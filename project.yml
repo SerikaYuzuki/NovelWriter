@@ -1,0 +1,56 @@
+# XcodeGen プロジェクト仕様(docs/DECISIONS.md D-008)。
+#
+# `NovelWriter.xcodeproj` はこのファイルから生成する生成物であり、
+# リポジトリにはコミットしない(.gitignore を参照)。正は常にこのファイル。
+#
+# 変更したら以下で再生成する:
+#   xcodegen generate
+name: NovelWriter
+
+options:
+  bundleIdPrefix: dev.serikayuzuki
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  NovelKit:
+    path: NovelKit
+
+targets:
+  NovelApp:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: NovelApp
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+    settings:
+      base:
+        PRODUCT_NAME: NovelWriter
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.NovelWriter
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Info.plist は物理ファイルを持たず、Xcode の現行方式(GENERATE_INFOPLIST_FILE)
+        # でビルド設定から生成する。
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: NovelWriter
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        # コード署名: ローカル実行用に自動署名。CIビルドチェックでは
+        # `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` を
+        # 引数で渡して署名なしビルドにする(Scripts/check.sh)。
+        CODE_SIGN_STYLE: Automatic
+        # App Sandbox は採用しない(docs/DECISIONS.md D-011)。entitlements
+        # ファイルを一切持たせないことで、Sandbox capability を付与しない。
+        ENABLE_HARDENED_RUNTIME: NO

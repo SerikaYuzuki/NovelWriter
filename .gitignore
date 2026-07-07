@@ -5,6 +5,8 @@ Package.resolved
 
 # Xcode
 DerivedData/
+# XcodeGen で生成する生成物(docs/DECISIONS.md D-008)。正は project.yml。
+*.xcodeproj/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcworkspace/xcuserdata/
@@ -44,3 +46,4 @@ fastlane/test_output
 .vscode/
 .idea/
 *.swp
+.claude/settings.local.json

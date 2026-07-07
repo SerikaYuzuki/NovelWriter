@@ -91,6 +91,51 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
             chapters: [Chapter(title: firstChapterTitle)]
         )
     }
+
+    /// 末尾に新しい章を追加する。
+    ///
+    /// 章操作のロジックを App 層(`AppState`)ではなくここに置くことで、
+    /// App 層を薄く保つ(docs/DESIGN.md 5.2)。
+    /// - Parameter title: 新しい章のタイトル。
+    /// - Returns: 生成した章の ``ChapterID``。
+    @discardableResult
+    public mutating func addChapter(title: String) -> ChapterID {
+        let chapter = Chapter(title: title)
+        chapters.append(chapter)
+        return chapter.id
+    }
+
+    /// 章を並べ替える。
+    ///
+    /// `SwiftUI` の `List.onMove(perform:)` がそのまま渡してくる
+    /// `(IndexSet, Int)` の形と互換にしてあるため、App 側はそのまま委譲できる。
+    /// `Array.move(fromOffsets:toOffset:)` は SwiftUI の拡張であり、NovelCore は
+    /// SwiftUI に依存してはならない(docs/DESIGN.md 9.1)ため、同等のロジックを
+    /// ここに自前で実装する。
+    /// - Parameters:
+    ///   - fromOffsets: 移動元のインデックス集合。
+    ///   - toOffset: 移動先のインデックス。
+    public mutating func moveChapters(fromOffsets: IndexSet, toOffset: Int) {
+        let itemsToMove = fromOffsets.map { chapters[$0] }
+        for index in fromOffsets.sorted(by: >) {
+            chapters.remove(at: index)
+        }
+        let removedBeforeDestination = fromOffsets.count(where: { $0 < toOffset })
+        let adjustedDestination = toOffset - removedBeforeDestination
+        chapters.insert(contentsOf: itemsToMove, at: adjustedDestination)
+    }
+
+    /// 指定した章の本文を更新する。
+    ///
+    /// 該当する ``ChapterID`` の章が存在しない場合は何もしない(呼び出し側が
+    /// 章切り替えの過渡状態などで古い ID を渡してもクラッシュしない)。
+    /// - Parameters:
+    ///   - content: 新しい本文。
+    ///   - id: 更新対象の章の ``ChapterID``。
+    public mutating func updateContent(_ content: String, for id: ChapterID) {
+        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
+        chapters[index].content = content
+    }
 }
 
 /// 作品データの保存・読み込みを抽象化するプロトコル。
