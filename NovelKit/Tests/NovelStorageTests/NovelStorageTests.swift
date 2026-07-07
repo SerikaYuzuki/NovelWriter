@@ -1,0 +1,202 @@
+import Foundation
+import NovelCore
+import Testing
+@testable import NovelStorage
+
+/// `NovelpkgRepository` に対するテスト(docs/DESIGN.md 4.2, 6.4)。
+
+/// `FileManager.default.temporaryDirectory` 配下に、このテスト実行専用の
+/// 一意なディレクトリを作成する。呼び出し側は `defer` で後始末すること。
+private func makeTempDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("NovelStorageTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+@Test func saveAndLoadRoundTrip() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("MyNovel.novelpkg")
+    let repository = NovelpkgRepository()
+
+    let doc = NovelDocument(
+        title: "ラウンドトリップ作品",
+        chapters: [
+            Chapter(title: "第1章", content: "本文1"),
+            Chapter(title: "第2章", content: "本文2")
+        ]
+    )
+
+    try await repository.save(doc, to: packageURL)
+    let loaded = try await repository.load(from: packageURL)
+
+    #expect(loaded.id == doc.id)
+    #expect(loaded.title == doc.title)
+    #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
+    #expect(loaded.chapters.map(\.title) == doc.chapters.map(\.title))
+    #expect(loaded.chapters.map(\.content) == doc.chapters.map(\.content))
+}
+
+@Test func reorderingChaptersPersistsAfterSave() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("Reorder.novelpkg")
+    let repository = NovelpkgRepository()
+
+    var doc = NovelDocument(
+        title: "並べ替えテスト",
+        chapters: [
+            Chapter(title: "第1章", content: "A"),
+            Chapter(title: "第2章", content: "B"),
+            Chapter(title: "第3章", content: "C")
+        ]
+    )
+    try await repository.save(doc, to: packageURL)
+
+    // 章を並べ替えてから再保存する(第3章, 第2章, 第1章の順に)
+    doc.chapters.swapAt(0, 2)
+    try await repository.save(doc, to: packageURL)
+
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters.map(\.title) == ["第3章", "第2章", "第1章"])
+    #expect(loaded.chapters.map(\.content) == ["C", "B", "A"])
+}
+
+@Test func overwriteSavePreservesAttachments() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("WithAttachments.novelpkg")
+    let repository = NovelpkgRepository()
+
+    let doc = NovelDocument(title: "添付テスト", chapters: [Chapter(title: "第1章", content: "本文")])
+    try await repository.save(doc, to: packageURL)
+
+    // 保存済みパッケージの attachments/ に、手動でダミーファイルを置く
+    // (将来の添付機能を見据えたもの。上書き保存で消えてはならない)
+    let attachmentsURL = packageURL.appendingPathComponent("attachments", isDirectory: true)
+    let dummyFileURL = attachmentsURL.appendingPathComponent("memo.txt")
+    try "dummy".write(to: dummyFileURL, atomically: true, encoding: .utf8)
+
+    var updatedDoc = doc
+    updatedDoc.chapters[0].content = "更新後の本文"
+    try await repository.save(updatedDoc, to: packageURL)
+
+    #expect(FileManager.default.fileExists(atPath: dummyFileURL.path))
+    let dummyContent = try String(contentsOf: dummyFileURL, encoding: .utf8)
+    #expect(dummyContent == "dummy")
+
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters[0].content == "更新後の本文")
+}
+
+@Test func loadingPackageWithoutManifestThrowsTypedError() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("NoManifest.novelpkg")
+    try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+
+    let repository = NovelpkgRepository()
+    do {
+        _ = try await repository.load(from: packageURL)
+        Issue.record("manifest.json が無いのに load が成功してしまった")
+    } catch let error as NovelpkgError {
+        #expect(error == .manifestMissing(packageURL))
+    } catch {
+        Issue.record("想定外のエラー型: \(error)")
+    }
+}
+
+@Test func loadingNonexistentPackageThrowsTypedError() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("DoesNotExist.novelpkg")
+    let repository = NovelpkgRepository()
+
+    do {
+        _ = try await repository.load(from: packageURL)
+        Issue.record("存在しないパッケージの load が成功してしまった")
+    } catch let error as NovelpkgError {
+        #expect(error == .packageNotFound(packageURL))
+    } catch {
+        Issue.record("想定外のエラー型: \(error)")
+    }
+}
+
+@Test func missingChapterFileLoadsAsEmptyContent() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("MissingChapterFile.novelpkg")
+    let repository = NovelpkgRepository()
+
+    let chapter = Chapter(title: "第1章", content: "消される本文")
+    let doc = NovelDocument(title: "欠損テスト", chapters: [chapter])
+    try await repository.save(doc, to: packageURL)
+
+    // 章ファイルを直接削除して、章ファイルが欠けた破損状態を模す
+    let chapterFileURL = packageURL
+        .appendingPathComponent("chapters", isDirectory: true)
+        .appendingPathComponent("\(chapter.id.rawValue.uuidString).md")
+    try FileManager.default.removeItem(at: chapterFileURL)
+
+    // 章ファイルが1つ欠けていても、読み込み全体は失敗せず、空本文として読める
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters.count == 1)
+    #expect(loaded.chapters[0].title == "第1章")
+    #expect(loaded.chapters[0].content.isEmpty)
+}
+
+@Test func orphanChapterFileIsIgnoredButNotDeletedOnLoad() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("Orphan.novelpkg")
+    let repository = NovelpkgRepository()
+
+    let doc = NovelDocument(title: "孤児章テスト", chapters: [Chapter(title: "第1章", content: "本文")])
+    try await repository.save(doc, to: packageURL)
+
+    // manifest.json に載っていない章ファイルを直接置く
+    let chaptersURL = packageURL.appendingPathComponent("chapters", isDirectory: true)
+    let orphanURL = chaptersURL.appendingPathComponent("\(UUID().uuidString).md")
+    try "manifestに載っていない本文".write(to: orphanURL, atomically: true, encoding: .utf8)
+
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters.count == 1)
+    // 無視はするが、削除はしない
+    #expect(FileManager.default.fileExists(atPath: orphanURL.path))
+}
+
+@Test func unsupportedFormatVersionThrowsTypedError() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("FutureVersion.novelpkg")
+    let repository = NovelpkgRepository()
+
+    let doc = NovelDocument(title: "バージョンテスト", chapters: [Chapter(title: "第1章")])
+    try await repository.save(doc, to: packageURL)
+
+    // manifest.json の formatVersion を非対応の値に書き換える
+    let manifestURL = packageURL.appendingPathComponent("manifest.json")
+    let data = try Data(contentsOf: manifestURL)
+    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    json["formatVersion"] = "999"
+    let rewritten = try JSONSerialization.data(withJSONObject: json)
+    try rewritten.write(to: manifestURL)
+
+    do {
+        _ = try await repository.load(from: packageURL)
+        Issue.record("非対応バージョンなのに load が成功してしまった")
+    } catch let error as NovelpkgError {
+        #expect(error == .unsupportedFormatVersion("999"))
+    } catch {
+        Issue.record("想定外のエラー型: \(error)")
+    }
+}
