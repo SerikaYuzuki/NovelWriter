@@ -1,14 +1,14 @@
 import Foundation
-import Testing
 @testable import NovelCore
+import Testing
 
-/// `NovelCore` のモデル(`ChapterID` / `Chapter` / `NovelDocument`)に対するテスト
-/// (docs/DESIGN.md 4.1)。
+// `NovelCore` のモデル(`ChapterID` / `Chapter` / `NovelDocument`)に対するテスト
+// (docs/DESIGN.md 4.1)。
 
 @Test func chapterIDGeneratesUniqueValues() {
-    let a = ChapterID()
-    let b = ChapterID()
-    #expect(a != b)
+    let firstID = ChapterID()
+    let secondID = ChapterID()
+    #expect(firstID != secondID)
 }
 
 @Test func chapterIDRoundTripsThroughRawValue() {

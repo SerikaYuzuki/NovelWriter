@@ -1,9 +1,9 @@
 import Foundation
 import NovelCore
-import Testing
 @testable import NovelStorage
+import Testing
 
-/// `NovelpkgRepository` に対するテスト(docs/DESIGN.md 4.2, 6.4)。
+// `NovelpkgRepository` に対するテスト(docs/DESIGN.md 4.2, 6.4)。
 
 /// `FileManager.default.temporaryDirectory` 配下に、このテスト実行専用の
 /// 一意なディレクトリを作成する。呼び出し側は `defer` で後始末すること。
