@@ -20,4 +20,12 @@ echo "==> iOS compile check (NovelKit)"
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO)
 
+echo "==> NovelApp build check (macOS, XcodeGen)"
+xcodegen generate
+xcodebuild build \
+  -project NovelWriter.xcodeproj \
+  -scheme NovelApp \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+
 echo "==> All checks passed"
