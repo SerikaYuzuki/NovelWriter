@@ -1,4 +1,4 @@
-# 小説執筆アプリ 設計書 v0.3
+# 小説執筆アプリ 設計書 v0.4
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -382,7 +382,7 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 - git init + GitHub Flow
 - PRテンプレート / Issueテンプレート
 - SwiftFormat / SwiftLint
-- GitHub Actions CI(NovelKit の `swift test` + **iOS向けコンパイルチェック**。共有コードへの AppKit 混入をコンパイラで検出する → D-013)
+- ローカル検証スクリプト `Scripts/check.sh`(lint + `swift test` + **iOS向けコンパイルチェック**。共有コードへの AppKit 混入をコンパイラで検出する → D-013, D-014。クラウドCIは使わない)
 - 最小テスト
 
 ### Phase 1: 最小執筆環境
@@ -517,6 +517,10 @@ NovelCore は絶対にUIやStorageに依存しない。
 ---
 
 ## 変更履歴
+
+### v0.4 (2026-07-07)
+
+- CI/CD はローカル実行のみに変更。GitHub Actions を廃止し、`Scripts/check.sh` に置き換え(→ D-014)。D-013 の「CI での iOS コンパイル保証」もローカルスクリプトで行う
 
 ### v0.3 (2026-07-07)
 
