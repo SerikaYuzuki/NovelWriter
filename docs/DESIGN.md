@@ -1,4 +1,4 @@
-# 小説執筆アプリ 設計書 v0.4
+# 小説執筆アプリ 設計書 v0.5
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -35,7 +35,8 @@
 - **配布**: GitHub Releases による直接配布。App Sandbox は採用しない(→ D-011)
 - **最低ターゲット**: macOS 14(`@Observable` の要件。実機は macOS 27 なので余裕あり)
 - **テスト**: swift-testing(`@Test`)を使用
-- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / EditorKit / NovelUI / PreviewSupport は NovelKit 内のターゲットとして実装し、CI では署名不要の `swift test` を回せるようにする
+- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / EditorKit / NovelUI / PreviewSupport は NovelKit 内のターゲットとして実装し、署名不要の `swift test` を回せるようにする
+- **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
 
 ## 3. モジュール構成
 
@@ -517,6 +518,10 @@ NovelCore は絶対にUIやStorageに依存しない。
 ---
 
 ## 変更履歴
+
+### v0.5 (2026-07-08)
+
+- Phase 1 実装完了に伴う決定を追記: XcodeGen によるプロジェクト生成(→ D-015)、新規作品の既定保存先と自動保存の方針(→ D-016)
 
 ### v0.4 (2026-07-07)
 

@@ -93,3 +93,20 @@
 - **内容**: クラウド CI(GitHub Actions)は廃止。検証は `Scripts/check.sh` をローカルで実行する。内容は SwiftFormat(lint)→ SwiftLint → `swift test` → iOS 向けコンパイルチェックで、旧 CI と同一。マージ前に必ず実行する運用とする。
 - **理由**: ユーザーの方針。個人開発では macOS ランナーの待ち時間・管理コストに見合わない。GitHub Flow(ブランチ + PR)自体は継続する。
 - **補足**: Phase 0 で一度 GitHub Actions を構築し正常動作を確認済み(履歴: `.github/workflows/ci.yml`、初回 run で lint 設定の不備を1件検出・修正)。将来チーム開発になったら本決定を破棄して復活させればよい。
+
+## D-015: Xcode プロジェクトは XcodeGen で生成する
+
+- **日付**: 2026-07-08 / **状態**: 承認(D-008 の具体化、Phase 1-C で導入)
+- **内容**: `NovelWriter.xcodeproj` はコミットせず、リポジトリルートの `project.yml` から `xcodegen generate` で生成する。正は常に `project.yml`。
+- **理由**: pbxproj の手書き・手動管理はエラーの温床で、diff も読めない。project.yml なら宣言的でレビュー可能、AIエージェントにも扱いやすい。
+- **補足**: 開発者(と `Scripts/check.sh`)は `brew install xcodegen` が必要。将来 XcodeGen が Xcode の新形式に追従できなくなったら再評価。
+
+## D-016: 新規作品の既定保存先と自動保存の方針
+
+- **日付**: 2026-07-08 / **状態**: 承認(Phase 1-C で実装)
+- **内容**:
+  - 新規作品の既定保存先は `~/Documents/NovelWriter/<作品タイトル>.novelpkg`。同名が存在する場合は連番(`新規作品2.novelpkg` など)で回避する
+  - 自動保存: モデル(メモリ上の `NovelDocument`)への反映は編集のたびに即時。ディスクへの保存は本文編集では**2秒デバウンス**、章切り替え・章追加・並べ替え・アプリ非アクティブ時(`willResignActiveNotification`)は**即時**
+  - 「最近開いた作品」は UserDefaults にファイルパスで記録(D-011 により Sandbox 不要のため、これで足りる)
+- **理由**: 執筆中のキーストロークごとのディスクI/Oを避けつつ、データ喪失ウィンドウを最大2秒に抑える。章操作は頻度が低く保存コストが小さいので即時が安全。
+- **既知の制限**: アプリがアクティブなまま Cmd+Q した場合、最後の編集から2秒未満だと未保存になりうる(terminate 時の同期保存は未実装)。Phase 3 のスナップショット保存までに解消する。
