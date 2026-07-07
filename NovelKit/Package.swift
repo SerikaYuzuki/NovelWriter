@@ -38,6 +38,10 @@ let package = Package(
         .testTarget(
             name: "NovelCoreTests",
             dependencies: ["NovelCore"]
+        ),
+        .testTarget(
+            name: "EditorKitTests",
+            dependencies: ["EditorKit"]
         )
     ]
 )
