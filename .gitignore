@@ -1,0 +1,46 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Build products
+build/
+*.o
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# CocoaPods / Carthage / SwiftPM legacy artifacts (not used, but ignore if introduced)
+Pods/
+Carthage/Build/
+
+# Fastlane (in case introduced later)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
