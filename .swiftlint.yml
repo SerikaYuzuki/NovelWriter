@@ -1,0 +1,16 @@
+# NovelWriter — SwiftLint 設定
+#
+# 方針: 控えめな設定にする(docs/DESIGN.md Phase 0)。
+# ローカル環境に swiftlint が未インストールで実行確認ができないため、
+# 初回 CI がルール過多で落ちるのを避ける。デフォルトルールをベースとし、
+# opt-in ルールの大量追加は行わない。
+
+included:
+  - NovelKit/Sources
+  - NovelKit/Tests
+
+excluded:
+  - NovelKit/.build
+  - NovelKit/.swiftpm
+
+reporter: "xcode"

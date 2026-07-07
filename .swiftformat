@@ -1,0 +1,22 @@
+# NovelWriter — SwiftFormat 設定
+#
+# 対象: NovelKit/Sources, NovelKit/Tests
+# (将来 NovelApp/ を追加した場合も、この設定のままで対象に含まれる想定。
+#  ビルド生成物・Package.swift は除外しているため、Swift ソースがあれば
+#  自動的に対象になる)
+#
+# 方針: 既存プレースホルダコードのスタイル(4スペースインデント、
+# K&R式の中括弧、ファイルスコープの #if を追加インデントしない)に
+# 合わせた、控えめな設定。過度な自動書き換えは行わない。
+
+--swiftversion 6.0
+--indent 4
+--indentcase false
+--ifdef no-indent
+--trimwhitespace always
+--elseposition same-line
+--guardelse same-line
+--emptybraces no-space
+
+# ビルド生成物・パッケージマニフェストは対象外
+--exclude NovelKit/.build,NovelKit/.swiftpm,NovelKit/Package.swift,.build,.swiftpm,.git
