@@ -18,5 +18,10 @@
 --guardelse same-line
 --emptybraces no-space
 
+# SwiftFormat 0.62 のデフォルト(always)は複数行リストに末尾カンマを追加するが、
+# SwiftLint デフォルトの trailing_comma ルールは末尾カンマを禁止しており衝突する。
+# 既存コードのスタイル(末尾カンマなし)と SwiftLint に合わせて never にする。
+--trailing-commas never
+
 # ビルド生成物・パッケージマニフェストは対象外
 --exclude NovelKit/.build,NovelKit/.swiftpm,NovelKit/Package.swift,.build,.swiftpm,.git

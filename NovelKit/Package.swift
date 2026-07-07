@@ -40,6 +40,10 @@ let package = Package(
             dependencies: ["NovelCore"]
         ),
         .testTarget(
+            name: "NovelStorageTests",
+            dependencies: ["NovelStorage", "NovelCore"]
+        ),
+        .testTarget(
             name: "EditorKitTests",
             dependencies: ["EditorKit"]
         )
