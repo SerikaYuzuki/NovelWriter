@@ -85,3 +85,11 @@
   1. **Phase 0 から**: CI で NovelKit を iOS 向けにもコンパイルする(ビルドのみ、UIなし)。ほぼタダで「共有コードに AppKit が漏れていない」ことを常時保証でき、実装ルール 9.2 をコンパイラで強制できる。
   2. **iOS アプリ本体は Phase 5(出力)完了後に Phase 7 として着手**。macOS 版で執筆体験が安定し出力まで揃ってから。UITextView アダプタ + iOS UI はここで作る。
 - **理由**: 早すぎる iOS 対応は macOS 版の足を引っ張るが、放置すると EditorKit の抽象が macOS 専用に腐る。コンパイル保証だけ先行させるのが最も安いバランス。Phase 5 完了時点で需要がなければ先送りしてよい(AI支援 Phase 6 を優先して構わない)。
+- **補足**: 当初「CI で」としていた iOS コンパイル保証は、D-014 によりローカルの `Scripts/check.sh` で行う(内容は同じ)。
+
+## D-014: CI/CD はローカル実行のみ。GitHub Actions は使わない
+
+- **日付**: 2026-07-07 / **状態**: 承認(ユーザー判断。Phase 0 の GitHub Actions CI を置き換え)
+- **内容**: クラウド CI(GitHub Actions)は廃止。検証は `Scripts/check.sh` をローカルで実行する。内容は SwiftFormat(lint)→ SwiftLint → `swift test` → iOS 向けコンパイルチェックで、旧 CI と同一。マージ前に必ず実行する運用とする。
+- **理由**: ユーザーの方針。個人開発では macOS ランナーの待ち時間・管理コストに見合わない。GitHub Flow(ブランチ + PR)自体は継続する。
+- **補足**: Phase 0 で一度 GitHub Actions を構築し正常動作を確認済み(履歴: `.github/workflows/ci.yml`、初回 run で lint 設定の不備を1件検出・修正)。将来チーム開発になったら本決定を破棄して復活させればよい。
