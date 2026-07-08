@@ -102,7 +102,18 @@ private extension NovelpkgRepository {
             return Chapter(id: ChapterID(rawValue: entry.id), title: entry.title, content: content, memo: memo)
         }
 
-        return NovelDocument(id: manifest.documentID, title: manifest.title, chapters: chapters)
+        let characters = try readCharacters(from: url)
+        let plotCards = try readPlotCards(from: url, validChapterIDs: Set(chapters.map(\.id)))
+        let flags = try readFlags(from: url, validChapterIDs: Set(chapters.map(\.id)))
+
+        return NovelDocument(
+            id: manifest.documentID,
+            title: manifest.title,
+            chapters: chapters,
+            characters: characters,
+            plotCards: plotCards,
+            flags: flags
+        )
     }
 
     private static func isSupportedFormatVersion(_ formatVersion: String) -> Bool {
@@ -241,6 +252,9 @@ private extension NovelpkgRepository {
         // 章本文を書き出す。ファイル名は ChapterID(UUID)ベース(D-003)。
         try writeChapterContents(doc.chapters, into: chaptersURL)
         try writeChapterNotes(doc.chapters, into: workingURL, fileManager: fileManager)
+        try writeCharacters(doc.characters, into: workingURL)
+        try writePlotCards(doc.plotCards, into: workingURL)
+        try writeFlags(doc.flags, into: workingURL)
         try writeManifest(for: doc, into: workingURL, existingPackageURL: url, fileManager: fileManager)
     }
 

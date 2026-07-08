@@ -75,22 +75,58 @@ public struct Chapter: Codable, Sendable, Identifiable, Equatable {
 /// 章の並び順は `chapters` 配列の順序そのものが唯一の正であり、
 /// 個々の `Chapter` に順序情報を持たせてはならない(D-004)。
 public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case chapters
+        case characters
+        case plotCards
+        case flags
+    }
+
     /// 作品の識別子。
     public var id: UUID
     /// 作品タイトル。
     public var title: String
     /// 章の並び順つきリスト。この配列の順序が章順そのもの。
     public var chapters: [Chapter]
+    /// 登場人物リスト。この配列の順序が表示順そのもの。
+    public var characters: [Character]
+    /// プロットカードリスト。この配列の順序が表示順そのもの。
+    public var plotCards: [PlotCard]
+    /// 伏線・フラグリスト。この配列の順序が表示順そのもの。
+    public var flags: [Flag]
 
     /// 作品を作成する。
     /// - Parameters:
     ///   - id: 作品の識別子。省略時は新規に生成する。
     ///   - title: 作品タイトル。
     ///   - chapters: 章の並び順つきリスト。
-    public init(id: UUID = UUID(), title: String, chapters: [Chapter]) {
+    ///   - characters: 登場人物リスト。
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        chapters: [Chapter],
+        characters: [Character] = [],
+        plotCards: [PlotCard] = [],
+        flags: [Flag] = []
+    ) {
         self.id = id
         self.title = title
         self.chapters = chapters
+        self.characters = characters
+        self.plotCards = plotCards
+        self.flags = flags
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        chapters = try container.decode([Chapter].self, forKey: .chapters)
+        characters = try container.decodeIfPresent([Character].self, forKey: .characters) ?? []
+        plotCards = try container.decodeIfPresent([PlotCard].self, forKey: .plotCards) ?? []
+        flags = try container.decodeIfPresent([Flag].self, forKey: .flags) ?? []
     }
 
     /// 新規作品を、空の章1つを添えて生成する便利ファクトリ。
@@ -146,6 +182,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public mutating func removeChapter(id: ChapterID) -> (chapter: Chapter, index: Int)? {
         guard let index = chapters.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = chapters.remove(at: index)
+        detachPlotCards(from: id)
+        detachFlags(from: id)
         return (removed, index)
     }
 

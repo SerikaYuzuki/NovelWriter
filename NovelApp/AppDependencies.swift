@@ -13,6 +13,9 @@ struct AppDependencies {
     /// プロトコルのみを見て、`.novelpkg` の内部構造を知らない(docs/DESIGN.md 9.3)。
     let repository: DocumentRepository
 
+    /// 資料添付の操作を担当する抽象。非対応リポジトリでは `nil`。
+    let attachmentManager: AttachmentManaging?
+
     /// 「最近開いた作品」のファイルパスを保存する場所(D-009)。
     let userDefaults: UserDefaults
 
@@ -21,10 +24,12 @@ struct AppDependencies {
 
     init(
         repository: DocumentRepository = NovelpkgRepository(),
+        attachmentManager: AttachmentManaging? = nil,
         userDefaults: UserDefaults = .standard,
         fileManager: FileManager = .default
     ) {
         self.repository = repository
+        self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
         self.userDefaults = userDefaults
         self.fileManager = fileManager
     }
