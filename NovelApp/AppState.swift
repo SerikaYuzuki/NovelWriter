@@ -1,4 +1,5 @@
 import AppKit
+import EditorKit
 import Foundation
 import NovelCore
 import Observation
@@ -26,6 +27,13 @@ final class AppState {
     private(set) var selectedPlotCardID: PlotCardID?
     /// 選択中の伏線ID。
     private(set) var selectedFlagID: FlagID?
+    /// 現在の作業モード。
+    var mode: AppMode {
+        didSet {
+            userDefaults.set(mode.rawValue, forKey: Self.appModeKey)
+        }
+    }
+
     /// 現在の作品に取り込まれている資料一覧。
     private(set) var attachments: [Attachment]
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
@@ -66,6 +74,7 @@ final class AppState {
     private nonisolated(unsafe) var resignActiveObserver: NSObjectProtocol?
 
     private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
+    private static let appModeKey = "dev.serikayuzuki.NovelWriter.appMode"
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
     init(dependencies: AppDependencies) {
@@ -83,6 +92,7 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
+        mode = AppMode(rawValue: dependencies.userDefaults.string(forKey: Self.appModeKey) ?? "") ?? .writing
         attachments = []
     }
 
@@ -256,15 +266,42 @@ final class AppState {
     }
 
     /// 選択中の登場人物を更新する。
-    func updateSelectedCharacter(name: String? = nil, kana: String? = nil, memo: String? = nil, colorHex: String? = nil) {
+    func updateSelectedCharacter(
+        name: String? = nil,
+        kana: String? = nil,
+        memo: String? = nil,
+        colorHex: String? = nil,
+        role: String? = nil,
+        age: String? = nil,
+        gender: String? = nil,
+        firstPerson: String? = nil,
+        secondPerson: String? = nil,
+        speechStyle: String? = nil,
+        appearance: String? = nil,
+        personality: String? = nil,
+        background: String? = nil
+    ) {
         guard let selectedCharacterID, let current = selectedCharacter else { return }
         let nextName = name ?? current.name
         let nextKana = kana ?? current.kana
         let nextMemo = memo ?? current.memo
         let nextColorHex = colorHex ?? current.colorHex
+        let nextRole = role ?? current.role
+        let nextAge = age ?? current.age
+        let nextGender = gender ?? current.gender
+        let nextFirstPerson = firstPerson ?? current.firstPerson
+        let nextSecondPerson = secondPerson ?? current.secondPerson
+        let nextSpeechStyle = speechStyle ?? current.speechStyle
+        let nextAppearance = appearance ?? current.appearance
+        let nextPersonality = personality ?? current.personality
+        let nextBackground = background ?? current.background
 
         guard current.name != nextName || current.kana != nextKana || current.memo != nextMemo ||
-            current.colorHex != nextColorHex else
+            current.colorHex != nextColorHex || current.role != nextRole || current.age != nextAge ||
+            current.gender != nextGender || current.firstPerson != nextFirstPerson ||
+            current.secondPerson != nextSecondPerson || current.speechStyle != nextSpeechStyle ||
+            current.appearance != nextAppearance || current.personality != nextPersonality ||
+            current.background != nextBackground else
         {
             return
         }
@@ -274,7 +311,86 @@ final class AppState {
             name: nextName,
             kana: nextKana,
             memo: nextMemo,
-            colorHex: nextColorHex
+            colorHex: nextColorHex,
+            role: nextRole,
+            age: nextAge,
+            gender: nextGender,
+            firstPerson: nextFirstPerson,
+            secondPerson: nextSecondPerson,
+            speechStyle: nextSpeechStyle,
+            appearance: nextAppearance,
+            personality: nextPersonality,
+            background: nextBackground
+        )
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// Optional な登場人物シート項目を更新する。空文字は `nil` として保存する。
+    func updateSelectedCharacterProfile(
+        role: String? = nil,
+        age: String? = nil,
+        gender: String? = nil,
+        firstPerson: String? = nil,
+        secondPerson: String? = nil,
+        speechStyle: String? = nil,
+        appearance: String? = nil,
+        personality: String? = nil,
+        background: String? = nil
+    ) {
+        updateSelectedCharacter(
+            role: role.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.role,
+            age: age.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.age,
+            gender: gender.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.gender,
+            firstPerson: firstPerson.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.firstPerson,
+            secondPerson: secondPerson.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.secondPerson,
+            speechStyle: speechStyle.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.speechStyle,
+            appearance: appearance.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.appearance,
+            personality: personality.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.personality,
+            background: background.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.background
+        )
+    }
+
+    func updateSelectedCharacterProfileField(_ field: CharacterProfileField, value: String) {
+        guard var current = selectedCharacter else { return }
+        let normalized = Self.nilIfBlank(value)
+
+        switch field {
+        case .role:
+            current.role = normalized
+        case .age:
+            current.age = normalized
+        case .gender:
+            current.gender = normalized
+        case .firstPerson:
+            current.firstPerson = normalized
+        case .secondPerson:
+            current.secondPerson = normalized
+        case .speechStyle:
+            current.speechStyle = normalized
+        case .appearance:
+            current.appearance = normalized
+        case .personality:
+            current.personality = normalized
+        case .background:
+            current.background = normalized
+        }
+
+        document.updateCharacter(
+            id: current.id,
+            name: current.name,
+            kana: current.kana,
+            memo: current.memo,
+            colorHex: current.colorHex,
+            role: current.role,
+            age: current.age,
+            gender: current.gender,
+            firstPerson: current.firstPerson,
+            secondPerson: current.secondPerson,
+            speechStyle: current.speechStyle,
+            appearance: current.appearance,
+            personality: current.personality,
+            background: current.background
         )
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
@@ -290,7 +406,16 @@ final class AppState {
             name: current.name,
             kana: current.kana,
             memo: current.memo,
-            colorHex: colorHex
+            colorHex: colorHex,
+            role: current.role,
+            age: current.age,
+            gender: current.gender,
+            firstPerson: current.firstPerson,
+            secondPerson: current.secondPerson,
+            speechStyle: current.speechStyle,
+            appearance: current.appearance,
+            personality: current.personality,
+            background: current.background
         )
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
@@ -306,7 +431,16 @@ final class AppState {
                     name: normalizedName,
                     kana: character.kana,
                     memo: character.memo,
-                    colorHex: character.colorHex
+                    colorHex: character.colorHex,
+                    role: character.role,
+                    age: character.age,
+                    gender: character.gender,
+                    firstPerson: character.firstPerson,
+                    secondPerson: character.secondPerson,
+                    speechStyle: character.speechStyle,
+                    appearance: character.appearance,
+                    personality: character.personality,
+                    background: character.background
                 )
                 saveCoordinator.markDirty()
             }
@@ -339,8 +473,8 @@ final class AppState {
     // MARK: - プロットカード
 
     /// プロットカードを追加し、追加したカードを選択状態にする。
-    func addPlotCard() {
-        let newID = document.addPlotCard(title: "新しいカード", chapterID: selection)
+    func addPlotCard(chapterID: ChapterID? = nil) {
+        let newID = document.addPlotCard(title: "新しいカード", chapterID: chapterID ?? selection)
         selectedPlotCardID = newID
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -407,6 +541,13 @@ final class AppState {
     /// プロットカードを並べ替える。
     func movePlotCards(fromOffsets: IndexSet, toOffset: Int) {
         document.movePlotCards(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// プロットカードを章レーン内/レーン間で移動する。
+    func movePlotCard(id: PlotCardID, toChapter chapterID: ChapterID?, before targetID: PlotCardID? = nil) {
+        document.movePlotCard(id: id, toChapter: chapterID, before: targetID)
         saveCoordinator.markDirty()
         flushSaveImmediately()
     }
@@ -623,6 +764,12 @@ final class AppState {
     private func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の章" : trimmed
+    }
+
+    private static func nilIfBlank(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : value
     }
 
     private func loadAttachments(for url: URL) async -> [Attachment] {
