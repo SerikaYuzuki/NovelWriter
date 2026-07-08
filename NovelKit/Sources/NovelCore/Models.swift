@@ -105,6 +105,31 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         return chapter.id
     }
 
+    /// 指定した章のタイトルを更新する。
+    ///
+    /// 該当する ``ChapterID`` の章が存在しない場合は何もしない。
+    /// - Parameters:
+    ///   - title: 新しい章タイトル。
+    ///   - id: 更新対象の章の ``ChapterID``。
+    public mutating func updateTitle(_ title: String, for id: ChapterID) {
+        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
+        chapters[index].title = title
+    }
+
+    /// 指定した章を削除する。
+    ///
+    /// 章が見つかった場合は削除した章と、削除位置を返す。見つからなければ `nil`。
+    /// 章が0件になること自体はモデルとして許容し、アプリ側が必要に応じて
+    /// 「最後の1章は削除不可」などの運用ルールを決める。
+    /// - Parameter id: 削除対象の章ID。
+    /// - Returns: 削除した章と元のインデックス。
+    @discardableResult
+    public mutating func removeChapter(id: ChapterID) -> (chapter: Chapter, index: Int)? {
+        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return nil }
+        let removed = chapters.remove(at: index)
+        return (removed, index)
+    }
+
     /// 章を並べ替える。
     ///
     /// `SwiftUI` の `List.onMove(perform:)` がそのまま渡してくる
@@ -154,4 +179,18 @@ public protocol DocumentRepository: Sendable {
     ///   - doc: 保存する作品。
     ///   - url: 保存先のパッケージ(またはファイル)のURL。
     func save(_ doc: NovelDocument, to url: URL) async throws
+}
+
+/// スナップショット保存に対応するリポジトリ。
+///
+/// スナップショットの具体的な置き場所や形式は保存層の責務であり、App 側は
+/// このプロトコルを通して「現在の作品状態の退避」だけを依頼する。
+public protocol SnapshottingDocumentRepository: DocumentRepository {
+    /// 現在の作品状態をスナップショットとして保存する。
+    /// - Parameters:
+    ///   - doc: スナップショットに残す作品。
+    ///   - url: 元の作品パッケージURL。
+    /// - Returns: 作成したスナップショットの URL。
+    @discardableResult
+    func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL
 }
