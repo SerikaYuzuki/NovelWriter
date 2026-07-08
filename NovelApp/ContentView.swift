@@ -69,8 +69,10 @@ struct ContentView: View {
                         .onSubmit {
                             jumpToSearchResult(direction: .forward)
                         }
-                        .onChange(of: searchQuery) {
-                            resetSearchCursor()
+                        .onChange(of: searchQuery) { _, newQuery in
+                            if lastSearchQuery != newQuery {
+                                resetSearchCursor()
+                            }
                         }
 
                     Button {
@@ -149,7 +151,13 @@ struct ContentView: View {
             InspectorView(
                 selectedChapter: appState.selectedChapter,
                 memo: selectedChapterMemoBinding,
-                selectedTab: $inspectorTab
+                selectedTab: $inspectorTab,
+                onCharacterSearch: { query in
+                    beginSearch(query: query)
+                },
+                onCharacterAppearanceJump: { appearance in
+                    jumpToCharacterAppearance(appearance)
+                }
             )
         }
         .confirmationDialog(
@@ -168,8 +176,10 @@ struct ContentView: View {
         .alert(item: $operationMessage) { message in
             Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("OK")))
         }
-        .onChange(of: appState.selection) {
-            resetSearchCursor()
+        .onChange(of: appState.selection) { _, newSelection in
+            if lastSearchChapterID != newSelection {
+                resetSearchCursor()
+            }
         }
     }
 
@@ -239,6 +249,22 @@ struct ContentView: View {
         lastSearchQuery = searchQuery
         lastSearchRange = range
         searchSelectionRequest = EditorSelectionRequest(range: range)
+    }
+
+    private func beginSearch(query: String) {
+        searchQuery = query
+        resetSearchCursor()
+        jumpToSearchResult(direction: .forward)
+    }
+
+    private func jumpToCharacterAppearance(_ appearance: CharacterAppearance) {
+        searchQuery = appearance.query
+        didMissSearch = false
+        lastSearchChapterID = appearance.chapterID
+        lastSearchQuery = appearance.query
+        lastSearchRange = appearance.range
+        appState.selectChapter(appearance.chapterID)
+        searchSelectionRequest = EditorSelectionRequest(range: appearance.range)
     }
 
     private func resetSearchCursor() {
@@ -314,6 +340,8 @@ struct ContentView: View {
         let selectedChapter: Chapter?
         @Binding var memo: String
         @Binding var selectedTab: InspectorTab
+        let onCharacterSearch: (String) -> Void
+        let onCharacterAppearanceJump: (CharacterAppearance) -> Void
 
         var body: some View {
             VStack(spacing: 0) {
@@ -339,7 +367,10 @@ struct ContentView: View {
                             .padding(8)
                     }
                 case .characters:
-                    CharacterInspectorView()
+                    CharacterInspectorView(
+                        onSearchQuery: onCharacterSearch,
+                        onAppearanceJump: onCharacterAppearanceJump
+                    )
                 }
             }
             .frame(minWidth: 260)
@@ -348,6 +379,9 @@ struct ContentView: View {
 
     private struct CharacterInspectorView: View {
         @Environment(AppState.self) private var appState
+
+        let onSearchQuery: (String) -> Void
+        let onAppearanceJump: (CharacterAppearance) -> Void
 
         @State private var characterPendingDeletion: NovelCore.Character?
 
@@ -399,15 +433,29 @@ struct ContentView: View {
                     ContentUnavailableView("キャラクターが選択されていません", systemImage: "person")
                         .frame(maxHeight: .infinity)
                 } else {
-                    CharacterEditor(
-                        name: selectedCharacterNameBinding,
-                        kana: selectedCharacterKanaBinding,
-                        memo: selectedCharacterMemoBinding,
-                        colorHex: selectedCharacterColorBinding,
-                        onCommit: {
-                            appState.commitCharacterEditing()
-                        }
-                    )
+                    ScrollView {
+                        CharacterEditor(
+                            name: selectedCharacterNameBinding,
+                            kana: selectedCharacterKanaBinding,
+                            memo: selectedCharacterMemoBinding,
+                            colorHex: selectedCharacterColorBinding,
+                            onSearchName: {
+                                if let query = selectedCharacterSearchQuery {
+                                    onSearchQuery(query)
+                                }
+                            },
+                            onCommit: {
+                                appState.commitCharacterEditing()
+                            }
+                        )
+
+                        CharacterAppearancesView(
+                            appearances: selectedCharacterAppearances,
+                            onJump: onAppearanceJump
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
+                    }
                 }
             }
             .confirmationDialog(
@@ -471,6 +519,46 @@ struct ContentView: View {
                 }
             )
         }
+
+        private var selectedCharacterSearchQuery: String? {
+            guard let character = appState.selectedCharacter else { return nil }
+            let name = NovelDocument.normalizedCharacterName(character.name)
+            return name.isEmpty ? nil : name
+        }
+
+        private var selectedCharacterAppearances: [CharacterAppearance] {
+            guard let character = appState.selectedCharacter else { return [] }
+            let queries = appearanceQueries(for: character)
+            guard !queries.isEmpty else { return [] }
+
+            return appState.document.chapters.compactMap { chapter in
+                for query in queries {
+                    if let range = TextSearch.find(query: query, in: chapter.content, from: 0, wraps: false) {
+                        return CharacterAppearance(
+                            chapterID: chapter.id,
+                            chapterTitle: chapter.title,
+                            query: query,
+                            range: range
+                        )
+                    }
+                }
+                return nil
+            }
+        }
+
+        private func appearanceQueries(for character: NovelCore.Character) -> [String] {
+            var seen: Set<String> = []
+            let candidates = [
+                NovelDocument.normalizedCharacterName(character.name),
+                character.kana.trimmingCharacters(in: .whitespacesAndNewlines)
+            ]
+
+            return candidates.compactMap { candidate in
+                guard !candidate.isEmpty, !seen.contains(candidate) else { return nil }
+                seen.insert(candidate)
+                return candidate
+            }
+        }
     }
 
     private struct CharacterRow: View {
@@ -500,6 +588,7 @@ struct ContentView: View {
         @Binding var memo: String
         @Binding var colorHex: String?
 
+        let onSearchName: () -> Void
         let onCommit: () -> Void
 
         private let colorChoices = ["#C44536", "#2E7D32", "#1565C0", "#6A4C93", "#B7791F"]
@@ -525,6 +614,12 @@ struct ContentView: View {
                 }
                 .pickerStyle(.menu)
 
+                Button {
+                    onSearchName()
+                } label: {
+                    Label("この名前で本文検索", systemImage: "magnifyingglass")
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("メモ")
                         .foregroundStyle(.secondary)
@@ -535,6 +630,45 @@ struct ContentView: View {
             .formStyle(.grouped)
             .padding(10)
             .onDisappear(perform: onCommit)
+        }
+    }
+
+    private struct CharacterAppearancesView: View {
+        let appearances: [CharacterAppearance]
+        let onJump: (CharacterAppearance) -> Void
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("登場章")
+                    .font(.headline)
+
+                if appearances.isEmpty {
+                    Text("本文中に見つかりません")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appearances) { appearance in
+                        Button {
+                            onJump(appearance)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(appearance.chapterTitle)
+                                        .lineLimit(1)
+                                    Text("「\(appearance.query)」")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrowshape.turn.up.right")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -586,6 +720,17 @@ struct ContentView: View {
         let id = UUID()
         let title: String
         let body: String
+    }
+
+    private struct CharacterAppearance: Identifiable {
+        let chapterID: ChapterID
+        let chapterTitle: String
+        let query: String
+        let range: NSRange
+
+        var id: String {
+            "\(chapterID.rawValue.uuidString)-\(query)-\(range.location)"
+        }
     }
 }
 

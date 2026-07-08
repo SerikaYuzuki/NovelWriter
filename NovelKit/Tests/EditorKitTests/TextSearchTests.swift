@@ -16,6 +16,13 @@ import Testing
     #expect(match == NSRange(location: 0, length: 3))
 }
 
+@Test func forwardSearchDoesNotWrapWhenDisabled() {
+    let text = "abc def"
+    let match = TextSearch.find(query: "abc", in: text, from: 4, direction: .forward, wraps: false)
+
+    #expect(match == nil)
+}
+
 @Test func backwardSearchFindsPreviousMatch() {
     let text = "abc abc"
     let match = TextSearch.find(query: "abc", in: text, from: 4, direction: .backward)
