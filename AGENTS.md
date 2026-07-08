@@ -34,6 +34,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 5. **章順は `NovelDocument.chapters` の配列順が唯一の正**(D-004)。order フィールドを追加しない。保存形式では manifest.json だけが章順を持ち、章ファイル名は ChapterID(UUID)ベース(D-003)
 6. **`.novelpkg` の内部構造を NovelStorage の外に漏らさない**(DESIGN 9.3)
 7. **エディタ機能は EditorPlugin として追加する**(DESIGN 4.4)。EditorView / MacTextAdapter を直接太らせない。純粋な判定ロジックは `Rules/` に切り出してテストする
+8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反
 
 ## エディタにプラグインを足す手順(Phase 2 で確立)
 
