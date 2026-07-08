@@ -20,6 +20,8 @@ final class AppState {
     private(set) var document: NovelDocument
     /// 選択中の章ID。`Chapter` そのものではなく ID で管理する(docs/DESIGN.md 5.2)。
     private(set) var selection: ChapterID?
+    /// 選択中の登場人物ID。
+    private(set) var selectedCharacterID: CharacterID?
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
     private(set) var documentURL: URL
 
@@ -70,6 +72,7 @@ final class AppState {
         document = placeholder
         documentURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
         selection = placeholder.chapters.first?.id
+        selectedCharacterID = nil
     }
 
     deinit {
@@ -92,6 +95,7 @@ final class AppState {
                 document = loaded
                 documentURL = url
                 selection = loaded.chapters.first?.id
+                selectedCharacterID = loaded.characters.first?.id
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -104,6 +108,7 @@ final class AppState {
         document = newDocument
         documentURL = newURL
         selection = newDocument.chapters.first?.id
+        selectedCharacterID = nil
 
         saveCoordinator.markDirty()
         await saveCoordinator.saveNow()
@@ -116,6 +121,12 @@ final class AppState {
     var selectedChapter: Chapter? {
         guard let selection else { return nil }
         return document.chapters.first { $0.id == selection }
+    }
+
+    /// 選択中の登場人物(存在しなければ `nil`)。
+    var selectedCharacter: NovelCore.Character? {
+        guard let selectedCharacterID else { return nil }
+        return document.characters.first { $0.id == selectedCharacterID }
     }
 
     /// 章を選択する。選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
@@ -197,6 +208,102 @@ final class AppState {
         document.updateMemo(memo, for: selection)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+    }
+
+    // MARK: - 登場人物
+
+    /// 登場人物を追加し、追加した人物を選択状態にする。
+    func addCharacter() {
+        let newID = document.addCharacter(name: "名無し")
+        selectedCharacterID = newID
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 登場人物を選択する。
+    func selectCharacter(_ id: CharacterID?) {
+        selectedCharacterID = id
+    }
+
+    /// 選択中の登場人物を更新する。
+    func updateSelectedCharacter(name: String? = nil, kana: String? = nil, memo: String? = nil, colorHex: String? = nil) {
+        guard let selectedCharacterID, let current = selectedCharacter else { return }
+        let nextName = name ?? current.name
+        let nextKana = kana ?? current.kana
+        let nextMemo = memo ?? current.memo
+        let nextColorHex = colorHex ?? current.colorHex
+
+        guard current.name != nextName || current.kana != nextKana || current.memo != nextMemo ||
+            current.colorHex != nextColorHex else
+        {
+            return
+        }
+
+        document.updateCharacter(
+            id: selectedCharacterID,
+            name: nextName,
+            kana: nextKana,
+            memo: nextMemo,
+            colorHex: nextColorHex
+        )
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中の登場人物カラーを更新する。`nil` はカラーなしを表す。
+    func updateSelectedCharacterColor(_ colorHex: String?) {
+        guard let selectedCharacterID, let current = selectedCharacter else { return }
+        guard current.colorHex != colorHex else { return }
+
+        document.updateCharacter(
+            id: selectedCharacterID,
+            name: current.name,
+            kana: current.kana,
+            memo: current.memo,
+            colorHex: colorHex
+        )
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 登場人物名の編集確定時に、空名を正規化して即時保存へ寄せる。
+    func commitCharacterEditing() {
+        for character in document.characters {
+            let normalizedName = NovelDocument.normalizedCharacterName(character.name)
+            if character.name != normalizedName {
+                document.updateCharacter(
+                    id: character.id,
+                    name: normalizedName,
+                    kana: character.kana,
+                    memo: character.memo,
+                    colorHex: character.colorHex
+                )
+                saveCoordinator.markDirty()
+            }
+        }
+        flushSaveImmediately()
+    }
+
+    /// 登場人物を削除する。
+    func deleteCharacter(id: CharacterID) {
+        guard let originalIndex = document.characters.firstIndex(where: { $0.id == id }) else { return }
+        guard document.removeCharacter(id: id) != nil else { return }
+
+        if selectedCharacterID == id {
+            let fallbackIndex = min(originalIndex, document.characters.count - 1)
+            selectedCharacterID = document.characters.indices.contains(fallbackIndex) ?
+                document.characters[fallbackIndex].id : nil
+        }
+
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 登場人物を並べ替える。
+    func moveCharacters(fromOffsets: IndexSet, toOffset: Int) {
+        document.moveCharacters(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
     }
 
     /// 現在の作品状態をスナップショットとして保存する。

@@ -72,11 +72,35 @@ import Testing
 @Test func novelDocumentIsCodableRoundTrip() throws {
     let doc = NovelDocument(
         title: "テスト作品",
-        chapters: [Chapter(title: "第1章", content: "本文")]
+        chapters: [Chapter(title: "第1章", content: "本文")],
+        characters: [NovelCore.Character(name: "灯", kana: "あかり", memo: "主人公", colorHex: "#C44536")]
     )
     let data = try JSONEncoder().encode(doc)
     let decoded = try JSONDecoder().decode(NovelDocument.self, from: data)
     #expect(decoded == doc)
+}
+
+@Test func novelDocumentDecodesMissingCharactersAsEmptyArray() throws {
+    let chapterID = ChapterID()
+    let documentID = UUID()
+    let json = """
+    {
+      "id": "\(documentID.uuidString)",
+      "title": "旧形式",
+      "chapters": [
+        {
+          "id": {"rawValue": "\(chapterID.rawValue.uuidString)"},
+          "title": "第1章",
+          "content": "本文"
+        }
+      ]
+    }
+    """
+
+    let decoded = try JSONDecoder().decode(NovelDocument.self, from: Data(json.utf8))
+
+    #expect(decoded.id == documentID)
+    #expect(decoded.characters.isEmpty)
 }
 
 // MARK: - addChapter / moveChapters / updateContent (docs/DESIGN.md 5.2)
@@ -215,4 +239,61 @@ import Testing
     #expect(ManuscriptMetrics.manuscriptPages400(for: 1) == 1)
     #expect(ManuscriptMetrics.manuscriptPages400(for: 400) == 1)
     #expect(ManuscriptMetrics.manuscriptPages400(for: 401) == 2)
+}
+
+// MARK: - characters
+
+@Test func characterIDGeneratesUniqueValues() {
+    let firstID = CharacterID()
+    let secondID = CharacterID()
+    #expect(firstID != secondID)
+}
+
+@Test func addCharacterAppendsToEndAndNormalizesEmptyName() {
+    var doc = NovelDocument(title: "人物テスト", chapters: [Chapter(title: "第1章")])
+
+    let newID = doc.addCharacter(name: " \n ", kana: "ななし", memo: "メモ", colorHex: "#1565C0")
+
+    #expect(doc.characters.count == 1)
+    #expect(doc.characters[0].id == newID)
+    #expect(doc.characters[0].name == "名無し")
+    #expect(doc.characters[0].kana == "ななし")
+    #expect(doc.characters[0].memo == "メモ")
+    #expect(doc.characters[0].colorHex == "#1565C0")
+}
+
+@Test func updateCharacterUpdatesMatchingCharacterOnly() {
+    let first = NovelCore.Character(name: "旧名", kana: "きゅうめい", memo: "旧メモ")
+    let second = NovelCore.Character(name: "変わらない")
+    var doc = NovelDocument(title: "人物テスト", chapters: [Chapter(title: "第1章")], characters: [first, second])
+
+    doc.updateCharacter(id: first.id, name: "新名", kana: "しんめい", memo: "新メモ", colorHex: "#2E7D32")
+
+    #expect(doc.characters[0].name == "新名")
+    #expect(doc.characters[0].kana == "しんめい")
+    #expect(doc.characters[0].memo == "新メモ")
+    #expect(doc.characters[0].colorHex == "#2E7D32")
+    #expect(doc.characters[1] == second)
+}
+
+@Test func removeCharacterDeletesMatchingCharacterOnly() {
+    let first = NovelCore.Character(name: "残る")
+    let second = NovelCore.Character(name: "消す")
+    var doc = NovelDocument(title: "人物テスト", chapters: [Chapter(title: "第1章")], characters: [first, second])
+
+    let removed = doc.removeCharacter(id: second.id)
+
+    #expect(removed == second)
+    #expect(doc.characters == [first])
+}
+
+@Test func moveCharactersReordersLikeSwiftUIOnMove() {
+    let first = NovelCore.Character(name: "A")
+    let second = NovelCore.Character(name: "B")
+    let third = NovelCore.Character(name: "C")
+    var doc = NovelDocument(title: "人物テスト", chapters: [Chapter(title: "第1章")], characters: [first, second, third])
+
+    doc.moveCharacters(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+
+    #expect(doc.characters.map(\.id) == [second.id, third.id, first.id])
 }

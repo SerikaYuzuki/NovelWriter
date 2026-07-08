@@ -41,6 +41,10 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
         chapters: [
             Chapter(title: "第1章", content: "本文1", memo: "メモ1"),
             Chapter(title: "第2章", content: "本文2")
+        ],
+        characters: [
+            NovelCore.Character(name: "灯", kana: "あかり", memo: "主人公", colorHex: "#C44536"),
+            NovelCore.Character(name: "澪", kana: "みお", memo: "相棒")
         ]
     )
 
@@ -55,6 +59,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.chapters.map(\.title) == doc.chapters.map(\.title))
     #expect(loaded.chapters.map(\.content) == doc.chapters.map(\.content))
     #expect(loaded.chapters.map(\.memo) == doc.chapters.map(\.memo))
+    #expect(loaded.characters == doc.characters)
 }
 
 @Test func emptyChapterMemoDoesNotCreateNoteFile() async throws {
@@ -115,6 +120,31 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     let loaded = try await repository.load(from: packageURL)
     #expect(loaded.chapters.map(\.title) == ["第3章", "第2章", "第1章"])
     #expect(loaded.chapters.map(\.content) == ["C", "B", "A"])
+}
+
+@Test func charactersPersistInArrayOrderAfterSave() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("Characters.novelpkg")
+    let repository = NovelpkgRepository()
+
+    var doc = NovelDocument(
+        title: "人物保存テスト",
+        chapters: [Chapter(title: "第1章")],
+        characters: [
+            NovelCore.Character(name: "A"),
+            NovelCore.Character(name: "B"),
+            NovelCore.Character(name: "C")
+        ]
+    )
+
+    try await repository.save(doc, to: packageURL)
+    doc.characters.swapAt(0, 2)
+    try await repository.save(doc, to: packageURL)
+
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.characters.map(\.name) == ["C", "B", "A"])
 }
 
 @Test func overwriteSavePreservesAttachments() async throws {
@@ -225,6 +255,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
 
     var loaded = try await repository.load(from: packageURL)
     #expect(loaded.chapters[0].memo == "")
+    #expect(loaded.characters.isEmpty)
     loaded.chapters[0].memo = "移行後メモ"
     try await repository.save(loaded, to: packageURL)
 
