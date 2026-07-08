@@ -26,10 +26,13 @@ final class AppState {
     private(set) var selectedPlotCardID: PlotCardID?
     /// 選択中の伏線ID。
     private(set) var selectedFlagID: FlagID?
+    /// 現在の作品に取り込まれている資料一覧。
+    private(set) var attachments: [Attachment]
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
     private(set) var documentURL: URL
 
     private let repository: DocumentRepository
+    private let attachmentManager: AttachmentManaging?
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
 
@@ -67,6 +70,7 @@ final class AppState {
 
     init(dependencies: AppDependencies) {
         repository = dependencies.repository
+        attachmentManager = dependencies.attachmentManager
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager
 
@@ -79,6 +83,7 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
+        attachments = []
     }
 
     deinit {
@@ -104,6 +109,7 @@ final class AppState {
                 selectedCharacterID = loaded.characters.first?.id
                 selectedPlotCardID = loaded.plotCards.first?.id
                 selectedFlagID = loaded.flags.first?.id
+                attachments = await loadAttachments(for: url)
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -119,9 +125,11 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
+        attachments = []
 
         saveCoordinator.markDirty()
         await saveCoordinator.saveNow()
+        attachments = await loadAttachments(for: newURL)
         rememberDocumentURL(newURL)
     }
 
@@ -517,6 +525,54 @@ final class AppState {
         flushSaveImmediately()
     }
 
+    // MARK: - 資料添付
+
+    /// 現在のリポジトリが資料添付に対応しているか。
+    var supportsAttachments: Bool {
+        attachmentManager != nil
+    }
+
+    /// 資料一覧を保存層から再読み込みする。
+    func reloadAttachments() async {
+        attachments = await loadAttachments(for: documentURL)
+    }
+
+    /// 外部ファイルを現在の作品へ資料として取り込む。
+    @discardableResult
+    func addAttachment(from sourceURL: URL) async -> Attachment? {
+        guard let attachmentManager else { return nil }
+        guard await saveCoordinator.saveNow() else { return nil }
+
+        do {
+            let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: documentURL)
+            attachments = await loadAttachments(for: documentURL)
+            return attachment
+        } catch {
+            print("NovelWriter: 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
+            return nil
+        }
+    }
+
+    /// 作品から資料を削除する。
+    func deleteAttachment(_ attachment: Attachment) async -> Bool {
+        guard let attachmentManager else { return false }
+        guard await saveCoordinator.saveNow() else { return false }
+
+        do {
+            try await attachmentManager.deleteAttachment(named: attachment.fileName, from: documentURL)
+            attachments = await loadAttachments(for: documentURL)
+            return true
+        } catch {
+            print("NovelWriter: 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
+            return false
+        }
+    }
+
+    /// プレビュー用の資料URLを返す。
+    func attachmentPreviewURL(for attachment: Attachment) -> URL? {
+        attachmentManager?.attachmentURL(named: attachment.fileName, in: documentURL)
+    }
+
     /// 現在の作品状態をスナップショットとして保存する。
     ///
     /// まず通常保存を完了させてから、対応リポジトリにスナップショット作成を依頼する。
@@ -550,6 +606,17 @@ final class AppState {
     private func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の章" : trimmed
+    }
+
+    private func loadAttachments(for url: URL) async -> [Attachment] {
+        guard let attachmentManager else { return [] }
+
+        do {
+            return try await attachmentManager.listAttachments(in: url)
+        } catch {
+            print("NovelWriter: 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
+            return []
+        }
     }
 
     private func observeResignActive() {
