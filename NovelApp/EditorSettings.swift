@@ -88,8 +88,10 @@ struct EditorSettingsView: View {
                 Text("フォントサイズ")
             } minimumValueLabel: {
                 Text("12")
+                    .monospacedDigit()
             } maximumValueLabel: {
                 Text("24")
+                    .monospacedDigit()
             }
             Text("\(Int(settings.fontSize)) pt")
                 .foregroundStyle(.secondary)
@@ -99,8 +101,10 @@ struct EditorSettingsView: View {
                 Text("行間")
             } minimumValueLabel: {
                 Text("1.2")
+                    .monospacedDigit()
             } maximumValueLabel: {
                 Text("2.0")
+                    .monospacedDigit()
             }
             Text(String(format: "%.1f", settings.lineHeightMultiple))
                 .foregroundStyle(.secondary)
@@ -109,6 +113,7 @@ struct EditorSettingsView: View {
             Picker("本文の最大幅", selection: $settings.widthMode) {
                 ForEach(EditorWidthMode.allCases) { mode in
                     Text(mode.title)
+                        .monospacedDigit()
                         .tag(mode)
                 }
             }

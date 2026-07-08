@@ -30,7 +30,13 @@ private typealias PlatformColor = UIColor
 
 #if canImport(AppKit) || canImport(UIKit)
 private func platformColor(hex: String) -> PlatformColor {
-    guard let components = ColorHex.components(from: hex) else { return PlatformColor.black }
+    guard let components = ColorHex.components(from: hex) else {
+        #if canImport(AppKit)
+        return PlatformColor.labelColor
+        #else
+        return PlatformColor.label
+        #endif
+    }
     return PlatformColor(
         red: CGFloat(components.red) / 255,
         green: CGFloat(components.green) / 255,

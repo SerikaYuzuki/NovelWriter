@@ -64,8 +64,11 @@ private struct ChapterContextView: View {
             Section("プロットカード") {
                 let cards = chapterPlotCards
                 if cards.isEmpty {
-                    Text("この章に紐付くカードはありません")
-                        .foregroundStyle(.secondary)
+                    ContentUnavailableView(
+                        "プロットカードがありません",
+                        systemImage: "rectangle.stack",
+                        description: Text("プロットモードでこの章のカードを追加できます。")
+                    )
                 } else {
                     ForEach(cards) { card in
                         Button {
@@ -81,8 +84,11 @@ private struct ChapterContextView: View {
             Section("登場キャラクター") {
                 let characters = appearingCharacters
                 if characters.isEmpty {
-                    Text("本文中に見つかりません")
-                        .foregroundStyle(.secondary)
+                    ContentUnavailableView(
+                        "登場キャラクターがありません",
+                        systemImage: "person.2",
+                        description: Text("本文にキャラクター名かふりがなが含まれると表示されます。")
+                    )
                 } else {
                     ForEach(characters) { character in
                         Button {
@@ -158,7 +164,7 @@ struct AttachmentInspectorView: View {
                         ContentUnavailableView(
                             "資料がありません",
                             systemImage: "paperclip",
-                            description: Text("下の取り込むボタンから資料を追加できます。")
+                            description: Text("下の資料を取り込むボタンから資料を追加できます。")
                         )
                     }
                 }
@@ -169,7 +175,7 @@ struct AttachmentInspectorView: View {
                     Button {
                         isImportingAttachment = true
                     } label: {
-                        Label("取り込む", systemImage: "plus")
+                        Label("資料を取り込む…", systemImage: "plus")
                     }
 
                     Button {
@@ -211,7 +217,7 @@ struct AttachmentInspectorView: View {
             Text("「\(attachment.fileName)」を削除します。")
         }
         .alert(item: $operationMessage) { message in
-            Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("OK")))
+            Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
         }
     }
 

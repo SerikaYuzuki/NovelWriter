@@ -50,6 +50,7 @@ struct PlotModeView: View {
             PlotCardDetailSheet(
                 card: card,
                 onDelete: {
+                    editingCardID = nil
                     cardPendingDeletion = card
                 },
                 onClose: {
@@ -156,7 +157,7 @@ private struct PlotLaneView: View {
                 Button {
                     appState.addPlotCard(chapterID: chapterID)
                 } label: {
-                    Label("追加", systemImage: "plus")
+                    Label("カードを追加", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderless)

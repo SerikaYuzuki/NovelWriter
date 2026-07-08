@@ -474,7 +474,7 @@ final class AppState {
 
     /// プロットカードを追加し、追加したカードを選択状態にする。
     func addPlotCard(chapterID: ChapterID? = nil) {
-        let newID = document.addPlotCard(title: "新しいカード", chapterID: chapterID ?? selection)
+        let newID = document.addPlotCard(title: "新しいカード", chapterID: chapterID)
         selectedPlotCardID = newID
         saveCoordinator.markDirty()
         flushSaveImmediately()

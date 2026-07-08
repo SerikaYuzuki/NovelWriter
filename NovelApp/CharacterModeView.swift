@@ -45,7 +45,7 @@ struct CharacterModeView: View {
                     Button {
                         appState.addCharacter()
                     } label: {
-                        Label("追加", systemImage: "plus")
+                        Label("キャラクターを追加", systemImage: "plus")
                     }
 
                     Button(role: .destructive) {
@@ -328,8 +328,11 @@ private struct CharacterAppearancesView: View {
 
     var body: some View {
         if appearances.isEmpty {
-            Text("本文中に見つかりません")
-                .foregroundStyle(.secondary)
+            ContentUnavailableView(
+                "登場章がありません",
+                systemImage: "text.magnifyingglass",
+                description: Text("本文に名前かふりがなが含まれると表示されます。")
+            )
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(appearances) { appearance in
