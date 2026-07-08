@@ -46,6 +46,10 @@ let package = Package(
         .testTarget(
             name: "EditorKitTests",
             dependencies: ["EditorKit"]
+        ),
+        .testTarget(
+            name: "NovelUITests",
+            dependencies: ["NovelUI"]
         )
     ]
 )

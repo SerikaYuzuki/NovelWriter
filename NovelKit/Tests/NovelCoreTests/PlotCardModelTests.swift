@@ -73,3 +73,43 @@ import Testing
     #expect(doc.plotCards[0].chapterID == nil)
     #expect(doc.plotCards[1].chapterID == secondChapter.id)
 }
+
+@Test func movePlotCardMovesBetweenChapterLanesBeforeTarget() {
+    let firstChapter = Chapter(title: "第1章")
+    let secondChapter = Chapter(title: "第2章")
+    let first = PlotCard(title: "A", chapterID: firstChapter.id)
+    let second = PlotCard(title: "B", chapterID: secondChapter.id)
+    let third = PlotCard(title: "C", chapterID: secondChapter.id)
+    var doc = NovelDocument(
+        title: "プロットテスト",
+        chapters: [firstChapter, secondChapter],
+        plotCards: [first, second, third]
+    )
+
+    doc.movePlotCard(id: first.id, toChapter: secondChapter.id, before: third.id)
+
+    #expect(doc.plotCards.map(\.id) == [second.id, first.id, third.id])
+    #expect(doc.plotCards[1].chapterID == secondChapter.id)
+}
+
+@Test func movePlotCardAppendsToEmptyUnassignedLane() {
+    let chapter = Chapter(title: "第1章")
+    let first = PlotCard(title: "A", chapterID: chapter.id)
+    var doc = NovelDocument(title: "プロットテスト", chapters: [chapter], plotCards: [first])
+
+    doc.movePlotCard(id: first.id, toChapter: nil)
+
+    #expect(doc.plotCards == [PlotCard(id: first.id, title: "A", chapterID: nil)])
+}
+
+@Test func movePlotCardBeforeItselfOnlyUpdatesChapter() {
+    let chapter = Chapter(title: "第1章")
+    let first = PlotCard(title: "A")
+    let second = PlotCard(title: "B")
+    var doc = NovelDocument(title: "プロットテスト", chapters: [chapter], plotCards: [first, second])
+
+    doc.movePlotCard(id: first.id, toChapter: chapter.id, before: first.id)
+
+    #expect(doc.plotCards.map(\.id) == [first.id, second.id])
+    #expect(doc.plotCards[0].chapterID == chapter.id)
+}
