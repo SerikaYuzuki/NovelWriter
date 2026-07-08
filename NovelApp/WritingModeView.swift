@@ -233,8 +233,9 @@ private struct ChapterListRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            .monospacedDigit()
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
     }
 }
 

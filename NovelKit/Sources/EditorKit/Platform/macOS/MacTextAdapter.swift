@@ -24,6 +24,7 @@ struct MacTextAdapter: NSViewRepresentable {
     let chapterKey: AnyHashable
     let initialText: String
     let selectionRequest: EditorSelectionRequest?
+    let configuration: EditorConfiguration
     let onTextChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -48,6 +49,7 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.currentChapterKey = chapterKey
 
         textView.string = initialText
+        context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
         context.coordinator.undoManager.removeAllActions()
 
         return scrollView
@@ -59,17 +61,21 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.onTextChange = onTextChange
 
         guard let textView = context.coordinator.textView else { return }
-
-        if TextOwnershipPolicy.shouldLoadText(
+        let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
-        ) {
+        )
+
+        if shouldLoadText {
             context.coordinator.currentChapterKey = chapterKey
             textView.string = initialText
             textView.setSelectedRange(NSRange(location: 0, length: 0))
+            context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
 
             // 章切り替え: 前章の undo 履歴が新しい章に効いてはならない。
             context.coordinator.undoManager.removeAllActions()
+        } else {
+            context.coordinator.applyConfigurationIfNeeded(configuration, to: textView)
         }
 
         context.coordinator.applySelectionRequestIfNeeded(selectionRequest, textView: textView)
@@ -106,15 +112,6 @@ struct MacTextAdapter: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isGrammarCheckingEnabled = false
 
-        // 日本語の長文執筆が読みやすいデフォルト(システムフォント16pt、行間やや広め)。
-        let font = NSFont.systemFont(ofSize: 16)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineHeightMultiple = 1.4
-        textView.font = font
-        textView.defaultParagraphStyle = paragraphStyle
-        textView.typingAttributes = [.font: font, .paragraphStyle: paragraphStyle]
-        textView.textContainerInset = NSSize(width: 12, height: 16)
-
         // 幅追従・縦スクロールのみ。
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -134,6 +131,9 @@ struct MacTextAdapter: NSViewRepresentable {
         weak var textView: NSTextView?
         var currentChapterKey: AnyHashable?
         private var lastAppliedSelectionRequestID: UUID?
+        private(set) var lastAppliedConfiguration: EditorConfiguration?
+        private var deferredConfiguration: EditorConfiguration?
+        private(set) var textStorageAttributeApplicationCount = 0
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -202,6 +202,34 @@ struct MacTextAdapter: NSViewRepresentable {
             undoManager
         }
 
+        /// 本文を流し直さず、設定が変わったときだけ表示属性を更新する。
+        ///
+        /// IME 変換中は marked text の表示属性を乱さないよう適用を保留し、次の
+        /// `updateNSView` で同じ設定が渡されたときに反映する。
+        func applyConfigurationIfNeeded(
+            _ configuration: EditorConfiguration,
+            to textView: NSTextView,
+            force: Bool = false
+        ) {
+            let needsApply = force || lastAppliedConfiguration != configuration
+
+            if textView.hasMarkedText() {
+                if needsApply {
+                    deferredConfiguration = configuration
+                }
+                return
+            }
+
+            guard needsApply || deferredConfiguration == configuration else {
+                deferredConfiguration = nil
+                return
+            }
+
+            apply(configuration, to: textView)
+            lastAppliedConfiguration = configuration
+            deferredConfiguration = nil
+        }
+
         /// 検索ジャンプなど、外部からの「選択だけ変える」依頼を適用する。
         ///
         /// 本文そのものは書き換えず、`textView.string` の範囲内であることを確認してから
@@ -238,6 +266,24 @@ struct MacTextAdapter: NSViewRepresentable {
             textView.didChangeText()
 
             textView.setSelectedRange(NSRange(location: range.location + caretOffset, length: 0))
+        }
+
+        /// 本文を流し直さず、表示属性だけを更新する。
+        private func apply(_ configuration: EditorConfiguration, to textView: NSTextView) {
+            let font = NSFont(name: configuration.fontName, size: configuration.fontSize) ??
+                NSFont.systemFont(ofSize: configuration.fontSize)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineHeightMultiple = configuration.lineHeightMultiple
+
+            textView.font = font
+            textView.defaultParagraphStyle = paragraphStyle
+            textView.typingAttributes = [.font: font, .paragraphStyle: paragraphStyle]
+            textView.textContainerInset = NSSize(width: 24, height: 20)
+            textView.textStorage?.addAttributes(
+                [.font: font, .paragraphStyle: paragraphStyle],
+                range: NSRange(location: 0, length: (textView.string as NSString).length)
+            )
+            textStorageAttributeApplicationCount += 1
         }
     }
 }

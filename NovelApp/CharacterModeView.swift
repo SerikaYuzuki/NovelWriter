@@ -31,7 +31,11 @@ struct CharacterModeView: View {
                 }
                 .overlay {
                     if appState.document.characters.isEmpty {
-                        ContentUnavailableView("キャラクターがありません", systemImage: "person.2")
+                        ContentUnavailableView(
+                            "キャラクターがありません",
+                            systemImage: "person.2",
+                            description: Text("下の追加ボタンからキャラクターを追加できます。")
+                        )
                     }
                 }
 
@@ -55,12 +59,16 @@ struct CharacterModeView: View {
 
                     Spacer()
                 }
-                .padding(10)
+                .padding(8)
             }
             .navigationTitle("キャラクター")
         } detail: {
             if appState.selectedCharacter == nil {
-                ContentUnavailableView("キャラクターが選択されていません", systemImage: "person")
+                ContentUnavailableView(
+                    "キャラクターが選択されていません",
+                    systemImage: "person",
+                    description: Text("左の一覧から編集するキャラクターを選択してください。")
+                )
             } else {
                 CharacterSheetView(onAppearanceJump: onAppearanceJump)
             }
@@ -108,7 +116,7 @@ private struct CharacterSheetView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 header
                 sheetSection("基本") {
                     HStack(spacing: 12) {
@@ -161,10 +169,17 @@ private struct CharacterSheetView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 16) {
             ColorPicker("カラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
                 .labelsHidden()
-                .frame(width: 36)
+                .frame(width: 32)
+
+            CharacterColorPresetPicker(
+                selectedHex: appState.selectedCharacter?.colorHex,
+                onSelect: { hex in
+                    appState.updateSelectedCharacterColor(hex)
+                }
+            )
 
             TextField("名前", text: selectedCharacterNameBinding)
                 .font(.title2)
@@ -183,7 +198,7 @@ private struct CharacterSheetView: View {
     }
 
     private func sheetSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
             content()
@@ -192,14 +207,14 @@ private struct CharacterSheetView: View {
     }
 
     private func labeledEditor(_ title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextEditor(text: text)
                 .frame(minHeight: minHeight)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 8)
                         .stroke(.separator, lineWidth: 1)
                 }
         }
@@ -278,6 +293,35 @@ private struct CharacterSheetView: View {
     }
 }
 
+private struct CharacterColorPresetPicker: View {
+    let selectedHex: String?
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
+                let fillColor = Color(hex: hex) ?? Color.accentColor
+                let strokeColor = selectedHex == hex ? Color.accentColor : Color(nsColor: .separatorColor)
+
+                Button {
+                    onSelect(hex)
+                } label: {
+                    Circle()
+                        .fill(fillColor)
+                        .frame(width: 16, height: 16)
+                        .overlay {
+                            Circle()
+                                .stroke(strokeColor, lineWidth: 1)
+                        }
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .help(hex)
+            }
+        }
+    }
+}
+
 private struct CharacterAppearancesView: View {
     let appearances: [CharacterAppearance]
     let onJump: (CharacterAppearance) -> Void
@@ -287,7 +331,7 @@ private struct CharacterAppearancesView: View {
             Text("本文中に見つかりません")
                 .foregroundStyle(.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(appearances) { appearance in
                     Button {
                         onJump(appearance)

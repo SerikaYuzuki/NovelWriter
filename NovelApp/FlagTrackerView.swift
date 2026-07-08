@@ -1,4 +1,5 @@
 import NovelCore
+import NovelUI
 import SwiftUI
 
 struct FlagTrackerView: View {
@@ -12,7 +13,7 @@ struct FlagTrackerView: View {
     var body: some View {
         VStack(spacing: 0) {
             List(selection: flagSelectionBinding) {
-                Section("未回収 \(unresolvedFlags.count)件") {
+                Section {
                     ForEach(unresolvedFlags) { flag in
                         FlagRow(flag: flag, plantedTitle: chapterTitle(for: flag.plantedChapterID))
                             .tag(flag.id)
@@ -20,6 +21,9 @@ struct FlagTrackerView: View {
                                 deleteButton(for: flag)
                             }
                     }
+                } header: {
+                    Text("未回収 \(unresolvedFlags.count)件")
+                        .monospacedDigit()
                 }
 
                 DisclosureGroup(isExpanded: $showsResolvedFlags) {
@@ -32,11 +36,16 @@ struct FlagTrackerView: View {
                     }
                 } label: {
                     Text("回収済み \(resolvedFlags.count)件")
+                        .monospacedDigit()
                 }
             }
             .overlay {
                 if appState.document.flags.isEmpty {
-                    ContentUnavailableView("伏線がありません", systemImage: "checklist")
+                    ContentUnavailableView(
+                        "伏線がありません",
+                        systemImage: "checklist",
+                        description: Text("下の伏線を追加ボタンから伏線を追加できます。")
+                    )
                 }
             }
 
@@ -60,13 +69,17 @@ struct FlagTrackerView: View {
 
                 Spacer()
             }
-            .padding(10)
+            .padding(8)
 
             Divider()
 
             if appState.selectedFlag == nil {
-                ContentUnavailableView("伏線が選択されていません", systemImage: "checklist")
-                    .frame(maxHeight: .infinity)
+                ContentUnavailableView(
+                    "伏線が選択されていません",
+                    systemImage: "checklist",
+                    description: Text("上の一覧から編集する伏線を選択してください。")
+                )
+                .frame(maxHeight: .infinity)
             } else {
                 FlagEditor(
                     title: selectedFlagTitleBinding,
@@ -238,10 +251,10 @@ private struct FlagEditor: View {
 
             if showsOrderWarning {
                 Label("回収章が張った章より前です", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(StyleToken.warning)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("メモ")
                     .foregroundStyle(.secondary)
                 TextEditor(text: $note)
@@ -249,7 +262,7 @@ private struct FlagEditor: View {
             }
         }
         .formStyle(.grouped)
-        .padding(10)
+        .padding(8)
         .onDisappear(perform: onCommit)
     }
 

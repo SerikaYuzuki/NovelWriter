@@ -107,7 +107,7 @@ struct ChapterTitleField: View {
 
 struct CharacterColorSwatch: View {
     let colorHex: String?
-    var size: CGFloat = 10
+    var size: CGFloat = 8
 
     var body: some View {
         Circle()
@@ -132,7 +132,7 @@ struct CharacterRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            CharacterColorSwatch(colorHex: character.colorHex, size: 11)
+            CharacterColorSwatch(colorHex: character.colorHex)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(NovelDocument.normalizedCharacterName(character.name))
@@ -173,7 +173,7 @@ struct FlagRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: flag.isResolved ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(flag.isResolved ? .green : .secondary)
+                .foregroundStyle(flag.isResolved ? StyleToken.success : .secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(NovelDocument.normalizedFlagTitle(flag.title))
@@ -204,6 +204,7 @@ struct AttachmentRow: View {
                 Text(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
         }
     }
@@ -221,8 +222,9 @@ struct ManuscriptStatusBar: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+        .monospacedDigit()
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(.bar)
     }
 }

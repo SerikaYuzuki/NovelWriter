@@ -144,6 +144,43 @@ struct MacTextAdapterIntegrationTests {
         #expect(appliedFont == font)
     }
 
+    @Test("同一設定の再適用ではtextStorageへの属性再適用を走らせない")
+    func sameConfigurationDoesNotReapplyTextStorageAttributes() {
+        let harness = makeHarness(initialText: "本文")
+        let configuration = EditorConfiguration()
+
+        harness.coordinator.applyConfigurationIfNeeded(configuration, to: harness.textView)
+        #expect(harness.coordinator.textStorageAttributeApplicationCount == 1)
+
+        harness.coordinator.applyConfigurationIfNeeded(configuration, to: harness.textView)
+        #expect(harness.coordinator.textStorageAttributeApplicationCount == 1)
+    }
+
+    @Test("IME変換中の設定変更は保留し、変換終了後の再updateで適用する")
+    func configurationApplicationIsDeferredWhileComposing() {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        let initialConfiguration = EditorConfiguration()
+        let changedConfiguration = EditorConfiguration(fontSize: 18)
+
+        harness.coordinator.applyConfigurationIfNeeded(initialConfiguration, to: textView)
+        #expect(harness.coordinator.textStorageAttributeApplicationCount == 1)
+
+        beginIMEComposition(in: textView)
+        #expect(textView.hasMarkedText())
+
+        harness.coordinator.applyConfigurationIfNeeded(changedConfiguration, to: textView)
+        #expect(harness.coordinator.textStorageAttributeApplicationCount == 1)
+        #expect(harness.coordinator.lastAppliedConfiguration == initialConfiguration)
+
+        textView.unmarkText()
+        #expect(!textView.hasMarkedText())
+
+        harness.coordinator.applyConfigurationIfNeeded(changedConfiguration, to: textView)
+        #expect(harness.coordinator.textStorageAttributeApplicationCount == 2)
+        #expect(harness.coordinator.lastAppliedConfiguration == changedConfiguration)
+    }
+
     @Test("IME変換中(setMarkedText)は、通常なら字下げを発生させる改行にも介入しない")
     func imeComposingPreventsIntervention() {
         let harness = makeHarness(initialText: "こんにちは")

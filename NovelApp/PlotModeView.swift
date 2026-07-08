@@ -20,7 +20,7 @@ struct PlotModeView: View {
     var body: some View {
         HSplitView {
             ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 12) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     PlotLaneView(
                         title: "未割り当て",
                         chapterID: nil,
@@ -113,7 +113,7 @@ private struct PlotLaneView: View {
     @Binding var cardPendingDeletion: PlotCard?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -122,6 +122,7 @@ private struct PlotLaneView: View {
                     Text("\(cards.count)枚")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
                 Spacer()
                 Button {
@@ -159,7 +160,7 @@ private struct PlotLaneView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderless)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)
             }
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let droppedID = items.first else { return false }
@@ -168,7 +169,7 @@ private struct PlotLaneView: View {
             }
         }
         .padding(12)
-        .frame(width: 250, alignment: .topLeading)
+        .frame(width: 260, alignment: .topLeading)
         .background(.quaternary.opacity(0.45))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -181,7 +182,7 @@ private struct PlotBoardCard: View {
 
     var body: some View {
         Button(action: onEdit) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(NovelDocument.normalizedPlotCardTitle(card.title))
                     .font(.headline)
                     .lineLimit(2)
@@ -194,11 +195,14 @@ private struct PlotBoardCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(10)
+            .padding(12)
             .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
-            .background(.background)
+            .background(.quaternary.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.separator, lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -238,7 +242,7 @@ private struct PlotCardDetailSheet: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("メモ")
                         .foregroundStyle(.secondary)
                     TextEditor(text: selectedPlotCardMemoBinding)
@@ -257,7 +261,7 @@ private struct PlotCardDetailSheet: View {
                 Button("閉じる", action: onClose)
                     .keyboardShortcut(.defaultAction)
             }
-            .padding()
+            .padding(16)
         }
         .onAppear {
             appState.selectPlotCard(card.id)

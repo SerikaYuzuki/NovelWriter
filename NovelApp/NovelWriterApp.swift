@@ -18,15 +18,64 @@ import SwiftUI
 struct NovelWriterApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var appState = AppState(dependencies: AppDependencies())
+    @State private var editorSettings = EditorSettings()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(appState)
+                .environment(editorSettings)
                 .task {
                     applicationDelegate.appState = appState
                     await appState.bootstrap()
                 }
         }
+        .commands {
+            CommandGroup(after: .saveItem) {
+                Button("スナップショットを保存") {
+                    Task { await appState.createSnapshot() }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
+
+            CommandMenu("表示") {
+                Picker("モード", selection: modeBinding) {
+                    ForEach(AppMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.systemImage)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+
+                Divider()
+
+                Button("執筆") {
+                    appState.mode = .writing
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("キャラクター") {
+                    appState.mode = .characters
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button("プロット") {
+                    appState.mode = .plot
+                }
+                .keyboardShortcut("3", modifiers: .command)
+            }
+        }
+
+        Settings {
+            EditorSettingsView()
+                .environment(editorSettings)
+        }
+    }
+
+    private var modeBinding: Binding<AppMode> {
+        Binding(
+            get: { appState.mode },
+            set: { appState.mode = $0 }
+        )
     }
 }
