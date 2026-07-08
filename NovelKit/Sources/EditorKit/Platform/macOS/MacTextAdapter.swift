@@ -23,6 +23,7 @@ import SwiftUI
 struct MacTextAdapter: NSViewRepresentable {
     let chapterKey: AnyHashable
     let initialText: String
+    let selectionRequest: EditorSelectionRequest?
     let onTextChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -59,21 +60,19 @@ struct MacTextAdapter: NSViewRepresentable {
 
         guard let textView = context.coordinator.textView else { return }
 
-        guard TextOwnershipPolicy.shouldLoadText(
+        if TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
-        ) else {
-            // 同じ章のままの再描画。編集中の本文を外部から上書きしない
-            // (テキスト所有権ルール, docs/DESIGN.md 4.3, D-005)。
-            return
+        ) {
+            context.coordinator.currentChapterKey = chapterKey
+            textView.string = initialText
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+            // 章切り替え: 前章の undo 履歴が新しい章に効いてはならない。
+            context.coordinator.undoManager.removeAllActions()
         }
 
-        context.coordinator.currentChapterKey = chapterKey
-        textView.string = initialText
-        textView.setSelectedRange(NSRange(location: 0, length: 0))
-
-        // 章切り替え: 前章の undo 履歴が新しい章に効いてはならない。
-        context.coordinator.undoManager.removeAllActions()
+        context.coordinator.applySelectionRequestIfNeeded(selectionRequest, textView: textView)
     }
 
     /// `NSTextView` が TextKit 2 で構築されていることを検証する。
@@ -134,6 +133,7 @@ struct MacTextAdapter: NSViewRepresentable {
         var onTextChange: (String) -> Void
         weak var textView: NSTextView?
         var currentChapterKey: AnyHashable?
+        private var lastAppliedSelectionRequestID: UUID?
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -200,6 +200,20 @@ struct MacTextAdapter: NSViewRepresentable {
 
         func undoManager(for _: NSTextView) -> UndoManager? {
             undoManager
+        }
+
+        /// 検索ジャンプなど、外部からの「選択だけ変える」依頼を適用する。
+        ///
+        /// 本文そのものは書き換えず、`textView.string` の範囲内であることを確認してから
+        /// 選択・スクロール・フォーカスだけを更新する。
+        func applySelectionRequestIfNeeded(_ request: EditorSelectionRequest?, textView: NSTextView) {
+            guard let request, lastAppliedSelectionRequestID != request.id else { return }
+            guard Range(request.range, in: textView.string) != nil else { return }
+
+            lastAppliedSelectionRequestID = request.id
+            textView.setSelectedRange(request.range)
+            textView.scrollRangeToVisible(request.range)
+            textView.window?.makeFirstResponder(textView)
         }
 
         /// プラグインが確定した置換を、undo が正しく動く経路で適用する。

@@ -16,7 +16,4 @@ import NovelCore
 ///   所有権ルールの判定(`TextOwnershipPolicy`)は Phase 1 で導入済み
 /// - `Plugins/`  IndentPlugin / IMEGuardPlugin などの具象プラグイン(Phase 2 で実装済み)
 /// - `Platform/macOS/` AppKit 依存の実装(`MacTextAdapter`。`#if canImport(AppKit)` で保護)
-public enum EditorKit {
-    /// パッケージ雛形の版数。Phase 2 で Plugin 基盤導入後は用途を終える。
-    public static let placeholderVersion = "0.0.0-scaffold"
-}
+public enum EditorKit {}
