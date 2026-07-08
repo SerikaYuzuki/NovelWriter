@@ -28,7 +28,26 @@ import Testing
 @Test func chapterDefaultsToEmptyContent() {
     let chapter = Chapter(title: "第1章")
     #expect(chapter.content.isEmpty)
+    #expect(chapter.memo.isEmpty)
     #expect(chapter.title == "第1章")
+}
+
+@Test func chapterDecodesMissingMemoAsEmptyString() throws {
+    let id = ChapterID()
+    let json = """
+    {
+      "id": {"rawValue": "\(id.rawValue.uuidString)"},
+      "title": "第1章",
+      "content": "本文"
+    }
+    """
+
+    let decoded = try JSONDecoder().decode(Chapter.self, from: Data(json.utf8))
+
+    #expect(decoded.id == id)
+    #expect(decoded.title == "第1章")
+    #expect(decoded.content == "本文")
+    #expect(decoded.memo == "")
 }
 
 @Test func novelDocumentChaptersOrderIsArrayOrder() {
@@ -70,6 +89,7 @@ import Testing
     #expect(doc.chapters.last?.id == newID)
     #expect(doc.chapters.last?.title == "第2章")
     #expect(doc.chapters.last?.content.isEmpty == true)
+    #expect(doc.chapters.last?.memo.isEmpty == true)
 }
 
 @Test func updateTitleUpdatesMatchingChapterOnly() {
@@ -146,4 +166,53 @@ import Testing
     doc.updateContent("書き換え", for: ChapterID())
 
     #expect(doc.chapters == [chapter])
+}
+
+@Test func updateMemoUpdatesMatchingChapterOnly() {
+    let first = Chapter(title: "第1章", content: "本文", memo: "旧メモ")
+    let second = Chapter(title: "第2章", content: "本文2", memo: "変わらない")
+    var doc = NovelDocument(title: "テスト作品", chapters: [first, second])
+
+    doc.updateMemo("新メモ", for: first.id)
+
+    #expect(doc.chapters[0].memo == "新メモ")
+    #expect(doc.chapters[1].memo == "変わらない")
+}
+
+@Test func updateMemoIgnoresUnknownChapterID() {
+    let chapter = Chapter(title: "第1章", content: "本文", memo: "メモ")
+    var doc = NovelDocument(title: "テスト作品", chapters: [chapter])
+
+    doc.updateMemo("書き換え", for: ChapterID())
+
+    #expect(doc.chapters == [chapter])
+}
+
+@Test func manuscriptCharacterCountExcludesNewlinesButIncludesSpaces() {
+    let text = "abc\n　 d\r\n"
+
+    #expect(ManuscriptMetrics.countCharacters(in: text) == 6)
+}
+
+@Test func manuscriptCharacterCountTreatsEmojiAsOneCharacter() {
+    #expect(ManuscriptMetrics.countCharacters(in: "😀\n👨‍👩‍👧‍👦") == 2)
+}
+
+@Test func novelDocumentManuscriptCharacterCountSumsChapterContentOnly() {
+    let doc = NovelDocument(
+        title: "文字数テスト",
+        chapters: [
+            Chapter(title: "第1章", content: "本文\nA", memo: "メモは数えない"),
+            Chapter(title: "第2章", content: "😀")
+        ]
+    )
+
+    #expect(doc.manuscriptCharacterCount == 4)
+}
+
+@Test func manuscriptPages400RoundsUp() {
+    #expect(ManuscriptMetrics.manuscriptPages400(for: 0) == 0)
+    #expect(ManuscriptMetrics.manuscriptPages400(for: 1) == 1)
+    #expect(ManuscriptMetrics.manuscriptPages400(for: 400) == 1)
+    #expect(ManuscriptMetrics.manuscriptPages400(for: 401) == 2)
 }

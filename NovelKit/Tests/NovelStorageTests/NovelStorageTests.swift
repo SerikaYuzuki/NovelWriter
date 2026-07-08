@@ -14,6 +14,21 @@ private func makeTempDirectory() throws -> URL {
     return url
 }
 
+private func manifestJSON(at packageURL: URL) throws -> [String: Any] {
+    let manifestURL = packageURL.appendingPathComponent("manifest.json")
+    let data = try Data(contentsOf: manifestURL)
+    return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL: URL) throws {
+    let manifestURL = packageURL.appendingPathComponent("manifest.json")
+    let data = try Data(contentsOf: manifestURL)
+    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    json["formatVersion"] = formatVersion
+    let rewritten = try JSONSerialization.data(withJSONObject: json)
+    try rewritten.write(to: manifestURL)
+}
+
 @Test func saveAndLoadRoundTrip() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -24,19 +39,56 @@ private func makeTempDirectory() throws -> URL {
     let doc = NovelDocument(
         title: "ラウンドトリップ作品",
         chapters: [
-            Chapter(title: "第1章", content: "本文1"),
+            Chapter(title: "第1章", content: "本文1", memo: "メモ1"),
             Chapter(title: "第2章", content: "本文2")
         ]
     )
 
     try await repository.save(doc, to: packageURL)
     let loaded = try await repository.load(from: packageURL)
+    let manifest = try manifestJSON(at: packageURL)
 
+    #expect(manifest["formatVersion"] as? String == "2")
     #expect(loaded.id == doc.id)
     #expect(loaded.title == doc.title)
     #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
     #expect(loaded.chapters.map(\.title) == doc.chapters.map(\.title))
     #expect(loaded.chapters.map(\.content) == doc.chapters.map(\.content))
+    #expect(loaded.chapters.map(\.memo) == doc.chapters.map(\.memo))
+}
+
+@Test func emptyChapterMemoDoesNotCreateNoteFile() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("EmptyMemo.novelpkg")
+    let repository = NovelpkgRepository()
+    let chapter = Chapter(title: "第1章", content: "本文", memo: "")
+    let doc = NovelDocument(title: "空メモテスト", chapters: [chapter])
+
+    try await repository.save(doc, to: packageURL)
+
+    let noteURL = packageURL
+        .appendingPathComponent("notes", isDirectory: true)
+        .appendingPathComponent("\(chapter.id.rawValue.uuidString).md")
+    #expect(!FileManager.default.fileExists(atPath: noteURL.path))
+}
+
+@Test func clearingChapterMemoRemovesExistingNoteFileOnSave() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("ClearMemo.novelpkg")
+    let repository = NovelpkgRepository()
+    var doc = NovelDocument(title: "メモ削除テスト", chapters: [Chapter(title: "第1章", memo: "残さない")])
+
+    try await repository.save(doc, to: packageURL)
+    doc.chapters[0].memo = ""
+    try await repository.save(doc, to: packageURL)
+
+    let notesURL = packageURL.appendingPathComponent("notes", isDirectory: true)
+    let noteURL = notesURL.appendingPathComponent("\(doc.chapters[0].id.rawValue.uuidString).md")
+    #expect(!FileManager.default.fileExists(atPath: noteURL.path))
 }
 
 @Test func reorderingChaptersPersistsAfterSave() async throws {
@@ -130,6 +182,62 @@ private func makeTempDirectory() throws -> URL {
     #expect(loadedCurrent.chapters[0].content == "更新版")
 }
 
+@Test func overwriteSavePreservesUnknownRootItems() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("UnknownRootItems.novelpkg")
+    let repository = NovelpkgRepository()
+    let doc = NovelDocument(title: "未知ファイル保持テスト", chapters: [Chapter(title: "第1章")])
+
+    try await repository.save(doc, to: packageURL)
+
+    let unknownFileURL = packageURL.appendingPathComponent("future-data.json")
+    try #"{"kept":true}"#.write(to: unknownFileURL, atomically: true, encoding: .utf8)
+    let unknownDirectoryURL = packageURL.appendingPathComponent("future", isDirectory: true)
+    try FileManager.default.createDirectory(at: unknownDirectoryURL, withIntermediateDirectories: true)
+    let nestedFileURL = unknownDirectoryURL.appendingPathComponent("payload.txt")
+    try "payload".write(to: nestedFileURL, atomically: true, encoding: .utf8)
+
+    var updatedDoc = doc
+    updatedDoc.chapters[0].content = "更新"
+    try await repository.save(updatedDoc, to: packageURL)
+
+    #expect(FileManager.default.fileExists(atPath: unknownFileURL.path))
+    #expect(FileManager.default.fileExists(atPath: nestedFileURL.path))
+    #expect(try String(contentsOf: nestedFileURL, encoding: .utf8) == "payload")
+}
+
+@Test func versionOnePackageLoadsAndMigratesToVersionTwoOnSave() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("V1Migration.novelpkg")
+    let repository = NovelpkgRepository()
+    let doc = NovelDocument(title: "移行テスト", chapters: [Chapter(title: "第1章", content: "本文")])
+
+    try await repository.save(doc, to: packageURL)
+    let attachmentsURL = packageURL.appendingPathComponent("attachments", isDirectory: true)
+    let attachmentURL = attachmentsURL.appendingPathComponent("memo.txt")
+    try "attachment".write(to: attachmentURL, atomically: true, encoding: .utf8)
+    let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
+    try rewriteManifestFormatVersion("1", at: packageURL)
+
+    var loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters[0].memo == "")
+    loaded.chapters[0].memo = "移行後メモ"
+    try await repository.save(loaded, to: packageURL)
+
+    let manifest = try manifestJSON(at: packageURL)
+    #expect(manifest["formatVersion"] as? String == "2")
+    #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
+    #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
+
+    let reloaded = try await repository.load(from: packageURL)
+    #expect(reloaded.chapters[0].content == "本文")
+    #expect(reloaded.chapters[0].memo == "移行後メモ")
+}
+
 @Test func loadingPackageWithoutManifestThrowsTypedError() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -221,12 +329,7 @@ private func makeTempDirectory() throws -> URL {
     try await repository.save(doc, to: packageURL)
 
     // manifest.json の formatVersion を非対応の値に書き換える
-    let manifestURL = packageURL.appendingPathComponent("manifest.json")
-    let data = try Data(contentsOf: manifestURL)
-    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-    json["formatVersion"] = "999"
-    let rewritten = try JSONSerialization.data(withJSONObject: json)
-    try rewritten.write(to: manifestURL)
+    try rewriteManifestFormatVersion("999", at: packageURL)
 
     do {
         _ = try await repository.load(from: packageURL)

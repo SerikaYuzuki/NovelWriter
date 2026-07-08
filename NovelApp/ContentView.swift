@@ -21,21 +21,31 @@ struct ContentView: View {
     @State private var lastSearchQuery = ""
     @State private var lastSearchRange: NSRange?
     @State private var didMissSearch = false
+    @State private var isInspectorPresented = true
+    @State private var inspectorTab: InspectorTab = .memo
     @State private var operationMessage: OperationMessage?
 
     var body: some View {
         NavigationSplitView {
             List(selection: selectionBinding) {
                 ForEach(appState.document.chapters) { chapter in
-                    ChapterTitleField(
-                        chapter: chapter,
-                        onTitleChange: { title in
-                            appState.updateChapterTitle(title, for: chapter.id)
-                        },
-                        onCommit: {
-                            appState.commitChapterTitleEditing()
+                    HStack(spacing: 6) {
+                        ChapterTitleField(
+                            chapter: chapter,
+                            onTitleChange: { title in
+                                appState.updateChapterTitle(title, for: chapter.id)
+                            },
+                            onCommit: {
+                                appState.commitChapterTitleEditing()
+                            }
+                        )
+
+                        if !chapter.memo.isEmpty {
+                            Image(systemName: "note.text")
+                                .foregroundStyle(.secondary)
+                                .help("メモあり")
                         }
-                    )
+                    }
                     .contextMenu {
                         Button(role: .destructive) {
                             chapterPendingDeletion = chapter
@@ -88,6 +98,12 @@ struct ContentView: View {
                         Label("スナップショットを保存", systemImage: "camera")
                     }
 
+                    Button {
+                        isInspectorPresented.toggle()
+                    } label: {
+                        Label("インスペクタ", systemImage: "sidebar.right")
+                    }
+
                     Button(role: .destructive) {
                         if let chapter = appState.selectedChapter {
                             chapterPendingDeletion = chapter
@@ -106,14 +122,21 @@ struct ContentView: View {
             }
         } detail: {
             if let chapter = appState.selectedChapter {
-                EditorView(
-                    chapterKey: chapter.id,
-                    initialText: chapter.content,
-                    selectionRequest: searchSelectionRequest,
-                    onTextChange: { newText in
-                        appState.updateSelectedChapterContent(newText)
-                    }
-                )
+                VStack(spacing: 0) {
+                    EditorView(
+                        chapterKey: chapter.id,
+                        initialText: chapter.content,
+                        selectionRequest: searchSelectionRequest,
+                        onTextChange: { newText in
+                            appState.updateSelectedChapterContent(newText)
+                        }
+                    )
+
+                    ManuscriptStatusBar(
+                        chapterCharacterCount: ManuscriptMetrics.countCharacters(in: chapter.content),
+                        totalCharacterCount: appState.document.manuscriptCharacterCount
+                    )
+                }
             } else {
                 ContentUnavailableView(
                     "章が選択されていません",
@@ -121,6 +144,13 @@ struct ContentView: View {
                     description: Text("左のサイドバーから章を選択するか、章を追加してください。")
                 )
             }
+        }
+        .inspector(isPresented: $isInspectorPresented) {
+            InspectorView(
+                selectedChapter: appState.selectedChapter,
+                memo: selectedChapterMemoBinding,
+                selectedTab: $inspectorTab
+            )
         }
         .confirmationDialog(
             "章を削除しますか？",
@@ -160,6 +190,17 @@ struct ContentView: View {
                 if !isPresented {
                     chapterPendingDeletion = nil
                 }
+            }
+        )
+    }
+
+    private var selectedChapterMemoBinding: Binding<String> {
+        Binding(
+            get: {
+                appState.selectedChapter?.memo ?? ""
+            },
+            set: { memo in
+                appState.updateSelectedChapterMemo(memo)
             }
         )
     }
@@ -267,6 +308,60 @@ struct ContentView: View {
             }
             onCommit()
         }
+    }
+
+    private struct InspectorView: View {
+        let selectedChapter: Chapter?
+        @Binding var memo: String
+        @Binding var selectedTab: InspectorTab
+
+        var body: some View {
+            VStack(spacing: 0) {
+                Picker("インスペクタ", selection: $selectedTab) {
+                    Label("メモ", systemImage: "note.text")
+                        .tag(InspectorTab.memo)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding()
+
+                Divider()
+
+                switch selectedTab {
+                case .memo:
+                    if selectedChapter == nil {
+                        ContentUnavailableView("章が選択されていません", systemImage: "note.text")
+                    } else {
+                        TextEditor(text: $memo)
+                            .font(.body)
+                            .padding(8)
+                    }
+                }
+            }
+            .frame(minWidth: 260)
+        }
+    }
+
+    private struct ManuscriptStatusBar: View {
+        let chapterCharacterCount: Int
+        let totalCharacterCount: Int
+
+        var body: some View {
+            HStack(spacing: 16) {
+                Text("章 \(chapterCharacterCount)字 / \(ManuscriptMetrics.manuscriptPages400(for: chapterCharacterCount))枚")
+                Spacer()
+                Text("全体 \(totalCharacterCount)字 / \(ManuscriptMetrics.manuscriptPages400(for: totalCharacterCount))枚")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
+        }
+    }
+
+    private enum InspectorTab: Hashable {
+        case memo
     }
 
     private struct OperationMessage: Identifiable {

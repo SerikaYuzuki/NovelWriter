@@ -32,22 +32,41 @@ extension ChapterID: CustomStringConvertible {
 ///   章順は `NovelDocument.chapters` の配列順のみが唯一の正であり、
 ///   二重管理によるズレを防ぐ(docs/DESIGN.md 4.1, D-004)。
 public struct Chapter: Codable, Sendable, Identifiable, Equatable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case content
+        case memo
+    }
+
     /// 章の識別子。
     public var id: ChapterID
     /// 章タイトル。
     public var title: String
     /// 章本文(プレーンテキスト、Markdown互換)。
     public var content: String
+    /// 章メモ。本文とは別に、短い執筆メモやTODOを保持する。
+    public var memo: String
 
     /// 章を作成する。
     /// - Parameters:
     ///   - id: 章の識別子。省略時は新規に生成する。
     ///   - title: 章タイトル。
     ///   - content: 章本文。省略時は空文字列。
-    public init(id: ChapterID = ChapterID(), title: String, content: String = "") {
+    ///   - memo: 章メモ。省略時は空文字列。
+    public init(id: ChapterID = ChapterID(), title: String, content: String = "", memo: String = "") {
         self.id = id
         self.title = title
         self.content = content
+        self.memo = memo
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(ChapterID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        content = try container.decode(String.self, forKey: .content)
+        memo = try container.decodeIfPresent(String.self, forKey: .memo) ?? ""
     }
 }
 
@@ -160,6 +179,44 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public mutating func updateContent(_ content: String, for id: ChapterID) {
         guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
         chapters[index].content = content
+    }
+
+    /// 指定した章のメモを更新する。
+    ///
+    /// 該当する ``ChapterID`` の章が存在しない場合は何もしない。
+    /// - Parameters:
+    ///   - memo: 新しい章メモ。
+    ///   - id: 更新対象の章の ``ChapterID``。
+    public mutating func updateMemo(_ memo: String, for id: ChapterID) {
+        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
+        chapters[index].memo = memo
+    }
+
+    /// 作品全体の本文文字数。
+    ///
+    /// 定義は ``ManuscriptMetrics/countCharacters(in:)`` と同じく、
+    /// 改行を除いた `Character` 数。章メモは含めない。
+    public var manuscriptCharacterCount: Int {
+        chapters.reduce(0) { $0 + ManuscriptMetrics.countCharacters(in: $1.content) }
+    }
+}
+
+/// 原稿本文の文字数など、表示用メトリクスの純粋ロジック。
+public enum ManuscriptMetrics {
+    /// 改行を除いた `Character` 数を返す。
+    ///
+    /// 空白・全角スペースは文字数に含める。Swift の `Character` 単位で数えるため、
+    /// 絵文字や結合文字列もユーザーの見た目に近い1文字として扱う。
+    public static func countCharacters(in text: String) -> Int {
+        text.reduce(0) { count, character in
+            String(character).rangeOfCharacter(from: .newlines) == nil ? count + 1 : count
+        }
+    }
+
+    /// 400字詰め原稿用紙に換算した枚数。0文字なら0枚。
+    public static func manuscriptPages400(for characterCount: Int) -> Int {
+        guard characterCount > 0 else { return 0 }
+        return (characterCount + 399) / 400
     }
 }
 
