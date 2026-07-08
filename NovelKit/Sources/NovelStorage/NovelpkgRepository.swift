@@ -31,11 +31,13 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository {
     private static let manifestFileName = "manifest.json"
     private static let chaptersDirectoryName = "chapters"
     private static let notesDirectoryName = "notes"
-    private static let attachmentsDirectoryName = "attachments"
+    // `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
+    static let attachmentsDirectoryName = "attachments"
     private static let snapshotsDirectoryName = "snapshots"
-    private static let charactersFileName = "characters.json"
-    private static let plotFileName = "plot.json"
-    private static let flagsFileName = "flags.json"
+    // 以下3つは `NovelpkgRepository+Metadata.swift` からも参照するため internal(F-D)。
+    static let charactersFileName = "characters.json"
+    static let plotFileName = "plot.json"
+    static let flagsFileName = "flags.json"
 
     /// `NovelpkgRepository` を作成する。
     public init() {}

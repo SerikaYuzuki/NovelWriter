@@ -85,7 +85,7 @@ private extension NovelpkgRepository {
     }
 
     static func attachmentsURL(in packageURL: URL) -> URL {
-        packageURL.appendingPathComponent("attachments", isDirectory: true)
+        packageURL.appendingPathComponent(attachmentsDirectoryName, isDirectory: true)
     }
 
     static func ensurePackageExists(at packageURL: URL, fileManager: FileManager) throws {

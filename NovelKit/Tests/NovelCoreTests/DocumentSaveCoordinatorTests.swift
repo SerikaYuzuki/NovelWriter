@@ -191,4 +191,156 @@ struct DocumentSaveCoordinatorTests {
 
         #expect(spy.savedTitles == ["デバウンス"])
     }
+
+    // MARK: - performExclusive (Phase 4 レビュー F-A)
+
+    /// テストから任意のタイミングで再開できる、待ち合わせ用のゲート。
+    /// `performExclusive` に渡す operation を意図的に長時間ブロックさせ、
+    /// 「排他区間の実行中」を確定的に再現するために使う。
+    @MainActor
+    private final class PausableGate {
+        private(set) var isWaiting = false
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                self.isWaiting = true
+            }
+        }
+
+        func release() {
+            isWaiting = false
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    /// F-A の回帰テスト(1)(2)。
+    ///
+    /// 1. 添付操作などを模した `performExclusive` の operation がゲートで止まっている間、
+    ///    本文編集で `markDirty()` され、`saveNow()` が呼ばれる状況を再現する。
+    /// 2. その `saveNow()` が、排他区間が終わるまで保存を開始しないこと(スパイが
+    ///    呼ばれないこと)を確認する。
+    /// 3. 排他区間を終えたら、その `saveNow()` が実際に保存を完了させ、取りこぼした
+    ///    dirty が無いことを確認する。
+    @Test func saveNowDuringExclusiveRegionWaitsAndFlushesAfterward() async {
+        let state = MutableDocumentState(title: "v1")
+        let spy = PausableSaveSpy()
+        let coordinator = makeCoordinator(state: state, spy: spy)
+        let gate = PausableGate()
+
+        let exclusiveTask = Task {
+            await coordinator.performExclusive {
+                await gate.wait()
+            }
+        }
+
+        // operation がゲートで止まるまで待つ(= 排他区間に入っている)。
+        while !gate.isWaiting {
+            await Task.yield()
+        }
+
+        // 排他区間の最中に本文編集が入り、dirty になったとする。
+        state.document.title = "v2"
+        coordinator.markDirty()
+        let saveTask = Task { await coordinator.saveNow() }
+
+        // saveNow() が排他区間を待っている間、保存処理はまだ一度も呼ばれていない。
+        await Task.yield()
+        await Task.yield()
+        await Task.yield()
+        #expect(spy.savedTitles.isEmpty)
+
+        // 排他区間を終える。
+        gate.release()
+        await exclusiveTask.value
+
+        // 排他区間終了後、待たされていた saveNow() が実際に保存を完了させる。
+        let saveResult = await saveTask.value
+        #expect(saveResult == true)
+        #expect(spy.savedTitles == ["v2"])
+    }
+
+    /// F-A の回帰テスト: `scheduleDebouncedSave()` によるデバウンス発火も、
+    /// 排他区間中は保存を開始しないこと(内部的に `saveNow()` を経由するため
+    /// 上と同じガードが効くはずだが、実際の呼び出し経路として明示的に確認する)。
+    @Test func debouncedSaveDuringExclusiveRegionWaitsAndFlushesAfterward() async throws {
+        let state = MutableDocumentState(title: "v1")
+        let spy = PausableSaveSpy()
+        let coordinator = makeCoordinator(state: state, spy: spy, debounceNanoseconds: 10_000_000)
+        let gate = PausableGate()
+
+        let exclusiveTask = Task {
+            await coordinator.performExclusive {
+                await gate.wait()
+            }
+        }
+
+        while !gate.isWaiting {
+            await Task.yield()
+        }
+
+        state.document.title = "v2"
+        coordinator.markDirty()
+        coordinator.scheduleDebouncedSave()
+
+        // デバウンス遅延を過ぎても、排他区間が終わるまでは保存されない。
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(spy.savedTitles.isEmpty)
+
+        gate.release()
+        await exclusiveTask.value
+
+        // 排他区間終了後にデバウンス経由の保存が完了する。
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(spy.savedTitles == ["v2"])
+    }
+
+    /// F-A の回帰テスト(3): 複数の `performExclusive` 呼び出しが重ならないこと。
+    @Test func performExclusiveRegionsDoNotOverlap() async {
+        let state = MutableDocumentState(title: "v1")
+        let spy = PausableSaveSpy()
+        let coordinator = makeCoordinator(state: state, spy: spy)
+        let firstGate = PausableGate()
+
+        var isFirstRegionActive = false
+        var observedOverlap = false
+        var completionOrder: [String] = []
+
+        let firstTask = Task {
+            await coordinator.performExclusive {
+                isFirstRegionActive = true
+                await firstGate.wait()
+                completionOrder.append("first")
+                isFirstRegionActive = false
+            }
+        }
+
+        while !firstGate.isWaiting {
+            await Task.yield()
+        }
+
+        let secondTask = Task {
+            await coordinator.performExclusive {
+                if isFirstRegionActive {
+                    observedOverlap = true
+                }
+                completionOrder.append("second")
+            }
+        }
+
+        // 1つ目の区間がまだ終わっていない間は、2つ目は開始できていないはず。
+        await Task.yield()
+        await Task.yield()
+        await Task.yield()
+        #expect(completionOrder.isEmpty)
+
+        firstGate.release()
+        await firstTask.value
+        await secondTask.value
+
+        #expect(observedOverlap == false)
+        #expect(completionOrder == ["first", "second"])
+    }
 }

@@ -13,6 +13,10 @@ public enum NovelpkgError: Error, Sendable, Equatable {
     case manifestMissing(URL)
     /// `manifest.json` の読み込み・デコードに失敗した(壊れている)。
     case manifestCorrupted(url: URL, reason: String)
+    /// メタデータファイル(`characters.json` / `plot.json` / `flags.json`)の
+    /// 読み込み・デコードに失敗した(壊れている)。`manifest.json` 自体は無事な
+    /// ケースなので `manifestCorrupted` とは区別する(Phase 4 レビュー F-C)。
+    case metadataCorrupted(url: URL, file: String, reason: String)
     /// `manifest.json` の `formatVersion` が、この実装の対応バージョンではない。
     case unsupportedFormatVersion(String)
     /// 保存処理(アトミック書き込みのための一時ディレクトリ操作など)に失敗した。
@@ -28,6 +32,8 @@ extension NovelpkgError: CustomStringConvertible {
             "manifest.json が見つかりません: \(url.path)"
         case let .manifestCorrupted(url, reason):
             "manifest.json の読み込みに失敗しました(\(url.path)): \(reason)"
+        case let .metadataCorrupted(url, file, reason):
+            "\(file) の読み込みに失敗しました(\(url.path)): \(reason)"
         case let .unsupportedFormatVersion(version):
             "対応していないフォーマットバージョンです: \(version)"
         case let .saveFailed(reason):
