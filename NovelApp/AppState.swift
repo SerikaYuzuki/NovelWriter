@@ -22,6 +22,8 @@ final class AppState {
     private(set) var selection: ChapterID?
     /// 選択中の登場人物ID。
     private(set) var selectedCharacterID: CharacterID?
+    /// 選択中のプロットカードID。
+    private(set) var selectedPlotCardID: PlotCardID?
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
     private(set) var documentURL: URL
 
@@ -73,6 +75,7 @@ final class AppState {
         documentURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
         selection = placeholder.chapters.first?.id
         selectedCharacterID = nil
+        selectedPlotCardID = nil
     }
 
     deinit {
@@ -96,6 +99,7 @@ final class AppState {
                 documentURL = url
                 selection = loaded.chapters.first?.id
                 selectedCharacterID = loaded.characters.first?.id
+                selectedPlotCardID = loaded.plotCards.first?.id
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -109,6 +113,7 @@ final class AppState {
         documentURL = newURL
         selection = newDocument.chapters.first?.id
         selectedCharacterID = nil
+        selectedPlotCardID = nil
 
         saveCoordinator.markDirty()
         await saveCoordinator.saveNow()
@@ -127,6 +132,12 @@ final class AppState {
     var selectedCharacter: NovelCore.Character? {
         guard let selectedCharacterID else { return nil }
         return document.characters.first { $0.id == selectedCharacterID }
+    }
+
+    /// 選択中のプロットカード(存在しなければ `nil`)。
+    var selectedPlotCard: PlotCard? {
+        guard let selectedPlotCardID else { return nil }
+        return document.plotCards.first { $0.id == selectedPlotCardID }
     }
 
     /// 章を選択する。選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
@@ -302,6 +313,81 @@ final class AppState {
     /// 登場人物を並べ替える。
     func moveCharacters(fromOffsets: IndexSet, toOffset: Int) {
         document.moveCharacters(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    // MARK: - プロットカード
+
+    /// プロットカードを追加し、追加したカードを選択状態にする。
+    func addPlotCard() {
+        let newID = document.addPlotCard(title: "新しいカード", chapterID: selection)
+        selectedPlotCardID = newID
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// プロットカードを選択する。
+    func selectPlotCard(_ id: PlotCardID?) {
+        selectedPlotCardID = id
+    }
+
+    /// 選択中のプロットカードを更新する。
+    func updateSelectedPlotCard(title: String? = nil, memo: String? = nil, chapterID: ChapterID? = nil) {
+        guard let selectedPlotCardID, let current = selectedPlotCard else { return }
+        let nextTitle = title ?? current.title
+        let nextMemo = memo ?? current.memo
+        let nextChapterID = chapterID ?? current.chapterID
+
+        guard current.title != nextTitle || current.memo != nextMemo || current.chapterID != nextChapterID else {
+            return
+        }
+
+        document.updatePlotCard(id: selectedPlotCardID, title: nextTitle, memo: nextMemo, chapterID: nextChapterID)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中のプロットカードの章紐付けを更新する。`nil` は未紐付けを表す。
+    func updateSelectedPlotCardChapter(_ chapterID: ChapterID?) {
+        guard let selectedPlotCardID, let current = selectedPlotCard else { return }
+        guard current.chapterID != chapterID else { return }
+
+        document.updatePlotCard(id: selectedPlotCardID, title: current.title, memo: current.memo, chapterID: chapterID)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// プロットカードタイトルの編集確定時に、空タイトルを正規化して即時保存へ寄せる。
+    func commitPlotCardEditing() {
+        for card in document.plotCards {
+            let normalizedTitle = NovelDocument.normalizedPlotCardTitle(card.title)
+            if card.title != normalizedTitle {
+                document.updatePlotCard(id: card.id, title: normalizedTitle, memo: card.memo, chapterID: card.chapterID)
+                saveCoordinator.markDirty()
+            }
+        }
+        flushSaveImmediately()
+    }
+
+    /// プロットカードを削除する。
+    func deletePlotCard(id: PlotCardID) {
+        guard let originalIndex = document.plotCards.firstIndex(where: { $0.id == id }) else { return }
+        guard document.removePlotCard(id: id) != nil else { return }
+
+        if selectedPlotCardID == id {
+            let fallbackIndex = min(originalIndex, document.plotCards.count - 1)
+            selectedPlotCardID = document.plotCards.indices.contains(fallbackIndex) ?
+                document.plotCards[fallbackIndex].id : nil
+        }
+
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// プロットカードを並べ替える。
+    func movePlotCards(fromOffsets: IndexSet, toOffset: Int) {
+        document.movePlotCards(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
     }

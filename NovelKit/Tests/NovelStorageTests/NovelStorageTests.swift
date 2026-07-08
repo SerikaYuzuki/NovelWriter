@@ -7,7 +7,7 @@ import Testing
 
 /// `FileManager.default.temporaryDirectory` 配下に、このテスト実行専用の
 /// 一意なディレクトリを作成する。呼び出し側は `defer` で後始末すること。
-private func makeTempDirectory() throws -> URL {
+func makeTempDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("NovelStorageTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -45,6 +45,9 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
         characters: [
             NovelCore.Character(name: "灯", kana: "あかり", memo: "主人公", colorHex: "#C44536"),
             NovelCore.Character(name: "澪", kana: "みお", memo: "相棒")
+        ],
+        plotCards: [
+            PlotCard(title: "開幕", memo: "導入", chapterID: nil)
         ]
     )
 
@@ -60,6 +63,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.chapters.map(\.content) == doc.chapters.map(\.content))
     #expect(loaded.chapters.map(\.memo) == doc.chapters.map(\.memo))
     #expect(loaded.characters == doc.characters)
+    #expect(loaded.plotCards == doc.plotCards)
 }
 
 @Test func emptyChapterMemoDoesNotCreateNoteFile() async throws {
@@ -256,6 +260,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     var loaded = try await repository.load(from: packageURL)
     #expect(loaded.chapters[0].memo == "")
     #expect(loaded.characters.isEmpty)
+    #expect(loaded.plotCards.isEmpty)
     loaded.chapters[0].memo = "移行後メモ"
     try await repository.save(loaded, to: packageURL)
 

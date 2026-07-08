@@ -26,28 +26,6 @@ extension ChapterID: CustomStringConvertible {
     }
 }
 
-/// 登場人物を一意に識別するID。
-public struct CharacterID: Hashable, Codable, Sendable {
-    /// 識別に使う実体のUUID。
-    public let rawValue: UUID
-
-    /// 既存のUUIDから `CharacterID` を作る。
-    public init(rawValue: UUID) {
-        self.rawValue = rawValue
-    }
-
-    /// 新規の登場人物のために、ランダムなUUIDで `CharacterID` を生成する。
-    public init() {
-        rawValue = UUID()
-    }
-}
-
-extension CharacterID: CustomStringConvertible {
-    public var description: String {
-        rawValue.uuidString
-    }
-}
-
 /// 小説の1章を表すモデル。
 ///
 /// - 重要: 章の並び順を表す `order` フィールドは意図的に持たない。
@@ -92,37 +70,6 @@ public struct Chapter: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
-/// 小説に登場する人物設定。
-///
-/// 配列順が表示順であり、`order` フィールドは持たない。
-public struct Character: Codable, Sendable, Identifiable, Equatable {
-    /// 登場人物の識別子。
-    public var id: CharacterID
-    /// 表示名。空白だけの名前は ``NovelDocument/normalizedCharacterName(_:)`` で正規化する。
-    public var name: String
-    /// ふりがな。
-    public var kana: String
-    /// 自由メモ。
-    public var memo: String
-    /// 識別用カラー。`#RRGGBB` 形式を想定するが、この層では表示解釈しない。
-    public var colorHex: String?
-
-    /// 登場人物を作成する。
-    public init(
-        id: CharacterID = CharacterID(),
-        name: String,
-        kana: String = "",
-        memo: String = "",
-        colorHex: String? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.kana = kana
-        self.memo = memo
-        self.colorHex = colorHex
-    }
-}
-
 /// 1つの小説作品全体を表すモデル。
 ///
 /// 章の並び順は `chapters` 配列の順序そのものが唯一の正であり、
@@ -133,6 +80,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         case title
         case chapters
         case characters
+        case plotCards
     }
 
     /// 作品の識別子。
@@ -143,6 +91,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public var chapters: [Chapter]
     /// 登場人物リスト。この配列の順序が表示順そのもの。
     public var characters: [Character]
+    /// プロットカードリスト。この配列の順序が表示順そのもの。
+    public var plotCards: [PlotCard]
 
     /// 作品を作成する。
     /// - Parameters:
@@ -154,12 +104,14 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         id: UUID = UUID(),
         title: String,
         chapters: [Chapter],
-        characters: [Character] = []
+        characters: [Character] = [],
+        plotCards: [PlotCard] = []
     ) {
         self.id = id
         self.title = title
         self.chapters = chapters
         self.characters = characters
+        self.plotCards = plotCards
     }
 
     public init(from decoder: Decoder) throws {
@@ -168,6 +120,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         title = try container.decode(String.self, forKey: .title)
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         characters = try container.decodeIfPresent([Character].self, forKey: .characters) ?? []
+        plotCards = try container.decodeIfPresent([PlotCard].self, forKey: .plotCards) ?? []
     }
 
     /// 新規作品を、空の章1つを添えて生成する便利ファクトリ。
@@ -223,6 +176,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public mutating func removeChapter(id: ChapterID) -> (chapter: Chapter, index: Int)? {
         guard let index = chapters.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = chapters.remove(at: index)
+        detachPlotCards(from: id)
         return (removed, index)
     }
 
@@ -275,65 +229,6 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     /// 改行を除いた `Character` 数。章メモは含めない。
     public var manuscriptCharacterCount: Int {
         chapters.reduce(0) { $0 + ManuscriptMetrics.countCharacters(in: $1.content) }
-    }
-
-    // MARK: - 登場人物
-
-    /// 空白だけの登場人物名を、保存・表示に耐える名前へ正規化する。
-    public static func normalizedCharacterName(_ name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "名無し" : trimmed
-    }
-
-    /// 末尾に登場人物を追加する。
-    @discardableResult
-    public mutating func addCharacter(
-        name: String,
-        kana: String = "",
-        memo: String = "",
-        colorHex: String? = nil
-    ) -> CharacterID {
-        let character = Character(
-            name: Self.normalizedCharacterName(name),
-            kana: kana,
-            memo: memo,
-            colorHex: colorHex
-        )
-        characters.append(character)
-        return character.id
-    }
-
-    /// 指定した登場人物を削除する。
-    @discardableResult
-    public mutating func removeCharacter(id: CharacterID) -> Character? {
-        guard let index = characters.firstIndex(where: { $0.id == id }) else { return nil }
-        return characters.remove(at: index)
-    }
-
-    /// 登場人物を並べ替える。
-    public mutating func moveCharacters(fromOffsets: IndexSet, toOffset: Int) {
-        let itemsToMove = fromOffsets.map { characters[$0] }
-        for index in fromOffsets.sorted(by: >) {
-            characters.remove(at: index)
-        }
-        let removedBeforeDestination = fromOffsets.count(where: { $0 < toOffset })
-        let adjustedDestination = toOffset - removedBeforeDestination
-        characters.insert(contentsOf: itemsToMove, at: adjustedDestination)
-    }
-
-    /// 指定した登場人物を更新する。
-    public mutating func updateCharacter(
-        id: CharacterID,
-        name: String,
-        kana: String,
-        memo: String,
-        colorHex: String? = nil
-    ) {
-        guard let index = characters.firstIndex(where: { $0.id == id }) else { return }
-        characters[index].name = name
-        characters[index].kana = kana
-        characters[index].memo = memo
-        characters[index].colorHex = colorHex
     }
 }
 

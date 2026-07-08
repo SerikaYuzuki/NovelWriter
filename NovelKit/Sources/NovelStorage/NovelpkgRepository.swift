@@ -103,8 +103,15 @@ private extension NovelpkgRepository {
         }
 
         let characters = try readCharacters(from: url)
+        let plotCards = try readPlotCards(from: url, validChapterIDs: Set(chapters.map(\.id)))
 
-        return NovelDocument(id: manifest.documentID, title: manifest.title, chapters: chapters, characters: characters)
+        return NovelDocument(
+            id: manifest.documentID,
+            title: manifest.title,
+            chapters: chapters,
+            characters: characters,
+            plotCards: plotCards
+        )
     }
 
     private static func isSupportedFormatVersion(_ formatVersion: String) -> Bool {
@@ -128,18 +135,6 @@ private extension NovelpkgRepository {
             return try JSONDecoder().decode(NovelpkgManifest.self, from: data)
         } catch {
             throw NovelpkgError.manifestCorrupted(url: url, reason: String(describing: error))
-        }
-    }
-
-    private static func readCharacters(from packageURL: URL) throws -> [NovelCore.Character] {
-        let charactersURL = packageURL.appendingPathComponent(charactersFileName)
-        guard FileManager.default.fileExists(atPath: charactersURL.path) else { return [] }
-
-        do {
-            let data = try Data(contentsOf: charactersURL)
-            return try JSONDecoder().decode([NovelCore.Character].self, from: data)
-        } catch {
-            throw NovelpkgError.manifestCorrupted(url: packageURL, reason: String(describing: error))
         }
     }
 }
@@ -256,6 +251,7 @@ private extension NovelpkgRepository {
         try writeChapterContents(doc.chapters, into: chaptersURL)
         try writeChapterNotes(doc.chapters, into: workingURL, fileManager: fileManager)
         try writeCharacters(doc.characters, into: workingURL)
+        try writePlotCards(doc.plotCards, into: workingURL)
         try writeManifest(for: doc, into: workingURL, existingPackageURL: url, fileManager: fileManager)
     }
 
@@ -341,21 +337,6 @@ private extension NovelpkgRepository {
 
         let manifestURL = workingURL.appendingPathComponent(manifestFileName)
         try manifestData.write(to: manifestURL)
-    }
-
-    private static func writeCharacters(_ characters: [NovelCore.Character], into workingURL: URL) throws {
-        let charactersURL = workingURL.appendingPathComponent(charactersFileName)
-        try encodePrettyJSON(characters).write(to: charactersURL)
-    }
-
-    private static func encodePrettyJSON(_ value: some Encodable) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        do {
-            return try encoder.encode(value)
-        } catch {
-            throw NovelpkgError.saveFailed(reason: String(describing: error))
-        }
     }
 
     private static func copyUnknownRootItems(
