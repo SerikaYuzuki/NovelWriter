@@ -245,9 +245,14 @@ public enum ManuscriptMetrics {
     ///
     /// 空白・全角スペースは文字数に含める。Swift の `Character` 単位で数えるため、
     /// 絵文字や結合文字列もユーザーの見た目に近い1文字として扱う。
+    ///
+    /// キーストロークごとに全章合計で呼ばれる想定のため、`Character` ごとに
+    /// `String` を確保して `rangeOfCharacter(from:)` を呼ぶのは避け、
+    /// `Character.isNewline` で直接判定する(`\r\n` のような複数スカラーの
+    /// 改行も1つの `Character`(拡張書記素クラスタ)として正しく判定される)。
     public static func countCharacters(in text: String) -> Int {
         text.reduce(0) { count, character in
-            String(character).rangeOfCharacter(from: .newlines) == nil ? count + 1 : count
+            character.isNewline ? count : count + 1
         }
     }
 
