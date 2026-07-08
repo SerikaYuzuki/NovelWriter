@@ -1,0 +1,64 @@
+# AGENTS.md — AIエージェント向け作業ガイド
+
+macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(TextKit 2)エディタ + `.novelpkg` フォルダパッケージ保存。
+
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。
+
+## 現在地(2026-07-08 時点)
+
+- Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)完了
+- 動くもの: 章リスト(追加・選択・並べ替え)、NSTextView エディタ、自動字下げ(改行で全角スペース、`「` で字下げ解除)、`.novelpkg` 自動保存(2秒デバウンス)、起動時の前回作品読み込み
+- 次: Phase 3(章タイトル編集、章削除、Cmd+Q 時保存、検索ジャンプなど)
+
+## リポジトリ構成
+
+```
+NovelApp/            アプリ本体(AppState / ContentView / AppDependencies)
+NovelKit/            ローカル Swift Package(ライブラリ群 + 全テスト)
+  Sources/NovelCore/     モデル(Chapter, NovelDocument, DocumentRepository)— 依存ゼロ
+  Sources/NovelStorage/  .novelpkg の読み書き(NovelpkgRepository)
+  Sources/EditorKit/     エディタ(EditorView / プラグイン / IndentRules / MacTextAdapter)
+  Sources/NovelUI/       共有 SwiftUI 部品(まだ薄い)
+  Sources/PreviewSupport/ Preview 用固定データ(まだ薄い)
+project.yml          XcodeGen 定義。NovelWriter.xcodeproj は生成物(コミット禁止)
+Scripts/check.sh     ローカルCI。マージ前に必ず全通しすること
+docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
+```
+
+## 破ってはいけないルール
+
+1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / EditorKit / NovelUI → NovelCore のみ。違反はコンパイルで落ちるように Package.swift が組んである
+2. **テキスト所有権**(D-005): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは章切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
+3. **TextKit 2**(D-006): `NSTextView.layoutManager` に触れない(触れると TextKit 1 に暗黙フォールバックする)。`textLayoutManager` を使う
+4. **公開APIに `NSTextView` / `UITextView` を出さない**(DESIGN 9.2)。AppKit 依存コードは `EditorKit/Platform/` 配下 + `#if canImport(AppKit)` 内のみ
+5. **章順は `NovelDocument.chapters` の配列順が唯一の正**(D-004)。order フィールドを追加しない。保存形式では manifest.json だけが章順を持ち、章ファイル名は ChapterID(UUID)ベース(D-003)
+6. **`.novelpkg` の内部構造を NovelStorage の外に漏らさない**(DESIGN 9.3)
+7. **エディタ機能は EditorPlugin として追加する**(DESIGN 4.4)。EditorView / MacTextAdapter を直接太らせない。純粋な判定ロジックは `Rules/` に切り出してテストする
+
+## エディタにプラグインを足す手順(Phase 2 で確立)
+
+1. 判定ロジックを `EditorKit/Rules/` に純関数で書く(AppKit 禁止、`String` + UTF-16 `NSRange`。変換は `Range(_:in:)` 経由)+ swift-testing でテスト
+2. `EditorKit/Plugins/` に `EditorPlugin` 準拠の薄いクラスを作り、Rules の判定を `EditorAction` に写像する
+3. `MacTextAdapter.Coordinator` の `pipeline`(現在 `[IMEGuardPlugin(), IndentPlugin()]`)に登録。**IMEGuardPlugin より後ろに置くこと**
+4. `EditorKitTests/MacTextAdapterIntegrationTests.swift` の方式(実 NSTextView + Coordinator を直接組み立てて delegate を駆動)で統合テストを書く。**Undo で戻ることも必ずテストする**
+
+## 開発ワークフロー
+
+- **GitHub Flow**: main から `feat/…` ブランチ → PR(テンプレート: .github/PULL_REQUEST_TEMPLATE.md)。main への直接 push 禁止
+- **検証はローカルのみ**(D-014。GitHub Actions は使わない): PR 前に `./Scripts/check.sh` が「All checks passed」まで通ること(SwiftFormat lint / SwiftLint / swift test / iOS向けコンパイルチェック / NovelApp ビルド)
+- Xcode プロジェクトは `xcodegen generate` で生成(D-015)。project.yml が正
+- 単体テストは swift-testing(`@Test`)。XCTest は使わない
+- コミットは意味単位で `feat:` / `fix:` / `docs:` / `chore:` / `style:` プレフィックス。本文は日本語可
+- 必要ツール: Xcode 16+、`brew install swiftformat swiftlint xcodegen`
+
+## 設計判断のしかた
+
+- 新しい設計判断をしたら docs/DECISIONS.md に D-XXX として追記する(既存の決定を覆す場合は元を消さず「破棄」とマークして新しい番号で)
+- DESIGN.md の内容と実装が食い違ったら、実装を直すか DESIGN.md を更新するかを明示的に決めて、変更履歴に記録する
+- 作業は小さい単位で: モデル追加 / Repository 変更 / プラグイン追加 / UI追加 / テスト追加 / リファクタリングを1つの PR に混ぜすぎない(DESIGN 10章)
+
+## 既知の注意点
+
+- Cmd+Q 直後の最大2秒分が未保存になりうる(D-016 の既知の制限。Phase 3 で解消予定)
+- `EditorContext` は delegate 呼び出しごとの本文スナップショット。超長文でのパフォーマンスは将来の最適化課題
+- 各モジュールに残る `placeholderVersion` 定数は scaffold の名残(削除してよい負債)
