@@ -43,6 +43,13 @@ public final class DocumentSaveCoordinator {
     private var waiters: [CheckedContinuation<Bool, Never>] = []
     private var debouncedSaveTask: Task<Void, Never>?
 
+    /// `performExclusive(_:)` の実行中かどうか(Phase 4 レビュー F-A)。
+    private var isExclusiveRunning = false
+    /// `isExclusiveRunning` の間に来た `saveNow()` 呼び出しが登録する継続。
+    /// `performExclusive` の区間が終わったら全員起こし、通常の `saveNow()` の
+    /// 手順(dirty があれば保存)へ進ませる。
+    private var exclusiveWaiters: [CheckedContinuation<Void, Never>] = []
+
     /// - Parameters:
     ///   - debounceNanoseconds: `scheduleDebouncedSave()` が実際に保存を実行するまでの遅延。
     ///   - currentState: 保存すべき最新の本文モデルと保存先URLを返すクロージャ。
@@ -85,6 +92,16 @@ public final class DocumentSaveCoordinator {
         debouncedSaveTask?.cancel()
         debouncedSaveTask = nil
 
+        // `performExclusive(_:)` の区間中は新しい保存を一切開始させない。区間が
+        // 終わるまで待ち、起床後は `while` で再チェックする(起きた直後に別の
+        // 排他区間がすぐ始まっている可能性を考慮。check-then-act の隙間を作らない
+        // ため、チェックと待機の登録の間に `await` を挟まない)。
+        while isExclusiveRunning {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                exclusiveWaiters.append(continuation)
+            }
+        }
+
         if isSaving {
             return await withCheckedContinuation { continuation in
                 waiters.append(continuation)
@@ -125,5 +142,70 @@ public final class DocumentSaveCoordinator {
         }
 
         return succeeded
+    }
+
+    /// 保存経路と直列化された排他区間で `operation` を実行する(Phase 4 レビュー F-A)。
+    ///
+    /// 添付ファイルの追加・削除のように、パッケージ全置換の保存と競合すると
+    /// データを失いうる操作のためのAPI。以下を保証する:
+    ///
+    /// - 実行中の保存(owner ループ)があれば、その完了を待ってから `operation` を開始する
+    /// - `operation` の実行中(このメソッドが返るまでの間)は、新しい保存を一切
+    ///   開始させない。この間に来た `saveNow()`(`scheduleDebouncedSave()` が
+    ///   最終的に呼ぶものも含む)は待たされ、`operation` 完了後にあらためて
+    ///   「dirty な revision があれば保存する」通常の手順を踏む
+    /// - 複数の `performExclusive` 呼び出しが重なった場合も、区間同士が重ならない
+    ///   よう直列化する
+    ///
+    /// `isSaving`/`waiters` による既存の owner/waiter 構造をそのまま利用して
+    /// 「実行中の保存の完了待ち」を行い、`isExclusiveRunning`/`exclusiveWaiters` で
+    /// 「排他区間そのものの完了待ち」を行う。どちらも `while` で起床後に条件を
+    /// 再チェックしてから状態を確定させる(チェックと更新の間に `await` を挟まない)
+    /// ため、起床の順序がどうであれ check-then-act の隙間は生まれない。
+    ///
+    /// - Important: `operation` の中で `saveNow()` を呼び出してはならない
+    ///   (この排他区間そのものを待つことになり、デッドロックする)。保存を
+    ///   確実に反映させたい場合は `performExclusive` を呼ぶ前に `saveNow()` を
+    ///   済ませておくこと。
+    public func performExclusive<T>(_ operation: () async throws -> T) async rethrows -> T {
+        await acquireExclusiveRegion()
+
+        do {
+            let result = try await operation()
+            releaseExclusiveRegion()
+            return result
+        } catch {
+            releaseExclusiveRegion()
+            throw error
+        }
+    }
+
+    /// 実行中の保存(owner)と、他の `performExclusive` 区間の両方が無い状態に
+    /// なるまで待ってから、排他区間を開始する。
+    private func acquireExclusiveRegion() async {
+        while isSaving || isExclusiveRunning {
+            if isSaving {
+                _ = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                    waiters.append(continuation)
+                }
+            } else {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    exclusiveWaiters.append(continuation)
+                }
+            }
+        }
+
+        // ここまでの判定から `await` を挟んでいないため、この直前の while 条件
+        // 評価から見て割り込みは無い。安全にフラグを立てられる。
+        isExclusiveRunning = true
+    }
+
+    private func releaseExclusiveRegion() {
+        isExclusiveRunning = false
+        let pendingExclusiveWaiters = exclusiveWaiters
+        exclusiveWaiters.removeAll()
+        for waiter in pendingExclusiveWaiters {
+            waiter.resume()
+        }
     }
 }

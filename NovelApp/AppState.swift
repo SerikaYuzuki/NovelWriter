@@ -538,33 +538,50 @@ final class AppState {
     }
 
     /// 外部ファイルを現在の作品へ資料として取り込む。
+    ///
+    /// 添付ファイルのコピーは大きなファイルだと数秒かかることがあり、その間に
+    /// 本文編集のデバウンス保存(2秒)が発火すると、保存側は「取り込み中の古い
+    /// attachments/ をコピーした作業ディレクトリ」でパッケージを全置換してしまい、
+    /// 取り込んだ資料が失われる(Phase 4 レビュー F-A)。そこで、まず
+    /// `saveCoordinator.saveNow()` で保留中の編集を先に排出したうえで、実際の
+    /// ファイルコピーと一覧再読込みは `saveCoordinator.performExclusive` の中で
+    /// 行い、その間は新しい保存が一切始まらないようにする。
+    ///
+    /// - Important: `saveNow()` は `performExclusive` の *外側* で呼ぶこと。
+    ///   `performExclusive` の中から `saveNow()` を呼ぶと、排他区間そのものを
+    ///   待つ形になりデッドロックする。
     @discardableResult
     func addAttachment(from sourceURL: URL) async -> Attachment? {
         guard let attachmentManager else { return nil }
         guard await saveCoordinator.saveNow() else { return nil }
 
-        do {
-            let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: documentURL)
-            attachments = await loadAttachments(for: documentURL)
-            return attachment
-        } catch {
-            print("NovelWriter: 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
-            return nil
+        return await saveCoordinator.performExclusive {
+            do {
+                let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: documentURL)
+                attachments = await loadAttachments(for: documentURL)
+                return attachment
+            } catch {
+                print("NovelWriter: 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
+                return nil
+            }
         }
     }
 
-    /// 作品から資料を削除する。
+    /// 作品から資料を削除する。添付操作と保存の直列化は `addAttachment` と同じ理由
+    /// (Phase 4 レビュー F-A)。
     func deleteAttachment(_ attachment: Attachment) async -> Bool {
         guard let attachmentManager else { return false }
         guard await saveCoordinator.saveNow() else { return false }
 
-        do {
-            try await attachmentManager.deleteAttachment(named: attachment.fileName, from: documentURL)
-            attachments = await loadAttachments(for: documentURL)
-            return true
-        } catch {
-            print("NovelWriter: 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
-            return false
+        return await saveCoordinator.performExclusive {
+            do {
+                try await attachmentManager.deleteAttachment(named: attachment.fileName, from: documentURL)
+                attachments = await loadAttachments(for: documentURL)
+                return true
+            } catch {
+                print("NovelWriter: 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
+                return false
+            }
         }
     }
 
