@@ -84,6 +84,7 @@ NovelWriter
 - 章モデル
 - ID型
 - 保存層の抽象プロトコル
+- 保存要求の直列化(`DocumentSaveCoordinator`。保存処理はクロージャ注入で、依存ゼロを維持 → D-017)
 
 代表モデル:
 
