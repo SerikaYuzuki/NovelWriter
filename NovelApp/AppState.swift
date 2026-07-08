@@ -189,6 +189,16 @@ final class AppState {
         saveCoordinator.scheduleDebouncedSave()
     }
 
+    /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
+    /// `TextEditor` から通常の Binding 更新で呼ばれる。
+    func updateSelectedChapterMemo(_ memo: String) {
+        guard let selection else { return }
+        guard document.chapters.first(where: { $0.id == selection })?.memo != memo else { return }
+        document.updateMemo(memo, for: selection)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
     /// 現在の作品状態をスナップショットとして保存する。
     ///
     /// まず通常保存を完了させてから、対応リポジトリにスナップショット作成を依頼する。
