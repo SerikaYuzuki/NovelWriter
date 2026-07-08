@@ -11,10 +11,10 @@ import NovelCore
 ///
 /// ディレクトリ構成:
 /// - `EditorView.swift` Phase 1 で実装した Public な SwiftUI Facade
-/// - `Core/`     EditorPlugin / EditorContext などのプロトコル(Phase 2 で実装)
-/// - `Rules/`    自動インデントなどの純粋な判定ロジック。テキスト所有権ルールの
-///   判定(`TextOwnershipPolicy`)は Phase 1 で導入済み
-/// - `Plugins/`  IndentPlugin / IMEGuardPlugin などの具象プラグイン(Phase 2 で実装)
+/// - `Core/`     EditorPlugin / EditorContext / EditorPluginPipeline(Phase 2 で実装済み)
+/// - `Rules/`    自動インデント(`IndentRules`)などの純粋な判定ロジック。テキスト
+///   所有権ルールの判定(`TextOwnershipPolicy`)は Phase 1 で導入済み
+/// - `Plugins/`  IndentPlugin / IMEGuardPlugin などの具象プラグイン(Phase 2 で実装済み)
 /// - `Platform/macOS/` AppKit 依存の実装(`MacTextAdapter`。`#if canImport(AppKit)` で保護)
 public enum EditorKit {
     /// パッケージ雛形の版数。Phase 2 で Plugin 基盤導入後は用途を終える。
