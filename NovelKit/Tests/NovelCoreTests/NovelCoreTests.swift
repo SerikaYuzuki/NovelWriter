@@ -72,6 +72,50 @@ import Testing
     #expect(doc.chapters.last?.content.isEmpty == true)
 }
 
+@Test func updateTitleUpdatesMatchingChapterOnly() {
+    let first = Chapter(title: "旧タイトル", content: "本文")
+    let second = Chapter(title: "変わらない", content: "本文2")
+    var doc = NovelDocument(title: "テスト作品", chapters: [first, second])
+
+    doc.updateTitle("新タイトル", for: first.id)
+
+    #expect(doc.chapters[0].title == "新タイトル")
+    #expect(doc.chapters[1].title == "変わらない")
+}
+
+@Test func updateTitleIgnoresUnknownChapterID() {
+    let chapter = Chapter(title: "第1章", content: "本文")
+    var doc = NovelDocument(title: "テスト作品", chapters: [chapter])
+
+    doc.updateTitle("書き換え", for: ChapterID())
+
+    #expect(doc.chapters == [chapter])
+}
+
+@Test func removeChapterDeletesMatchingChapterAndReportsOriginalIndex() throws {
+    let first = Chapter(title: "第1章")
+    let second = Chapter(title: "第2章")
+    let third = Chapter(title: "第3章")
+    var doc = NovelDocument(title: "テスト作品", chapters: [first, second, third])
+
+    let removedResult = doc.removeChapter(id: second.id)
+    let removed = try #require(removedResult)
+
+    #expect(removed.chapter == second)
+    #expect(removed.index == 1)
+    #expect(doc.chapters.map(\.id) == [first.id, third.id])
+}
+
+@Test func removeChapterIgnoresUnknownChapterID() {
+    let chapter = Chapter(title: "第1章")
+    var doc = NovelDocument(title: "テスト作品", chapters: [chapter])
+
+    let removed = doc.removeChapter(id: ChapterID())
+
+    #expect(removed == nil)
+    #expect(doc.chapters == [chapter])
+}
+
 @Test func moveChaptersReordersLikeSwiftUIOnMove() {
     let first = Chapter(title: "第1章")
     let second = Chapter(title: "第2章")

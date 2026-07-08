@@ -22,13 +22,14 @@ import NovelCore
 /// - 章ファイルが1つ欠けていても、読み込み全体は失敗させない。欠けた章は
 ///   空本文として読み込む(データ救出優先)。`manifest.json` に記載の無い
 ///   `chapters/*.md` は読み込み時に無視する(削除はしない)
-public struct NovelpkgRepository: DocumentRepository {
+public struct NovelpkgRepository: SnapshottingDocumentRepository {
     /// この実装が読み書きできる `manifest.json` の `formatVersion`。
     public static let currentFormatVersion = "1"
 
     private static let manifestFileName = "manifest.json"
     private static let chaptersDirectoryName = "chapters"
     private static let attachmentsDirectoryName = "attachments"
+    private static let snapshotsDirectoryName = "snapshots"
 
     /// `NovelpkgRepository` を作成する。
     public init() {}
@@ -51,6 +52,17 @@ public struct NovelpkgRepository: DocumentRepository {
     public func save(_ doc: NovelDocument, to url: URL) async throws {
         try await Task.detached(priority: .utility) {
             try Self.performSave(doc, to: url)
+        }.value
+    }
+
+    /// `.novelpkg/snapshots/<timestamp>.novelpkg` に、現在の作品状態を退避する。
+    ///
+    /// App 側はスナップショットの内部構造を知らず、このメソッドの戻り値を
+    /// ユーザー通知などに使うだけに留める。
+    @discardableResult
+    public func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            try Self.performSaveSnapshot(doc, to: url)
         }.value
     }
 
@@ -123,7 +135,13 @@ public struct NovelpkgRepository: DocumentRepository {
         )
 
         do {
-            try writePackageContents(of: doc, into: workingURL, existingPackageURL: url, fileManager: fileManager)
+            try writePackageContents(
+                of: doc,
+                into: workingURL,
+                existingPackageURL: url,
+                fileManager: fileManager,
+                preservesSnapshots: true
+            )
         } catch let error as NovelpkgError {
             try? fileManager.removeItem(at: workingURL)
             throw error
@@ -144,6 +162,42 @@ public struct NovelpkgRepository: DocumentRepository {
         }
     }
 
+    private static func performSaveSnapshot(_ doc: NovelDocument, to url: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let snapshotsURL = url.appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: snapshotsURL, withIntermediateDirectories: true)
+        } catch {
+            throw NovelpkgError.saveFailed(reason: String(describing: error))
+        }
+
+        let timestamp = snapshotTimestamp()
+        var snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp).novelpkg", isDirectory: true)
+        var suffix = 2
+        while fileManager.fileExists(atPath: snapshotURL.path) {
+            snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp)-\(suffix).novelpkg", isDirectory: true)
+            suffix += 1
+        }
+
+        do {
+            try writePackageContents(
+                of: doc,
+                into: snapshotURL,
+                existingPackageURL: url,
+                fileManager: fileManager,
+                preservesSnapshots: false
+            )
+            return snapshotURL
+        } catch let error as NovelpkgError {
+            try? fileManager.removeItem(at: snapshotURL)
+            throw error
+        } catch {
+            try? fileManager.removeItem(at: snapshotURL)
+            throw NovelpkgError.saveFailed(reason: String(describing: error))
+        }
+    }
+
     /// `workingURL` に、完全な形の `.novelpkg` パッケージ内容(manifest.json /
     /// chapters/ / attachments/)を書き出す。この時点では最終的な保存先(`url`)
     /// には一切触れない(読み取り専用でのみ参照する)ため、書き出し途中に
@@ -152,7 +206,8 @@ public struct NovelpkgRepository: DocumentRepository {
         of doc: NovelDocument,
         into workingURL: URL,
         existingPackageURL url: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        preservesSnapshots: Bool
     ) throws {
         try fileManager.createDirectory(at: workingURL, withIntermediateDirectories: true)
 
@@ -167,6 +222,16 @@ public struct NovelpkgRepository: DocumentRepository {
             try fileManager.copyItem(at: existingAttachmentsURL, to: attachmentsURL)
         } else {
             try fileManager.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
+        }
+
+        if preservesSnapshots {
+            let snapshotsURL = workingURL.appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
+            let existingSnapshotsURL = url.appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
+            if fileManager.fileExists(atPath: existingSnapshotsURL.path) {
+                try fileManager.copyItem(at: existingSnapshotsURL, to: snapshotsURL)
+            } else {
+                try fileManager.createDirectory(at: snapshotsURL, withIntermediateDirectories: true)
+            }
         }
 
         // 章本文を書き出す。ファイル名は ChapterID(UUID)ベース(D-003)。
@@ -200,5 +265,12 @@ public struct NovelpkgRepository: DocumentRepository {
 
         let manifestURL = workingURL.appendingPathComponent(manifestFileName)
         try manifestData.write(to: manifestURL)
+    }
+
+    private static func snapshotTimestamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
     }
 }

@@ -27,7 +27,29 @@ final class AppState {
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
 
-    private var debouncedSaveTask: Task<Void, Never>?
+    /// 保存要求の直列化を担う(D-017)。`document` / `documentURL` の最新値を
+    /// クロージャ越しに参照するため、`self` を弱参照で捕捉できるよう `lazy` にする
+    /// (`init` の途中で `self` を捕捉すると「全プロパティ初期化前に self を使った」
+    /// エラーになるため。`lazy` なら初回アクセス時点で初期化が完了している)。
+    /// `@Observable` の観測対象からは外す(UIの再描画とは無関係な内部実装)。
+    @ObservationIgnored
+    private lazy var saveCoordinator: DocumentSaveCoordinator = .init(
+        debounceNanoseconds: Self.autosaveDebounceNanoseconds,
+        currentState: { [weak self] in
+            guard let self else { return nil }
+            return (document, documentURL)
+        },
+        saveOperation: { [weak self] doc, url in
+            guard let self else { throw CancellationError() }
+            do {
+                try await repository.save(doc, to: url)
+            } catch {
+                // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
+                print("NovelWriter: 保存に失敗しました(\(url.path)): \(error)")
+                throw error
+            }
+        }
+    )
     /// `deinit` は MainActor 分離を持たない(nonisolated)ため、そこから触れるように
     /// `nonisolated(unsafe)` にする。実際の読み書きは init/メソッド(MainActor)と
     /// deinit(このインスタンスへの参照がなくなった後、一度だけ)からのみで、
@@ -83,7 +105,8 @@ final class AppState {
         documentURL = newURL
         selection = newDocument.chapters.first?.id
 
-        await save()
+        saveCoordinator.markDirty()
+        await saveCoordinator.saveNow()
         rememberDocumentURL(newURL)
     }
 
@@ -109,12 +132,49 @@ final class AppState {
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
         selection = newID
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
+    func updateChapterTitle(_ title: String, for id: ChapterID) {
+        guard document.chapters.first(where: { $0.id == id })?.title != title else { return }
+        document.updateTitle(title, for: id)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// タイトル編集の確定時に、未保存分を即時保存へ寄せる。
+    func commitChapterTitleEditing() {
+        for chapter in document.chapters {
+            let normalizedTitle = normalizedChapterTitle(chapter.title)
+            if chapter.title != normalizedTitle {
+                document.updateTitle(normalizedTitle, for: chapter.id)
+                saveCoordinator.markDirty()
+            }
+        }
+        flushSaveImmediately()
+    }
+
+    /// 章を削除し、隣接章へ選択を移す。最後の1章は削除しない。
+    func deleteChapter(id: ChapterID) {
+        guard document.chapters.count > 1 else { return }
+        guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return }
+        guard document.removeChapter(id: id) != nil else { return }
+
+        if selection == id {
+            let fallbackIndex = min(originalIndex, document.chapters.count - 1)
+            selection = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil
+        }
+
+        saveCoordinator.markDirty()
         flushSaveImmediately()
     }
 
     /// 章を並べ替える(`List.onMove` からそのまま呼べる形)。
     func moveChapters(fromOffsets: IndexSet, toOffset: Int) {
         document.moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
         flushSaveImmediately()
     }
 
@@ -123,34 +183,45 @@ final class AppState {
     /// `EditorView` から編集中に本文を書き戻すことはしない)。
     func updateSelectedChapterContent(_ content: String) {
         guard let selection else { return }
+        guard document.chapters.first(where: { $0.id == selection })?.content != content else { return }
         document.updateContent(content, for: selection)
-        scheduleDebouncedSave()
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 現在の作品状態をスナップショットとして保存する。
+    ///
+    /// まず通常保存を完了させてから、対応リポジトリにスナップショット作成を依頼する。
+    /// 非対応リポジトリの場合は `nil` を返す。
+    func createSnapshot() async -> URL? {
+        guard let repository = repository as? SnapshottingDocumentRepository else { return nil }
+        guard await saveCoordinator.saveNow() else { return nil }
+
+        do {
+            return try await repository.saveSnapshot(document, to: documentURL)
+        } catch {
+            print("NovelWriter: スナップショット保存に失敗しました(\(documentURL.path)): \(error)")
+            return nil
+        }
     }
 
     // MARK: - 保存
 
-    private func scheduleDebouncedSave() {
-        debouncedSaveTask?.cancel()
-        debouncedSaveTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.autosaveDebounceNanoseconds)
-            guard !Task.isCancelled else { return }
-            await self?.save()
-        }
+    /// アプリ終了前に、保留中のデバウンス保存をキャンセルして現在状態を保存する。
+    func saveBeforeTermination() async -> Bool {
+        await saveCoordinator.saveNow()
     }
 
+    /// 保留中のデバウンス保存をキャンセルし、即座に保存キューへ流す(fire-and-forget)。
+    /// `saveCoordinator.saveNow()` 自体がデバウンスのキャンセルと dirty 分の
+    /// 保存until-cleanを面倒見るため、ここでは呼び出すだけでよい。
     private func flushSaveImmediately() {
-        debouncedSaveTask?.cancel()
-        debouncedSaveTask = nil
-        Task { await self.save() }
+        Task { await self.saveCoordinator.saveNow() }
     }
 
-    private func save() async {
-        do {
-            try await repository.save(document, to: documentURL)
-        } catch {
-            // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
-            print("NovelWriter: 保存に失敗しました(\(documentURL.path)): \(error)")
-        }
+    private func normalizedChapterTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "無題の章" : trimmed
     }
 
     private func observeResignActive() {
