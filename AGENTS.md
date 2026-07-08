@@ -2,13 +2,13 @@
 
 macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(TextKit 2)エディタ + `.novelpkg` フォルダパッケージ保存。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある(Phase 4 の作業指示書は [docs/PHASE4.md](docs/PHASE4.md))。
 
 ## 現在地(2026-07-08 時点)
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)完了
 - 動くもの: 章リスト(追加・選択・タイトル編集・削除・並べ替え)、NSTextView エディタ、自動字下げ(改行で全角スペース、`「` で字下げ解除)、検索ジャンプ、スナップショット保存、`.novelpkg` 自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み
-- 次: Phase 4(章メモ、キャラクター管理、プロット/シーンカード、資料添付など)
+- 次: Phase 4(章メモ、キャラクター管理、プロット/シーンカード、資料添付など)。**サブフェーズ分解済みの作業指示書 = [docs/PHASE4.md](docs/PHASE4.md)。4-1 から順に、1サブフェーズ = 1PR で進めること**
 
 ## リポジトリ構成
 
