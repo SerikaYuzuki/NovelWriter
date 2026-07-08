@@ -140,8 +140,47 @@ struct MacTextAdapter: NSViewRepresentable {
         /// 章切り替え時に他のUIへ影響を与えずに履歴をクリアできる。
         let undoManager = UndoManager()
 
+        /// EditorKit の既定プラグインパイプライン(docs/DESIGN.md 4.3): IMEGuard → Indent の順。
+        /// `EditorView` の公開APIは変えず、プラグインは常にこの並びで有効にする。
+        private let pipeline = EditorPluginPipeline(plugins: [IMEGuardPlugin(), IndentPlugin()])
+
+        /// プラグインが確定した置換を `shouldChangeText` 経由で適用している最中かどうか。
+        ///
+        /// `NSTextView.shouldChangeText(in:replacementString:)` は undo 登録と delegate
+        /// 通知を兼ねる唯一のゲートであり、内部でもう一度
+        /// `textView(_:shouldChangeTextIn:replacementString:)` を呼び出す。このフラグで
+        /// その再入を検知し、パイプラインを再実行せずそのまま許可することで、
+        /// 自分自身の置換適用が無限に再帰するのを防ぐ。
+        private var isApplyingPluginReplacement = false
+
         init(onTextChange: @escaping (String) -> Void) {
             self.onTextChange = onTextChange
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            // 自分自身が確定させた置換を適用中の再入呼び出し。パイプラインには
+            // 通さず、そのまま許可する(上記 `isApplyingPluginReplacement` 参照)。
+            guard !isApplyingPluginReplacement else { return true }
+            guard let replacementString else { return true }
+
+            let context = MacEditorContext(textView: textView)
+            let action = pipeline.shouldChange(
+                context: context,
+                range: affectedCharRange,
+                replacement: replacementString
+            )
+
+            switch action {
+            case .allow, .allowSkippingRemaining:
+                return true
+            case let .replace(range, text, caretOffset):
+                applyPluginReplacement(range: range, text: text, caretOffset: caretOffset, textView: textView)
+                return false
+            }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -155,12 +194,59 @@ struct MacTextAdapter: NSViewRepresentable {
                 return
             }
 
+            pipeline.didChange(context: MacEditorContext(textView: textView))
             onTextChange(textView.string)
         }
 
         func undoManager(for _: NSTextView) -> UndoManager? {
             undoManager
         }
+
+        /// プラグインが確定した置換を、undo が正しく動く経路で適用する。
+        ///
+        /// `shouldChangeText(in:replacementString:)` を経由することで、実際のタイピングと
+        /// 同じ経路で undo 登録と delegate 通知を行う。挿入するテキストには
+        /// `typingAttributes` を明示的に適用し、置換挿入でフォント・行間が崩れない
+        /// ようにする。
+        private func applyPluginReplacement(
+            range: NSRange,
+            text: String,
+            caretOffset: Int,
+            textView: NSTextView
+        ) {
+            isApplyingPluginReplacement = true
+            defer { isApplyingPluginReplacement = false }
+
+            guard textView.shouldChangeText(in: range, replacementString: text) else { return }
+
+            let attributedText = NSAttributedString(string: text, attributes: textView.typingAttributes)
+            textView.textStorage?.replaceCharacters(in: range, with: attributedText)
+            textView.didChangeText()
+
+            textView.setSelectedRange(NSRange(location: range.location + caretOffset, length: 0))
+        }
+    }
+}
+
+/// `EditorContext`(docs/DESIGN.md 4.4)を実際の `NSTextView` の状態から作るアダプタ。
+///
+/// `NSTextView` を直接プラグインへ渡さないための境界(docs/DESIGN.md 9.2)。
+/// delegate 呼び出しのたびに、その時点のテキストビュー状態のスナップショットとして
+/// 作り直す。プラグインは同期実行されるため、スナップショットでも一貫性は保てる。
+/// `NSTextView` への参照を持たないことで、非隔離な `EditorContext` プロトコルと
+/// AppKit の `@MainActor` 隔離の衝突も避けている。
+private struct MacEditorContext: EditorContext {
+    let string: String
+    let isIMEComposing: Bool
+
+    @MainActor
+    init(textView: NSTextView) {
+        string = textView.string
+        isIMEComposing = textView.hasMarkedText()
+    }
+
+    func lineRange(at location: Int) -> NSRange {
+        (string as NSString).lineRange(for: NSRange(location: location, length: 0))
     }
 }
 #endif
