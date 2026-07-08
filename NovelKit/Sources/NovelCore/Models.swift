@@ -81,6 +81,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         case chapters
         case characters
         case plotCards
+        case flags
     }
 
     /// 作品の識別子。
@@ -93,6 +94,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public var characters: [Character]
     /// プロットカードリスト。この配列の順序が表示順そのもの。
     public var plotCards: [PlotCard]
+    /// 伏線・フラグリスト。この配列の順序が表示順そのもの。
+    public var flags: [Flag]
 
     /// 作品を作成する。
     /// - Parameters:
@@ -105,13 +108,15 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         title: String,
         chapters: [Chapter],
         characters: [Character] = [],
-        plotCards: [PlotCard] = []
+        plotCards: [PlotCard] = [],
+        flags: [Flag] = []
     ) {
         self.id = id
         self.title = title
         self.chapters = chapters
         self.characters = characters
         self.plotCards = plotCards
+        self.flags = flags
     }
 
     public init(from decoder: Decoder) throws {
@@ -121,6 +126,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         characters = try container.decodeIfPresent([Character].self, forKey: .characters) ?? []
         plotCards = try container.decodeIfPresent([PlotCard].self, forKey: .plotCards) ?? []
+        flags = try container.decodeIfPresent([Flag].self, forKey: .flags) ?? []
     }
 
     /// 新規作品を、空の章1つを添えて生成する便利ファクトリ。
@@ -177,6 +183,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         guard let index = chapters.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = chapters.remove(at: index)
         detachPlotCards(from: id)
+        detachFlags(from: id)
         return (removed, index)
     }
 

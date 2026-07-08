@@ -24,6 +24,8 @@ final class AppState {
     private(set) var selectedCharacterID: CharacterID?
     /// 選択中のプロットカードID。
     private(set) var selectedPlotCardID: PlotCardID?
+    /// 選択中の伏線ID。
+    private(set) var selectedFlagID: FlagID?
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
     private(set) var documentURL: URL
 
@@ -76,6 +78,7 @@ final class AppState {
         selection = placeholder.chapters.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
+        selectedFlagID = nil
     }
 
     deinit {
@@ -100,6 +103,7 @@ final class AppState {
                 selection = loaded.chapters.first?.id
                 selectedCharacterID = loaded.characters.first?.id
                 selectedPlotCardID = loaded.plotCards.first?.id
+                selectedFlagID = loaded.flags.first?.id
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -114,6 +118,7 @@ final class AppState {
         selection = newDocument.chapters.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
+        selectedFlagID = nil
 
         saveCoordinator.markDirty()
         await saveCoordinator.saveNow()
@@ -138,6 +143,12 @@ final class AppState {
     var selectedPlotCard: PlotCard? {
         guard let selectedPlotCardID else { return nil }
         return document.plotCards.first { $0.id == selectedPlotCardID }
+    }
+
+    /// 選択中の伏線(存在しなければ `nil`)。
+    var selectedFlag: Flag? {
+        guard let selectedFlagID else { return nil }
+        return document.flags.first { $0.id == selectedFlagID }
     }
 
     /// 章を選択する。選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
@@ -388,6 +399,120 @@ final class AppState {
     /// プロットカードを並べ替える。
     func movePlotCards(fromOffsets: IndexSet, toOffset: Int) {
         document.movePlotCards(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    // MARK: - 伏線
+
+    /// 伏線を追加し、追加した伏線を選択状態にする。
+    func addFlag() {
+        let newID = document.addFlag(title: "新しい伏線", plantedChapterID: selection)
+        selectedFlagID = newID
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 伏線を選択する。
+    func selectFlag(_ id: FlagID?) {
+        selectedFlagID = id
+    }
+
+    /// 選択中の伏線を更新する。
+    func updateSelectedFlag(title: String? = nil, note: String? = nil) {
+        guard var next = selectedFlag else { return }
+        let nextTitle = title ?? next.title
+        let nextNote = note ?? next.note
+
+        guard next.title != nextTitle || next.note != nextNote else { return }
+
+        next.title = nextTitle
+        next.note = nextNote
+        document.updateFlag(next)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中の伏線の章紐付けを更新する。
+    func updateSelectedFlagChapters(plantedChapterID: ChapterID? = nil, resolvedChapterID: ChapterID? = nil) {
+        guard var next = selectedFlag else { return }
+        let nextPlantedChapterID = plantedChapterID ?? next.plantedChapterID
+        let nextResolvedChapterID = resolvedChapterID ?? next.resolvedChapterID
+
+        guard next.plantedChapterID != nextPlantedChapterID || next.resolvedChapterID != nextResolvedChapterID else {
+            return
+        }
+
+        next.plantedChapterID = nextPlantedChapterID
+        next.resolvedChapterID = nextResolvedChapterID
+        document.updateFlag(next)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中の伏線の張った章を更新する。`nil` は未設定を表す。
+    func updateSelectedFlagPlantedChapter(_ chapterID: ChapterID?) {
+        guard var next = selectedFlag else { return }
+        guard next.plantedChapterID != chapterID else { return }
+
+        next.plantedChapterID = chapterID
+        document.updateFlag(next)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中の伏線の回収章を更新する。`nil` は未設定を表す。
+    func updateSelectedFlagResolvedChapter(_ chapterID: ChapterID?) {
+        guard var next = selectedFlag else { return }
+        guard next.resolvedChapterID != chapterID else { return }
+
+        next.resolvedChapterID = chapterID
+        document.updateFlag(next)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 選択中の伏線の回収状態を反転する。
+    func toggleSelectedFlagResolved() {
+        guard var next = selectedFlag else { return }
+        next.isResolved.toggle()
+        next.resolvedChapterID = next.isResolved ? selection : nil
+        document.updateFlag(next)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 伏線タイトルの編集確定時に、空タイトルを正規化して即時保存へ寄せる。
+    func commitFlagEditing() {
+        for flag in document.flags {
+            let normalizedTitle = NovelDocument.normalizedFlagTitle(flag.title)
+            if flag.title != normalizedTitle {
+                var next = flag
+                next.title = normalizedTitle
+                document.updateFlag(next)
+                saveCoordinator.markDirty()
+            }
+        }
+        flushSaveImmediately()
+    }
+
+    /// 伏線を削除する。
+    func deleteFlag(id: FlagID) {
+        guard let originalIndex = document.flags.firstIndex(where: { $0.id == id }) else { return }
+        guard document.removeFlag(id: id) != nil else { return }
+
+        if selectedFlagID == id {
+            let fallbackIndex = min(originalIndex, document.flags.count - 1)
+            selectedFlagID = document.flags.indices.contains(fallbackIndex) ? document.flags[fallbackIndex].id : nil
+        }
+
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 伏線を並べ替える。
+    func moveFlags(fromOffsets: IndexSet, toOffset: Int) {
+        document.moveFlags(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
     }

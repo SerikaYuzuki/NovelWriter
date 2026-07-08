@@ -35,6 +35,28 @@ extension NovelpkgRepository {
         }
     }
 
+    static func readFlags(from packageURL: URL, validChapterIDs: Set<ChapterID>) throws -> [Flag] {
+        let flagsURL = packageURL.appendingPathComponent("flags.json")
+        guard FileManager.default.fileExists(atPath: flagsURL.path) else { return [] }
+
+        do {
+            let data = try Data(contentsOf: flagsURL)
+            let flags = try JSONDecoder().decode([Flag].self, from: data)
+            return flags.map { flag in
+                var corrected = flag
+                if let chapterID = corrected.plantedChapterID, !validChapterIDs.contains(chapterID) {
+                    corrected.plantedChapterID = nil
+                }
+                if let chapterID = corrected.resolvedChapterID, !validChapterIDs.contains(chapterID) {
+                    corrected.resolvedChapterID = nil
+                }
+                return corrected
+            }
+        } catch {
+            throw NovelpkgError.manifestCorrupted(url: packageURL, reason: String(describing: error))
+        }
+    }
+
     static func writeCharacters(_ characters: [NovelCore.Character], into workingURL: URL) throws {
         let charactersURL = workingURL.appendingPathComponent("characters.json")
         try encodePrettyJSON(characters).write(to: charactersURL)
@@ -43,6 +65,11 @@ extension NovelpkgRepository {
     static func writePlotCards(_ cards: [PlotCard], into workingURL: URL) throws {
         let plotURL = workingURL.appendingPathComponent("plot.json")
         try encodePrettyJSON(cards).write(to: plotURL)
+    }
+
+    static func writeFlags(_ flags: [Flag], into workingURL: URL) throws {
+        let flagsURL = workingURL.appendingPathComponent("flags.json")
+        try encodePrettyJSON(flags).write(to: flagsURL)
     }
 
     private static func encodePrettyJSON(_ value: some Encodable) throws -> Data {

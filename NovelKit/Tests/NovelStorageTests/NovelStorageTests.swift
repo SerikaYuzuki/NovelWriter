@@ -48,6 +48,9 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
         ],
         plotCards: [
             PlotCard(title: "開幕", memo: "導入", chapterID: nil)
+        ],
+        flags: [
+            Flag(title: "鍵", note: "後で回収", plantedChapterID: nil)
         ]
     )
 
@@ -64,6 +67,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.chapters.map(\.memo) == doc.chapters.map(\.memo))
     #expect(loaded.characters == doc.characters)
     #expect(loaded.plotCards == doc.plotCards)
+    #expect(loaded.flags == doc.flags)
 }
 
 @Test func emptyChapterMemoDoesNotCreateNoteFile() async throws {
@@ -261,6 +265,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.chapters[0].memo == "")
     #expect(loaded.characters.isEmpty)
     #expect(loaded.plotCards.isEmpty)
+    #expect(loaded.flags.isEmpty)
     loaded.chapters[0].memo = "移行後メモ"
     try await repository.save(loaded, to: packageURL)
 

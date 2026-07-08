@@ -104,13 +104,15 @@ private extension NovelpkgRepository {
 
         let characters = try readCharacters(from: url)
         let plotCards = try readPlotCards(from: url, validChapterIDs: Set(chapters.map(\.id)))
+        let flags = try readFlags(from: url, validChapterIDs: Set(chapters.map(\.id)))
 
         return NovelDocument(
             id: manifest.documentID,
             title: manifest.title,
             chapters: chapters,
             characters: characters,
-            plotCards: plotCards
+            plotCards: plotCards,
+            flags: flags
         )
     }
 
@@ -252,6 +254,7 @@ private extension NovelpkgRepository {
         try writeChapterNotes(doc.chapters, into: workingURL, fileManager: fileManager)
         try writeCharacters(doc.characters, into: workingURL)
         try writePlotCards(doc.plotCards, into: workingURL)
+        try writeFlags(doc.flags, into: workingURL)
         try writeManifest(for: doc, into: workingURL, existingPackageURL: url, fileManager: fileManager)
     }
 
