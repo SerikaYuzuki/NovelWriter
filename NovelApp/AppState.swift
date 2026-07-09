@@ -34,6 +34,18 @@ final class AppState {
         }
     }
 
+    /// Project Sidebar と Outline の選択状態。UI2 以降の画面選択の正。
+    private(set) var workspaceSelection: WorkspaceSelection {
+        didSet {
+            userDefaults.set(workspaceSelection.section.rawValue, forKey: Self.projectSectionKey)
+        }
+    }
+
+    /// Outline の検索バーなど、表示専用の一時状態。
+    var outlinePresentation = OutlinePresentationState()
+    /// 下部 AI Assistant Panel の開閉・入力状態。
+    var aiAssistantPanel = AIAssistantPanelState()
+
     /// 現在の作品に取り込まれている資料一覧。
     private(set) var attachments: [Attachment]
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
@@ -75,6 +87,7 @@ final class AppState {
 
     private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
     private static let appModeKey = "dev.serikayuzuki.NovelWriter.appMode"
+    private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
     init(dependencies: AppDependencies) {
@@ -93,6 +106,10 @@ final class AppState {
         selectedPlotCardID = nil
         selectedFlagID = nil
         mode = AppMode(rawValue: dependencies.userDefaults.string(forKey: Self.appModeKey) ?? "") ?? .writing
+        let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
+        workspaceSelection = WorkspaceSelection(
+            section: ProjectSection(rawValue: storedSection) ?? .structure
+        )
         attachments = []
     }
 
@@ -111,6 +128,26 @@ final class AppState {
 
         if let path = userDefaults.string(forKey: Self.recentDocumentPathKey), !path.isEmpty {
             let url = URL(fileURLWithPath: path)
+            #if DEBUG
+            if Self.shouldSkipRecentDocumentInDebug(url, fileManager: fileManager) {
+                userDefaults.removeObject(forKey: Self.recentDocumentPathKey)
+            } else {
+                do {
+                    let loaded = try await repository.load(from: url)
+                    document = loaded
+                    documentURL = url
+                    selection = loaded.chapters.first?.id
+                    selectedCharacterID = loaded.characters.first?.id
+                    selectedPlotCardID = loaded.plotCards.first?.id
+                    selectedFlagID = loaded.flags.first?.id
+                    attachments = await loadAttachments(for: url)
+                    return
+                } catch {
+                    // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
+                    print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
+                }
+            }
+            #else
             do {
                 let loaded = try await repository.load(from: url)
                 document = loaded
@@ -125,6 +162,7 @@ final class AppState {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
                 print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
             }
+            #endif
         }
 
         let newDocument = NovelDocument.newDocument()
@@ -144,6 +182,12 @@ final class AppState {
     }
 
     // MARK: - 選択中章
+
+    /// Project Sidebar のセクションを選択する。UI2 では画面の主導線として使う。
+    func selectProjectSection(_ section: ProjectSection) {
+        guard workspaceSelection.section != section else { return }
+        workspaceSelection = WorkspaceSelection(section: section)
+    }
 
     /// 選択中の章(存在しなければ `nil`)。
     var selectedChapter: Chapter? {
@@ -173,6 +217,7 @@ final class AppState {
     func selectChapter(_ id: ChapterID?) {
         guard id != selection else { return }
         selection = id
+        workspaceSelection.outlineItemID = id.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
         flushSaveImmediately()
     }
 
@@ -802,7 +847,14 @@ final class AppState {
     // MARK: - 既定の保存先
 
     private static func defaultDirectory(fileManager: FileManager) -> URL {
-        fileManager.homeDirectoryForCurrentUser
+        #if DEBUG
+        if let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            return applicationSupport
+                .appendingPathComponent("NovelWriter", isDirectory: true)
+                .appendingPathComponent("Drafts", isDirectory: true)
+        }
+        #endif
+        return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("NovelWriter", isDirectory: true)
     }
@@ -811,7 +863,7 @@ final class AppState {
         defaultDirectory(fileManager: fileManager).appendingPathComponent("\(title).novelpkg", isDirectory: true)
     }
 
-    /// `~/Documents/NovelWriter/<title>.novelpkg` を既定の保存先とする。
+    /// 既定保存先の `<title>.novelpkg` を返す。
     /// 既に同名のパッケージが存在する場合は連番を振って重複を避ける。
     private static func availableSaveURL(forTitle title: String, fileManager: FileManager) -> URL {
         let directory = defaultDirectory(fileManager: fileManager)
@@ -824,4 +876,19 @@ final class AppState {
         }
         return candidate
     }
+
+    #if DEBUG
+    private static func shouldSkipRecentDocumentInDebug(_ url: URL, fileManager: FileManager) -> Bool {
+        let path = url.standardizedFileURL.path
+        if path.contains("/Library/Mobile Documents/") {
+            return true
+        }
+
+        let documentsPath = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .standardizedFileURL
+            .path
+        return path == documentsPath || path.hasPrefix(documentsPath + "/")
+    }
+    #endif
 }

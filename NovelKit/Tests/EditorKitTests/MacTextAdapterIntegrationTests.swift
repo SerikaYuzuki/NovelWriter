@@ -104,6 +104,23 @@ struct MacTextAdapterIntegrationTests {
         #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
     }
 
+    @Test("字下げ直後の行末で「」を入力すると、全角スペースが消えてキャレットが括弧内に来る")
+    func bracketPairReplacesIndentSpaceAndKeepsCaretInside() {
+        let harness = makeHarness(initialText: "\u{3000}")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        let handled = harness.coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange(),
+            replacementString: "「」"
+        )
+
+        #expect(!handled)
+        #expect(textView.string == "「」")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+    }
+
     @Test("プラグインによる置換後、Undoで置換前の本文に戻る")
     func undoRevertsPluginReplacement() {
         let harness = makeHarness(initialText: "こんにちは")
@@ -154,6 +171,22 @@ struct MacTextAdapterIntegrationTests {
 
         harness.coordinator.applyConfigurationIfNeeded(configuration, to: harness.textView)
         #expect(harness.coordinator.textStorageAttributeApplicationCount == 1)
+    }
+
+    @Test("設定した本文色がtextColorと既存本文属性に適用される")
+    func textColorConfigurationAppliesToTextViewAndStorage() {
+        let harness = makeHarness(initialText: "本文")
+        let configuration = EditorConfiguration(textColorHex: "#E8E6DF", backgroundColorHex: "#171719")
+
+        harness.coordinator.applyConfigurationIfNeeded(configuration, to: harness.textView)
+
+        let appliedTextColor = harness.textView.textColor?.usingColorSpace(.sRGB)
+        let storageTextColor = (harness.textView.textStorage?
+            .attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?
+                    .usingColorSpace(.sRGB)
+        #expect(appliedTextColor?.redComponent == storageTextColor?.redComponent)
+        #expect(appliedTextColor?.greenComponent == storageTextColor?.greenComponent)
+        #expect(appliedTextColor?.blueComponent == storageTextColor?.blueComponent)
     }
 
     @Test("IME変換中の設定変更は保留し、変換終了後の再updateで適用する")

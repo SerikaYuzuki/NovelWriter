@@ -12,7 +12,7 @@ import Foundation
 /// 常に `.allow` を返すので、呼び出し側でそのまま素通しできる。
 ///
 /// - 改行1文字の挿入(`replacement == "\n"`)
-/// - 鉤括弧1文字の挿入(`replacement == "「"` または `"『"`)
+/// - 鉤括弧1文字または括弧ペアの挿入(`replacement == "「"` / `"『"` / `"「」"` / `"『』"`)
 public enum IndentRules {
     /// 字下げに用いる全角スペース(U+3000)。
     public static let fullWidthSpace: Character = "\u{3000}"
@@ -30,7 +30,7 @@ public enum IndentRules {
         case replace(range: NSRange, text: String, caretOffset: Int)
     }
 
-    /// 改行1文字挿入・鉤括弧1文字挿入それぞれに対する自動インデントを判定する。
+    /// 改行1文字挿入・鉤括弧挿入それぞれに対する自動インデントを判定する。
     ///
     /// - Parameters:
     ///   - replacement: 挿入しようとしている文字列。1文字の改行・鉤括弧以外は
@@ -42,8 +42,8 @@ public enum IndentRules {
         switch replacement {
         case "\n":
             newlineAction(in: text, range: range)
-        case "「", "『":
-            bracketAction(bracket: replacement, in: text, range: range)
+        case "「", "『", "「」", "『』":
+            bracketAction(replacement: replacement, in: text, range: range)
         default:
             .allow
         }
@@ -71,7 +71,7 @@ public enum IndentRules {
     // MARK: - R3: 鉤括弧
 
     /// R3(行が全角スペース1つだけで、キャレットが行末にあるときの鉤括弧入力)を判定する。
-    private static func bracketAction(bracket: String, in text: String, range: NSRange) -> Action {
+    private static func bracketAction(replacement: String, in text: String, range: NSRange) -> Action {
         // 対象は素朴なキャレット入力のみ(選択範囲の置き換えは対象外)。
         guard range.length == 0 else { return .allow }
         guard let line = lineBounds(at: range.location, in: text) else { return .allow }
@@ -81,7 +81,13 @@ public enum IndentRules {
         let lineEnd = line.nsRange.location + line.nsRange.length
         guard range.location == lineEnd else { return .allow }
 
-        return .replace(range: line.nsRange, text: bracket, caretOffset: bracket.utf16.count)
+        let caretOffset = switch replacement {
+        case "「」", "『』":
+            1
+        default:
+            replacement.utf16.count
+        }
+        return .replace(range: line.nsRange, text: replacement, caretOffset: caretOffset)
     }
 
     // MARK: - 補助ロジック

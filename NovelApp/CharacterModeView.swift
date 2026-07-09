@@ -73,7 +73,7 @@ struct CharacterModeView: View {
                 CharacterSheetView(onAppearanceJump: onAppearanceJump)
             }
         }
-        .navigationSplitViewColumnWidth(min: 220, ideal: 240)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 280)
         .confirmationDialog(
             "キャラクターを削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
@@ -169,7 +169,21 @@ private struct CharacterSheetView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 16) {
+                colorControls
+                nameFields
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                colorControls
+                nameFields
+            }
+        }
+    }
+
+    private var colorControls: some View {
+        HStack(spacing: 12) {
             ColorPicker("カラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
                 .labelsHidden()
                 .frame(width: 32)
@@ -180,7 +194,11 @@ private struct CharacterSheetView: View {
                     appState.updateSelectedCharacterColor(hex)
                 }
             )
+        }
+    }
 
+    private var nameFields: some View {
+        HStack(spacing: 12) {
             TextField("名前", text: selectedCharacterNameBinding)
                 .font(.title2)
                 .textFieldStyle(.plain)

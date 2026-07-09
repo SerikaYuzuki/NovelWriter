@@ -119,6 +119,26 @@ struct IndentRulesTests {
         #expect(action == .replace(range: NSRange(location: 0, length: 1), text: "『", caretOffset: 1))
     }
 
+    @Test("R3: 鉤括弧ペア(「」)では全角スペースを消し、キャレットを括弧内に置く")
+    func r3ReplacesFullWidthSpaceWithKagiBracketPair() {
+        let text = "\u{3000}"
+        let range = NSRange(location: text.utf16.count, length: 0)
+
+        let action = IndentRules.action(for: "「」", in: text, range: range)
+
+        #expect(action == .replace(range: NSRange(location: 0, length: 1), text: "「」", caretOffset: 1))
+    }
+
+    @Test("R3: 二重鉤括弧ペア(『』)でもキャレットを括弧内に置く")
+    func r3ReplacesFullWidthSpaceWithDoubleKagiBracketPair() {
+        let text = "\u{3000}"
+        let range = NSRange(location: text.utf16.count, length: 0)
+
+        let action = IndentRules.action(for: "『』", in: text, range: range)
+
+        #expect(action == .replace(range: NSRange(location: 0, length: 1), text: "『』", caretOffset: 1))
+    }
+
     @Test("R3: 複数行中の字下げ行でも、その行だけが対象になる")
     func r3OnlyAffectsCurrentIndentedLine() {
         let text = "前の行\n\u{3000}"

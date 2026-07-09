@@ -133,17 +133,21 @@ struct CharacterRow: View {
     var body: some View {
         HStack(spacing: 8) {
             CharacterColorSwatch(colorHex: character.colorHex)
+                .layoutPriority(1)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(NovelDocument.normalizedCharacterName(character.name))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 if !character.kana.isEmpty {
                     Text(character.kana)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
     }
 }

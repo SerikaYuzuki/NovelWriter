@@ -2,10 +2,18 @@ import EditorKit
 import Foundation
 import Observation
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
+import NovelUI
 
 @MainActor
 @Observable
 final class EditorSettings {
+    var fontName: String {
+        didSet { userDefaults.set(fontName, forKey: Self.fontNameKey) }
+    }
+
     var fontSize: Double {
         didSet { userDefaults.set(fontSize, forKey: Self.fontSizeKey) }
     }
@@ -18,14 +26,27 @@ final class EditorSettings {
         didSet { userDefaults.set(widthMode.rawValue, forKey: Self.widthModeKey) }
     }
 
+    var textColorHex: String {
+        didSet { userDefaults.set(textColorHex, forKey: Self.textColorKey) }
+    }
+
+    var backgroundColorHex: String {
+        didSet { userDefaults.set(backgroundColorHex, forKey: Self.backgroundColorKey) }
+    }
+
     private let userDefaults: UserDefaults
 
+    private static let fontNameKey = "dev.serikayuzuki.NovelWriter.editor.fontName"
     private static let fontSizeKey = "dev.serikayuzuki.NovelWriter.editor.fontSize"
     private static let lineHeightKey = "dev.serikayuzuki.NovelWriter.editor.lineHeight"
     private static let widthModeKey = "dev.serikayuzuki.NovelWriter.editor.widthMode"
+    private static let textColorKey = "dev.serikayuzuki.NovelWriter.editor.textColor"
+    private static let backgroundColorKey = "dev.serikayuzuki.NovelWriter.editor.backgroundColor"
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
+
+        fontName = userDefaults.string(forKey: Self.fontNameKey) ?? EditorFontFamily.hiraginoMincho.fontName
 
         let storedFontSize = userDefaults.double(forKey: Self.fontSizeKey)
         fontSize = storedFontSize == 0 ? 16 : storedFontSize
@@ -35,13 +56,60 @@ final class EditorSettings {
 
         let storedWidthMode = userDefaults.string(forKey: Self.widthModeKey) ?? ""
         widthMode = EditorWidthMode(rawValue: storedWidthMode) ?? .width900
+
+        textColorHex = userDefaults.string(forKey: Self.textColorKey) ?? EditorConfiguration.defaultTextColorHex
+        backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey) ?? EditorConfiguration.defaultBackgroundColorHex
     }
 
     var configuration: EditorConfiguration {
         EditorConfiguration(
+            fontName: fontName,
             fontSize: fontSize,
-            lineHeightMultiple: lineHeightMultiple
+            lineHeightMultiple: lineHeightMultiple,
+            textColorHex: textColorHex,
+            backgroundColorHex: backgroundColorHex
         )
+    }
+}
+
+enum EditorFontFamily: String, CaseIterable, Identifiable {
+    case hiraginoMincho
+    case hiraginoSans
+    case yuMincho
+    case system
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .hiraginoMincho:
+            "ヒラギノ明朝"
+        case .hiraginoSans:
+            "ヒラギノ角ゴ"
+        case .yuMincho:
+            "游明朝"
+        case .system:
+            "システム"
+        }
+    }
+
+    var fontName: String {
+        switch self {
+        case .hiraginoMincho:
+            "Hiragino Mincho ProN"
+        case .hiraginoSans:
+            "Hiragino Sans"
+        case .yuMincho:
+            "YuMincho"
+        case .system:
+            ".AppleSystemUIFont"
+        }
+    }
+
+    static func selection(for fontName: String) -> EditorFontFamily {
+        allCases.first { $0.fontName == fontName } ?? .hiraginoMincho
     }
 }
 
@@ -84,6 +152,14 @@ struct EditorSettingsView: View {
         @Bindable var settings = settings
 
         Form {
+            Picker("フォント", selection: fontFamilyBinding) {
+                ForEach(EditorFontFamily.allCases) { family in
+                    Text(family.title)
+                        .tag(family)
+                }
+            }
+            .pickerStyle(.menu)
+
             Slider(value: $settings.fontSize, in: 12 ... 24, step: 1) {
                 Text("フォントサイズ")
             } minimumValueLabel: {
@@ -118,9 +194,41 @@ struct EditorSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            #if canImport(AppKit)
+            ColorPicker("本文色", selection: textColorBinding, supportsOpacity: false)
+            ColorPicker("背景色", selection: backgroundColorBinding, supportsOpacity: false)
+            #endif
         }
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 420)
     }
+
+    private var fontFamilyBinding: Binding<EditorFontFamily> {
+        Binding(
+            get: { EditorFontFamily.selection(for: settings.fontName) },
+            set: { settings.fontName = $0.fontName }
+        )
+    }
+
+    #if canImport(AppKit)
+    private var textColorBinding: Binding<Color> {
+        Binding(
+            get: { Color(hex: settings.textColorHex) ?? Color(nsColor: .labelColor) },
+            set: { color in
+                settings.textColorHex = NSColor(color).hexString ?? EditorConfiguration.defaultTextColorHex
+            }
+        )
+    }
+
+    private var backgroundColorBinding: Binding<Color> {
+        Binding(
+            get: { Color(hex: settings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor) },
+            set: { color in
+                settings.backgroundColorHex = NSColor(color).hexString ?? EditorConfiguration.defaultBackgroundColorHex
+            }
+        )
+    }
+    #endif
 }

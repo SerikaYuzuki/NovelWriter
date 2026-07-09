@@ -3,6 +3,12 @@ import NovelCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum WritingInspectorTab: Hashable {
+    case memo
+    case chapter
+    case attachments
+}
+
 struct WritingInspectorView: View {
     @Environment(AppState.self) private var appState
 
