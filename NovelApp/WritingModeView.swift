@@ -273,7 +273,10 @@ private struct OutlineChapterRow: View {
             systemName: "textformat.size",
             help: "文字数: \(ManuscriptMetrics.countCharacters(in: chapter.content))字"
         )
-        metadataIcon(systemName: "checkmark.circle", help: "保存状態: 保存済み")
+        metadataIcon(
+            systemName: appState.saveState.systemImage,
+            help: "保存状態: \(appState.saveState.label)"
+        )
         metadataIcon(
             systemName: chapter.memo.isEmpty ? "note.text" : "note.text.badge.plus",
             help: chapter.memo.isEmpty ? "章メモ: なし" : "章メモ: あり"
@@ -476,7 +479,7 @@ private struct EditorTopBarView: View {
                 Text(appState.selectedChapter?.title ?? "章未選択")
                     .font(.headline)
                     .lineLimit(1)
-                Text("自動保存")
+                Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -489,6 +492,7 @@ private struct EditorTopBarView: View {
                 Label("検索", systemImage: "magnifyingglass")
             }
             .labelStyle(.iconOnly)
+            .help("検索")
 
             Button {
                 isMemoPresented.toggle()
@@ -496,6 +500,7 @@ private struct EditorTopBarView: View {
                 Label("章メモ", systemImage: "note.text")
             }
             .labelStyle(.iconOnly)
+            .help("章メモ")
             .popover(isPresented: $isMemoPresented) {
                 ChapterMemoPopover()
                     .frame(width: 320, height: 260)
@@ -506,7 +511,7 @@ private struct EditorTopBarView: View {
                     Task { await appState.createSnapshot() }
                 }
             } label: {
-                Label("履歴", systemImage: "clock.arrow.circlepath")
+                topBarIcon("clock.arrow.circlepath", help: "履歴")
             }
             .menuStyle(.borderlessButton)
 
@@ -514,6 +519,7 @@ private struct EditorTopBarView: View {
                 Label("プレビュー", systemImage: "doc.richtext")
             }
             .labelStyle(.iconOnly)
+            .help("プレビュー")
             .disabled(true)
 
             Menu {
@@ -522,13 +528,20 @@ private struct EditorTopBarView: View {
                     onOpenPlotCard: onOpenPlotCard
                 )
             } label: {
-                Label("この章", systemImage: "doc.text.magnifyingglass")
+                topBarIcon("doc.text.magnifyingglass", help: "この章")
             }
             .menuStyle(.borderlessButton)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    private func topBarIcon(_ systemName: String, help: String) -> some View {
+        Image(systemName: systemName)
+            .frame(width: 28, height: 24)
+            .contentShape(Rectangle())
+            .help(help)
     }
 }
 

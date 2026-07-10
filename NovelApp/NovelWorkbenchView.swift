@@ -216,26 +216,42 @@ private struct AssistantStatusBarView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        Button {
-            appState.aiAssistantPanel.isExpanded.toggle()
-        } label: {
-            HStack(spacing: 16) {
-                Label("自動保存", systemImage: "checkmark.circle")
-                Text(chapterCountText)
-                Text(totalCountText)
-                Text("行 -- / 列 --")
-                Spacer()
-                Label("AI 未接続", systemImage: "sparkles")
-                Text("通常")
+        HStack(spacing: 8) {
+            Button {
+                appState.aiAssistantPanel.isExpanded.toggle()
+            } label: {
+                statusContent
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if appState.saveState == .failed {
+                Button("再試行") {
+                    appState.retrySave()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.trailing, 8)
+            }
         }
-        .buttonStyle(.plain)
+        .background(.bar)
+    }
+
+    private var statusContent: some View {
+        HStack(spacing: 16) {
+            Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
+            Text(chapterCountText)
+            Text(totalCountText)
+            Text("行 -- / 列 --")
+            Spacer()
+            Label("AI 未接続", systemImage: "sparkles")
+            Text("通常")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .contentShape(Rectangle())
     }
 
     private var chapterCountText: String {
@@ -310,6 +326,7 @@ private struct ProjectInfoView: View {
             Form {
                 LabeledContent("作品タイトル", value: appState.document.title)
                 LabeledContent("保存場所", value: appState.documentURL.path)
+                LabeledContent("保存状態", value: appState.saveState.label)
                 LabeledContent("章数", value: "\(appState.document.chapters.count)")
                 LabeledContent("文字数", value: "\(appState.document.manuscriptCharacterCount)")
                 LabeledContent("保存形式", value: ".novelpkg v2")

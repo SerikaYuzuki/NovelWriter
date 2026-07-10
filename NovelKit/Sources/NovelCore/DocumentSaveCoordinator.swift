@@ -26,16 +26,31 @@ import Foundation
 /// 保存中に新たに `markDirty()` された分もそのまま同じ呼び出しの中で保存される。
 @MainActor
 public final class DocumentSaveCoordinator {
+    /// 保存経路で発生する状態変化。呼び出し側はこれを表示用の状態へ写像できる。
+    public enum SaveEvent: Sendable, Equatable {
+        /// 保存対象が更新され、未保存の revision がある。
+        case dirty
+        /// 実際の保存処理を開始した。
+        case saving
+        /// 保存対象だった全 revision の保存に成功した。
+        case saved
+        /// 保存処理が失敗した。次の `saveNow()` は同じ未保存 revision を再試行する。
+        case failed
+    }
+
     /// 現在保存すべき本文モデルと保存先URLを取得する。
     /// 取得できない(例: 呼び出し元が既に解放されている)場合は `nil`。
     public typealias CurrentStateProvider = () -> (document: NovelDocument, url: URL)?
 
     /// 実際の保存処理。`DocumentRepository.save(_:to:)` と同じ形。
     public typealias SaveOperation = (NovelDocument, URL) async throws -> Void
+    /// 保存状態の通知先。`DocumentSaveCoordinator` 自体は UI 状態を持たない。
+    public typealias SaveEventHandler = @MainActor @Sendable (SaveEvent) -> Void
 
     private let debounceNanoseconds: UInt64
     private let currentState: CurrentStateProvider
     private let saveOperation: SaveOperation
+    private let saveEventHandler: SaveEventHandler
 
     private var saveRevision = 0
     private var savedRevision = 0
@@ -54,19 +69,23 @@ public final class DocumentSaveCoordinator {
     ///   - debounceNanoseconds: `scheduleDebouncedSave()` が実際に保存を実行するまでの遅延。
     ///   - currentState: 保存すべき最新の本文モデルと保存先URLを返すクロージャ。
     ///   - saveOperation: 実際の保存処理(例: `repository.save`)。
+    /// - saveEventHandler: 保存状態の変化を受け取るクロージャ。
     public init(
         debounceNanoseconds: UInt64,
         currentState: @escaping CurrentStateProvider,
-        saveOperation: @escaping SaveOperation
+        saveOperation: @escaping SaveOperation,
+        saveEventHandler: @escaping SaveEventHandler = { _ in }
     ) {
         self.debounceNanoseconds = debounceNanoseconds
         self.currentState = currentState
         self.saveOperation = saveOperation
+        self.saveEventHandler = saveEventHandler
     }
 
     /// 保存対象を dirty としてマークする。次の `saveNow()` / デバウンス保存の対象になる。
     public func markDirty() {
         saveRevision += 1
+        saveEventHandler(.dirty)
     }
 
     /// `debounceNanoseconds` 後に `saveNow()` を実行するようスケジュールする。
@@ -113,6 +132,7 @@ public final class DocumentSaveCoordinator {
         }
 
         isSaving = true
+        saveEventHandler(.saving)
         var succeeded = true
 
         while savedRevision < saveRevision {
@@ -135,6 +155,7 @@ public final class DocumentSaveCoordinator {
         // ここから return までの間に `await` は無い。他の呼び出しがこの間に
         // 割り込んで `isSaving` や `waiters` を観測することはできない。
         isSaving = false
+        saveEventHandler(succeeded ? .saved : .failed)
         let pendingWaiters = waiters
         waiters.removeAll()
         for waiter in pendingWaiters {

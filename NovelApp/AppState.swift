@@ -4,6 +4,39 @@ import Foundation
 import NovelCore
 import Observation
 
+enum DocumentSaveState: Equatable {
+    case unsaved
+    case saving
+    case saved
+    case failed
+
+    var label: String {
+        switch self {
+        case .unsaved:
+            "未保存"
+        case .saving:
+            "保存中"
+        case .saved:
+            "保存済み"
+        case .failed:
+            "保存に失敗しました"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .unsaved:
+            "circle.fill"
+        case .saving:
+            "arrow.triangle.2.circlepath"
+        case .saved:
+            "checkmark.circle"
+        case .failed:
+            "exclamationmark.triangle"
+        }
+    }
+}
+
 /// アプリ全体の状態を管理する(docs/DESIGN.md 5.2)。
 ///
 /// 責務:
@@ -27,12 +60,8 @@ final class AppState {
     private(set) var selectedPlotCardID: PlotCardID?
     /// 選択中の伏線ID。
     private(set) var selectedFlagID: FlagID?
-    /// 現在の作業モード。
-    var mode: AppMode {
-        didSet {
-            userDefaults.set(mode.rawValue, forKey: Self.appModeKey)
-        }
-    }
+    /// 原稿パッケージの保存状態。表示はこの値だけを正とする。
+    private(set) var saveState: DocumentSaveState
 
     /// Project Sidebar と Outline の選択状態。UI2 以降の画面選択の正。
     private(set) var workspaceSelection: WorkspaceSelection {
@@ -77,6 +106,9 @@ final class AppState {
                 print("NovelWriter: 保存に失敗しました(\(url.path)): \(error)")
                 throw error
             }
+        },
+        saveEventHandler: { [weak self] event in
+            self?.handleSaveEvent(event)
         }
     )
     /// `deinit` は MainActor 分離を持たない(nonisolated)ため、そこから触れるように
@@ -86,7 +118,6 @@ final class AppState {
     private nonisolated(unsafe) var resignActiveObserver: NSObjectProtocol?
 
     private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
-    private static let appModeKey = "dev.serikayuzuki.NovelWriter.appMode"
     private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
@@ -105,7 +136,7 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
-        mode = AppMode(rawValue: dependencies.userDefaults.string(forKey: Self.appModeKey) ?? "") ?? .writing
+        saveState = .unsaved
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         workspaceSelection = WorkspaceSelection(
             section: ProjectSection(rawValue: storedSection) ?? .structure
@@ -141,6 +172,7 @@ final class AppState {
                     selectedPlotCardID = loaded.plotCards.first?.id
                     selectedFlagID = loaded.flags.first?.id
                     attachments = await loadAttachments(for: url)
+                    saveState = .saved
                     return
                 } catch {
                     // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -157,6 +189,7 @@ final class AppState {
                 selectedPlotCardID = loaded.plotCards.first?.id
                 selectedFlagID = loaded.flags.first?.id
                 attachments = await loadAttachments(for: url)
+                saveState = .saved
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
@@ -799,11 +832,29 @@ final class AppState {
         await saveCoordinator.saveNow()
     }
 
+    /// 保存失敗後に、現在の未保存 revision を明示的に再試行する。
+    func retrySave() {
+        flushSaveImmediately()
+    }
+
     /// 保留中のデバウンス保存をキャンセルし、即座に保存キューへ流す(fire-and-forget)。
     /// `saveCoordinator.saveNow()` 自体がデバウンスのキャンセルと dirty 分の
     /// 保存until-cleanを面倒見るため、ここでは呼び出すだけでよい。
     private func flushSaveImmediately() {
         Task { await self.saveCoordinator.saveNow() }
+    }
+
+    private func handleSaveEvent(_ event: DocumentSaveCoordinator.SaveEvent) {
+        switch event {
+        case .dirty:
+            saveState = .unsaved
+        case .saving:
+            saveState = .saving
+        case .saved:
+            saveState = .saved
+        case .failed:
+            saveState = .failed
+        }
     }
 
     private func normalizedChapterTitle(_ title: String) -> String {
