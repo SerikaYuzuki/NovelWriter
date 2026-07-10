@@ -99,7 +99,12 @@ struct NovelWriterApp: App {
                     appState.addChapter()
                 }
 
-                Button("章メモ") {
+                Button("選択中の章に話を追加") {
+                    appState.addEpisode()
+                }
+                .disabled(appState.selectedChapter == nil)
+
+                Button("話メモ") {
                     NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                 }
                 .disabled(appState.selectedEpisode == nil)

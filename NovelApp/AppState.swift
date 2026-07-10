@@ -400,9 +400,14 @@ final class AppState {
     }
 
     /// 指定章に話を追加し、追加した話を選択する。
-    func addEpisode(to chapterID: ChapterID? = nil, title: String = Episode.defaultTitle) {
+    ///
+    /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
+    func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
         let targetChapterID = chapterID ?? selectedChapterID
-        guard let targetChapterID, let episodeID = document.addEpisode(to: targetChapterID, title: title) else { return }
+        guard let targetChapterID,
+              let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
+        let resolvedTitle = title ?? "第\(chapter.episodes.count + 1)話"
+        guard let episodeID = document.addEpisode(to: targetChapterID, title: resolvedTitle) else { return }
         setSelection(chapterID: targetChapterID, episodeID: episodeID)
         saveCoordinator.markDirty()
         flushSaveImmediately()

@@ -28,7 +28,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 Button {
                     appState.addEpisode()
                 } label: {
-                    Label("話を追加", systemImage: "text.badge.plus")
+                    Label("選択中の章に話を追加", systemImage: "text.badge.plus")
                 }
                 .disabled(appState.selectedChapter == nil)
             } label: {

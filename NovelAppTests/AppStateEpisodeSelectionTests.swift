@@ -13,6 +13,17 @@ struct AppStateEpisodeSelectionTests {
         #expect(state.selectedEpisodeID == state.document.chapters.first?.episodes.first?.id)
     }
 
+    @Test("タイトル省略の話追加は第N話になる")
+    func addEpisodeWithoutTitleUsesNumberedDefault() throws {
+        let state = makeState()
+        let chapterID = try #require(state.selectedChapterID)
+        #expect(state.document.chapters[0].episodes.count == 1)
+
+        state.addEpisode(to: chapterID)
+        #expect(state.selectedEpisode?.title == "第2話")
+        #expect(state.document.chapters[0].episodes.map(\.title) == ["本文", "第2話"])
+    }
+
     @Test("話の追加・選択・本文メモ更新は話単位で行う")
     func episodeOperationsUpdateSelectedEpisode() throws {
         let state = makeState()

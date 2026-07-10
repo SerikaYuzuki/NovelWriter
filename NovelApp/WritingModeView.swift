@@ -129,8 +129,9 @@ struct OutlineView: View {
                                 appState.selectChapter(chapter.id)
                                 NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                             } label: {
-                                Label("章メモ", systemImage: "note.text")
+                                Label("話メモ", systemImage: "note.text")
                             }
+                            .disabled(chapter.episodes.isEmpty)
 
                             Menu {
                                 ChapterContextMenuContent(
@@ -446,7 +447,7 @@ private struct OutlineEpisodeRow: View {
             .foregroundStyle(.secondary)
         }
         .padding(.leading, 16)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
     }
 
     private func metadataIcon(systemName: String, help: String) -> some View {
