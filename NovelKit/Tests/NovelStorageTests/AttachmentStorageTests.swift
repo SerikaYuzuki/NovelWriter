@@ -87,7 +87,7 @@ import Testing
     try "{}".write(to: unknownURL, atomically: true, encoding: .utf8)
 
     var copied = original
-    copied.chapters[0].content = "別名保存版"
+    copied.chapters[0].episodes[0].content = "別名保存版"
     try await repository.saveCopy(copied, from: sourceURL, to: destinationURL)
 
     #expect(try await repository.load(from: destinationURL) == copied)

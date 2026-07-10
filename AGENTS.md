@@ -2,13 +2,13 @@
 
 macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(TextKit 2)エディタ + `.novelpkg` フォルダパッケージ保存。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある(**現在進行中の作業指示書は [docs/UIFIX.md](docs/UIFIX.md)**。Phase 5 は UI Fix 完了まで待機。Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある(**現在進行中の作業指示書は [docs/PHASE5.md](docs/PHASE5.md)**。UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
 ## 現在地(2026-07-11 時点)
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)完了
-- 動くもの: 章リスト(追加・選択・タイトル編集・削除・並べ替え)、NSTextView エディタ、自動字下げ(改行で全角スペース、`「` で字下げ解除)、章メモ、文字数表示、キャラクター管理、登場章ジャンプ、プロットカード、伏線管理、資料添付、検索ジャンプ、スナップショット保存・一覧・確認付き復元、`.novelpkg` 自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み、作品の新規・開く・別名保存、3列 NavigationSplitView + 一段 native toolbar
-- 次: **Phase 5-1(Chapter / Episode出力仕様の更新)**。UI-FIX-2aで保存形式、UI-FIX-2bでAppState、UI-FIX-2cで執筆Outline、UI-FIX-3でプロット章Outlineと伏線split、UI-FIX-4でToolbar popover、UI-FIX-5でCharacter header / Outline統一が完了した。詳細は [docs/PHASE5.md](docs/PHASE5.md)。Toolbarの現行設計は [docs/TOOLBAR.md](docs/TOOLBAR.md)
+- 動くもの: 章／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で全角スペース、`「` で字下げ解除)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み、作品の新規・開く・別名保存、3列 NavigationSplitView + 一段 native toolbar
+- 次: **Phase 5-1(Export Core + プレーンテキスト / Markdown)**。Chapter / Episode出力仕様は更新済み。詳細は [docs/PHASE5.md](docs/PHASE5.md)。Toolbarの現行設計は [docs/TOOLBAR.md](docs/TOOLBAR.md)
 
 ## リポジトリ構成
 
@@ -28,10 +28,10 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 ## 破ってはいけないルール
 
 1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / EditorKit / NovelUI → NovelCore のみ。違反はコンパイルで落ちるように Package.swift が組んである
-2. **テキスト所有権**(D-005): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは章切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
+2. **テキスト所有権**(D-005 / D-028): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは話切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
 3. **TextKit 2**(D-006): `NSTextView.layoutManager` に触れない(触れると TextKit 1 に暗黙フォールバックする)。`textLayoutManager` を使う
 4. **公開APIに `NSTextView` / `UITextView` を出さない**(DESIGN 9.2)。AppKit 依存コードは `EditorKit/Platform/` 配下 + `#if canImport(AppKit)` 内のみ
-5. **章順は `NovelDocument.chapters` の配列順が唯一の正**(D-004)。order フィールドを追加しない。保存形式では manifest.json だけが章順を持ち、章ファイル名は ChapterID(UUID)ベース(D-003)
+5. **章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順が唯一の正**(D-004 / D-028)。order フィールドを追加しない。v3保存形式ではmanifestだけが両方の順序を持ち、本文・メモのファイル名はEpisodeID(UUID)ベース
 6. **`.novelpkg` の内部構造を NovelStorage の外に漏らさない**(DESIGN 9.3)
 7. **エディタ機能は EditorPlugin として追加する**(DESIGN 4.4)。EditorView / MacTextAdapter を直接太らせない。純粋な判定ロジックは `Rules/` に切り出してテストする
 8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。ダーク基調だがライト外観も壊さない(セマンティックカラー原則。D-021 補足参照)。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反

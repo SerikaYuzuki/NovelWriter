@@ -110,7 +110,7 @@ private struct ChapterContextView: View {
     }
 
     private var chapterPlotCards: [PlotCard] {
-        guard let chapterID = appState.selection else { return [] }
+        guard let chapterID = appState.selectedChapterID else { return [] }
         return appState.document.plotCards.filter { $0.chapterID == chapterID }
     }
 

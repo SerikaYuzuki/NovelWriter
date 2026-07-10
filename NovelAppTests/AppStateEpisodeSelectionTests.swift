@@ -37,8 +37,8 @@ struct AppStateEpisodeSelectionTests {
 
         state.updateSelectedEpisodeContent("第2話本文")
         state.updateSelectedEpisodeMemo("第2話メモ")
-        #expect(try state.document.episode(#require(secondEpisodeID))?.episode.content == "第2話本文")
-        #expect(try state.document.episode(#require(secondEpisodeID))?.episode.memo == "第2話メモ")
+        #expect(state.document.episode(secondEpisodeID)?.episode.content == "第2話本文")
+        #expect(state.document.episode(secondEpisodeID)?.episode.memo == "第2話メモ")
 
         state.selectEpisode(firstEpisodeID, in: chapterID)
         #expect(state.selectedEpisodeID == firstEpisodeID)
@@ -53,7 +53,7 @@ struct AppStateEpisodeSelectionTests {
         let secondEpisodeID = try #require(state.selectedEpisodeID)
         let firstEpisodeID = state.document.chapters[0].episodes[0].id
 
-        #expect(try state.deleteEpisode(id: #require(secondEpisodeID), from: chapterID))
+        #expect(state.deleteEpisode(id: secondEpisodeID, from: chapterID))
         #expect(state.selectedEpisodeID == firstEpisodeID)
         #expect(state.document.chapters[0].episodes.count == 1)
     }
@@ -70,14 +70,14 @@ struct AppStateEpisodeSelectionTests {
         #expect(try state.moveEpisode(
             id: episodeID,
             from: sourceChapterID,
-            to: #require(destinationChapterID)
+            to: destinationChapterID
         ))
         #expect(state.selectedChapterID == destinationChapterID)
         #expect(state.selectedEpisodeID == episodeID)
     }
 
     @Test("開く成功時は先頭章と先頭話へ選択を初期化する")
-    func openDocumentResetsSelectionToFirstEpisode() async throws {
+    func openDocumentResetsSelectionToFirstEpisode() async {
         let repository = EpisodeLifecycleRepository()
         let defaults = makeUserDefaults()
         let sourceURL = packageURL("OpenSource")
@@ -89,7 +89,7 @@ struct AppStateEpisodeSelectionTests {
         let state = makeState(repository: repository, defaults: defaults)
 
         #expect(await state.openDocument(at: sourceURL))
-        let sourceSecondEpisode = try #require(source.chapters[1].episodes[1].id)
+        let sourceSecondEpisode = source.chapters[1].episodes[1].id
         state.selectChapter(source.chapters[1].id)
         state.selectEpisode(sourceSecondEpisode, in: source.chapters[1].id)
 
@@ -99,7 +99,7 @@ struct AppStateEpisodeSelectionTests {
     }
 
     @Test("新規作品は先頭章と先頭話へ選択を初期化する")
-    func createNewDocumentResetsSelectionToFirstEpisode() async throws {
+    func createNewDocumentResetsSelectionToFirstEpisode() async {
         let repository = EpisodeLifecycleRepository()
         let defaults = makeUserDefaults()
         let sourceURL = packageURL("NewDocumentSource")
@@ -108,7 +108,7 @@ struct AppStateEpisodeSelectionTests {
         let state = makeState(repository: repository, defaults: defaults)
 
         #expect(await state.openDocument(at: sourceURL))
-        let secondEpisode = try #require(source.chapters[1].episodes[1].id)
+        let secondEpisode = source.chapters[1].episodes[1].id
         state.selectChapter(source.chapters[1].id)
         state.selectEpisode(secondEpisode, in: source.chapters[1].id)
 
@@ -118,7 +118,7 @@ struct AppStateEpisodeSelectionTests {
     }
 
     @Test("別名保存成功後も章と話の選択を維持する")
-    func saveAsPreservesChapterAndEpisodeSelection() async throws {
+    func saveAsPreservesChapterAndEpisodeSelection() async {
         let repository = EpisodeLifecycleRepository()
         let defaults = makeUserDefaults()
         let sourceURL = packageURL("SaveAsSource")
@@ -129,7 +129,7 @@ struct AppStateEpisodeSelectionTests {
 
         #expect(await state.openDocument(at: sourceURL))
         let selectedChapterID = document.chapters[1].id
-        let selectedEpisodeID = try #require(document.chapters[1].episodes[1].id)
+        let selectedEpisodeID = document.chapters[1].episodes[1].id
         state.selectChapter(selectedChapterID)
         state.selectEpisode(selectedEpisodeID, in: selectedChapterID)
 
@@ -151,7 +151,7 @@ struct AppStateEpisodeSelectionTests {
         #expect(await state.openDocument(at: packageURL))
         let snapshotURL = try #require(await state.createSnapshot())
 
-        let secondEpisode = try #require(original.chapters[1].episodes[1].id)
+        let secondEpisode = original.chapters[1].episodes[1].id
         state.selectChapter(original.chapters[1].id)
         state.selectEpisode(secondEpisode, in: original.chapters[1].id)
         state.updateSelectedEpisodeContent("復元前の編集")

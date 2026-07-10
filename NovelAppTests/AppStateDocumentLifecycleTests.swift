@@ -24,12 +24,12 @@ struct AppStateDocumentLifecycleTests {
 
         #expect(await state.openDocument(at: sourceURL))
         state.selectChapter(source.chapters[1].id)
-        state.updateSelectedChapterContent("切り替え直前の編集")
+        state.updateSelectedEpisodeContent("切り替え直前の編集")
 
         #expect(await state.openDocument(at: targetURL))
         #expect(state.document == target)
         #expect(state.documentURL == targetURL.standardizedFileURL)
-        #expect(state.selection == target.chapters.first?.id)
+        #expect(state.selectedChapterID == target.chapters.first?.id)
         #expect(state.selectedCharacterID == target.characters.first?.id)
         #expect(state.selectedPlotCardID == target.plotCards.first?.id)
         #expect(state.selectedFlagID == target.flags.first?.id)
@@ -37,7 +37,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(recentDocumentPath(in: defaults) == targetURL.standardizedFileURL.path)
 
         let savedSource = await repository.document(at: sourceURL)
-        #expect(savedSource?.chapters[1].content == "切り替え直前の編集")
+        #expect(savedSource?.chapters[1].episodes.first?.content == "切り替え直前の編集")
     }
 
     @Test("現在作品の保存失敗時は読み込み済み候補へ切り替えない")
@@ -55,14 +55,14 @@ struct AppStateDocumentLifecycleTests {
 
         #expect(await state.openDocument(at: sourceURL))
         state.selectChapter(source.chapters[1].id)
-        state.updateSelectedChapterContent("未保存の本文")
+        state.updateSelectedEpisodeContent("未保存の本文")
         await repository.setSaveFailure(true)
 
         #expect(await state.openDocument(at: targetURL) == false)
         #expect(state.document.title == source.title)
-        #expect(state.document.chapters[1].content == "未保存の本文")
+        #expect(state.document.chapters[1].episodes.first?.content == "未保存の本文")
         #expect(state.documentURL == sourceURL.standardizedFileURL)
-        #expect(state.selection == source.chapters[1].id)
+        #expect(state.selectedChapterID == source.chapters[1].id)
         #expect(state.attachments == sourceAttachments)
         #expect(recentDocumentPath(in: defaults) == sourceURL.standardizedFileURL.path)
     }
@@ -88,12 +88,12 @@ struct AppStateDocumentLifecycleTests {
         }
 
         let beforeDocument = state.document
-        let beforeSelection = state.selection
+        let beforeSelection = state.selectedChapterID
         let beforeAttachments = state.attachments
         #expect(await state.openDocument(at: targetURL) == false)
         #expect(state.document == beforeDocument)
         #expect(state.documentURL == sourceURL.standardizedFileURL)
-        #expect(state.selection == beforeSelection)
+        #expect(state.selectedChapterID == beforeSelection)
         #expect(state.attachments == beforeAttachments)
         #expect(recentDocumentPath(in: defaults) == sourceURL.standardizedFileURL.path)
     }
@@ -108,14 +108,14 @@ struct AppStateDocumentLifecycleTests {
         let state = makeState(repository: repository, defaults: defaults)
 
         #expect(await state.openDocument(at: sourceURL))
-        state.updateSelectedChapterContent("保存してから新規作成")
+        state.updateSelectedEpisodeContent("保存してから新規作成")
         #expect(await state.createNewDocument())
         #expect(state.document.title == "新規作品")
         #expect(state.documentURL != sourceURL.standardizedFileURL)
-        #expect(state.selection == state.document.chapters.first?.id)
+        #expect(state.selectedChapterID == state.document.chapters.first?.id)
         #expect(state.attachments.isEmpty)
         #expect(recentDocumentPath(in: defaults) == state.documentURL.path)
-        #expect(await repository.document(at: sourceURL)?.chapters[0].content == "保存してから新規作成")
+        #expect(await repository.document(at: sourceURL)?.chapters[0].episodes.first?.content == "保存してから新規作成")
     }
 
     @Test("新規作品の保存失敗時は現在作品と資料を維持する")
@@ -135,7 +135,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(await state.createNewDocument() == false)
         #expect(state.document == source)
         #expect(state.documentURL == sourceURL.standardizedFileURL)
-        #expect(state.selection == source.chapters[1].id)
+        #expect(state.selectedChapterID == source.chapters[1].id)
         #expect(state.attachments == sourceAttachments)
         #expect(recentDocumentPath(in: defaults) == sourceURL.standardizedFileURL.path)
     }
@@ -161,7 +161,7 @@ struct AppStateDocumentLifecycleTests {
         await repository.setCopyFailure(false)
         #expect(await state.saveDocument(as: destinationURL))
         #expect(state.documentURL == destinationURL.standardizedFileURL)
-        #expect(state.selection == document.chapters[1].id)
+        #expect(state.selectedChapterID == document.chapters[1].id)
         #expect(state.attachments == attachments)
         #expect(recentDocumentPath(in: defaults) == destinationURL.standardizedFileURL.path)
         #expect(await repository.document(at: destinationURL) == state.document)
@@ -182,26 +182,26 @@ struct AppStateDocumentLifecycleTests {
         let snapshotURL = try #require(await state.createSnapshot())
 
         state.selectChapter(original.chapters[1].id)
-        state.updateSelectedChapterContent("復元前の編集")
+        state.updateSelectedEpisodeContent("復元前の編集")
         let newerAttachments = [NovelCore.Attachment(fileName: "新資料.txt", byteCount: 16)]
         await repository.setAttachments(newerAttachments, at: packageURL)
         #expect(await state.saveBeforeTermination())
 
         #expect(await state.restoreSnapshot(at: snapshotURL))
         #expect(state.documentURL == packageURL.standardizedFileURL)
-        #expect(state.document.chapters[0].content == original.chapters[0].content)
-        #expect(state.document.chapters[1].content == original.chapters[1].content)
-        #expect(state.selection == original.chapters.first?.id)
+        #expect(state.document.chapters[0].episodes == original.chapters[0].episodes)
+        #expect(state.document.chapters[1].episodes == original.chapters[1].episodes)
+        #expect(state.selectedChapterID == original.chapters.first?.id)
         #expect(state.attachments == originalAttachments)
         #expect(recentDocumentPath(in: defaults) == packageURL.standardizedFileURL.path)
 
         let snapshots = await state.listSnapshots()
         #expect(snapshots.count == 2)
-        #expect(await repository.document(at: packageURL)?.chapters[1].content == original.chapters[1].content)
+        #expect(await repository.document(at: packageURL)?.chapters[1].episodes == original.chapters[1].episodes)
         #expect(await repository.attachments(at: packageURL) == originalAttachments)
 
         let backup = try #require(snapshots.first { $0.url != snapshotURL })
-        #expect(await repository.document(at: backup.url)?.chapters[1].content == "復元前の編集")
+        #expect(await repository.document(at: backup.url)?.chapters[1].episodes.first?.content == "復元前の編集")
     }
 
     @Test("スナップショット復元は退避または書き戻し失敗時に現在状態を維持する", arguments: [false, true])
@@ -218,7 +218,7 @@ struct AppStateDocumentLifecycleTests {
         let snapshotURL = try #require(await state.createSnapshot())
 
         state.selectChapter(original.chapters[1].id)
-        state.updateSelectedChapterContent("失敗しても残る本文")
+        state.updateSelectedEpisodeContent("失敗しても残る本文")
         #expect(await state.saveBeforeTermination())
 
         if restoreFails {
@@ -228,11 +228,11 @@ struct AppStateDocumentLifecycleTests {
         }
 
         #expect(await state.restoreSnapshot(at: snapshotURL) == false)
-        #expect(state.document.chapters[1].content == "失敗しても残る本文")
+        #expect(state.document.chapters[1].episodes.first?.content == "失敗しても残る本文")
         #expect(state.documentURL == packageURL.standardizedFileURL)
-        #expect(state.selection == original.chapters[1].id)
+        #expect(state.selectedChapterID == original.chapters[1].id)
         #expect(state.attachments == attachments)
-        #expect(await repository.document(at: packageURL)?.chapters[1].content == "失敗しても残る本文")
+        #expect(await repository.document(at: packageURL)?.chapters[1].episodes.first?.content == "失敗しても残る本文")
     }
 
     private func makeState(repository: LifecycleRepository, defaults: UserDefaults) -> AppState {
@@ -263,7 +263,9 @@ struct AppStateDocumentLifecycleTests {
     }
 
     private func makeDocument(title: String, chapterTitles: [String]) -> NovelDocument {
-        let chapters = chapterTitles.map { Chapter(title: $0, content: "\($0)本文") }
+        let chapters = chapterTitles.map {
+            Chapter(title: $0, episodes: [Episode(content: "\($0)本文")])
+        }
         return NovelDocument(
             title: title,
             chapters: chapters,

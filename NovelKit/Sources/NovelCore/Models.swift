@@ -232,29 +232,6 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         chapters.insert(contentsOf: itemsToMove, at: adjustedDestination)
     }
 
-    /// 指定した章の本文を更新する。
-    ///
-    /// 該当する ``ChapterID`` の章が存在しない場合は何もしない(呼び出し側が
-    /// 章切り替えの過渡状態などで古い ID を渡してもクラッシュしない)。
-    /// - Parameters:
-    ///   - content: 新しい本文。
-    ///   - id: 更新対象の章の ``ChapterID``。
-    public mutating func updateContent(_ content: String, for id: ChapterID) {
-        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
-        chapters[index].content = content
-    }
-
-    /// 指定した章のメモを更新する。
-    ///
-    /// 該当する ``ChapterID`` の章が存在しない場合は何もしない。
-    /// - Parameters:
-    ///   - memo: 新しい章メモ。
-    ///   - id: 更新対象の章の ``ChapterID``。
-    public mutating func updateMemo(_ memo: String, for id: ChapterID) {
-        guard let index = chapters.firstIndex(where: { $0.id == id }) else { return }
-        chapters[index].memo = memo
-    }
-
     /// 作品全体の本文文字数。
     ///
     /// 定義は ``ManuscriptMetrics/countCharacters(in:)`` と同じく、

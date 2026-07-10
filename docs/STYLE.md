@@ -60,7 +60,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - 既定: **ヒラギノ明朝 ProN 16pt、行間 1.5、本文色 `#E8E6DF`、背景色 `#171719`**(小説執筆の既定として明朝。設定でフォント種類/サイズ/行間/本文色/背景色を変更可能にする)
 - `textContainerInset`: 左右 16pt / 上下 16pt
 - 本文の最大幅: 未設定時は制限なし(中央寄せなし)。制限なし / 700pt / 900pt は設定で切り替えられる
-- 章メモなど補助テキスト入力はシステムフォントのまま(明朝は本文だけの特別扱い)
+- 話メモなど補助テキスト入力はシステムフォントのまま(明朝は本文だけの特別扱い)
 
 ## 4. スペーシングとレイアウト
 
@@ -77,7 +77,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - **ボタン**: 主アクション(ダイアログの実行など)= `.borderedProminent`、通常 = `.bordered`、ツールバー・行内 = `.borderless` + アイコン。破壊的操作は `role: .destructive` を必ず付ける
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
 - **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない
-- **Workbench toolbar**: [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の章内検索とする。保存状態と章タイトルを重複表示しない。編集操作は個別の native toolbar item とし、独自背景・影・大きなラベルを付けない
+- **Workbench toolbar**: [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の話内検索とする。保存状態と章タイトルを重複表示しない。編集操作は個別の native toolbar item とし、独自背景・影・大きなラベルを付けない
 - **AI Assistant Panel**: collapsed はステータスバー、expanded はチャット入力・提案一覧・選択テキスト操作の3領域。入力欄は下端に固定し、本文領域を覆わない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」

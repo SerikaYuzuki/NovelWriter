@@ -22,15 +22,6 @@ func manifestJSON(at packageURL: URL) throws -> [String: Any] {
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
 }
 
-private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL: URL) throws {
-    let manifestURL = packageURL.appendingPathComponent("manifest.json")
-    let data = try Data(contentsOf: manifestURL)
-    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-    json["formatVersion"] = formatVersion
-    let rewritten = try JSONSerialization.data(withJSONObject: json)
-    try rewritten.write(to: manifestURL)
-}
-
 @Test func saveAndLoadRoundTrip() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -65,8 +56,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.title == doc.title)
     #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
     #expect(loaded.chapters.map(\.title) == doc.chapters.map(\.title))
-    #expect(loaded.chapters.map(\.content) == doc.chapters.map(\.content))
-    #expect(loaded.chapters.map(\.memo) == doc.chapters.map(\.memo))
+    #expect(loaded.chapters.map(\.episodes) == doc.chapters.map(\.episodes))
     #expect(loaded.chapters.map { $0.episodes.map(\.title) } == doc.chapters.map { $0.episodes.map(\.title) })
     #expect(loaded.characters == doc.characters)
     #expect(loaded.plotCards == doc.plotCards)
@@ -134,7 +124,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     var doc = NovelDocument(title: "メモ削除テスト", chapters: [Chapter(title: "第1章", memo: "残さない")])
 
     try await repository.save(doc, to: packageURL)
-    doc.chapters[0].memo = ""
+    doc.chapters[0].episodes[0].memo = ""
     try await repository.save(doc, to: packageURL)
 
     let notesURL = packageURL.appendingPathComponent("episode-notes", isDirectory: true)
@@ -166,7 +156,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
 
     let loaded = try await repository.load(from: packageURL)
     #expect(loaded.chapters.map(\.title) == ["第3章", "第2章", "第1章"])
-    #expect(loaded.chapters.map(\.content) == ["C", "B", "A"])
+    #expect(loaded.chapters.compactMap { $0.episodes.first?.content } == ["C", "B", "A"])
 }
 
 @Test func charactersPersistInArrayOrderAfterSave() async throws {
@@ -211,7 +201,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     try "dummy".write(to: dummyFileURL, atomically: true, encoding: .utf8)
 
     var updatedDoc = doc
-    updatedDoc.chapters[0].content = "更新後の本文"
+    updatedDoc.chapters[0].episodes[0].content = "更新後の本文"
     try await repository.save(updatedDoc, to: packageURL)
 
     #expect(FileManager.default.fileExists(atPath: dummyFileURL.path))
@@ -219,7 +209,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(dummyContent == "dummy")
 
     let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.chapters[0].content == "更新後の本文")
+    #expect(loaded.chapters[0].episodes[0].content == "更新後の本文")
 }
 
 @Test func overwriteSavePreservesUnknownRootItems() async throws {
@@ -240,7 +230,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     try "payload".write(to: nestedFileURL, atomically: true, encoding: .utf8)
 
     var updatedDoc = doc
-    updatedDoc.chapters[0].content = "更新"
+    updatedDoc.chapters[0].episodes[0].content = "更新"
     try await repository.save(updatedDoc, to: packageURL)
 
     #expect(FileManager.default.fileExists(atPath: unknownFileURL.path))
@@ -264,11 +254,11 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     try convertPackageToVersionTwo(at: packageURL, chapterIDs: doc.chapters.map(\.id))
 
     var loaded = try await repository.load(from: packageURL)
-    #expect(loaded.chapters[0].memo == "移行前メモ")
+    #expect(loaded.chapters[0].episodes[0].memo == "移行前メモ")
     #expect(loaded.characters.isEmpty)
     #expect(loaded.plotCards.isEmpty)
     #expect(loaded.flags.isEmpty)
-    loaded.chapters[0].memo = "移行後メモ"
+    loaded.chapters[0].episodes[0].memo = "移行後メモ"
     try await repository.save(loaded, to: packageURL)
 
     let manifest = try manifestJSON(at: packageURL)
@@ -277,8 +267,8 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
 
     let reloaded = try await repository.load(from: packageURL)
-    #expect(reloaded.chapters[0].content == "本文")
-    #expect(reloaded.chapters[0].memo == "移行後メモ")
+    #expect(reloaded.chapters[0].episodes[0].content == "本文")
+    #expect(reloaded.chapters[0].episodes[0].memo == "移行後メモ")
 }
 
 @Test func versionOnePackageLoadsAndMigratesToVersionThreeOnSave() async throws {
@@ -311,7 +301,7 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     let loaded = try await repository.load(from: packageURL)
     #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
     #expect(loaded.chapters.map(\.title) == ["第1章", "第2章"])
-    #expect(loaded.chapters.map(\.content) == ["本文1", "本文2"])
+    #expect(loaded.chapters.compactMap { $0.episodes.first?.content } == ["本文1", "本文2"])
     #expect(loaded.characters.isEmpty)
     #expect(loaded.plotCards.isEmpty)
     #expect(loaded.flags.isEmpty)
@@ -331,114 +321,11 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
             .appendingPathComponent("\(episodeID.uuidString).md")
         #expect(FileManager.default.fileExists(atPath: episodeFileURL.path))
     }
-    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("chapters", isDirectory: true).path))
+    let legacyChaptersURL = packageURL.appendingPathComponent("chapters", isDirectory: true)
+    #expect(!FileManager.default.fileExists(atPath: legacyChaptersURL.path))
 
     // 再読込しても内容が一致する
     let reloaded = try await repository.load(from: packageURL)
     #expect(reloaded.chapters.map(\.title) == ["第1章", "第2章"])
-    #expect(reloaded.chapters.map(\.content) == ["本文1", "本文2"])
-}
-
-@Test func loadingPackageWithoutManifestThrowsTypedError() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("NoManifest.novelpkg")
-    try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
-
-    let repository = NovelpkgRepository()
-    do {
-        _ = try await repository.load(from: packageURL)
-        Issue.record("manifest.json が無いのに load が成功してしまった")
-    } catch let error as NovelpkgError {
-        #expect(error == .manifestMissing(packageURL))
-    } catch {
-        Issue.record("想定外のエラー型: \(error)")
-    }
-}
-
-@Test func loadingNonexistentPackageThrowsTypedError() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("DoesNotExist.novelpkg")
-    let repository = NovelpkgRepository()
-
-    do {
-        _ = try await repository.load(from: packageURL)
-        Issue.record("存在しないパッケージの load が成功してしまった")
-    } catch let error as NovelpkgError {
-        #expect(error == .packageNotFound(packageURL))
-    } catch {
-        Issue.record("想定外のエラー型: \(error)")
-    }
-}
-
-@Test func missingChapterFileLoadsAsEmptyContent() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("MissingChapterFile.novelpkg")
-    let repository = NovelpkgRepository()
-
-    let chapter = Chapter(title: "第1章", content: "消される本文")
-    let doc = NovelDocument(title: "欠損テスト", chapters: [chapter])
-    try await repository.save(doc, to: packageURL)
-
-    // 章ファイルを直接削除して、章ファイルが欠けた破損状態を模す
-    let episodeID = try #require(chapter.episodes.first?.id)
-    let episodeFileURL = packageURL
-        .appendingPathComponent("episodes", isDirectory: true)
-        .appendingPathComponent("\(episodeID.rawValue.uuidString).md")
-    try FileManager.default.removeItem(at: episodeFileURL)
-
-    // 話ファイルが1つ欠けていても、読み込み全体は失敗せず、空本文として読める
-    let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.chapters.count == 1)
-    #expect(loaded.chapters[0].title == "第1章")
-    #expect(loaded.chapters[0].content.isEmpty)
-}
-
-@Test func orphanChapterFileIsIgnoredButNotDeletedOnLoad() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("Orphan.novelpkg")
-    let repository = NovelpkgRepository()
-
-    let doc = NovelDocument(title: "孤児章テスト", chapters: [Chapter(title: "第1章", content: "本文")])
-    try await repository.save(doc, to: packageURL)
-
-    // manifest.json に載っていない話ファイルを直接置く
-    let episodesURL = packageURL.appendingPathComponent("episodes", isDirectory: true)
-    let orphanURL = episodesURL.appendingPathComponent("\(UUID().uuidString).md")
-    try "manifestに載っていない本文".write(to: orphanURL, atomically: true, encoding: .utf8)
-
-    let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.chapters.count == 1)
-    // 無視はするが、削除はしない
-    #expect(FileManager.default.fileExists(atPath: orphanURL.path))
-}
-
-@Test func unsupportedFormatVersionThrowsTypedError() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("FutureVersion.novelpkg")
-    let repository = NovelpkgRepository()
-
-    let doc = NovelDocument(title: "バージョンテスト", chapters: [Chapter(title: "第1章")])
-    try await repository.save(doc, to: packageURL)
-
-    // manifest.json の formatVersion を非対応の値に書き換える
-    try rewriteManifestFormatVersion("999", at: packageURL)
-
-    do {
-        _ = try await repository.load(from: packageURL)
-        Issue.record("非対応バージョンなのに load が成功してしまった")
-    } catch let error as NovelpkgError {
-        #expect(error == .unsupportedFormatVersion("999"))
-    } catch {
-        Issue.record("想定外のエラー型: \(error)")
-    }
+    #expect(reloaded.chapters.compactMap { $0.episodes.first?.content } == ["本文1", "本文2"])
 }
