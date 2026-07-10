@@ -14,11 +14,13 @@ struct OperationMessage: Identifiable {
 struct CharacterAppearance: Identifiable {
     let chapterID: ChapterID
     let chapterTitle: String
+    let episodeID: EpisodeID
+    let episodeTitle: String
     let query: String
     let range: NSRange
 
     var id: String {
-        "\(chapterID.rawValue.uuidString)-\(query)-\(range.location)"
+        "\(episodeID.rawValue.uuidString)-\(query)-\(range.location)"
     }
 }
 
@@ -27,18 +29,22 @@ enum CharacterAppearanceDetector {
         let queries = appearanceQueries(for: character)
         guard !queries.isEmpty else { return [] }
 
-        return document.chapters.compactMap { chapter in
-            for query in queries {
-                if let range = TextSearch.find(query: query, in: chapter.content, from: 0, wraps: false) {
-                    return CharacterAppearance(
-                        chapterID: chapter.id,
-                        chapterTitle: chapter.title,
-                        query: query,
-                        range: range
-                    )
+        return document.chapters.flatMap { chapter in
+            chapter.episodes.compactMap { episode in
+                for query in queries {
+                    if let range = TextSearch.find(query: query, in: episode.content, from: 0, wraps: false) {
+                        return CharacterAppearance(
+                            chapterID: chapter.id,
+                            chapterTitle: chapter.title,
+                            episodeID: episode.id,
+                            episodeTitle: episode.title,
+                            query: query,
+                            range: range
+                        )
+                    }
                 }
+                return nil
             }
-            return nil
         }
     }
 

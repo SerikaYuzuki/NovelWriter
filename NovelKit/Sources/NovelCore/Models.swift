@@ -180,7 +180,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     /// - Returns: 生成した章の ``ChapterID``。
     @discardableResult
     public mutating func addChapter(title: String) -> ChapterID {
-        let chapter = Chapter(title: title)
+        let chapter = Chapter(title: title, episodes: [])
         chapters.append(chapter)
         return chapter.id
     }

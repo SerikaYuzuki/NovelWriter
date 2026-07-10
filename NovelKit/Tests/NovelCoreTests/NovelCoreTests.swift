@@ -165,6 +165,7 @@ import Testing
     #expect(doc.chapters.count == 2)
     #expect(doc.chapters.last?.id == newID)
     #expect(doc.chapters.last?.title == "第2章")
+    #expect(doc.chapters.last?.episodes.isEmpty == true)
     #expect(doc.chapters.last?.content.isEmpty == true)
     #expect(doc.chapters.last?.memo.isEmpty == true)
 }

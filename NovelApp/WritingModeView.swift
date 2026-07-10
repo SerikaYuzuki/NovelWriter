@@ -157,13 +157,17 @@ struct OutlineView: View {
         guard !query.isEmpty else { return appState.document.chapters }
         return appState.document.chapters.filter { chapter in
             chapter.title.localizedStandardContains(query) ||
-                chapter.content.localizedStandardContains(query)
+                chapter.episodes.contains { episode in
+                    episode.title.localizedStandardContains(query) ||
+                        episode.content.localizedStandardContains(query) ||
+                        episode.memo.localizedStandardContains(query)
+                }
         }
     }
 
     private var selectionBinding: Binding<ChapterID?> {
         Binding(
-            get: { appState.selection },
+            get: { appState.selectedChapterID },
             set: { appState.selectChapter($0) }
         )
     }
@@ -276,15 +280,15 @@ private struct OutlineChapterRow: View {
     private var outlineIconMetadata: some View {
         metadataIcon(
             systemName: "textformat.size",
-            help: "文字数: \(ManuscriptMetrics.countCharacters(in: chapter.content))字"
+            help: "文字数: \(chapter.episodes.reduce(0) { $0 + ManuscriptMetrics.countCharacters(in: $1.content) })字"
         )
         metadataIcon(
             systemName: appState.saveState.systemImage,
             help: "保存状態: \(appState.saveState.label)"
         )
         metadataIcon(
-            systemName: chapter.memo.isEmpty ? "note.text" : "note.text.badge.plus",
-            help: chapter.memo.isEmpty ? "章メモ: なし" : "章メモ: あり"
+            systemName: chapter.episodes.allSatisfy({ $0.memo.isEmpty }) ? "note.text" : "note.text.badge.plus",
+            help: chapter.episodes.allSatisfy({ $0.memo.isEmpty }) ? "話メモ: なし" : "話メモ: あり"
         )
     }
 
@@ -351,31 +355,31 @@ struct EditorPaneView: View {
 
     var body: some View {
         Group {
-            if let chapter = appState.selectedChapter {
+            if let episode = appState.selectedEpisode {
                 ZStack {
                     Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                     EditorView(
-                        chapterKey: chapter.id,
-                        initialText: chapter.content,
+                        chapterKey: episode.id,
+                        initialText: episode.content,
                         selectionRequest: editorSearchSession.selectionRequest,
                         configuration: editorSettings.configuration,
                         onTextChange: { newText in
-                            appState.updateSelectedChapterContent(newText)
+                            appState.updateSelectedEpisodeContent(newText)
                         }
                     )
                     .frame(maxWidth: editorMaximumWidth)
                 }
             } else {
                 ContentUnavailableView(
-                    "章が選択されていません",
+                    "話が選択されていません",
                     systemImage: "doc.text",
-                    description: Text("Outlineから章を選択するか、章を追加してください。")
+                    description: Text("Outlineから章を選択するか、話を追加してください。")
                 )
             }
         }
         .focusedSceneValue(\.workbenchSearchSurface, .editor)
-        .onChange(of: appState.selection) { _, newSelection in
-            editorSearchSession.handleChapterChange(newSelection)
+        .onChange(of: appState.selectedEpisodeID) { _, newSelection in
+            editorSearchSession.handleEpisodeChange(newSelection)
         }
     }
 

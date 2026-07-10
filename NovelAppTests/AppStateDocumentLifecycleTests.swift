@@ -30,6 +30,8 @@ struct AppStateDocumentLifecycleTests {
         #expect(state.document == target)
         #expect(state.documentURL == targetURL.standardizedFileURL)
         #expect(state.selection == target.chapters.first?.id)
+        #expect(state.selectedChapterID == target.chapters.first?.id)
+        #expect(state.selectedEpisodeID == target.chapters.first?.episodes.first?.id)
         #expect(state.selectedCharacterID == target.characters.first?.id)
         #expect(state.selectedPlotCardID == target.plotCards.first?.id)
         #expect(state.selectedFlagID == target.flags.first?.id)
@@ -162,6 +164,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(await state.saveDocument(as: destinationURL))
         #expect(state.documentURL == destinationURL.standardizedFileURL)
         #expect(state.selection == document.chapters[1].id)
+        #expect(state.selectedEpisodeID == document.chapters[1].episodes.first?.id)
         #expect(state.attachments == attachments)
         #expect(recentDocumentPath(in: defaults) == destinationURL.standardizedFileURL.path)
         #expect(await repository.document(at: destinationURL) == state.document)
@@ -192,6 +195,7 @@ struct AppStateDocumentLifecycleTests {
         #expect(state.document.chapters[0].content == original.chapters[0].content)
         #expect(state.document.chapters[1].content == original.chapters[1].content)
         #expect(state.selection == original.chapters.first?.id)
+        #expect(state.selectedEpisodeID == original.chapters.first?.episodes.first?.id)
         #expect(state.attachments == originalAttachments)
         #expect(recentDocumentPath(in: defaults) == packageURL.standardizedFileURL.path)
 
@@ -271,6 +275,62 @@ struct AppStateDocumentLifecycleTests {
             plotCards: [PlotCard(title: "カード", chapterID: chapters.first?.id)],
             flags: [Flag(title: "伏線", plantedChapterID: chapters.first?.id)]
         )
+    }
+
+    @Test("話の選択は章と独立し、章へ戻ると最後の話を復元する")
+    func episodeSelectionIsRememberedPerChapter() async {
+        let repository = LifecycleRepository()
+        let defaults = makeUserDefaults()
+        let first = Episode(title: "第一話", content: "A")
+        let second = Episode(title: "第二話", content: "B")
+        let firstChapter = Chapter(title: "第1章", episodes: [first, second])
+        let emptyChapter = Chapter(title: "第2章", episodes: [])
+        let document = NovelDocument(title: "話選択", chapters: [firstChapter, emptyChapter])
+        let url = packageURL("EpisodeSelection")
+        await repository.seed(document, at: url, attachments: [])
+        let state = makeState(repository: repository, defaults: defaults)
+
+        #expect(await state.openDocument(at: url))
+        #expect(state.selectedChapterID == firstChapter.id)
+        #expect(state.selectedEpisodeID == first.id)
+
+        state.selectEpisode(second.id)
+        #expect(state.selectedChapterID == firstChapter.id)
+        #expect(state.selectedEpisodeID == second.id)
+
+        state.selectChapter(emptyChapter.id)
+        #expect(state.selectedChapterID == emptyChapter.id)
+        #expect(state.selectedEpisodeID == nil)
+
+        state.selectChapter(firstChapter.id)
+        #expect(state.selectedEpisodeID == second.id)
+    }
+
+    @Test("話の追加・編集・章間移動・削除で選択を有効な話へ保つ")
+    func episodeOperationsUpdateSelection() async throws {
+        let repository = LifecycleRepository()
+        let defaults = makeUserDefaults()
+        let firstChapter = Chapter(title: "第1章", episodes: [])
+        let secondChapter = Chapter(title: "第2章", episodes: [])
+        let document = NovelDocument(title: "話操作", chapters: [firstChapter, secondChapter])
+        let url = packageURL("EpisodeOperations")
+        await repository.seed(document, at: url, attachments: [])
+        let state = makeState(repository: repository, defaults: defaults)
+
+        #expect(await state.openDocument(at: url))
+        let firstEpisodeID = try #require(state.addEpisode(to: firstChapter.id, title: "第一話"))
+        state.updateSelectedEpisodeContent("本文")
+        state.updateSelectedEpisodeMemo("メモ")
+        #expect(state.selectedEpisode?.content == "本文")
+        #expect(state.selectedEpisode?.memo == "メモ")
+
+        state.moveEpisode(id: firstEpisodeID, from: firstChapter.id, to: secondChapter.id)
+        #expect(state.selectedChapterID == secondChapter.id)
+        #expect(state.selectedEpisodeID == firstEpisodeID)
+
+        state.deleteEpisode(id: firstEpisodeID, from: secondChapter.id)
+        #expect(state.selectedChapterID == secondChapter.id)
+        #expect(state.selectedEpisodeID == nil)
     }
 }
 

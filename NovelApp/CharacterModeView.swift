@@ -374,6 +374,9 @@ private struct CharacterAppearancesView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(appearance.chapterTitle)
                                     .lineLimit(1)
+                                Text(appearance.episodeTitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                                 Text("「\(appearance.query)」")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

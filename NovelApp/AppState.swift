@@ -40,8 +40,8 @@ enum DocumentSaveState: Equatable {
 /// アプリ全体の状態を管理する(docs/DESIGN.md 5.2)。
 ///
 /// 責務:
-/// - 現在開いている作品(`document`)と選択中の章ID(`selection`)の保持
-/// - 選択中章の取得・本文更新(ロジック自体は `NovelDocument` のヘルパーに委譲し、
+/// - 現在開いている作品(`document`)と選択中の章／話IDの保持
+/// - 選択中話の取得・本文更新(ロジック自体は `NovelDocument` のヘルパーに委譲し、
 ///   `AppState` は薄く保つ)
 /// - 保存先 URL の保持と、「最近開いた作品」のファイルパスの記録(D-009。
 ///   App Sandbox 非採用のためセキュリティスコープ付きブックマークは不要 → D-011)
@@ -52,8 +52,10 @@ enum DocumentSaveState: Equatable {
 final class AppState {
     /// 現在開いている作品。
     private(set) var document: NovelDocument
-    /// 選択中の章ID。`Chapter` そのものではなく ID で管理する(docs/DESIGN.md 5.2)。
-    private(set) var selection: ChapterID?
+    /// 選択中の章ID。`Chapter` そのものではなく ID で管理する(D-028)。
+    private(set) var selectedChapterID: ChapterID?
+    /// 選択中の話ID。本文編集とEditorの切り替えキーはこのIDを正とする(D-028)。
+    private(set) var selectedEpisodeID: EpisodeID?
     /// 選択中の登場人物ID。
     private(set) var selectedCharacterID: CharacterID?
     /// 選択中のプロットカードID。
@@ -116,6 +118,9 @@ final class AppState {
     /// deinit(このインスタンスへの参照がなくなった後、一度だけ)からのみで、
     /// 競合アクセスは発生しない。
     private nonisolated(unsafe) var resignActiveObserver: NSObjectProtocol?
+    /// 章ジャンプ時に、最後に選択していた話へ戻すための一時状態。
+    @ObservationIgnored
+    private var lastSelectedEpisodeIDs: [ChapterID: EpisodeID] = [:]
 
     private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
     private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
@@ -132,7 +137,8 @@ final class AppState {
         let placeholder = NovelDocument.newDocument()
         document = placeholder
         documentURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
-        selection = placeholder.chapters.first?.id
+        selectedChapterID = placeholder.chapters.first?.id
+        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
@@ -167,7 +173,7 @@ final class AppState {
                     let loaded = try await repository.load(from: url)
                     document = loaded
                     documentURL = url
-                    selection = loaded.chapters.first?.id
+                    resetSelection(for: loaded)
                     selectedCharacterID = loaded.characters.first?.id
                     selectedPlotCardID = loaded.plotCards.first?.id
                     selectedFlagID = loaded.flags.first?.id
@@ -184,7 +190,7 @@ final class AppState {
                 let loaded = try await repository.load(from: url)
                 document = loaded
                 documentURL = url
-                selection = loaded.chapters.first?.id
+                resetSelection(for: loaded)
                 selectedCharacterID = loaded.characters.first?.id
                 selectedPlotCardID = loaded.plotCards.first?.id
                 selectedFlagID = loaded.flags.first?.id
@@ -202,7 +208,7 @@ final class AppState {
         let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
         document = newDocument
         documentURL = newURL
-        selection = newDocument.chapters.first?.id
+        resetSelection(for: newDocument)
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
@@ -324,8 +330,19 @@ final class AppState {
 
     /// 選択中の章(存在しなければ `nil`)。
     var selectedChapter: Chapter? {
-        guard let selection else { return nil }
-        return document.chapters.first { $0.id == selection }
+        guard let selectedChapterID else { return nil }
+        return document.chapters.first { $0.id == selectedChapterID }
+    }
+
+    /// 選択中の話(存在しなければ `nil`)。
+    var selectedEpisode: Episode? {
+        guard let selectedChapter, let selectedEpisodeID else { return nil }
+        return selectedChapter.episodes.first { $0.id == selectedEpisodeID }
+    }
+
+    /// 既存UIとの移行用。UI-FIX-2cで `selectedChapterID` へ置き換える。
+    var selection: ChapterID? {
+        selectedChapterID
     }
 
     /// 選択中の登場人物(存在しなければ `nil`)。
@@ -346,11 +363,58 @@ final class AppState {
         return document.flags.first { $0.id == selectedFlagID }
     }
 
-    /// 章を選択する。選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
+    /// 章を選択する。最後に選択していた話があればそこへ戻る。
     func selectChapter(_ id: ChapterID?) {
-        guard id != selection else { return }
-        selection = id
-        workspaceSelection.outlineItemID = id.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
+        guard let id else {
+            guard selectedChapterID != nil || selectedEpisodeID != nil else { return }
+            selectedChapterID = nil
+            selectedEpisodeID = nil
+            workspaceSelection.outlineItemID = nil
+            flushSaveImmediately()
+            return
+        }
+        guard let chapter = document.chapters.first(where: { $0.id == id }) else { return }
+        let chapterChanged = selectedChapterID != id
+        let nextEpisodeID = rememberedEpisodeID(for: chapter)
+        let episodeChanged = selectedEpisodeID != nextEpisodeID
+        guard chapterChanged || episodeChanged else { return }
+
+        selectedChapterID = id
+        selectedEpisodeID = nextEpisodeID
+        if let nextEpisodeID {
+            lastSelectedEpisodeIDs[id] = nextEpisodeID
+        }
+        workspaceSelection.outlineItemID = OutlineItemID(rawValue: id.rawValue.uuidString)
+        flushSaveImmediately()
+    }
+
+    /// 話を選択する。話の所属章も同時に正規化し、Editorの切り替えキーを更新する。
+    func selectEpisode(_ id: EpisodeID?, in chapterID: ChapterID? = nil) {
+        guard let id else {
+            guard selectedEpisodeID != nil else { return }
+            selectedEpisodeID = nil
+            if let selectedChapterID {
+                lastSelectedEpisodeIDs.removeValue(forKey: selectedChapterID)
+            }
+            flushSaveImmediately()
+            return
+        }
+
+        let targetChapterID = chapterID ?? selectedChapterID
+        guard let targetChapterID,
+              let chapter = document.chapters.first(where: { $0.id == targetChapterID }),
+              chapter.episodes.contains(where: { $0.id == id }) else
+        {
+            return
+        }
+
+        let chapterChanged = selectedChapterID != targetChapterID
+        let episodeChanged = selectedEpisodeID != id
+        guard chapterChanged || episodeChanged else { return }
+        selectedChapterID = targetChapterID
+        selectedEpisodeID = id
+        lastSelectedEpisodeIDs[targetChapterID] = id
+        workspaceSelection.outlineItemID = OutlineItemID(rawValue: targetChapterID.rawValue.uuidString)
         flushSaveImmediately()
     }
 
@@ -360,9 +424,28 @@ final class AppState {
     func addChapter() {
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
-        selection = newID
+        selectedChapterID = newID
+        selectedEpisodeID = nil
+        workspaceSelection.outlineItemID = OutlineItemID(rawValue: newID.rawValue.uuidString)
         saveCoordinator.markDirty()
         flushSaveImmediately()
+    }
+
+    /// 指定章の末尾に話を追加し、追加した話を選択する。
+    @discardableResult
+    func addEpisode(to chapterID: ChapterID? = nil, title: String = Episode.defaultTitle) -> EpisodeID? {
+        guard let targetChapterID = chapterID ?? selectedChapterID,
+              let episodeID = document.addEpisode(to: targetChapterID, title: title) else
+        {
+            return nil
+        }
+        selectedChapterID = targetChapterID
+        selectedEpisodeID = episodeID
+        lastSelectedEpisodeIDs[targetChapterID] = episodeID
+        workspaceSelection.outlineItemID = OutlineItemID(rawValue: targetChapterID.rawValue.uuidString)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+        return episodeID
     }
 
     /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
@@ -391,9 +474,13 @@ final class AppState {
         guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return }
         guard document.removeChapter(id: id) != nil else { return }
 
-        if selection == id {
+        lastSelectedEpisodeIDs.removeValue(forKey: id)
+        if selectedChapterID == id {
             let fallbackIndex = min(originalIndex, document.chapters.count - 1)
-            selection = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil
+            selectedChapterID = nil
+            selectedEpisodeID = nil
+            let fallbackID = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil
+            selectChapter(fallbackID)
         }
 
         saveCoordinator.markDirty()
@@ -407,25 +494,122 @@ final class AppState {
         flushSaveImmediately()
     }
 
+    /// 話を削除し、同じ章の隣接話へ選択を移す。話が0件になる章も許容する。
+    func deleteEpisode(id episodeID: EpisodeID, from chapterID: ChapterID? = nil) {
+        guard let targetChapterID = chapterID ?? selectedChapterID,
+              let originalIndex = document.chapters.first(where: { $0.id == targetChapterID })?.episodes.firstIndex(where: {
+                  $0.id == episodeID
+              }),
+              document.removeEpisode(id: episodeID, from: targetChapterID) != nil else
+        {
+            return
+        }
+
+        if selectedEpisodeID == episodeID {
+            let episodes = document.chapters.first { $0.id == targetChapterID }?.episodes ?? []
+            let fallbackIndex = min(originalIndex, episodes.count - 1)
+            let fallbackID = episodes.indices.contains(fallbackIndex) ? episodes[fallbackIndex].id : nil
+            selectedChapterID = targetChapterID
+            selectedEpisodeID = fallbackID
+            if let fallbackID {
+                lastSelectedEpisodeIDs[targetChapterID] = fallbackID
+            } else {
+                lastSelectedEpisodeIDs.removeValue(forKey: targetChapterID)
+            }
+        }
+
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 章内の話を並べ替える。
+    func moveEpisodes(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) {
+        document.moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 話を別章または同じ章の指定位置へ移動する。
+    func moveEpisode(
+        id episodeID: EpisodeID,
+        from sourceChapterID: ChapterID? = nil,
+        to destinationChapterID: ChapterID,
+        before targetEpisodeID: EpisodeID? = nil
+    ) {
+        guard let sourceChapterID = sourceChapterID ?? selectedChapterID,
+              document.moveEpisode(
+                  id: episodeID,
+                  from: sourceChapterID,
+                  to: destinationChapterID,
+                  before: targetEpisodeID
+              ) else
+        {
+            return
+        }
+
+        if selectedEpisodeID == episodeID {
+            selectedChapterID = destinationChapterID
+            lastSelectedEpisodeIDs[sourceChapterID] = document.chapters.first { $0.id == sourceChapterID }?.episodes.first?.id
+            lastSelectedEpisodeIDs[destinationChapterID] = episodeID
+            workspaceSelection.outlineItemID = OutlineItemID(rawValue: destinationChapterID.rawValue.uuidString)
+        }
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
     /// 選択中章の本文を更新する。編集のたびに呼ばれる想定で、モデル更新は即座に行い、
     /// ディスクへの保存は2秒デバウンスする(テキスト所有権ルール D-005。
     /// `EditorView` から編集中に本文を書き戻すことはしない)。
-    func updateSelectedChapterContent(_ content: String) {
-        guard let selection else { return }
-        guard document.chapters.first(where: { $0.id == selection })?.content != content else { return }
-        document.updateContent(content, for: selection)
+    func updateSelectedEpisodeContent(_ content: String) {
+        guard let selectedChapterID, let selectedEpisodeID else { return }
+        guard selectedEpisode?.content != content else { return }
+        document.updateEpisodeContent(content, for: selectedEpisodeID, in: selectedChapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
 
-    /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
+    /// 旧章API互換。UI-FIX-2c完了後に撤去する。
+    func updateSelectedChapterContent(_ content: String) {
+        updateSelectedEpisodeContent(content)
+    }
+
+    /// 選択中話のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
     /// `TextEditor` から通常の Binding 更新で呼ばれる。
-    func updateSelectedChapterMemo(_ memo: String) {
-        guard let selection else { return }
-        guard document.chapters.first(where: { $0.id == selection })?.memo != memo else { return }
-        document.updateMemo(memo, for: selection)
+    func updateSelectedEpisodeMemo(_ memo: String) {
+        guard let selectedChapterID, let selectedEpisodeID else { return }
+        guard selectedEpisode?.memo != memo else { return }
+        document.updateEpisodeMemo(memo, for: selectedEpisodeID, in: selectedChapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 旧章API互換。UI-FIX-2c完了後に撤去する。
+    func updateSelectedChapterMemo(_ memo: String) {
+        updateSelectedEpisodeMemo(memo)
+    }
+
+    /// 話タイトルを更新する。編集中はデバウンス保存する。
+    func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
+        guard document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID })?.title != title else {
+            return
+        }
+        document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 話タイトル編集の確定時に空タイトルを正規化する。
+    func commitEpisodeTitleEditing() {
+        for chapter in document.chapters {
+            for episode in chapter.episodes {
+                let normalizedTitle = normalizedEpisodeTitle(episode.title)
+                if episode.title != normalizedTitle {
+                    document.updateEpisodeTitle(normalizedTitle, for: episode.id, in: chapter.id)
+                    saveCoordinator.markDirty()
+                }
+            }
+        }
+        flushSaveImmediately()
     }
 
     // MARK: - 登場人物
@@ -1016,6 +1200,30 @@ final class AppState {
         return trimmed.isEmpty ? "無題の章" : trimmed
     }
 
+    private func normalizedEpisodeTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Episode.defaultTitle : trimmed
+    }
+
+    private func rememberedEpisodeID(for chapter: Chapter) -> EpisodeID? {
+        if let rememberedID = lastSelectedEpisodeIDs[chapter.id],
+           chapter.episodes.contains(where: { $0.id == rememberedID })
+        {
+            return rememberedID
+        }
+        return chapter.episodes.first?.id
+    }
+
+    private func resetSelection(for newDocument: NovelDocument) {
+        selectedChapterID = newDocument.chapters.first?.id
+        selectedEpisodeID = newDocument.chapters.first?.episodes.first?.id
+        lastSelectedEpisodeIDs.removeAll()
+        if let selectedChapterID, let selectedEpisodeID {
+            lastSelectedEpisodeIDs[selectedChapterID] = selectedEpisodeID
+        }
+        workspaceSelection.outlineItemID = selectedChapterID.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
+    }
+
     private static func nilIfBlank(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1039,11 +1247,11 @@ final class AppState {
     private func installDocument(_ newDocument: NovelDocument, at url: URL, attachments newAttachments: [Attachment]) {
         document = newDocument
         documentURL = url
-        selection = newDocument.chapters.first?.id
+        resetSelection(for: newDocument)
         selectedCharacterID = newDocument.characters.first?.id
         selectedPlotCardID = newDocument.plotCards.first?.id
         selectedFlagID = newDocument.flags.first?.id
-        workspaceSelection.outlineItemID = selection.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
+        workspaceSelection.outlineItemID = selectedChapterID.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
         attachments = newAttachments
         saveState = .saved
         rememberDocumentURL(url)
