@@ -281,6 +281,20 @@ public protocol DocumentRepository: Sendable {
     func save(_ doc: NovelDocument, to url: URL) async throws
 }
 
+/// 作品パッケージを別 URL へ複製保存できるリポジトリ。
+///
+/// 本文モデルに含まれない資料・スナップショット・将来追加される保存項目も含めて
+/// 「別名で保存」を成立させるための能力を表す。具体的なパッケージ構造は保存層に
+/// 閉じ込め、App 層は元 URL と保存先 URL だけを渡す。
+public protocol DocumentCopyingRepository: DocumentRepository {
+    /// 現在の作品内容と、元の保存先にだけ存在する付随データを別 URL へ保存する。
+    /// - Parameters:
+    ///   - doc: 保存する現在の作品モデル。
+    ///   - sourceURL: 付随データを引き継ぐ元の作品 URL。
+    ///   - destinationURL: 複製先 URL。
+    func saveCopy(_ doc: NovelDocument, from sourceURL: URL, to destinationURL: URL) async throws
+}
+
 /// スナップショット保存に対応するリポジトリ。
 ///
 /// スナップショットの具体的な置き場所や形式は保存層の責務であり、App 側は

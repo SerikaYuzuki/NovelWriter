@@ -23,7 +23,7 @@ import NovelCore
 /// - 章ファイルが1つ欠けていても、読み込み全体は失敗させない。欠けた章は
 ///   空本文として読み込む(データ救出優先)。`manifest.json` に記載の無い
 ///   `chapters/*.md` は読み込み時に無視する(削除はしない)
-public struct NovelpkgRepository: SnapshottingDocumentRepository {
+public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
     /// 読み込みは v1 / v2 を受理する。
     public static let currentFormatVersion = "2"
@@ -60,6 +60,13 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository {
     public func save(_ doc: NovelDocument, to url: URL) async throws {
         try await Task.detached(priority: .utility) {
             try Self.performSave(doc, to: url)
+        }.value
+    }
+
+    /// 元パッケージの資料・スナップショット・未知項目を保ったまま別 URL へ保存する。
+    public func saveCopy(_ doc: NovelDocument, from sourceURL: URL, to destinationURL: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.performSave(doc, preservingContentsFrom: sourceURL, to: destinationURL)
         }.value
     }
 
@@ -147,8 +154,16 @@ private extension NovelpkgRepository {
 
 private extension NovelpkgRepository {
     private static func performSave(_ doc: NovelDocument, to url: URL) throws {
+        try performSave(doc, preservingContentsFrom: url, to: url)
+    }
+
+    private static func performSave(
+        _ doc: NovelDocument,
+        preservingContentsFrom sourceURL: URL,
+        to destinationURL: URL
+    ) throws {
         let fileManager = FileManager.default
-        let parentDirectory = url.deletingLastPathComponent()
+        let parentDirectory = destinationURL.deletingLastPathComponent()
 
         do {
             try fileManager.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
@@ -160,7 +175,7 @@ private extension NovelpkgRepository {
         // 置くことで、末尾の replaceItemAt(またはmoveItem)によるアトミックな
         // 置換が成立する。
         let workingURL = parentDirectory.appendingPathComponent(
-            ".\(url.lastPathComponent).\(UUID().uuidString).tmp",
+            ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp",
             isDirectory: true
         )
 
@@ -168,7 +183,7 @@ private extension NovelpkgRepository {
             try writePackageContents(
                 of: doc,
                 into: workingURL,
-                existingPackageURL: url,
+                existingPackageURL: sourceURL,
                 fileManager: fileManager,
                 preservesSnapshots: true
             )
@@ -181,10 +196,10 @@ private extension NovelpkgRepository {
         }
 
         do {
-            if fileManager.fileExists(atPath: url.path) {
-                _ = try fileManager.replaceItemAt(url, withItemAt: workingURL)
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(destinationURL, withItemAt: workingURL)
             } else {
-                try fileManager.moveItem(at: workingURL, to: url)
+                try fileManager.moveItem(at: workingURL, to: destinationURL)
             }
         } catch {
             try? fileManager.removeItem(at: workingURL)

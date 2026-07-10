@@ -68,3 +68,38 @@ import Testing
     #expect(second.fileName == "image-2.png")
     #expect(Set(listed.map(\.fileName)) == Set(["image.png", "image-2.png"]))
 }
+
+@Test func saveCopyPreservesPackageOwnedDataAtDestination() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let sourceURL = tempDir.appendingPathComponent("Source.novelpkg")
+    let destinationURL = tempDir.appendingPathComponent("Destination.novelpkg")
+    let attachmentSourceURL = tempDir.appendingPathComponent("資料.txt")
+    let repository = NovelpkgRepository()
+    let original = NovelDocument(title: "元作品", chapters: [Chapter(title: "第1章", content: "初版")])
+
+    try await repository.save(original, to: sourceURL)
+    try "資料本文".write(to: attachmentSourceURL, atomically: true, encoding: .utf8)
+    _ = try await repository.addAttachment(from: attachmentSourceURL, to: sourceURL)
+    let snapshotURL = try await repository.saveSnapshot(original, to: sourceURL)
+    let unknownURL = sourceURL.appendingPathComponent("future-metadata.json")
+    try "{}".write(to: unknownURL, atomically: true, encoding: .utf8)
+
+    var copied = original
+    copied.chapters[0].content = "別名保存版"
+    try await repository.saveCopy(copied, from: sourceURL, to: destinationURL)
+
+    #expect(try await repository.load(from: destinationURL) == copied)
+    #expect(try await repository.listAttachments(in: destinationURL).map(\.fileName) == ["資料.txt"])
+    #expect(FileManager.default.fileExists(
+        atPath: destinationURL
+            .appendingPathComponent("snapshots", isDirectory: true)
+            .appendingPathComponent(snapshotURL.lastPathComponent, isDirectory: true)
+            .path
+    ))
+    #expect(FileManager.default.fileExists(
+        atPath: destinationURL.appendingPathComponent("future-metadata.json").path
+    ))
+    #expect(try await repository.load(from: sourceURL) == original)
+}

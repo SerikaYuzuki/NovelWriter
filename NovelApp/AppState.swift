@@ -214,6 +214,106 @@ final class AppState {
         rememberDocumentURL(newURL)
     }
 
+    // MARK: - 作品ライフサイクル
+
+    /// 現在の作品を失わず、指定 URL の作品へ切り替える。
+    ///
+    /// 読み込み結果は一時値に保持し、本文と資料一覧の両方を取得できた後で現在作品の
+    /// 保留中保存を完了させる。保存または読み込みに失敗した場合は、現在の状態を
+    /// 一切置き換えない。
+    @discardableResult
+    func openDocument(at url: URL) async -> Bool {
+        let targetURL = url.standardizedFileURL
+        guard targetURL != documentURL.standardizedFileURL else {
+            return await saveCoordinator.saveNow()
+        }
+
+        let loadedDocument: NovelDocument
+        let loadedAttachments: [Attachment]
+        do {
+            loadedDocument = try await repository.load(from: targetURL)
+            loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
+        } catch {
+            print("NovelWriter: 作品の読み込みに失敗しました(\(targetURL.path)): \(error)")
+            return false
+        }
+
+        // 読み込み待ちの間に現在作品が編集されても、ここで最新 revision まで保存する。
+        // saveNow() から復帰した後は状態置換まで await しないため、未保存編集が
+        // 切り替えとの隙間に入り込むことはない。
+        guard await saveCoordinator.saveNow() else { return false }
+
+        installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
+        return true
+    }
+
+    /// 新規作品を既定保存先へ作成し、保存成功後にだけ現在作品として採用する。
+    @discardableResult
+    func createNewDocument() async -> Bool {
+        guard await saveCoordinator.saveNow() else { return false }
+
+        let newDocument = NovelDocument.newDocument()
+        let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+        let newAttachments: [Attachment]
+
+        do {
+            try await repository.save(newDocument, to: newURL)
+            newAttachments = try await loadAttachmentsThrowing(for: newURL)
+        } catch {
+            print("NovelWriter: 新規作品の保存に失敗しました(\(newURL.path)): \(error)")
+            return false
+        }
+
+        // 新規作品の書き込み中にも現在作品は編集できる。切り替え直前にもう一度
+        // 保存キューを排出し、その編集を現在の保存先へ確実に残す。
+        guard await saveCoordinator.saveNow() else { return false }
+
+        installDocument(newDocument, at: newURL, attachments: newAttachments)
+        return true
+    }
+
+    /// 現在作品を別 URL へ複製し、成功後にだけ保存先を切り替える。
+    ///
+    /// `DocumentCopyingRepository` が利用できる場合は、モデル外の資料・
+    /// スナップショット・未知項目も保存層に引き継がせる。コピー中に生じた編集は
+    /// dirty revision として残り、保存先切り替え後に新 URL へ保存される。
+    @discardableResult
+    func saveDocument(as url: URL) async -> Bool {
+        let destinationURL = url.standardizedFileURL
+        let sourceURL = documentURL
+
+        guard destinationURL != sourceURL.standardizedFileURL else {
+            return await saveCoordinator.saveNow()
+        }
+        guard await saveCoordinator.saveNow() else { return false }
+
+        let documentSnapshot = document
+        do {
+            try await saveCoordinator.performExclusive {
+                if let copyingRepository = repository as? DocumentCopyingRepository {
+                    try await copyingRepository.saveCopy(
+                        documentSnapshot,
+                        from: sourceURL,
+                        to: destinationURL
+                    )
+                } else {
+                    try await repository.save(documentSnapshot, to: destinationURL)
+                }
+            }
+        } catch {
+            print("NovelWriter: 別名保存に失敗しました(\(destinationURL.path)): \(error)")
+            return false
+        }
+
+        // コピー成功までは URL と最近使った作品を変更しない。コピー待ちの間に
+        // 入った編集は同じ document 値に残っているため、切り替え後の saveNow()
+        // が新 URL へ追記する。
+        documentURL = destinationURL
+        rememberDocumentURL(destinationURL)
+        _ = await saveCoordinator.saveNow()
+        return true
+    }
+
     // MARK: - 選択中章
 
     /// Project Sidebar のセクションを選択する。UI2 では画面の主導線として使う。
@@ -869,14 +969,30 @@ final class AppState {
     }
 
     private func loadAttachments(for url: URL) async -> [Attachment] {
-        guard let attachmentManager else { return [] }
-
         do {
-            return try await attachmentManager.listAttachments(in: url)
+            return try await loadAttachmentsThrowing(for: url)
         } catch {
             print("NovelWriter: 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
             return []
         }
+    }
+
+    private func loadAttachmentsThrowing(for url: URL) async throws -> [Attachment] {
+        guard let attachmentManager else { return [] }
+        return try await attachmentManager.listAttachments(in: url)
+    }
+
+    private func installDocument(_ newDocument: NovelDocument, at url: URL, attachments newAttachments: [Attachment]) {
+        document = newDocument
+        documentURL = url
+        selection = newDocument.chapters.first?.id
+        selectedCharacterID = newDocument.characters.first?.id
+        selectedPlotCardID = newDocument.plotCards.first?.id
+        selectedFlagID = newDocument.flags.first?.id
+        workspaceSelection.outlineItemID = selection.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
+        attachments = newAttachments
+        saveState = .saved
+        rememberDocumentURL(url)
     }
 
     private func observeResignActive() {
