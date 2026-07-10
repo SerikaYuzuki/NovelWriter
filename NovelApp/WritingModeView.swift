@@ -5,18 +5,10 @@ import NovelUI
 import SwiftUI
 
 struct WritingModeView: View {
-    @Binding var searchSelectionRequest: EditorSelectionRequest?
-    let onOpenCharacter: (CharacterID) -> Void
-    let onOpenPlotCard: (PlotCardID) -> Void
-
     var body: some View {
         // Toolbar-1 以降、Outline は NavigationSplitView の content 列へ移した。
-        // この View は Editor detail の薄いラッパとして残す(呼び出し互換用)。
-        EditorPaneView(
-            searchSelectionRequest: $searchSelectionRequest,
-            onOpenCharacter: onOpenCharacter,
-            onOpenPlotCard: onOpenPlotCard
-        )
+        // Toolbar-2 以降、上部 chrome は WorkbenchToolbarContent が所有する。
+        EditorPaneView()
     }
 }
 
@@ -43,15 +35,8 @@ struct OutlineContainerView: View {
         }
         .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
         .background(.bar)
+        .focusedSceneValue(\.workbenchSearchSurface, .outline)
         .focusable()
-        .background {
-            Button("検索") {
-                appState.outlinePresentation.isSearchVisible = true
-                appState.outlinePresentation.pinnedSearchByKeyboard = true
-            }
-            .keyboardShortcut("f", modifiers: .command)
-            .hidden()
-        }
         .onKeyPress(.escape) {
             guard appState.outlinePresentation.isSearchVisible else { return .ignored }
             appState.outlinePresentation.isSearchVisible = false
@@ -103,6 +88,30 @@ struct OutlineView: View {
                 ForEach(filteredChapters) { chapter in
                     OutlineChapterRow(chapter: chapter)
                         .contextMenu {
+                            Button {
+                                appState.selectChapter(chapter.id)
+                                NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+                            } label: {
+                                Label("章メモ", systemImage: "note.text")
+                            }
+
+                            Menu {
+                                ChapterContextMenuContent(
+                                    appState: appState,
+                                    chapterID: chapter.id,
+                                    onOpenCharacter: { characterID in
+                                        appState.selectCharacter(characterID)
+                                        appState.selectProjectSection(.characters)
+                                    },
+                                    onOpenPlotCard: { cardID in
+                                        appState.selectPlotCard(cardID)
+                                        appState.selectProjectSection(.plot)
+                                    }
+                                )
+                            } label: {
+                                Label("この章", systemImage: "doc.text.magnifyingglass")
+                            }
+
                             Button(role: .destructive) {
                                 chapterPendingDeletion = chapter
                             } label: {
@@ -338,49 +347,17 @@ private struct OutlineSearchBar: View {
 struct EditorPaneView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
-
-    @Binding var searchSelectionRequest: EditorSelectionRequest?
-    let onOpenCharacter: (CharacterID) -> Void
-    let onOpenPlotCard: (PlotCardID) -> Void
-
-    @State private var searchQuery = ""
-    @State private var isSearchPresented = false
-    @State private var lastSearchChapterID: ChapterID?
-    @State private var lastSearchQuery = ""
-    @State private var lastSearchRange: NSRange?
-    @State private var didMissSearch = false
-    @State private var isMemoPresented = false
+    @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
-        VStack(spacing: 0) {
-            EditorTopBarView(
-                isSearchPresented: $isSearchPresented,
-                isMemoPresented: $isMemoPresented,
-                onOpenCharacter: onOpenCharacter,
-                onOpenPlotCard: onOpenPlotCard
-            )
-
-            if isSearchPresented {
-                SearchBar(
-                    query: $searchQuery,
-                    didMissSearch: didMissSearch,
-                    onPrevious: { jumpToSearchResult(direction: .backward) },
-                    onNext: { jumpToSearchResult(direction: .forward) },
-                    onClose: {
-                        isSearchPresented = false
-                        resetSearchCursor()
-                    }
-                )
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
+        Group {
             if let chapter = appState.selectedChapter {
                 ZStack {
                     Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                     EditorView(
                         chapterKey: chapter.id,
                         initialText: chapter.content,
-                        selectionRequest: searchSelectionRequest,
+                        selectionRequest: editorSearchSession.selectionRequest,
                         configuration: editorSettings.configuration,
                         onTextChange: { newText in
                             appState.updateSelectedChapterContent(newText)
@@ -396,344 +373,13 @@ struct EditorPaneView: View {
                 )
             }
         }
-        .animation(.snappy(duration: 0.18), value: isSearchPresented)
-        .focusable()
-        .background {
-            Button("検索") {
-                isSearchPresented = true
-            }
-            .keyboardShortcut("f", modifiers: .command)
-            .hidden()
-        }
-        .onKeyPress(.escape) {
-            guard isSearchPresented else { return .ignored }
-            isSearchPresented = false
-            return .handled
-        }
+        .focusedSceneValue(\.workbenchSearchSurface, .editor)
         .onChange(of: appState.selection) { _, newSelection in
-            if lastSearchChapterID != newSelection {
-                resetSearchCursor()
-            }
+            editorSearchSession.handleChapterChange(newSelection)
         }
     }
 
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
-    }
-
-    private func jumpToSearchResult(direction: TextSearchDirection) {
-        guard let chapter = appState.selectedChapter, !searchQuery.isEmpty else { return }
-
-        let startLocation: Int = if lastSearchChapterID == chapter.id, lastSearchQuery == searchQuery, let lastSearchRange {
-            switch direction {
-            case .forward:
-                lastSearchRange.location + lastSearchRange.length
-            case .backward:
-                lastSearchRange.location
-            }
-        } else {
-            switch direction {
-            case .forward:
-                0
-            case .backward:
-                (chapter.content as NSString).length
-            }
-        }
-
-        guard let range = TextSearch.find(query: searchQuery, in: chapter.content, from: startLocation, direction: direction) else {
-            didMissSearch = true
-            return
-        }
-
-        didMissSearch = false
-        lastSearchChapterID = chapter.id
-        lastSearchQuery = searchQuery
-        lastSearchRange = range
-        searchSelectionRequest = EditorSelectionRequest(range: range)
-    }
-
-    private func resetSearchCursor() {
-        didMissSearch = false
-        lastSearchChapterID = nil
-        lastSearchQuery = ""
-        lastSearchRange = nil
-        searchSelectionRequest = nil
-    }
-}
-
-private struct EditorTopBarView: View {
-    @Environment(AppState.self) private var appState
-
-    @Binding var isSearchPresented: Bool
-    @Binding var isMemoPresented: Bool
-    let onOpenCharacter: (CharacterID) -> Void
-    let onOpenPlotCard: (PlotCardID) -> Void
-
-    @State private var snapshots: [DocumentSnapshotInfo] = []
-    @State private var snapshotPendingRestore: DocumentSnapshotInfo?
-    @State private var restoreErrorMessage: String?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(appState.selectedChapter?.title ?? "章未選択")
-                    .font(.headline)
-                    .lineLimit(1)
-                Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                isSearchPresented = true
-            } label: {
-                Label("検索", systemImage: "magnifyingglass")
-            }
-            .labelStyle(.iconOnly)
-            .help("検索")
-
-            Button {
-                isMemoPresented.toggle()
-            } label: {
-                Label("章メモ", systemImage: "note.text")
-            }
-            .labelStyle(.iconOnly)
-            .help("章メモ")
-            .popover(isPresented: $isMemoPresented) {
-                ChapterMemoPopover()
-                    .frame(width: 320, height: 260)
-            }
-
-            Menu {
-                Button("スナップショットを保存") {
-                    Task {
-                        _ = await appState.createSnapshot()
-                        await refreshSnapshots()
-                    }
-                }
-
-                Divider()
-
-                if snapshots.isEmpty {
-                    Text("スナップショットはありません")
-                } else {
-                    ForEach(snapshots) { snapshot in
-                        Menu(snapshot.displayName) {
-                            Button("この状態に戻す…") {
-                                snapshotPendingRestore = snapshot
-                            }
-                            Button("Finder で表示") {
-                                NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
-                            }
-                        }
-                    }
-                }
-            } label: {
-                topBarIcon("clock.arrow.circlepath", help: "履歴")
-            }
-            .menuStyle(.borderlessButton)
-
-            Button {} label: {
-                Label("プレビュー", systemImage: "doc.richtext")
-            }
-            .labelStyle(.iconOnly)
-            .help("プレビュー")
-            .disabled(true)
-
-            Menu {
-                ChapterContextMenuContent(
-                    onOpenCharacter: onOpenCharacter,
-                    onOpenPlotCard: onOpenPlotCard
-                )
-            } label: {
-                topBarIcon("doc.text.magnifyingglass", help: "この章")
-            }
-            .menuStyle(.borderlessButton)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-        .task(id: appState.documentURL) {
-            await refreshSnapshots()
-        }
-        .confirmationDialog(
-            "このスナップショットに戻しますか？",
-            isPresented: restoreDialogIsPresented,
-            presenting: snapshotPendingRestore
-        ) { snapshot in
-            Button("戻す", role: .destructive) {
-                Task {
-                    let success = await appState.restoreSnapshot(at: snapshot.url)
-                    await refreshSnapshots()
-                    if !success {
-                        restoreErrorMessage = "スナップショットを復元できませんでした。保存に失敗したか、ファイルにアクセスできない可能性があります。"
-                    }
-                }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: { snapshot in
-            Text("「\(snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
-        }
-        .alert(
-            "復元できませんでした",
-            isPresented: restoreErrorIsPresented
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(restoreErrorMessage ?? "")
-        }
-    }
-
-    private var restoreDialogIsPresented: Binding<Bool> {
-        Binding(
-            get: { snapshotPendingRestore != nil },
-            set: { isPresented in
-                if !isPresented {
-                    snapshotPendingRestore = nil
-                }
-            }
-        )
-    }
-
-    private var restoreErrorIsPresented: Binding<Bool> {
-        Binding(
-            get: { restoreErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    restoreErrorMessage = nil
-                }
-            }
-        )
-    }
-
-    private func refreshSnapshots() async {
-        snapshots = await appState.listSnapshots()
-    }
-
-    private func topBarIcon(_ systemName: String, help: String) -> some View {
-        Image(systemName: systemName)
-            .frame(width: 28, height: 24)
-            .contentShape(Rectangle())
-            .help(help)
-    }
-}
-
-private struct ChapterMemoPopover: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("章メモ")
-                .font(.headline)
-            TextEditor(text: memoBinding)
-        }
-        .padding(12)
-    }
-
-    private var memoBinding: Binding<String> {
-        Binding(
-            get: { appState.selectedChapter?.memo ?? "" },
-            set: { appState.updateSelectedChapterMemo($0) }
-        )
-    }
-}
-
-private struct ChapterContextMenuContent: View {
-    @Environment(AppState.self) private var appState
-
-    let onOpenCharacter: (CharacterID) -> Void
-    let onOpenPlotCard: (PlotCardID) -> Void
-
-    var body: some View {
-        Section("プロットカード") {
-            if chapterPlotCards.isEmpty {
-                Text("プロットカードがありません")
-            } else {
-                ForEach(chapterPlotCards) { card in
-                    Button(NovelDocument.normalizedPlotCardTitle(card.title)) {
-                        onOpenPlotCard(card.id)
-                    }
-                }
-            }
-        }
-
-        Section("登場人物") {
-            if appearingCharacters.isEmpty {
-                Text("登場人物がありません")
-            } else {
-                ForEach(appearingCharacters) { character in
-                    Button(NovelDocument.normalizedCharacterName(character.name)) {
-                        onOpenCharacter(character.id)
-                    }
-                }
-            }
-        }
-    }
-
-    private var chapterPlotCards: [PlotCard] {
-        guard let chapterID = appState.selection else { return [] }
-        return appState.document.plotCards.filter { $0.chapterID == chapterID }
-    }
-
-    private var appearingCharacters: [NovelCore.Character] {
-        guard let chapter = appState.selectedChapter else { return [] }
-        return appState.document.characters.filter { character in
-            CharacterAppearanceDetector.appearances(
-                for: character,
-                in: NovelDocument(
-                    id: appState.document.id,
-                    title: appState.document.title,
-                    chapters: [chapter],
-                    characters: [],
-                    plotCards: [],
-                    flags: []
-                )
-            ).isEmpty == false
-        }
-    }
-}
-
-private struct SearchBar: View {
-    @Binding var query: String
-    let didMissSearch: Bool
-    let onPrevious: () -> Void
-    let onNext: () -> Void
-    let onClose: () -> Void
-
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("検索", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFocused)
-                .onSubmit(onNext)
-            Button(action: onPrevious) {
-                Label("前の検索結果", systemImage: "chevron.up")
-            }
-            .disabled(query.isEmpty)
-            Button(action: onNext) {
-                Label("次の検索結果", systemImage: "chevron.down")
-            }
-            .disabled(query.isEmpty)
-            if didMissSearch {
-                Text("見つかりません")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Button(action: onClose) {
-                Label("閉じる", systemImage: "xmark")
-            }
-        }
-        .labelStyle(.iconOnly)
-        .padding(8)
-        .background(.bar)
-        .onAppear {
-            isFocused = true
-        }
     }
 }
