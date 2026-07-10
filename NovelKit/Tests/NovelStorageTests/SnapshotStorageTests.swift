@@ -99,3 +99,51 @@ import Testing
         backupURL.lastPathComponent
     ]))
 }
+
+@Test func restoringLegacyFormatSnapshotMigratesPackageToVersionThree() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("LegacySnapshotRestore.novelpkg")
+    let repository = NovelpkgRepository()
+    let doc = NovelDocument(
+        title: "旧形式スナップショット復元テスト",
+        chapters: [Chapter(title: "第1章", content: "スナップショット時点の本文", memo: "当時のメモ")]
+    )
+
+    try await repository.save(doc, to: packageURL)
+    // v3パッケージ内に、v2形式のスナップショットを用意する。
+    let legacySnapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
+    try convertPackageToVersionTwo(at: legacySnapshotURL, chapterIDs: doc.chapters.map(\.id))
+    let legacySnapshotManifestBefore = try manifestJSON(at: legacySnapshotURL)
+    #expect(legacySnapshotManifestBefore["formatVersion"] as? String == "2")
+
+    // スナップショット後にパッケージを更新しておき、復元で巻き戻ることを確認できるようにする。
+    var updatedDoc = doc
+    updatedDoc.chapters[0].content = "更新後の本文"
+    updatedDoc.chapters[0].memo = "更新後のメモ"
+    try await repository.save(updatedDoc, to: packageURL)
+
+    try await repository.restoreSnapshot(from: legacySnapshotURL, into: packageURL)
+
+    // 復元後のパッケージは v3 として読め、本文・メモは snapshot 時点のものに戻る。
+    let manifest = try manifestJSON(at: packageURL)
+    #expect(manifest["formatVersion"] as? String == "3")
+    let restored = try await repository.load(from: packageURL)
+    #expect(restored.chapters[0].content == "スナップショット時点の本文")
+    #expect(restored.chapters[0].memo == "当時のメモ")
+
+    // 既存の snapshots/ (v2形式のスナップショットを含む)は保持される。
+    let listed = try await repository.listSnapshots(in: packageURL)
+    #expect(listed.map(\.url.lastPathComponent) == [legacySnapshotURL.lastPathComponent])
+    let legacySnapshotManifestAfter = try manifestJSON(at: legacySnapshotURL)
+    #expect(legacySnapshotManifestAfter["formatVersion"] as? String == "2")
+
+    // 復元後のパッケージ直下に旧形式の chapters/ / notes/ が残っていない。
+    #expect(!FileManager.default.fileExists(
+        atPath: packageURL.appendingPathComponent("chapters", isDirectory: true).path
+    ))
+    #expect(!FileManager.default.fileExists(
+        atPath: packageURL.appendingPathComponent("notes", isDirectory: true).path
+    ))
+}

@@ -14,7 +14,9 @@ func makeTempDirectory() throws -> URL {
     return url
 }
 
-private func manifestJSON(at packageURL: URL) throws -> [String: Any] {
+/// `manifest.json` を JSON として読み込む。`SnapshotStorageTests.swift` からも
+/// 参照するため internal のままにする(同一テストターゲット内)。
+func manifestJSON(at packageURL: URL) throws -> [String: Any] {
     let manifestURL = packageURL.appendingPathComponent("manifest.json")
     let data = try Data(contentsOf: manifestURL)
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -277,6 +279,64 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     let reloaded = try await repository.load(from: packageURL)
     #expect(reloaded.chapters[0].content == "本文")
     #expect(reloaded.chapters[0].memo == "移行後メモ")
+}
+
+@Test func versionOnePackageLoadsAndMigratesToVersionThreeOnSave() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("V0Migration.novelpkg")
+    let repository = NovelpkgRepository()
+    let doc = NovelDocument(
+        title: "v1移行テスト",
+        chapters: [
+            Chapter(title: "第1章", content: "本文1"),
+            Chapter(title: "第2章", content: "本文2")
+        ]
+    )
+
+    try await repository.save(doc, to: packageURL)
+    try convertPackageToVersionOne(at: packageURL, chapterIDs: doc.chapters.map(\.id))
+
+    let manifestBeforeLoad = try manifestJSON(at: packageURL)
+    #expect(manifestBeforeLoad["formatVersion"] as? String == "1")
+    let chapterEntries = try #require(manifestBeforeLoad["chapters"] as? [[String: Any]])
+    #expect(chapterEntries.allSatisfy { $0["episodes"] == nil })
+    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("notes", isDirectory: true).path))
+    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("characters.json").path))
+    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("plot.json").path))
+    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("flags.json").path))
+
+    // v1 パッケージを本文・章タイトル無損失で読み込めること
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.chapters.map(\.id) == doc.chapters.map(\.id))
+    #expect(loaded.chapters.map(\.title) == ["第1章", "第2章"])
+    #expect(loaded.chapters.map(\.content) == ["本文1", "本文2"])
+    #expect(loaded.characters.isEmpty)
+    #expect(loaded.plotCards.isEmpty)
+    #expect(loaded.flags.isEmpty)
+
+    // v1 は章IDを話IDとして再利用する(NovelpkgRepository.performLoad の isLegacyChapter 分岐)
+    let episodeIDs = loaded.chapters.map { $0.episodes[0].id.rawValue }
+    #expect(episodeIDs == doc.chapters.map(\.id.rawValue))
+
+    try await repository.save(loaded, to: packageURL)
+
+    let manifest = try manifestJSON(at: packageURL)
+    #expect(manifest["formatVersion"] as? String == "3")
+
+    for episodeID in episodeIDs {
+        let episodeFileURL = packageURL
+            .appendingPathComponent("episodes", isDirectory: true)
+            .appendingPathComponent("\(episodeID.uuidString).md")
+        #expect(FileManager.default.fileExists(atPath: episodeFileURL.path))
+    }
+    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("chapters", isDirectory: true).path))
+
+    // 再読込しても内容が一致する
+    let reloaded = try await repository.load(from: packageURL)
+    #expect(reloaded.chapters.map(\.title) == ["第1章", "第2章"])
+    #expect(reloaded.chapters.map(\.content) == ["本文1", "本文2"])
 }
 
 @Test func loadingPackageWithoutManifestThrowsTypedError() async throws {
