@@ -88,39 +88,36 @@ struct OutlineView: View {
                 ForEach(filteredChapters) { chapter in
                     OutlineChapterRow(chapter: chapter)
                         .contextMenu {
-                            Group {
-                                Button {
-                                    NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
-                                } label: {
-                                    Label("章メモ", systemImage: "note.text")
-                                }
-
-                                Menu {
-                                    ChapterContextMenuContent(
-                                        appState: appState,
-                                        onOpenCharacter: { characterID in
-                                            appState.selectCharacter(characterID)
-                                            appState.selectProjectSection(.characters)
-                                        },
-                                        onOpenPlotCard: { cardID in
-                                            appState.selectPlotCard(cardID)
-                                            appState.selectProjectSection(.plot)
-                                        }
-                                    )
-                                } label: {
-                                    Label("この章", systemImage: "doc.text.magnifyingglass")
-                                }
-
-                                Button(role: .destructive) {
-                                    chapterPendingDeletion = chapter
-                                } label: {
-                                    Label("章を削除", systemImage: "trash")
-                                }
-                                .disabled(appState.document.chapters.count <= 1)
-                            }
-                            .onAppear {
+                            Button {
                                 appState.selectChapter(chapter.id)
+                                NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+                            } label: {
+                                Label("章メモ", systemImage: "note.text")
                             }
+
+                            Menu {
+                                ChapterContextMenuContent(
+                                    appState: appState,
+                                    chapterID: chapter.id,
+                                    onOpenCharacter: { characterID in
+                                        appState.selectCharacter(characterID)
+                                        appState.selectProjectSection(.characters)
+                                    },
+                                    onOpenPlotCard: { cardID in
+                                        appState.selectPlotCard(cardID)
+                                        appState.selectProjectSection(.plot)
+                                    }
+                                )
+                            } label: {
+                                Label("この章", systemImage: "doc.text.magnifyingglass")
+                            }
+
+                            Button(role: .destructive) {
+                                chapterPendingDeletion = chapter
+                            } label: {
+                                Label("章を削除", systemImage: "trash")
+                            }
+                            .disabled(appState.document.chapters.count <= 1)
                         }
                         .tag(chapter.id)
                 }

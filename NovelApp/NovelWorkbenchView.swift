@@ -105,6 +105,10 @@ struct NovelWorkbenchView: View {
             guard appState.selectedChapter != nil else { return }
             isMemoPresented = true
         }
+        .popover(isPresented: $isMemoPresented) {
+            ChapterMemoPopover()
+                .frame(width: 320, height: 260)
+        }
     }
 
     private var searchableIsPresented: Binding<Bool> {

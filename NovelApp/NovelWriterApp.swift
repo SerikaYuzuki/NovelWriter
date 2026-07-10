@@ -205,11 +205,13 @@ private struct WorkbenchFindCommands: View {
         .keyboardShortcut("f", modifiers: .command)
 
         Button("次を検索") {
+            guard appState.workspaceSelection.section == .structure else { return }
             editorSearchSession.jump(direction: .forward, in: appState.selectedChapter)
         }
         .keyboardShortcut("g", modifiers: .command)
 
         Button("前を検索") {
+            guard appState.workspaceSelection.section == .structure else { return }
             editorSearchSession.jump(direction: .backward, in: appState.selectedChapter)
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])

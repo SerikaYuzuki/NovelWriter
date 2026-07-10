@@ -36,10 +36,6 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             }
             .help("章メモ")
             .disabled(appState.selectedChapter == nil || !showsWritingActions)
-            .popover(isPresented: $isMemoPresented) {
-                ChapterMemoPopover()
-                    .frame(width: 320, height: 260)
-            }
         }
         .defaultCustomization(.visible)
 
@@ -104,6 +100,8 @@ struct ChapterMemoPopover: View {
 struct ChapterContextMenuContent: View {
     @Bindable var appState: AppState
 
+    /// 指定時はその章を対象にする。未指定時は現在の選択章。
+    var chapterID: ChapterID?
     let onOpenCharacter: (CharacterID) -> Void
     let onOpenPlotCard: (PlotCardID) -> Void
 
@@ -133,13 +131,22 @@ struct ChapterContextMenuContent: View {
         }
     }
 
+    private var targetChapterID: ChapterID? {
+        chapterID ?? appState.selection
+    }
+
+    private var targetChapter: Chapter? {
+        guard let targetChapterID else { return nil }
+        return appState.document.chapters.first { $0.id == targetChapterID }
+    }
+
     private var chapterPlotCards: [PlotCard] {
-        guard let chapterID = appState.selection else { return [] }
-        return appState.document.plotCards.filter { $0.chapterID == chapterID }
+        guard let targetChapterID else { return [] }
+        return appState.document.plotCards.filter { $0.chapterID == targetChapterID }
     }
 
     private var appearingCharacters: [NovelCore.Character] {
-        guard let chapter = appState.selectedChapter else { return [] }
+        guard let chapter = targetChapter else { return [] }
         return appState.document.characters.filter { character in
             CharacterAppearanceDetector.appearances(
                 for: character,
