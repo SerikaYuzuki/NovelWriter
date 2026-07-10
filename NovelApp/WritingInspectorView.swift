@@ -133,7 +133,6 @@ struct AttachmentListView: View {
     @Binding var selection: String?
 
     @State private var attachmentPendingDeletion: Attachment?
-    @State private var isImportingAttachment = false
     @State private var operationMessage: OperationMessage?
 
     var body: some View {
@@ -177,25 +176,12 @@ struct AttachmentListView: View {
                 .workbenchOutlineListStyle()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
-            guard appState.supportsAttachments else { return }
-            isImportingAttachment = true
-        }
         .onDeleteCommand {
             guard let attachment = selectedAttachment else { return }
             attachmentPendingDeletion = attachment
         }
         .task {
             await appState.reloadAttachments()
-        }
-        .fileImporter(
-            isPresented: $isImportingAttachment,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            Task {
-                await importAttachment(from: result)
-            }
         }
         .confirmationDialog(
             "資料を削除しますか？",
@@ -233,28 +219,6 @@ struct AttachmentListView: View {
     private func revealInFinder(_ attachment: Attachment) {
         guard let url = appState.attachmentPreviewURL(for: attachment) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    @MainActor
-    private func importAttachment(from result: Result<[URL], Error>) async {
-        do {
-            guard let sourceURL = try result.get().first else { return }
-            let didAccess = sourceURL.startAccessingSecurityScopedResource()
-            defer {
-                if didAccess {
-                    sourceURL.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            if let attachment = await appState.addAttachment(from: sourceURL) {
-                selection = attachment.fileName
-                operationMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
-            } else {
-                operationMessage = OperationMessage(title: "取り込めませんでした", body: "資料の追加に失敗しました。")
-            }
-        } catch {
-            operationMessage = OperationMessage(title: "取り込めませんでした", body: String(describing: error))
-        }
     }
 
     @MainActor

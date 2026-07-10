@@ -1,6 +1,7 @@
 import EditorKit
 import NovelCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 3列ワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
 ///
@@ -23,6 +24,8 @@ struct NovelWorkbenchView: View {
     @State private var selectedAttachmentFileName: String?
     @State private var sectionOverviewSelection: String? = Self.overviewItemID
     @State private var overlayState = WorkbenchOverlayState()
+    @State private var isImportingAttachment = false
+    @State private var attachmentImportMessage: OperationMessage?
 
     fileprivate static let overviewItemID = "overview"
 
@@ -98,12 +101,29 @@ struct NovelWorkbenchView: View {
         } message: {
             Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
         }
+        .alert(item: $attachmentImportMessage) { message in
+            Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
+        }
+        .fileImporter(
+            isPresented: $isImportingAttachment,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: false
+        ) { result in
+            Task {
+                await importAttachment(from: result)
+            }
+        }
         .task(id: appState.documentURL) {
             await snapshotMenuPresenter.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
             guard appState.selectedEpisode != nil else { return }
             overlayState.presented = .memo
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
+            guard appState.supportsAttachments else { return }
+            appState.selectProjectSection(.references)
+            isImportingAttachment = true
         }
     }
 
@@ -147,6 +167,28 @@ struct NovelWorkbenchView: View {
     private func openPlotCard(_ cardID: PlotCardID) {
         appState.selectPlotCard(cardID)
         appState.selectProjectSection(.plot)
+    }
+
+    @MainActor
+    private func importAttachment(from result: Result<[URL], Error>) async {
+        do {
+            guard let sourceURL = try result.get().first else { return }
+            let didAccess = sourceURL.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    sourceURL.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            if let attachment = await appState.addAttachment(from: sourceURL) {
+                selectedAttachmentFileName = attachment.fileName
+                attachmentImportMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
+            } else {
+                attachmentImportMessage = OperationMessage(title: "取り込めませんでした", body: "資料の追加に失敗しました。")
+            }
+        } catch {
+            attachmentImportMessage = OperationMessage(title: "取り込めませんでした", body: String(describing: error))
+        }
     }
 
     @ViewBuilder
