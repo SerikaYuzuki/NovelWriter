@@ -10,12 +10,21 @@ import NovelUI
 @MainActor
 @Observable
 final class EditorSettings {
+    static let fontSizeRange = 8.0 ... 24.0
+    static let defaultFontSize = 16.0
+
     var fontName: String {
         didSet { userDefaults.set(fontName, forKey: Self.fontNameKey) }
     }
 
     var fontSize: Double {
-        didSet { userDefaults.set(fontSize, forKey: Self.fontSizeKey) }
+        didSet {
+            let clamped = Self.clampedFontSize(fontSize)
+            if clamped != fontSize {
+                fontSize = clamped
+            }
+            userDefaults.set(fontSize, forKey: Self.fontSizeKey)
+        }
     }
 
     var lineHeightMultiple: Double {
@@ -49,13 +58,17 @@ final class EditorSettings {
         fontName = userDefaults.string(forKey: Self.fontNameKey) ?? EditorFontFamily.hiraginoMincho.fontName
 
         let storedFontSize = userDefaults.double(forKey: Self.fontSizeKey)
-        fontSize = storedFontSize == 0 ? 16 : storedFontSize
+        let normalizedFontSize = storedFontSize == 0 ? Self.defaultFontSize : Self.clampedFontSize(storedFontSize)
+        fontSize = normalizedFontSize
+        if storedFontSize != 0, storedFontSize != normalizedFontSize {
+            userDefaults.set(normalizedFontSize, forKey: Self.fontSizeKey)
+        }
 
         let storedLineHeight = userDefaults.double(forKey: Self.lineHeightKey)
         lineHeightMultiple = storedLineHeight == 0 ? 1.5 : storedLineHeight
 
         let storedWidthMode = userDefaults.string(forKey: Self.widthModeKey) ?? ""
-        widthMode = EditorWidthMode(rawValue: storedWidthMode) ?? .width900
+        widthMode = EditorWidthMode(rawValue: storedWidthMode) ?? .unlimited
 
         textColorHex = userDefaults.string(forKey: Self.textColorKey) ?? EditorConfiguration.defaultTextColorHex
         backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey) ?? EditorConfiguration.defaultBackgroundColorHex
@@ -69,6 +82,10 @@ final class EditorSettings {
             textColorHex: textColorHex,
             backgroundColorHex: backgroundColorHex
         )
+    }
+
+    private static func clampedFontSize(_ value: Double) -> Double {
+        min(max(value, fontSizeRange.lowerBound), fontSizeRange.upperBound)
     }
 }
 
@@ -160,10 +177,10 @@ struct EditorSettingsView: View {
             }
             .pickerStyle(.menu)
 
-            Slider(value: $settings.fontSize, in: 12 ... 24, step: 1) {
+            Slider(value: $settings.fontSize, in: EditorSettings.fontSizeRange, step: 1) {
                 Text("フォントサイズ")
             } minimumValueLabel: {
-                Text("12")
+                Text("8")
                     .monospacedDigit()
             } maximumValueLabel: {
                 Text("24")
