@@ -93,6 +93,8 @@ struct NovelWriterApp: App {
                     .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
                 }
             }
+
+            SidebarCommands()
         }
 
         Settings {

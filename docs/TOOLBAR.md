@@ -1,6 +1,6 @@
 # Workbench 上部ツールバー設計
 
-**状態: 設計確定・未実装。** 実装はユーザーから改めて着手指示があった時に行う。
+**状態: Toolbar-1 完了。** Toolbar-2(一段ツールバー + カスタマイズ)は未着手。実装はユーザーから改めて着手指示があった時に行う。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 
@@ -174,16 +174,18 @@ WindowGroup
 
 ## 10. 実装順
 
-実装は次の2サブフェーズに分け、**1サブフェーズ = 1ブランチ = 1PR**、スタックPR禁止とする。現在の Phase 4.5-2b を先に完了し、本書の実装はユーザーの着手指示を待つ。
+実装は次の2サブフェーズに分け、**1サブフェーズ = 1ブランチ = 1PR**、スタックPR禁止とする。Toolbar-1 は完了。Toolbar-2 の実装はユーザーの着手指示を待つ。
 
-### Toolbar-1: 3列ワークベンチ基盤
+### Toolbar-1: 3列ワークベンチ基盤【完了】
 
-- root を3列 `NavigationSplitView` へ移行する
-- Project Sidebar の標準開閉と、Outline の作品名 + 章数を成立させる
-- 各 `ProjectSection` の content/detail 方針を整理し、既存の人物・プロット View の split view 入れ子を解消する
-- 既存の `EditorTopBarView` はこの段階では残し、機能導線を失わない
+- [x] root を3列 `NavigationSplitView` へ移行する
+- [x] Project Sidebar の標準開閉と、Outline の作品名 + 章数を成立させる
+- [x] 各 `ProjectSection` の content/detail 方針を整理し、既存の人物・プロット View の split view 入れ子を解消する
+- [x] 既存の `EditorTopBarView` はこの段階では残し、機能導線を失わない
 
 **完了条件:** 全セクションへ到達でき、列幅・Sidebar 開閉・章選択・本文編集が維持される。狭いウィンドウでも Editor の最小幅を守る。
+
+**実装メモ**: `NovelWorkbenchView` を `NavigationSplitView` + 下部 AI Panel に再構成。執筆は Outline / Editor、登場人物は一覧 / シート、プロットは伏線ナビゲータ / ボード、資料は一覧 / 詳細、その他は概要 / section surface。`SidebarCommands()` を追加。人物・プロットの入れ子 split を撤去。
 
 ### Toolbar-2: 一段ツールバー + カスタマイズ
 

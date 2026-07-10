@@ -10,17 +10,13 @@ struct WritingModeView: View {
     let onOpenPlotCard: (PlotCardID) -> Void
 
     var body: some View {
-        HSplitView {
-            OutlineContainerView()
-                .frame(minWidth: 224, idealWidth: 360, maxWidth: 440)
-
-            EditorPaneView(
-                searchSelectionRequest: $searchSelectionRequest,
-                onOpenCharacter: onOpenCharacter,
-                onOpenPlotCard: onOpenPlotCard
-            )
-            .frame(minWidth: 560)
-        }
+        // Toolbar-1 以降、Outline は NavigationSplitView の content 列へ移した。
+        // この View は Editor detail の薄いラッパとして残す(呼び出し互換用)。
+        EditorPaneView(
+            searchSelectionRequest: $searchSelectionRequest,
+            onOpenCharacter: onOpenCharacter,
+            onOpenPlotCard: onOpenPlotCard
+        )
     }
 }
 

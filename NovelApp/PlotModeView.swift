@@ -9,7 +9,7 @@ extension PlotCardID: @retroactive Transferable {
     }
 }
 
-struct PlotModeView: View {
+struct PlotBoardView: View {
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
@@ -18,33 +18,27 @@ struct PlotModeView: View {
     @State private var cardPendingDeletion: PlotCard?
 
     var body: some View {
-        HSplitView {
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 16) {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: 16) {
+                PlotLaneView(
+                    title: "未割り当て",
+                    chapterID: nil,
+                    cards: cards(in: nil),
+                    editingCardID: $editingCardID,
+                    cardPendingDeletion: $cardPendingDeletion
+                )
+
+                ForEach(appState.document.chapters) { chapter in
                     PlotLaneView(
-                        title: "未割り当て",
-                        chapterID: nil,
-                        cards: cards(in: nil),
+                        title: chapter.title,
+                        chapterID: chapter.id,
+                        cards: cards(in: chapter.id),
                         editingCardID: $editingCardID,
                         cardPendingDeletion: $cardPendingDeletion
                     )
-
-                    ForEach(appState.document.chapters) { chapter in
-                        PlotLaneView(
-                            title: chapter.title,
-                            chapterID: chapter.id,
-                            cards: cards(in: chapter.id),
-                            editingCardID: $editingCardID,
-                            cardPendingDeletion: $cardPendingDeletion
-                        )
-                    }
                 }
-                .padding(16)
             }
-            .frame(minWidth: 560)
-
-            FlagTrackerView(onChapterJump: onChapterJump)
-                .frame(minWidth: 260, idealWidth: 280, maxWidth: 340)
+            .padding(16)
         }
         .sheet(item: editingCardBinding) { card in
             PlotCardDetailSheet(
@@ -101,6 +95,15 @@ struct PlotModeView: View {
                 }
             }
         )
+    }
+}
+
+/// Toolbar-1 以前の HSplitView 互換ラッパ。新規呼び出しは `PlotBoardView` を使う。
+struct PlotModeView: View {
+    let onChapterJump: (ChapterID) -> Void
+
+    var body: some View {
+        PlotBoardView(onChapterJump: onChapterJump)
     }
 }
 
