@@ -189,6 +189,16 @@ struct MacTextAdapterIntegrationTests {
         #expect(appliedTextColor?.blueComponent == storageTextColor?.blueComponent)
     }
 
+    @Test("設定適用時のtextContainerInsetは16pt四方になる")
+    func textContainerInsetMatchesStyleGuide() {
+        let harness = makeHarness(initialText: "本文")
+        let configuration = EditorConfiguration()
+
+        harness.coordinator.applyConfigurationIfNeeded(configuration, to: harness.textView)
+
+        #expect(harness.textView.textContainerInset == NSSize(width: 16, height: 16))
+    }
+
     @Test("IME変換中の設定変更は保留し、変換終了後の再updateで適用する")
     func configurationApplicationIsDeferredWhileComposing() {
         let harness = makeHarness(initialText: "本文")

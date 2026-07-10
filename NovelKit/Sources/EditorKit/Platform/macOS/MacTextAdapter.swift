@@ -21,6 +21,9 @@ import SwiftUI
 /// - 章切り替え時、章専用の `UndoManager` を `removeAllActions()` でクリアし、
 ///   前章の undo 履歴が新しい章に効かないようにする。
 struct MacTextAdapter: NSViewRepresentable {
+    /// 本文とウィンドウ端の余白(docs/STYLE.md エディタ本文)。
+    private static let contentInset = NSSize(width: 16, height: 16)
+
     let chapterKey: AnyHashable
     let initialText: String
     let selectionRequest: EditorSelectionRequest?
@@ -302,7 +305,7 @@ struct MacTextAdapter: NSViewRepresentable {
                 .foregroundColor: textColor,
                 .paragraphStyle: paragraphStyle
             ]
-            textView.textContainerInset = NSSize(width: 32, height: 24)
+            textView.textContainerInset = MacTextAdapter.contentInset
             textView.textStorage?.addAttributes(
                 [
                     .font: font,
