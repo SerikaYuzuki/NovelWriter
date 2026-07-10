@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: 設計確定、実装未着手。**
+**状態: UI-FIX-1 / UI-FIX-2a 完了、UI-FIX-2b 以降は未着手。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
@@ -183,7 +183,7 @@ detail列:
 
 **完了条件:** 8 / 16 / 24pt で日本語IME、改行、自動字下げ、Undo が動作し、800 / 1200 / 1600pt 幅で不要な二重余白がない。
 
-### UI-FIX-2a: Chapter / Episode モデル + `.novelpkg` v3
+### UI-FIX-2a: Chapter / Episode モデル + `.novelpkg` v3【完了】
 
 - `EpisodeID` / `Episode` / `Chapter.episodes` を追加
 - v3 manifest と episode 本文・メモの読み書きを追加
@@ -192,6 +192,8 @@ detail列:
 - Core / Storage の移行テスト、旧 snapshot 復元テストを追加
 
 **完了条件:** v2 fixture を無損失で読み、保存後に v3 として再読込できる。本文、メモ、カード、伏線、資料、snapshot が残る。
+
+**実装結果 (2026-07-11):** `EpisodeID` / `Episode` / `Chapter.episodes` を追加。v1 / v2 の `chapters/` + `notes/` を `EpisodeID == ChapterID` の「本文」話へ移行し、v3では `episodes/` + `episode-notes/` と nested manifest を書き出す。既存Appの章単位APIは2bまで互換 accessorで維持する。v3の複数話順、欠損本文、旧形式移行、添付・snapshot保持をテスト済み。
 
 ### UI-FIX-2b: AppState の話選択と操作
 

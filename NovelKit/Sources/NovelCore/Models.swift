@@ -3,8 +3,8 @@ import Foundation
 /// 章を一意に識別するID。
 ///
 /// `Chapter` の同一性のためだけに使う軽量な値型。実体は `UUID` のラップであり、
-/// `.novelpkg` への保存時にはこの `rawValue` の文字列表現がそのまま
-/// 章ファイル名(`chapters/<UUID>.md`)になる(docs/DESIGN.md 4.2, D-003)。
+/// `.novelpkg` の manifest ではこの `rawValue` が章エントリの識別子になる
+/// (docs/DESIGN.md 4.2, D-003)。本文ファイル名は `EpisodeID` が担う。
 public struct ChapterID: Hashable, Codable, Sendable {
     /// 識別に使う実体のUUID。
     public let rawValue: UUID
@@ -26,7 +26,7 @@ extension ChapterID: CustomStringConvertible {
     }
 }
 
-/// 小説の1章を表すモデル。
+/// 小説の1章を表す構造。本文は ``episodes`` に属する(D-028)。
 ///
 /// - 重要: 章の並び順を表す `order` フィールドは意図的に持たない。
 ///   章順は `NovelDocument.chapters` の配列順のみが唯一の正であり、
@@ -35,38 +35,63 @@ public struct Chapter: Codable, Sendable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case episodes
+        // v1 / v2 の JSON を直接 decode するための互換キー。
         case content
         case memo
     }
 
-    /// 章の識別子。
     public var id: ChapterID
-    /// 章タイトル。
     public var title: String
-    /// 章本文(プレーンテキスト、Markdown互換)。
-    public var content: String
-    /// 章メモ。本文とは別に、短い執筆メモやTODOを保持する。
-    public var memo: String
+    public var episodes: [Episode]
 
-    /// 章を作成する。
-    /// - Parameters:
-    ///   - id: 章の識別子。省略時は新規に生成する。
-    ///   - title: 章タイトル。
-    ///   - content: 章本文。省略時は空文字列。
-    ///   - memo: 章メモ。省略時は空文字列。
+    /// 旧API互換の初期化子。本文とメモは「本文」という話へ格納する。
     public init(id: ChapterID = ChapterID(), title: String, content: String = "", memo: String = "") {
         self.id = id
         self.title = title
-        self.content = content
-        self.memo = memo
+        episodes = [
+            Episode(
+                id: EpisodeID(rawValue: id.rawValue),
+                title: Episode.defaultTitle,
+                content: content,
+                memo: memo
+            )
+        ]
+    }
+
+    /// 話を明示して章を作成する。空の章もこの初期化子で表現できる。
+    public init(id: ChapterID = ChapterID(), title: String, episodes: [Episode]) {
+        self.id = id
+        self.title = title
+        self.episodes = episodes
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(ChapterID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
-        content = try container.decode(String.self, forKey: .content)
-        memo = try container.decodeIfPresent(String.self, forKey: .memo) ?? ""
+        if let decodedEpisodes = try container.decodeIfPresent([Episode].self, forKey: .episodes) {
+            episodes = decodedEpisodes
+        } else {
+            // NovelCore 単体で v1 / v2 の JSON を扱う場合も無損失で話へ移す。
+            let content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+            let memo = try container.decodeIfPresent(String.self, forKey: .memo) ?? ""
+            episodes = [
+                Episode(
+                    id: EpisodeID(rawValue: id.rawValue),
+                    title: Episode.defaultTitle,
+                    content: content,
+                    memo: memo
+                )
+            ]
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(episodes, forKey: .episodes)
     }
 }
 
@@ -235,7 +260,11 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     /// 定義は ``ManuscriptMetrics/countCharacters(in:)`` と同じく、
     /// 改行を除いた `Character` 数。章メモは含めない。
     public var manuscriptCharacterCount: Int {
-        chapters.reduce(0) { $0 + ManuscriptMetrics.countCharacters(in: $1.content) }
+        chapters.reduce(0) { total, chapter in
+            total + chapter.episodes.reduce(0) { episodeTotal, episode in
+                episodeTotal + ManuscriptMetrics.countCharacters(in: episode.content)
+            }
+        }
     }
 }
 
