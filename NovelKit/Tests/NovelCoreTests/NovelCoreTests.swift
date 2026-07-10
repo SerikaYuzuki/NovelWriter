@@ -2,7 +2,7 @@ import Foundation
 @testable import NovelCore
 import Testing
 
-// `NovelCore` のモデル(`ChapterID` / `Chapter` / `NovelDocument`)に対するテスト
+// `NovelCore` のモデル(`ChapterID` / `EpisodeID` / `Chapter` / `NovelDocument`)に対するテスト
 // (docs/DESIGN.md 4.1)。
 
 @Test func chapterIDGeneratesUniqueValues() {
@@ -30,6 +30,8 @@ import Testing
     #expect(chapter.content.isEmpty)
     #expect(chapter.memo.isEmpty)
     #expect(chapter.title == "第1章")
+    #expect(chapter.episodes.count == 1)
+    #expect(chapter.episodes[0].title == Episode.defaultTitle)
 }
 
 @Test func chapterDecodesMissingMemoAsEmptyString() throws {
@@ -48,6 +50,8 @@ import Testing
     #expect(decoded.title == "第1章")
     #expect(decoded.content == "本文")
     #expect(decoded.memo == "")
+    #expect(decoded.episodes.count == 1)
+    #expect(decoded.episodes[0].id.rawValue == id.rawValue)
 }
 
 @Test func novelDocumentChaptersOrderIsArrayOrder() {
@@ -67,6 +71,7 @@ import Testing
     #expect(doc.chapters.count == 1)
     #expect(!doc.title.isEmpty)
     #expect(!doc.chapters[0].title.isEmpty)
+    #expect(doc.chapters[0].episodes.count == 1)
 }
 
 @Test func novelDocumentIsCodableRoundTrip() throws {

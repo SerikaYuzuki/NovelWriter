@@ -7,28 +7,30 @@ import NovelCore
 /// ```text
 /// MyNovel.novelpkg/
 /// ├── manifest.json                          … 章順・タイトル・日時などのメタデータ
-/// ├── chapters/<ChapterID(UUID)>.md           … 章本文のみ(メタデータなし)
-/// ├── notes/<ChapterID(UUID)>.md              … 章メモ(空ならファイルなし)
+/// ├── episodes/<EpisodeID(UUID)>.md           … 話本文のみ(メタデータなし)
+/// ├── episode-notes/<EpisodeID(UUID)>.md      … 話メモ(空ならファイルなし)
 /// └── attachments/                            … 将来の添付ファイル置き場
 /// ```
 ///
 /// 設計上の要点:
-/// - 章順は `manifest.json` のみが持つ唯一の正(D-003, D-004)。章ファイル名は
-///   連番ではなく `ChapterID`(UUID)ベースにし、並べ替えを manifest.json の
-///   書き換えだけで完結させる
+/// - 章順と章内の話順は `manifest.json` のみが持つ唯一の正(D-003, D-004, D-028)。
+///   本文ファイル名は連番ではなく `EpisodeID`(UUID)ベースにする
 /// - 保存は一時ディレクトリに完全な形で書き出してから `replaceItemAt` で
 ///   置換することでアトミックに行う(docs/DESIGN.md 6.4)
 /// - 既存パッケージへの上書き保存では、既存の `attachments/` を新しい
 ///   パッケージへそのまま引き継ぐ(添付ファイルを失わない)
-/// - 章ファイルが1つ欠けていても、読み込み全体は失敗させない。欠けた章は
-///   空本文として読み込む(データ救出優先)。`manifest.json` に記載の無い
-///   `chapters/*.md` は読み込み時に無視する(削除はしない)
+/// - 話ファイルが1つ欠けていても、読み込み全体は失敗させない。欠けた話は
+///   空本文として読み込む(データ救出優先)。manifest に記載のない本文は
+///   読み込み時に無視する(削除はしない)
 public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
-    /// 読み込みは v1 / v2 を受理する。
-    public static let currentFormatVersion = "2"
+    /// 読み込みは v1 / v2 / v3 を受理する。
+    public static let currentFormatVersion = "3"
 
     private static let manifestFileName = "manifest.json"
+    private static let episodesDirectoryName = "episodes"
+    private static let episodeNotesDirectoryName = "episode-notes"
+    // v1 / v2 の読み込みと、v3保存時に既知項目として除外するために残す。
     private static let chaptersDirectoryName = "chapters"
     private static let notesDirectoryName = "notes"
     /// `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
@@ -47,7 +49,7 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyin
     ///
     /// - Throws: パッケージやマニフェストが存在しない、あるいはマニフェストが
     ///   壊れている・非対応バージョンの場合は ``NovelpkgError``。
-    ///   個々の章本文ファイルが欠けている場合はエラーにせず、空本文として扱う。
+    ///   個々の話本文ファイルが欠けている場合はエラーにせず、空本文として扱う。
     public func load(from url: URL) async throws -> NovelDocument {
         try await Task.detached(priority: .utility) {
             try Self.performLoad(from: url)
@@ -89,16 +91,36 @@ extension NovelpkgRepository {
             throw NovelpkgError.unsupportedFormatVersion(manifest.formatVersion)
         }
 
+        let episodesURL = url.appendingPathComponent(episodesDirectoryName, isDirectory: true)
+        let episodeNotesURL = url.appendingPathComponent(episodeNotesDirectoryName, isDirectory: true)
         let chaptersURL = url.appendingPathComponent(chaptersDirectoryName, isDirectory: true)
         let notesURL = url.appendingPathComponent(notesDirectoryName, isDirectory: true)
         let chapters: [Chapter] = manifest.chapters.map { entry in
-            let chapterFileURL = chaptersURL.appendingPathComponent("\(entry.id.uuidString).md")
-            let noteFileURL = notesURL.appendingPathComponent("\(entry.id.uuidString).md")
-            // 章ファイルが欠けていても読み込み全体は失敗させない(データ救出優先)。
-            // 欠けていた場合は空本文として扱う。
-            let content = (try? String(contentsOf: chapterFileURL, encoding: .utf8)) ?? ""
-            let memo = (try? String(contentsOf: noteFileURL, encoding: .utf8)) ?? ""
-            return Chapter(id: ChapterID(rawValue: entry.id), title: entry.title, content: content, memo: memo)
+            let episodeEntries = entry.episodes ?? [
+                NovelpkgManifest.EpisodeEntry(id: entry.id, title: Episode.defaultTitle)
+            ]
+            let isLegacyChapter = entry.episodes == nil
+            let episodes = episodeEntries.map { episodeEntry in
+                let contentURL: URL
+                let memoURL: URL
+                if isLegacyChapter {
+                    // v1 / v2 は章IDを話IDとして再利用し、読み込みを安定させる。
+                    contentURL = chaptersURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
+                    memoURL = notesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
+                } else {
+                    contentURL = episodesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
+                    memoURL = episodeNotesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
+                }
+                let content = (try? String(contentsOf: contentURL, encoding: .utf8)) ?? ""
+                let memo = (try? String(contentsOf: memoURL, encoding: .utf8)) ?? ""
+                return Episode(
+                    id: EpisodeID(rawValue: episodeEntry.id),
+                    title: episodeEntry.title,
+                    content: content,
+                    memo: memo
+                )
+            }
+            return Chapter(id: ChapterID(rawValue: entry.id), title: entry.title, episodes: episodes)
         }
 
         let characters = try readCharacters(from: url)
@@ -116,7 +138,7 @@ extension NovelpkgRepository {
     }
 
     private static func isSupportedFormatVersion(_ formatVersion: String) -> Bool {
-        formatVersion == "1" || formatVersion == currentFormatVersion
+        formatVersion == "1" || formatVersion == "2" || formatVersion == currentFormatVersion
     }
 
     static func readManifest(at url: URL, fileManager: FileManager) throws -> NovelpkgManifest {
@@ -198,7 +220,7 @@ extension NovelpkgRepository {
     }
 
     /// `workingURL` に、完全な形の `.novelpkg` パッケージ内容(manifest.json /
-    /// chapters/ / attachments/)を書き出す。この時点では最終的な保存先には
+    /// episodes/ / attachments/)を書き出す。この時点では最終的な保存先には
     /// 一切触れない(読み取り専用でのみ参照する)ため、書き出し途中に失敗しても
     /// 既存の保存済みパッケージは無傷のまま残る。
     ///
@@ -214,8 +236,8 @@ extension NovelpkgRepository {
     ) throws {
         try fileManager.createDirectory(at: workingURL, withIntermediateDirectories: true)
 
-        let chaptersURL = workingURL.appendingPathComponent(chaptersDirectoryName, isDirectory: true)
-        try fileManager.createDirectory(at: chaptersURL, withIntermediateDirectories: true)
+        let episodesURL = workingURL.appendingPathComponent(episodesDirectoryName, isDirectory: true)
+        try fileManager.createDirectory(at: episodesURL, withIntermediateDirectories: true)
 
         try copyUnknownRootItems(from: contentSourceURL, to: workingURL, fileManager: fileManager)
 
@@ -224,9 +246,9 @@ extension NovelpkgRepository {
             try preserveSnapshotsDirectory(from: snapshotsSourceURL, to: workingURL, fileManager: fileManager)
         }
 
-        // 章本文を書き出す。ファイル名は ChapterID(UUID)ベース(D-003)。
-        try writeChapterContents(doc.chapters, into: chaptersURL)
-        try writeChapterNotes(doc.chapters, into: workingURL, fileManager: fileManager)
+        // 話本文を書き出す。ファイル名は EpisodeID(UUID)ベース(D-028)。
+        try writeEpisodeContents(doc.chapters, into: episodesURL)
+        try writeEpisodeNotes(doc.chapters, into: workingURL, fileManager: fileManager)
         try writeCharacters(doc.characters, into: workingURL)
         try writePlotCards(doc.plotCards, into: workingURL)
         try writeFlags(doc.flags, into: workingURL)
@@ -268,26 +290,28 @@ extension NovelpkgRepository {
         }
     }
 
-    private static func writeChapterContents(_ chapters: [Chapter], into chaptersURL: URL) throws {
+    private static func writeEpisodeContents(_ chapters: [Chapter], into episodesURL: URL) throws {
         for chapter in chapters {
-            let chapterFileURL = chaptersURL.appendingPathComponent("\(chapter.id.rawValue.uuidString).md")
-            try chapter.content.write(to: chapterFileURL, atomically: false, encoding: .utf8)
+            for episode in chapter.episodes {
+                let episodeFileURL = episodesURL.appendingPathComponent("\(episode.id.rawValue.uuidString).md")
+                try episode.content.write(to: episodeFileURL, atomically: false, encoding: .utf8)
+            }
         }
     }
 
-    private static func writeChapterNotes(
+    private static func writeEpisodeNotes(
         _ chapters: [Chapter],
         into workingURL: URL,
         fileManager: FileManager
     ) throws {
-        let memos = chapters.filter { !$0.memo.isEmpty }
+        let memos = chapters.flatMap(\.episodes).filter { !$0.memo.isEmpty }
         guard !memos.isEmpty else { return }
 
-        let notesURL = workingURL.appendingPathComponent(notesDirectoryName, isDirectory: true)
+        let notesURL = workingURL.appendingPathComponent(episodeNotesDirectoryName, isDirectory: true)
         try fileManager.createDirectory(at: notesURL, withIntermediateDirectories: true)
-        for chapter in memos {
-            let noteFileURL = notesURL.appendingPathComponent("\(chapter.id.rawValue.uuidString).md")
-            try chapter.memo.write(to: noteFileURL, atomically: false, encoding: .utf8)
+        for episode in memos {
+            let noteFileURL = notesURL.appendingPathComponent("\(episode.id.rawValue.uuidString).md")
+            try episode.memo.write(to: noteFileURL, atomically: false, encoding: .utf8)
         }
     }
 
@@ -304,7 +328,15 @@ extension NovelpkgRepository {
             formatVersion: currentFormatVersion,
             documentID: doc.id,
             title: doc.title,
-            chapters: doc.chapters.map { NovelpkgManifest.ChapterEntry(id: $0.id.rawValue, title: $0.title) },
+            chapters: doc.chapters.map { chapter in
+                NovelpkgManifest.ChapterEntry(
+                    id: chapter.id.rawValue,
+                    title: chapter.title,
+                    episodes: chapter.episodes.map {
+                        NovelpkgManifest.EpisodeEntry(id: $0.id.rawValue, title: $0.title)
+                    }
+                )
+            },
             createdAt: createdAt,
             updatedAt: now
         )
@@ -331,6 +363,8 @@ extension NovelpkgRepository {
 
         let knownRootItemNames: Set<String> = [
             manifestFileName,
+            episodesDirectoryName,
+            episodeNotesDirectoryName,
             chaptersDirectoryName,
             notesDirectoryName,
             attachmentsDirectoryName,
