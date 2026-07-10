@@ -295,10 +295,33 @@ public protocol DocumentCopyingRepository: DocumentRepository {
     func saveCopy(_ doc: NovelDocument, from sourceURL: URL, to destinationURL: URL) async throws
 }
 
-/// スナップショット保存に対応するリポジトリ。
+/// 作品パッケージ内に保存されたスナップショットの一覧項目。
+///
+/// 置き場所やファイル名規則は保存層の詳細であり、App 側はこの値の
+/// `url` / `displayName` / `createdAt` だけを使う(docs/PHASE5.md 4.5-3a)。
+public struct DocumentSnapshotInfo: Identifiable, Hashable, Sendable {
+    public var id: URL {
+        url
+    }
+
+    /// スナップショット本体の URL(読み込み・Finder 表示・復元の入力に使う)。
+    public let url: URL
+    /// 作成時刻(新しい順の並べ替えと表示に使う)。
+    public let createdAt: Date
+    /// UI 向けの表示名(保存層がロケールに合わせて組み立てる)。
+    public let displayName: String
+
+    public init(url: URL, createdAt: Date, displayName: String) {
+        self.url = url
+        self.createdAt = createdAt
+        self.displayName = displayName
+    }
+}
+
+/// スナップショット保存・一覧・復元に対応するリポジトリ。
 ///
 /// スナップショットの具体的な置き場所や形式は保存層の責務であり、App 側は
-/// このプロトコルを通して「現在の作品状態の退避」だけを依頼する。
+/// このプロトコルを通して退避・一覧・復元だけを依頼する(D-017、PHASE5 4.5-3a)。
 public protocol SnapshottingDocumentRepository: DocumentRepository {
     /// 現在の作品状態をスナップショットとして保存する。
     /// - Parameters:
@@ -307,4 +330,17 @@ public protocol SnapshottingDocumentRepository: DocumentRepository {
     /// - Returns: 作成したスナップショットの URL。
     @discardableResult
     func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL
+
+    /// 作品パッケージに保存されているスナップショットを新しい順で返す。
+    /// - Parameter url: 元の作品パッケージURL。
+    func listSnapshots(in url: URL) async throws -> [DocumentSnapshotInfo]
+
+    /// 指定スナップショットの内容を現在の作品パッケージへ書き戻す。
+    ///
+    /// 既存のスナップショット一覧は保持する。復元前に現在状態を退避するのは
+    /// 呼び出し側の責務とする。
+    /// - Parameters:
+    ///   - snapshotURL: 書き戻すスナップショットの URL。
+    ///   - packageURL: 現在の作品パッケージURL。
+    func restoreSnapshot(from snapshotURL: URL, into packageURL: URL) async throws
 }

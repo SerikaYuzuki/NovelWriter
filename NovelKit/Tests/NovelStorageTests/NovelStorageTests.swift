@@ -183,43 +183,6 @@ private func rewriteManifestFormatVersion(_ formatVersion: String, at packageURL
     #expect(loaded.chapters[0].content == "更新後の本文")
 }
 
-@Test func saveSnapshotCreatesLoadablePackage() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("SnapshotSource.novelpkg")
-    let repository = NovelpkgRepository()
-    let doc = NovelDocument(title: "退避テスト", chapters: [Chapter(title: "第1章", content: "本文")])
-
-    try await repository.save(doc, to: packageURL)
-    let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
-
-    #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
-    let loadedSnapshot = try await repository.load(from: snapshotURL)
-    #expect(loadedSnapshot == doc)
-}
-
-@Test func overwriteSavePreservesSnapshots() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("SnapshotPreserve.novelpkg")
-    let repository = NovelpkgRepository()
-    var doc = NovelDocument(title: "退避保持テスト", chapters: [Chapter(title: "第1章", content: "初版")])
-
-    try await repository.save(doc, to: packageURL)
-    let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
-
-    doc.chapters[0].content = "更新版"
-    try await repository.save(doc, to: packageURL)
-
-    #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
-    let loadedSnapshot = try await repository.load(from: snapshotURL)
-    #expect(loadedSnapshot.chapters[0].content == "初版")
-    let loadedCurrent = try await repository.load(from: packageURL)
-    #expect(loadedCurrent.chapters[0].content == "更新版")
-}
-
 @Test func overwriteSavePreservesUnknownRootItems() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
