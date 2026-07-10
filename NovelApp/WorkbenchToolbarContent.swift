@@ -166,7 +166,17 @@ final class WorkbenchOverlayState {
     var presented: WorkbenchOverlay?
 
     func toggle(_ overlay: WorkbenchOverlay) {
-        presented = presented == overlay ? nil : overlay
+        switch overlay {
+        case .plotCards:
+            switch presented {
+            case .plotCards, .plotCard:
+                presented = nil
+            default:
+                presented = .plotCards
+            }
+        default:
+            presented = presented == overlay ? nil : overlay
+        }
     }
 }
 
