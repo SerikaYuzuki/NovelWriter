@@ -185,3 +185,14 @@
   2. 新規作品は D-016 の既定保存先へ先に保存し、現在作品の保存と新規パッケージ保存が成功した後にだけ切り替える。I/O 待機中の編集も切り替え直前に再度保存する。
   3. 別名保存で `NovelDocument` 外の資料・スナップショット・未知項目を引き継ぐ能力は `DocumentCopyingRepository` として NovelCore に抽象化し、`.novelpkg` の具体的な複製方法は NovelStorage に閉じ込める。新しい URL と最近使った作品は複製成功後にだけ更新する。
 - **理由**: async I/O の途中で AppState を段階的に書き換えると、後半の失敗時に本文・選択・資料が別作品同士で混ざる。また App 層が付随データを直接コピーすると `.novelpkg` の内部構造が漏れる。候補を先読みして最後に同期的に確定し、パッケージ固有の複製を能力プロトコルへ委譲すれば、編集中の保存直列化とストレージ境界の両方を維持できる。
+
+## D-024: 上部は3列に追従する一体型 toolbar とし、編集操作だけをカスタマイズ可能にする
+
+- **日付**: 2026-07-10 / **状態**: 承認(設計のみ。実装計画は [TOOLBAR.md](TOOLBAR.md))
+- **内容**:
+  1. Workbench 上部は独自のペイン内バーを重ねず、Project Sidebar / Outline / Editor に追従する macOS ネイティブの一体型 toolbar へ寄せる。Project Sidebar 上は標準の表示／非表示、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の章内検索とする。
+  2. Sidebar toggle、Outline identity、章内検索は構造上のアンカーとして固定する。章追加、章メモ、スナップショット、「この章」などの編集操作は、stable ID を持つ個別の `ToolbarItem` とし、macOS 標準UIで追加・削除・並べ替え可能にする。
+  3. すべての toolbar 操作にメニューバーまたは文脈メニューの代替入口を用意し、toolbar を非表示にしても機能を失わない。カスタマイズ状態は OS に委ね、`NovelDocument` / `.novelpkg` / AppState へ保存しない。
+  4. ネイティブの列追従と Sidebar toggle を得るため、二重の `HSplitView` は3列 `NavigationSplitView` へ段階的に移行する。toolbar 所有者は `NovelWorkbenchView` 一箇所に限定し、EditorKit は変更しない。
+- **理由**: 長時間執筆では本文の縦幅と、頻用操作への一手での到達が重要である。macOS 標準 toolbar はユーザーごとの作業スタイルに合わせたカスタマイズ、overflow、メニューとの一貫性を提供できる。一方、すべてを自由移動可能にするとペインの開閉・現在地・検索の位置まで失われるため、固定の構造要素と可変の編集操作を分ける。
+- **制約**: macOS 14 の SwiftUI では「全項目を自由に移動」と「各項目を常に特定ペインの真上へ固定」は同時保証できない。初期配置を3領域に合わせ、カスタマイズ対象は中央の編集操作に限定する。厳密な tracking separator のための AppKit bridge は採用しない。

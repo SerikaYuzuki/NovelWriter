@@ -69,6 +69,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - 角丸: カード・ポップオーバー内パネル = 8pt、小さなチップ = 4pt。それ以外の角丸を発明しない
 - 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / AI panel collapsed 28pt / AI panel expanded 280pt(240〜360pt) / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
+- Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - フォームは `.formStyle(.grouped)` に統一
 
 ## 5. コンポーネント規約
@@ -76,7 +77,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - **ボタン**: 主アクション(ダイアログの実行など)= `.borderedProminent`、通常 = `.bordered`、ツールバー・行内 = `.borderless` + アイコン。破壊的操作は `role: .destructive` を必ず付ける
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
 - **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない
-- **Editor Top Bar**: 章タイトル、検索、履歴、プレビュー、保存状態だけを置く。本文エリア上部に大きな説明文や装飾を置かない
+- **Workbench toolbar**: [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の章内検索とする。保存状態と章タイトルを重複表示しない。編集操作は個別の native toolbar item とし、独自背景・影・大きなラベルを付けない
 - **AI Assistant Panel**: collapsed はステータスバー、expanded はチャット入力・提案一覧・選択テキスト操作の3領域。入力欄は下端に固定し、本文領域を覆わない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
@@ -97,6 +98,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする
 - Project Sidebar: Cmd+1〜8 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
+- Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
 - AI Assistant Panel: Cmd+J など既存ショートカットと衝突しないキーで開閉。expanded 中も Esc で入力フォーカス解除できる
 
 ## 8. 文言(日本語 UI ライティング)
@@ -113,6 +115,8 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
 - [ ] Project Sidebar / Outline / Editor / AI Assistant Panel の幅と優先順位が崩れていないか
+- [ ] 上部が一段の native toolbar で、Sidebar 開閉 / 作品名 + 章数 / 編集操作 / 右端検索の既定配置になっているか
+- [ ] カスタマイズ可能な toolbar 操作すべてに、メニューまたは文脈メニューの代替入口があるか
 - [ ] AI Assistant Panel を閉じた状態でも保存状態・文字数・AI状態が読めるか
 - [ ] 空状態は `ContentUnavailableView` + 規約どおりの文言か
 - [ ] 常設の影・独自ハイライト・0.5s 超のアニメーションを追加していないか
