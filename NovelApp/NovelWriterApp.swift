@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
@@ -29,11 +30,14 @@ struct NovelWriterApp: App {
     @State private var appState: AppState
     @State private var editorSettings = EditorSettings()
     @State private var documentPanelPresenter: DocumentPanelPresenter
+    @State private var snapshotMenuPresenter: SnapshotMenuPresenter
+    @State private var editorSearchSession = EditorSearchSession()
 
     init() {
         let appState = AppState(dependencies: AppDependencies())
         _appState = State(initialValue: appState)
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
+        _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
     }
 
     var body: some Scene {
@@ -42,6 +46,8 @@ struct NovelWriterApp: App {
                 .environment(appState)
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
+                .environment(snapshotMenuPresenter)
+                .environment(editorSearchSession)
                 .task {
                     applicationDelegate.appState = appState
                     await appState.bootstrap()
@@ -78,9 +84,50 @@ struct NovelWriterApp: App {
                 Divider()
 
                 Button("スナップショットを保存") {
-                    Task { await appState.createSnapshot() }
+                    Task {
+                        _ = await appState.createSnapshot()
+                        await snapshotMenuPresenter.refresh()
+                    }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
+
+                SnapshotRestoreCommands(presenter: snapshotMenuPresenter)
+            }
+
+            CommandMenu("章") {
+                Button("章を追加") {
+                    appState.addChapter()
+                }
+
+                Button("章メモ") {
+                    NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+                }
+                .disabled(appState.selectedChapter == nil)
+
+                Divider()
+
+                Menu("この章") {
+                    ChapterContextMenuContent(
+                        appState: appState,
+                        onOpenCharacter: { characterID in
+                            appState.selectCharacter(characterID)
+                            appState.selectProjectSection(.characters)
+                        },
+                        onOpenPlotCard: { cardID in
+                            appState.selectPlotCard(cardID)
+                            appState.selectProjectSection(.plot)
+                        }
+                    )
+                }
+                .disabled(appState.selectedChapter == nil)
+            }
+
+            CommandGroup(after: .textEditing) {
+                Divider()
+                WorkbenchFindCommands(
+                    appState: appState,
+                    editorSearchSession: editorSearchSession
+                )
             }
 
             CommandMenu("表示") {
@@ -92,14 +139,79 @@ struct NovelWriterApp: App {
                     }
                     .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
                 }
+
+                Divider()
+
+                Button("AI Assistant") {
+                    appState.aiAssistantPanel.isExpanded.toggle()
+                }
+                .keyboardShortcut("j", modifiers: .command)
             }
 
             SidebarCommands()
+            ToolbarCommands()
         }
 
         Settings {
             EditorSettingsView()
                 .environment(editorSettings)
         }
+    }
+}
+
+private struct SnapshotRestoreCommands: View {
+    @Bindable var presenter: SnapshotMenuPresenter
+
+    var body: some View {
+        Menu("スナップショットを復元") {
+            if presenter.snapshots.isEmpty {
+                Text("スナップショットはありません")
+            } else {
+                ForEach(presenter.snapshots) { snapshot in
+                    Menu(snapshot.displayName) {
+                        Button("この状態に戻す…") {
+                            presenter.snapshotPendingRestore = snapshot
+                        }
+                        Button("Finder で表示") {
+                            NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                        }
+                    }
+                }
+            }
+        }
+        .task {
+            await presenter.refresh()
+        }
+    }
+}
+
+private struct WorkbenchFindCommands: View {
+    @FocusedValue(\.workbenchSearchSurface) private var searchSurface
+
+    @Bindable var appState: AppState
+    @Bindable var editorSearchSession: EditorSearchSession
+
+    var body: some View {
+        Button("検索…") {
+            switch searchSurface {
+            case .outline:
+                appState.outlinePresentation.isSearchVisible = true
+                appState.outlinePresentation.pinnedSearchByKeyboard = true
+            case .editor, .none:
+                guard appState.workspaceSelection.section == .structure else { return }
+                editorSearchSession.focusSearchField()
+            }
+        }
+        .keyboardShortcut("f", modifiers: .command)
+
+        Button("次を検索") {
+            editorSearchSession.jump(direction: .forward, in: appState.selectedChapter)
+        }
+        .keyboardShortcut("g", modifiers: .command)
+
+        Button("前を検索") {
+            editorSearchSession.jump(direction: .backward, in: appState.selectedChapter)
+        }
+        .keyboardShortcut("g", modifiers: [.command, .shift])
     }
 }

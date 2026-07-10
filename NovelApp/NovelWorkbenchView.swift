@@ -2,11 +2,11 @@ import EditorKit
 import NovelCore
 import SwiftUI
 
-/// 3列ワークベンチのルート(docs/TOOLBAR.md Toolbar-1)。
+/// 3列ワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
 ///
 /// `NavigationSplitView` で Project Sidebar / Outline(content) / Detail を構成し、
 /// 標準の Sidebar 開閉と列追従 chrome を得る。下部の AI Assistant Panel は
-/// 従来どおり split の外に置く。`EditorTopBarView` は Toolbar-2 まで残す。
+/// 従来どおり split の外に置く。上部 chrome は `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
     var ideal: CGFloat
@@ -16,12 +16,13 @@ private struct WorkbenchColumnWidths {
 struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
-
-    @Binding var searchSelectionRequest: EditorSelectionRequest?
+    @Environment(EditorSearchSession.self) private var editorSearchSession
+    @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
 
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
     @State private var sectionOverviewSelection: String? = Self.overviewItemID
+    @State private var isMemoPresented = false
 
     fileprivate static let overviewItemID = "overview"
 
@@ -45,18 +46,25 @@ struct NovelWorkbenchView: View {
             AIAssistantPanelView()
         }
         .preferredColorScheme(.dark)
-        .toolbar {
-            ToolbarItemGroup {
-                Spacer()
-
-                if showsWritingActions {
-                    Button {
-                        appState.addChapter()
-                    } label: {
-                        Label("章を追加", systemImage: "plus")
-                    }
-                }
-            }
+        .toolbar(id: "novelwriter.workbench.v1") {
+            WorkbenchToolbarContent(
+                isMemoPresented: $isMemoPresented,
+                showsWritingActions: showsWritingActions,
+                onOpenCharacter: openCharacter,
+                onOpenPlotCard: openPlotCard
+            )
+        }
+        .searchable(
+            text: Bindable(editorSearchSession).query,
+            isPresented: searchableIsPresented,
+            placement: .toolbar,
+            prompt: "章内を検索"
+        )
+        .onSubmit(of: .search) {
+            editorSearchSession.jump(direction: .forward, in: appState.selectedChapter)
+        }
+        .onChange(of: showsWritingActions) { _, isWriting in
+            editorSearchSession.isSearchPresented = isWriting
         }
         .background {
             Button("AI Assistant") {
@@ -70,6 +78,75 @@ struct NovelWorkbenchView: View {
             // 一時状態だが、登場人物選択と同様に戻ってきたときに残す。
             sectionOverviewSelection = Self.overviewItemID
         }
+        .confirmationDialog(
+            "このスナップショットに戻しますか？",
+            isPresented: snapshotRestoreDialogIsPresented,
+            presenting: snapshotMenuPresenter.snapshotPendingRestore
+        ) { snapshot in
+            Button("戻す", role: .destructive) {
+                Task { await snapshotMenuPresenter.restore(snapshot) }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: { snapshot in
+            Text("「\(snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+        }
+        .alert(
+            "復元できませんでした",
+            isPresented: snapshotRestoreErrorIsPresented
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
+        }
+        .task(id: appState.documentURL) {
+            await snapshotMenuPresenter.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
+            guard appState.selectedChapter != nil else { return }
+            isMemoPresented = true
+        }
+    }
+
+    private var searchableIsPresented: Binding<Bool> {
+        Binding(
+            get: { showsWritingActions && editorSearchSession.isSearchPresented },
+            set: { newValue in
+                guard showsWritingActions else { return }
+                editorSearchSession.isSearchPresented = newValue
+            }
+        )
+    }
+
+    private var snapshotRestoreDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { snapshotMenuPresenter.snapshotPendingRestore != nil },
+            set: { isPresented in
+                if !isPresented {
+                    snapshotMenuPresenter.snapshotPendingRestore = nil
+                }
+            }
+        )
+    }
+
+    private var snapshotRestoreErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { snapshotMenuPresenter.restoreErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    snapshotMenuPresenter.restoreErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private func openCharacter(_ characterID: CharacterID) {
+        appState.selectCharacter(characterID)
+        appState.selectProjectSection(.characters)
+    }
+
+    private func openPlotCard(_ cardID: PlotCardID) {
+        appState.selectPlotCard(cardID)
+        appState.selectProjectSection(.plot)
     }
 
     @ViewBuilder
@@ -104,22 +181,12 @@ struct NovelWorkbenchView: View {
     private var workbenchDetail: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            EditorPaneView(
-                searchSelectionRequest: $searchSelectionRequest,
-                onOpenCharacter: { characterID in
-                    appState.selectCharacter(characterID)
-                    appState.selectProjectSection(.characters)
-                },
-                onOpenPlotCard: { cardID in
-                    appState.selectPlotCard(cardID)
-                    appState.selectProjectSection(.plot)
-                }
-            )
+            EditorPaneView()
         case .characters:
             CharacterDetailView { appearance in
                 appState.selectProjectSection(.structure)
                 appState.selectChapter(appearance.chapterID)
-                searchSelectionRequest = EditorSelectionRequest(range: appearance.range)
+                editorSearchSession.requestSelection(range: appearance.range)
             }
         case .plot:
             PlotBoardView { chapterID in
@@ -299,6 +366,7 @@ private struct ResizeHandle: View {
 
 private struct AssistantStatusBarView: View {
     @Environment(AppState.self) private var appState
+    @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
         HStack(spacing: 8) {
@@ -326,6 +394,9 @@ private struct AssistantStatusBarView: View {
             Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
             Text(chapterCountText)
             Text(totalCountText)
+            if appState.workspaceSelection.section == .structure, editorSearchSession.didMissSearch {
+                Text("見つかりません")
+            }
             Text("行 -- / 列 --")
             Spacer()
             Label("AI 未接続", systemImage: "sparkles")

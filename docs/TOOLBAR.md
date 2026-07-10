@@ -1,6 +1,6 @@
 # Workbench 上部ツールバー設計
 
-**状態: Toolbar-1 完了。** Toolbar-2(一段ツールバー + カスタマイズ)は未着手。実装はユーザーから改めて着手指示があった時に行う。
+**状態: Toolbar-1 / Toolbar-2 完了。** 上部 chrome の刷新は完了。次の実装はユーザー指示に従う。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 
@@ -174,7 +174,7 @@ WindowGroup
 
 ## 10. 実装順
 
-実装は次の2サブフェーズに分け、**1サブフェーズ = 1ブランチ = 1PR**、スタックPR禁止とする。Toolbar-1 は完了。Toolbar-2 の実装はユーザーの着手指示を待つ。
+実装は次の2サブフェーズに分け、**1サブフェーズ = 1ブランチ = 1PR**、スタックPR禁止とする。Toolbar-1 / Toolbar-2 は完了。
 
 ### Toolbar-1: 3列ワークベンチ基盤【完了】
 
@@ -187,17 +187,19 @@ WindowGroup
 
 **実装メモ**: `NovelWorkbenchView` を `NavigationSplitView` + 下部 AI Panel に再構成。執筆は Outline / Editor、登場人物は一覧 / シート、プロットは伏線ナビゲータ / ボード、資料は一覧 / 詳細、その他は概要 / section surface。`SidebarCommands()` を追加。人物・プロットの入れ子 split を撤去。
 
-### Toolbar-2: 一段ツールバー + カスタマイズ
+### Toolbar-2: 一段ツールバー + カスタマイズ【完了】
 
-- `WorkbenchToolbarContent` と stable ID を追加する
-- 章追加、メモ、スナップショット、この章、検索を native toolbar へ移す
-- `EditorTopBarView` と展開式の2段目検索を撤去する
-- `ToolbarCommands()` と全操作のメニューバー fallback を追加する
-- カスタマイズ配置の再起動保持、overflow、Cmd+F のフォーカス分岐を確認する
+- [x] `WorkbenchToolbarContent` と stable ID を追加する
+- [x] 章追加、メモ、スナップショット、この章、検索を native toolbar へ移す
+- [x] `EditorTopBarView` と展開式の2段目検索を撤去する
+- [x] `ToolbarCommands()` と全操作のメニューバー fallback を追加する
+- [x] カスタマイズ配置の再起動保持、overflow、Cmd+F のフォーカス分岐を確認する
 
 **完了条件:** 初期配置が本書の図と一致し、編集操作を個別に移動・削除・再追加できる。toolbar を非表示にしても全機能へ到達できる。
 
-Toolbar-1 を main にマージしてから Toolbar-2 のブランチを切る。
+**実装メモ**: `EditorSearchSession` をウィンドウ単位で抽出し、`.searchable(placement: .toolbar)` で右端検索。章メニュー / File のスナップショット復元 / Outline 文脈メニューを fallback に。`ToolbarCommands()` でカスタマイズ導線を有効化。
+
+Toolbar-1 を main にマージしてから Toolbar-2 のブランチを切る、という順序は守った。
 
 ## 11. 手動確認
 
