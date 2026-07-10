@@ -1,3 +1,4 @@
+import NovelCore
 import SwiftUI
 
 enum ProjectSection: String, CaseIterable, Codable, Identifiable {
@@ -107,6 +108,12 @@ struct OutlinePresentationState: Equatable {
     var searchText = ""
     var isSearchVisible = false
     var pinnedSearchByKeyboard = false
+}
+
+/// プロット画面 content 列の選択(UIFIX 4.2)。執筆の章選択とは独立させる。
+enum PlotOutlineSelection: Hashable, Sendable {
+    case unassigned
+    case chapter(ChapterID)
 }
 
 enum AIAssistantTab: String, CaseIterable, Identifiable {
