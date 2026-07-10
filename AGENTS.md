@@ -2,13 +2,13 @@
 
 macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(TextKit 2)エディタ + `.novelpkg` フォルダパッケージ保存。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある(**現在進行中の作業指示書は [docs/UIDESIGN.md](docs/UIDESIGN.md)**。Phase 4 の完了記録は [docs/PHASE4.md](docs/PHASE4.md))。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある(**現在進行中の作業指示書は [docs/PHASE5.md](docs/PHASE5.md)**。Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
-## 現在地(2026-07-08 時点)
+## 現在地(2026-07-10 時点)
 
-- Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)完了
+- Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)完了
 - 動くもの: 章リスト(追加・選択・タイトル編集・削除・並べ替え)、NSTextView エディタ、自動字下げ(改行で全角スペース、`「` で字下げ解除)、章メモ、文字数表示、キャラクター管理、登場章ジャンプ、プロットカード、伏線管理、資料添付、検索ジャンプ、スナップショット保存、`.novelpkg` 自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み
-- 次: **Phase UI(GUI刷新 → [docs/UIDESIGN.md](docs/UIDESIGN.md)。UI-1 から順に、1サブフェーズ = 1PR、スタックPR禁止)**。その後 Phase 5(出力)。Phase 4 の完了記録は [docs/PHASE4.md](docs/PHASE4.md)
+- 次: **Phase 4.5-2a(作品切り替えのトランザクション)**。詳細は [docs/PHASE5.md](docs/PHASE5.md)
 
 ## リポジトリ構成
 
@@ -34,7 +34,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 5. **章順は `NovelDocument.chapters` の配列順が唯一の正**(D-004)。order フィールドを追加しない。保存形式では manifest.json だけが章順を持ち、章ファイル名は ChapterID(UUID)ベース(D-003)
 6. **`.novelpkg` の内部構造を NovelStorage の外に漏らさない**(DESIGN 9.3)
 7. **エディタ機能は EditorPlugin として追加する**(DESIGN 4.4)。EditorView / MacTextAdapter を直接太らせない。純粋な判定ロジックは `Rules/` に切り出してテストする
-8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反
+8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。ダーク基調だがライト外観も壊さない(セマンティックカラー原則。D-021 補足参照)。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反
 
 ## エディタにプラグインを足す手順(Phase 2 で確立)
 

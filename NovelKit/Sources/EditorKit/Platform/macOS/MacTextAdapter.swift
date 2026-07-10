@@ -36,6 +36,7 @@ struct MacTextAdapter: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
 
         guard let textView = scrollView.documentView as? NSTextView else {
             preconditionFailure("NSTextView.scrollableTextView() は常に NSTextView を documentView に持つ")
@@ -50,6 +51,9 @@ struct MacTextAdapter: NSViewRepresentable {
 
         textView.string = initialText
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
+        scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
+            NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
+            .textBackgroundColor
         context.coordinator.undoManager.removeAllActions()
 
         return scrollView
@@ -78,6 +82,11 @@ struct MacTextAdapter: NSViewRepresentable {
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView)
         }
 
+        if let scrollView = textView.enclosingScrollView {
+            scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
+                NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
+                .textBackgroundColor
+        }
         context.coordinator.applySelectionRequestIfNeeded(selectionRequest, textView: textView)
     }
 
@@ -272,15 +281,34 @@ struct MacTextAdapter: NSViewRepresentable {
         private func apply(_ configuration: EditorConfiguration, to textView: NSTextView) {
             let font = NSFont(name: configuration.fontName, size: configuration.fontSize) ??
                 NSFont.systemFont(ofSize: configuration.fontSize)
+            let textColor = NSColor(hex: configuration.textColorHex) ??
+                NSColor(hex: EditorConfiguration.defaultTextColorHex) ??
+                .labelColor
+            let backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
+                NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
+                .textBackgroundColor
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineHeightMultiple = configuration.lineHeightMultiple
 
             textView.font = font
+            textView.textColor = textColor
+            textView.insertionPointColor = textColor
+            textView.backgroundColor = backgroundColor
+            textView.drawsBackground = true
+            textView.enclosingScrollView?.backgroundColor = backgroundColor
             textView.defaultParagraphStyle = paragraphStyle
-            textView.typingAttributes = [.font: font, .paragraphStyle: paragraphStyle]
-            textView.textContainerInset = NSSize(width: 24, height: 20)
+            textView.typingAttributes = [
+                .font: font,
+                .foregroundColor: textColor,
+                .paragraphStyle: paragraphStyle
+            ]
+            textView.textContainerInset = NSSize(width: 32, height: 24)
             textView.textStorage?.addAttributes(
-                [.font: font, .paragraphStyle: paragraphStyle],
+                [
+                    .font: font,
+                    .foregroundColor: textColor,
+                    .paragraphStyle: paragraphStyle
+                ],
                 range: NSRange(location: 0, length: (textView.string as NSString).length)
             )
             textStorageAttributeApplicationCount += 1
@@ -307,6 +335,19 @@ private struct MacEditorContext: EditorContext {
 
     func lineRange(at location: Int) -> NSRange {
         (string as NSString).lineRange(for: NSRange(location: location, length: 0))
+    }
+}
+
+private extension NSColor {
+    convenience init?(hex: String) {
+        let normalized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingPrefix("#")
+        guard normalized.count == 6, let value = Int(normalized, radix: 16) else { return nil }
+
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        self.init(srgbRed: red, green: green, blue: blue, alpha: 1)
     }
 }
 #endif

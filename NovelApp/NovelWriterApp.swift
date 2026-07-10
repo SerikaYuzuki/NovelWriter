@@ -39,30 +39,14 @@ struct NovelWriterApp: App {
             }
 
             CommandMenu("表示") {
-                Picker("モード", selection: modeBinding) {
-                    ForEach(AppMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.systemImage)
-                            .tag(mode)
+                ForEach(ProjectSection.allCases) { section in
+                    Button {
+                        appState.selectProjectSection(section)
+                    } label: {
+                        Label(section.title, systemImage: section.systemImage)
                     }
+                    .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
                 }
-                .pickerStyle(.inline)
-
-                Divider()
-
-                Button("執筆") {
-                    appState.mode = .writing
-                }
-                .keyboardShortcut("1", modifiers: .command)
-
-                Button("キャラクター") {
-                    appState.mode = .characters
-                }
-                .keyboardShortcut("2", modifiers: .command)
-
-                Button("プロット") {
-                    appState.mode = .plot
-                }
-                .keyboardShortcut("3", modifiers: .command)
             }
         }
 
@@ -70,12 +54,5 @@ struct NovelWriterApp: App {
             EditorSettingsView()
                 .environment(editorSettings)
         }
-    }
-
-    private var modeBinding: Binding<AppMode> {
-        Binding(
-            get: { appState.mode },
-            set: { appState.mode = $0 }
-        )
     }
 }
