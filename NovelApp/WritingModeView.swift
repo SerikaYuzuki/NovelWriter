@@ -473,6 +473,10 @@ private struct EditorTopBarView: View {
     let onOpenCharacter: (CharacterID) -> Void
     let onOpenPlotCard: (PlotCardID) -> Void
 
+    @State private var snapshots: [DocumentSnapshotInfo] = []
+    @State private var snapshotPendingRestore: DocumentSnapshotInfo?
+    @State private var restoreErrorMessage: String?
+
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -508,7 +512,27 @@ private struct EditorTopBarView: View {
 
             Menu {
                 Button("スナップショットを保存") {
-                    Task { await appState.createSnapshot() }
+                    Task {
+                        _ = await appState.createSnapshot()
+                        await refreshSnapshots()
+                    }
+                }
+
+                Divider()
+
+                if snapshots.isEmpty {
+                    Text("スナップショットはありません")
+                } else {
+                    ForEach(snapshots) { snapshot in
+                        Menu(snapshot.displayName) {
+                            Button("この状態に戻す…") {
+                                snapshotPendingRestore = snapshot
+                            }
+                            Button("Finder で表示") {
+                                NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                            }
+                        }
+                    }
                 }
             } label: {
                 topBarIcon("clock.arrow.circlepath", help: "履歴")
@@ -535,6 +559,61 @@ private struct EditorTopBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+        .task(id: appState.documentURL) {
+            await refreshSnapshots()
+        }
+        .confirmationDialog(
+            "このスナップショットに戻しますか？",
+            isPresented: restoreDialogIsPresented,
+            presenting: snapshotPendingRestore
+        ) { snapshot in
+            Button("戻す", role: .destructive) {
+                Task {
+                    let success = await appState.restoreSnapshot(at: snapshot.url)
+                    await refreshSnapshots()
+                    if !success {
+                        restoreErrorMessage = "スナップショットを復元できませんでした。保存に失敗したか、ファイルにアクセスできない可能性があります。"
+                    }
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: { snapshot in
+            Text("「\(snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+        }
+        .alert(
+            "復元できませんでした",
+            isPresented: restoreErrorIsPresented
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(restoreErrorMessage ?? "")
+        }
+    }
+
+    private var restoreDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { snapshotPendingRestore != nil },
+            set: { isPresented in
+                if !isPresented {
+                    snapshotPendingRestore = nil
+                }
+            }
+        )
+    }
+
+    private var restoreErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { restoreErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    restoreErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private func refreshSnapshots() async {
+        snapshots = await appState.listSnapshots()
     }
 
     private func topBarIcon(_ systemName: String, help: String) -> some View {

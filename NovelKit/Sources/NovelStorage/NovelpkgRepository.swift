@@ -31,9 +31,10 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyin
     private static let manifestFileName = "manifest.json"
     private static let chaptersDirectoryName = "chapters"
     private static let notesDirectoryName = "notes"
-    // `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
+    /// `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
     static let attachmentsDirectoryName = "attachments"
-    private static let snapshotsDirectoryName = "snapshots"
+    /// `NovelpkgRepository+Snapshots.swift` からも参照するため internal。
+    static let snapshotsDirectoryName = "snapshots"
     // 以下3つは `NovelpkgRepository+Metadata.swift` からも参照するため internal(F-D)。
     static let charactersFileName = "characters.json"
     static let plotFileName = "plot.json"
@@ -69,23 +70,12 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyin
             try Self.performSave(doc, preservingContentsFrom: sourceURL, to: destinationURL)
         }.value
     }
-
-    /// `.novelpkg/snapshots/<timestamp>.novelpkg` に、現在の作品状態を退避する。
-    ///
-    /// App 側はスナップショットの内部構造を知らず、このメソッドの戻り値を
-    /// ユーザー通知などに使うだけに留める。
-    @discardableResult
-    public func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL {
-        try await Task.detached(priority: .utility) {
-            try Self.performSaveSnapshot(doc, to: url)
-        }.value
-    }
 }
 
 // MARK: - Load
 
-private extension NovelpkgRepository {
-    private static func performLoad(from url: URL) throws -> NovelDocument {
+extension NovelpkgRepository {
+    static func performLoad(from url: URL) throws -> NovelDocument {
         let fileManager = FileManager.default
 
         var isDirectory: ObjCBool = false
@@ -129,7 +119,7 @@ private extension NovelpkgRepository {
         formatVersion == "1" || formatVersion == currentFormatVersion
     }
 
-    private static func readManifest(at url: URL, fileManager: FileManager) throws -> NovelpkgManifest {
+    static func readManifest(at url: URL, fileManager: FileManager) throws -> NovelpkgManifest {
         let manifestURL = url.appendingPathComponent(manifestFileName)
         guard fileManager.fileExists(atPath: manifestURL.path) else {
             throw NovelpkgError.manifestMissing(url)
@@ -152,12 +142,12 @@ private extension NovelpkgRepository {
 
 // MARK: - Save
 
-private extension NovelpkgRepository {
-    private static func performSave(_ doc: NovelDocument, to url: URL) throws {
+extension NovelpkgRepository {
+    static func performSave(_ doc: NovelDocument, to url: URL) throws {
         try performSave(doc, preservingContentsFrom: url, to: url)
     }
 
-    private static func performSave(
+    static func performSave(
         _ doc: NovelDocument,
         preservingContentsFrom sourceURL: URL,
         to destinationURL: URL
@@ -183,9 +173,9 @@ private extension NovelpkgRepository {
             try writePackageContents(
                 of: doc,
                 into: workingURL,
-                existingPackageURL: sourceURL,
-                fileManager: fileManager,
-                preservesSnapshots: true
+                contentSourceURL: sourceURL,
+                snapshotsSourceURL: sourceURL,
+                fileManager: fileManager
             )
         } catch let error as NovelpkgError {
             try? fileManager.removeItem(at: workingURL)
@@ -207,63 +197,31 @@ private extension NovelpkgRepository {
         }
     }
 
-    private static func performSaveSnapshot(_ doc: NovelDocument, to url: URL) throws -> URL {
-        let fileManager = FileManager.default
-        let snapshotsURL = url.appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
-
-        do {
-            try fileManager.createDirectory(at: snapshotsURL, withIntermediateDirectories: true)
-        } catch {
-            throw NovelpkgError.saveFailed(reason: String(describing: error))
-        }
-
-        let timestamp = snapshotTimestamp()
-        var snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp).novelpkg", isDirectory: true)
-        var suffix = 2
-        while fileManager.fileExists(atPath: snapshotURL.path) {
-            snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp)-\(suffix).novelpkg", isDirectory: true)
-            suffix += 1
-        }
-
-        do {
-            try writePackageContents(
-                of: doc,
-                into: snapshotURL,
-                existingPackageURL: url,
-                fileManager: fileManager,
-                preservesSnapshots: false
-            )
-            return snapshotURL
-        } catch let error as NovelpkgError {
-            try? fileManager.removeItem(at: snapshotURL)
-            throw error
-        } catch {
-            try? fileManager.removeItem(at: snapshotURL)
-            throw NovelpkgError.saveFailed(reason: String(describing: error))
-        }
-    }
-
     /// `workingURL` に、完全な形の `.novelpkg` パッケージ内容(manifest.json /
-    /// chapters/ / attachments/)を書き出す。この時点では最終的な保存先(`url`)
-    /// には一切触れない(読み取り専用でのみ参照する)ため、書き出し途中に
-    /// 失敗しても既存の保存済みパッケージは無傷のまま残る。
-    private static func writePackageContents(
+    /// chapters/ / attachments/)を書き出す。この時点では最終的な保存先には
+    /// 一切触れない(読み取り専用でのみ参照する)ため、書き出し途中に失敗しても
+    /// 既存の保存済みパッケージは無傷のまま残る。
+    ///
+    /// - Parameters:
+    ///   - contentSourceURL: 資料・未知項目・`createdAt` の引き継ぎ元。
+    ///   - snapshotsSourceURL: 非 `nil` のとき、その URL の `snapshots/` を保持する。
+    static func writePackageContents(
         of doc: NovelDocument,
         into workingURL: URL,
-        existingPackageURL url: URL,
-        fileManager: FileManager,
-        preservesSnapshots: Bool
+        contentSourceURL: URL,
+        snapshotsSourceURL: URL?,
+        fileManager: FileManager
     ) throws {
         try fileManager.createDirectory(at: workingURL, withIntermediateDirectories: true)
 
         let chaptersURL = workingURL.appendingPathComponent(chaptersDirectoryName, isDirectory: true)
         try fileManager.createDirectory(at: chaptersURL, withIntermediateDirectories: true)
 
-        try copyUnknownRootItems(from: url, to: workingURL, fileManager: fileManager)
+        try copyUnknownRootItems(from: contentSourceURL, to: workingURL, fileManager: fileManager)
 
-        try preserveAttachments(from: url, to: workingURL, fileManager: fileManager)
-        if preservesSnapshots {
-            try preserveSnapshotsDirectory(from: url, to: workingURL, fileManager: fileManager)
+        try preserveAttachments(from: contentSourceURL, to: workingURL, fileManager: fileManager)
+        if let snapshotsSourceURL {
+            try preserveSnapshotsDirectory(from: snapshotsSourceURL, to: workingURL, fileManager: fileManager)
         }
 
         // 章本文を書き出す。ファイル名は ChapterID(UUID)ベース(D-003)。
@@ -272,7 +230,12 @@ private extension NovelpkgRepository {
         try writeCharacters(doc.characters, into: workingURL)
         try writePlotCards(doc.plotCards, into: workingURL)
         try writeFlags(doc.flags, into: workingURL)
-        try writeManifest(for: doc, into: workingURL, existingPackageURL: url, fileManager: fileManager)
+        try writeManifest(
+            for: doc,
+            into: workingURL,
+            existingPackageURL: contentSourceURL,
+            fileManager: fileManager
+        )
     }
 
     private static func preserveAttachments(
@@ -389,12 +352,5 @@ private extension NovelpkgRepository {
                 to: workingURL.appendingPathComponent(itemURL.lastPathComponent)
             )
         }
-    }
-
-    private static func snapshotTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-            .replacingOccurrences(of: ":", with: "-")
     }
 }

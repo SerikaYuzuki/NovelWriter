@@ -168,6 +168,73 @@ struct AppStateDocumentLifecycleTests {
         #expect(await repository.attachments(at: destinationURL) == attachments)
     }
 
+    @Test("スナップショット復元は現在状態を退避してから本文と資料を戻し、URLは変えない")
+    func restoreSnapshotBacksUpCurrentStateThenRestoresContent() async throws {
+        let repository = LifecycleRepository()
+        let defaults = makeUserDefaults()
+        let packageURL = packageURL("RestoreSource")
+        let original = makeDocument(title: "復元元", chapterTitles: ["第1章", "第2章"])
+        let originalAttachments = [NovelCore.Attachment(fileName: "旧資料.txt", byteCount: 8)]
+        await repository.seed(original, at: packageURL, attachments: originalAttachments)
+        let state = makeState(repository: repository, defaults: defaults)
+
+        #expect(await state.openDocument(at: packageURL))
+        let snapshotURL = try #require(await state.createSnapshot())
+
+        state.selectChapter(original.chapters[1].id)
+        state.updateSelectedChapterContent("復元前の編集")
+        let newerAttachments = [NovelCore.Attachment(fileName: "新資料.txt", byteCount: 16)]
+        await repository.setAttachments(newerAttachments, at: packageURL)
+        #expect(await state.saveBeforeTermination())
+
+        #expect(await state.restoreSnapshot(at: snapshotURL))
+        #expect(state.documentURL == packageURL.standardizedFileURL)
+        #expect(state.document.chapters[0].content == original.chapters[0].content)
+        #expect(state.document.chapters[1].content == original.chapters[1].content)
+        #expect(state.selection == original.chapters.first?.id)
+        #expect(state.attachments == originalAttachments)
+        #expect(recentDocumentPath(in: defaults) == packageURL.standardizedFileURL.path)
+
+        let snapshots = await state.listSnapshots()
+        #expect(snapshots.count == 2)
+        #expect(await repository.document(at: packageURL)?.chapters[1].content == original.chapters[1].content)
+        #expect(await repository.attachments(at: packageURL) == originalAttachments)
+
+        let backup = try #require(snapshots.first { $0.url != snapshotURL })
+        #expect(await repository.document(at: backup.url)?.chapters[1].content == "復元前の編集")
+    }
+
+    @Test("スナップショット復元は退避または書き戻し失敗時に現在状態を維持する", arguments: [false, true])
+    func restoreSnapshotKeepsCurrentStateOnFailure(restoreFails: Bool) async throws {
+        let repository = LifecycleRepository()
+        let defaults = makeUserDefaults()
+        let packageURL = packageURL("RestoreFailure-\(restoreFails)")
+        let original = makeDocument(title: "失敗時維持", chapterTitles: ["第1章", "第2章"])
+        let attachments = [NovelCore.Attachment(fileName: "維持資料.txt", byteCount: 4)]
+        await repository.seed(original, at: packageURL, attachments: attachments)
+        let state = makeState(repository: repository, defaults: defaults)
+
+        #expect(await state.openDocument(at: packageURL))
+        let snapshotURL = try #require(await state.createSnapshot())
+
+        state.selectChapter(original.chapters[1].id)
+        state.updateSelectedChapterContent("失敗しても残る本文")
+        #expect(await state.saveBeforeTermination())
+
+        if restoreFails {
+            await repository.setRestoreFailure(true)
+        } else {
+            await repository.setSnapshotFailure(true)
+        }
+
+        #expect(await state.restoreSnapshot(at: snapshotURL) == false)
+        #expect(state.document.chapters[1].content == "失敗しても残る本文")
+        #expect(state.documentURL == packageURL.standardizedFileURL)
+        #expect(state.selection == original.chapters[1].id)
+        #expect(state.attachments == attachments)
+        #expect(await repository.document(at: packageURL)?.chapters[1].content == "失敗しても残る本文")
+    }
+
     private func makeState(repository: LifecycleRepository, defaults: UserDefaults) -> AppState {
         AppState(
             dependencies: AppDependencies(
@@ -207,17 +274,21 @@ struct AppStateDocumentLifecycleTests {
     }
 }
 
-private actor LifecycleRepository: DocumentCopyingRepository, AttachmentManaging {
+private actor LifecycleRepository: DocumentCopyingRepository, SnapshottingDocumentRepository, AttachmentManaging {
     private var documents: [String: NovelDocument] = [:]
     private var storedAttachments: [String: [NovelCore.Attachment]] = [:]
+    private var snapshotsByPackage: [String: [DocumentSnapshotInfo]] = [:]
     private var documentLoadFailurePaths: Set<String> = []
     private var attachmentLoadFailurePaths: Set<String> = []
     private var shouldFailSave = false
     private var shouldFailCopy = false
+    private var shouldFailSnapshot = false
+    private var shouldFailRestore = false
 
     func seed(_ document: NovelDocument, at url: URL, attachments: [NovelCore.Attachment]) {
         documents[key(url)] = document
         storedAttachments[key(url)] = attachments
+        snapshotsByPackage[key(url)] = []
     }
 
     func setDocumentLoadFailure(at url: URL) {
@@ -234,6 +305,18 @@ private actor LifecycleRepository: DocumentCopyingRepository, AttachmentManaging
 
     func setCopyFailure(_ value: Bool) {
         shouldFailCopy = value
+    }
+
+    func setSnapshotFailure(_ value: Bool) {
+        shouldFailSnapshot = value
+    }
+
+    func setRestoreFailure(_ value: Bool) {
+        shouldFailRestore = value
+    }
+
+    func setAttachments(_ attachments: [NovelCore.Attachment], at url: URL) {
+        storedAttachments[key(url)] = attachments
     }
 
     func document(at url: URL) -> NovelDocument? {
@@ -261,6 +344,39 @@ private actor LifecycleRepository: DocumentCopyingRepository, AttachmentManaging
         guard !shouldFailCopy else { throw LifecycleRepositoryError.saveFailed }
         documents[key(destinationURL)] = doc
         storedAttachments[key(destinationURL)] = storedAttachments[key(sourceURL)] ?? []
+        snapshotsByPackage[key(destinationURL)] = snapshotsByPackage[key(sourceURL)] ?? []
+    }
+
+    func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL {
+        guard !shouldFailSnapshot else { throw LifecycleRepositoryError.saveFailed }
+        let snapshotURL = url
+            .appendingPathComponent("snapshots", isDirectory: true)
+            .appendingPathComponent("\(UUID().uuidString).novelpkg", isDirectory: true)
+        documents[key(snapshotURL)] = doc
+        storedAttachments[key(snapshotURL)] = storedAttachments[key(url)] ?? []
+        let createdAt = Date()
+        let info = DocumentSnapshotInfo(
+            url: snapshotURL,
+            createdAt: createdAt,
+            displayName: "snapshot-\(createdAt.timeIntervalSince1970)"
+        )
+        var listed = snapshotsByPackage[key(url)] ?? []
+        listed.insert(info, at: 0)
+        snapshotsByPackage[key(url)] = listed
+        return snapshotURL
+    }
+
+    func listSnapshots(in url: URL) async throws -> [DocumentSnapshotInfo] {
+        snapshotsByPackage[key(url)] ?? []
+    }
+
+    func restoreSnapshot(from snapshotURL: URL, into packageURL: URL) async throws {
+        guard !shouldFailRestore else { throw LifecycleRepositoryError.saveFailed }
+        guard let document = documents[key(snapshotURL)] else {
+            throw LifecycleRepositoryError.loadFailed
+        }
+        documents[key(packageURL)] = document
+        storedAttachments[key(packageURL)] = storedAttachments[key(snapshotURL)] ?? []
     }
 
     func listAttachments(in packageURL: URL) async throws -> [NovelCore.Attachment] {
