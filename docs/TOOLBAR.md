@@ -1,8 +1,8 @@
 # Workbench 上部ツールバー設計
 
-> **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、および Chapter / Episode 階層後の「話メモ」への移行は UI-FIX-4 で実装した。今後の修正は [UIFIX.md](UIFIX.md) を正とする。
+> **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。今後は [PHASE5.md](PHASE5.md) を正とする。
 
-**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 完了。** 上部 chrome の基盤とToolbar起点のpopoverは実装済み。次の修正は [UIFIX.md](UIFIX.md)(UI-FIX-5 ほか)を正とする。
+**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次は Phase 5-1へ進む。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 
@@ -59,6 +59,9 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.chapter.memo` | 章メモ | 表示 | 移動・削除可 | 選択章のメモを popover で編集 |
 | `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
 | `workbench.chapter.context` | この章 | 表示 | 移動・削除可 | 紐付くカード・登場人物を表示するpopover |
+| `workbench.character.add` | 登場人物を追加 | 表示 | 移動・削除可 | `AppState.addCharacter()` |
+| `workbench.plot.card.add` | プロットカードを追加 | 表示 | 移動・削除可 | 選択中の章または未割り当てへ追加 |
+| `workbench.attachment.add` | 資料を取り込む | 表示 | 移動・削除可 | 資料のfileImporterを開く |
 | `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
 | `workbench.ai.toggle` | AI Assistant | 初期非表示 | 追加・移動・削除可 | 下部AIパネルを開閉 |
 | Editor search | 章内を検索 | 表示 | 右端固定 | 選択章の本文検索 |

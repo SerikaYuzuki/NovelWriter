@@ -127,6 +127,29 @@ struct NovelWriterApp: App {
                 .disabled(appState.selectedChapter == nil)
             }
 
+            CommandMenu("登場人物") {
+                Button("登場人物を追加") {
+                    appState.addCharacter()
+                }
+            }
+
+            CommandMenu("プロット") {
+                Button("プロットカードを追加") {
+                    if case let .chapter(chapterID) = appState.plotOutlineSelection {
+                        appState.addPlotCard(chapterID: chapterID)
+                    } else {
+                        appState.addPlotCard()
+                    }
+                }
+            }
+
+            CommandMenu("資料") {
+                Button("資料を取り込む…") {
+                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
+                }
+                .disabled(!appState.supportsAttachments)
+            }
+
             CommandGroup(after: .textEditing) {
                 Divider()
                 WorkbenchFindCommands(

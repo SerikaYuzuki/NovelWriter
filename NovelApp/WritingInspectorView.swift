@@ -170,35 +170,21 @@ struct AttachmentListView: View {
                         ContentUnavailableView(
                             "資料がありません",
                             systemImage: "paperclip",
-                            description: Text("下の資料を取り込むボタンから資料を追加できます。")
+                            description: Text("ツールバーまたは資料メニューから取り込めます。")
                         )
                     }
                 }
-
-                Divider()
-
-                HStack {
-                    Button {
-                        isImportingAttachment = true
-                    } label: {
-                        Label("資料を取り込む…", systemImage: "plus")
-                    }
-
-                    Button {
-                        if let attachment = selectedAttachment {
-                            revealInFinder(attachment)
-                        }
-                    } label: {
-                        Label("Finderで表示", systemImage: "folder")
-                    }
-                    .disabled(selectedAttachment == nil)
-
-                    Spacer()
-                }
-                .padding(8)
+                .workbenchOutlineListStyle()
             }
         }
-        .background(.bar)
+        .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
+            guard appState.supportsAttachments else { return }
+            isImportingAttachment = true
+        }
+        .onDeleteCommand {
+            guard let attachment = selectedAttachment else { return }
+            attachmentPendingDeletion = attachment
+        }
         .task {
             await appState.reloadAttachments()
         }

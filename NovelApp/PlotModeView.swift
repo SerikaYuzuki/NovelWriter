@@ -87,6 +87,14 @@ struct PlotBoardView: View {
         } message: { card in
             Text("「\(card.title)」を削除します。")
         }
+        .onDeleteCommand {
+            guard let selectedPlotCardID = appState.selectedPlotCardID,
+                  let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else
+            {
+                return
+            }
+            cardPendingDeletion = card
+        }
     }
 
     private func cards(in chapterID: ChapterID?) -> [PlotCard] {
@@ -148,7 +156,7 @@ struct PlotChapterOutlineView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .workbenchOutlineListStyle()
         .overlay {
             if appState.document.chapters.isEmpty,
                appState.document.plotCards.allSatisfy({ $0.chapterID != nil })

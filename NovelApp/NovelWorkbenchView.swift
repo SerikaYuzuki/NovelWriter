@@ -273,11 +273,15 @@ private struct SectionOverviewList: View {
 
     var body: some View {
         List(selection: $selection) {
-            Label("概要", systemImage: section.systemImage)
-                .tag(NovelWorkbenchView.overviewItemID)
+            VStack(alignment: .leading, spacing: 4) {
+                Label("概要", systemImage: section.systemImage)
+                Text("\(section.title)の概要")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .tag(NovelWorkbenchView.overviewItemID)
         }
-        .listStyle(.sidebar)
-        .background(.bar)
+        .workbenchOutlineListStyle()
     }
 }
 

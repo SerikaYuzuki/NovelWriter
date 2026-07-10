@@ -9,56 +9,36 @@ struct CharacterListView: View {
     @State private var characterPendingDeletion: NovelCore.Character?
 
     var body: some View {
-        VStack(spacing: 0) {
-            List(selection: characterSelectionBinding) {
-                ForEach(appState.document.characters) { character in
-                    CharacterRow(character: character)
-                        .tag(character.id)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                characterPendingDeletion = character
-                            } label: {
-                                Label("削除", systemImage: "trash")
-                            }
+        List(selection: characterSelectionBinding) {
+            ForEach(appState.document.characters) { character in
+                CharacterRow(character: character)
+                    .tag(character.id)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            characterPendingDeletion = character
+                        } label: {
+                            Label("削除", systemImage: "trash")
                         }
-                }
-                .onMove { offsets, destination in
-                    appState.moveCharacters(fromOffsets: offsets, toOffset: destination)
-                }
-            }
-            .overlay {
-                if appState.document.characters.isEmpty {
-                    ContentUnavailableView(
-                        "キャラクターがありません",
-                        systemImage: "person.2",
-                        description: Text("下の追加ボタンからキャラクターを追加できます。")
-                    )
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Button {
-                    appState.addCharacter()
-                } label: {
-                    Label("キャラクターを追加", systemImage: "plus")
-                }
-
-                Button(role: .destructive) {
-                    if let character = appState.selectedCharacter {
-                        characterPendingDeletion = character
                     }
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-                .disabled(appState.selectedCharacter == nil)
-
-                Spacer()
             }
-            .padding(8)
+            .onMove { offsets, destination in
+                appState.moveCharacters(fromOffsets: offsets, toOffset: destination)
+            }
         }
-        .background(.bar)
+        .overlay {
+            if appState.document.characters.isEmpty {
+                ContentUnavailableView(
+                    "キャラクターがありません",
+                    systemImage: "person.2",
+                    description: Text("ツールバーまたは登場人物メニューから追加できます。")
+                )
+            }
+        }
+        .workbenchOutlineListStyle()
+        .onDeleteCommand {
+            guard let character = appState.selectedCharacter else { return }
+            characterPendingDeletion = character
+        }
         .confirmationDialog(
             "キャラクターを削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
@@ -182,15 +162,23 @@ private struct CharacterSheetView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 16) {
-                colorControls
-                nameFields
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("名前", text: selectedCharacterNameBinding)
+                .font(.title2)
+                .textFieldStyle(.plain)
+                .onSubmit {
+                    appState.commitCharacterEditing()
+                }
 
-            VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                TextField("ふりがな", text: selectedCharacterKanaBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .onSubmit {
+                        appState.commitCharacterEditing()
+                    }
+
                 colorControls
-                nameFields
             }
         }
     }
@@ -207,24 +195,6 @@ private struct CharacterSheetView: View {
                     appState.updateSelectedCharacterColor(hex)
                 }
             )
-        }
-    }
-
-    private var nameFields: some View {
-        HStack(spacing: 12) {
-            TextField("名前", text: selectedCharacterNameBinding)
-                .font(.title2)
-                .textFieldStyle(.plain)
-                .onSubmit {
-                    appState.commitCharacterEditing()
-                }
-
-            TextField("ふりがな", text: selectedCharacterKanaBinding)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 220)
-                .onSubmit {
-                    appState.commitCharacterEditing()
-                }
         }
     }
 
