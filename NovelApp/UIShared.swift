@@ -11,6 +11,22 @@ struct OperationMessage: Identifiable {
     let body: String
 }
 
+/// WorkbenchのOutline系Listで共通利用するmacOS sidebarの外観。
+struct WorkbenchOutlineListModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(.bar)
+    }
+}
+
+extension View {
+    func workbenchOutlineListStyle() -> some View {
+        modifier(WorkbenchOutlineListModifier())
+    }
+}
+
 struct CharacterAppearance: Identifiable {
     let chapterID: ChapterID
     let episodeID: EpisodeID

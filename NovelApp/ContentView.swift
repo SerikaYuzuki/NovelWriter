@@ -27,6 +27,7 @@ struct ContentView: View {
 extension Notification.Name {
     static let toggleWritingInspector = Notification.Name("dev.serikayuzuki.NovelWriter.toggleWritingInspector")
     static let presentChapterMemo = Notification.Name("dev.serikayuzuki.NovelWriter.presentChapterMemo")
+    static let presentAttachmentImporter = Notification.Name("dev.serikayuzuki.NovelWriter.presentAttachmentImporter")
 }
 
 #Preview {

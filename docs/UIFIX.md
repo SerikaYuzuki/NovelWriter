@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 完了、UI-FIX-5 以降は未着手。**
+**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 完了、Phase 5 は待機中。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
@@ -248,6 +248,8 @@ detail列:
 - section に応じた追加 toolbar と context menu / Delete fallback を整える
 
 **完了条件:** セクションを切り替えても content 列の背景、row高さ、選択、空状態、追加・削除の作法が一貫する。
+
+**実装結果 (2026-07-11):** キャラクター詳細を「名前」→「ふりがな・カラー」の順に再配置し、キャラクター一覧の下部操作バーを撤去した。Character / Plot / References / overview / 執筆Outlineで共通のsidebar List modifierと2行メタデータ表示を使い、空状態の次の一歩も統一した。登場人物・プロットカード・資料の追加をセクション別Toolbarとメニューへ移し、削除は行のcontext menuとDeleteキーの確認導線を維持した。
 
 ## 6. 各PRの検証ゲート
 

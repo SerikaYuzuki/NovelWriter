@@ -210,7 +210,7 @@ struct OutlineView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .workbenchOutlineListStyle()
         .overlay {
             if filteredChapters.isEmpty {
                 ContentUnavailableView(

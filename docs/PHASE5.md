@@ -1,6 +1,6 @@
 # Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
 
-**状態: Phase 4.5 / UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 完了、Phase 5 は待機中。** 次の最優先は [UIFIX.md](UIFIX.md) の UI-FIX-5。Chapter / Episode 階層(D-028)が出力構造へ影響するため、UI-FIX-5 完了後に本書の形式仕様を更新してから Phase 5-1 を開始する(4.5-1c はリネームのみの小タスクで、どのタイミングで挟んでもよい)。
+**状態: Phase 4.5 / UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 完了、Phase 5 は待機中。** 次の最優先は本書の Chapter / Episode 出力仕様更新(Phase 5-1)。UI-FIX-5までで階層移行を完了したため、形式仕様を更新してから Phase 5-1の実装を開始する(4.5-1c はリネームのみの小タスクで、どのタイミングで挟んでもよい)。
 
 本書は、Phase UI2 完了後の実装指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022)。
 

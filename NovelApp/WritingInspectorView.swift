@@ -133,7 +133,6 @@ struct AttachmentListView: View {
     @Binding var selection: String?
 
     @State private var attachmentPendingDeletion: Attachment?
-    @State private var isImportingAttachment = false
     @State private var operationMessage: OperationMessage?
 
     var body: some View {
@@ -170,46 +169,19 @@ struct AttachmentListView: View {
                         ContentUnavailableView(
                             "資料がありません",
                             systemImage: "paperclip",
-                            description: Text("下の資料を取り込むボタンから資料を追加できます。")
+                            description: Text("ツールバーまたは資料メニューから取り込めます。")
                         )
                     }
                 }
-
-                Divider()
-
-                HStack {
-                    Button {
-                        isImportingAttachment = true
-                    } label: {
-                        Label("資料を取り込む…", systemImage: "plus")
-                    }
-
-                    Button {
-                        if let attachment = selectedAttachment {
-                            revealInFinder(attachment)
-                        }
-                    } label: {
-                        Label("Finderで表示", systemImage: "folder")
-                    }
-                    .disabled(selectedAttachment == nil)
-
-                    Spacer()
-                }
-                .padding(8)
+                .workbenchOutlineListStyle()
             }
         }
-        .background(.bar)
+        .onDeleteCommand {
+            guard let attachment = selectedAttachment else { return }
+            attachmentPendingDeletion = attachment
+        }
         .task {
             await appState.reloadAttachments()
-        }
-        .fileImporter(
-            isPresented: $isImportingAttachment,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            Task {
-                await importAttachment(from: result)
-            }
         }
         .confirmationDialog(
             "資料を削除しますか？",
@@ -247,28 +219,6 @@ struct AttachmentListView: View {
     private func revealInFinder(_ attachment: Attachment) {
         guard let url = appState.attachmentPreviewURL(for: attachment) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    @MainActor
-    private func importAttachment(from result: Result<[URL], Error>) async {
-        do {
-            guard let sourceURL = try result.get().first else { return }
-            let didAccess = sourceURL.startAccessingSecurityScopedResource()
-            defer {
-                if didAccess {
-                    sourceURL.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            if let attachment = await appState.addAttachment(from: sourceURL) {
-                selection = attachment.fileName
-                operationMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
-            } else {
-                operationMessage = OperationMessage(title: "取り込めませんでした", body: "資料の追加に失敗しました。")
-            }
-        } catch {
-            operationMessage = OperationMessage(title: "取り込めませんでした", body: String(describing: error))
-        }
     }
 
     @MainActor

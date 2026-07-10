@@ -84,6 +84,56 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             }
         }
         .defaultCustomization(.visible)
+
+        ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
+            Button {
+                appState.addCharacter()
+            } label: {
+                Label("登場人物を追加", systemImage: "person.badge.plus")
+            }
+            .help("登場人物を追加")
+            .disabled(!showsCharacterActions)
+        }
+        .defaultCustomization(.visible)
+
+        ToolbarItem(id: WorkbenchToolbarItemID.plotCardAdd) {
+            Button {
+                appState.addPlotCard(chapterID: selectedPlotChapterID)
+            } label: {
+                Label("プロットカードを追加", systemImage: "rectangle.stack.badge.plus")
+            }
+            .help("プロットカードを追加")
+            .disabled(!showsPlotActions)
+        }
+        .defaultCustomization(.visible)
+
+        ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
+            Button {
+                NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
+            } label: {
+                Label("資料を取り込む", systemImage: "paperclip")
+            }
+            .help("資料を取り込む")
+            .disabled(!showsReferenceActions || !appState.supportsAttachments)
+        }
+        .defaultCustomization(.visible)
+    }
+
+    private var showsCharacterActions: Bool {
+        appState.workspaceSelection.section == .characters
+    }
+
+    private var showsPlotActions: Bool {
+        appState.workspaceSelection.section == .plot
+    }
+
+    private var showsReferenceActions: Bool {
+        appState.workspaceSelection.section == .references
+    }
+
+    private var selectedPlotChapterID: ChapterID? {
+        guard case let .chapter(chapterID) = appState.plotOutlineSelection else { return nil }
+        return chapterID
     }
 
     private func isPresented(_ overlay: WorkbenchOverlay) -> Binding<Bool> {
@@ -151,6 +201,9 @@ enum WorkbenchToolbarItemID {
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
     static let chapterContext = "workbench.chapter.context"
+    static let characterAdd = "workbench.character.add"
+    static let plotCardAdd = "workbench.plot.card.add"
+    static let attachmentAdd = "workbench.attachment.add"
 }
 
 enum WorkbenchOverlay: Hashable {
