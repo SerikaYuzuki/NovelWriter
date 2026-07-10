@@ -13,29 +13,48 @@ struct PlotBoardView: View {
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
+    let focusedSelection: PlotOutlineSelection
 
     @State private var editingCardID: PlotCardID?
     @State private var cardPendingDeletion: PlotCard?
 
+    init(
+        focusedSelection: PlotOutlineSelection = .unassigned,
+        onChapterJump: @escaping (ChapterID) -> Void
+    ) {
+        self.focusedSelection = focusedSelection
+        self.onChapterJump = onChapterJump
+    }
+
     var body: some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 16) {
-                PlotLaneView(
-                    title: "未割り当て",
-                    chapterID: nil,
-                    cards: cards(in: nil),
-                    editingCardID: $editingCardID,
-                    cardPendingDeletion: $cardPendingDeletion
-                )
-
-                ForEach(appState.document.chapters) { chapter in
+                switch focusedSelection {
+                case .unassigned:
                     PlotLaneView(
-                        title: chapter.title,
-                        chapterID: chapter.id,
-                        cards: cards(in: chapter.id),
+                        title: "未割り当て",
+                        chapterID: nil,
+                        cards: cards(in: nil),
                         editingCardID: $editingCardID,
                         cardPendingDeletion: $cardPendingDeletion
                     )
+                case let .chapter(focusedChapterID):
+                    if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
+                        PlotLaneView(
+                            title: chapter.title,
+                            chapterID: chapter.id,
+                            cards: cards(in: chapter.id),
+                            editingCardID: $editingCardID,
+                            cardPendingDeletion: $cardPendingDeletion
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "章が見つかりません",
+                            systemImage: "rectangle.stack",
+                            description: Text("Outlineから章または未割り当てを選び直してください。")
+                        )
+                        .frame(width: 260)
+                    }
                 }
             }
             .padding(16)
@@ -104,6 +123,121 @@ struct PlotModeView: View {
 
     var body: some View {
         PlotBoardView(onChapterJump: onChapterJump)
+    }
+}
+
+/// プロット画面のcontent列。執筆Outlineと同じsidebar list規約で章を選択する。
+struct PlotChapterOutlineView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        List(selection: plotOutlineSelectionBinding) {
+            Section("章") {
+                PlotUnassignedOutlineRow(
+                    cardCount: appState.document.plotCards.count { $0.chapterID == nil }
+                )
+                .tag(PlotOutlineSelection.unassigned)
+
+                ForEach(appState.document.chapters) { chapter in
+                    PlotChapterOutlineRow(
+                        chapter: chapter,
+                        cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
+                        flagCount: flagCount(for: chapter.id)
+                    )
+                    .tag(PlotOutlineSelection.chapter(chapter.id))
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if appState.document.chapters.isEmpty,
+               appState.document.plotCards.allSatisfy({ $0.chapterID != nil })
+            {
+                ContentUnavailableView(
+                    "章がありません",
+                    systemImage: "doc.text",
+                    description: Text("執筆画面から章を追加できます。")
+                )
+            }
+        }
+    }
+
+    private var plotOutlineSelectionBinding: Binding<PlotOutlineSelection?> {
+        Binding(
+            get: { appState.plotOutlineSelection },
+            set: { selection in
+                guard let selection else { return }
+                appState.selectPlotOutline(selection)
+            }
+        )
+    }
+
+    private func flagCount(for chapterID: ChapterID) -> Int {
+        appState.document.flags.reduce(into: 0) { count, flag in
+            if flag.plantedChapterID == chapterID || flag.resolvedChapterID == chapterID {
+                count += 1
+            }
+        }
+    }
+}
+
+private struct PlotUnassignedOutlineRow: View {
+    let cardCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("未割り当て")
+                .lineLimit(1)
+            HStack(spacing: 8) {
+                Label("\(cardCount)枚", systemImage: "rectangle.stack")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct PlotChapterOutlineRow: View {
+    let chapter: Chapter
+    let cardCount: Int
+    let flagCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(chapter.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            HStack(spacing: 8) {
+                Label("\(cardCount)枚", systemImage: "rectangle.stack")
+                Label("\(flagCount)件", systemImage: "flag")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// 選択章のプロットカードと、作品全体の伏線を左右に並べる。
+struct PlotAndFlagSplitView: View {
+    @Environment(AppState.self) private var appState
+
+    let onChapterJump: (ChapterID) -> Void
+
+    var body: some View {
+        HSplitView {
+            PlotBoardView(
+                focusedSelection: appState.plotOutlineSelection,
+                onChapterJump: onChapterJump
+            )
+            .frame(minWidth: 360, idealWidth: 640)
+
+            FlagTrackerView(onChapterJump: onChapterJump)
+                .frame(minWidth: 240, idealWidth: 320)
+        }
     }
 }
 

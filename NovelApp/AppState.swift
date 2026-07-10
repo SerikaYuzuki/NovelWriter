@@ -62,6 +62,8 @@ final class AppState {
     private(set) var selectedPlotCardID: PlotCardID?
     /// 選択中の伏線ID。
     private(set) var selectedFlagID: FlagID?
+    /// プロット画面 content 列の選択。未割り当てと章を切り替える(UIFIX 4.2)。
+    private(set) var plotOutlineSelection: PlotOutlineSelection = .unassigned
     /// 原稿パッケージの保存状態。表示はこの値だけを正とする。
     private(set) var saveState: DocumentSaveState
 
@@ -142,6 +144,7 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
+        plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         workspaceSelection = WorkspaceSelection(
@@ -371,6 +374,16 @@ final class AppState {
         flushSaveImmediately()
     }
 
+    /// プロット画面の章Outline選択を更新する。章を選んだときは執筆側の章選択も揃える。
+    func selectPlotOutline(_ selection: PlotOutlineSelection) {
+        guard selection != plotOutlineSelection else { return }
+        plotOutlineSelection = selection
+        if case let .chapter(chapterID) = selection {
+            setSelection(chapterID: chapterID, episodeID: preferredEpisodeID(in: chapterID))
+            flushSaveImmediately()
+        }
+    }
+
     /// 話を選択する。`chapterID` を省略した場合は現在の章を対象にする。
     func selectEpisode(_ id: EpisodeID?, in chapterID: ChapterID? = nil) {
         let targetChapterID = chapterID ?? selectedChapterID
@@ -474,6 +487,13 @@ final class AppState {
             let fallbackIndex = min(originalIndex, document.chapters.count - 1)
             let fallbackChapterID = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil
             setSelection(chapterID: fallbackChapterID, episodeID: fallbackChapterID.flatMap(preferredEpisodeID(in:)))
+        }
+        if case let .chapter(focusedID) = plotOutlineSelection, focusedID == id {
+            if let selectedChapterID {
+                plotOutlineSelection = .chapter(selectedChapterID)
+            } else {
+                plotOutlineSelection = .unassigned
+            }
         }
 
         saveCoordinator.markDirty()
@@ -1198,6 +1218,7 @@ final class AppState {
         let chapterID = newDocument.chapters.first?.id
         let episodeID = newDocument.chapters.first?.episodes.first?.id
         setSelection(chapterID: chapterID, episodeID: episodeID)
+        plotOutlineSelection = chapterID.map(PlotOutlineSelection.chapter) ?? .unassigned
     }
 
     private func setSelection(chapterID: ChapterID?, episodeID: EpisodeID?) {
@@ -1205,6 +1226,9 @@ final class AppState {
         selectedEpisodeID = episodeID
         if let chapterID, let episodeID {
             lastSelectedEpisodeByChapter[chapterID] = episodeID
+        }
+        if let chapterID {
+            plotOutlineSelection = .chapter(chapterID)
         }
         workspaceSelection.outlineItemID = chapterID.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
     }

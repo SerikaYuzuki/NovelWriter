@@ -164,11 +164,8 @@ struct NovelWorkbenchView: View {
             CharacterListView()
                 .navigationTitle("登場人物")
         case .plot:
-            FlagTrackerView { chapterID in
-                appState.selectProjectSection(.structure)
-                appState.selectChapter(chapterID)
-            }
-            .navigationTitle("伏線")
+            PlotChapterOutlineView()
+                .navigationTitle("プロット")
         case .references:
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
@@ -193,7 +190,7 @@ struct NovelWorkbenchView: View {
                 editorSearchSession.requestSelection(range: appearance.range)
             }
         case .plot:
-            PlotBoardView { chapterID in
+            PlotAndFlagSplitView { chapterID in
                 appState.selectProjectSection(.structure)
                 appState.selectChapter(chapterID)
             }
@@ -236,7 +233,9 @@ struct NovelWorkbenchView: View {
         switch appState.workspaceSelection.section {
         case .structure:
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
-        case .characters, .plot, .references:
+        case .plot:
+            WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
+        case .characters, .references:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
         case .projectInfo, .planning, .worldbuilding, .settings:
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
