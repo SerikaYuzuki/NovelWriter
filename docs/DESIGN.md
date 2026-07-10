@@ -123,7 +123,7 @@ public protocol DocumentRepository: Sendable {
 
 作品データの保存・読み込みを担当する。`.novelpkg` はフォルダ形式のパッケージであり、将来的に画像・資料・AI生成メモなどを追加しやすい。
 
-> **次期形式(D-028)**: UI-FIX-2a で formatVersion 3 へ上げ、本文を `episodes/<EpisodeID>.md`、メモを `episode-notes/<EpisodeID>.md` へ移す。v1 / v2 は読み込み時に各旧章を「同じIDの章 + 本文1話」へ変換し、次回保存で v3 にする。詳細は [UIFIX.md](UIFIX.md) 2章。
+> **次期形式(D-028)**: UI-FIX-2a で formatVersion 3 へ上げ、本文を `episodes/<EpisodeID>.md`、メモを `episode-notes/<EpisodeID>.md` へ移す。manifest の `chapters[].episodes[]` が話順を持つ。v1 / v2 は読み込み時に各旧章を「同じIDの章 + 本文1話」へ変換し、次回保存で v3 にする。詳細は [UIFIX.md](UIFIX.md) 2章。
 
 保存形式:
 

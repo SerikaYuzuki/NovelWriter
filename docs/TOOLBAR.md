@@ -2,7 +2,7 @@
 
 > **次の修正**: toolbar item 起点の popover、スナップショット一覧、プロットカード内容表示、および Chapter / Episode 階層後の「話メモ」への移行は [UIFIX.md](UIFIX.md) を正とする。本書は Toolbar-1 / Toolbar-2 の基盤とカスタマイズ方針を引き続き保持する。
 
-**状態: Toolbar-1 / Toolbar-2 完了。** 上部 chrome の刷新は完了。次の実装はユーザー指示に従う。
+**状態: Toolbar-1 / Toolbar-2 完了。** 上部 chrome の基盤は完了。次の toolbar 修正は [UIFIX.md](UIFIX.md)(UI-FIX-4 ほか)を正とする。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 

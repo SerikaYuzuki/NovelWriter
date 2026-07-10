@@ -42,7 +42,10 @@ NovelDocument
 - `order` フィールドは章にも話にも追加しない。順序は配列順だけを正とする
 - `PlotCard.chapterID`、`Flag.plantedChapterID`、`Flag.resolvedChapterID` は章単位の参照として維持する
 - プロットカードを話へ直接紐付ける `episodeID` は今回追加しない。選択章の構成をカードで扱う
-- 現行の章メモは v2 移行時に生成される話のメモへ移す。階層化後の toolbar 文言は「話メモ」とする。章自体のメモは今回追加しない
+- 現行の章メモは v1 / v2 → v3 移行時に生成される話のメモへ移す。階層化後の toolbar 文言は「話メモ」とする。章自体のメモは今回追加しない
+- 新規作品(`newDocument`)は「第1章 + タイトル『本文』の話1件」で始め、すぐ編集できる状態を維持する
+- 「章を追加」は空の章を追加する。話が無い章では editor を空文字で偽装せず、話追加を促す `ContentUnavailableView` を出す
+- 「選択中の章に話を追加」は空の話を追加して選択する。既定タイトルは「第N話」(N はその章内の通し番号)
 
 ### 2.2 `.novelpkg` v3
 
@@ -61,6 +64,31 @@ MyNovel.novelpkg/
 ```
 
 `manifest.json` が章順と各章内の話順を持つ。本文ファイル名は `EpisodeID` ベースとし、並べ替えでリネームしない。
+
+v3 の `manifest.json` 形(フィールド名は実装でこのキーを正とする):
+
+```json
+{
+  "formatVersion": "3",
+  "documentID": "<UUID>",
+  "title": "作品タイトル",
+  "chapters": [
+    {
+      "id": "<ChapterUUID>",
+      "title": "第1章",
+      "episodes": [
+        { "id": "<EpisodeUUID>", "title": "本文" }
+      ]
+    }
+  ],
+  "createdAt": "<ISO8601>",
+  "updatedAt": "<ISO8601>"
+}
+```
+
+- `chapters[].episodes[]` の配列順が話順の唯一の正
+- 本文は `episodes/<EpisodeUUID>.md`、メモは `episode-notes/<EpisodeUUID>.md`(空メモはファイルなし)
+- 未対応の `formatVersion` "4" 以上は読み込みエラーとする
 
 ### 2.3 v1 / v2 からの移行
 
@@ -84,7 +112,8 @@ private(set) var selectedEpisodeID: EpisodeID?
 - 章を選ぶと、その章で最後に選んだ話、なければ先頭の話を選ぶ
 - 空の章では editor を空文字で偽装せず、話を追加する `ContentUnavailableView` を出す
 - `EditorView.chapterKey` 相当には `EpisodeID` を渡す。話切り替え時だけ本文を流し込み、同じ話の編集中は外から `textView.string` を変更しない
-- 検索、文字数、登場箇所、章ジャンプは `Episode` を編集単位として更新する
+- 検索・文字数・登場箇所検出は `Episode` を編集単位として更新する(登場箇所のジャンプ先は該当話 + 範囲)
+- PlotCard / Flag の章ジャンプは章単位のまま維持し、ジャンプ先はその章で最後に選んだ話(なければ先頭の話)とする
 
 ## 4. 画面仕様
 
@@ -150,7 +179,7 @@ detail列:
 - macOS adapter の `textContainerInset` を左右16 / 上下16へ変更
 - 幅設定が未保存の場合の既定を「制限なし」へ変更。ユーザーが明示保存した 700 / 900pt は維持
 - font slider を 8...24 に変更し、UserDefaults 読み込み値を範囲内へ正規化
-- STYLE.md の editor inset を実装値へ更新
+- STYLE.md の editor inset と本文最大幅の未設定時既定(制限なし)を実装値へ更新
 
 **完了条件:** 8 / 16 / 24pt で日本語IME、改行、自動字下げ、Undo が動作し、800 / 1200 / 1600pt 幅で不要な二重余白がない。
 
