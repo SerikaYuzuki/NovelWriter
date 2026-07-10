@@ -61,7 +61,7 @@ struct NovelWorkbenchView: View {
             prompt: "章内を検索"
         )
         .onSubmit(of: .search) {
-            editorSearchSession.jump(direction: .forward, in: appState.selectedChapter)
+            editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
         }
         .onChange(of: showsWritingActions) { _, isWriting in
             editorSearchSession.isSearchPresented = isWriting
@@ -102,7 +102,7 @@ struct NovelWorkbenchView: View {
             await snapshotMenuPresenter.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
-            guard appState.selectedChapter != nil else { return }
+            guard appState.selectedEpisode != nil else { return }
             isMemoPresented = true
         }
         .popover(isPresented: $isMemoPresented) {
@@ -189,7 +189,7 @@ struct NovelWorkbenchView: View {
         case .characters:
             CharacterDetailView { appearance in
                 appState.selectProjectSection(.structure)
-                appState.selectChapter(appearance.chapterID)
+                appState.selectEpisode(appearance.episodeID, in: appearance.chapterID)
                 editorSearchSession.requestSelection(range: appearance.range)
             }
         case .plot:
@@ -415,8 +415,8 @@ private struct AssistantStatusBarView: View {
     }
 
     private var chapterCountText: String {
-        let count = ManuscriptMetrics.countCharacters(in: appState.selectedChapter?.content ?? "")
-        return "章 \(count)字"
+        let count = ManuscriptMetrics.countCharacters(in: appState.selectedEpisode?.content ?? "")
+        return "話 \(count)字"
     }
 
     private var totalCountText: String {

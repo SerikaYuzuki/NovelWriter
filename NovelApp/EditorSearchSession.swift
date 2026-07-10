@@ -5,7 +5,7 @@ import NovelCore
 import Observation
 import SwiftUI
 
-/// 章内検索のウィンドウ単位の一時状態(docs/TOOLBAR.md Toolbar-2)。
+/// 話内検索のウィンドウ単位の一時状態(docs/TOOLBAR.md Toolbar-2)。
 ///
 /// `NovelDocument` や保存形式には含めない。検索結果の選択反映は
 /// `selectionRequest` 経由で `EditorView` へ渡す。
@@ -18,7 +18,7 @@ final class EditorSearchSession {
     var isSearchPresented = true
 
     private(set) var selectionRequest: EditorSelectionRequest?
-    private var lastSearchChapterID: ChapterID?
+    private var lastSearchEpisodeID: EpisodeID?
     private var lastSearchQuery = ""
     private var lastSearchRange: NSRange?
 
@@ -30,10 +30,10 @@ final class EditorSearchSession {
         }
     }
 
-    func jump(direction: TextSearchDirection, in chapter: Chapter?) {
-        guard let chapter, !query.isEmpty else { return }
+    func jump(direction: TextSearchDirection, in episode: Episode?) {
+        guard let episode, !query.isEmpty else { return }
 
-        let startLocation: Int = if lastSearchChapterID == chapter.id,
+        let startLocation: Int = if lastSearchEpisodeID == episode.id,
                                     lastSearchQuery == query,
                                     let lastSearchRange
         {
@@ -48,13 +48,13 @@ final class EditorSearchSession {
             case .forward:
                 0
             case .backward:
-                (chapter.content as NSString).length
+                (episode.content as NSString).length
             }
         }
 
         guard let range = TextSearch.find(
             query: query,
-            in: chapter.content,
+            in: episode.content,
             from: startLocation,
             direction: direction
         ) else {
@@ -64,7 +64,7 @@ final class EditorSearchSession {
         }
 
         didMissSearch = false
-        lastSearchChapterID = chapter.id
+        lastSearchEpisodeID = episode.id
         lastSearchQuery = query
         lastSearchRange = range
         selectionRequest = EditorSelectionRequest(range: range)
@@ -76,16 +76,26 @@ final class EditorSearchSession {
 
     func resetCursor() {
         didMissSearch = false
-        lastSearchChapterID = nil
+        lastSearchEpisodeID = nil
         lastSearchQuery = ""
         lastSearchRange = nil
         selectionRequest = nil
     }
 
-    func handleChapterChange(_ newSelection: ChapterID?) {
-        if lastSearchChapterID != newSelection {
+    func handleEpisodeChange(_ newSelection: EpisodeID?) {
+        if lastSearchEpisodeID != newSelection {
             resetCursor()
         }
+    }
+
+    /// 2c移行前の章単位呼び出しとの互換API。
+    func jump(direction: TextSearchDirection, in chapter: Chapter?) {
+        jump(direction: direction, in: chapter?.episodes.first)
+    }
+
+    /// 2c移行前の章単位呼び出しとの互換API。
+    func handleChapterChange(_: ChapterID?) {
+        resetCursor()
     }
 }
 

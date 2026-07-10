@@ -35,7 +35,7 @@ struct WritingInspectorView: View {
 
             switch selectedTab {
             case .memo:
-                if appState.selectedChapter == nil {
+                if appState.selectedEpisode == nil {
                     ContentUnavailableView(
                         "章が選択されていません",
                         systemImage: "note.text",
@@ -115,18 +115,13 @@ private struct ChapterContextView: View {
     }
 
     private var appearingCharacters: [NovelCore.Character] {
-        guard let chapter = appState.selectedChapter else { return [] }
+        guard let chapter = appState.selectedChapter, let episode = appState.selectedEpisode else { return [] }
         return appState.document.characters.filter { character in
             CharacterAppearanceDetector.appearances(
                 for: character,
-                in: NovelDocument(
-                    id: appState.document.id,
-                    title: appState.document.title,
-                    chapters: [chapter],
-                    characters: [],
-                    plotCards: [],
-                    flags: []
-                )
+                in: episode,
+                chapterID: chapter.id,
+                chapterTitle: chapter.title
             ).isEmpty == false
         }
     }
