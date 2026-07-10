@@ -13,12 +13,13 @@ struct OperationMessage: Identifiable {
 
 struct CharacterAppearance: Identifiable {
     let chapterID: ChapterID
+    let episodeID: EpisodeID
     let chapterTitle: String
     let query: String
     let range: NSRange
 
     var id: String {
-        "\(chapterID.rawValue.uuidString)-\(query)-\(range.location)"
+        "\(chapterID.rawValue.uuidString)-\(episodeID.rawValue.uuidString)-\(query)-\(range.location)"
     }
 }
 
@@ -27,19 +28,56 @@ enum CharacterAppearanceDetector {
         let queries = appearanceQueries(for: character)
         guard !queries.isEmpty else { return [] }
 
-        return document.chapters.compactMap { chapter in
-            for query in queries {
-                if let range = TextSearch.find(query: query, in: chapter.content, from: 0, wraps: false) {
-                    return CharacterAppearance(
-                        chapterID: chapter.id,
-                        chapterTitle: chapter.title,
-                        query: query,
-                        range: range
-                    )
-                }
+        return document.chapters.flatMap { chapter in
+            chapter.episodes.compactMap { episode in
+                appearance(
+                    for: character,
+                    queries: queries,
+                    in: episode,
+                    chapterID: chapter.id,
+                    chapterTitle: chapter.title
+                )
             }
-            return nil
         }
+    }
+
+    static func appearances(
+        for character: NovelCore.Character,
+        in episode: Episode,
+        chapterID: ChapterID,
+        chapterTitle: String
+    ) -> [CharacterAppearance] {
+        let queries = appearanceQueries(for: character)
+        guard !queries.isEmpty else { return [] }
+        guard let appearance = appearance(
+            for: character,
+            queries: queries,
+            in: episode,
+            chapterID: chapterID,
+            chapterTitle: chapterTitle
+        ) else { return [] }
+        return [appearance]
+    }
+
+    private static func appearance(
+        for _: NovelCore.Character,
+        queries: [String],
+        in episode: Episode,
+        chapterID: ChapterID,
+        chapterTitle: String
+    ) -> CharacterAppearance? {
+        for query in queries {
+            if let range = TextSearch.find(query: query, in: episode.content, from: 0, wraps: false) {
+                return CharacterAppearance(
+                    chapterID: chapterID,
+                    episodeID: episode.id,
+                    chapterTitle: chapterTitle,
+                    query: query,
+                    range: range
+                )
+            }
+        }
+        return nil
     }
 
     private static func appearanceQueries(for character: NovelCore.Character) -> [String] {

@@ -35,7 +35,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 Label("章メモ", systemImage: "note.text")
             }
             .help("章メモ")
-            .disabled(appState.selectedChapter == nil || !showsWritingActions)
+            .disabled(appState.selectedEpisode == nil || !showsWritingActions)
         }
         .defaultCustomization(.visible)
 
@@ -91,8 +91,8 @@ struct ChapterMemoPopover: View {
 
     private var memoBinding: Binding<String> {
         Binding(
-            get: { appState.selectedChapter?.memo ?? "" },
-            set: { appState.updateSelectedChapterMemo($0) }
+            get: { appState.selectedEpisode?.memo ?? "" },
+            set: { appState.updateSelectedEpisodeMemo($0) }
         )
     }
 }
