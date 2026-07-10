@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c 完了、UI-FIX-3 以降は未着手。**
+**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 完了、UI-FIX-4 以降は未着手。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
@@ -217,7 +217,7 @@ detail列:
 
 **実装結果 (2026-07-11):** 執筆Outlineを章行＋話行の階層表示へ更新し、話選択時にEpisodeIDをAppStateへ渡すようにした。Toolbarの`+`を章／話追加メニューへ変更し、話タイトル編集、章内並べ替え、別章移動、削除確認、章／話ごとの件数・文字数・メモ状態を追加した。
 
-### UI-FIX-3: プロット章 Outline + 伏線 split
+### UI-FIX-3: プロット章 Outline + 伏線 split【完了】
 
 - Plot の content 列を章 Outline に変更
 - detail を選択章プロット / 伏線の左右 split に変更
@@ -225,6 +225,8 @@ detail列:
 - Plot / Flag の操作テストを章／話モデルへ追従
 
 **完了条件:** Outline で章を切り替えると左側カードだけが切り替わり、右側の伏線は維持される。カードと伏線の章参照が再起動後も正しい。
+
+**実装結果 (2026-07-11):** プロットのcontent列を執筆Outlineと同じ章Listへ変更し、detail列を選択章のプロットカードと作品全体の伏線のHSplitへ変更した。選択章のカードだけを表示し、PlotCard / Flagの既存ChapterID参照と章ジャンプを維持した。
 
 ### UI-FIX-4: Toolbarの anchored popover
 

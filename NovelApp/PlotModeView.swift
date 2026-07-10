@@ -13,22 +13,22 @@ struct PlotBoardView: View {
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
+    let focusedChapterID: ChapterID?
 
     @State private var editingCardID: PlotCardID?
     @State private var cardPendingDeletion: PlotCard?
 
+    init(focusedChapterID: ChapterID? = nil, onChapterJump: @escaping (ChapterID) -> Void) {
+        self.focusedChapterID = focusedChapterID
+        self.onChapterJump = onChapterJump
+    }
+
     var body: some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 16) {
-                PlotLaneView(
-                    title: "未割り当て",
-                    chapterID: nil,
-                    cards: cards(in: nil),
-                    editingCardID: $editingCardID,
-                    cardPendingDeletion: $cardPendingDeletion
-                )
-
-                ForEach(appState.document.chapters) { chapter in
+                if let focusedChapterID,
+                   let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID })
+                {
                     PlotLaneView(
                         title: chapter.title,
                         chapterID: chapter.id,
@@ -36,6 +36,24 @@ struct PlotBoardView: View {
                         editingCardID: $editingCardID,
                         cardPendingDeletion: $cardPendingDeletion
                     )
+                } else {
+                    PlotLaneView(
+                        title: "未割り当て",
+                        chapterID: nil,
+                        cards: cards(in: nil),
+                        editingCardID: $editingCardID,
+                        cardPendingDeletion: $cardPendingDeletion
+                    )
+
+                    ForEach(appState.document.chapters) { chapter in
+                        PlotLaneView(
+                            title: chapter.title,
+                            chapterID: chapter.id,
+                            cards: cards(in: chapter.id),
+                            editingCardID: $editingCardID,
+                            cardPendingDeletion: $cardPendingDeletion
+                        )
+                    }
                 }
             }
             .padding(16)
@@ -104,6 +122,93 @@ struct PlotModeView: View {
 
     var body: some View {
         PlotBoardView(onChapterJump: onChapterJump)
+    }
+}
+
+/// プロット画面のcontent列。執筆Outlineと同じsidebar list規約で章を選択する。
+struct PlotChapterOutlineView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        List(selection: chapterSelectionBinding) {
+            Section("章") {
+                ForEach(appState.document.chapters) { chapter in
+                    PlotChapterOutlineRow(
+                        chapter: chapter,
+                        cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
+                        flagCount: flagCount(for: chapter.id)
+                    )
+                    .tag(chapter.id)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if appState.document.chapters.isEmpty {
+                ContentUnavailableView(
+                    "章がありません",
+                    systemImage: "doc.text",
+                    description: Text("執筆画面から章を追加できます。")
+                )
+            }
+        }
+    }
+
+    private var chapterSelectionBinding: Binding<ChapterID?> {
+        Binding(
+            get: { appState.selectedChapterID },
+            set: { appState.selectChapter($0) }
+        )
+    }
+
+    private func flagCount(for chapterID: ChapterID) -> Int {
+        appState.document.flags.reduce(into: 0) { count, flag in
+            if flag.plantedChapterID == chapterID || flag.resolvedChapterID == chapterID {
+                count += 1
+            }
+        }
+    }
+}
+
+private struct PlotChapterOutlineRow: View {
+    let chapter: Chapter
+    let cardCount: Int
+    let flagCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(chapter.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            HStack(spacing: 8) {
+                Label("\(cardCount)枚", systemImage: "rectangle.stack")
+                Label("\(flagCount)件", systemImage: "flag")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// 選択章のプロットカードと、作品全体の伏線を左右に並べる。
+struct PlotAndFlagSplitView: View {
+    @Environment(AppState.self) private var appState
+
+    let onChapterJump: (ChapterID) -> Void
+
+    var body: some View {
+        HSplitView {
+            PlotBoardView(
+                focusedChapterID: appState.selectedChapterID,
+                onChapterJump: onChapterJump
+            )
+            .frame(minWidth: 360)
+
+            FlagTrackerView(onChapterJump: onChapterJump)
+                .frame(minWidth: 360)
+        }
     }
 }
 
