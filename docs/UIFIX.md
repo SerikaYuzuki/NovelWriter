@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b 完了、UI-FIX-2c 以降は未着手。**
+**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c 完了、UI-FIX-3 以降は未着手。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
@@ -206,7 +206,7 @@ detail列:
 
 **実装結果 (2026-07-11):** AppStateの選択正を`selectedChapterID` / `selectedEpisodeID`へ分離し、話の追加・更新・削除・並べ替え・別章移動を実装。Editor、検索、文字数、登場箇所検出をEpisode単位へ移し、新規・開く・別名保存・snapshot復元で選択を初期化する回帰テストを追加した。既存UIの章単位APIは2c移行まで互換名で維持する。
 
-### UI-FIX-2c: 階層型の執筆 Outline + 追加 menu
+### UI-FIX-2c: 階層型の執筆 Outline + 追加 menu【完了】
 
 - 章 header + 話 row を実装
 - toolbar `+` を章／話の追加 menu に変更
@@ -214,6 +214,8 @@ detail列:
 - 章・話それぞれの件数、文字数、保存・メモ状態を表示
 
 **完了条件:** 複数章・複数話を作り、選択、編集、並べ替え、保存、再起動後の順序を確認できる。
+
+**実装結果 (2026-07-11):** 執筆Outlineを章行＋話行の階層表示へ更新し、話選択時にEpisodeIDをAppStateへ渡すようにした。Toolbarの`+`を章／話追加メニューへ変更し、話タイトル編集、章内並べ替え、別章移動、削除確認、章／話ごとの件数・文字数・メモ状態を追加した。
 
 ### UI-FIX-3: プロット章 Outline + 伏線 split
 

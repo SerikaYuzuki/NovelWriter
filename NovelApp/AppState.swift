@@ -400,9 +400,14 @@ final class AppState {
     }
 
     /// 指定章に話を追加し、追加した話を選択する。
-    func addEpisode(to chapterID: ChapterID? = nil, title: String = Episode.defaultTitle) {
+    ///
+    /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
+    func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
         let targetChapterID = chapterID ?? selectedChapterID
-        guard let targetChapterID, let episodeID = document.addEpisode(to: targetChapterID, title: title) else { return }
+        guard let targetChapterID,
+              let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
+        let resolvedTitle = title ?? "第\(chapter.episodes.count + 1)話"
+        guard let episodeID = document.addEpisode(to: targetChapterID, title: resolvedTitle) else { return }
         setSelection(chapterID: targetChapterID, episodeID: episodeID)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -423,6 +428,20 @@ final class AppState {
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 話タイトルの編集を確定し、空タイトルを既定値へ戻す。
+    func commitEpisodeTitleEditing() {
+        for chapter in document.chapters {
+            for episode in chapter.episodes {
+                let normalizedTitle = normalizedEpisodeTitle(episode.title)
+                if episode.title != normalizedTitle {
+                    document.updateEpisodeTitle(normalizedTitle, for: episode.id, in: chapter.id)
+                    saveCoordinator.markDirty()
+                }
+            }
+        }
+        flushSaveImmediately()
     }
 
     /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
@@ -1135,6 +1154,11 @@ final class AppState {
     private func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の章" : trimmed
+    }
+
+    private func normalizedEpisodeTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Episode.defaultTitle : trimmed
     }
 
     private static func nilIfBlank(_ value: String?) -> String? {
