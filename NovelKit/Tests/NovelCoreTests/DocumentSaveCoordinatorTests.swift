@@ -343,4 +343,35 @@ struct DocumentSaveCoordinatorTests {
         #expect(observedOverlap == false)
         #expect(completionOrder == ["first", "second"])
     }
+
+    /// Phase 4.5-3b: 保存処理の await 中も MainActor が他の仕事を進められること。
+    ///
+    /// `DocumentSaveCoordinator` は `@MainActor` だが、`saveOperation` 内の
+    /// サスペンションで MainActor を占有し続けない。UI 応答性の下限保証として、
+    /// 遅い保存のあいだにハートビートが観測できることを確認する。
+    @Test func saveNowAllowsMainActorHeartbeatsDuringSlowSave() async throws {
+        let state = MutableDocumentState(title: "応答性")
+        let coordinator = DocumentSaveCoordinator(
+            debounceNanoseconds: 1,
+            currentState: { [weak state] in
+                guard let state else { return nil }
+                return (state.document, state.url)
+            },
+            saveOperation: { _, _ in
+                try await Task.sleep(for: .milliseconds(500))
+            }
+        )
+
+        coordinator.markDirty()
+        async let saveSucceeded = coordinator.saveNow()
+
+        var heartbeats = 0
+        while heartbeats < 3 {
+            try await Task.sleep(for: .milliseconds(50))
+            heartbeats += 1
+        }
+
+        #expect(await saveSucceeded)
+        #expect(heartbeats >= 3)
+    }
 }

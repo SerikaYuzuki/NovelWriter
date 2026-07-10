@@ -1,6 +1,6 @@
 # Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
 
-**状態: 進行中。** Phase 4.5-1a / 1b / 2a / 2b / 3a は完了。現在の最優先は Phase 4.5-3b(4.5-1c はリネームのみの小タスクで、どのタイミングで挟んでもよい)。
+**状態: 進行中。** Phase 4.5-1a / 1b / 2a / 2b / 3a / 3b は完了。次の最優先は Phase 5-1(4.5-1c はリネームのみの小タスクで、どのタイミングで挟んでもよい)。
 
 本書は、Phase UI2 完了後の実装指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022)。
 
@@ -108,13 +108,25 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 **実装メモ**: `SnapshottingDocumentRepository` に `listSnapshots` / `restoreSnapshot` を追加し、置き場所は保存層に閉じ込めた。AppState の復元は (1) スナップショット読み込み (2) 現在作品の保存 (3) 現在状態の退避 (4) パッケージへの書き戻し (5) メモリ状態の置換、の順。失敗時は URL / 本文 / 資料を切り替えない。Editor Top Bar の履歴メニューから一覧・Finder 表示・確認付き復元ができる。
 
-### 4.5-3b: 保存性能の基準化
+### 4.5-3b: 保存性能の基準化【完了】
 
-- [ ] 1 MB 本文、100 MB 添付、20 個のスナップショットを含む代表パッケージで、保存時間と UI 応答性を計測するテスト／手順を追加する
-- [ ] 許容時間を決め、超過した場合だけ snapshots の保持方法・保持数・コピー方式を別 PR で改善する。測定なしの保存形式全面変更はしない
+- [x] 1 MB 本文、100 MB 添付、20 個のスナップショットを含む代表パッケージで、保存時間と UI 応答性を計測するテスト／手順を追加する
+- [x] 許容時間を決め、超過した場合だけ snapshots の保持方法・保持数・コピー方式を別 PR で改善する。測定なしの保存形式全面変更はしない
 
 **完了条件:** 性能測定の結果と採否を PR に記録できる。
 
+**実装メモ / 実測結果 (2026-07-10, macOS APFS, arm64)**:
+
+| 項目 | 値 |
+| --- | --- |
+| 代表パッケージ | 1 MB 本文 + 100 MB 添付 + 20 スナップショット |
+| 上書き保存 wall time | **0.039s** |
+| スナップショット20個の準備 | 0.035s |
+| 許容予算 | 上書き保存 ≤ **15s** (`SavePerformanceBudget.overwriteSaveDuration`) |
+| UI 応答性 | `DocumentSaveCoordinator.saveNow` 中も MainActor ハートビート可能(常時テスト) |
+| 採否 | **改善しない**(予算内。APFS の `clonefile` により同一ボリューム上の attachments/snapshots 引き継ぎは実バイトコピーにならない) |
+
+計測手順: `./Scripts/measure-save-performance.sh`(環境変数 `NOVELWRITER_PERF_TEST=1`。`check.sh` には含めない)。詳細は D-027。
 ## Phase 5: 出力
 
 ### 5-1: Export Core + プレーンテキスト / Markdown
