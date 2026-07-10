@@ -18,12 +18,23 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
     var body: some CustomizableToolbarContent {
         ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd) {
-            Button {
-                appState.addChapter()
+            Menu {
+                Button {
+                    appState.addChapter()
+                } label: {
+                    Label("章を追加", systemImage: "rectangle.stack.badge.plus")
+                }
+
+                Button {
+                    appState.addEpisode()
+                } label: {
+                    Label("話を追加", systemImage: "text.badge.plus")
+                }
+                .disabled(appState.selectedChapter == nil)
             } label: {
-                Label("章を追加", systemImage: "plus")
+                Label("追加", systemImage: "plus")
             }
-            .help("章を追加")
+            .help("章または話を追加")
             .disabled(!showsWritingActions)
         }
         .defaultCustomization(.visible)
@@ -32,9 +43,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             Button {
                 isMemoPresented.toggle()
             } label: {
-                Label("章メモ", systemImage: "note.text")
+                Label("話メモ", systemImage: "note.text")
             }
-            .help("章メモ")
+            .help("話メモ")
             .disabled(appState.selectedEpisode == nil || !showsWritingActions)
         }
         .defaultCustomization(.visible)
@@ -82,7 +93,7 @@ struct ChapterMemoPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("章メモ")
+            Text("話メモ")
                 .font(.headline)
             TextEditor(text: memoBinding)
         }

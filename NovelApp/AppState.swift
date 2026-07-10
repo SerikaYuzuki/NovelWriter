@@ -425,6 +425,20 @@ final class AppState {
         saveCoordinator.scheduleDebouncedSave()
     }
 
+    /// 話タイトルの編集を確定し、空タイトルを既定値へ戻す。
+    func commitEpisodeTitleEditing() {
+        for chapter in document.chapters {
+            for episode in chapter.episodes {
+                let normalizedTitle = normalizedEpisodeTitle(episode.title)
+                if episode.title != normalizedTitle {
+                    document.updateEpisodeTitle(normalizedTitle, for: episode.id, in: chapter.id)
+                    saveCoordinator.markDirty()
+                }
+            }
+        }
+        flushSaveImmediately()
+    }
+
     /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
     func updateChapterTitle(_ title: String, for id: ChapterID) {
         guard document.chapters.first(where: { $0.id == id })?.title != title else { return }
@@ -1135,6 +1149,11 @@ final class AppState {
     private func normalizedChapterTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の章" : trimmed
+    }
+
+    private func normalizedEpisodeTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Episode.defaultTitle : trimmed
     }
 
     private static func nilIfBlank(_ value: String?) -> String? {

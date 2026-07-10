@@ -20,7 +20,7 @@ struct WritingInspectorView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("インスペクタ", selection: $selectedTab) {
-                Label("章メモ", systemImage: "note.text")
+                Label("話メモ", systemImage: "note.text")
                     .tag(WritingInspectorTab.memo)
                 Label("この章", systemImage: "doc.text.magnifyingglass")
                     .tag(WritingInspectorTab.chapter)
