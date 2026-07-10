@@ -132,8 +132,10 @@ private struct ChapterContextView: View {
     }
 }
 
-struct AttachmentInspectorView: View {
+struct AttachmentListView: View {
     @Environment(AppState.self) private var appState
+
+    @Binding var selection: String?
 
     @State private var attachmentPendingDeletion: Attachment?
     @State private var isImportingAttachment = false
@@ -149,21 +151,24 @@ struct AttachmentInspectorView: View {
                 )
                 .frame(maxHeight: .infinity)
             } else {
-                List(appState.attachments) { attachment in
-                    AttachmentRow(attachment: attachment)
-                        .contextMenu {
-                            Button {
-                                revealInFinder(attachment)
-                            } label: {
-                                Label("Finderで表示", systemImage: "folder")
-                            }
+                List(selection: $selection) {
+                    ForEach(appState.attachments) { attachment in
+                        AttachmentRow(attachment: attachment)
+                            .tag(attachment.fileName)
+                            .contextMenu {
+                                Button {
+                                    revealInFinder(attachment)
+                                } label: {
+                                    Label("Finderで表示", systemImage: "folder")
+                                }
 
-                            Button(role: .destructive) {
-                                attachmentPendingDeletion = attachment
-                            } label: {
-                                Label("削除", systemImage: "trash")
+                                Button(role: .destructive) {
+                                    attachmentPendingDeletion = attachment
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
                             }
-                        }
+                    }
                 }
                 .overlay {
                     if appState.attachments.isEmpty {
@@ -185,19 +190,20 @@ struct AttachmentInspectorView: View {
                     }
 
                     Button {
-                        if let attachment = appState.attachments.first {
+                        if let attachment = selectedAttachment {
                             revealInFinder(attachment)
                         }
                     } label: {
                         Label("Finderで表示", systemImage: "folder")
                     }
-                    .disabled(appState.attachments.isEmpty)
+                    .disabled(selectedAttachment == nil)
 
                     Spacer()
                 }
                 .padding(8)
             }
         }
+        .background(.bar)
         .task {
             await appState.reloadAttachments()
         }
@@ -225,6 +231,11 @@ struct AttachmentInspectorView: View {
         .alert(item: $operationMessage) { message in
             Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
         }
+    }
+
+    private var selectedAttachment: Attachment? {
+        guard let selection else { return nil }
+        return appState.attachments.first { $0.fileName == selection }
     }
 
     private var attachmentDeletionDialogIsPresented: Binding<Bool> {
@@ -255,6 +266,7 @@ struct AttachmentInspectorView: View {
             }
 
             if let attachment = await appState.addAttachment(from: sourceURL) {
+                selection = attachment.fileName
                 operationMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
             } else {
                 operationMessage = OperationMessage(title: "取り込めませんでした", body: "資料の追加に失敗しました。")
@@ -267,9 +279,55 @@ struct AttachmentInspectorView: View {
     @MainActor
     private func delete(_ attachment: Attachment) async {
         if await appState.deleteAttachment(attachment) {
+            if selection == attachment.fileName {
+                selection = nil
+            }
             operationMessage = OperationMessage(title: "削除しました", body: attachment.fileName)
         } else {
             operationMessage = OperationMessage(title: "削除できませんでした", body: "資料の削除に失敗しました。")
         }
+    }
+}
+
+struct AttachmentDetailView: View {
+    @Environment(AppState.self) private var appState
+
+    let fileName: String?
+
+    var body: some View {
+        if let attachment = selectedAttachment {
+            Form {
+                LabeledContent("ファイル名", value: attachment.fileName)
+                LabeledContent("サイズ", value: ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
+                if let url = appState.attachmentPreviewURL(for: attachment) {
+                    LabeledContent("場所", value: url.path)
+                    Button("Finder で表示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .padding(20)
+            .frame(maxWidth: 720, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            ContentUnavailableView(
+                "資料が選択されていません",
+                systemImage: "paperclip",
+                description: Text("左の一覧から資料を選択してください。")
+            )
+        }
+    }
+
+    private var selectedAttachment: Attachment? {
+        guard let fileName else { return nil }
+        return appState.attachments.first { $0.fileName == fileName }
+    }
+}
+
+struct AttachmentInspectorView: View {
+    @State private var selection: String?
+
+    var body: some View {
+        AttachmentListView(selection: $selection)
     }
 }

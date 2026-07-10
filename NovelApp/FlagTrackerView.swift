@@ -99,6 +99,7 @@ struct FlagTrackerView: View {
                 )
             }
         }
+        .background(.bar)
         .confirmationDialog(
             "伏線を削除しますか？",
             isPresented: flagDeletionDialogIsPresented,

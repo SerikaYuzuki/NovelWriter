@@ -2,20 +2,44 @@ import EditorKit
 import NovelCore
 import SwiftUI
 
+/// 3列ワークベンチのルート(docs/TOOLBAR.md Toolbar-1)。
+///
+/// `NavigationSplitView` で Project Sidebar / Outline(content) / Detail を構成し、
+/// 標準の Sidebar 開閉と列追従 chrome を得る。下部の AI Assistant Panel は
+/// 従来どおり split の外に置く。`EditorTopBarView` は Toolbar-2 まで残す。
+private struct WorkbenchColumnWidths {
+    var min: CGFloat
+    var ideal: CGFloat
+    var max: CGFloat
+}
+
 struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
 
     @Binding var searchSelectionRequest: EditorSelectionRequest?
 
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var selectedAttachmentFileName: String?
+    @State private var sectionOverviewSelection: String? = Self.overviewItemID
+
+    fileprivate static let overviewItemID = "overview"
+
     var body: some View {
         VStack(spacing: 0) {
-            HSplitView {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
                 ProjectSidebarView()
-                    .frame(minWidth: 184, idealWidth: 200, maxWidth: 224)
-
-                detailView
-                    .frame(minWidth: 720)
+                    .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
+            } content: {
+                workbenchContent
+                    .navigationSplitViewColumnWidth(
+                        min: contentColumnWidths.min,
+                        ideal: contentColumnWidths.ideal,
+                        max: contentColumnWidths.max
+                    )
+            } detail: {
+                workbenchDetail
+                    .frame(minWidth: 560)
             }
 
             AIAssistantPanelView()
@@ -41,13 +65,46 @@ struct NovelWorkbenchView: View {
             .keyboardShortcut("j", modifiers: .command)
             .hidden()
         }
+        .onChange(of: appState.workspaceSelection.section) { _, _ in
+            // 概要リストはセクションごとに付け替える。資料選択は AppState 外の
+            // 一時状態だが、登場人物選択と同様に戻ってきたときに残す。
+            sectionOverviewSelection = Self.overviewItemID
+        }
     }
 
     @ViewBuilder
-    private var detailView: some View {
+    private var workbenchContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            WritingModeView(
+            OutlineContainerView()
+                .navigationTitle(documentDisplayTitle)
+                .navigationSubtitle("\(appState.document.chapters.count)章")
+        case .characters:
+            CharacterListView()
+                .navigationTitle("登場人物")
+        case .plot:
+            FlagTrackerView { chapterID in
+                appState.selectProjectSection(.structure)
+                appState.selectChapter(chapterID)
+            }
+            .navigationTitle("伏線")
+        case .references:
+            AttachmentListView(selection: $selectedAttachmentFileName)
+                .navigationTitle("資料")
+        case .projectInfo, .planning, .worldbuilding, .settings:
+            SectionOverviewList(
+                section: appState.workspaceSelection.section,
+                selection: $sectionOverviewSelection
+            )
+            .navigationTitle(appState.workspaceSelection.section.title)
+        }
+    }
+
+    @ViewBuilder
+    private var workbenchDetail: some View {
+        switch appState.workspaceSelection.section {
+        case .structure:
+            EditorPaneView(
                 searchSelectionRequest: $searchSelectionRequest,
                 onOpenCharacter: { characterID in
                     appState.selectCharacter(characterID)
@@ -58,19 +115,21 @@ struct NovelWorkbenchView: View {
                     appState.selectProjectSection(.plot)
                 }
             )
-        case .projectInfo:
-            ProjectInfoView()
         case .characters:
-            CharacterModeView { appearance in
+            CharacterDetailView { appearance in
                 appState.selectProjectSection(.structure)
                 appState.selectChapter(appearance.chapterID)
                 searchSelectionRequest = EditorSelectionRequest(range: appearance.range)
             }
         case .plot:
-            PlotModeView { chapterID in
+            PlotBoardView { chapterID in
                 appState.selectProjectSection(.structure)
                 appState.selectChapter(chapterID)
             }
+        case .references:
+            AttachmentDetailView(fileName: selectedAttachmentFileName)
+        case .projectInfo:
+            ProjectInfoView()
         case .planning:
             NotesSectionView(
                 title: "企画",
@@ -83,10 +142,6 @@ struct NovelWorkbenchView: View {
                 systemImage: "globe.asia.australia",
                 placeholder: "世界観メモは今後の保存モデル追加で有効化します。"
             )
-        case .references:
-            SectionSurface(title: "資料", systemImage: "paperclip") {
-                AttachmentInspectorView()
-            }
         case .settings:
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
@@ -99,6 +154,22 @@ struct NovelWorkbenchView: View {
 
     private var showsWritingActions: Bool {
         appState.workspaceSelection.section == .structure
+    }
+
+    private var documentDisplayTitle: String {
+        let trimmed = appState.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "無題の作品" : trimmed
+    }
+
+    private var contentColumnWidths: WorkbenchColumnWidths {
+        switch appState.workspaceSelection.section {
+        case .structure:
+            WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
+        case .characters, .plot, .references:
+            WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
+        case .projectInfo, .planning, .worldbuilding, .settings:
+            WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
+        }
     }
 }
 
@@ -113,7 +184,6 @@ struct ProjectSidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle(appState.document.title)
         .scrollContentBackground(.hidden)
         .background(.bar)
     }
@@ -127,6 +197,21 @@ struct ProjectSidebarView: View {
                 }
             }
         )
+    }
+}
+
+/// 永続モデルがまだないセクション用の content 列。detail に概要を出す。
+private struct SectionOverviewList: View {
+    let section: ProjectSection
+    @Binding var selection: String?
+
+    var body: some View {
+        List(selection: $selection) {
+            Label("概要", systemImage: section.systemImage)
+                .tag(NovelWorkbenchView.overviewItemID)
+        }
+        .listStyle(.sidebar)
+        .background(.bar)
     }
 }
 

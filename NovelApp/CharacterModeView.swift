@@ -3,77 +3,62 @@ import NovelCore
 import NovelUI
 import SwiftUI
 
-struct CharacterModeView: View {
+struct CharacterListView: View {
     @Environment(AppState.self) private var appState
-
-    let onAppearanceJump: (CharacterAppearance) -> Void
 
     @State private var characterPendingDeletion: NovelCore.Character?
 
     var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                List(selection: characterSelectionBinding) {
-                    ForEach(appState.document.characters) { character in
-                        CharacterRow(character: character)
-                            .tag(character.id)
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    characterPendingDeletion = character
-                                } label: {
-                                    Label("削除", systemImage: "trash")
-                                }
+        VStack(spacing: 0) {
+            List(selection: characterSelectionBinding) {
+                ForEach(appState.document.characters) { character in
+                    CharacterRow(character: character)
+                        .tag(character.id)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                characterPendingDeletion = character
+                            } label: {
+                                Label("削除", systemImage: "trash")
                             }
-                    }
-                    .onMove { offsets, destination in
-                        appState.moveCharacters(fromOffsets: offsets, toOffset: destination)
-                    }
-                }
-                .overlay {
-                    if appState.document.characters.isEmpty {
-                        ContentUnavailableView(
-                            "キャラクターがありません",
-                            systemImage: "person.2",
-                            description: Text("下の追加ボタンからキャラクターを追加できます。")
-                        )
-                    }
-                }
-
-                Divider()
-
-                HStack {
-                    Button {
-                        appState.addCharacter()
-                    } label: {
-                        Label("キャラクターを追加", systemImage: "plus")
-                    }
-
-                    Button(role: .destructive) {
-                        if let character = appState.selectedCharacter {
-                            characterPendingDeletion = character
                         }
-                    } label: {
-                        Label("削除", systemImage: "trash")
-                    }
-                    .disabled(appState.selectedCharacter == nil)
-
-                    Spacer()
                 }
-                .padding(8)
+                .onMove { offsets, destination in
+                    appState.moveCharacters(fromOffsets: offsets, toOffset: destination)
+                }
             }
-            .navigationTitle("キャラクター")
-        } detail: {
-            if appState.selectedCharacter == nil {
-                ContentUnavailableView(
-                    "キャラクターが選択されていません",
-                    systemImage: "person",
-                    description: Text("左の一覧から編集するキャラクターを選択してください。")
-                )
-            } else {
-                CharacterSheetView(onAppearanceJump: onAppearanceJump)
+            .overlay {
+                if appState.document.characters.isEmpty {
+                    ContentUnavailableView(
+                        "キャラクターがありません",
+                        systemImage: "person.2",
+                        description: Text("下の追加ボタンからキャラクターを追加できます。")
+                    )
+                }
             }
+
+            Divider()
+
+            HStack {
+                Button {
+                    appState.addCharacter()
+                } label: {
+                    Label("キャラクターを追加", systemImage: "plus")
+                }
+
+                Button(role: .destructive) {
+                    if let character = appState.selectedCharacter {
+                        characterPendingDeletion = character
+                    }
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+                .disabled(appState.selectedCharacter == nil)
+
+                Spacer()
+            }
+            .padding(8)
         }
-        .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+        .background(.bar)
         .confirmationDialog(
             "キャラクターを削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
@@ -104,6 +89,34 @@ struct CharacterModeView: View {
                 }
             }
         )
+    }
+}
+
+struct CharacterDetailView: View {
+    @Environment(AppState.self) private var appState
+
+    let onAppearanceJump: (CharacterAppearance) -> Void
+
+    var body: some View {
+        if appState.selectedCharacter == nil {
+            ContentUnavailableView(
+                "キャラクターが選択されていません",
+                systemImage: "person",
+                description: Text("左の一覧から編集するキャラクターを選択してください。")
+            )
+        } else {
+            CharacterSheetView(onAppearanceJump: onAppearanceJump)
+        }
+    }
+}
+
+/// Toolbar-1 以前の入れ子 `NavigationSplitView` 互換ラッパ。新規呼び出しは
+/// `CharacterListView` / `CharacterDetailView` を使う。
+struct CharacterModeView: View {
+    let onAppearanceJump: (CharacterAppearance) -> Void
+
+    var body: some View {
+        CharacterDetailView(onAppearanceJump: onAppearanceJump)
     }
 }
 
