@@ -226,7 +226,7 @@
 
 ## D-028: 原稿は Chapter(章) / Episode(話)の2階層とし、出力より先に移行する
 
-- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2aでNovelCore / NovelStorage、UI-FIX-2bでAppState、UI-FIX-2cで執筆UI、UI-FIX-3でプロットUI実装済み。UI-FIX-4でToolbarを移行予定。実装計画は [UIFIX.md](UIFIX.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2aでNovelCore / NovelStorage、UI-FIX-2bでAppState、UI-FIX-2cで執筆UI、UI-FIX-3でプロットUI、UI-FIX-4でToolbar popoverを実装済み。UI-FIX-5が次の作業。実装計画は [UIFIX.md](UIFIX.md))
 - **内容**:
   1. `Chapter` は章タイトルと順序付きの `[Episode]` を持つ構造とし、本文は持たない。`Episode` は `EpisodeID`、話タイトル、本文、メモを持つ編集単位とする。章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順だけを正とし、どちらにも `order` を追加しない。
   2. `PlotCard.chapterID` と `Flag` の張った章／回収章は章単位の参照として維持する。今回 `episodeID` 参照は追加しない。現行の章メモは v1 / v2 → v3 移行時に生成される話のメモへ移し、章自体のメモは追加しない。

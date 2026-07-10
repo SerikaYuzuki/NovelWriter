@@ -22,7 +22,7 @@ struct NovelWorkbenchView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
     @State private var sectionOverviewSelection: String? = Self.overviewItemID
-    @State private var isMemoPresented = false
+    @State private var overlayState = WorkbenchOverlayState()
 
     fileprivate static let overviewItemID = "overview"
 
@@ -48,7 +48,7 @@ struct NovelWorkbenchView: View {
         .preferredColorScheme(.dark)
         .toolbar(id: "novelwriter.workbench.v1") {
             WorkbenchToolbarContent(
-                isMemoPresented: $isMemoPresented,
+                overlayState: overlayState,
                 showsWritingActions: showsWritingActions,
                 onOpenCharacter: openCharacter,
                 onOpenPlotCard: openPlotCard
@@ -103,11 +103,7 @@ struct NovelWorkbenchView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
             guard appState.selectedEpisode != nil else { return }
-            isMemoPresented = true
-        }
-        .popover(isPresented: $isMemoPresented) {
-            ChapterMemoPopover()
-                .frame(width: 320, height: 260)
+            overlayState.presented = .memo
         }
     }
 

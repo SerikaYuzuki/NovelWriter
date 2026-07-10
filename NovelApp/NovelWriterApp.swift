@@ -124,7 +124,7 @@ struct NovelWriterApp: App {
                         }
                     )
                 }
-                .disabled(appState.selectedEpisode == nil)
+                .disabled(appState.selectedChapter == nil)
             }
 
             CommandGroup(after: .textEditing) {
