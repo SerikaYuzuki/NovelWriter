@@ -925,6 +925,60 @@ final class AppState {
         }
     }
 
+    /// 現在の作品パッケージに保存されているスナップショットを新しい順で返す。
+    func listSnapshots() async -> [DocumentSnapshotInfo] {
+        guard let repository = repository as? SnapshottingDocumentRepository else { return [] }
+
+        do {
+            return try await repository.listSnapshots(in: documentURL)
+        } catch {
+            print("NovelWriter: スナップショット一覧の取得に失敗しました(\(documentURL.path)): \(error)")
+            return []
+        }
+    }
+
+    /// 指定スナップショットを現在の作品へ復元する。
+    ///
+    /// 復元は破壊的でないよう、現在状態を先にスナップショット化してから書き戻す。
+    /// 失敗時は `documentURL` / 本文 / 資料一覧を切り替えない(docs/PHASE5.md 4.5-3a)。
+    @discardableResult
+    func restoreSnapshot(at snapshotURL: URL) async -> Bool {
+        guard let repository = repository as? SnapshottingDocumentRepository else { return false }
+
+        let restoredDocument: NovelDocument
+        let restoredAttachments: [Attachment]
+        do {
+            restoredDocument = try await repository.load(from: snapshotURL)
+            restoredAttachments = try await loadAttachmentsThrowing(for: snapshotURL)
+        } catch {
+            print("NovelWriter: スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
+            return false
+        }
+
+        guard await saveCoordinator.saveNow() else { return false }
+
+        // 復元前の現在状態を退避する。ここが失敗したら現在作品を書き換えない。
+        do {
+            _ = try await repository.saveSnapshot(document, to: documentURL)
+        } catch {
+            print("NovelWriter: 復元前のスナップショット退避に失敗しました(\(documentURL.path)): \(error)")
+            return false
+        }
+
+        let packageURL = documentURL
+        do {
+            try await saveCoordinator.performExclusive {
+                try await repository.restoreSnapshot(from: snapshotURL, into: packageURL)
+            }
+        } catch {
+            print("NovelWriter: スナップショットの復元に失敗しました(\(snapshotURL.path)): \(error)")
+            return false
+        }
+
+        installDocument(restoredDocument, at: packageURL, attachments: restoredAttachments)
+        return true
+    }
+
     // MARK: - 保存
 
     /// アプリ終了前に、保留中のデバウンス保存をキャンセルして現在状態を保存する。
