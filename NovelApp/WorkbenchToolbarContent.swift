@@ -1,5 +1,6 @@
 import AppKit
 import NovelCore
+import Observation
 import SwiftUI
 
 /// Workbench 上部の一段 native toolbar(docs/TOOLBAR.md Toolbar-2 / D-024)。
@@ -11,7 +12,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
 
-    @Binding var isMemoPresented: Bool
+    let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
     let onOpenCharacter: (CharacterID) -> Void
     let onOpenPlotCard: (PlotCardID) -> Void
@@ -41,43 +42,107 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
         ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
             Button {
-                isMemoPresented.toggle()
+                overlayState.toggle(.memo)
             } label: {
                 Label("話メモ", systemImage: "note.text")
             }
             .help("話メモ")
             .disabled(appState.selectedEpisode == nil || !showsWritingActions)
+            .popover(isPresented: isPresented(.memo), arrowEdge: .bottom) {
+                ChapterMemoPopover()
+                    .frame(width: 320, height: 260)
+            }
         }
         .defaultCustomization(.visible)
 
         ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
             Button {
-                Task {
-                    _ = await appState.createSnapshot()
-                    await snapshotMenuPresenter.refresh()
-                }
+                overlayState.toggle(.snapshots)
             } label: {
-                Label("スナップショットを保存", systemImage: "clock.arrow.circlepath")
+                Label("スナップショット", systemImage: "clock.arrow.circlepath")
             }
-            .help("スナップショットを保存")
+            .help("スナップショットの保存・一覧")
             .disabled(!showsWritingActions)
+            .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
+                SnapshotPopover(overlayState: overlayState)
+                    .frame(width: 360, height: 320)
+            }
         }
         .defaultCustomization(.visible)
 
         ToolbarItem(id: WorkbenchToolbarItemID.chapterContext) {
-            Menu {
-                ChapterContextMenuContent(
-                    appState: appState,
-                    onOpenCharacter: onOpenCharacter,
-                    onOpenPlotCard: onOpenPlotCard
-                )
+            Button {
+                overlayState.toggle(.plotCards)
             } label: {
                 Label("この章", systemImage: "doc.text.magnifyingglass")
             }
             .help("この章")
             .disabled(appState.selectedChapter == nil || !showsWritingActions)
+            .popover(isPresented: isPlotPopoverPresented, arrowEdge: .bottom) {
+                plotPopover
+                    .frame(width: 340, height: 360)
+            }
         }
         .defaultCustomization(.visible)
+    }
+
+    private func isPresented(_ overlay: WorkbenchOverlay) -> Binding<Bool> {
+        Binding(
+            get: { overlayState.presented == overlay },
+            set: { isPresented in
+                if isPresented {
+                    overlayState.presented = overlay
+                } else if overlayState.presented == overlay {
+                    overlayState.presented = nil
+                }
+            }
+        )
+    }
+
+    private var isPlotPopoverPresented: Binding<Bool> {
+        Binding(
+            get: {
+                switch overlayState.presented {
+                case .plotCards, .plotCard:
+                    true
+                default:
+                    false
+                }
+            },
+            set: { isPresented in
+                if !isPresented {
+                    overlayState.presented = nil
+                } else if overlayState.presented == nil {
+                    overlayState.presented = .plotCards
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var plotPopover: some View {
+        switch overlayState.presented {
+        case let .plotCard(cardID):
+            PlotCardQuickPopover(
+                cardID: cardID,
+                onOpenPlotCard: { cardID in
+                    overlayState.presented = nil
+                    onOpenPlotCard(cardID)
+                }
+            )
+        case .plotCards, nil:
+            ChapterContextPopover(
+                onOpenCharacter: { characterID in
+                    overlayState.presented = nil
+                    onOpenCharacter(characterID)
+                },
+                onOpenPlotCard: { cardID in
+                    overlayState.presented = .plotCard(cardID)
+                }
+            )
+        case .memo, .snapshots:
+            EmptyView()
+        }
     }
 }
 
@@ -86,6 +151,23 @@ enum WorkbenchToolbarItemID {
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
     static let chapterContext = "workbench.chapter.context"
+}
+
+enum WorkbenchOverlay: Hashable {
+    case memo
+    case snapshots
+    case plotCards
+    case plotCard(PlotCardID)
+}
+
+@MainActor
+@Observable
+final class WorkbenchOverlayState {
+    var presented: WorkbenchOverlay?
+
+    func toggle(_ overlay: WorkbenchOverlay) {
+        presented = presented == overlay ? nil : overlay
+    }
 }
 
 struct ChapterMemoPopover: View {
@@ -105,6 +187,200 @@ struct ChapterMemoPopover: View {
             get: { appState.selectedEpisode?.memo ?? "" },
             set: { appState.updateSelectedEpisodeMemo($0) }
         )
+    }
+}
+
+struct SnapshotPopover: View {
+    @Environment(AppState.self) private var appState
+    @Environment(SnapshotMenuPresenter.self) private var presenter
+
+    let overlayState: WorkbenchOverlayState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("スナップショット")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    Task {
+                        _ = await appState.createSnapshot()
+                        await presenter.refresh()
+                    }
+                } label: {
+                    Label("保存", systemImage: "plus")
+                }
+                .labelStyle(.iconOnly)
+                .help("現在の状態を保存")
+            }
+
+            Divider()
+
+            if presenter.snapshots.isEmpty {
+                ContentUnavailableView(
+                    "スナップショットがありません",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("保存ボタンから現在の状態を記録できます。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(presenter.snapshots) { snapshot in
+                    HStack(spacing: 8) {
+                        Button(snapshot.displayName) {
+                            presenter.snapshotPendingRestore = snapshot
+                            overlayState.presented = nil
+                        }
+                        .buttonStyle(.plain)
+                        .lineLimit(1)
+
+                        Spacer()
+
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                        } label: {
+                            Label("Finderで表示", systemImage: "folder")
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Finderで表示")
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .padding(12)
+        .task {
+            await presenter.refresh()
+        }
+    }
+}
+
+struct ChapterContextPopover: View {
+    @Environment(AppState.self) private var appState
+
+    let onOpenCharacter: (CharacterID) -> Void
+    let onOpenPlotCard: (PlotCardID) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("この章")
+                    .font(.headline)
+
+                if chapterPlotCards.isEmpty {
+                    Text("プロットカードがありません")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("プロットカード")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    ForEach(chapterPlotCards) { card in
+                        Button {
+                            onOpenPlotCard(card.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(NovelDocument.normalizedPlotCardTitle(card.title))
+                                    .lineLimit(1)
+                                if !card.memo.isEmpty {
+                                    Text(card.memo)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Divider()
+
+                Text("登場人物")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if appearingCharacters.isEmpty {
+                    Text("登場人物がありません")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(appearingCharacters) { character in
+                        Button(NovelDocument.normalizedCharacterName(character.name)) {
+                            onOpenCharacter(character.id)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(16)
+    }
+
+    private var chapterPlotCards: [PlotCard] {
+        guard let chapterID = appState.selectedChapterID else { return [] }
+        return appState.document.plotCards.filter { $0.chapterID == chapterID }
+    }
+
+    private var appearingCharacters: [NovelCore.Character] {
+        guard let chapter = appState.selectedChapter else { return [] }
+        return appState.document.characters.filter { character in
+            CharacterAppearanceDetector.appearances(
+                for: character,
+                in: NovelDocument(
+                    id: appState.document.id,
+                    title: appState.document.title,
+                    chapters: [chapter],
+                    characters: [],
+                    plotCards: [],
+                    flags: []
+                )
+            ).isEmpty == false
+        }
+    }
+}
+
+struct PlotCardQuickPopover: View {
+    @Environment(AppState.self) private var appState
+
+    let cardID: PlotCardID
+    let onOpenPlotCard: (PlotCardID) -> Void
+
+    var body: some View {
+        if let card = appState.document.plotCards.first(where: { $0.id == cardID }) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(NovelDocument.normalizedPlotCardTitle(card.title))
+                    .font(.headline)
+                if card.memo.isEmpty {
+                    Text("内容がありません")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(card.memo)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let chapterID = card.chapterID,
+                   let chapter = appState.document.chapters.first(where: { $0.id == chapterID })
+                {
+                    Label(chapter.title, systemImage: "doc.text")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label("未割り当て", systemImage: "tray")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    onOpenPlotCard(card.id)
+                } label: {
+                    Label("プロットカードへ移動", systemImage: "arrow.up.right")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(16)
+        } else {
+            ContentUnavailableView("カードが見つかりません", systemImage: "rectangle.stack")
+                .padding(16)
+        }
     }
 }
 

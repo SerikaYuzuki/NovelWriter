@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 完了、UI-FIX-4 以降は未着手。**
+**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 完了、UI-FIX-5 以降は未着手。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
@@ -237,6 +237,8 @@ detail列:
 - root に付いているメモ popover と、保存だけを行う snapshot button を撤去
 
 **完了条件:** 各 popup が押したアイコン付近に出て、同じアイコンの再クリックで閉じる。toolbar カスタマイズ後も menu fallback から全操作へ到達できる。
+
+**実装結果 (2026-07-11):** `WorkbenchOverlayState` でメモ・スナップショット・この章の表示を排他的に管理し、各 `ToolbarItem` に直接 `.popover` を接続した。メモは話メモを編集でき、スナップショットは保存・一覧・Finder表示・確認付き復元を提供する。この章はカード内容を段階表示し、プロットカード画面へ移動できる。既存の File / Outline / CommandMenu の fallback は維持した。
 
 ### UI-FIX-5: Character header + Outline統一
 
