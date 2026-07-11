@@ -4,7 +4,7 @@
 
 > **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。列方針はUI-REF-3で更新済みで、今後は [PHASE5.md](PHASE5.md) を正とする。
 
-**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次は Phase 5-1へ進む。
+**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 / UI-REF-1〜6 完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次は Phase 5-1へ進む。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 

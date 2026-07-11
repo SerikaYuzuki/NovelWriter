@@ -1,6 +1,6 @@
 # Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
 
-**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9完了、Chapter / Episode出力仕様更新済み。Phase 5はUI-REF-1〜6完了まで待機。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md) を正とする(4.5-1c はリネームのみの独立タスクで、どのタイミングで挟んでもよい)。
+**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6完了、Chapter / Episode出力仕様更新済み。次は Phase 5-1。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md) に記録した(4.5-1c はリネームのみの独立タスクで、どのタイミングで挟んでもよい)。
 
 本書は、Phase UI2 完了後の実装指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022)。
 
@@ -82,7 +82,7 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 ### 4.5-1c: ファイル名を新UIの実態に揃える(リネームのみ)
 
-- [ ] 型は UI2 で改名済みだが、ファイル名が旧UIのまま残っている。**動作を変えずリネームだけ**行う: `AppMode.swift` → `ProjectSection.swift`(中身は ProjectSection)、`WritingModeView.swift` → 中身の主要型に合わせて分割・改名(OutlineContainerView / OutlineView / EditorPaneView)、`CharacterModeView.swift` / `PlotModeView.swift` / `FlagTrackerView.swift` / `WritingInspectorView.swift` はワークベンチのセクションコンテンツとして再利用されているため、役割が分かる名前(例: CharacterSectionView.swift 等)に改名
+- [ ] 型は UI2 で改名済みだが、ファイル名が旧UIのまま残っている。**動作を変えずリネームだけ**行う: `AppMode.swift` → `ProjectSection.swift`(中身は ProjectSection)、`WritingModeView.swift` → 中身の主要型に合わせて分割・改名(OutlineContainerView / OutlineView / EditorPaneView)、`CharacterModeView.swift` / `PlotModeView.swift` / `FlagTrackerView.swift` はワークベンチのセクションコンテンツとして再利用されているため、役割が分かる名前(例: CharacterSectionView.swift 等)に改名。`WritingInspectorView.swift` は UI-REF-6 で未使用のため削除済み
 - [ ] DESIGN.md 5.3 のビュー木と実在の型名・ファイル名が一致することを確認し、差異(例: WorkspaceBodyView の実名)があればどちらかに揃える
 
 **完了条件:** `git log --follow` でリネームが追跡でき、check.sh 全通過。挙動・見た目の変化なし。
