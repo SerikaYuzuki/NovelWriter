@@ -1,5 +1,7 @@
 # Workbench 上部ツールバー設計
 
+> **次期修正:** section固有の追加操作をpaneへ固定し、執筆Outlineの章追加とEditorの話追加を分離する方針はD-029 / [UIREVISION.md](UIREVISION.md)が本書に優先する。本書はToolbar-1 / Toolbar-2の完了記録として残す。
+
 > **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。今後は [PHASE5.md](PHASE5.md) を正とする。
 
 **状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次は Phase 5-1へ進む。

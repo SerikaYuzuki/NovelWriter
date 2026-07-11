@@ -70,23 +70,24 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / AI panel collapsed 28pt / AI panel expanded 280pt(240〜360pt) / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
+- Outline系paneは`.thinMaterial`を共通surfaceとし、背面のwindow surfaceがわずかに見える状態を保つ。不透明な`.bar`への統一は禁止
 - フォームは `.formStyle(.grouped)` に統一
 
 ## 5. コンポーネント規約
 
 - **ボタン**: 主アクション(ダイアログの実行など)= `.borderedProminent`、通常 = `.bordered`、ツールバー・行内 = `.borderless` + アイコン。破壊的操作は `role: .destructive` を必ず付ける
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
-- **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない
-- **Workbench toolbar**: [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の話内検索とする。保存状態と章タイトルを重複表示しない。編集操作は個別の native toolbar item とし、独自背景・影・大きなラベルを付けない
+- **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
+- **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定のsection追加、Editor上は話追加・補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
 - **AI Assistant Panel**: collapsed はステータスバー、expanded はチャット入力・提案一覧・選択テキスト操作の3領域。入力欄は下端に固定し、本文領域を覆わない
-- **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
+- **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
 - **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成
 - **バッジ・カウント**: 数字は `.caption` + secondary。未回収数など注意を引くものだけ `warning` トークン
 
 ## 6. 深さ・階層
 
-- 階層はまず**素材**で表現する: Project Sidebar = 標準 sidebar material、AI collapsed status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま
+- 階層はまず**素材**で表現する: Project Sidebar / Outline = `.thinMaterial`、AI collapsed status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま
 - 影は「浮いている最中」(ドラッグ中のカード等)専用。常設の drop shadow は禁止
 - 境界線は `.separator` の hairline(1px)。太い枠線・二重枠を使わない
 
@@ -115,6 +116,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
 - [ ] Project Sidebar / Outline / Editor / AI Assistant Panel の幅と優先順位が崩れていないか
+- [ ] Project Sidebarを含むOutlineが共通のtranslucent materialで、Reduce Transparencyでも読めるか
 - [ ] 上部が一段の native toolbar で、Sidebar 開閉 / 作品名 + 章数 / 編集操作 / 右端検索の既定配置になっているか
 - [ ] カスタマイズ可能な toolbar 操作すべてに、メニューまたは文脈メニューの代替入口があるか
 - [ ] AI Assistant Panel を閉じた状態でも保存状態・文字数・AI状態が読めるか
