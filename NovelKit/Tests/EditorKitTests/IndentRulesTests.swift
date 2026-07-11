@@ -39,62 +39,46 @@ struct IndentRulesTests {
         #expect(action == .replace(range: range, text: "\n\u{3000}", caretOffset: 2))
     }
 
-    // MARK: - R2: 空白のみの行での改行
+    // MARK: - R1': 空白行を含む常時字下げ
 
-    @Test("R2: 全角スペースのみの行での改行は、行の空白を消して空行にする")
-    func r2CleansFullWidthSpaceOnlyLine() {
+    @Test("R1': 全角スペースのみの行でも改行後に字下げする")
+    func r1AlwaysIndentsFullWidthSpaceOnlyLine() {
         let text = "　　"
         let range = NSRange(location: text.utf16.count, length: 0)
 
         let action = IndentRules.action(for: "\n", in: text, range: range)
 
-        let expectedRange = NSRange(location: 0, length: text.utf16.count)
-        #expect(action == .replace(range: expectedRange, text: "\n", caretOffset: 1))
+        #expect(action == .replace(range: range, text: "\n\u{3000}", caretOffset: 2))
     }
 
-    @Test("R2: 半角スペース・タブ混在の行でも空行として扱われる")
-    func r2CleansMixedWhitespaceLine() {
+    @Test("R1': 半角スペース・タブ混在の行でも空白を掃除せず字下げする")
+    func r1PreservesMixedWhitespaceLine() {
         let text = " \t "
         let range = NSRange(location: text.utf16.count, length: 0)
 
         let action = IndentRules.action(for: "\n", in: text, range: range)
 
-        let expectedRange = NSRange(location: 0, length: text.utf16.count)
-        #expect(action == .replace(range: expectedRange, text: "\n", caretOffset: 1))
+        #expect(action == .replace(range: range, text: "\n\u{3000}", caretOffset: 2))
     }
 
-    @Test("R2: 前の行がある場合でも、空白行のみが掃除される")
-    func r2OnlyCleansCurrentWhitespaceLine() {
+    @Test("R1': 前の行があっても現在行だけに常時字下げを挿入する")
+    func r1OnlyChangesCurrentLine() {
         let text = "本文\n　"
-        let lineStart = "本文\n".utf16.count
         let range = NSRange(location: (text as NSString).length, length: 0)
 
         let action = IndentRules.action(for: "\n", in: text, range: range)
 
-        let expectedRange = NSRange(location: lineStart, length: "　".utf16.count)
-        #expect(action == .replace(range: expectedRange, text: "\n", caretOffset: 1))
+        #expect(action == .replace(range: range, text: "\n\u{3000}", caretOffset: 2))
     }
 
-    @Test("R2: キャレットが空白行の途中にあっても、行全体の空白が置換される")
-    func r2CaretInMiddleOfWhitespaceLine() {
-        let text = "　　"
-        // 2つの全角スペースの間にキャレットがある状態で改行。
-        let range = NSRange(location: 1, length: 0)
-
-        let action = IndentRules.action(for: "\n", in: text, range: range)
-
-        let expectedRange = NSRange(location: 0, length: text.utf16.count)
-        #expect(action == .replace(range: expectedRange, text: "\n", caretOffset: 1))
-    }
-
-    @Test("完全な空行(空白すら無い行)での改行はR1のインデントを付けない")
-    func emptyLineNewlineDoesNotIndent() {
+    @Test("R1': 完全な空行でも改行後に字下げする")
+    func emptyLineNewlineIndents() {
         let text = ""
         let range = NSRange(location: 0, length: 0)
 
         let action = IndentRules.action(for: "\n", in: text, range: range)
 
-        #expect(action == .replace(range: NSRange(location: 0, length: 0), text: "\n", caretOffset: 1))
+        #expect(action == .replace(range: NSRange(location: 0, length: 0), text: "\n\u{3000}", caretOffset: 2))
     }
 
     // MARK: - R3: 字下げ直後の鉤括弧
@@ -245,17 +229,14 @@ struct IndentRulesTests {
         #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "『", caretOffset: 1))
     }
 
-    @Test("結合絵文字(ZWJシーケンス)を含む行でもR2の空白判定・置換範囲が壊れない")
-    func zwjEmojiDoesNotBreakR2() {
+    @Test("IME確定後のR5判定は絵文字を含む前行でも範囲を壊さない")
+    func postChangeActionWithEmojiPrecedingLineIsSafe() {
         // 👨‍👩‍👧‍👦 (family) は複数コードポイント・複数UTF-16単位のZWJシーケンス。
         let family = "👨‍👩‍👧‍👦"
-        let text = "\(family)\n　"
+        let text = "\(family)\n　『"
         let lineStart = ("\(family)\n" as NSString).length
-        let range = NSRange(location: (text as NSString).length, length: 0)
+        let action = IndentRules.postChangeAction(in: text, caretLocation: (text as NSString).length)
 
-        let action = IndentRules.action(for: "\n", in: text, range: range)
-
-        let expectedRange = NSRange(location: lineStart, length: "　".utf16.count)
-        #expect(action == .replace(range: expectedRange, text: "\n", caretOffset: 1))
+        #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "『", caretOffset: 1))
     }
 }

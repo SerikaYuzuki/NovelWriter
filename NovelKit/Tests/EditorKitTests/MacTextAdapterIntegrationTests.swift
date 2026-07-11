@@ -71,8 +71,8 @@ struct MacTextAdapterIntegrationTests {
         #expect(textView.selectedRange() == NSRange(location: (textView.string as NSString).length, length: 0))
     }
 
-    @Test("空白のみの行でEnter: 行が掃除され、新しい行には字下げしない")
-    func enterOnWhitespaceOnlyLineCleansIndent() {
+    @Test("空白のみの行でEnter: 空白を掃除せず、新しい行にも字下げする")
+    func enterOnWhitespaceOnlyLineKeepsIndent() {
         let harness = makeHarness(initialText: "本文\n　　")
         let textView = harness.textView
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
@@ -84,7 +84,7 @@ struct MacTextAdapterIntegrationTests {
         )
 
         #expect(!handled)
-        #expect(textView.string == "本文\n\n")
+        #expect(textView.string == "本文\n　　\n　")
     }
 
     @Test("字下げ直後の行末で「を入力すると、全角スペースが鉤括弧に置き換わる")
@@ -326,6 +326,35 @@ struct MacTextAdapterIntegrationTests {
         )
 
         #expect(harness.changes.received.isEmpty)
+    }
+
+    @Test("IME確定後のR5: 行頭の字下げを鉤括弧直後に削除し、Undoで戻せる")
+    func imeCommitRemovesIndentAndUndoRestoresIt() {
+        let harness = makeHarness(initialText: "　")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.setMarkedText(
+            "「",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 0)
+        )
+        #expect(textView.string == "　「")
+        #expect(textView.hasMarkedText())
+
+        textView.unmarkText()
+        harness.coordinator.textDidChange(
+            Notification(name: NSText.didChangeNotification, object: textView)
+        )
+
+        #expect(textView.string == "「")
+        #expect(harness.changes.received == ["「"])
+        #expect(harness.coordinator.undoManager.canUndo)
+
+        harness.coordinator.undoManager.undo()
+
+        // Undo一回で自動字下げ解除が戻り、全角スペースが復元される。
+        #expect(textView.string == "　")
     }
 }
 #endif

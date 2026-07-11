@@ -244,7 +244,7 @@ public final class EditorPluginPipeline {
 
 草案からの変更(Phase 2 実装時に確定):
 
-- `replace` に `range:` を追加 — IndentRules の R2/R3 は「行頭の空白全体」など提案範囲と異なる範囲を置換する必要があるため
+- `replace` に `range:` を追加 — IndentRules の R3/R5 は「行頭の空白全体」など提案範囲と異なる範囲を置換する必要があるため
 - `allowSkippingRemaining` を追加 — IME変換中に後続プラグインを一切実行させないため(素の `allow` =「次のプラグインに委ねる」と区別)
 - `EditorPluginPipeline` を追加 — 「登録順に実行、最初に `.allow` 以外を返したプラグインで確定」という規則の実装体
 
@@ -266,14 +266,14 @@ public protocol EditorContext {
 
 `IndentRules.swift` は、改行時の字下げルールを定義する純ロジックである(AppKit / UIKit 非依存、`String` + UTF-16 `NSRange` のみ)。`IndentPlugin` はこの判定を `EditorAction` に写像するだけの薄い層。
 
-確定済みルール(Phase 2 実装。テスト仕様そのもの):
+確定済みルール(UI-POL-1 / D-033 実装済み。テスト仕様そのもの):
 
-- **R1**: 非空白文字を含む行で改行 → 新しい行を全角スペース(U+3000)1つで開始(地の文の字下げ)
-- **R2**: 空白(全角/半角スペース・タブ)のみの行で改行 → その行の空白を掃除して空行にし、新しい行は字下げしない(字下げのゴミ行を残さない)
+- **R1'**: 行の内容にかかわらず改行 → 新しい行を全角スペース(U+3000)1つで開始。字下げが不要な行はユーザーが削除する
 - **R3**: 行の内容がちょうど `　`(全角スペース1つ)でキャレットが行末のとき `「` または `『` を入力 → 全角スペースを鉤括弧に置き換える(会話文は字下げしない作法)
 - **R4**: 日本語IME変換中は一切介入しない(IMEGuardPlugin がパイプライン先頭で保証)
+- **R5**: IME確定後、キャレット直前が `「` / `『` で、その行が `　「` / `　『` のとき、行頭の全角スペースを削除する。削除は undo 可能な正規置換経路で行う
 
-対象は単一の `\n` 挿入(R1/R2)と単一の `「`/`『` 挿入(R3)のみ。複数行ペースト等は素通し(将来の PasteSanitizerPlugin の領分)。`NSRange` ⇄ `String.Index` の変換は `Range(_:in:)` 経由に閉じ込め、絵文字・サロゲートペアで壊れないことをテストで保証している。
+対象は単一の `\n` 挿入(R1')と単一の `「`/`『` 挿入(R3)のみ。複数行ペースト等は素通し(将来の PasteSanitizerPlugin の領分)。R5はIME確定後のキャレット位置に基づく局所判定である。`NSRange` ⇄ `String.Index` の変換は `Range(_:in:)` 経由に閉じ込め、絵文字・サロゲートペアで壊れないことをテストで保証している。
 
 ### 4.6 NovelUI
 
@@ -586,7 +586,7 @@ NovelCore は絶対にUIやStorageに依存しない。
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 は完了済み(→ 変更履歴)。次は **UI-POL-1〜4(UI磨き上げ: インデント仕様変更・傍点記法改訂・アクセサリバー視認性・ツールバー再配置 → [UIPOLISH.md](UIPOLISH.md)、D-033〜D-035)**。その完了後に **Phase 5-1「Export Core + プレーンテキスト / Markdown」**([PHASE5.md](PHASE5.md))。
+Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1 は完了済み(→ 変更履歴)。次は **UI-POL-2〜4(UI磨き上げ: 傍点記法改訂・アクセサリバー視認性・ツールバー再配置 → [UIPOLISH.md](UIPOLISH.md)、D-034〜D-035)**。その完了後に **Phase 5-1「Export Core + プレーンテキスト / Markdown」**([PHASE5.md](PHASE5.md))。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
@@ -949,7 +949,7 @@ Phase 3(基本操作強化)完了に伴う更新。
 Phase 2(Editor基盤強化)完了に伴う更新。
 
 - 4.4 を実装済みの最終 API に更新: `EditorAction` に `range:` と `allowSkippingRemaining` を追加、`EditorPluginPipeline` を追加。既定パイプラインは IMEGuard → Indent
-- 4.5 を確定ルール(R1〜R4)に書き換え。自動字下げ・会話文の字下げ解除・IMEガードが動作する状態
+- 4.5 を確定ルール(R1' / R3 / R4 / R5)に更新。常時字下げ・会話文の字下げ解除・IME確定後処理・IMEガードが動作する状態
 - 11章「直近の次タスク」を Phase 3 の内容に更新
 
 ### v0.5 (2026-07-08)

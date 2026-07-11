@@ -24,7 +24,7 @@ public enum IndentRules {
         /// `range` を `text` に置き換える。
         ///
         /// - `range`: 置換対象の範囲。呼び出し元から渡された挿入位置とは限らない
-        ///   (R2 / R3 では行全体の空白範囲まで拡張される)。
+        ///   (R3 / R5 では入力位置と異なる範囲を置換する)。
         /// - `caretOffset`: 置換後、`range.location` を起点として数えたキャレット位置
         ///   (UTF-16 オフセット)。
         case replace(range: NSRange, text: String, caretOffset: Int)
@@ -49,21 +49,13 @@ public enum IndentRules {
         }
     }
 
-    // MARK: - R1 / R2: 改行
+    // MARK: - R1': 改行
 
-    /// R1(空白以外を含む行での改行)・R2(空白のみの行での改行)を判定する。
+    /// R1'(行の内容にかかわらず、改行後を常に字下げする)を判定する。
     private static func newlineAction(in text: String, range: NSRange) -> Action {
-        guard let line = lineBounds(at: range.location, in: text) else { return .allow }
+        guard range.length == 0, Range(range, in: text) != nil else { return .allow }
 
-        if line.content.allSatisfy(isIndentWhitespace) {
-            // R2: 空白のみの行(空行も含む) → 行の空白ごと置き換えて行を空にする。
-            // 新しい行は字下げしない。置換範囲は「行の空白全体」と「挿入位置」の
-            // 両方を覆うように拡張する。
-            let replaceRange = NSUnionRange(line.nsRange, range)
-            return .replace(range: replaceRange, text: "\n", caretOffset: 1)
-        }
-
-        // R1: 空白以外を含む行 → 新しい行を全角スペース1つで開始する。
+        // R1': 行の内容にかかわらず、新しい行を全角スペース1つで開始する。
         let insertion = "\n\(fullWidthSpace)"
         return .replace(range: range, text: insertion, caretOffset: insertion.utf16.count)
     }
@@ -90,12 +82,31 @@ public enum IndentRules {
         return .replace(range: line.nsRange, text: replacement, caretOffset: caretOffset)
     }
 
-    // MARK: - 補助ロジック
+    // MARK: - R5: IME確定後の鉤括弧
 
-    /// 字下げ判定における「空白」かどうか(全角/半角スペース・タブのみ)。
-    private static func isIndentWhitespace(_ character: Character) -> Bool {
-        character == " " || character == "\t" || character == fullWidthSpace
+    /// IME確定後の本文に、行頭の字下げと鉤括弧が並んでいる場合の後処理を判定する。
+    ///
+    /// `caretLocation` は鉤括弧直後のキャレット位置。行全体を走査せず、キャレットの
+    /// ある行がちょうど `　「` / `　『` である場合だけ、行頭の全角スペースを削除する。
+    public static func postChangeAction(in text: String, caretLocation: Int) -> Action {
+        guard let line = lineBounds(at: caretLocation, in: text) else { return .allow }
+        guard caretLocation == line.nsRange.location + line.nsRange.length else { return .allow }
+        guard line.content.count == 2 else { return .allow }
+
+        let characters = Array(line.content)
+        guard characters[0] == fullWidthSpace, characters[1] == "「" || characters[1] == "『" else {
+            return .allow
+        }
+
+        let bracket = String(characters[1])
+        return .replace(
+            range: NSRange(location: line.nsRange.location, length: fullWidthSpace.utf16.count),
+            text: bracket,
+            caretOffset: bracket.utf16.count
+        )
     }
+
+    // MARK: - 補助ロジック
 
     /// `location` を含む行の、行終端記号を除いた範囲と内容を返す。
     ///
