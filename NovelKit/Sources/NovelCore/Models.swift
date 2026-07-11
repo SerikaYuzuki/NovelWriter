@@ -108,6 +108,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         case characters
         case plotCards
         case flags
+        case worldNotes
     }
 
     /// 作品の識別子。
@@ -124,6 +125,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public var plotCards: [PlotCard]
     /// 伏線・フラグリスト。この配列の順序が表示順そのもの。
     public var flags: [Flag]
+    /// 世界観ノートリスト。この配列の順序が表示順そのもの。
+    public var worldNotes: [WorldNote]
 
     /// 作品を作成する。
     /// - Parameters:
@@ -138,7 +141,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         chapters: [Chapter],
         characters: [Character] = [],
         plotCards: [PlotCard] = [],
-        flags: [Flag] = []
+        flags: [Flag] = [],
+        worldNotes: [WorldNote] = []
     ) {
         self.id = id
         self.title = title
@@ -147,6 +151,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         self.characters = characters
         self.plotCards = plotCards
         self.flags = flags
+        self.worldNotes = worldNotes
     }
 
     public init(from decoder: Decoder) throws {
@@ -158,6 +163,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         characters = try container.decodeIfPresent([Character].self, forKey: .characters) ?? []
         plotCards = try container.decodeIfPresent([PlotCard].self, forKey: .plotCards) ?? []
         flags = try container.decodeIfPresent([Flag].self, forKey: .flags) ?? []
+        worldNotes = try container.decodeIfPresent([WorldNote].self, forKey: .worldNotes) ?? []
     }
 
     /// 新規作品を、空の章1つを添えて生成する便利ファクトリ。

@@ -2,6 +2,17 @@ import Foundation
 import NovelCore
 
 extension NovelpkgRepository {
+    static func readDocumentMetadata(from url: URL, chapters: [Chapter]) throws -> DocumentMetadata {
+        let chapterIDs = Set(chapters.map(\.id))
+        return try DocumentMetadata(
+            characters: readCharacters(from: url),
+            plotCards: readPlotCards(from: url, validChapterIDs: chapterIDs),
+            flags: readFlags(from: url, validChapterIDs: chapterIDs),
+            synopsis: readSynopsis(from: url),
+            worldNotes: readWorldNotes(from: url)
+        )
+    }
+
     static func readCharacters(from packageURL: URL) throws -> [NovelCore.Character] {
         let charactersURL = packageURL.appendingPathComponent(charactersFileName)
         guard FileManager.default.fileExists(atPath: charactersURL.path) else { return [] }
@@ -87,4 +98,12 @@ extension NovelpkgRepository {
     private static func metadataCorruptedError(url: URL, file: String, underlying error: any Error) -> NovelpkgError {
         .metadataCorrupted(url: url, file: file, reason: String(describing: error))
     }
+}
+
+struct DocumentMetadata {
+    let characters: [NovelCore.Character]
+    let plotCards: [PlotCard]
+    let flags: [Flag]
+    let synopsis: String
+    let worldNotes: [WorldNote]
 }
