@@ -189,7 +189,7 @@
 
 ## D-024: 上部は3列に追従する一体型 toolbar とし、編集操作だけをカスタマイズ可能にする
 
-- **日付**: 2026-07-10 / **状態**: 承認(Toolbar-1 / Toolbar-2 / UI-FIX-4で実装済み。実装記録は [TOOLBAR.md](TOOLBAR.md) / [UIFIX.md](UIFIX.md))
+- **日付**: 2026-07-10 / **状態**: 承認(Toolbar-1 / Toolbar-2 / UI-FIX-4で実装済み。pane固有操作の配置はD-029で一部改定)
 - **内容**:
   1. Workbench 上部は独自のペイン内バーを重ねず、Project Sidebar / Outline / Editor に追従する macOS ネイティブの一体型 toolbar へ寄せる。Project Sidebar 上は標準の表示／非表示、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の話内検索とする。
   2. Sidebar toggle、Outline identity、話内検索は構造上のアンカーとして固定する。章／話追加、話メモ、スナップショット、「この章」などの編集操作は、stable ID を持つ個別の `ToolbarItem` とし、macOS 標準UIで追加・削除・並べ替え可能にする。
@@ -226,7 +226,7 @@
 
 ## D-028: 原稿は Chapter(章) / Episode(話)の2階層とし、出力より先に移行する
 
-- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2aでNovelCore / NovelStorage、UI-FIX-2bでAppState、UI-FIX-2cで執筆UI、UI-FIX-3でプロットUI、UI-FIX-4でToolbar popover、UI-FIX-5でCharacter header / Outline統一を実装済み。次はPhase 5-1。実装計画は [UIFIX.md](UIFIX.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2a〜5で実装済み。Phase 5はD-029〜D-031のUI再設計完了後に開始)
 - **内容**:
   1. `Chapter` は章タイトルと順序付きの `[Episode]` を持つ構造とし、本文は持たない。`Episode` は `EpisodeID`、話タイトル、本文、メモを持つ編集単位とする。章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順だけを正とし、どちらにも `order` を追加しない。
   2. `PlotCard.chapterID` と `Flag` の張った章／回収章は章単位の参照として維持する。今回 `episodeID` 参照は追加しない。現行の章メモは v1 / v2 → v3 移行時に生成される話のメモへ移し、章自体のメモは追加しない。
@@ -236,3 +236,32 @@
   6. 検索・文字数・登場箇所検出は `Episode` 単位へ移す。PlotCard / Flag の章ジャンプは章単位のままとし、ジャンプ先はその章で最後に選んだ話(なければ先頭の話)とする。
   7. Phase 5 の出力は作品→章→話の配列順を共通の原稿展開処理で走査し、全形式で章見出しと話見出しを区別する。空章は章見出しだけ、空話は話見出しだけを出力する。詳細な改行・空タイトル規則はPHASE5.mdを正とする。
 - **理由**: 章を本文の編集単位として扱う現行モデルでは、章の中に複数の話を持つ構成を表現できず、執筆 Outline とプロットの章選択も同じ意味にならない。出力実装後に階層を変えると全形式のレンダラと fixture を作り直すため、出力前に保存形式・選択状態・UIを一貫して移行する方が安全である。既存の ChapterID を章側に残せば、プロットカードと伏線の参照を壊さず移行できる。
+
+## D-029: Outlineはtranslucent materialへ統一し、pane固有の追加操作はpaneへ固定する
+
+- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **内容**:
+  1. Project Sidebarを含むすべてのOutlineは、不透明な`.bar`背景ではなく、背面がわずかに見えるmacOS標準の`.thinMaterial`を共通surfaceとする。標準List選択、focus ring、Reduce Transparency fallbackはOSへ委ねる。
+  2. Plot detailは上段Plot canvas／下段伏線の`VSplitView`とし、下段だけを伏線一覧／詳細の`HSplitView`にする。Plotカードは章レーンの囲いを持たず、Outline選択を文脈として横方向へ連続表示する。
+  3. Plotカードは`PlotCardID`をdrag payloadとし、Plot Outlineの章または未割り当てへdropして`chapterID`を変更できるようにする。
+  4. D-024のうち、Sidebar toggleとEditor共通操作を一体型toolbarへ置く方針は維持する。一方、章追加などpane固有の追加操作は厳密な位置を優先してOutline headerへ固定し、カスタマイズ対象から外す。Editor側の話追加は`square.and.pencil`としてEditor上部左端へ置く。
+- **理由**: UI-FIX-5はOutlineの操作作法だけでなく背景まで不透明な方向へ統一してしまい、意図したmacOSのglass感と逆になった。またmacOS 14では自由なtoolbar移動とpane直上への固定を同時保証できないため、構造操作の位置を優先してD-024を部分的に修正する。
+
+## D-030: 明示的な執筆補助はEditor command境界から選択範囲を置換する
+
+- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **内容**:
+  1. Editor下部へ`……`、`――`、ルビ、傍点のcompact accessory barを置く。これはユーザーが明示的に実行するcommandであり、自動入力変換の`EditorPlugin`にはしない。
+  2. SwiftUIは本文Bindingを直接書き換えず、EditorKitのAppKit非公開command APIへ置換要求を送る。MacTextAdapterがUTF-16選択範囲、IME、Undoを管理し、置換を1 Undo単位にする。
+  3. ルビは`｜親文字《ルビ》`、傍点は`《《対象文字列》》`へ固定する。選択ありでは入力欄をprefillして元範囲を置換し、未選択では取得時caretへ挿入する。キャンセル、stale range、IME変換中は本文を変更しない。
+- **理由**: 本文所有権D-005 / D-028を守りながら選択文字列を扱うには、SwiftUIモデル経由ではなくNSTextView内部の正規編集経路へ命令する必要がある。公開APIへNSTextViewを出さず、UndoとIMEを同じ境界で保証する。
+
+## D-031: 「企画」を廃止し、あらすじはproject.jsonのadditive metadataとする
+
+- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **内容**:
+  1. 永続モデルを持たない`ProjectSection.planning`を削除し、保存済みselectionが`planning`なら`projectInfo`へ移行する。Project Sidebarのショートカットは7項目へ再割当する。
+  2. `NovelDocument`へ`synopsis: String`を追加し、UIでは「あらすじ」と表示する。作品情報上段でタイトルとあらすじを編集し、保存場所・状態・章数・話数・文字数・形式は下段の読み取り専用カードへ分離する。
+  3. タイトルはmanifestを正として維持し、あらすじはNovelStorageだけが構造を知る`project.json`へ保存する。欠損は空文字とし、空へ戻した場合は既知項目として旧ファイルを除去する。
+  4. `project.json`は`.novelpkg` v3へのadditive metadataとし、formatVersionは上げない。旧アプリはunknown root item保持により通常保存、別名保存、snapshotでファイルを維持できる。
+- **理由**: 企画placeholderを残すより、作品の中心情報であるタイトルとあらすじを作品情報へ集約する方が導線が明確である。manifestへフィールドを足すと旧アプリの再保存で欠落するが、未知root itemを保持する既存方針を使えばv3互換を維持できる。
