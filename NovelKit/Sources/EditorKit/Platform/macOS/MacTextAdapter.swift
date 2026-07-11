@@ -209,7 +209,27 @@ struct MacTextAdapter: NSViewRepresentable {
                 return
             }
 
+            // 内部置換が発生させた再入通知は、外側の変更処理が最終本文を通知する。
+            // ここで再度後処理や onTextChange を行うと、IME確定後に中間本文が通知される。
+            guard !isApplyingPluginReplacement else { return }
+
             pipeline.didChange(context: MacEditorContext(textView: textView))
+
+            if case let .replace(range, text, caretOffset) = IndentRules.postChangeAction(
+                in: textView.string,
+                caretLocation: textView.selectedRange().location
+            ) {
+                // IMEの確定挿入とR5の後処理を別Undo単位にする。これによりUndo一回で
+                // 字下げだけが戻り、確定した鉤括弧は残る。
+                textView.breakUndoCoalescing()
+                applyInternalReplacement(
+                    range: range,
+                    text: text,
+                    caretOffset: caretOffset,
+                    textView: textView
+                )
+            }
+
             onTextChange(textView.string)
         }
 
