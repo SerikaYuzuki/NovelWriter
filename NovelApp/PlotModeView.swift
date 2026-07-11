@@ -239,11 +239,24 @@ struct PlotAndFlagSplitView: View {
                 focusedSelection: appState.plotOutlineSelection,
                 onChapterJump: onChapterJump
             )
-            .frame(minWidth: nil, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity)
-            .layoutPriority(2)
+            .frame(
+                minWidth: nil,
+                idealWidth: nil,
+                maxWidth: .infinity,
+                minHeight: 320,
+                idealHeight: 480,
+                maxHeight: .infinity
+            )
 
             FlagSectionView(onChapterJump: onChapterJump)
-                .frame(minWidth: nil, maxWidth: .infinity, minHeight: 220, maxHeight: .infinity)
+                .frame(
+                    minWidth: nil,
+                    idealWidth: nil,
+                    maxWidth: .infinity,
+                    minHeight: 220,
+                    idealHeight: 240,
+                    maxHeight: .infinity
+                )
         }
     }
 }
