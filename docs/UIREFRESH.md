@@ -1,6 +1,6 @@
 # Workbench 透明感・余白・セクション構成の再設計
 
-**状態: UI-REF-2完了。次は UI-REF-3(Outlineなしセクション)。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REF-3完了。次は UI-REF-4(世界観モデル + Storage)。Phase 5 は本計画の完了まで待機する。**
 
 本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
 
@@ -248,13 +248,15 @@ DESIGN.md:
 
 **実装結果 (2026-07-11):** 作品情報のタイトル・あらすじ、登場人物シートの短文・長文入力へ共通部品を適用した。長文入力は内側8pt paddingとseparator枠を統一し、設定画面の`EditorSettingsView`二重paddingを解消した。
 
-### UI-REF-3: Outlineなしセクション
+### UI-REF-3: Outlineなしセクション【完了】
 
 - 作品情報・設定を2列化
 - `SectionOverviewList`削除
 - TOOLBAR / DESIGNの列方針を更新
 
 **完了条件:** 作品情報と設定で不要なcontent列が出ない。他セクションの3列は維持。
+
+**実装結果 (2026-07-11):** `NovelWorkbenchView`は作品情報・設定でSidebar + Detailの2列`NavigationSplitView`を構築し、それ以外のセクションでは従来の3列構成を維持するよう分岐した。`SectionOverviewList`は世界観専用とし、作品情報・設定の空の概要Listと関連する選択状態を削除した。
 
 ### UI-REF-4: 世界観モデル + Storage
 
