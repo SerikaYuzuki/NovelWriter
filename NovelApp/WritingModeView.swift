@@ -647,21 +647,22 @@ private struct EditorAccessoryBar: View {
             Button {
                 requestOperation(.ruby)
             } label: {
-                Text("ルビ…")
+                Text("ルビ")
             }
             .help("なろう形式のルビを追加")
 
             Button {
                 requestOperation(.bouten)
             } label: {
-                Text("傍点…")
+                Text("傍点")
             }
             .disabled(!commandSession.hasNonEmptySelection)
             .help("なろう形式の傍点を追加")
 
             Spacer()
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
         .padding(8)
         .workbenchGlassChromeStyle()
         .disabled(commandSession.pendingCommand != nil || pendingOperation != nil || notationSheet != nil)
