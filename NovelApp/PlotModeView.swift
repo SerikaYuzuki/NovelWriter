@@ -31,8 +31,7 @@ struct PlotBoardView: View {
             LazyHStack(alignment: .top, spacing: 16) {
                 switch focusedSelection {
                 case .unassigned:
-                    PlotLaneView(
-                        title: "未割り当て",
+                    PlotCardCanvas(
                         chapterID: nil,
                         cards: cards(in: nil),
                         editingCardID: $editingCardID,
@@ -40,8 +39,7 @@ struct PlotBoardView: View {
                     )
                 case let .chapter(focusedChapterID):
                     if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
-                        PlotLaneView(
-                            title: chapter.title,
+                        PlotCardCanvas(
                             chapterID: chapter.id,
                             cards: cards(in: chapter.id),
                             editingCardID: $editingCardID,
@@ -125,7 +123,7 @@ struct PlotBoardView: View {
     }
 }
 
-/// Toolbar-1 以前の HSplitView 互換ラッパ。新規呼び出しは `PlotBoardView` を使う。
+/// Toolbar-1以前の互換ラッパ。新規呼び出しは`PlotBoardView`を使う。
 struct PlotModeView: View {
     let onChapterJump: (ChapterID) -> Void
 
@@ -229,95 +227,90 @@ private struct PlotChapterOutlineRow: View {
     }
 }
 
-/// 選択章のプロットカードと、作品全体の伏線を左右に並べる。
+/// 上段のプロットと下段の伏線を分離するdetail列。
 struct PlotAndFlagSplitView: View {
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
 
     var body: some View {
-        HSplitView {
+        VSplitView {
             PlotBoardView(
                 focusedSelection: appState.plotOutlineSelection,
                 onChapterJump: onChapterJump
             )
-            .frame(minWidth: 360, idealWidth: 640)
+            .frame(
+                minWidth: nil,
+                idealWidth: nil,
+                maxWidth: .infinity,
+                minHeight: 320,
+                idealHeight: 480,
+                maxHeight: .infinity
+            )
 
-            FlagTrackerView(onChapterJump: onChapterJump)
-                .frame(minWidth: 240, idealWidth: 320)
+            FlagSectionView(onChapterJump: onChapterJump)
+                .frame(
+                    minWidth: nil,
+                    idealWidth: nil,
+                    maxWidth: .infinity,
+                    minHeight: 220,
+                    idealHeight: 240,
+                    maxHeight: .infinity
+                )
         }
     }
 }
 
-private struct PlotLaneView: View {
+/// Outlineの選択を文脈として、カードだけを横方向へ連続配置するcanvas。
+private struct PlotCardCanvas: View {
     @Environment(AppState.self) private var appState
 
-    let title: String
     let chapterID: ChapterID?
     let cards: [PlotCard]
     @Binding var editingCardID: PlotCardID?
     @Binding var cardPendingDeletion: PlotCard?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text("\(cards.count)枚")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+        ForEach(cards) { card in
+            PlotBoardCard(
+                card: card,
+                onEdit: {
+                    editingCardID = card.id
+                    appState.selectPlotCard(card.id)
+                },
+                onDelete: {
+                    cardPendingDeletion = card
                 }
-                Spacer()
-                Button {
-                    appState.addPlotCard(chapterID: chapterID)
-                } label: {
-                    Label("カードを追加", systemImage: "plus")
-                }
-                .labelStyle(.iconOnly)
-            }
-
-            VStack(spacing: 8) {
-                ForEach(cards) { card in
-                    PlotBoardCard(
-                        card: card,
-                        onEdit: {
-                            editingCardID = card.id
-                            appState.selectPlotCard(card.id)
-                        },
-                        onDelete: {
-                            cardPendingDeletion = card
-                        }
-                    )
-                    .draggable(card.id)
-                    .dropDestination(for: PlotCardID.self) { items, _ in
-                        guard let droppedID = items.first else { return false }
-                        appState.movePlotCard(id: droppedID, toChapter: chapterID, before: card.id)
-                        return true
-                    }
-                }
-
-                Button {
-                    appState.addPlotCard(chapterID: chapterID)
-                } label: {
-                    Label("カードを追加", systemImage: "plus")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderless)
-                .padding(.vertical, 8)
-            }
+            )
+            .frame(width: 260, alignment: .topLeading)
+            .draggable(card.id)
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let droppedID = items.first else { return false }
-                appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
+                appState.movePlotCard(id: droppedID, toChapter: chapterID, before: card.id)
                 return true
             }
         }
-        .padding(12)
-        .frame(width: 260, alignment: .topLeading)
-        .background(.quaternary.opacity(0.45))
+
+        Button {
+            appState.addPlotCard(chapterID: chapterID)
+        } label: {
+            Label("カードを追加", systemImage: "plus")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .buttonStyle(.borderless)
+        .frame(width: 260)
+        .frame(minHeight: 72)
+        .background(.quaternary.opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.separator, lineWidth: 1)
+        }
+        .dropDestination(for: PlotCardID.self) { items, _ in
+            guard let droppedID = items.first else { return false }
+            appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
+            return true
+        }
     }
 }
 

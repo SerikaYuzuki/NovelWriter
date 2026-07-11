@@ -2,12 +2,61 @@ import NovelCore
 import NovelUI
 import SwiftUI
 
-struct FlagTrackerView: View {
+/// プロットdetail下段の伏線領域。選択状態はAppStateに集約したまま一覧と詳細を分ける。
+struct FlagSectionView: View {
     @Environment(AppState.self) private var appState
 
     let onChapterJump: (ChapterID) -> Void
 
     @State private var flagPendingDeletion: Flag?
+
+    var body: some View {
+        HSplitView {
+            FlagListView(flagPendingDeletion: $flagPendingDeletion)
+                .frame(minWidth: 240, idealWidth: 280)
+
+            FlagDetailView(onChapterJump: onChapterJump)
+                .frame(minWidth: 280, idealWidth: 360)
+        }
+        .confirmationDialog(
+            "伏線を削除しますか？",
+            isPresented: flagDeletionDialogIsPresented,
+            presenting: flagPendingDeletion
+        ) { flag in
+            Button("削除", role: .destructive) {
+                appState.deleteFlag(id: flag.id)
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: { flag in
+            Text("「\(flag.title)」を削除します。")
+        }
+    }
+
+    private var flagDeletionDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { flagPendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented {
+                    flagPendingDeletion = nil
+                }
+            }
+        )
+    }
+}
+
+/// UI-REV-2以前の呼び出し互換。新規呼び出しは`FlagSectionView`を使う。
+struct FlagTrackerView: View {
+    let onChapterJump: (ChapterID) -> Void
+
+    var body: some View {
+        FlagSectionView(onChapterJump: onChapterJump)
+    }
+}
+
+private struct FlagListView: View {
+    @Environment(AppState.self) private var appState
+
+    @Binding var flagPendingDeletion: Flag?
     @State private var showsResolvedFlags = false
 
     var body: some View {
@@ -44,7 +93,7 @@ struct FlagTrackerView: View {
                     ContentUnavailableView(
                         "伏線がありません",
                         systemImage: "checklist",
-                        description: Text("下の伏線を追加ボタンから伏線を追加できます。")
+                        description: Text("伏線を追加ボタンから伏線を追加できます。")
                     )
                 }
             }
@@ -59,9 +108,7 @@ struct FlagTrackerView: View {
                 }
 
                 Button(role: .destructive) {
-                    if let flag = appState.selectedFlag {
-                        flagPendingDeletion = flag
-                    }
+                    flagPendingDeletion = appState.selectedFlag
                 } label: {
                     Label("削除", systemImage: "trash")
                 }
@@ -70,47 +117,6 @@ struct FlagTrackerView: View {
                 Spacer()
             }
             .padding(8)
-
-            Divider()
-
-            if appState.selectedFlag == nil {
-                ContentUnavailableView(
-                    "伏線が選択されていません",
-                    systemImage: "checklist",
-                    description: Text("上の一覧から編集する伏線を選択してください。")
-                )
-                .frame(maxHeight: .infinity)
-            } else {
-                FlagEditor(
-                    title: selectedFlagTitleBinding,
-                    note: selectedFlagNoteBinding,
-                    plantedChapterID: selectedFlagPlantedChapterBinding,
-                    resolvedChapterID: selectedFlagResolvedChapterBinding,
-                    isResolved: appState.selectedFlag?.isResolved == true,
-                    chapters: appState.document.chapters,
-                    showsOrderWarning: selectedFlagHasOrderWarning,
-                    onToggleResolved: {
-                        appState.toggleSelectedFlagResolved()
-                    },
-                    onJump: onChapterJump,
-                    onCommit: {
-                        appState.commitFlagEditing()
-                    }
-                )
-            }
-        }
-        .background(.bar)
-        .confirmationDialog(
-            "伏線を削除しますか？",
-            isPresented: flagDeletionDialogIsPresented,
-            presenting: flagPendingDeletion
-        ) { flag in
-            Button("削除", role: .destructive) {
-                appState.deleteFlag(id: flag.id)
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: { flag in
-            Text("「\(flag.title)」を削除します。")
         }
     }
 
@@ -129,15 +135,50 @@ struct FlagTrackerView: View {
         )
     }
 
-    private var flagDeletionDialogIsPresented: Binding<Bool> {
-        Binding(
-            get: { flagPendingDeletion != nil },
-            set: { isPresented in
-                if !isPresented {
-                    flagPendingDeletion = nil
+    private func deleteButton(for flag: Flag) -> some View {
+        Button(role: .destructive) {
+            flagPendingDeletion = flag
+        } label: {
+            Label("削除", systemImage: "trash")
+        }
+    }
+
+    private func chapterTitle(for chapterID: ChapterID?) -> String? {
+        guard let chapterID else { return nil }
+        return appState.document.chapters.first { $0.id == chapterID }?.title
+    }
+}
+
+private struct FlagDetailView: View {
+    @Environment(AppState.self) private var appState
+
+    let onChapterJump: (ChapterID) -> Void
+
+    var body: some View {
+        if appState.selectedFlag == nil {
+            ContentUnavailableView(
+                "伏線が選択されていません",
+                systemImage: "checklist",
+                description: Text("左の一覧から編集する伏線を選択してください。")
+            )
+        } else {
+            FlagEditor(
+                title: selectedFlagTitleBinding,
+                note: selectedFlagNoteBinding,
+                plantedChapterID: selectedFlagPlantedChapterBinding,
+                resolvedChapterID: selectedFlagResolvedChapterBinding,
+                isResolved: appState.selectedFlag?.isResolved == true,
+                chapters: appState.document.chapters,
+                showsOrderWarning: selectedFlagHasOrderWarning,
+                onToggleResolved: {
+                    appState.toggleSelectedFlagResolved()
+                },
+                onJump: onChapterJump,
+                onCommit: {
+                    appState.commitFlagEditing()
                 }
-            }
-        )
+            )
+        }
     }
 
     private var selectedFlagTitleBinding: Binding<String> {
@@ -177,19 +218,6 @@ struct FlagTrackerView: View {
         }
 
         return resolvedIndex < plantedIndex
-    }
-
-    private func deleteButton(for flag: Flag) -> some View {
-        Button(role: .destructive) {
-            flagPendingDeletion = flag
-        } label: {
-            Label("削除", systemImage: "trash")
-        }
-    }
-
-    private func chapterTitle(for chapterID: ChapterID?) -> String? {
-        guard let chapterID else { return nil }
-        return appState.document.chapters.first { $0.id == chapterID }?.title
     }
 
     private func chapterIndex(for chapterID: ChapterID?) -> Int? {
