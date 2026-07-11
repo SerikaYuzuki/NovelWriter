@@ -46,6 +46,53 @@ extension View {
     }
 }
 
+/// 1行入力のラベルとコントロールを縦に積む共通部品。
+struct WorkbenchLabeledField<Content: View>: View {
+    let label: String
+    private let content: Content
+
+    init(_ label: String, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// 長文入力のラベル、内側余白、境界線を統一する共通部品。
+struct WorkbenchLabeledEditor<Content: View>: View {
+    let label: String
+    private let content: Content
+
+    init(_ label: String, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.separator, lineWidth: 1)
+                }
+        }
+    }
+}
+
 struct CharacterAppearance: Identifiable {
     let chapterID: ChapterID
     let episodeID: EpisodeID
