@@ -100,12 +100,9 @@ WorkbenchLabeledEditor
 - Outlineあり: 現行どおり Sidebar + Content + Detail
 - Outlineなし(`projectInfo` / `settings`): Sidebar + Detail の2列。content列を出さない
 
-実装は次のいずれかとし、PR内で一方に固定する。
+sectionに応じて`NavigationSplitView`の2列イニシャライザと3列イニシャライザを切り替える。3列構成の`columnVisibility`ではcontentだけを隠してSidebar + Detailを残せないため、この方法には分岐しない。
 
-1. sectionに応じて`NavigationSplitView`の2列イニシャライザと3列イニシャライザを切り替える
-2. 3列を維持したままOutlineなしsectionでは`columnVisibility`でcontentを隠す
-
-推奨は **1**(空の「概要」Listをマウントしない)。`SectionOverviewList`は削除する。
+空の「概要」Listはマウントせず、`SectionOverviewList`は削除する。
 
 ### 4.3 幅
 
@@ -150,7 +147,7 @@ public var worldNotes: [WorldNote]  // 配列順が唯一の正。orderフィー
 ```
 
 - 選択は`AppState.selectedWorldNoteID`
-- 本文所有権はD-005に合わせ、編集中の正は`NSTextView`。モデル反映はノート切り替え時と`didChange`デバウンスのみ
+- 本文所有権はD-005に合わせ、編集中の正は`NSTextView`。`didChange`でモデルへ即時反映し、自動保存要求だけを2秒デバウンスする。ノート切り替え前には最新のモデル反映と保存要求を確定し、未反映の本文を破棄しない
 - EditorKitへ渡すキーは`WorldNoteID`(話の`EpisodeID`と同じく型で取り違えを防ぐ)
 - 空タイトルは編集中許可。表示fallbackは「無題のノート」。commit時に空ならfallbackへ正規化してよい
 
