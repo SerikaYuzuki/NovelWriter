@@ -61,6 +61,36 @@ import Testing
     #expect(try await repository.load(from: packageURL).worldNotes.isEmpty)
 }
 
+@Test func deletingOneWorldNoteRemovesStaleContentFile() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("PartialDelete.novelpkg")
+    let repository = NovelpkgRepository()
+    let remaining = WorldNote(title: "残すノート", content: "残す本文")
+    let removed = WorldNote(title: "削除するノート", content: "削除する本文")
+    var document = NovelDocument(
+        title: "部分削除テスト",
+        chapters: [Chapter(title: "第1章")],
+        worldNotes: [remaining, removed]
+    )
+    try await repository.save(document, to: packageURL)
+
+    document.worldNotes = [remaining]
+    try await repository.save(document, to: packageURL)
+
+    let loaded = try await repository.load(from: packageURL)
+    #expect(loaded.worldNotes == [remaining])
+    let notesURL = packageURL.appendingPathComponent("world-notes", isDirectory: true)
+    #expect(!FileManager.default.fileExists(
+        atPath: notesURL.appendingPathComponent("\(removed.id.rawValue.uuidString).md").path
+    ))
+    #expect(try String(
+        contentsOf: notesURL.appendingPathComponent("\(remaining.id.rawValue.uuidString).md"),
+        encoding: .utf8
+    ) == remaining.content)
+}
+
 @Test func missingWorldMetadataLoadsAsEmptyWorldNotesForLegacyPackages() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

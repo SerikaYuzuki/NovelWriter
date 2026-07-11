@@ -9,6 +9,9 @@ import NovelCore
 /// ├── manifest.json                          … 章順・タイトル・日時などのメタデータ
 /// ├── episodes/<EpisodeID(UUID)>.md           … 話本文のみ(メタデータなし)
 /// ├── episode-notes/<EpisodeID(UUID)>.md      … 話メモ(空ならファイルなし)
+/// ├── project.json                            … あらすじ(空なら省略)
+/// ├── world.json                              … 世界観ノート順・タイトル(空なら省略)
+/// ├── world-notes/<WorldNoteID(UUID)>.md      … 世界観ノート本文
 /// └── attachments/                            … 将来の添付ファイル置き場
 /// ```
 ///
