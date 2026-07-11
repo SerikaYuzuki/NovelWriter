@@ -625,49 +625,213 @@ struct EditorPaneView: View {
 private struct EditorAccessoryBar: View {
     @Environment(EditorCommandSession.self) private var commandSession
 
-    @State private var pendingReplacement: PendingReplacement?
+    @State private var pendingOperation: PendingEditorOperation?
+    @State private var notationSheet: NotationSheetState?
+    @State private var lastReplacementID: UUID?
+    @State private var replacementError: String?
 
     var body: some View {
         HStack(spacing: 8) {
             Button {
-                requestReplacement("……")
+                requestOperation(.punctuation("……"))
             } label: {
                 Text("……")
             }
             .help("三点リーダーを挿入")
 
             Button {
-                requestReplacement("――")
+                requestOperation(.punctuation("――"))
             } label: {
                 Text("――")
             }
             .help("ダッシュを挿入")
+
+            Button {
+                requestOperation(.ruby)
+            } label: {
+                Text("ルビ…")
+            }
+            .help("なろう形式のルビを追加")
+
+            Button {
+                requestOperation(.bouten)
+            } label: {
+                Text("傍点…")
+            }
+            .help("なろう形式の傍点を追加")
 
             Spacer()
         }
         .buttonStyle(.borderless)
         .padding(8)
         .background(.bar)
-        .disabled(commandSession.pendingCommand != nil || pendingReplacement != nil)
+        .disabled(commandSession.pendingCommand != nil || pendingOperation != nil || notationSheet != nil)
         .onChange(of: commandSession.selectionSnapshot) { _, snapshot in
-            guard let pendingReplacement, snapshot?.id == pendingReplacement.id else { return }
-            commandSession.replaceSelection(id: pendingReplacement.id, text: pendingReplacement.text)
-            self.pendingReplacement = nil
+            guard let pendingOperation, snapshot?.id == pendingOperation.id else { return }
+            handleSelectionSnapshot(snapshot, for: pendingOperation)
         }
         .onChange(of: commandSession.rejectedCommandID) { _, rejectedID in
-            guard rejectedID == pendingReplacement?.id else { return }
-            pendingReplacement = nil
+            guard rejectedID == pendingOperation?.id || rejectedID == notationSheet?.snapshot.id || rejectedID == lastReplacementID else { return }
+            pendingOperation = nil
+            notationSheet = nil
+            replacementError = "本文または選択が変わったため、挿入できませんでした。選択し直して再度実行してください。"
+        }
+        .sheet(item: $notationSheet) { state in
+            NotationInputSheet(
+                state: state,
+                onCancel: { notationSheet = nil }
+            ) { notation in
+                commandSession.replaceSelection(id: state.snapshot.id, text: notation)
+                lastReplacementID = state.snapshot.id
+                notationSheet = nil
+            }
+        }
+        .alert("挿入できませんでした", isPresented: replacementErrorIsPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(replacementError ?? "")
         }
     }
 
-    private func requestReplacement(_ text: String) {
-        guard pendingReplacement == nil, commandSession.pendingCommand == nil else { return }
+    private func requestOperation(_ operation: EditorAccessoryOperation) {
+        guard pendingOperation == nil, notationSheet == nil, commandSession.pendingCommand == nil else { return }
         let id = commandSession.requestSelectionSnapshot()
-        pendingReplacement = PendingReplacement(id: id, text: text)
+        pendingOperation = PendingEditorOperation(id: id, operation: operation)
+    }
+
+    private func handleSelectionSnapshot(_ snapshot: EditorSelectionSnapshot?, for pendingOperation: PendingEditorOperation) {
+        guard let snapshot else { return }
+        self.pendingOperation = nil
+
+        switch pendingOperation.operation {
+        case let .punctuation(text):
+            commandSession.replaceSelection(id: snapshot.id, text: text)
+            lastReplacementID = snapshot.id
+        case .ruby, .bouten:
+            notationSheet = NotationSheetState(operation: pendingOperation.operation, snapshot: snapshot)
+        }
+    }
+
+    private var replacementErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { replacementError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    replacementError = nil
+                }
+            }
+        )
     }
 }
 
-private struct PendingReplacement: Equatable {
+private enum EditorAccessoryOperation: Equatable {
+    case punctuation(String)
+    case ruby
+    case bouten
+}
+
+private struct PendingEditorOperation: Equatable {
     let id: UUID
-    let text: String
+    let operation: EditorAccessoryOperation
+}
+
+private struct NotationSheetState: Identifiable {
+    let operation: EditorAccessoryOperation
+    let snapshot: EditorSelectionSnapshot
+
+    var id: UUID {
+        snapshot.id
+    }
+}
+
+private struct NotationInputSheet: View {
+    let state: NotationSheetState
+    let onCancel: () -> Void
+    let onComplete: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: Field?
+    @State private var parentText: String
+    @State private var rubyText = ""
+
+    init(
+        state: NotationSheetState,
+        onCancel: @escaping () -> Void,
+        onComplete: @escaping (String) -> Void
+    ) {
+        self.state = state
+        self.onCancel = onCancel
+        self.onComplete = onComplete
+        _parentText = State(initialValue: state.snapshot.text)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                switch state.operation {
+                case .ruby:
+                    TextField("親文字", text: $parentText)
+                        .focused($focusedField, equals: .parent)
+                    TextField("ルビ", text: $rubyText)
+                        .focused($focusedField, equals: .ruby)
+                case .bouten:
+                    TextField("対象文字列", text: $parentText)
+                        .focused($focusedField, equals: .parent)
+                case .punctuation:
+                    EmptyView()
+                }
+
+                Text(previewText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack {
+                Button("キャンセル", role: .cancel) {
+                    onCancel()
+                    dismiss()
+                }
+                Spacer()
+                Button("追加") {
+                    guard let notation else { return }
+                    onComplete(notation)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(notation == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 360)
+        .onAppear {
+            if case .ruby = state.operation, !state.snapshot.text.isEmpty {
+                focusedField = .ruby
+            } else {
+                focusedField = .parent
+            }
+        }
+    }
+
+    private var notation: String? {
+        switch state.operation {
+        case .ruby:
+            EditorNotationRules.ruby(parentText: parentText, rubyText: rubyText)
+        case .bouten:
+            EditorNotationRules.bouten(text: parentText)
+        case .punctuation:
+            nil
+        }
+    }
+
+    private var previewText: String {
+        notation ?? "入力するとプレビューが表示されます。"
+    }
+
+    private enum Field {
+        case parent
+        case ruby
+    }
 }
