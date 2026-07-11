@@ -580,22 +580,28 @@ struct EditorPaneView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
+    @Environment(EditorCommandSession.self) private var editorCommandSession
 
     var body: some View {
         Group {
             if let episode = appState.selectedEpisode {
-                ZStack {
-                    Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
-                    EditorView(
-                        chapterKey: episode.id,
-                        initialText: episode.content,
-                        selectionRequest: editorSearchSession.selectionRequest,
-                        configuration: editorSettings.configuration,
-                        onTextChange: { newText in
-                            appState.updateSelectedEpisodeContent(newText)
-                        }
-                    )
-                    .frame(maxWidth: editorMaximumWidth)
+                VStack(spacing: 0) {
+                    ZStack {
+                        Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
+                        EditorView(
+                            chapterKey: episode.id,
+                            initialText: episode.content,
+                            selectionRequest: editorSearchSession.selectionRequest,
+                            commandSession: editorCommandSession,
+                            configuration: editorSettings.configuration,
+                            onTextChange: { newText in
+                                appState.updateSelectedEpisodeContent(newText)
+                            }
+                        )
+                        .frame(maxWidth: editorMaximumWidth)
+                    }
+
+                    EditorAccessoryBar()
                 }
             } else {
                 ContentUnavailableView(
@@ -614,4 +620,54 @@ struct EditorPaneView: View {
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
     }
+}
+
+private struct EditorAccessoryBar: View {
+    @Environment(EditorCommandSession.self) private var commandSession
+
+    @State private var pendingReplacement: PendingReplacement?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                requestReplacement("……")
+            } label: {
+                Text("……")
+            }
+            .help("三点リーダーを挿入")
+
+            Button {
+                requestReplacement("――")
+            } label: {
+                Text("――")
+            }
+            .help("ダッシュを挿入")
+
+            Spacer()
+        }
+        .buttonStyle(.borderless)
+        .padding(8)
+        .background(.bar)
+        .disabled(commandSession.pendingCommand != nil || pendingReplacement != nil)
+        .onChange(of: commandSession.selectionSnapshot) { _, snapshot in
+            guard let pendingReplacement, snapshot?.id == pendingReplacement.id else { return }
+            commandSession.replaceSelection(id: pendingReplacement.id, text: pendingReplacement.text)
+            self.pendingReplacement = nil
+        }
+        .onChange(of: commandSession.rejectedCommandID) { _, rejectedID in
+            guard rejectedID == pendingReplacement?.id else { return }
+            pendingReplacement = nil
+        }
+    }
+
+    private func requestReplacement(_ text: String) {
+        guard pendingReplacement == nil, commandSession.pendingCommand == nil else { return }
+        let id = commandSession.requestSelectionSnapshot()
+        pendingReplacement = PendingReplacement(id: id, text: text)
+    }
+}
+
+private struct PendingReplacement: Equatable {
+    let id: UUID
+    let text: String
 }
