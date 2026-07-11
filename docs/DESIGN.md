@@ -576,9 +576,9 @@ NovelCore は絶対にUIやStorageに依存しない。
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 は完了済み(→ 変更履歴)。次は **Phase 5-1「Chapter / Episode出力仕様の更新」**。詳細な作業指示書は [PHASE5.md](PHASE5.md)。
+Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 は完了済み(→ 変更履歴)。Chapter / Episode の出力仕様更新も完了済み。次は **Phase 5-1「Export Core + プレーンテキスト / Markdown」**。詳細な作業指示書は [PHASE5.md](PHASE5.md)。
 
-Phase 5-1 の Chapter / Episode 出力仕様は [PHASE5.md](PHASE5.md) へ反映済みである。作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則を実装の正とする。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md)。
+Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md)。
 
 Phase UI2 の完了記録は **[UIDESIGN.md](UIDESIGN.md)**。新UIは Project Sidebar / Outline / Editor / AI Assistant Panel の4領域ワークベンチ(→ D-021)として成立した。
 

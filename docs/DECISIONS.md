@@ -191,8 +191,8 @@
 
 - **日付**: 2026-07-10 / **状態**: 承認(Toolbar-1 / Toolbar-2 / UI-FIX-4で実装済み。実装記録は [TOOLBAR.md](TOOLBAR.md) / [UIFIX.md](UIFIX.md))
 - **内容**:
-  1. Workbench 上部は独自のペイン内バーを重ねず、Project Sidebar / Outline / Editor に追従する macOS ネイティブの一体型 toolbar へ寄せる。Project Sidebar 上は標準の表示／非表示、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の章内検索とする。
-  2. Sidebar toggle、Outline identity、章内検索は構造上のアンカーとして固定する。章追加、章メモ、スナップショット、「この章」などの編集操作は、stable ID を持つ個別の `ToolbarItem` とし、macOS 標準UIで追加・削除・並べ替え可能にする。
+  1. Workbench 上部は独自のペイン内バーを重ねず、Project Sidebar / Outline / Editor に追従する macOS ネイティブの一体型 toolbar へ寄せる。Project Sidebar 上は標準の表示／非表示、Outline 上は作品名 + 章数、Editor 上は一段の操作列 + 右端の話内検索とする。
+  2. Sidebar toggle、Outline identity、話内検索は構造上のアンカーとして固定する。章／話追加、話メモ、スナップショット、「この章」などの編集操作は、stable ID を持つ個別の `ToolbarItem` とし、macOS 標準UIで追加・削除・並べ替え可能にする。
   3. すべての toolbar 操作にメニューバーまたは文脈メニューの代替入口を用意し、toolbar を非表示にしても機能を失わない。カスタマイズ状態は OS に委ね、`NovelDocument` / `.novelpkg` / AppState へ保存しない。
   4. ネイティブの列追従と Sidebar toggle を得るため、二重の `HSplitView` は3列 `NavigationSplitView` へ段階的に移行する。toolbar 所有者は `NovelWorkbenchView` 一箇所に限定し、EditorKit は変更しない。
 - **理由**: 長時間執筆では本文の縦幅と、頻用操作への一手での到達が重要である。macOS 標準 toolbar はユーザーごとの作業スタイルに合わせたカスタマイズ、overflow、メニューとの一貫性を提供できる。一方、すべてを自由移動可能にするとペインの開閉・現在地・検索の位置まで失われるため、固定の構造要素と可変の編集操作を分ける。

@@ -59,9 +59,9 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.chapter.memo` | 話メモ | 表示 | 移動・削除可 | 選択話のメモを popover で編集 |
 | `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
 | `workbench.chapter.context` | この章 | 表示 | 移動・削除可 | 紐付くカード・登場人物を表示するpopover |
-| `workbench.character.add` | 登場人物を追加 | 表示 | 移動・削除可 | `AppState.addCharacter()` |
-| `workbench.plot.card.add` | プロットカードを追加 | 表示 | 移動・削除可 | 選択中の章または未割り当てへ追加 |
-| `workbench.attachment.add` | 資料を取り込む | 表示 | 移動・削除可 | 資料のfileImporterを開く |
+| `workbench.character.add` | 登場人物を追加 | 登場人物セクション時のみ表示 | 移動・削除可 | `AppState.addCharacter()` |
+| `workbench.plot.card.add` | プロットカードを追加 | プロットセクション時のみ表示 | 移動・削除可 | 選択中の章または未割り当てへ追加 |
+| `workbench.attachment.add` | 資料を取り込む | 資料セクション時のみ表示 | 移動・削除可 | 資料のfileImporterを開く |
 | `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
 | `workbench.ai.toggle` | AI Assistant | 初期非表示 | 追加・移動・削除可 | 下部AIパネルを開閉 |
 | Editor search | 話内を検索 | 表示 | 右端固定 | 選択話の本文検索 |
@@ -156,7 +156,8 @@ WindowGroup
 - 現在 `EditorPaneView` が持つ query、検索位置、該当なし状態、`EditorSelectionRequest` を、ウィンドウ単位の `EditorSearchSession` へ抽出する
 - `EditorSearchSession` は表示用の一時状態であり、`NovelDocument` や保存形式へ追加しない
 - 話メモ popover と「この章」メニューは小さい独立 View とし、toolbar content を肥大化させない
-- 選択中章がない場合、章依存操作は表示したまま disabled にする。条件分岐で stable ID を消したり作り直したりしない
+- 選択中の章／話がない場合、依存操作は表示したまま disabled にする。選択欠如だけで stable ID を消したり作り直したりしない
+- 登場人物・プロット・資料の追加ボタンは対象セクション表示中だけ出し、他セクションでは toolbar を混雑させない。メニューバー fallback は常時維持する
 
 `NavigationSplitView` 化は toolbar の見た目だけでなく、人物・プロット・単一 detail セクションの列方針にも影響する。実装前に各 `ProjectSection` の content/detail 対応を固定し、`NavigationSplitView` を入れ子にしない。
 

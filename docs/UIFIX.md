@@ -272,4 +272,4 @@ detail列:
 
 ## 8. Phase 5 への引き継ぎ
 
-UI-FIX-5 完了後に PHASE5.md の出力仕様を `NovelDocument → Chapter → Episode` に更新する。出力順は章配列順、その中の話配列順とし、テキスト / Markdown / EPUB / PDF のすべてで章見出しと話見出しを区別する。これを終えるまで Phase 5-1 は開始しない。
+UI-FIX-5 完了後、PHASE5.md の出力仕様を `NovelDocument → Chapter → Episode` へ更新済みである。出力順は章配列順、その中の話配列順とし、テキスト / Markdown / EPUB / PDF のすべてで章見出しと話見出しを区別する。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)へ進む。
