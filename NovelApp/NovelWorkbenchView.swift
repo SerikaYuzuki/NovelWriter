@@ -207,7 +207,7 @@ struct NovelWorkbenchView: View {
         case .references:
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
-        case .projectInfo, .planning, .worldbuilding, .settings:
+        case .projectInfo, .worldbuilding, .settings:
             SectionOverviewList(
                 section: appState.workspaceSelection.section,
                 selection: $sectionOverviewSelection
@@ -236,12 +236,6 @@ struct NovelWorkbenchView: View {
             AttachmentDetailView(fileName: selectedAttachmentFileName)
         case .projectInfo:
             ProjectInfoView()
-        case .planning:
-            NotesSectionView(
-                title: "企画",
-                systemImage: "lightbulb",
-                placeholder: "企画メモは今後の保存モデル追加で有効化します。"
-            )
         case .worldbuilding:
             NotesSectionView(
                 title: "世界観",
@@ -275,7 +269,7 @@ struct NovelWorkbenchView: View {
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
         case .characters, .references:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
-        case .projectInfo, .planning, .worldbuilding, .settings:
+        case .projectInfo, .worldbuilding, .settings:
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
         }
     }

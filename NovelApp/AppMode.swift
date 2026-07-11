@@ -3,7 +3,6 @@ import SwiftUI
 
 enum ProjectSection: String, CaseIterable, Codable, Identifiable {
     case projectInfo
-    case planning
     case structure
     case plot
     case characters
@@ -19,8 +18,6 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .projectInfo:
             "作品情報"
-        case .planning:
-            "企画"
         case .structure:
             "執筆"
         case .plot:
@@ -40,8 +37,6 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .projectInfo:
             "book.closed"
-        case .planning:
-            "lightbulb"
         case .structure:
             "list.bullet.indent"
         case .plot:
@@ -61,20 +56,18 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .projectInfo:
             "1"
-        case .planning:
-            "2"
         case .structure:
-            "3"
+            "2"
         case .plot:
-            "4"
+            "3"
         case .characters:
-            "5"
+            "4"
         case .worldbuilding:
-            "6"
+            "5"
         case .references:
-            "7"
+            "6"
         case .settings:
-            "8"
+            "7"
         }
     }
 }
