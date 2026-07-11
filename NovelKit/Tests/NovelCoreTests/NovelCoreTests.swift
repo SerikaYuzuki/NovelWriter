@@ -77,6 +77,7 @@ import Testing
 @Test func novelDocumentIsCodableRoundTrip() throws {
     let doc = NovelDocument(
         title: "テスト作品",
+        synopsis: "あらすじ",
         chapters: [Chapter(title: "第1章", content: "本文")],
         characters: [NovelCore.Character(name: "灯", kana: "あかり", memo: "主人公", colorHex: "#C44536")],
         plotCards: [PlotCard(title: "出会い", memo: "導入")],
@@ -107,6 +108,7 @@ import Testing
     let decoded = try JSONDecoder().decode(NovelDocument.self, from: Data(json.utf8))
 
     #expect(decoded.id == documentID)
+    #expect(decoded.synopsis.isEmpty)
     #expect(decoded.characters.isEmpty)
 }
 

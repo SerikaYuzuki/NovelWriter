@@ -103,6 +103,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case synopsis
         case chapters
         case characters
         case plotCards
@@ -113,6 +114,8 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public var id: UUID
     /// 作品タイトル。
     public var title: String
+    /// 作品のあらすじ。パッケージでは manifest とは別のメタデータとして保存される。
+    public var synopsis: String
     /// 章の並び順つきリスト。この配列の順序が章順そのもの。
     public var chapters: [Chapter]
     /// 登場人物リスト。この配列の順序が表示順そのもの。
@@ -131,6 +134,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     public init(
         id: UUID = UUID(),
         title: String,
+        synopsis: String = "",
         chapters: [Chapter],
         characters: [Character] = [],
         plotCards: [PlotCard] = [],
@@ -138,6 +142,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
     ) {
         self.id = id
         self.title = title
+        self.synopsis = synopsis
         self.chapters = chapters
         self.characters = characters
         self.plotCards = plotCards
@@ -148,6 +153,7 @@ public struct NovelDocument: Codable, Sendable, Identifiable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
+        synopsis = try container.decodeIfPresent(String.self, forKey: .synopsis) ?? ""
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         characters = try container.decodeIfPresent([Character].self, forKey: .characters) ?? []
         plotCards = try container.decodeIfPresent([PlotCard].self, forKey: .plotCards) ?? []
