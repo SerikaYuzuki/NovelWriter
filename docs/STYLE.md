@@ -71,7 +71,9 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - Outline系paneは`.thinMaterial`を共通surfaceとし、背面のwindow surfaceがわずかに見える状態を保つ。不透明な`.bar`への統一は禁止
-- フォームは `.formStyle(.grouped)` に統一
+- detail chrome(見出しバー、フォーム背面、GroupBox周辺)も`.thinMaterial`へ寄せる。原稿および世界観ノートの`EditorView`背景だけは不透明キャンバスを維持する
+- フォームは `.formStyle(.grouped)` を設定などシステムフォームに使う。作品情報・人物・世界観の長文入力は共通のLabeled Field部品を使い、ラベルと入力の間隔8pt、長文の内側inset 8ptを守る
+- 作品情報と設定はOutline列を持たない(Sidebar + Detailの2列)。世界観はノート一覧Outline + 本文Detailの3列とする(D-032)
 
 ## 5. コンポーネント規約
 
@@ -87,9 +89,10 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 
 ## 6. 深さ・階層
 
-- 階層はまず**素材**で表現する: Project Sidebar / Outline = `.thinMaterial`、AI collapsed status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま
+- 階層はまず**素材**で表現する: Project Sidebar / Outline / detail chrome = `.thinMaterial`、AI collapsed status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま。本文キャンバスだけ不透明
 - 影は「浮いている最中」(ドラッグ中のカード等)専用。常設の drop shadow は禁止
 - 境界線は `.separator` の hairline(1px)。太い枠線・二重枠を使わない
+- ラベルと入力が横に張り付いて見える配置を避ける。長文は縦積み(ラベル→8pt→入力)にする
 
 ## 7. インタラクションと状態
 
@@ -97,7 +100,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - ドラッグ中: 元位置は `opacity 0.4`、持ち上げたカードは軽い影。ドロップ先レーンは `accent` の淡いハイライト
 - アニメーション: `.snappy`(0.2s 目安)に統一。バウンスや 0.5s 超の演出は禁止
 - キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする
-- Project Sidebar: Cmd+1〜8 でセクション移動
+- Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
 - AI Assistant Panel: Cmd+J など既存ショートカットと衝突しないキーで開閉。expanded 中も Esc で入力フォーカス解除できる

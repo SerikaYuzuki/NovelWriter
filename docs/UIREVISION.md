@@ -1,6 +1,6 @@
 # UI修正再設計: Glass Outline・Plot再構成・執筆補助・作品情報
 
-**状態: UI-REV-1〜9完了。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)。**
+**状態: UI-REV-1〜9完了。追加のWorkbench再調整は [UIREFRESH.md](UIREFRESH.md)。Phase 5はUI-REF完了まで待機。**
 
 本書は、UI-FIX-1〜5完了後に確認された方向違いを修正する実装指示書である。旧UI-FIXの完了記録は [UIFIX.md](UIFIX.md) に残し、本書で上書きする点だけを明示する。前提は [../AGENTS.md](../AGENTS.md)、全体設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、見た目は [STYLE.md](STYLE.md) を正とする。
 

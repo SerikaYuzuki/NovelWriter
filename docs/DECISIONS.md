@@ -226,7 +226,7 @@
 
 ## D-028: 原稿は Chapter(章) / Episode(話)の2階層とし、出力より先に移行する
 
-- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2a〜5で実装済み。UI-REV-1〜9完了後にPhase 5へ進む)
+- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2a〜5で実装済み。Phase 5はD-032のWorkbench再調整完了後に開始)
 - **内容**:
   1. `Chapter` は章タイトルと順序付きの `[Episode]` を持つ構造とし、本文は持たない。`Episode` は `EpisodeID`、話タイトル、本文、メモを持つ編集単位とする。章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順だけを正とし、どちらにも `order` を追加しない。
   2. `PlotCard.chapterID` と `Flag` の張った章／回収章は章単位の参照として維持する。今回 `episodeID` 参照は追加しない。現行の章メモは v1 / v2 → v3 移行時に生成される話のメモへ移し、章自体のメモは追加しない。
@@ -265,3 +265,14 @@
   3. タイトルはmanifestを正として維持し、あらすじはNovelStorageだけが構造を知る`project.json`へ保存する。欠損は空文字とし、空へ戻した場合は既知項目として旧ファイルを除去する。
   4. `project.json`は`.novelpkg` v3へのadditive metadataとし、formatVersionは上げない。旧アプリはunknown root item保持により通常保存、別名保存、snapshotでファイルを維持できる。
 - **理由**: 企画placeholderを残すより、作品の中心情報であるタイトルとあらすじを作品情報へ集約する方が導線が明確である。manifestへフィールドを足すと旧アプリの再保存で欠落するが、未知root itemを保持する既存方針を使えばv3互換を維持できる。
+
+## D-032: Workbench全体をtranslucent chromeとし、Outline不要セクションと世界観ノートを導入する
+
+- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREFRESH.md](UIREFRESH.md))
+- **内容**:
+  1. Project Sidebar / Outline / detail chromeは`.thinMaterial`を基本のsurfaceとする。原稿および世界観ノートの`EditorView`背景だけは可読性のため不透明キャンバスを維持する。Outlineの不透明`.bar`統一は引き続き禁止し、detail側の`.bar`見出しもthinMaterialへ寄せる。
+  2. 長文・短文を問わず、ラベルと入力コントロールの間隔は8pt、長文入力は内側inset 8ptを共通部品で固定する。横並び`LabeledContent`は短文1行に限り、あらすじなどの長文には使わない。
+  3. 作品情報と設定はOutline(content列)を持たない。`NavigationSplitView`をSidebar + Detailの2列で表示し、1行だけの概要Listは置かない。執筆・プロット・登場人物・資料・世界観は従来どおり3列とする。
+  4. 世界観は章立てのないノート一覧とする。`WorldNote { id, title, content }`を`NovelDocument.worldNotes`の配列順で持ち、本文所有権は話と同じく`NSTextView`側を正とする。保存は`world.json` + `world-notes/<UUID>.md`のadditive metadataとし、formatVersionは上げない。
+  5. 世界観ノートとあらすじはPhase 5 v1の出力対象に含めない。
+- **理由**: UI-REVでOutlineのglass化は進んだが、detail chromeとフォーム余白が追いついておらずSwiftUIらしい透明感が分断されている。また作品情報・設定の概要Listは操作対象がなく列を浪費する。世界観は企画placeholderの代替として、自由記述の資料置き場を永続化する必要がある。出力前に保存形式と列構成を固定し、Exporter着手後の手戻りを避ける。
