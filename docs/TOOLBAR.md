@@ -2,7 +2,7 @@
 
 > **次期修正:** section固有の追加操作をpaneへ固定し、執筆Outlineの章追加とEditorの話追加を分離する方針はD-029 / [UIREVISION.md](UIREVISION.md)が本書に優先する。本書はToolbar-1 / Toolbar-2の完了記録として残す。
 
-> **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。今後は [PHASE5.md](PHASE5.md) を正とする。
+> **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。列方針はUI-REF-3で更新済みで、今後は [PHASE5.md](PHASE5.md) を正とする。
 
 **状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次は Phase 5-1へ進む。
 
@@ -144,7 +144,7 @@ WindowGroup
     └── NovelWorkbenchView
         ├── NavigationSplitView
         │   ├── ProjectSidebarView
-        │   ├── OutlineContainerView
+        │   ├── OutlineContainerView / Section Outline
         │   └── EditorPaneView / Section Detail
         └── WorkbenchToolbarContent
             ├── fixed navigation / identity
@@ -152,7 +152,7 @@ WindowGroup
             └── editor search
 ```
 
-- 二重の `HSplitView` を3列の `NavigationSplitView` へ寄せ、標準 Sidebar toggle と列に追従する上部 chrome を得る
+- Outlineを持つセクションは二重の `HSplitView` を3列の `NavigationSplitView` へ寄せ、作品情報・設定はSidebar + Detailの2列 `NavigationSplitView` とする。いずれも標準 Sidebar toggle と列に追従する上部 chrome を得る
 - toolbar の所有者は `NovelWorkbenchView` の一箇所だけにする。各ペインから `.toolbar` を追加してマージさせない
 - `WorkbenchToolbarContent` は NovelApp 内に置き、AppState の既存操作へ接続する。EditorKit を toolbar 都合で変更しない
 - 現在 `EditorPaneView` が持つ query、検索位置、該当なし状態、`EditorSelectionRequest` を、ウィンドウ単位の `EditorSearchSession` へ抽出する
@@ -169,9 +169,10 @@ WindowGroup
 | 登場人物 | 人物一覧 | 人物シート |
 | プロット | カード／伏線のナビゲータ | ボードまたは選択項目の詳細 |
 | 資料 | 添付一覧 | 選択資料の情報／Preview |
-| 作品情報・企画・世界観・設定 | `概要` またはセクション内項目 | 現在の section surface |
+| 世界観 | `概要` またはセクション内項目 | 現在の section surface |
+| 作品情報・設定 | なし（Sidebar + Detailの2列） | 現在の section surface |
 
-永続モデルがまだないセクションは、既存 placeholder を `概要` detail として再利用する。Toolbar-1 で新しい保存モデルや機能を追加しない。
+永続モデルがまだない世界観は、UI-REF-5まで暫定のOutline placeholderを使う。作品情報・設定はOutlineを持たない。Toolbar-1 で新しい保存モデルや機能を追加しない。
 
 ## 9. 非目標
 

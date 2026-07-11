@@ -3,11 +3,12 @@ import NovelCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 3列ワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
+/// セクションに応じて2列または3列となるワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
 ///
-/// `NavigationSplitView` で Project Sidebar / Outline(content) / Detail を構成し、
-/// 標準の Sidebar 開閉と列追従 chrome を得る。下部の AI Assistant Panel は
-/// 従来どおり split の外に置く。上部 chrome は `WorkbenchToolbarContent` が一箇所で所有する。
+/// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
+/// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。下部の
+/// AI Assistant Panel は従来どおり split の外に置く。上部 chrome は
+/// `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
     var ideal: CGFloat
@@ -22,29 +23,14 @@ struct NovelWorkbenchView: View {
 
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
-    @State private var sectionOverviewSelection: String? = Self.overviewItemID
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
     @State private var attachmentImportMessage: OperationMessage?
 
-    fileprivate static let overviewItemID = "overview"
-
     var body: some View {
         VStack(spacing: 0) {
-            NavigationSplitView(columnVisibility: $columnVisibility) {
-                ProjectSidebarView()
-                    .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
-            } content: {
-                workbenchContent
-                    .navigationSplitViewColumnWidth(
-                        min: contentColumnWidths.min,
-                        ideal: contentColumnWidths.ideal,
-                        max: contentColumnWidths.max
-                    )
-            } detail: {
-                workbenchDetail
-                    .frame(minWidth: 560)
-            }
+            workbenchSplitView
+                .id(usesTwoColumnLayout)
 
             AIAssistantPanelView()
         }
@@ -75,11 +61,6 @@ struct NovelWorkbenchView: View {
             }
             .keyboardShortcut("j", modifiers: .command)
             .hidden()
-        }
-        .onChange(of: appState.workspaceSelection.section) { _, _ in
-            // 概要リストはセクションごとに付け替える。資料選択は AppState 外の
-            // 一時状態だが、登場人物選択と同様に戻ってきたときに残す。
-            sectionOverviewSelection = Self.overviewItemID
         }
         .confirmationDialog(
             "このスナップショットに戻しますか？",
@@ -135,6 +116,37 @@ struct NovelWorkbenchView: View {
                 editorSearchSession.isSearchPresented = newValue
             }
         )
+    }
+
+    @ViewBuilder
+    private var workbenchSplitView: some View {
+        if usesTwoColumnLayout {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                projectSidebar
+            } detail: {
+                workbenchDetail
+                    .frame(minWidth: 560)
+            }
+        } else {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                projectSidebar
+            } content: {
+                workbenchContent
+                    .navigationSplitViewColumnWidth(
+                        min: contentColumnWidths.min,
+                        ideal: contentColumnWidths.ideal,
+                        max: contentColumnWidths.max
+                    )
+            } detail: {
+                workbenchDetail
+                    .frame(minWidth: 560)
+            }
+        }
+    }
+
+    private var projectSidebar: some View {
+        ProjectSidebarView()
+            .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
     }
 
     private var snapshotRestoreDialogIsPresented: Binding<Bool> {
@@ -207,12 +219,11 @@ struct NovelWorkbenchView: View {
         case .references:
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
-        case .projectInfo, .worldbuilding, .settings:
-            SectionOverviewList(
-                section: appState.workspaceSelection.section,
-                selection: $sectionOverviewSelection
-            )
-            .navigationTitle(appState.workspaceSelection.section.title)
+        case .worldbuilding:
+            WorldbuildingOutlinePlaceholder()
+                .navigationTitle(appState.workspaceSelection.section.title)
+        case .projectInfo, .settings:
+            EmptyView()
         }
     }
 
@@ -255,6 +266,15 @@ struct NovelWorkbenchView: View {
         appState.workspaceSelection.section == .structure
     }
 
+    private var usesTwoColumnLayout: Bool {
+        switch appState.workspaceSelection.section {
+        case .projectInfo, .settings:
+            true
+        case .structure, .plot, .characters, .worldbuilding, .references:
+            false
+        }
+    }
+
     private var documentDisplayTitle: String {
         let trimmed = appState.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "無題の作品" : trimmed
@@ -268,7 +288,10 @@ struct NovelWorkbenchView: View {
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
         case .characters, .references:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
-        case .projectInfo, .worldbuilding, .settings:
+        case .worldbuilding:
+            WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
+        case .projectInfo, .settings:
+            // 2列セクションでは content 列を出さないため未使用
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
         }
     }
@@ -299,20 +322,16 @@ struct ProjectSidebarView: View {
     }
 }
 
-/// 永続モデルがまだないセクション用の content 列。detail に概要を出す。
-private struct SectionOverviewList: View {
-    let section: ProjectSection
-    @Binding var selection: String?
-
+/// 永続モデルがまだない世界観用のOutline。UI-REF-4でノート一覧へ置き換える。
+private struct WorldbuildingOutlinePlaceholder: View {
     var body: some View {
-        List(selection: $selection) {
+        List {
             VStack(alignment: .leading, spacing: 4) {
-                Label("概要", systemImage: section.systemImage)
-                Text("\(section.title)の概要")
+                Label("概要", systemImage: "globe.asia.australia")
+                Text("世界観の概要")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .tag(NovelWorkbenchView.overviewItemID)
         }
         .workbenchGlassOutlineStyle()
     }
