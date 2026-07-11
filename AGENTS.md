@@ -2,7 +2,7 @@
 
 macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(TextKit 2)エディタ + `.novelpkg` フォルダパッケージ保存。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの作業指示書は [docs/UIPOLISH.md](docs/UIPOLISH.md)(UI-POL-1〜3完了、次は UI-POL-4)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
 ## 現在地(2026-07-11 時点)
 

@@ -1,6 +1,6 @@
 # Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
 
-**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜3完了、Chapter / Episode出力仕様更新済み。次は UI-POL-4 の後に Phase 5-1。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md)、UI磨き上げは [UIPOLISH.md](UIPOLISH.md) に記録した(4.5-1c はリネームのみの独立タスクで、どのタイミングで挟んでもよい)。
+**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4完了、Chapter / Episode出力仕様更新済み。次は Phase 5-1。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md)、UI磨き上げは [UIPOLISH.md](UIPOLISH.md) に記録した(4.5-1c はリネームのみの独立タスクで、どのタイミングで挟んでもよい)。
 
 本書は、Phase UI2 完了後の実装指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022)。
 
