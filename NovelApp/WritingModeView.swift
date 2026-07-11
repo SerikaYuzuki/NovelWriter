@@ -40,7 +40,7 @@ struct OutlineContainerView: View {
             )
         }
         .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
-        .background(.thinMaterial)
+        .workbenchGlassChromeStyle()
         .focusedSceneValue(\.workbenchSearchSurface, .outline)
         .focusable()
         .onKeyPress(.escape) {
@@ -122,7 +122,6 @@ private struct WritingOutlineHeader: View {
             .help("章を追加")
         }
         .padding(8)
-        .background(.thinMaterial)
     }
 }
 
@@ -232,7 +231,7 @@ struct OutlineView: View {
                 }
             }
         }
-        .workbenchGlassOutlineStyle()
+        .workbenchOutlineListStyle()
         .overlay {
             if filteredChapters.isEmpty {
                 ContentUnavailableView(
@@ -569,7 +568,6 @@ private struct OutlineSearchBar: View {
             .labelStyle(.iconOnly)
         }
         .padding(8)
-        .background(.thinMaterial)
         .onAppear {
             isFocused = true
         }
@@ -664,7 +662,7 @@ private struct EditorAccessoryBar: View {
         }
         .buttonStyle(.borderless)
         .padding(8)
-        .background(.bar)
+        .workbenchGlassChromeStyle()
         .disabled(commandSession.pendingCommand != nil || pendingOperation != nil || notationSheet != nil)
         .onChange(of: commandSession.selectionSnapshot) { _, snapshot in
             guard let pendingOperation, snapshot?.id == pendingOperation.id else { return }

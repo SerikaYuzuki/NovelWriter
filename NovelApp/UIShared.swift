@@ -11,21 +11,38 @@ struct OperationMessage: Identifiable {
     let body: String
 }
 
-/// WorkbenchのOutline系Listで共通利用するmacOS Glass UIの外観。
-struct WorkbenchOutlineListModifier: ViewModifier {
+/// Workbenchのdetail chromeやOutline pane全体で共通利用するtranslucent surface。
+struct WorkbenchGlassChromeModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
             // `.thinMaterial` は Reduce Transparency をOS標準の不透明表現へ
             // 自動でフォールバックするため、個別の外観分岐を持たない。
             .background(.thinMaterial)
     }
 }
 
+/// Outline系Listの選択・スクロール背景だけを整えるmodifier。materialは含めない。
+struct WorkbenchOutlineListModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+    }
+}
+
 extension View {
-    func workbenchGlassOutlineStyle() -> some View {
+    func workbenchGlassChromeStyle() -> some View {
+        modifier(WorkbenchGlassChromeModifier())
+    }
+
+    func workbenchOutlineListStyle() -> some View {
         modifier(WorkbenchOutlineListModifier())
+    }
+
+    /// 単体のOutline List向け。Listスタイルとglass surfaceを1層で適用する。
+    func workbenchGlassOutlineStyle() -> some View {
+        workbenchOutlineListStyle()
+            .workbenchGlassChromeStyle()
     }
 }
 
