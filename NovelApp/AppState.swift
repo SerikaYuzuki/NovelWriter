@@ -877,6 +877,34 @@ final class AppState {
         flushSaveImmediately()
     }
 
+    /// Plot Outlineへのdropとしてカードの所属先を変更する。
+    /// 存在しないカード／章、および現在と同じ所属先へのdropは拒否する。
+    @discardableResult
+    func movePlotCardFromOutline(id: PlotCardID, to selection: PlotOutlineSelection) -> Bool {
+        guard let card = document.plotCards.first(where: { $0.id == id }) else { return false }
+
+        let destinationChapterID: ChapterID?
+        switch selection {
+        case .unassigned:
+            destinationChapterID = nil
+        case let .chapter(chapterID):
+            guard document.chapters.contains(where: { $0.id == chapterID }) else { return false }
+            destinationChapterID = chapterID
+        }
+
+        guard card.chapterID != destinationChapterID else { return false }
+
+        document.movePlotCard(id: id, toChapter: destinationChapterID)
+        selectedPlotCardID = id
+        plotOutlineSelection = selection
+        if let destinationChapterID {
+            setSelection(chapterID: destinationChapterID, episodeID: preferredEpisodeID(in: destinationChapterID))
+        }
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+        return true
+    }
+
     // MARK: - 伏線
 
     /// 伏線を追加し、追加した伏線を選択状態にする。
