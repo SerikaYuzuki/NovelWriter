@@ -112,26 +112,38 @@ private struct CharacterSheetView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 sheetSection("基本") {
-                    HStack(spacing: 12) {
-                        TextField("役割", text: profileBinding(.role))
-                        Menu {
-                            ForEach(roleChoices, id: \.self) { role in
-                                Button(role) {
-                                    appState.updateSelectedCharacterProfileField(.role, value: role)
+                    HStack(alignment: .top, spacing: 12) {
+                        WorkbenchLabeledField("役割") {
+                            HStack(spacing: 8) {
+                                TextField("役割", text: profileBinding(.role))
+                                Menu {
+                                    ForEach(roleChoices, id: \.self) { role in
+                                        Button(role) {
+                                            appState.updateSelectedCharacterProfileField(.role, value: role)
+                                        }
+                                    }
+                                } label: {
+                                    Label("候補", systemImage: "chevron.down.circle")
                                 }
                             }
-                        } label: {
-                            Label("候補", systemImage: "chevron.down.circle")
                         }
-                        TextField("年齢", text: profileBinding(.age))
-                        TextField("性別", text: profileBinding(.gender))
+                        WorkbenchLabeledField("年齢") {
+                            TextField("年齢", text: profileBinding(.age))
+                        }
+                        WorkbenchLabeledField("性別") {
+                            TextField("性別", text: profileBinding(.gender))
+                        }
                     }
                 }
 
                 sheetSection("口調") {
-                    HStack(spacing: 12) {
-                        TextField("一人称", text: profileBinding(.firstPerson))
-                        TextField("二人称", text: profileBinding(.secondPerson))
+                    HStack(alignment: .top, spacing: 12) {
+                        WorkbenchLabeledField("一人称") {
+                            TextField("一人称", text: profileBinding(.firstPerson))
+                        }
+                        WorkbenchLabeledField("二人称") {
+                            TextField("二人称", text: profileBinding(.secondPerson))
+                        }
                     }
                     labeledEditor("口調・話し方", text: profileBinding(.speechStyle), minHeight: 90)
                 }
@@ -171,13 +183,15 @@ private struct CharacterSheetView: View {
                     appState.commitCharacterEditing()
                 }
 
-            HStack(spacing: 12) {
-                TextField("ふりがな", text: selectedCharacterKanaBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 220)
-                    .onSubmit {
-                        appState.commitCharacterEditing()
-                    }
+            HStack(alignment: .top, spacing: 12) {
+                WorkbenchLabeledField("ふりがな") {
+                    TextField("ふりがな", text: selectedCharacterKanaBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 220)
+                        .onSubmit {
+                            appState.commitCharacterEditing()
+                        }
+                }
 
                 colorControls
             }
@@ -209,16 +223,9 @@ private struct CharacterSheetView: View {
     }
 
     private func labeledEditor(_ title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        WorkbenchLabeledEditor(title) {
             TextEditor(text: text)
                 .frame(minHeight: minHeight)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.separator, lineWidth: 1)
-                }
         }
     }
 

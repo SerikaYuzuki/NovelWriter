@@ -246,7 +246,6 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
-                    .padding(20)
                     .frame(maxWidth: 560, alignment: .leading)
             }
         }
@@ -520,19 +519,15 @@ private struct ProjectInfoView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("作品タイトル") {
+                            WorkbenchLabeledField("作品タイトル") {
                                 TextField("作品タイトル", text: titleBinding)
                             }
 
-                            Text("あらすじ")
-                                .foregroundStyle(.secondary)
-                            TextEditor(text: synopsisBinding)
-                                .accessibilityLabel("あらすじ")
-                                .frame(minHeight: 160)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(.separator, lineWidth: 1)
-                                }
+                            WorkbenchLabeledEditor("あらすじ") {
+                                TextEditor(text: synopsisBinding)
+                                    .accessibilityLabel("あらすじ")
+                                    .frame(minHeight: 160)
+                            }
                         }
                         .padding(8)
                     }

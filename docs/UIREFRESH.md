@@ -1,6 +1,6 @@
 # Workbench 透明感・余白・セクション構成の再設計
 
-**状態: UI-REF-1完了。次は UI-REF-2(Labeled Field余白)。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REF-2完了。次は UI-REF-3(Outlineなしセクション)。Phase 5 は本計画の完了まで待機する。**
 
 本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
 
@@ -238,13 +238,15 @@ DESIGN.md:
 
 **実装結果 (2026-07-11):** `workbenchGlassChromeStyle()`と`workbenchOutlineListStyle()`を分離し、執筆Outlineはpane全体へglass、Listは1層だけmaterialを適用した。`SectionSurface`、Editor accessory、人物詳細、資料詳細、プロットsplitのchromeもthinMaterialへ統一した。AI status barはSTYLEどおり`.bar`のまま。
 
-### UI-REF-2: Labeled Field余白
+### UI-REF-2: Labeled Field余白【完了】
 
 - `WorkbenchLabeledField` / `WorkbenchLabeledEditor`を追加
 - 作品情報・登場人物シートへ適用
 - 設定の二重paddingを解消
 
 **完了条件:** あらすじ・人物の長文入力でラベルと枠が張り付いて見えない。
+
+**実装結果 (2026-07-11):** 作品情報のタイトル・あらすじ、登場人物シートの短文・長文入力へ共通部品を適用した。長文入力は内側8pt paddingとseparator枠を統一し、設定画面の`EditorSettingsView`二重paddingを解消した。
 
 ### UI-REF-3: Outlineなしセクション
 
