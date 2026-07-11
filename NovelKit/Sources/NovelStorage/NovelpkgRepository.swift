@@ -9,6 +9,9 @@ import NovelCore
 /// ├── manifest.json                          … 章順・タイトル・日時などのメタデータ
 /// ├── episodes/<EpisodeID(UUID)>.md           … 話本文のみ(メタデータなし)
 /// ├── episode-notes/<EpisodeID(UUID)>.md      … 話メモ(空ならファイルなし)
+/// ├── project.json                            … あらすじ(空なら省略)
+/// ├── world.json                              … 世界観ノート順・タイトル(空なら省略)
+/// ├── world-notes/<WorldNoteID(UUID)>.md      … 世界観ノート本文
 /// └── attachments/                            … 将来の添付ファイル置き場
 /// ```
 ///
@@ -42,6 +45,8 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyin
     static let plotFileName = "plot.json"
     static let flagsFileName = "flags.json"
     static let projectFileName = "project.json"
+    static let worldFileName = "world.json"
+    static let worldNotesDirectoryName = "world-notes"
 
     /// `NovelpkgRepository` を作成する。
     public init() {}
@@ -133,17 +138,8 @@ extension NovelpkgRepository {
             chapters: chapters,
             characters: metadata.characters,
             plotCards: metadata.plotCards,
-            flags: metadata.flags
-        )
-    }
-
-    private static func readDocumentMetadata(from url: URL, chapters: [Chapter]) throws -> DocumentMetadata {
-        let chapterIDs = Set(chapters.map(\.id))
-        return try DocumentMetadata(
-            characters: readCharacters(from: url),
-            plotCards: readPlotCards(from: url, validChapterIDs: chapterIDs),
-            flags: readFlags(from: url, validChapterIDs: chapterIDs),
-            synopsis: readSynopsis(from: url)
+            flags: metadata.flags,
+            worldNotes: metadata.worldNotes
         )
     }
 
@@ -170,13 +166,6 @@ extension NovelpkgRepository {
             throw NovelpkgError.manifestCorrupted(url: url, reason: String(describing: error))
         }
     }
-}
-
-private struct DocumentMetadata {
-    let characters: [NovelCore.Character]
-    let plotCards: [PlotCard]
-    let flags: [Flag]
-    let synopsis: String
 }
 
 // MARK: - Save
@@ -270,6 +259,7 @@ extension NovelpkgRepository {
         try writePlotCards(doc.plotCards, into: workingURL)
         try writeFlags(doc.flags, into: workingURL)
         try writeSynopsis(doc.synopsis, into: workingURL)
+        try writeWorldNotes(doc.worldNotes, into: workingURL, fileManager: fileManager)
         try writeManifest(
             for: doc,
             into: workingURL,
@@ -390,7 +380,9 @@ extension NovelpkgRepository {
             charactersFileName,
             plotFileName,
             flagsFileName,
-            projectFileName
+            projectFileName,
+            worldFileName,
+            worldNotesDirectoryName
         ]
 
         let rootItems = try fileManager.contentsOfDirectory(

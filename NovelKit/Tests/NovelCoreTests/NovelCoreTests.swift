@@ -25,6 +25,15 @@ import Testing
     #expect(decoded == id)
 }
 
+@Test func worldNoteIDAndModelRoundTripThroughCodable() throws {
+    let note = WorldNote(title: "魔法体系", content: "魔力は月光から生まれる。")
+    let data = try JSONEncoder().encode(note)
+    let decoded = try JSONDecoder().decode(WorldNote.self, from: data)
+
+    #expect(decoded == note)
+    #expect(note.id.description == note.id.rawValue.uuidString)
+}
+
 @Test func chapterDefaultsToOneEmptyEpisode() {
     let chapter = Chapter(title: "第1章")
     #expect(chapter.title == "第1章")
@@ -81,7 +90,8 @@ import Testing
         chapters: [Chapter(title: "第1章", content: "本文")],
         characters: [NovelCore.Character(name: "灯", kana: "あかり", memo: "主人公", colorHex: "#C44536")],
         plotCards: [PlotCard(title: "出会い", memo: "導入")],
-        flags: [Flag(title: "鍵", note: "後で回収")]
+        flags: [Flag(title: "鍵", note: "後で回収")],
+        worldNotes: [WorldNote(title: "年表", content: "建国から百年")]
     )
     let data = try JSONEncoder().encode(doc)
     let decoded = try JSONDecoder().decode(NovelDocument.self, from: data)
@@ -110,6 +120,7 @@ import Testing
     #expect(decoded.id == documentID)
     #expect(decoded.synopsis.isEmpty)
     #expect(decoded.characters.isEmpty)
+    #expect(decoded.worldNotes.isEmpty)
 }
 
 @Test func novelDocumentDecodesMissingPlotCardsAsEmptyArray() throws {
@@ -156,6 +167,7 @@ import Testing
 
     #expect(decoded.id == documentID)
     #expect(decoded.flags.isEmpty)
+    #expect(decoded.worldNotes.isEmpty)
 }
 
 // MARK: - addChapter / moveChapters / updateContent (docs/DESIGN.md 5.2)

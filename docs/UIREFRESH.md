@@ -1,6 +1,6 @@
 # Workbench 透明感・余白・セクション構成の再設計
 
-**状態: UI-REF-3完了。次は UI-REF-4(世界観モデル + Storage)。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REF-4完了。次は UI-REF-5(世界観UI)。Phase 5 は本計画の完了まで待機する。**
 
 本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
 
@@ -258,13 +258,15 @@ DESIGN.md:
 
 **実装結果 (2026-07-11):** `NovelWorkbenchView`は作品情報・設定でSidebar + Detailの2列`NavigationSplitView`を構築し、それ以外のセクションでは従来の3列構成を維持するよう分岐した。`SectionOverviewList`は世界観専用とし、作品情報・設定の空の概要Listと関連する選択状態を削除した。
 
-### UI-REF-4: 世界観モデル + Storage
+### UI-REF-4: 世界観モデル + Storage【完了】
 
 - `WorldNote` / `WorldNoteID` / `NovelDocument.worldNotes`
 - `world.json` + `world-notes/`の読み書き
 - v1/v2/v3、snapshot、別名保存、空一覧省略のテスト
 
 **完了条件:** UIなしでもrepositoryテストでノートの永続化が保証される。
+
+**実装結果 (2026-07-11):** `WorldNoteID` / `WorldNote` を NovelCore に追加し、`world.json`（順序・タイトル）と `world-notes/<UUID>.md`（本文）を NovelStorage で読み書きする。空一覧時はファイルを省略し、v1/v2 読み込み後の v3 保存・スナップショット・別名保存をテストで担保した。UI は UI-REF-5 へ委譲。
 
 ### UI-REF-5: 世界観UI
 
