@@ -40,19 +40,20 @@ struct EditorNotationCommandIntegrationTests {
 
     @Test("傍点記法の選択置換もUndo一回で戻せる")
     func replacesSelectionWithBoutenAndUndo() throws {
-        let (textView, coordinator) = makeHarness(initialText: "猫")
+        let original = "例えばこの文章"
+        let (textView, coordinator) = makeHarness(initialText: original)
         let session = EditorCommandSession()
-        textView.setSelectedRange(NSRange(location: 0, length: 1))
-        let notation = try #require(EditorNotationRules.bouten(text: "猫"))
+        textView.setSelectedRange(NSRange(location: 0, length: (original as NSString).length))
+        let notation = try #require(EditorNotationRules.bouten(text: original))
 
         let id = session.requestSelectionSnapshot()
         coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
         session.replaceSelection(id: id, text: notation)
         coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
 
-        #expect(textView.string == "《《猫》》")
+        #expect(textView.string == "｜例《・》｜え《・》｜ば《・》｜こ《・》｜の《・》｜文《・》｜章《・》")
         coordinator.undoManager.undo()
-        #expect(textView.string == "猫")
+        #expect(textView.string == original)
     }
 
     @Test("snapshot後に選択が変わった場合の置換を拒否する")
@@ -65,7 +66,7 @@ struct EditorNotationCommandIntegrationTests {
         coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
         _ = try #require(session.selectionSnapshot)
         textView.setSelectedRange(NSRange(location: 2, length: 1))
-        session.replaceSelection(id: id, text: "《《猫》》")
+        session.replaceSelection(id: id, text: "｜猫《・》")
         coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
 
         #expect(session.rejectedCommandID == id)

@@ -38,6 +38,7 @@ public final class EditorCommandSession {
     public private(set) var pendingCommand: EditorCommand?
     public private(set) var selectionSnapshot: EditorSelectionSnapshot?
     public private(set) var rejectedCommandID: UUID?
+    public private(set) var hasNonEmptySelection = false
 
     public init() {}
 
@@ -69,5 +70,9 @@ public final class EditorCommandSession {
         guard pendingCommand?.id == id else { return }
         rejectedCommandID = id
         pendingCommand = nil
+    }
+
+    func updateSelectionAvailability(_ range: NSRange) {
+        hasNonEmptySelection = range.length > 0
     }
 }

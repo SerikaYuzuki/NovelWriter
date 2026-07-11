@@ -656,6 +656,7 @@ private struct EditorAccessoryBar: View {
             } label: {
                 Text("傍点…")
             }
+            .disabled(!commandSession.hasNonEmptySelection)
             .help("なろう形式の傍点を追加")
 
             Spacer()
@@ -705,8 +706,15 @@ private struct EditorAccessoryBar: View {
         case let .punctuation(text):
             commandSession.replaceSelection(id: snapshot.id, text: text)
             lastReplacementID = snapshot.id
-        case .ruby, .bouten:
+        case .ruby:
             notationSheet = NotationSheetState(operation: pendingOperation.operation, snapshot: snapshot)
+        case .bouten:
+            guard let notation = EditorNotationRules.bouten(text: snapshot.text) else {
+                replacementError = "傍点を付ける文字を選択してください。"
+                return
+            }
+            commandSession.replaceSelection(id: snapshot.id, text: notation)
+            lastReplacementID = snapshot.id
         }
     }
 
@@ -773,8 +781,7 @@ private struct NotationInputSheet: View {
                     TextField("ルビ", text: $rubyText)
                         .focused($focusedField, equals: .ruby)
                 case .bouten:
-                    TextField("対象文字列", text: $parentText)
-                        .focused($focusedField, equals: .parent)
+                    EmptyView()
                 case .punctuation:
                     EmptyView()
                 }
@@ -818,7 +825,7 @@ private struct NotationInputSheet: View {
         case .ruby:
             EditorNotationRules.ruby(parentText: parentText, rubyText: rubyText)
         case .bouten:
-            EditorNotationRules.bouten(text: parentText)
+            nil
         case .punctuation:
             nil
         }

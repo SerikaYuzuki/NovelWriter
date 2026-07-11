@@ -51,10 +51,14 @@ struct MacTextAdapter: NSViewRepresentable {
         configure(textView)
 
         textView.delegate = context.coordinator
+        context.coordinator.onSelectionChange = { range in
+            commandSession.updateSelectionAvailability(range)
+        }
         context.coordinator.textView = textView
         context.coordinator.currentChapterKey = chapterKey
 
         textView.string = initialText
+        commandSession.updateSelectionAvailability(textView.selectedRange())
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
         scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
             NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
@@ -68,6 +72,9 @@ struct MacTextAdapter: NSViewRepresentable {
         // クロージャは SwiftUI の再描画のたびに再生成されるため、常に最新のものへ
         // 差し替える(Coordinator はビューのライフサイクルを通じて生き続ける)。
         context.coordinator.onTextChange = onTextChange
+        context.coordinator.onSelectionChange = { range in
+            commandSession.updateSelectionAvailability(range)
+        }
 
         guard let textView = context.coordinator.textView else { return }
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
@@ -79,6 +86,7 @@ struct MacTextAdapter: NSViewRepresentable {
             context.coordinator.currentChapterKey = chapterKey
             textView.string = initialText
             textView.setSelectedRange(NSRange(location: 0, length: 0))
+            commandSession.updateSelectionAvailability(textView.selectedRange())
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
 
             // 章切り替え: 前章の undo 履歴が新しい章に効いてはならない。
@@ -143,6 +151,7 @@ struct MacTextAdapter: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onTextChange: (String) -> Void
+        var onSelectionChange: ((NSRange) -> Void)?
         weak var textView: NSTextView?
         var currentChapterKey: AnyHashable?
         private var lastAppliedSelectionRequestID: UUID?
@@ -231,6 +240,11 @@ struct MacTextAdapter: NSViewRepresentable {
             }
 
             onTextChange(textView.string)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            onSelectionChange?(textView.selectedRange())
         }
 
         func undoManager(for _: NSTextView) -> UndoManager? {
