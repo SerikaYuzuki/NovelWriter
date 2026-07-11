@@ -254,6 +254,7 @@ struct AttachmentDetailView: View {
             .formStyle(.grouped)
             .padding(20)
             .frame(maxWidth: 720, maxHeight: .infinity, alignment: .topLeading)
+            .workbenchGlassChromeStyle()
         } else {
             ContentUnavailableView(
                 "資料が選択されていません",

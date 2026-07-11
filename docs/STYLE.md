@@ -71,7 +71,8 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - Outline系paneは`.thinMaterial`を共通surfaceとし、背面のwindow surfaceがわずかに見える状態を保つ。不透明な`.bar`への統一は禁止
-- detail chrome(見出しバー、フォーム背面、GroupBox周辺)も`.thinMaterial`へ寄せる。原稿および世界観ノートの`EditorView`背景だけは不透明キャンバスを維持する
+- detail chrome(見出しバー、フォーム背面、GroupBox周辺)も`workbenchGlassChromeStyle()`(=`.thinMaterial`)へ寄せる。原稿および世界観ノートの`EditorView`背景だけは不透明キャンバスを維持する
+- 執筆Outlineは`OutlineContainerView`全体へglassを付け、内側Listは`workbenchOutlineListStyle()`だけを使い二重materialを避ける
 - フォームは `.formStyle(.grouped)` を設定などシステムフォームに使う。作品情報・人物・世界観の長文入力は共通のLabeled Field部品を使い、ラベルと入力の間隔8pt、長文の内側inset 8ptを守る
 - 作品情報と設定はOutline列を持たない(Sidebar + Detailの2列)。世界観はノート一覧Outline + 本文Detailの3列とする(D-032)
 

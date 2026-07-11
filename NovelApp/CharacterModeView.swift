@@ -156,6 +156,7 @@ private struct CharacterSheetView: View {
             .padding(24)
             .frame(maxWidth: 920, alignment: .leading)
         }
+        .workbenchGlassChromeStyle()
         .onDisappear {
             appState.commitCharacterEditing()
         }

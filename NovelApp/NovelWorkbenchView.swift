@@ -562,7 +562,6 @@ private struct ProjectInfoView: View {
                         }
                         .padding(8)
                     }
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .padding(20)
                 .frame(maxWidth: 720, alignment: .leading)
@@ -625,10 +624,10 @@ private struct SectionSurface<Content: View>: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(.bar)
 
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .workbenchGlassChromeStyle()
     }
 }

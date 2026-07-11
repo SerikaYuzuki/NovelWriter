@@ -299,6 +299,7 @@ struct PlotAndFlagSplitView: View {
                     maxHeight: .infinity
                 )
         }
+        .workbenchGlassChromeStyle()
     }
 }
 
