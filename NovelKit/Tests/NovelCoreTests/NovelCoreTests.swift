@@ -25,13 +25,13 @@ import Testing
     #expect(decoded == id)
 }
 
-@Test func chapterDefaultsToEmptyContent() {
+@Test func chapterDefaultsToOneEmptyEpisode() {
     let chapter = Chapter(title: "第1章")
-    #expect(chapter.content.isEmpty)
-    #expect(chapter.memo.isEmpty)
     #expect(chapter.title == "第1章")
     #expect(chapter.episodes.count == 1)
     #expect(chapter.episodes[0].title == Episode.defaultTitle)
+    #expect(chapter.episodes[0].content.isEmpty)
+    #expect(chapter.episodes[0].memo.isEmpty)
 }
 
 @Test func chapterDecodesMissingMemoAsEmptyString() throws {
@@ -48,10 +48,10 @@ import Testing
 
     #expect(decoded.id == id)
     #expect(decoded.title == "第1章")
-    #expect(decoded.content == "本文")
-    #expect(decoded.memo == "")
     #expect(decoded.episodes.count == 1)
     #expect(decoded.episodes[0].id.rawValue == id.rawValue)
+    #expect(decoded.episodes[0].content == "本文")
+    #expect(decoded.episodes[0].memo == "")
 }
 
 @Test func novelDocumentChaptersOrderIsArrayOrder() {
@@ -165,8 +165,7 @@ import Testing
     #expect(doc.chapters.count == 2)
     #expect(doc.chapters.last?.id == newID)
     #expect(doc.chapters.last?.title == "第2章")
-    #expect(doc.chapters.last?.content.isEmpty == true)
-    #expect(doc.chapters.last?.memo.isEmpty == true)
+    #expect(doc.chapters.last?.episodes.isEmpty == true)
 }
 
 @Test func updateTitleUpdatesMatchingChapterOnly() {
@@ -223,46 +222,6 @@ import Testing
     doc.moveChapters(fromOffsets: IndexSet(integer: 0), toOffset: 3)
 
     #expect(doc.chapters.map(\.id) == [second.id, third.id, first.id])
-}
-
-@Test func updateContentUpdatesMatchingChapterOnly() {
-    let first = Chapter(title: "第1章", content: "旧本文")
-    let second = Chapter(title: "第2章", content: "変わらない")
-    var doc = NovelDocument(title: "テスト作品", chapters: [first, second])
-
-    doc.updateContent("新本文", for: first.id)
-
-    #expect(doc.chapters[0].content == "新本文")
-    #expect(doc.chapters[1].content == "変わらない")
-}
-
-@Test func updateContentIgnoresUnknownChapterID() {
-    let chapter = Chapter(title: "第1章", content: "本文")
-    var doc = NovelDocument(title: "テスト作品", chapters: [chapter])
-
-    doc.updateContent("書き換え", for: ChapterID())
-
-    #expect(doc.chapters == [chapter])
-}
-
-@Test func updateMemoUpdatesMatchingChapterOnly() {
-    let first = Chapter(title: "第1章", content: "本文", memo: "旧メモ")
-    let second = Chapter(title: "第2章", content: "本文2", memo: "変わらない")
-    var doc = NovelDocument(title: "テスト作品", chapters: [first, second])
-
-    doc.updateMemo("新メモ", for: first.id)
-
-    #expect(doc.chapters[0].memo == "新メモ")
-    #expect(doc.chapters[1].memo == "変わらない")
-}
-
-@Test func updateMemoIgnoresUnknownChapterID() {
-    let chapter = Chapter(title: "第1章", content: "本文", memo: "メモ")
-    var doc = NovelDocument(title: "テスト作品", chapters: [chapter])
-
-    doc.updateMemo("書き換え", for: ChapterID())
-
-    #expect(doc.chapters == [chapter])
 }
 
 @Test func manuscriptCharacterCountExcludesNewlinesButIncludesSpaces() {

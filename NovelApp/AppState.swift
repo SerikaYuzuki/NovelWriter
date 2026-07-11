@@ -37,6 +37,17 @@ enum DocumentSaveState: Equatable {
     }
 }
 
+/// AppStateのactor分離に依存せず、破棄時に通知登録を解除するtoken holder。
+private final class NotificationObserverToken {
+    var value: NSObjectProtocol?
+
+    deinit {
+        if let value {
+            NotificationCenter.default.removeObserver(value)
+        }
+    }
+}
+
 /// アプリ全体の状態を管理する(docs/DESIGN.md 5.2)。
 ///
 /// 責務:
@@ -45,7 +56,7 @@ enum DocumentSaveState: Equatable {
 ///   `AppState` は薄く保つ)
 /// - 保存先 URL の保持と、「最近開いた作品」のファイルパスの記録(D-009。
 ///   App Sandbox 非採用のためセキュリティスコープ付きブックマークは不要 → D-011)
-/// - 自動保存: 本文変更は2秒デバウンス、章切り替え時とアプリ非アクティブ時は即保存
+/// - 自動保存: 本文変更は2秒デバウンス、話切り替え時とアプリ非アクティブ時は即保存
 ///   (docs/DESIGN.md 6.4)
 @MainActor
 @Observable
@@ -118,11 +129,8 @@ final class AppState {
             self?.handleSaveEvent(event)
         }
     )
-    /// `deinit` は MainActor 分離を持たない(nonisolated)ため、そこから触れるように
-    /// `nonisolated(unsafe)` にする。実際の読み書きは init/メソッド(MainActor)と
-    /// deinit(このインスタンスへの参照がなくなった後、一度だけ)からのみで、
-    /// 競合アクセスは発生しない。
-    private nonisolated(unsafe) var resignActiveObserver: NSObjectProtocol?
+    /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
+    @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
 
     private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
     private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
@@ -151,12 +159,6 @@ final class AppState {
             section: ProjectSection(rawValue: storedSection) ?? .structure
         )
         attachments = []
-    }
-
-    deinit {
-        if let resignActiveObserver {
-            NotificationCenter.default.removeObserver(resignActiveObserver)
-        }
     }
 
     /// 起動時の読み込み/新規作成を行う。`NovelWriterApp` から一度だけ呼ばれる想定。
@@ -329,11 +331,6 @@ final class AppState {
     func selectProjectSection(_ section: ProjectSection) {
         guard workspaceSelection.section != section else { return }
         workspaceSelection = WorkspaceSelection(section: section)
-    }
-
-    /// 既存UIとの互換名。2cで `selectedChapterID` へ置き換える。
-    var selection: ChapterID? {
-        selectedChapterID
     }
 
     /// 選択中の章(存在しなければ `nil`)。
@@ -568,11 +565,6 @@ final class AppState {
         saveCoordinator.scheduleDebouncedSave()
     }
 
-    /// 既存UIとの互換名。2cで話単位APIへ置き換える。
-    func updateSelectedChapterContent(_ content: String) {
-        updateSelectedEpisodeContent(content)
-    }
-
     /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
     /// `TextEditor` から通常の Binding 更新で呼ばれる。
     func updateSelectedEpisodeMemo(_ memo: String) {
@@ -581,11 +573,6 @@ final class AppState {
         document.updateEpisodeMemo(memo, for: selectedEpisodeID, in: selectedChapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
-    }
-
-    /// 既存UIとの互換名。2cで話単位APIへ置き換える。
-    func updateSelectedChapterMemo(_ memo: String) {
-        updateSelectedEpisodeMemo(memo)
     }
 
     // MARK: - 登場人物
@@ -894,7 +881,7 @@ final class AppState {
 
     /// 伏線を追加し、追加した伏線を選択状態にする。
     func addFlag() {
-        let newID = document.addFlag(title: "新しい伏線", plantedChapterID: selection)
+        let newID = document.addFlag(title: "新しい伏線", plantedChapterID: selectedChapterID)
         selectedFlagID = newID
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -963,7 +950,7 @@ final class AppState {
     func toggleSelectedFlagResolved() {
         guard var next = selectedFlag else { return }
         next.isResolved.toggle()
-        next.resolvedChapterID = next.isResolved ? selection : nil
+        next.resolvedChapterID = next.isResolved ? selectedChapterID : nil
         document.updateFlag(next)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -1242,7 +1229,7 @@ final class AppState {
     }
 
     private func observeResignActive() {
-        resignActiveObserver = NotificationCenter.default.addObserver(
+        resignActiveObserver.value = NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,
             object: nil,
             queue: .main

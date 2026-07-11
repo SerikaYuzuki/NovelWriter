@@ -61,7 +61,7 @@ struct NovelWorkbenchView: View {
             text: Bindable(editorSearchSession).query,
             isPresented: searchableIsPresented,
             placement: .toolbar,
-            prompt: "章内を検索"
+            prompt: "話内を検索"
         )
         .onSubmit(of: .search) {
             editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
@@ -530,7 +530,7 @@ private struct ProjectInfoView: View {
                 LabeledContent("保存状態", value: appState.saveState.label)
                 LabeledContent("章数", value: "\(appState.document.chapters.count)")
                 LabeledContent("文字数", value: "\(appState.document.manuscriptCharacterCount)")
-                LabeledContent("保存形式", value: ".novelpkg v2")
+                LabeledContent("保存形式", value: ".novelpkg v3")
             }
             .formStyle(.grouped)
             .padding(20)

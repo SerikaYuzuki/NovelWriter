@@ -87,7 +87,7 @@ private enum SavePerformanceFixture {
         let setupClock = ContinuousClock()
         let setupStartedAt = setupClock.now
         for index in 1 ... SavePerformanceBudget.snapshotCount {
-            document.chapters[0].content = body + "\n// snapshot \(index)"
+            document.chapters[0].episodes[0].content = body + "\n// snapshot \(index)"
             _ = try await repository.saveSnapshot(document, to: packageURL)
         }
         return PreparedRepresentativePackage(
@@ -123,7 +123,7 @@ func overwriteSaveOfRepresentativePackageStaysWithinBudget() async throws {
     #expect(try await repository.listSnapshots(in: packageURL).count == SavePerformanceBudget.snapshotCount)
 
     var document = try await repository.load(from: packageURL)
-    document.chapters[0].content = prepared.body + "\n// measured overwrite"
+    document.chapters[0].episodes[0].content = prepared.body + "\n// measured overwrite"
 
     let clock = ContinuousClock()
     let startedAt = clock.now
@@ -142,7 +142,8 @@ func overwriteSaveOfRepresentativePackageStaysWithinBudget() async throws {
     )
 
     #expect(elapsed <= SavePerformanceBudget.overwriteSaveDuration)
-    #expect(try await repository.load(from: packageURL).chapters[0].content.hasSuffix("// measured overwrite"))
+    let loadedContent = try await repository.load(from: packageURL).chapters[0].episodes[0].content
+    #expect(loadedContent.hasSuffix("// measured overwrite"))
     #expect(try await repository.listSnapshots(in: packageURL).count == SavePerformanceBudget.snapshotCount)
     #expect(try await repository.listAttachments(in: packageURL).count == 1)
 }

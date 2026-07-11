@@ -16,7 +16,7 @@ struct AppStateSaveStateTests {
             )
         )
 
-        state.updateSelectedChapterContent("保存対象")
+        state.updateSelectedEpisodeContent("保存対象")
         #expect(state.saveState == .unsaved)
 
         let firstResult = await state.saveBeforeTermination()

@@ -85,38 +85,42 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         }
         .defaultCustomization(.visible)
 
-        ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
-            Button {
-                appState.addCharacter()
-            } label: {
-                Label("登場人物を追加", systemImage: "person.badge.plus")
+        if showsCharacterActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
+                Button {
+                    appState.addCharacter()
+                } label: {
+                    Label("登場人物を追加", systemImage: "person.badge.plus")
+                }
+                .help("登場人物を追加")
             }
-            .help("登場人物を追加")
-            .disabled(!showsCharacterActions)
+            .defaultCustomization(.visible)
         }
-        .defaultCustomization(.visible)
 
-        ToolbarItem(id: WorkbenchToolbarItemID.plotCardAdd) {
-            Button {
-                appState.addPlotCard(chapterID: selectedPlotChapterID)
-            } label: {
-                Label("プロットカードを追加", systemImage: "rectangle.stack.badge.plus")
+        if showsPlotActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardAdd) {
+                Button {
+                    appState.addPlotCard(chapterID: selectedPlotChapterID)
+                } label: {
+                    Label("プロットカードを追加", systemImage: "rectangle.stack.badge.plus")
+                }
+                .help("プロットカードを追加")
             }
-            .help("プロットカードを追加")
-            .disabled(!showsPlotActions)
+            .defaultCustomization(.visible)
         }
-        .defaultCustomization(.visible)
 
-        ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
-            Button {
-                NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
-            } label: {
-                Label("資料を取り込む", systemImage: "paperclip")
+        if showsReferenceActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
+                Button {
+                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
+                } label: {
+                    Label("資料を取り込む", systemImage: "paperclip")
+                }
+                .help("資料を取り込む")
+                .disabled(!appState.supportsAttachments)
             }
-            .help("資料を取り込む")
-            .disabled(!showsReferenceActions || !appState.supportsAttachments)
+            .defaultCustomization(.visible)
         }
-        .defaultCustomization(.visible)
     }
 
     private var showsCharacterActions: Bool {
@@ -482,7 +486,7 @@ struct ChapterContextMenuContent: View {
     }
 
     private var targetChapterID: ChapterID? {
-        chapterID ?? appState.selection
+        chapterID ?? appState.selectedChapterID
     }
 
     private var targetChapter: Chapter? {

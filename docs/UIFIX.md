@@ -4,7 +4,7 @@
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 
-Phase 5 の出力仕様は現在の `Chapter` が本文を直接持つ前提である。章／話階層を出力実装後に導入すると全レンダラとテストを作り直すため、**本計画を Phase 5-1 より先に完了する**。
+Phase 5 の旧出力仕様は `Chapter` が本文を直接持つ前提だった。章／話階層を出力実装後に導入すると全レンダラとテストを作り直すため、本計画を Phase 5-1 より先に完了し、出力仕様も [PHASE5.md](PHASE5.md) で更新済みである。
 
 ## 1. 対象要望と設計結果
 
@@ -193,7 +193,7 @@ detail列:
 
 **完了条件:** v2 fixture を無損失で読み、保存後に v3 として再読込できる。本文、メモ、カード、伏線、資料、snapshot が残る。
 
-**実装結果 (2026-07-11):** `EpisodeID` / `Episode` / `Chapter.episodes` を追加。v1 / v2 の `chapters/` + `notes/` を `EpisodeID == ChapterID` の「本文」話へ移行し、v3では `episodes/` + `episode-notes/` と nested manifest を書き出す。既存Appの章単位APIは2bまで互換 accessorで維持する。v3の複数話順、欠損本文、旧形式移行、添付・snapshot保持をテスト済み。
+**実装結果 (2026-07-11):** `EpisodeID` / `Episode` / `Chapter.episodes` を追加。v1 / v2 の `chapters/` + `notes/` を `EpisodeID == ChapterID` の「本文」話へ移行し、v3では `episodes/` + `episode-notes/` と nested manifest を書き出す。移行中だけ置いた章本文・章メモの互換accessorはPhase 5着手前監査で撤去した。v3の複数話順、欠損本文、旧形式移行、添付・snapshot保持をテスト済み。
 
 ### UI-FIX-2b: AppState の話選択と操作【完了】
 
@@ -272,4 +272,4 @@ detail列:
 
 ## 8. Phase 5 への引き継ぎ
 
-UI-FIX-5 完了後に PHASE5.md の出力仕様を `NovelDocument → Chapter → Episode` に更新する。出力順は章配列順、その中の話配列順とし、テキスト / Markdown / EPUB / PDF のすべてで章見出しと話見出しを区別する。これを終えるまで Phase 5-1 は開始しない。
+UI-FIX-5 完了後、PHASE5.md の出力仕様を `NovelDocument → Chapter → Episode` へ更新済みである。出力順は章配列順、その中の話配列順とし、テキスト / Markdown / EPUB / PDF のすべてで章見出しと話見出しを区別する。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)へ進む。

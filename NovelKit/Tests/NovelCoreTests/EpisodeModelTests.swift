@@ -19,8 +19,8 @@ import Testing
     let decoded = try JSONDecoder().decode(Chapter.self, from: data)
 
     #expect(decoded.episodes == [first, second])
-    #expect(decoded.content == "最初")
-    #expect(decoded.memo == "")
+    #expect(decoded.episodes.first?.content == "最初")
+    #expect(decoded.episodes.first?.memo == "")
 }
 
 @Test func novelDocumentManuscriptCharacterCountSumsAllEpisodes() {

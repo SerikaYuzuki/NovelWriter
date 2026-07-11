@@ -30,14 +30,14 @@ import Testing
     try await repository.save(doc, to: packageURL)
     let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
 
-    doc.chapters[0].content = "更新版"
+    doc.chapters[0].episodes[0].content = "更新版"
     try await repository.save(doc, to: packageURL)
 
     #expect(FileManager.default.fileExists(atPath: snapshotURL.path))
     let loadedSnapshot = try await repository.load(from: snapshotURL)
-    #expect(loadedSnapshot.chapters[0].content == "初版")
+    #expect(loadedSnapshot.chapters[0].episodes[0].content == "初版")
     let loadedCurrent = try await repository.load(from: packageURL)
-    #expect(loadedCurrent.chapters[0].content == "更新版")
+    #expect(loadedCurrent.chapters[0].episodes[0].content == "更新版")
 }
 
 @Test func listSnapshotsReturnsNewestFirst() async throws {
@@ -78,7 +78,7 @@ import Testing
     _ = try await repository.addAttachment(from: attachmentSourceURL, to: packageURL)
     let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL)
 
-    doc.chapters[0].content = "更新版"
+    doc.chapters[0].episodes[0].content = "更新版"
     try await repository.save(doc, to: packageURL)
     let newerAttachmentURL = tempDir.appendingPathComponent("新資料.txt")
     try "新資料".write(to: newerAttachmentURL, atomically: true, encoding: .utf8)
@@ -90,7 +90,7 @@ import Testing
     try await repository.restoreSnapshot(from: snapshotURL, into: packageURL)
 
     let restored = try await repository.load(from: packageURL)
-    #expect(restored.chapters[0].content == "初版")
+    #expect(restored.chapters[0].episodes[0].content == "初版")
     #expect(try await repository.listAttachments(in: packageURL).map(\.fileName) == ["旧資料.txt"])
 
     let listed = try await repository.listSnapshots(in: packageURL)
@@ -120,8 +120,8 @@ import Testing
 
     // スナップショット後にパッケージを更新しておき、復元で巻き戻ることを確認できるようにする。
     var updatedDoc = doc
-    updatedDoc.chapters[0].content = "更新後の本文"
-    updatedDoc.chapters[0].memo = "更新後のメモ"
+    updatedDoc.chapters[0].episodes[0].content = "更新後の本文"
+    updatedDoc.chapters[0].episodes[0].memo = "更新後のメモ"
     try await repository.save(updatedDoc, to: packageURL)
 
     try await repository.restoreSnapshot(from: legacySnapshotURL, into: packageURL)
@@ -130,8 +130,8 @@ import Testing
     let manifest = try manifestJSON(at: packageURL)
     #expect(manifest["formatVersion"] as? String == "3")
     let restored = try await repository.load(from: packageURL)
-    #expect(restored.chapters[0].content == "スナップショット時点の本文")
-    #expect(restored.chapters[0].memo == "当時のメモ")
+    #expect(restored.chapters[0].episodes[0].content == "スナップショット時点の本文")
+    #expect(restored.chapters[0].episodes[0].memo == "当時のメモ")
 
     // 既存の snapshots/ (v2形式のスナップショットを含む)は保持される。
     let listed = try await repository.listSnapshots(in: packageURL)
