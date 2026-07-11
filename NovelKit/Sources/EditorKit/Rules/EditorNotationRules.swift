@@ -9,6 +9,17 @@ public enum EditorNotationRules {
 
     public static func bouten(text: String) -> String? {
         guard !text.isEmpty else { return nil }
-        return "《《\(text)》》"
+
+        var result = ""
+        result.reserveCapacity(text.utf8.count * 5)
+        for character in text {
+            if character.isNewline || character == " " || character == "\u{3000}" || character == "\t" {
+                result.append(character)
+            } else {
+                result += "｜\(character)《・》"
+            }
+        }
+
+        return result == text ? nil : result
     }
 }
