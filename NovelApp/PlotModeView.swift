@@ -136,12 +136,15 @@ struct PlotModeView: View {
 struct PlotChapterOutlineView: View {
     @Environment(AppState.self) private var appState
 
+    @State private var dropTarget: PlotOutlineSelection?
+
     var body: some View {
         List(selection: plotOutlineSelectionBinding) {
             Section("章") {
                 PlotUnassignedOutlineRow(
                     cardCount: appState.document.plotCards.count { $0.chapterID == nil }
                 )
+                .plotOutlineDropTarget(.unassigned, targetedSelection: $dropTarget)
                 .tag(PlotOutlineSelection.unassigned)
 
                 ForEach(appState.document.chapters) { chapter in
@@ -150,6 +153,7 @@ struct PlotChapterOutlineView: View {
                         cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
                         flagCount: flagCount(for: chapter.id)
                     )
+                    .plotOutlineDropTarget(.chapter(chapter.id), targetedSelection: $dropTarget)
                     .tag(PlotOutlineSelection.chapter(chapter.id))
                 }
             }
@@ -184,6 +188,43 @@ struct PlotChapterOutlineView: View {
                 count += 1
             }
         }
+    }
+}
+
+private extension View {
+    func plotOutlineDropTarget(
+        _ selection: PlotOutlineSelection,
+        targetedSelection: Binding<PlotOutlineSelection?>
+    ) -> some View {
+        modifier(PlotOutlineDropTargetModifier(selection: selection, targetedSelection: targetedSelection))
+    }
+}
+
+private struct PlotOutlineDropTargetModifier: ViewModifier {
+    @Environment(AppState.self) private var appState
+
+    let selection: PlotOutlineSelection
+    @Binding var targetedSelection: PlotOutlineSelection?
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .background {
+                if targetedSelection == selection {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.thinMaterial)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.accentColor.opacity(0.16))
+                        }
+                }
+            }
+            .dropDestination(for: PlotCardID.self) { items, _ in
+                guard let cardID = items.first else { return false }
+                return appState.movePlotCardFromOutline(id: cardID, to: selection)
+            } isTargeted: { isTargeted in
+                targetedSelection = isTargeted ? selection : nil
+            }
     }
 }
 
