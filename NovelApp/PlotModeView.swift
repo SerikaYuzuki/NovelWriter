@@ -139,35 +139,37 @@ struct PlotChapterOutlineView: View {
     @State private var dropTarget: PlotOutlineSelection?
 
     var body: some View {
-        List(selection: plotOutlineSelectionBinding) {
-            Section("章") {
-                PlotUnassignedOutlineRow(
-                    cardCount: appState.document.plotCards.count { $0.chapterID == nil }
-                )
-                .plotOutlineDropTarget(.unassigned, targetedSelection: $dropTarget)
-                .tag(PlotOutlineSelection.unassigned)
-
-                ForEach(appState.document.chapters) { chapter in
-                    PlotChapterOutlineRow(
-                        chapter: chapter,
-                        cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
-                        flagCount: flagCount(for: chapter.id)
+        VStack(spacing: 0) {
+            List(selection: plotOutlineSelectionBinding) {
+                Section("章") {
+                    PlotUnassignedOutlineRow(
+                        cardCount: appState.document.plotCards.count { $0.chapterID == nil }
                     )
-                    .plotOutlineDropTarget(.chapter(chapter.id), targetedSelection: $dropTarget)
-                    .tag(PlotOutlineSelection.chapter(chapter.id))
+                    .plotOutlineDropTarget(.unassigned, targetedSelection: $dropTarget)
+                    .tag(PlotOutlineSelection.unassigned)
+
+                    ForEach(appState.document.chapters) { chapter in
+                        PlotChapterOutlineRow(
+                            chapter: chapter,
+                            cardCount: appState.document.plotCards.count { $0.chapterID == chapter.id },
+                            flagCount: flagCount(for: chapter.id)
+                        )
+                        .plotOutlineDropTarget(.chapter(chapter.id), targetedSelection: $dropTarget)
+                        .tag(PlotOutlineSelection.chapter(chapter.id))
+                    }
                 }
             }
-        }
-        .workbenchGlassOutlineStyle()
-        .overlay {
-            if appState.document.chapters.isEmpty,
-               appState.document.plotCards.allSatisfy({ $0.chapterID != nil })
-            {
-                ContentUnavailableView(
-                    "章がありません",
-                    systemImage: "doc.text",
-                    description: Text("執筆画面から章を追加できます。")
-                )
+            .workbenchGlassOutlineStyle()
+            .overlay {
+                if appState.document.chapters.isEmpty,
+                   appState.document.plotCards.allSatisfy({ $0.chapterID != nil })
+                {
+                    ContentUnavailableView(
+                        "章がありません",
+                        systemImage: "doc.text",
+                        description: Text("上部の「章を追加」または章メニューから追加できます。")
+                    )
+                }
             }
         }
     }
@@ -313,45 +315,39 @@ private struct PlotCardCanvas: View {
     @Binding var cardPendingDeletion: PlotCard?
 
     var body: some View {
-        ForEach(cards) { card in
-            PlotBoardCard(
-                card: card,
-                onEdit: {
-                    editingCardID = card.id
-                    appState.selectPlotCard(card.id)
-                },
-                onDelete: {
-                    cardPendingDeletion = card
-                }
+        if cards.isEmpty {
+            ContentUnavailableView(
+                "プロットカードがありません",
+                systemImage: "rectangle.stack",
+                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
             )
-            .frame(width: 260, alignment: .topLeading)
-            .draggable(card.id)
+            .frame(width: 260)
+            .frame(minHeight: 120)
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let droppedID = items.first else { return false }
-                appState.movePlotCard(id: droppedID, toChapter: chapterID, before: card.id)
+                appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
                 return true
             }
-        }
-
-        Button {
-            appState.addPlotCard(chapterID: chapterID)
-        } label: {
-            Label("カードを追加", systemImage: "plus")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .buttonStyle(.borderless)
-        .frame(width: 260)
-        .frame(minHeight: 72)
-        .background(.quaternary.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator, lineWidth: 1)
-        }
-        .dropDestination(for: PlotCardID.self) { items, _ in
-            guard let droppedID = items.first else { return false }
-            appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
-            return true
+        } else {
+            ForEach(cards) { card in
+                PlotBoardCard(
+                    card: card,
+                    onEdit: {
+                        editingCardID = card.id
+                        appState.selectPlotCard(card.id)
+                    },
+                    onDelete: {
+                        cardPendingDeletion = card
+                    }
+                )
+                .frame(width: 260, alignment: .topLeading)
+                .draggable(card.id)
+                .dropDestination(for: PlotCardID.self) { items, _ in
+                    guard let droppedID = items.first else { return false }
+                    appState.movePlotCard(id: droppedID, toChapter: chapterID, before: card.id)
+                    return true
+                }
+            }
         }
     }
 }

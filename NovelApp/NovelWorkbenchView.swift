@@ -35,12 +35,10 @@ struct NovelWorkbenchView: View {
             AIAssistantPanelView()
         }
         .preferredColorScheme(.dark)
-        .toolbar(id: "novelwriter.workbench.v1") {
+        .toolbar(id: "novelwriter.workbench.v3") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
-                showsWritingActions: showsWritingActions,
-                onOpenCharacter: openCharacter,
-                onOpenPlotCard: openPlotCard
+                showsWritingActions: showsWritingActions
             )
         }
         .searchable(
@@ -169,16 +167,6 @@ struct NovelWorkbenchView: View {
                 }
             }
         )
-    }
-
-    private func openCharacter(_ characterID: CharacterID) {
-        appState.selectCharacter(characterID)
-        appState.selectProjectSection(.characters)
-    }
-
-    private func openPlotCard(_ cardID: PlotCardID) {
-        appState.selectPlotCard(cardID)
-        appState.selectProjectSection(.plot)
     }
 
     @MainActor
@@ -326,19 +314,6 @@ private struct WorldbuildingOutlineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Spacer()
-                Button {
-                    appState.addWorldNote()
-                } label: {
-                    Label("ノートを追加", systemImage: "plus")
-                }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .help("ノートを追加")
-            }
-            .padding(8)
-
             List(selection: selectionBinding) {
                 ForEach(appState.document.worldNotes) { note in
                     WorldNoteRow(note: note)
@@ -360,7 +335,7 @@ private struct WorldbuildingOutlineView: View {
                     ContentUnavailableView(
                         "世界観ノートがありません",
                         systemImage: "globe.asia.australia",
-                        description: Text("ツールバーまたは＋からノートを追加できます。")
+                        description: Text("上部の「ノートを追加」または世界観メニューから追加できます。")
                     )
                 }
             }

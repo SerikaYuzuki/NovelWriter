@@ -20,8 +20,6 @@ struct OutlineContainerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WritingOutlineHeader()
-
             if appState.outlinePresentation.isSearchVisible {
                 OutlineSearchBar(
                     text: outlineSearchBinding,
@@ -103,25 +101,6 @@ struct OutlineContainerView: View {
                 }
             }
         )
-    }
-}
-
-private struct WritingOutlineHeader: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        HStack {
-            Spacer()
-            Button {
-                appState.addChapter()
-            } label: {
-                Label("章を追加", systemImage: "plus")
-            }
-            .buttonStyle(.borderless)
-            .labelStyle(.iconOnly)
-            .help("章を追加")
-        }
-        .padding(8)
     }
 }
 
@@ -237,7 +216,7 @@ struct OutlineView: View {
                 ContentUnavailableView(
                     "章または話がありません",
                     systemImage: "doc.text",
-                    description: Text("上部の + から章を追加できます。")
+                    description: Text("上部の「章を追加」または章メニューから追加できます。")
                 )
             }
         }
