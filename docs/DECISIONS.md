@@ -268,7 +268,7 @@
 
 ## D-032: Workbench全体をtranslucent chromeとし、Outline不要セクションと世界観ノートを導入する
 
-- **日付**: 2026-07-11 / **状態**: 承認(UI-REF-1〜3とUI-REF-4の世界観モデル・保存を実装済み。残りは [UIREFRESH.md](UIREFRESH.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-REF-1〜4とUI-REF-5の世界観UIを実装済み。残りは [UIREFRESH.md](UIREFRESH.md))
 - **内容**:
   1. Project Sidebar / Outline / detail chromeは`.thinMaterial`を基本のsurfaceとする。原稿および世界観ノートの`EditorView`背景だけは可読性のため不透明キャンバスを維持する。Outlineの不透明`.bar`統一は引き続き禁止し、detail側の`.bar`見出しもthinMaterialへ寄せる。
   2. 長文・短文を問わず、ラベルと入力コントロールの間隔は8pt、長文入力は内側inset 8ptを共通部品で固定する。横並び`LabeledContent`は短文1行に限り、あらすじなどの長文には使わない。

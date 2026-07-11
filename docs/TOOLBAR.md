@@ -169,10 +169,10 @@ WindowGroup
 | 登場人物 | 人物一覧 | 人物シート |
 | プロット | カード／伏線のナビゲータ | ボードまたは選択項目の詳細 |
 | 資料 | 添付一覧 | 選択資料の情報／Preview |
-| 世界観 | `概要` またはセクション内項目 | 現在の section surface |
+| 世界観 | ノート一覧 | タイトル + 本文 Editor |
 | 作品情報・設定 | なし（Sidebar + Detailの2列） | 現在の section surface |
 
-永続モデルがまだない世界観は、UI-REF-5まで暫定のOutline placeholderを使う。作品情報・設定はOutlineを持たない。Toolbar-1 で新しい保存モデルや機能を追加しない。
+世界観は Outline 側の pane 固定 `+` でノートを追加する。作品情報・設定は Outline を持たない。Toolbar-1 で新しい保存モデルや機能を追加しない。
 
 ## 9. 非目標
 

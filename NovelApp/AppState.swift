@@ -73,6 +73,8 @@ final class AppState {
     private(set) var selectedPlotCardID: PlotCardID?
     /// 選択中の伏線ID。
     private(set) var selectedFlagID: FlagID?
+    /// 選択中の世界観ノートID。
+    private(set) var selectedWorldNoteID: WorldNoteID?
     /// プロット画面 content 列の選択。未割り当てと章を切り替える(UIFIX 4.2)。
     private(set) var plotOutlineSelection: PlotOutlineSelection = .unassigned
     /// 原稿パッケージの保存状態。表示はこの値だけを正とする。
@@ -152,6 +154,7 @@ final class AppState {
         selectedCharacterID = nil
         selectedPlotCardID = nil
         selectedFlagID = nil
+        selectedWorldNoteID = nil
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
@@ -339,6 +342,9 @@ final class AppState {
     func selectProjectSection(_ section: ProjectSection) {
         guard workspaceSelection.section != section else { return }
         workspaceSelection = WorkspaceSelection(section: section)
+        if section == .worldbuilding {
+            ensureWorldNoteSelection()
+        }
     }
 
     /// 選択中の章(存在しなければ `nil`)。
@@ -369,6 +375,79 @@ final class AppState {
     var selectedFlag: Flag? {
         guard let selectedFlagID else { return nil }
         return document.flags.first { $0.id == selectedFlagID }
+    }
+
+    /// 選択中の世界観ノート(存在しなければ `nil`)。
+    var selectedWorldNote: WorldNote? {
+        guard let selectedWorldNoteID else { return nil }
+        return document.worldNotes.first { $0.id == selectedWorldNoteID }
+    }
+
+    // MARK: - 世界観ノート
+
+    /// 世界観ノートを追加し、追加したノートを選択する。
+    func addWorldNote() {
+        let note = WorldNote(title: "")
+        document.worldNotes.append(note)
+        selectedWorldNoteID = note.id
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 世界観ノートを選択する。選択前の本文はdidChangeでモデルへ反映済みとする。
+    func selectWorldNote(_ id: WorldNoteID?) {
+        guard id == nil || document.worldNotes.contains(where: { $0.id == id }) else { return }
+        guard selectedWorldNoteID != id else { return }
+        selectedWorldNoteID = id
+        flushSaveImmediately()
+    }
+
+    /// 世界観ノートのタイトルを更新する。空タイトルは編集中の値として許可する。
+    func updateWorldNoteTitle(_ title: String, for id: WorldNoteID) {
+        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
+              document.worldNotes[index].title != title else { return }
+        document.worldNotes[index].title = title
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 世界観ノートの本文を更新する。モデル反映は即時、保存だけをデバウンスする。
+    func updateWorldNoteContent(_ content: String, for id: WorldNoteID) {
+        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
+              document.worldNotes[index].content != content else { return }
+        document.worldNotes[index].content = content
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 世界観ノートを削除し、隣接ノートへ選択を移す。
+    func deleteWorldNote(id: WorldNoteID) {
+        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return }
+        document.worldNotes.remove(at: index)
+        if selectedWorldNoteID == id {
+            let fallbackIndex = min(index, max(document.worldNotes.count - 1, 0))
+            selectedWorldNoteID = document.worldNotes.indices.contains(fallbackIndex)
+                ? document.worldNotes[fallbackIndex].id
+                : nil
+        }
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    /// 世界観ノートの並び順を更新する。
+    func moveWorldNotes(fromOffsets: IndexSet, toOffset: Int) {
+        document.worldNotes.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        saveCoordinator.markDirty()
+        flushSaveImmediately()
+    }
+
+    private func ensureWorldNoteSelection() {
+        if let selectedWorldNoteID,
+           document.worldNotes.contains(where: { $0.id == selectedWorldNoteID })
+        {
+            return
+        }
+        selectedWorldNoteID = document.worldNotes.first?.id
     }
 
     /// 章を選択する。最後に選択していた話、なければ先頭の話も選択する。
@@ -1257,6 +1336,7 @@ final class AppState {
         let chapterID = newDocument.chapters.first?.id
         let episodeID = newDocument.chapters.first?.episodes.first?.id
         setSelection(chapterID: chapterID, episodeID: episodeID)
+        selectedWorldNoteID = newDocument.worldNotes.first?.id
         plotOutlineSelection = chapterID.map(PlotOutlineSelection.chapter) ?? .unassigned
     }
 
