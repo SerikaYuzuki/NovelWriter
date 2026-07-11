@@ -38,4 +38,5 @@ extension Notification.Name {
         .environment(DocumentPanelPresenter(appState: appState))
         .environment(SnapshotMenuPresenter(appState: appState))
         .environment(EditorSearchSession())
+        .environment(EditorCommandSession())
 }

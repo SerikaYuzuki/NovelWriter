@@ -1,4 +1,5 @@
 import AppKit
+import EditorKit
 import SwiftUI
 
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
@@ -32,6 +33,7 @@ struct NovelWriterApp: App {
     @State private var documentPanelPresenter: DocumentPanelPresenter
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
     @State private var editorSearchSession = EditorSearchSession()
+    @State private var editorCommandSession = EditorCommandSession()
 
     init() {
         let appState = AppState(dependencies: AppDependencies())
@@ -48,6 +50,7 @@ struct NovelWriterApp: App {
                 .environment(documentPanelPresenter)
                 .environment(snapshotMenuPresenter)
                 .environment(editorSearchSession)
+                .environment(editorCommandSession)
                 .task {
                     applicationDelegate.appState = appState
                     await appState.bootstrap()

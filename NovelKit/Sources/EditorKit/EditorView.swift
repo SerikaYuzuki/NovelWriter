@@ -23,6 +23,7 @@ public struct EditorView: View {
     private let chapterKey: AnyHashable
     private let initialText: String
     private let selectionRequest: EditorSelectionRequest?
+    private let commandSession: EditorCommandSession
     private let configuration: EditorConfiguration
     private let onTextChange: (String) -> Void
 
@@ -34,6 +35,7 @@ public struct EditorView: View {
     ///     本文。編集中は無視される(所有権はテキストビュー側にあるため)。
     ///   - selectionRequest: 本文中の指定範囲を選択し、表示位置へスクロールする
     ///     リクエスト。検索ジャンプなど、本文を書き換えない操作に使う。
+    ///   - commandSession: 選択取得・置換をAdapterへ配送する一時状態。本文のBindingには使わない。
     ///   - configuration: エディタの表示設定。本文は流し直さず、表示属性だけを更新する。
     ///   - onTextChange: 本文が変更されるたびに、そのときの全文を渡して呼び出される
     ///     コールバック。IME 変換中には呼ばれない。
@@ -41,12 +43,14 @@ public struct EditorView: View {
         chapterKey: AnyHashable,
         initialText: String,
         selectionRequest: EditorSelectionRequest? = nil,
+        commandSession: EditorCommandSession = EditorCommandSession(),
         configuration: EditorConfiguration = EditorConfiguration(),
         onTextChange: @escaping (String) -> Void
     ) {
         self.chapterKey = chapterKey
         self.initialText = initialText
         self.selectionRequest = selectionRequest
+        self.commandSession = commandSession
         self.configuration = configuration
         self.onTextChange = onTextChange
     }
@@ -57,6 +61,8 @@ public struct EditorView: View {
             chapterKey: chapterKey,
             initialText: initialText,
             selectionRequest: selectionRequest,
+            command: commandSession.pendingCommand,
+            commandSession: commandSession,
             configuration: configuration,
             onTextChange: onTextChange
         )

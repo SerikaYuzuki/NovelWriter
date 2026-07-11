@@ -141,6 +141,66 @@ struct MacTextAdapterIntegrationTests {
         #expect(textView.string == "こんにちは")
     }
 
+    @Test("Editor commandは選択範囲を置換し、Undo一回で戻せる")
+    func editorCommandReplacesSelectionAndSupportsSingleUndo() throws {
+        let harness = makeHarness(initialText: "本文を選択")
+        let textView = harness.textView
+        let session = EditorCommandSession()
+        let selectedRange = NSRange(location: 3, length: 1)
+        textView.setSelectedRange(selectedRange)
+
+        let id = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
+        let snapshot = try #require(session.selectionSnapshot)
+        #expect(snapshot.id == id)
+        #expect(snapshot.text == "選")
+        #expect(snapshot.range == selectedRange)
+
+        session.replaceSelection(id: id, text: "……")
+        harness.coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
+
+        #expect(textView.string == "本文を……択")
+        #expect(textView.selectedRange() == NSRange(location: 5, length: 0))
+        #expect(harness.coordinator.undoManager.canUndo)
+
+        harness.coordinator.undoManager.undo()
+
+        #expect(textView.string == "本文を選択")
+    }
+
+    @Test("Editor commandは未選択時にcaretへ挿入する")
+    func editorCommandInsertsAtCaret() throws {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        let session = EditorCommandSession()
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        let id = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
+        _ = try #require(session.selectionSnapshot)
+        session.replaceSelection(id: id, text: "――")
+        harness.coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
+
+        #expect(textView.string == "本――文")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+    }
+
+    @Test("Editor commandはIME変換中に本文を変更しない")
+    func editorCommandIsRejectedWhileComposing() {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        let session = EditorCommandSession()
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+        beginIMEComposition(in: textView)
+
+        let id = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(session.pendingCommand, session: session, textView: textView)
+
+        #expect(session.rejectedCommandID == id)
+        #expect(session.selectionSnapshot == nil)
+        #expect(textView.string == "本か文")
+    }
+
     @Test("置換挿入後もtypingAttributesのフォントが維持される")
     func typingAttributesArePreservedAfterReplacement() {
         let harness = makeHarness(initialText: "こんにちは")

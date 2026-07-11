@@ -27,6 +27,8 @@ struct MacTextAdapter: NSViewRepresentable {
     let chapterKey: AnyHashable
     let initialText: String
     let selectionRequest: EditorSelectionRequest?
+    let command: EditorCommand?
+    let commandSession: EditorCommandSession
     let configuration: EditorConfiguration
     let onTextChange: (String) -> Void
 
@@ -91,6 +93,7 @@ struct MacTextAdapter: NSViewRepresentable {
                 .textBackgroundColor
         }
         context.coordinator.applySelectionRequestIfNeeded(selectionRequest, textView: textView)
+        context.coordinator.applyEditorCommandIfNeeded(command, session: commandSession, textView: textView)
     }
 
     /// `NSTextView` が TextKit 2 で構築されていることを検証する。
@@ -163,7 +166,7 @@ struct MacTextAdapter: NSViewRepresentable {
         /// `textView(_:shouldChangeTextIn:replacementString:)` を呼び出す。このフラグで
         /// その再入を検知し、パイプラインを再実行せずそのまま許可することで、
         /// 自分自身の置換適用が無限に再帰するのを防ぐ。
-        private var isApplyingPluginReplacement = false
+        var isApplyingPluginReplacement = false
 
         init(onTextChange: @escaping (String) -> Void) {
             self.onTextChange = onTextChange
@@ -268,6 +271,15 @@ struct MacTextAdapter: NSViewRepresentable {
             caretOffset: Int,
             textView: NSTextView
         ) {
+            applyInternalReplacement(range: range, text: text, caretOffset: caretOffset, textView: textView)
+        }
+
+        func applyInternalReplacement(
+            range: NSRange,
+            text: String,
+            caretOffset: Int,
+            textView: NSTextView
+        ) {
             isApplyingPluginReplacement = true
             defer { isApplyingPluginReplacement = false }
 
@@ -316,28 +328,6 @@ struct MacTextAdapter: NSViewRepresentable {
             )
             textStorageAttributeApplicationCount += 1
         }
-    }
-}
-
-/// `EditorContext`(docs/DESIGN.md 4.4)を実際の `NSTextView` の状態から作るアダプタ。
-///
-/// `NSTextView` を直接プラグインへ渡さないための境界(docs/DESIGN.md 9.2)。
-/// delegate 呼び出しのたびに、その時点のテキストビュー状態のスナップショットとして
-/// 作り直す。プラグインは同期実行されるため、スナップショットでも一貫性は保てる。
-/// `NSTextView` への参照を持たないことで、非隔離な `EditorContext` プロトコルと
-/// AppKit の `@MainActor` 隔離の衝突も避けている。
-private struct MacEditorContext: EditorContext {
-    let string: String
-    let isIMEComposing: Bool
-
-    @MainActor
-    init(textView: NSTextView) {
-        string = textView.string
-        isIMEComposing = textView.hasMarkedText()
-    }
-
-    func lineRange(at location: Int) -> NSRange {
-        (string as NSString).lineRange(for: NSRange(location: location, length: 0))
     }
 }
 
