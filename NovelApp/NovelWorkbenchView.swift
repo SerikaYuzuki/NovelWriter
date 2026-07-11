@@ -516,18 +516,76 @@ private struct ProjectInfoView: View {
 
     var body: some View {
         SectionSurface(title: "作品情報", systemImage: "book.closed") {
-            Form {
-                LabeledContent("作品タイトル", value: appState.document.title)
-                LabeledContent("保存場所", value: appState.documentURL.path)
-                LabeledContent("保存状態", value: appState.saveState.label)
-                LabeledContent("章数", value: "\(appState.document.chapters.count)")
-                LabeledContent("文字数", value: "\(appState.document.manuscriptCharacterCount)")
-                LabeledContent("保存形式", value: ".novelpkg v3")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GroupBox("編集") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            LabeledContent("作品タイトル") {
+                                TextField("作品タイトル", text: titleBinding)
+                            }
+
+                            Text("あらすじ")
+                                .foregroundStyle(.secondary)
+                            TextEditor(text: synopsisBinding)
+                                .accessibilityLabel("あらすじ")
+                                .frame(minHeight: 160)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(.separator, lineWidth: 1)
+                                }
+                        }
+                        .padding(8)
+                    }
+
+                    GroupBox("保存情報") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            LabeledContent("保存場所") {
+                                Text(appState.documentURL.path)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                            LabeledContent("保存状態", value: appState.saveState.label)
+                            LabeledContent("章数") {
+                                Text("\(appState.document.chapters.count)")
+                                    .monospacedDigit()
+                            }
+                            LabeledContent("話数") {
+                                Text("\(episodeCount)")
+                                    .monospacedDigit()
+                            }
+                            LabeledContent("文字数") {
+                                Text("\(appState.document.manuscriptCharacterCount)")
+                                    .monospacedDigit()
+                            }
+                            LabeledContent("保存形式", value: ".novelpkg v3")
+                        }
+                        .padding(8)
+                    }
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .padding(20)
+                .frame(maxWidth: 720, alignment: .leading)
             }
-            .formStyle(.grouped)
-            .padding(20)
-            .frame(maxWidth: 720)
         }
+    }
+
+    private var titleBinding: Binding<String> {
+        Binding(
+            get: { appState.document.title },
+            set: { appState.updateDocumentTitle($0) }
+        )
+    }
+
+    private var synopsisBinding: Binding<String> {
+        Binding(
+            get: { appState.document.synopsis },
+            set: { appState.updateDocumentSynopsis($0) }
+        )
+    }
+
+    private var episodeCount: Int {
+        appState.document.chapters.reduce(0) { $0 + $1.episodes.count }
     }
 }
 

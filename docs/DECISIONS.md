@@ -226,7 +226,7 @@
 
 ## D-028: 原稿は Chapter(章) / Episode(話)の2階層とし、出力より先に移行する
 
-- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2a〜5で実装済み。Phase 5はD-029〜D-031のUI再設計完了後に開始)
+- **日付**: 2026-07-11 / **状態**: 承認(UI-FIX-2a〜5で実装済み。UI-REV-1〜9完了後にPhase 5へ進む)
 - **内容**:
   1. `Chapter` は章タイトルと順序付きの `[Episode]` を持つ構造とし、本文は持たない。`Episode` は `EpisodeID`、話タイトル、本文、メモを持つ編集単位とする。章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順だけを正とし、どちらにも `order` を追加しない。
   2. `PlotCard.chapterID` と `Flag` の張った章／回収章は章単位の参照として維持する。今回 `episodeID` 参照は追加しない。現行の章メモは v1 / v2 → v3 移行時に生成される話のメモへ移し、章自体のメモは追加しない。
@@ -239,7 +239,7 @@
 
 ## D-029: Outlineはtranslucent materialへ統一し、pane固有の追加操作はpaneへ固定する
 
-- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-REV-1〜4で実装済み。実装計画は [UIREVISION.md](UIREVISION.md))
 - **内容**:
   1. Project Sidebarを含むすべてのOutlineは、不透明な`.bar`背景ではなく、背面がわずかに見えるmacOS標準の`.thinMaterial`を共通surfaceとする。標準List選択、focus ring、Reduce Transparency fallbackはOSへ委ねる。
   2. Plot detailは上段Plot canvas／下段伏線の`VSplitView`とし、下段だけを伏線一覧／詳細の`HSplitView`にする。Plotカードは章レーンの囲いを持たず、Outline選択を文脈として横方向へ連続表示する。
@@ -249,7 +249,7 @@
 
 ## D-030: 明示的な執筆補助はEditor command境界から選択範囲を置換する
 
-- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-REV-5〜6で実装済み。実装計画は [UIREVISION.md](UIREVISION.md))
 - **内容**:
   1. Editor下部へ`……`、`――`、ルビ、傍点のcompact accessory barを置く。これはユーザーが明示的に実行するcommandであり、自動入力変換の`EditorPlugin`にはしない。
   2. SwiftUIは本文Bindingを直接書き換えず、EditorKitのAppKit非公開command APIへ置換要求を送る。MacTextAdapterがUTF-16選択範囲、IME、Undoを管理し、置換を1 Undo単位にする。
@@ -258,7 +258,7 @@
 
 ## D-031: 「企画」を廃止し、あらすじはproject.jsonのadditive metadataとする
 
-- **日付**: 2026-07-11 / **状態**: 承認(設計のみ。実装計画は [UIREVISION.md](UIREVISION.md))
+- **日付**: 2026-07-11 / **状態**: 承認(UI-REV-7〜9で実装済み。実装計画は [UIREVISION.md](UIREVISION.md))
 - **内容**:
   1. 永続モデルを持たない`ProjectSection.planning`を削除し、保存済みselectionが`planning`なら`projectInfo`へ移行する。Project Sidebarのショートカットは7項目へ再割当する。
   2. `NovelDocument`へ`synopsis: String`を追加し、UIでは「あらすじ」と表示する。作品情報上段でタイトルとあらすじを編集し、保存場所・状態・章数・話数・文字数・形式は下段の読み取り専用カードへ分離する。

@@ -448,6 +448,22 @@ final class AppState {
         saveCoordinator.scheduleDebouncedSave()
     }
 
+    /// 作品タイトルを更新する。空タイトルも編集中は許可し、保存はデバウンスする。
+    func updateDocumentTitle(_ title: String) {
+        guard document.title != title else { return }
+        document.title = title
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
+    /// 作品あらすじを更新する。保存形式の詳細はNovelStorageに閉じ込める。
+    func updateDocumentSynopsis(_ synopsis: String) {
+        guard document.synopsis != synopsis else { return }
+        document.synopsis = synopsis
+        saveCoordinator.markDirty()
+        saveCoordinator.scheduleDebouncedSave()
+    }
+
     /// 話タイトルの編集を確定し、空タイトルを既定値へ戻す。
     func commitEpisodeTitleEditing() {
         for chapter in document.chapters {
