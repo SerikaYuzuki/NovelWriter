@@ -1,6 +1,6 @@
 # Workbench 透明感・余白・セクション構成の再設計
 
-**状態: UI-REF-5完了。次は UI-REF-6(文書同期と軽い掃除)。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REF-1〜6完了。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)。**
 
 本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
 
@@ -256,7 +256,7 @@ DESIGN.md:
 
 **完了条件:** 作品情報と設定で不要なcontent列が出ない。他セクションの3列は維持。
 
-**実装結果 (2026-07-11):** `NovelWorkbenchView`は作品情報・設定でSidebar + Detailの2列`NavigationSplitView`を構築し、それ以外のセクションでは従来の3列構成を維持するよう分岐した。`SectionOverviewList`は世界観専用とし、作品情報・設定の空の概要Listと関連する選択状態を削除した。
+**実装結果 (2026-07-11):** `NovelWorkbenchView`は作品情報・設定でSidebar + Detailの2列`NavigationSplitView`を構築し、それ以外のセクションでは従来の3列構成を維持するよう分岐した。世界観には専用のノート一覧Outlineを配置し、作品情報・設定の空の概要Listと関連する選択状態を削除した。
 
 ### UI-REF-4: 世界観モデル + Storage【完了】
 
@@ -284,6 +284,10 @@ DESIGN.md:
 - AGENTS / DESIGN / PHASE5 / UIREVISION / STYLE / TOOLBARを完了状態へ
 - 本計画で不要になったoverview専用コードの削除
 - Phase 5-1着手可能である旨を明記
+
+**完了条件:** 現行機能・完了済みサブフェーズ・次タスクが各文書で一致し、overview専用のコードが残っていない。
+
+**実装結果 (2026-07-11):** AGENTS / DESIGN / PHASE5 / UIREVISION / TOOLBAR の状態と次タスクを同期し、現行のProject Sidebarから廃止済みの「企画」表記を除去した。作品情報・設定のoverview列、旧世界観placeholder、NotesSectionViewはUI-REF-3〜5で削除済みであることを確認した。Phase 5-1へ着手可能な状態とした。
 
 ## 9. 共通検証ゲート
 

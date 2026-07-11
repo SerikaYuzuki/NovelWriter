@@ -1,6 +1,6 @@
 # UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 完了、Phase 5 は待機中。**
+**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 完了。後続のUI-REF-1〜6も完了し、Phase 5-1へ進む。**
 
 本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
 

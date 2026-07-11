@@ -1,6 +1,6 @@
 # NovelWriter デザイン言語(STYLE.md)
 
-NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての PR はこの文書に従うこと**(AGENTS.md 参照)。
+NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての PR はこの文書に従うこと**(AGENTS.md 参照)。UI-REF-1〜6のWorkbench再調整は完了済みで、以後のUI変更も本書の規約を継続して適用する。
 形式は [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) の DESIGN.md 構成を借用し、中身はネイティブ macOS(SwiftUI + AppKit)前提で定義する。Web の流儀(固定 hex の多用、大きな drop shadow、独自コントロール)は持ち込まない。
 
 ## 1. ビジュアルテーマ
