@@ -11,18 +11,20 @@ struct OperationMessage: Identifiable {
     let body: String
 }
 
-/// WorkbenchのOutline系Listで共通利用するmacOS sidebarの外観。
+/// WorkbenchのOutline系Listで共通利用するmacOS Glass UIの外観。
 struct WorkbenchOutlineListModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
-            .background(.bar)
+            // `.thinMaterial` は Reduce Transparency をOS標準の不透明表現へ
+            // 自動でフォールバックするため、個別の外観分岐を持たない。
+            .background(.thinMaterial)
     }
 }
 
 extension View {
-    func workbenchOutlineListStyle() -> some View {
+    func workbenchGlassOutlineStyle() -> some View {
         modifier(WorkbenchOutlineListModifier())
     }
 }

@@ -34,7 +34,7 @@ struct CharacterListView: View {
                 )
             }
         }
-        .workbenchOutlineListStyle()
+        .workbenchGlassOutlineStyle()
         .onDeleteCommand {
             guard let character = appState.selectedCharacter else { return }
             characterPendingDeletion = character
