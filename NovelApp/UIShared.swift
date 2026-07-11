@@ -24,7 +24,7 @@ struct WorkbenchOutlineListModifier: ViewModifier {
 }
 
 extension View {
-    func workbenchOutlineListStyle() -> some View {
+    func workbenchGlassOutlineStyle() -> some View {
         modifier(WorkbenchOutlineListModifier())
     }
 }

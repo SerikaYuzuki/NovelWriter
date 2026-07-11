@@ -291,9 +291,7 @@ struct ProjectSidebarView: View {
                     .tag(section)
             }
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(.bar)
+        .workbenchGlassOutlineStyle()
     }
 
     private var sectionSelection: Binding<ProjectSection?> {
@@ -323,7 +321,7 @@ private struct SectionOverviewList: View {
             }
             .tag(NovelWorkbenchView.overviewItemID)
         }
-        .workbenchOutlineListStyle()
+        .workbenchGlassOutlineStyle()
     }
 }
 

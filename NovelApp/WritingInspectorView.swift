@@ -173,7 +173,7 @@ struct AttachmentListView: View {
                         )
                     }
                 }
-                .workbenchOutlineListStyle()
+                .workbenchGlassOutlineStyle()
             }
         }
         .onDeleteCommand {

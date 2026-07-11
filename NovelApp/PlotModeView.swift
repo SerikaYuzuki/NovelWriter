@@ -156,7 +156,7 @@ struct PlotChapterOutlineView: View {
                 }
             }
         }
-        .workbenchOutlineListStyle()
+        .workbenchGlassOutlineStyle()
         .overlay {
             if appState.document.chapters.isEmpty,
                appState.document.plotCards.allSatisfy({ $0.chapterID != nil })
