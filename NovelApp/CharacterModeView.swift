@@ -191,7 +191,7 @@ private struct CharacterSheetView: View {
                         .onSubmit {
                             appState.commitCharacterEditing()
                         }
-                    }
+                }
 
                 colorControls
             }
