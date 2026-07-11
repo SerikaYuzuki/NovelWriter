@@ -18,25 +18,14 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let onOpenPlotCard: (PlotCardID) -> Void
 
     var body: some CustomizableToolbarContent {
-        ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd) {
-            Menu {
-                Button {
-                    appState.addChapter()
-                } label: {
-                    Label("章を追加", systemImage: "rectangle.stack.badge.plus")
-                }
-
-                Button {
-                    appState.addEpisode()
-                } label: {
-                    Label("選択中の章に話を追加", systemImage: "text.badge.plus")
-                }
-                .disabled(appState.selectedChapter == nil)
+        ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
+            Button {
+                appState.addEpisode()
             } label: {
-                Label("追加", systemImage: "plus")
+                Label("話を追加", systemImage: "square.and.pencil")
             }
-            .help("章または話を追加")
-            .disabled(!showsWritingActions)
+            .help("選択中の章に話を追加")
+            .disabled(appState.selectedChapter == nil || !showsWritingActions)
         }
         .defaultCustomization(.visible)
 
@@ -201,7 +190,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 }
 
 enum WorkbenchToolbarItemID {
-    static let chapterAdd = "workbench.chapter.add"
+    static let episodeAdd = "workbench.episode.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
     static let chapterContext = "workbench.chapter.context"

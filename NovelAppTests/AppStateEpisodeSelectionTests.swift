@@ -24,6 +24,21 @@ struct AppStateEpisodeSelectionTests {
         #expect(state.document.chapters[0].episodes.map(\.title) == ["本文", "第2話"])
     }
 
+    @Test("章追加は空章を選択し、話追加は選択中の章へ追加する")
+    func chapterAndEpisodeAddActionsKeepTheirTargetsSeparate() throws {
+        let state = makeState()
+
+        state.addChapter()
+        let chapterID = try #require(state.selectedChapterID)
+        #expect(state.document.chapters.last?.episodes.isEmpty == true)
+        #expect(state.selectedEpisodeID == nil)
+
+        state.addEpisode()
+
+        #expect(try state.document.episode(#require(state.selectedEpisodeID))?.chapterID == chapterID)
+        #expect(state.selectedEpisode?.title == "第1話")
+    }
+
     @Test("話の追加・選択・本文メモ更新は話単位で行う")
     func episodeOperationsUpdateSelectedEpisode() throws {
         let state = makeState()
