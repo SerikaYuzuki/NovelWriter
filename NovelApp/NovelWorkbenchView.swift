@@ -30,6 +30,7 @@ struct NovelWorkbenchView: View {
     var body: some View {
         VStack(spacing: 0) {
             workbenchSplitView
+                .id(usesTwoColumnLayout)
 
             AIAssistantPanelView()
         }
@@ -287,7 +288,10 @@ struct NovelWorkbenchView: View {
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
         case .characters, .references:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
-        case .projectInfo, .worldbuilding, .settings:
+        case .worldbuilding:
+            WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
+        case .projectInfo, .settings:
+            // 2列セクションでは content 列を出さないため未使用
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
         }
     }

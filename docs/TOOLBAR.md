@@ -172,7 +172,7 @@ WindowGroup
 | 世界観 | `概要` またはセクション内項目 | 現在の section surface |
 | 作品情報・設定 | なし（Sidebar + Detailの2列） | 現在の section surface |
 
-永続モデルがまだないセクションは、既存 placeholder を `概要` detail として再利用する。Toolbar-1 で新しい保存モデルや機能を追加しない。
+永続モデルがまだない世界観は、UI-REF-5まで暫定のOutline placeholderを使う。作品情報・設定はOutlineを持たない。Toolbar-1 で新しい保存モデルや機能を追加しない。
 
 ## 9. 非目標
 

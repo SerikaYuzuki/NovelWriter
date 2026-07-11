@@ -576,7 +576,7 @@ NovelCore は絶対にUIやStorageに依存しない。
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜2 は完了済み(→ 変更履歴)。次は **UI-REF-3「Outlineなしセクション」**。詳細な作業指示書は [UIREFRESH.md](UIREFRESH.md)。
+Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜3 は完了済み(→ 変更履歴)。次は **UI-REF-4「世界観モデル + Storage」**。詳細な作業指示書は [UIREFRESH.md](UIREFRESH.md)。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とするが、実装開始はUI-REF-1〜6の完了後とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
