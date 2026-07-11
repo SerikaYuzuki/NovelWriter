@@ -1,6 +1,6 @@
 # Workbench 透明感・余白・セクション構成の再設計
 
-**状態: UI-REF-4完了。次は UI-REF-5(世界観UI)。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REF-5完了。次は UI-REF-6(文書同期と軽い掃除)。Phase 5 は本計画の完了まで待機する。**
 
 本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
 
@@ -268,7 +268,7 @@ DESIGN.md:
 
 **実装結果 (2026-07-11):** `WorldNoteID` / `WorldNote` を NovelCore に追加し、`world.json`（順序・タイトル）と `world-notes/<UUID>.md`（本文）を NovelStorage で読み書きする。空一覧時はファイルを省略し、v1/v2 読み込み後の v3 保存・スナップショット・別名保存をテストで担保した。UI は UI-REF-5 へ委譲。
 
-### UI-REF-5: 世界観UI
+### UI-REF-5: 世界観UI【完了】
 
 - Outline一覧、追加／削除／並べ替え
 - Detailのタイトル + `EditorView`
@@ -276,6 +276,8 @@ DESIGN.md:
 - 空状態・VoiceOver・Delete確認
 
 **完了条件:** ノートを複数作り、本文編集・IME・Undo・再起動後の順序が保たれる。
+
+**実装結果 (2026-07-11):** `WorldbuildingOutlineView` でノート一覧（タイトル＋文字数）、pane 固定の追加、context menu / Delete キーでの確認付き削除、drag 並べ替えを実装した。`WorldNoteDetailView` は `WorkbenchLabeledField` + `EditorView`（`WorldNoteID` キー）で本文所有権を維持し、AppState 経由で即時モデル反映とデバウンス保存を接続した。
 
 ### UI-REF-6: 文書同期と軽い掃除
 

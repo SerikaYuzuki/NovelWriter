@@ -220,7 +220,7 @@ struct NovelWorkbenchView: View {
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
         case .worldbuilding:
-            WorldbuildingOutlinePlaceholder()
+            WorldbuildingOutlineView()
                 .navigationTitle(appState.workspaceSelection.section.title)
         case .projectInfo, .settings:
             EmptyView()
@@ -248,11 +248,7 @@ struct NovelWorkbenchView: View {
         case .projectInfo:
             ProjectInfoView()
         case .worldbuilding:
-            NotesSectionView(
-                title: "世界観",
-                systemImage: "globe.asia.australia",
-                placeholder: "世界観メモは今後の保存モデル追加で有効化します。"
-            )
+            WorldNoteDetailView()
         case .settings:
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
@@ -322,18 +318,172 @@ struct ProjectSidebarView: View {
     }
 }
 
-/// 永続モデルがまだない世界観用のOutline。UI-REF-4でノート一覧へ置き換える。
-private struct WorldbuildingOutlinePlaceholder: View {
+/// 世界観ノートの一覧Outline。並び順はNovelDocument.worldNotesの配列順を正とする。
+private struct WorldbuildingOutlineView: View {
+    @Environment(AppState.self) private var appState
+
+    @State private var notePendingDeletion: WorldNote?
+
     var body: some View {
-        List {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("概要", systemImage: "globe.asia.australia")
-                Text("世界観の概要")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    appState.addWorldNote()
+                } label: {
+                    Label("ノートを追加", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .labelStyle(.iconOnly)
+                .help("ノートを追加")
+            }
+            .padding(8)
+
+            List(selection: selectionBinding) {
+                ForEach(appState.document.worldNotes) { note in
+                    WorldNoteRow(note: note)
+                        .tag(note.id)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                notePendingDeletion = note
+                            } label: {
+                                Label("削除", systemImage: "trash")
+                            }
+                        }
+                }
+                .onMove { offsets, destination in
+                    appState.moveWorldNotes(fromOffsets: offsets, toOffset: destination)
+                }
+            }
+            .overlay {
+                if appState.document.worldNotes.isEmpty {
+                    ContentUnavailableView(
+                        "世界観ノートがありません",
+                        systemImage: "globe.asia.australia",
+                        description: Text("ツールバーまたは＋からノートを追加できます。")
+                    )
+                }
+            }
+            .workbenchGlassOutlineStyle()
+        }
+        .onDeleteCommand {
+            guard let note = appState.selectedWorldNote else { return }
+            notePendingDeletion = note
+        }
+        .confirmationDialog(
+            "世界観ノートを削除しますか？",
+            isPresented: noteDeletionDialogIsPresented,
+            presenting: notePendingDeletion
+        ) { note in
+            Button("削除", role: .destructive) {
+                appState.deleteWorldNote(id: note.id)
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: { note in
+            Text("「\(displayTitle(for: note))」を削除します。")
+        }
+    }
+
+    private var selectionBinding: Binding<WorldNoteID?> {
+        Binding(
+            get: { appState.selectedWorldNoteID },
+            set: { appState.selectWorldNote($0) }
+        )
+    }
+
+    private var noteDeletionDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { notePendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented {
+                    notePendingDeletion = nil
+                }
+            }
+        )
+    }
+
+    private func displayTitle(for note: WorldNote) -> String {
+        let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "無題のノート" : trimmed
+    }
+}
+
+private struct WorldNoteRow: View {
+    let note: WorldNote
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(displayTitle)
+                .lineLimit(1)
+            Text("\(ManuscriptMetrics.countCharacters(in: note.content))字")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(displayTitle)、\(ManuscriptMetrics.countCharacters(in: note.content))字")
+    }
+
+    private var displayTitle: String {
+        let trimmed = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "無題のノート" : trimmed
+    }
+}
+
+private struct WorldNoteDetailView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(EditorSettings.self) private var editorSettings
+    @Environment(EditorCommandSession.self) private var editorCommandSession
+
+    var body: some View {
+        Group {
+            if let note = appState.selectedWorldNote {
+                VStack(alignment: .leading, spacing: 16) {
+                    WorkbenchLabeledField("タイトル") {
+                        TextField("ノートのタイトル", text: titleBinding(for: note))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    ZStack {
+                        Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
+                        EditorView(
+                            chapterKey: note.id,
+                            initialText: note.content,
+                            commandSession: editorCommandSession,
+                            configuration: editorSettings.configuration,
+                            onTextChange: { content in
+                                appState.updateWorldNoteContent(content, for: note.id)
+                            }
+                        )
+                        .frame(maxWidth: editorMaximumWidth)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(20)
+            } else {
+                ContentUnavailableView(
+                    "世界観ノートが選択されていません",
+                    systemImage: "globe.asia.australia",
+                    description: Text("Outlineからノートを選択するか、ノートを追加してください。")
+                )
             }
         }
-        .workbenchGlassOutlineStyle()
+        .workbenchGlassChromeStyle()
+    }
+
+    private func titleBinding(for note: WorldNote) -> Binding<String> {
+        Binding(
+            get: { noteTitle(for: note.id) },
+            set: { appState.updateWorldNoteTitle($0, for: note.id) }
+        )
+    }
+
+    private func noteTitle(for id: WorldNoteID) -> String {
+        appState.document.worldNotes.first(where: { $0.id == id })?.title ?? ""
+    }
+
+    private var editorMaximumWidth: CGFloat? {
+        editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
     }
 }
 
@@ -599,22 +749,6 @@ private struct ProjectInfoView: View {
 
     private var episodeCount: Int {
         appState.document.chapters.reduce(0) { $0 + $1.episodes.count }
-    }
-}
-
-private struct NotesSectionView: View {
-    let title: String
-    let systemImage: String
-    let placeholder: String
-
-    var body: some View {
-        SectionSurface(title: title, systemImage: systemImage) {
-            ContentUnavailableView(
-                "\(title)は準備中です",
-                systemImage: systemImage,
-                description: Text(placeholder)
-            )
-        }
     }
 }
 
