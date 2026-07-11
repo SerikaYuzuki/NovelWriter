@@ -1,6 +1,6 @@
 # UI修正再設計: Glass Outline・Plot再構成・執筆補助・作品情報
 
-**状態: 設計確定、実装未着手。Phase 5 は本計画の完了まで待機する。**
+**状態: UI-REV-1〜9完了。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)。**
 
 本書は、UI-FIX-1〜5完了後に確認された方向違いを修正する実装指示書である。旧UI-FIXの完了記録は [UIFIX.md](UIFIX.md) に残し、本書で上書きする点だけを明示する。前提は [../AGENTS.md](../AGENTS.md)、全体設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、見た目は [STYLE.md](STYLE.md) を正とする。
 
@@ -321,10 +321,12 @@ public struct EditorSelectionSnapshot: Sendable, Equatable {
 - NovelStorageの`project.json`読み書き
 - v1/v2/v3、unknown item、snapshot、別名保存を回帰テスト
 
-### UI-REV-9: 作品情報UI
+### UI-REV-9: 作品情報UI【完了】
 
 - 編集カードと読み取り専用カード
 - タイトル／あらすじの保存状態と文言を接続
+
+**実装結果 (2026-07-11):** 作品情報を上段の編集カード(タイトル TextField / あらすじTextEditor)と下段の読み取り専用保存情報カードへ分離した。更新はAppState経由で既存の2秒デバウンス保存へ接続し、空タイトルも編集中は許可する。話数は全章の`episodes.count`合計を表示する。
 
 ## 9. 共通検証ゲート
 

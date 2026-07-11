@@ -529,13 +529,22 @@ private struct ProjectInfoView: View {
                             TextEditor(text: synopsisBinding)
                                 .accessibilityLabel("あらすじ")
                                 .frame(minHeight: 160)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(.separator, lineWidth: 1)
+                                }
                         }
                         .padding(8)
                     }
 
-                    GroupBox("作品情報") {
+                    GroupBox("保存情報") {
                         VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("保存場所", value: appState.documentURL.path)
+                            LabeledContent("保存場所") {
+                                Text(appState.documentURL.path)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .multilineTextAlignment(.trailing)
+                            }
                             LabeledContent("保存状態", value: appState.saveState.label)
                             LabeledContent("章数") {
                                 Text("\(appState.document.chapters.count)")
