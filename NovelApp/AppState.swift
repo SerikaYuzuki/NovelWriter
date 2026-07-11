@@ -155,9 +155,17 @@ final class AppState {
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
+        let initialSection: ProjectSection = if storedSection == "planning" {
+            .projectInfo
+        } else {
+            ProjectSection(rawValue: storedSection) ?? .structure
+        }
         workspaceSelection = WorkspaceSelection(
-            section: ProjectSection(rawValue: storedSection) ?? .structure
+            section: initialSection
         )
+        if storedSection == "planning" {
+            dependencies.userDefaults.set(ProjectSection.projectInfo.rawValue, forKey: Self.projectSectionKey)
+        }
         attachments = []
     }
 
