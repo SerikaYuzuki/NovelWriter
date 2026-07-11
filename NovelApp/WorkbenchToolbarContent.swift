@@ -14,75 +14,50 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
-    let onOpenCharacter: (CharacterID) -> Void
-    let onOpenPlotCard: (PlotCardID) -> Void
 
     var body: some CustomizableToolbarContent {
-        ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
-            Button {
-                appState.addEpisode()
-            } label: {
-                Label("話を追加", systemImage: "square.and.pencil")
-            }
-            .help("選択中の章に話を追加")
-            .disabled(appState.selectedChapter == nil || !showsWritingActions)
-        }
-        .defaultCustomization(.visible)
-
-        ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
-            Button {
-                overlayState.toggle(.memo)
-            } label: {
-                Label("話メモ", systemImage: "note.text")
-            }
-            .help("話メモ")
-            .disabled(appState.selectedEpisode == nil || !showsWritingActions)
-            .popover(isPresented: isPresented(.memo), arrowEdge: .bottom) {
-                ChapterMemoPopover()
-                    .frame(width: 320, height: 260)
-            }
-        }
-        .defaultCustomization(.visible)
-
-        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
-            Button {
-                overlayState.toggle(.snapshots)
-            } label: {
-                Label("スナップショット", systemImage: "clock.arrow.circlepath")
-            }
-            .help("スナップショットの保存・一覧")
-            .disabled(!showsWritingActions)
-            .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
-                SnapshotPopover(overlayState: overlayState)
-                    .frame(width: 360, height: 320)
-            }
-        }
-        .defaultCustomization(.visible)
-
-        ToolbarItem(id: WorkbenchToolbarItemID.chapterContext) {
-            Button {
-                overlayState.toggle(.plotCards)
-            } label: {
-                Label("この章", systemImage: "doc.text.magnifyingglass")
-            }
-            .help("この章")
-            .disabled(appState.selectedChapter == nil || !showsWritingActions)
-            .popover(isPresented: isPlotPopoverPresented, arrowEdge: .bottom) {
-                plotPopover
-                    .frame(width: 340, height: 360)
-            }
-        }
-        .defaultCustomization(.visible)
-
-        if showsCharacterActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
+        if showsWritingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
-                    appState.addCharacter()
+                    appState.addEpisode()
                 } label: {
-                    Label("登場人物を追加", systemImage: "person.badge.plus")
+                    Label("話を追加", systemImage: "square.and.pencil")
                 }
-                .help("登場人物を追加")
+                .help("選択中の章に話を追加")
+                .disabled(appState.selectedChapter == nil)
             }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
+                Button {
+                    overlayState.toggle(.memo)
+                } label: {
+                    Label("話メモ", systemImage: "note.text")
+                }
+                .help("話メモ")
+                .disabled(appState.selectedEpisode == nil)
+                .popover(isPresented: isPresented(.memo), arrowEdge: .bottom) {
+                    ChapterMemoPopover()
+                        .frame(width: 320, height: 260)
+                }
+            }
+            .customizationBehavior(.reorderable)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
+                Button {
+                    overlayState.toggle(.snapshots)
+                } label: {
+                    Label("スナップショット", systemImage: "clock.arrow.circlepath")
+                }
+                .help("スナップショットの保存・一覧")
+                .popover(isPresented: isPresented(.snapshots), arrowEdge: .bottom) {
+                    SnapshotPopover(overlayState: overlayState)
+                        .frame(width: 360, height: 320)
+                }
+            }
+            .customizationBehavior(.reorderable)
             .defaultCustomization(.visible)
         }
 
@@ -95,11 +70,51 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 }
                 .help("プロットカードを追加")
             }
+            .customizationBehavior(.reorderable)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWritingActions || showsPlotActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
+                Button {
+                    appState.addChapter()
+                } label: {
+                    Label("章を追加", systemImage: "plus")
+                }
+                .help("章を追加")
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+        }
+
+        if showsCharacterActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd, placement: .navigation) {
+                Button {
+                    appState.addCharacter()
+                } label: {
+                    Label("登場人物を追加", systemImage: "person.badge.plus")
+                }
+                .help("登場人物を追加")
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWorldbuildingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.worldNoteAdd, placement: .navigation) {
+                Button {
+                    appState.addWorldNote()
+                } label: {
+                    Label("ノートを追加", systemImage: "note.text.badge.plus")
+                }
+                .help("ノートを追加")
+            }
+            .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
         }
 
         if showsReferenceActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
+            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd, placement: .navigation) {
                 Button {
                     NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
                 } label: {
@@ -108,6 +123,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .help("資料を取り込む")
                 .disabled(!appState.supportsAttachments)
             }
+            .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
         }
     }
@@ -118,6 +134,10 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
     private var showsPlotActions: Bool {
         appState.workspaceSelection.section == .plot
+    }
+
+    private var showsWorldbuildingActions: Bool {
+        appState.workspaceSelection.section == .worldbuilding
     }
 
     private var showsReferenceActions: Bool {
@@ -141,60 +161,15 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             }
         )
     }
-
-    private var isPlotPopoverPresented: Binding<Bool> {
-        Binding(
-            get: {
-                switch overlayState.presented {
-                case .plotCards, .plotCard:
-                    true
-                default:
-                    false
-                }
-            },
-            set: { isPresented in
-                if !isPresented {
-                    overlayState.presented = nil
-                } else if overlayState.presented == nil {
-                    overlayState.presented = .plotCards
-                }
-            }
-        )
-    }
-
-    @ViewBuilder
-    private var plotPopover: some View {
-        switch overlayState.presented {
-        case let .plotCard(cardID):
-            PlotCardQuickPopover(
-                cardID: cardID,
-                onOpenPlotCard: { cardID in
-                    overlayState.presented = nil
-                    onOpenPlotCard(cardID)
-                }
-            )
-        case .plotCards, nil:
-            ChapterContextPopover(
-                onOpenCharacter: { characterID in
-                    overlayState.presented = nil
-                    onOpenCharacter(characterID)
-                },
-                onOpenPlotCard: { cardID in
-                    overlayState.presented = .plotCard(cardID)
-                }
-            )
-        case .memo, .snapshots:
-            EmptyView()
-        }
-    }
 }
 
 enum WorkbenchToolbarItemID {
     static let episodeAdd = "workbench.episode.add"
+    static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
-    static let chapterContext = "workbench.chapter.context"
     static let characterAdd = "workbench.character.add"
+    static let worldNoteAdd = "workbench.world.note.add"
     static let plotCardAdd = "workbench.plot.card.add"
     static let attachmentAdd = "workbench.attachment.add"
 }
@@ -202,8 +177,6 @@ enum WorkbenchToolbarItemID {
 enum WorkbenchOverlay: Hashable {
     case memo
     case snapshots
-    case plotCards
-    case plotCard(PlotCardID)
 }
 
 @MainActor
@@ -212,17 +185,7 @@ final class WorkbenchOverlayState {
     var presented: WorkbenchOverlay?
 
     func toggle(_ overlay: WorkbenchOverlay) {
-        switch overlay {
-        case .plotCards:
-            switch presented {
-            case .plotCards, .plotCard:
-                presented = nil
-            default:
-                presented = .plotCards
-            }
-        default:
-            presented = presented == overlay ? nil : overlay
-        }
+        presented = presented == overlay ? nil : overlay
     }
 }
 

@@ -153,6 +153,13 @@ struct NovelWriterApp: App {
                 .disabled(!appState.supportsAttachments)
             }
 
+            CommandMenu("世界観") {
+                Button("ノートを追加") {
+                    appState.selectProjectSection(.worldbuilding)
+                    appState.addWorldNote()
+                }
+            }
+
             CommandGroup(after: .textEditing) {
                 Divider()
                 WorkbenchFindCommands(

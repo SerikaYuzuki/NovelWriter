@@ -81,7 +81,7 @@ NovelWriter の見た目と手触りの唯一の正。**UI を触るすべての
 - **ボタン**: 主アクション(ダイアログの実行など)= `.borderedProminent`、通常 = `.bordered`、ツールバー・行内 = `.borderless` + アイコン。破壊的操作は `role: .destructive` を必ず付ける
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
 - **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
-- **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定のsection追加、Editor上は話追加・補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
+- **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
 - **AI Assistant Panel**: collapsed はステータスバー、expanded はチャット入力・提案一覧・選択テキスト操作の3領域。入力欄は下端に固定し、本文領域を覆わない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
