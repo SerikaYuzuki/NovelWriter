@@ -82,7 +82,7 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 ### 4.5-1c: ファイル名を新UIの実態に揃える(リネームのみ)
 
-- [ ] 型は UI2 で改名済みだが、ファイル名が旧UIのまま残っている。**動作を変えずリネームだけ**行う: `AppMode.swift` → `ProjectSection.swift`(中身は ProjectSection)、`WritingModeView.swift` → 中身の主要型に合わせて分割・改名(OutlineContainerView / OutlineView / EditorPaneView)、`CharacterModeView.swift` / `PlotModeView.swift` / `FlagTrackerView.swift` / `WritingInspectorView.swift` はワークベンチのセクションコンテンツとして再利用されているため、役割が分かる名前(例: CharacterSectionView.swift 等)に改名
+- [ ] 型は UI2 で改名済みだが、ファイル名が旧UIのまま残っている。**動作を変えずリネームだけ**行う: `AppMode.swift` → `ProjectSection.swift`(中身は ProjectSection)、`WritingModeView.swift` → 中身の主要型に合わせて分割・改名(OutlineContainerView / OutlineView / EditorPaneView)、`CharacterModeView.swift` / `PlotModeView.swift` / `FlagTrackerView.swift` はワークベンチのセクションコンテンツとして再利用されているため、役割が分かる名前(例: CharacterSectionView.swift 等)に改名。`WritingInspectorView.swift` は UI-REF-6 で未使用のため削除済み
 - [ ] DESIGN.md 5.3 のビュー木と実在の型名・ファイル名が一致することを確認し、差異(例: WorkspaceBodyView の実名)があればどちらかに揃える
 
 **完了条件:** `git log --follow` でリネームが追跡でき、check.sh 全通過。挙動・見た目の変化なし。

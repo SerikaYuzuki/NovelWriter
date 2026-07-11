@@ -279,7 +279,7 @@ DESIGN.md:
 
 **実装結果 (2026-07-11):** `WorldbuildingOutlineView` でノート一覧（タイトル＋文字数）、pane 固定の追加、context menu / Delete キーでの確認付き削除、drag 並べ替えを実装した。`WorldNoteDetailView` は `WorkbenchLabeledField` + `EditorView`（`WorldNoteID` キー）で本文所有権を維持し、AppState 経由で即時モデル反映とデバウンス保存を接続した。
 
-### UI-REF-6: 文書同期と軽い掃除
+### UI-REF-6: 文書同期と軽い掃除【完了】
 
 - AGENTS / DESIGN / PHASE5 / UIREVISION / STYLE / TOOLBARを完了状態へ
 - 本計画で不要になったoverview専用コードの削除
@@ -287,7 +287,7 @@ DESIGN.md:
 
 **完了条件:** 現行機能・完了済みサブフェーズ・次タスクが各文書で一致し、overview専用のコードが残っていない。
 
-**実装結果 (2026-07-11):** AGENTS / DESIGN / PHASE5 / UIREVISION / TOOLBAR の状態と次タスクを同期し、現行のProject Sidebarから廃止済みの「企画」表記を除去した。作品情報・設定のoverview列、旧世界観placeholder、NotesSectionViewはUI-REF-3〜5で削除済みであることを確認した。Phase 5-1へ着手可能な状態とした。
+**実装結果 (2026-07-11):** AGENTS / DESIGN / PHASE5 / UIREVISION / TOOLBAR / STYLE の状態と次タスクを同期し、現行のProject Sidebarから廃止済みの「企画」表記を除去した。作品情報・設定のoverview列、旧世界観placeholder、NotesSectionViewはUI-REF-3〜5で削除済みであることを確認し、未使用の `WritingInspectorView` を削除して資料Viewを `AttachmentModeView.swift` へ分離した。Phase 5-1へ着手可能な状態とした。
 
 ## 9. 共通検証ゲート
 
