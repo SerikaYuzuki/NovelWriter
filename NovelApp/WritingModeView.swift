@@ -38,7 +38,7 @@ struct OutlineContainerView: View {
             )
         }
         .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
-        .background(.bar)
+        .background(.thinMaterial)
         .focusedSceneValue(\.workbenchSearchSurface, .outline)
         .focusable()
         .onKeyPress(.escape) {
@@ -547,7 +547,7 @@ private struct OutlineSearchBar: View {
             .labelStyle(.iconOnly)
         }
         .padding(8)
-        .background(.bar)
+        .background(.thinMaterial)
         .onAppear {
             isFocused = true
         }
