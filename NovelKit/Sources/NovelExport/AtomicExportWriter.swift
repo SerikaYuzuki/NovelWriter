@@ -35,7 +35,7 @@ enum AtomicExportWriter {
 
         // move / replace が同一ボリューム上のrenameになるよう、必ず保存先と同じ親に置く。
         let temporaryURL = parentDirectory.appendingPathComponent(
-            ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp"
+            ".novel-export-\(UUID().uuidString).tmp"
         )
 
         do {

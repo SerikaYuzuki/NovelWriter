@@ -22,6 +22,30 @@ import Testing
     #expect(try temporaryExportFiles(in: directory).isEmpty)
 }
 
+@Test func longValidDestinationNamesCreateAndReplaceWithoutLeavingTemporaryFiles() throws {
+    let directory = try makeExportTempDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    for (filenameByteCount, oldData) in [
+        (214, nil),
+        (255, Data("古い出力".utf8))
+    ] {
+        let filename = String(repeating: "a", count: filenameByteCount - 4) + ".txt"
+        #expect(filename.lengthOfBytes(using: .utf8) == filenameByteCount)
+
+        let destination = directory.appendingPathComponent(filename)
+        if let oldData {
+            try oldData.write(to: destination)
+        }
+
+        let newData = Data("新しい出力-\(filenameByteCount)".utf8)
+        try AtomicExportWriter.write(newData, to: destination)
+
+        #expect(try Data(contentsOf: destination) == newData)
+        #expect(try temporaryExportFiles(in: directory).isEmpty)
+    }
+}
+
 @Test func failedCommitPreservesExistingOutputAndRemovesTemporaryFile() throws {
     let directory = try makeExportTempDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
