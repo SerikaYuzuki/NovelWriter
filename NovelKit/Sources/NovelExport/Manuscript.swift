@@ -6,6 +6,16 @@ import NovelCore
 /// `NovelDocument` の章／話走査、空タイトルの表示名、本文改行の正規化を
 /// ここで一度だけ確定し、形式別レンダラがモデルを個別走査することを防ぐ。
 struct Manuscript: Equatable, Sendable {
+    struct Chapter: Equatable, Sendable {
+        let title: String
+        let episodes: [Episode]
+    }
+
+    struct Episode: Equatable, Sendable {
+        let title: String
+        let body: String?
+    }
+
     enum Block: Equatable, Sendable {
         case documentHeading(String)
         case chapterHeading(String)
@@ -13,27 +23,44 @@ struct Manuscript: Equatable, Sendable {
         case body(String)
     }
 
-    let blocks: [Block]
+    let identifier: UUID
+    let title: String
+    let chapters: [Chapter]
 
-    static func expand(_ document: NovelDocument) -> Manuscript {
-        var blocks: [Block] = [
-            .documentHeading(displayName(document.title, fallback: "無題の作品"))
-        ]
-
-        for chapter in document.chapters {
-            blocks.append(.chapterHeading(displayName(chapter.title, fallback: "無題の章")))
-
+    var blocks: [Block] {
+        var blocks: [Block] = [.documentHeading(title)]
+        for chapter in chapters {
+            blocks.append(.chapterHeading(chapter.title))
             for episode in chapter.episodes {
-                blocks.append(.episodeHeading(displayName(episode.title, fallback: "本文")))
-
-                let body = normalizedBody(episode.content)
-                if !body.isEmpty {
+                blocks.append(.episodeHeading(episode.title))
+                if let body = episode.body {
                     blocks.append(.body(body))
                 }
             }
         }
+        return blocks
+    }
 
-        return Manuscript(blocks: blocks)
+    static func expand(_ document: NovelDocument) -> Manuscript {
+        let chapters = document.chapters.map { chapter in
+            let episodes = chapter.episodes.map { episode in
+                let body = normalizedBody(episode.content)
+                return Episode(
+                    title: displayName(episode.title, fallback: "本文"),
+                    body: body.isEmpty ? nil : body
+                )
+            }
+            return Chapter(
+                title: displayName(chapter.title, fallback: "無題の章"),
+                episodes: episodes
+            )
+        }
+
+        return Manuscript(
+            identifier: document.id,
+            title: displayName(document.title, fallback: "無題の作品"),
+            chapters: chapters
+        )
     }
 
     private static func displayName(_ value: String, fallback: String) -> String {

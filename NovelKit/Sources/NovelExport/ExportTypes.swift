@@ -2,11 +2,11 @@ import Foundation
 
 /// NovelWriter が書き出せる原稿形式。
 ///
-/// Phase 5-1 ではテキスト系の2形式だけを公開する。EPUB / PDF は各実装が
-/// 利用可能になった段階で追加し、未実装の形式を選択可能にはしない。
+/// 実装が利用可能になった形式だけを公開し、未実装の形式を選択可能にはしない。
 public enum ExportFormat: String, CaseIterable, Codable, Equatable, Sendable {
     case plainText
     case markdown
+    case epub
 
     /// 保存先の既定ファイル名に使う拡張子。
     public var filenameExtension: String {
@@ -15,6 +15,8 @@ public enum ExportFormat: String, CaseIterable, Codable, Equatable, Sendable {
             "txt"
         case .markdown:
             "md"
+        case .epub:
+            "epub"
         }
     }
 }
@@ -33,6 +35,8 @@ public struct ExportOptions: Equatable, Sendable {
 
 /// 原稿の生成またはアトミックな書き込みで発生する型付きエラー。
 public enum ExportError: Error, Equatable, Sendable {
+    /// 指定形式の生成物を構築できない。
+    case renderingFailed(format: ExportFormat, reason: String)
     /// 保存先がファイルURLではない。
     case invalidDestination(URL)
     /// 保存先の親ディレクトリを準備できない。
@@ -46,6 +50,8 @@ public enum ExportError: Error, Equatable, Sendable {
 extension ExportError: LocalizedError {
     public var errorDescription: String? {
         switch self {
+        case let .renderingFailed(format, reason):
+            "\(format.rawValue) の生成に失敗しました: \(reason)"
         case let .invalidDestination(destination):
             "書き出し先がファイルURLではありません: \(destination.absoluteString)"
         case let .destinationPreparationFailed(destination, reason):

@@ -10,15 +10,14 @@ public struct NovelExporter: Equatable, Sendable {
     /// 原稿をメモリ上で生成する。バイナリ形式を追加できるよう戻り値は `Data` とする。
     public func render(_ document: NovelDocument, options: ExportOptions) throws -> Data {
         let manuscript = Manuscript.expand(document)
-        let rendered: String = switch options.format {
+        switch options.format {
         case .plainText:
-            PlainTextRenderer().render(manuscript)
+            return Data(PlainTextRenderer().render(manuscript).utf8)
         case .markdown:
-            MarkdownRenderer().render(manuscript)
+            return Data(MarkdownRenderer().render(manuscript).utf8)
+        case .epub:
+            return try EPUBRenderer().render(manuscript)
         }
-
-        // SwiftのStringからUTF-8への変換は常に成功し、BOMも付与しない。
-        return Data(rendered.utf8)
     }
 
     /// 原稿を一時ファイルへ完成させ、成功した場合だけ保存先を置き換える。
