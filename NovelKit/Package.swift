@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(name: "NovelCore", targets: ["NovelCore"]),
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
+        .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
@@ -21,6 +22,10 @@ let package = Package(
         ),
         .target(
             name: "NovelStorage",
+            dependencies: ["NovelCore"]
+        ),
+        .target(
+            name: "NovelExport",
             dependencies: ["NovelCore"]
         ),
         .target(
@@ -42,6 +47,10 @@ let package = Package(
         .testTarget(
             name: "NovelStorageTests",
             dependencies: ["NovelStorage", "NovelCore"]
+        ),
+        .testTarget(
+            name: "NovelExportTests",
+            dependencies: ["NovelExport", "NovelCore"]
         ),
         .testTarget(
             name: "EditorKitTests",
