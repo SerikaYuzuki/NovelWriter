@@ -4,11 +4,11 @@ macOS 向け日本語小説執筆アプリ。SwiftUI シェル + `NSTextView`(Te
 
 **設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** 次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
-## 現在地(2026-07-11 時点)
+## 現在地(2026-07-16 時点)
 
-- Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4完了
-- 動くもの: 章／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み、作品の新規・開く・別名保存、セクション別2列/3列 NavigationSplitView + 一段 native toolbar
-- 次: **Phase 5-1(Export Core)**。作業指示書は [docs/PHASE5.md](docs/PHASE5.md)
+- Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(出力、PDF除外)完了
+- 動くもの: 章／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+Q 時の終了前保存、起動時の前回作品読み込み、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、セクション別2列/3列 NavigationSplitView + 一段 native toolbar
+- 次: **Phase 6(AI支援の設計・プライバシー方針)**。PDFはユーザー判断によりAI実装後のPhase 6.5へ延期(D-037)
 
 ## リポジトリ構成
 
@@ -17,6 +17,7 @@ NovelApp/            アプリ本体(AppState / ContentView / AppDependencies)
 NovelKit/            ローカル Swift Package(ライブラリ群 + 全テスト)
   Sources/NovelCore/     モデル(Chapter, NovelDocument, DocumentRepository)— 依存ゼロ
   Sources/NovelStorage/  .novelpkg の読み書き(NovelpkgRepository)
+  Sources/NovelExport/   TXT / Markdown / EPUB 3の生成とアトミック書き出し
   Sources/EditorKit/     エディタ(EditorView / プラグイン / IndentRules / MacTextAdapter)
   Sources/NovelUI/       共有 SwiftUI 部品(まだ薄い)
   Sources/PreviewSupport/ Preview 用固定データ(まだ薄い)
@@ -27,7 +28,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 
 ## 破ってはいけないルール
 
-1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / EditorKit / NovelUI → NovelCore のみ。違反はコンパイルで落ちるように Package.swift が組んである
+1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / NovelExport / EditorKit / NovelUI → NovelCore のみ。違反はコンパイルで落ちるように Package.swift が組んである
 2. **テキスト所有権**(D-005 / D-028): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは話切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
 3. **TextKit 2**(D-006): `NSTextView.layoutManager` に触れない(触れると TextKit 1 に暗黙フォールバックする)。`textLayoutManager` を使う
 4. **公開APIに `NSTextView` / `UITextView` を出さない**(DESIGN 9.2)。AppKit 依存コードは `EditorKit/Platform/` 配下 + `#if canImport(AppKit)` 内のみ
