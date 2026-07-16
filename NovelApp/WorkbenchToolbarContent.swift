@@ -11,6 +11,7 @@ import SwiftUI
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
+    @Environment(ExportPresenter.self) private var exportPresenter
 
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
@@ -56,6 +57,18 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                     SnapshotPopover(overlayState: overlayState)
                         .frame(width: 360, height: 320)
                 }
+            }
+            .customizationBehavior(.reorderable)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.export) {
+                Button {
+                    exportPresenter.present()
+                } label: {
+                    Label("書き出す…", systemImage: "square.and.arrow.up")
+                }
+                .help("原稿を書き出す…")
+                .disabled(exportPresenter.state.isExporting)
             }
             .customizationBehavior(.reorderable)
             .defaultCustomization(.visible)
@@ -172,6 +185,7 @@ enum WorkbenchToolbarItemID {
     static let worldNoteAdd = "workbench.world.note.add"
     static let plotCardAdd = "workbench.plot.card.add"
     static let attachmentAdd = "workbench.attachment.add"
+    static let export = "workbench.export"
 }
 
 enum WorkbenchOverlay: Hashable {

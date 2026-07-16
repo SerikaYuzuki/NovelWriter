@@ -32,6 +32,7 @@ struct NovelWriterApp: App {
     @State private var editorSettings = EditorSettings()
     @State private var documentPanelPresenter: DocumentPanelPresenter
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
+    @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
     @State private var editorCommandSession = EditorCommandSession()
 
@@ -40,6 +41,7 @@ struct NovelWriterApp: App {
         _appState = State(initialValue: appState)
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
+        _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
     }
 
     var body: some Scene {
@@ -49,6 +51,7 @@ struct NovelWriterApp: App {
                 .environment(editorSettings)
                 .environment(documentPanelPresenter)
                 .environment(snapshotMenuPresenter)
+                .environment(exportPresenter)
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
                 .task {
@@ -79,6 +82,11 @@ struct NovelWriterApp: App {
                     documentPanelPresenter.presentSaveAsPanel()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Button("書き出す…") {
+                    exportPresenter.present()
+                }
+                .disabled(exportPresenter.state.isExporting)
 
                 Button("Finder で表示") {
                     documentPanelPresenter.revealInFinder()

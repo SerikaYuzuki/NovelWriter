@@ -42,6 +42,8 @@ targets:
         product: EditorKit
       - package: NovelKit
         product: NovelUI
+      - package: NovelKit
+        product: NovelExport
     settings:
       base:
         PRODUCT_NAME: NovelWriter
