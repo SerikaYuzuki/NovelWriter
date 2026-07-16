@@ -299,6 +299,19 @@
 - **内容**: セクションの一覧アイテムを増やす操作(章 / 登場人物 / 世界観ノート / 資料。プロットにも章追加を追加)は Outline 上の固定ボタンに統一し、ペーン内の重複導線は撤去する。本文に作用する操作(話を追加=Editor左端固定 / 話メモ / スナップショット / プロットカードを追加)は Editor 上に置き、中央のみカスタマイズ可能とする。「この章」アイコンは利用実態が薄く削除。プロットカードの追加導線はツールバーのアイコンのみに一本化。既定配置の意図的変更のため toolbar 全体 ID を版上げする。
 - **理由**: 「どこで増えるものは、その一覧の上で追加する」という空間対応で導線を覚えやすくする(ユーザー要望)。全操作にメニューバーの代替入口を維持する原則(TOOLBAR.md 5章)は不変。
 
+## D-036: `.novelpkg` を公開互換境界とし、Windows 版は WinUI 3 で同一リポジトリに実装する
+
+- **日付**: 2026-07-16 / **状態**: 承認(Windows 実装前。詳細契約は [CROSS_PLATFORM.md](CROSS_PLATFORM.md))
+- **内容**:
+  1. 製品方針を macOS 専用から **macOS ファーストのマルチプラットフォーム**へ拡張する。Windows 版は WinUI 3 + C# / .NET とし、同一リポジトリの `Windows/` 配下に置く。
+  2. Swift の `NovelCore` / `NovelStorage` / `EditorKit` や SwiftUI View を Windows から直接再利用しない。共有の正は `.novelpkg` schema、Chapter / Episode 等のドメイン意味、純粋ロジックと Export の入出力 fixture、日本語 UI 用語とする。Windows 側は同じ依存方向を .NET class library で再実装する。
+  3. `.novelpkg` は OS 間の公開互換境界とする。読み込み v1 / v2 / v3・保存 v3、UTF-8(BOMなし)、ISO 8601 UTC、UUID、配列順、未知ルート項目保持、OS 固有パスを保存しないことを共通契約にする。添付名は Windows の禁止名と case-insensitive 衝突を考慮する。
+  4. Windows 実装の前に W0 として言語非依存 schema と golden fixtureを作り、macOS reader / writerを補修・検証する。W0完了後のW1で、Mac writer → Windows reader、Windows writer → Mac reader、両方向round-tripで本文・メタデータ・添付・スナップショット・未知項目が失われないことを品質ゲートにする。
+  5. 保存 API は OS ごとに異なってよいが、「同じ親に完全な一時パッケージを作り、完成前のデータで既存作品を壊さず、失敗時は既存作品と dirty 状態を維持する」という結果を共通要件にする。
+  6. UI は各 OS の native 慣習に従う。macOS の D-021 / STYLE.md の画面表現を WinUI へ機械的に複製せず、テキスト所有権、機能の意味、情報構造を共有する。Windows 固有のデザインガイドは WinUI 実装開始時に別途作る。
+- **理由**: `.novelpkg` は JSON、UTF-8 テキスト、UUID ベースのファイルから成り、Swift / AppKit 型を含まないため Windows でも実装可能である。一方、Swift ソースや native UI の共有を狙うと WinUI の日本語 IME、Undo、file picker、ファイルロック、Windows の操作慣習を損ねる。保存契約と fixture を共有し、native 実装を分ける方が、互換性と各 OS の品質を同時に保てる。
+- **補足**: Windows 上の Codex を実装主体とする。WinUI / Windows App SDK、IME、NTFS、署名・配布は Windows 実機で検証し、macOS 側は同じ fixture による Mac reader-writer 検証を担当する。D-014 のローカル検証方針は両 OS に適用する。
+
 ## D-037: Phase 5はTXT / Markdown / EPUBで完了し、PDFはAI実装後へ延期する
 
 - **日付**: 2026-07-16 / **状態**: 承認(Phase 5の3形式とmacOSアプリ統合は実装済み、PDFは未実装)
