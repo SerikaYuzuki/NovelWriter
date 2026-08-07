@@ -15,8 +15,8 @@ struct PlotBoardView: View {
     let onChapterJump: (ChapterID) -> Void
     let focusedSelection: PlotOutlineSelection
 
-    @State private var editingCardID: PlotCardID?
-    @State private var cardPendingDeletion: PlotCard?
+    @State private var editingCardRequest: SessionBoundValue<PlotCard>?
+    @State private var cardPendingDeletion: SessionBoundValue<PlotCard>?
 
     init(
         focusedSelection: PlotOutlineSelection = .unassigned,
@@ -34,7 +34,7 @@ struct PlotBoardView: View {
                     PlotCardCanvas(
                         chapterID: nil,
                         cards: cards(in: nil),
-                        editingCardID: $editingCardID,
+                        editingCardRequest: $editingCardRequest,
                         cardPendingDeletion: $cardPendingDeletion
                     )
                 case let .chapter(focusedChapterID):
@@ -42,7 +42,7 @@ struct PlotBoardView: View {
                         PlotCardCanvas(
                             chapterID: chapter.id,
                             cards: cards(in: chapter.id),
-                            editingCardID: $editingCardID,
+                            editingCardRequest: $editingCardRequest,
                             cardPendingDeletion: $cardPendingDeletion
                         )
                     } else {
@@ -61,11 +61,12 @@ struct PlotBoardView: View {
             PlotCardDetailSheet(
                 card: card,
                 onDelete: {
-                    editingCardID = nil
-                    cardPendingDeletion = card
+                    guard let editingCardRequest else { return }
+                    self.editingCardRequest = nil
+                    cardPendingDeletion = editingCardRequest
                 },
                 onClose: {
-                    editingCardID = nil
+                    editingCardRequest = nil
                 }
             )
             .frame(width: 420, height: 420)
@@ -74,16 +75,16 @@ struct PlotBoardView: View {
             "プロットカードを削除しますか？",
             isPresented: cardDeletionDialogIsPresented,
             presenting: cardPendingDeletion
-        ) { card in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deletePlotCard(id: card.id)
-                if editingCardID == card.id {
-                    editingCardID = nil
+                appState.deletePlotCard(id: request.value.id, expectedSession: request.session)
+                if editingCardRequest?.value.id == request.value.id {
+                    editingCardRequest = nil
                 }
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { card in
-            Text("「\(card.title)」を削除します。")
+        } message: { request in
+            Text("「\(request.value.title)」を削除します。")
         }
         .onDeleteCommand {
             guard let selectedPlotCardID = appState.selectedPlotCardID,
@@ -91,22 +92,31 @@ struct PlotBoardView: View {
             {
                 return
             }
-            cardPendingDeletion = card
+            cardPendingDeletion = SessionBoundValue(
+                value: card,
+                session: appState.documentSessionToken
+            )
         }
     }
 
-    private func cards(in chapterID: ChapterID?) -> [PlotCard] {
-        appState.document.plotCards.filter { $0.chapterID == chapterID }
+    private func cards(in chapterID: ChapterID?) -> [SessionBoundValue<PlotCard>] {
+        let session = appState.documentSessionToken
+        return appState.document.plotCards
+            .filter { $0.chapterID == chapterID }
+            .map { SessionBoundValue(value: $0, session: session) }
     }
 
     private var editingCardBinding: Binding<PlotCard?> {
         Binding(
             get: {
-                guard let editingCardID else { return nil }
-                return appState.document.plotCards.first { $0.id == editingCardID }
+                guard let editingCardRequest,
+                      editingCardRequest.session == appState.documentSessionToken else { return nil }
+                return appState.document.plotCards.first { $0.id == editingCardRequest.value.id }
             },
             set: { card in
-                editingCardID = card?.id
+                editingCardRequest = card.map {
+                    SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                }
             }
         )
     }
@@ -310,9 +320,9 @@ private struct PlotCardCanvas: View {
     @Environment(AppState.self) private var appState
 
     let chapterID: ChapterID?
-    let cards: [PlotCard]
-    @Binding var editingCardID: PlotCardID?
-    @Binding var cardPendingDeletion: PlotCard?
+    let cards: [SessionBoundValue<PlotCard>]
+    @Binding var editingCardRequest: SessionBoundValue<PlotCard>?
+    @Binding var cardPendingDeletion: SessionBoundValue<PlotCard>?
 
     var body: some View {
         if cards.isEmpty {
@@ -329,15 +339,16 @@ private struct PlotCardCanvas: View {
                 return true
             }
         } else {
-            ForEach(cards) { card in
+            ForEach(cards) { item in
+                let card = item.value
                 PlotBoardCard(
                     card: card,
                     onEdit: {
-                        editingCardID = card.id
+                        editingCardRequest = item
                         appState.selectPlotCard(card.id)
                     },
                     onDelete: {
-                        cardPendingDeletion = card
+                        cardPendingDeletion = item
                     }
                 )
                 .frame(width: 260, alignment: .topLeading)

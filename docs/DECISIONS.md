@@ -122,6 +122,7 @@
 - **理由**: D-016 の Cmd+Q 直後の未保存ウィンドウを解消しつつ、高速な章操作や並べ替えで保存処理が重なって古い状態が後勝ちするリスクを下げる。スナップショットの置き場所は保存形式の詳細なので、App 側からは抽象プロトコル越しに扱う。
 - **補足**(実装レビューで確定): revision ベースの保存直列化は NovelCore の `DocumentSaveCoordinator`(@MainActor)に切り出した。保存処理と保存対象の取得はクロージャ注入とし、NovelCore の依存ゼロ原則(9.1)を維持。「実行中の保存がある場合は owner が dirty ゼロになるまでループし、待機側は owner の結果を受け取る」方式で、保存完了直後の隙間に入った変更が保存されないまま成功が返る競合(初版実装に存在)を排除。この interleaving はユニットテストで回帰保証している(`DocumentSaveCoordinatorTests`)。
 - **補足2**(Phase 4 レビューで追加): 添付ファイルの追加・削除のように「パッケージ全置換の保存と重なるとデータを失う操作」のため、`performExclusive(_:)` を追加した。実行中の保存の完了を待ってから排他区間を開始し、区間中は新しい保存を一切開始させない(区間中に来た保存要求は区間終了後に通常手順で実行)。**排他区間の中で `saveNow()` を呼ぶとデッドロックする**ため、保存の排出は区間の前に行うこと(添付操作の呼び出し側パターンは `AppState.addAttachment` を参照)。
+- **補足3**(D-041レビューで追加): 別名保存のように「保存排出後のURL切替」と「操作中に増えたrevisionの新URLへの保存」を一つの不可分な境界にする場合は、二段の`saveNow(); performExclusive { ... }`ではなく`performExclusiveAfterFlushing(flushAfter:)`を使う。排他を取得したまま事前保存、package操作、URL切替、事後保存を順に行い、旧URLへ保存が再開する隙間を作らない。
 
 ## D-018: Phase 4 メタデータの保存配置とフォーマットバージョン方針
 
@@ -330,7 +331,7 @@
 - **日付**: 2026-08-07 / **状態**: 承認(商業化基盤で実装)
 - **内容**:
   1. 日本語の表示名と広報名を **「ふみにわ」**、英字ロゴ・配布物・アプリbundle・実行ファイル・Xcode project / schemeを **`FUMINIWA`**、Swiftのブランド型名を `Fuminiwa` とする。初出では必要に応じて「ふみにわ（FUMINIWA）」と併記する。
-  2. bundle identifierは商業配布前に `dev.serikayuzuki.fuminiwa` へ変更する。旧bundle domain `dev.serikayuzuki.NovelWriter` の最近開いた作品、選択セクション、Editor設定8項目はallowlist方式で一度だけ移行する。新しい値を旧値で上書きせず、旧domainと旧ファイルを削除しない。
+  2. bundle identifierは商業配布前に `dev.serikayuzuki.fuminiwa` へ変更する。旧bundle domain `dev.serikayuzuki.NovelWriter` の最近開いた作品、選択セクション、Editor設定6項目（計8キー）はallowlist方式で一度だけ移行する。新しい値を旧値で上書きせず、旧domainと旧ファイルを削除しない。
   3. 新規作品の既定保存先はReleaseで `~/Documents/FUMINIWA`、DebugでApplication Support配下の `FUMINIWA/Drafts` とする。既存の `NovelWriter` フォルダや作品は一括移動せず、移行した絶対URLから元の場所のまま開く。
   4. `.novelpkg`、formatVersion v1〜v3、manifest、内部パス、`NovelKit` / `NovelCore` / `NovelStorage` / `NovelExport` / `EditorKit`等のドメイン名は変更しない。Finder上では同じ拡張子をUTType `dev.serikayuzuki.fuminiwa.novelpackage` の「ふみにわ作品」として宣言する。
   5. toolbar customization ID `novelwriter.workbench.v3` は永続互換IDとして維持する。過去ADR、旧成果物名、旧UserDefaults key、監査時点の証跡も履歴として書き換えない。
@@ -344,7 +345,7 @@
   1. 起動状態を `loading` / `ready` / `recovery` に分け、`ready`になるまで編集可能なWorkbenchを生成しない。初期 `NovelDocument` は内部の一時値にすぎず、bootstrap完了前のユーザー入力を受け付けない。
   2. 前回作品、Finderから指定された作品、またはその付随データの読込に失敗した場合、新規作品へ自動fallbackせず `recovery` で停止する。失敗したURLとrecent preferenceは変更せず、原稿への保存も行わない。
   3. Recoveryでは「再試行」「Finderで表示」「別の作品を開く」「利用者が明示した新規作品作成」を提供する。新規作品は保存成功後だけ現在作品として採用し、その後にだけrecent URLを更新する。
-  4. `bootstrap()`は一度だけ起動処理を開始し、SwiftUIのtask再評価や通知再登録で作品を二重作成しない。`Cmd+S`、終了前保存、自動保存は`ready`な作品だけを対象とする。
+  4. `bootstrap()`は一度だけ起動処理を開始し、同時呼び出しは実行中Taskの完了へ合流する。初回I/O中のFinder URLも起動完了前に処理し、SwiftUIのtask再評価や通知再登録で作品を二重作成・巻き戻ししない(D-041)。`Cmd+S`、終了前保存、自動保存は`ready`な作品だけを対象とする。
   5. manifestが参照する本文・世界観本文、または存在するメモpayloadが読めない／UTF-8でない場合は空文字へ変換せず型付きエラーにする。仕様上省略可能な空メモの欠損は維持する。さらに広いduplicate ID、symlink、孤児payload、resource limit、修復コピーは後続のPackage Validator Gateで扱う。
 - **理由**: 起動直後の編集可能placeholderは、前回作品の非同期読込で入力を上書きし得る。また読込失敗を空の新規作品へ見せかけrecentまで更新すると、利用者には原稿消失に見え、次の自動保存が復旧余地を狭める。執筆アプリでは「開けない」ことを明示する方が「空で開けた」ように装うより安全である。
 
@@ -360,3 +361,17 @@
   6. 直近の開発順はAIやPDFではなくPackage Validator Gateを優先する。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピーを一単位とし、外部変更／競合検出は続く独立Gateとして扱う。その後に署名・公証・更新・法務・サポート等の公開Gateを通す。AIとPDFの順序は、公開Gate後に需要とリスクを別々に評価する。
 - **置き換える範囲**: D-021のAI Assistant Panel常設を破棄し、chrome外観方針をシステム追従へ更新する。D-037の「AI実装後にPDF」という固定順も破棄する。D-021の3列Workbench、D-037のPhase 5完了範囲と「未実装機能を先出ししない」原則は維持する。
 - **理由**: placeholderは利用者に「使える」「本文が送信されるかもしれない」という誤解を同時に生む。執筆アプリの信用は機能数より原稿保全、表示の正直さ、OS慣習への追従、利用者が選べることから生まれる。AIやPDFの順番を商業公開の前提にせず、原稿保全と配布品質を先に完了させる。
+
+## D-041: 作品ライフサイクルを直列化し、古いUI操作を別作品へ適用しない
+
+- **日付**: 2026-08-08 / **状態**: 承認(PRレビューの原稿保全修正で実装)
+- **内容**:
+  1. `bootstrap()`の同時呼び出しは実行中Taskを共有し、初回I/O中に届いたFinder URLの処理まで同じ完了境界へ含める。後続呼び出しだけが先に戻ってdelegateを起動完了扱いにしない。
+  2. 開く、新規作成、別名保存、Recovery再試行、資料操作、スナップショット操作、終了前保存は、AppStateのFIFOなdocument operation gateで`await`を越えて直列化する。Finder openは通常の「開く」経路へ合流させ、二重にgateを取得しない。
+  3. 現在作品に属する操作は、呼び出し時の`generation + document ID + standardized URL`をsession tokenとして保持する。gate待機中に作品、保存先、または復元世代が変わった操作は、Repositoryを変更する前に失敗として破棄する。スナップショット、資料、章／話／人物／プロット／伏線／世界観ノートの確認UIも、一覧項目を表示した時点のtokenを対象値と一体で引き継ぐ。
+  4. 別名保存はpackage copyだけでなくURL、recent、session世代の切替まで保存排他区間で確定し、コピー中の編集を新URLへ保存する。この最終保存に失敗した場合は成功扱いにせず、保存先を切り替えた事実と再試行方法を利用者へ伝える。復元は固定した現在URLに対する復元前退避、書き戻し、メモリ状態のinstallを一つの保存排他区間で行う。
+  5. 開く、新規、別名保存、復元、終了前保存では、first responderとEditorKitの公開command境界を通じて表示中のフォーム入力／IME変換を旧作品へ確定・モデル同期し、最終保存とinstallが終わるまでWorkbench全体の変更を拒否する。本文callbackは表示時の章／話／ノートIDとsessionへ固定し、同じ子IDを持つ複製作品でも本文install世代をEditor keyへ含めて再読込する。別名保存は本文install世代を変えず、caretとUndoを維持する。AppKit型や本文BindingをAppStateへ公開しない。
+  6. 終了要求を受けた時点で新しい作品ライフサイクル操作の受付を停止する。重複した終了要求は同じsingle-flight Taskと一度のAppKit replyへ合流する。先行操作がgateを抜けた後に最後の保存を行い、失敗して終了を取り消す場合だけ受付とエディタを戻す。
+  7. lock順は常にdocument operation gate → `DocumentSaveCoordinator`とする。通常の自動保存／明示保存は外側gateへ入れず、既存のrevision保存直列化へ流す。gate付きpublic API同士を呼び出さない。
+- **理由**: `@MainActor`は一つの同期区間を守るが、Repository I/Oの`await`中には別TaskがAppStateへ入れる。Aの復元待ち中にFinderからBを開くと、再開後に動的な`documentURL`を読み直してBへAのsnapshotを書き戻せた。また同時bootstrapの片方だけが早く完了すると、Finderで開いたBを遅い初回処理がAへ巻き戻せた。操作全体の順序と対象作品を別々に固定しなければ、順序だけを直列化しても待機中の古い確認操作が新作品へ誤適用される。さらにD-005によりIME変換中の本文はモデルへ未反映なので、破壊的遷移の直前に旧エディタ自身から確定させなければ、通常保存だけでは未確定文字を保全できない。
+- **既知の制限**: FIFO gateの待機Taskはcancellationを明示処理せず、待機後にsession検査または操作を続ける。現行UIの破壊操作は自動cancelされず安全性はsession検査で保つが、構造化Taskへ移す際にcancellation-aware waiterを追加する。また別名保存はcopy完了後のfirst responder／IME確定に失敗すると現在作品へ切り替えない一方、作成済みの保存先copyが残り得るため、後続で案内または安全なcleanup方針を決める。

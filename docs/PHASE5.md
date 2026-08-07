@@ -109,6 +109,8 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 **実装メモ**: パネルの生成・結果処理は `NovelApp/DocumentPanelPresenter.swift` に分離し、`AppState.openDocument(at:)` / `createNewDocument()` / `saveDocument(as:)`(4.5-2a で実装済み)だけを呼ぶ。`.novelpkg` 用の `UTType` フィルタは、project.yml が `GENERATE_INFOPLIST_FILE` ベースで物理 Info.plist を持たない方針のため見送り、拡張子検証によるフォールバックとした(開くパネルはディレクトリ選択 + `.novelpkg` 拡張子チェック、保存パネルは既定ファイル名に作品タイトルを入れ拡張子を強制)。失敗(読み込み/新規作成/別名保存)はアラートで通知し、キャンセルは状態を変えない。Cmd+Shift+S の割当変更は D-025 を参照。
 
+> **改訂(2026-08-07):** D-038で物理Info.plist、UTType、Document Typeを導入した。上記は4.5-2b実装時点の履歴であり、現行の開く／保存パネルは`DocumentType.novelPackage`を正として絞り込む。
+
 ### 4.5-3a: スナップショットの復旧導線【完了】
 
 - [x] スナップショットを一覧・Finder 表示できる入口を作る。復元は確認付きで現在の作品へ戻し、元の状態を先にスナップショット化する

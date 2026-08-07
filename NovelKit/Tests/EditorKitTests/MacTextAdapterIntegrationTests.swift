@@ -328,6 +328,91 @@ struct MacTextAdapterIntegrationTests {
         #expect(harness.changes.received.isEmpty)
     }
 
+    @Test("作品遷移前はIMEを旧本文へ確定し、保存完了まで入力を停止する")
+    func documentTransitionCommitsIMEAndLocksEditor() {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        let session = EditorCommandSession()
+        harness.coordinator.registerDocumentLifecycle(with: session)
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        beginIMEComposition(in: textView)
+
+        #expect(textView.hasMarkedText())
+        #expect(harness.changes.received.isEmpty)
+        #expect(session.prepareForDocumentTransition())
+
+        #expect(!textView.hasMarkedText())
+        #expect(harness.changes.received.last == textView.string)
+        #expect(!textView.isEditable)
+        #expect(session.isDocumentTransitionPrepared)
+
+        session.resumeAfterDocumentTransition()
+        #expect(textView.isEditable)
+        #expect(!session.isDocumentTransitionPrepared)
+    }
+
+    @Test("作品遷移は処理中のEditor commandを旧作品側で拒否する")
+    func documentTransitionRejectsPendingCommand() {
+        let session = EditorCommandSession()
+        let commandID = session.requestSelectionSnapshot()
+
+        #expect(session.prepareForDocumentTransition())
+
+        #expect(session.pendingCommand == nil)
+        #expect(session.rejectedCommandID == commandID)
+    }
+
+    @Test("作品遷移は取得済み選択を破棄し、再開後も旧transactionを復活させない")
+    func documentTransitionInvalidatesCapturedSelectionTransaction() throws {
+        let harness = makeHarness(initialText: "猫と犬")
+        let textView = harness.textView
+        let session = EditorCommandSession()
+        harness.coordinator.registerDocumentLifecycle(with: session)
+        textView.setSelectedRange(NSRange(location: 0, length: 1))
+
+        let commandID = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: textView
+        )
+        _ = try #require(session.selectionSnapshot)
+
+        #expect(session.prepareForDocumentTransition())
+        #expect(session.selectionSnapshot == nil)
+        #expect(session.pendingCommand == nil)
+        #expect(session.rejectedCommandID == commandID)
+
+        session.resumeAfterDocumentTransition()
+        session.replaceSelection(id: commandID, text: "｜猫《ねこ》")
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: textView
+        )
+
+        #expect(session.pendingCommand == nil)
+        #expect(session.selectionSnapshot == nil)
+        #expect(session.rejectedCommandID == commandID)
+        #expect(textView.string == "猫と犬")
+    }
+
+    @Test("作品遷移中に発行されたEditor commandは即時拒否する")
+    func documentTransitionRejectsCommandsIssuedWhilePrepared() {
+        let session = EditorCommandSession()
+        #expect(session.prepareForDocumentTransition())
+
+        let requestID = session.requestSelectionSnapshot()
+        #expect(session.pendingCommand == nil)
+        #expect(session.selectionSnapshot == nil)
+        #expect(session.rejectedCommandID == requestID)
+
+        session.replaceSelection(id: requestID, text: "……")
+        #expect(session.pendingCommand == nil)
+        #expect(session.selectionSnapshot == nil)
+        #expect(session.rejectedCommandID == requestID)
+    }
+
     @Test("IME確定後のR5: 行頭の字下げを鉤括弧直後に削除し、Undoで戻せる")
     func imeCommitRemovesIndentAndUndoRestoresIt() {
         let harness = makeHarness(initialText: "　")

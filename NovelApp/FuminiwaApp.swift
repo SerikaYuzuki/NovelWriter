@@ -35,18 +35,25 @@ struct FuminiwaApp: App {
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
-    @State private var editorCommandSession = EditorCommandSession()
+    @State private var editorCommandSession: EditorCommandSession
 
     init() {
         let defaults = UserDefaults.standard
         LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
 
-        let appState = AppState(dependencies: AppDependencies(userDefaults: defaults))
+        let editorCommandSession = EditorCommandSession()
+        let appState = AppState(
+            dependencies: AppDependencies(
+                userDefaults: defaults,
+                editorCommandSession: editorCommandSession
+            )
+        )
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
+        _editorCommandSession = State(initialValue: editorCommandSession)
     }
 
     var body: some Scene {
@@ -75,13 +82,13 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(!appState.startupState.permitsDocumentChoice)
+                .disabled(!appState.permitsDocumentChoice)
 
                 Button("開く…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-                .disabled(!appState.startupState.permitsDocumentChoice)
+                .disabled(!appState.permitsDocumentChoice)
             }
 
             CommandGroup(replacing: .saveItem) {
@@ -89,7 +96,7 @@ struct FuminiwaApp: App {
                     Task { await appState.saveNow() }
                 }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             // Cmd+Shift+S は macOS の「別名で保存…」の慣習を優先する
@@ -99,48 +106,49 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentSaveAsPanel()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("書き出す…") {
                     exportPresenter.present()
                 }
-                .disabled(!appState.startupState.isReady || exportPresenter.state.isExporting)
+                .disabled(!appState.permitsDocumentInteraction || exportPresenter.state.isExporting)
 
                 Button("Finder で表示") {
                     documentPanelPresenter.revealInFinder()
                 }
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Divider()
 
                 Button("スナップショットを保存") {
+                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.createSnapshot()
+                        _ = await appState.createSnapshot(expectedSession: session)
                         await snapshotMenuPresenter.refresh()
                     }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
 
-                SnapshotRestoreCommands(presenter: snapshotMenuPresenter)
-                    .disabled(!appState.startupState.isReady)
+                SnapshotRestoreCommands(appState: appState, presenter: snapshotMenuPresenter)
+                    .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("章") {
                 Button("章を追加") {
                     appState.addChapter()
                 }
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("選択中の章に話を追加") {
                     appState.addEpisode()
                 }
-                .disabled(!appState.startupState.isReady || appState.selectedChapter == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
 
                 Button("話メモ") {
                     NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                 }
-                .disabled(!appState.startupState.isReady || appState.selectedEpisode == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedEpisode == nil)
 
                 Divider()
 
@@ -157,14 +165,14 @@ struct FuminiwaApp: App {
                         }
                     )
                 }
-                .disabled(!appState.startupState.isReady || appState.selectedChapter == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
             }
 
             CommandMenu("登場人物") {
                 Button("登場人物を追加") {
                     appState.addCharacter()
                 }
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("プロット") {
@@ -175,14 +183,14 @@ struct FuminiwaApp: App {
                         appState.addPlotCard()
                     }
                 }
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("資料") {
                 Button("資料を取り込む…") {
                     NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
                 }
-                .disabled(!appState.startupState.isReady || !appState.supportsAttachments)
+                .disabled(!appState.permitsDocumentInteraction || !appState.supportsAttachments)
             }
 
             CommandMenu("世界観") {
@@ -190,7 +198,7 @@ struct FuminiwaApp: App {
                     appState.selectProjectSection(.worldbuilding)
                     appState.addWorldNote()
                 }
-                .disabled(!appState.startupState.isReady)
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandGroup(after: .textEditing) {
@@ -199,6 +207,7 @@ struct FuminiwaApp: App {
                     appState: appState,
                     editorSearchSession: editorSearchSession
                 )
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("表示") {
@@ -209,7 +218,7 @@ struct FuminiwaApp: App {
                         Label(section.title, systemImage: section.systemImage)
                     }
                     .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
-                    .disabled(!appState.startupState.isReady)
+                    .disabled(!appState.permitsDocumentInteraction)
                 }
             }
 
@@ -225,6 +234,7 @@ struct FuminiwaApp: App {
 }
 
 private struct SnapshotRestoreCommands: View {
+    let appState: AppState
     @Bindable var presenter: SnapshotMenuPresenter
 
     var body: some View {
@@ -232,13 +242,14 @@ private struct SnapshotRestoreCommands: View {
             if presenter.snapshots.isEmpty {
                 Text("スナップショットはありません")
             } else {
-                ForEach(presenter.snapshots) { snapshot in
-                    Menu(snapshot.displayName) {
+                ForEach(presenter.snapshots) { item in
+                    Menu(item.snapshot.displayName) {
                         Button("この状態に戻す…") {
-                            presenter.snapshotPendingRestore = snapshot
+                            presenter.requestRestore(item)
                         }
                         Button("Finder で表示") {
-                            NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                            guard item.session == appState.documentSessionToken else { return }
+                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
                         }
                     }
                 }

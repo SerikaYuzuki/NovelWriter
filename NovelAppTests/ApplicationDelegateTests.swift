@@ -27,4 +27,26 @@ struct ApplicationDelegateTests {
 
         #expect(delegate.takeStartupOpenURL()?.path == firstURL.path)
     }
+
+    @Test("重複した終了要求は一つの保存と一度のAppKit replyへ合流する")
+    func coalescesConcurrentTerminationReplies() async throws {
+        let delegate = ApplicationDelegate()
+        let suiteName = "FUMINIWAApplicationDelegateTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let state = AppState(
+            dependencies: AppDependencies(userDefaults: defaults),
+            initialStartupState: .ready
+        )
+        delegate.attach(appState: state)
+        var replies: [Bool] = []
+
+        #expect(delegate.beginTerminationRequest { replies.append($0) } == .terminateLater)
+        #expect(delegate.beginTerminationRequest { replies.append($0) } == .terminateLater)
+        while replies.isEmpty {
+            await Task.yield()
+        }
+
+        #expect(replies == [true])
+    }
 }

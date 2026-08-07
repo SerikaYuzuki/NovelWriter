@@ -2,12 +2,21 @@ import AppKit
 import NovelCore
 import SwiftUI
 
+private struct SessionBoundAttachment: Identifiable {
+    var attachment: Attachment
+    var session: DocumentSessionToken
+
+    var id: String {
+        attachment.id
+    }
+}
+
 struct AttachmentListView: View {
     @Environment(AppState.self) private var appState
 
     @Binding var selection: String?
 
-    @State private var attachmentPendingDeletion: Attachment?
+    @State private var attachmentPendingDeletion: SessionBoundAttachment?
     @State private var operationMessage: OperationMessage?
 
     var body: some View {
@@ -21,18 +30,18 @@ struct AttachmentListView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 List(selection: $selection) {
-                    ForEach(appState.attachments) { attachment in
-                        AttachmentRow(attachment: attachment)
-                            .tag(attachment.fileName)
+                    ForEach(sessionBoundAttachments) { item in
+                        AttachmentRow(attachment: item.attachment)
+                            .tag(item.attachment.fileName)
                             .contextMenu {
                                 Button {
-                                    revealInFinder(attachment)
+                                    revealInFinder(item)
                                 } label: {
                                     Label("Finderで表示", systemImage: "folder")
                                 }
 
                                 Button(role: .destructive) {
-                                    attachmentPendingDeletion = attachment
+                                    attachmentPendingDeletion = item
                                 } label: {
                                     Label("削除", systemImage: "trash")
                                 }
@@ -53,7 +62,10 @@ struct AttachmentListView: View {
         }
         .onDeleteCommand {
             guard let attachment = selectedAttachment else { return }
-            attachmentPendingDeletion = attachment
+            attachmentPendingDeletion = SessionBoundAttachment(
+                attachment: attachment,
+                session: appState.documentSessionToken
+            )
         }
         .task {
             await appState.reloadAttachments()
@@ -62,13 +74,13 @@ struct AttachmentListView: View {
             "資料を削除しますか？",
             isPresented: attachmentDeletionDialogIsPresented,
             presenting: attachmentPendingDeletion
-        ) { attachment in
+        ) { request in
             Button("削除", role: .destructive) {
-                Task { await delete(attachment) }
+                Task { await delete(request) }
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { attachment in
-            Text("「\(attachment.fileName)」を削除します。")
+        } message: { request in
+            Text("「\(request.attachment.fileName)」を削除します。")
         }
         .alert(item: $operationMessage) { message in
             Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
@@ -78,6 +90,13 @@ struct AttachmentListView: View {
     private var selectedAttachment: Attachment? {
         guard let selection else { return nil }
         return appState.attachments.first { $0.fileName == selection }
+    }
+
+    private var sessionBoundAttachments: [SessionBoundAttachment] {
+        let session = appState.documentSessionToken
+        return appState.attachments.map {
+            SessionBoundAttachment(attachment: $0, session: session)
+        }
     }
 
     private var attachmentDeletionDialogIsPresented: Binding<Bool> {
@@ -91,14 +110,31 @@ struct AttachmentListView: View {
         )
     }
 
-    private func revealInFinder(_ attachment: Attachment) {
-        guard let url = appState.attachmentPreviewURL(for: attachment) else { return }
+    private func revealInFinder(_ item: SessionBoundAttachment) {
+        guard item.session == appState.documentSessionToken else {
+            operationMessage = OperationMessage(
+                title: "表示できませんでした",
+                body: "作品が切り替わったため、資料一覧を更新してください。"
+            )
+            return
+        }
+        guard let url = appState.attachmentPreviewURL(for: item.attachment) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @MainActor
-    private func delete(_ attachment: Attachment) async {
-        if await appState.deleteAttachment(attachment) {
+    private func delete(_ request: SessionBoundAttachment) async {
+        let attachment = request.attachment
+        let didDelete = await appState.deleteAttachment(attachment, expectedSession: request.session)
+        guard appState.documentSessionToken == request.session else {
+            operationMessage = OperationMessage(
+                title: didDelete ? "元の作品から削除しました" : "削除できませんでした",
+                body: "操作中に別の作品へ切り替わりました。現在の資料は変更していません。"
+            )
+            return
+        }
+
+        if didDelete {
             if selection == attachment.fileName {
                 selection = nil
             }

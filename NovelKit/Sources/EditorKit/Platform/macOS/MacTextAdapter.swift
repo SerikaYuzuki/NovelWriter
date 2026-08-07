@@ -64,6 +64,7 @@ struct MacTextAdapter: NSViewRepresentable {
             NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
             .textBackgroundColor
         context.coordinator.undoManager.removeAllActions()
+        context.coordinator.registerDocumentLifecycle(with: commandSession)
 
         return scrollView
     }
@@ -75,6 +76,7 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.onSelectionChange = { range in
             commandSession.updateSelectionAvailability(range)
         }
+        context.coordinator.registerDocumentLifecycle(with: commandSession)
 
         guard let textView = context.coordinator.textView else { return }
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
@@ -102,6 +104,10 @@ struct MacTextAdapter: NSViewRepresentable {
         }
         context.coordinator.applySelectionRequestIfNeeded(selectionRequest, textView: textView)
         context.coordinator.applyEditorCommandIfNeeded(command, session: commandSession, textView: textView)
+    }
+
+    static func dismantleNSView(_: NSScrollView, coordinator: Coordinator) {
+        coordinator.unregisterDocumentLifecycle()
     }
 
     /// `NSTextView` が TextKit 2 で構築されていることを検証する。
@@ -158,6 +164,8 @@ struct MacTextAdapter: NSViewRepresentable {
         private(set) var lastAppliedConfiguration: EditorConfiguration?
         private var deferredConfiguration: EditorConfiguration?
         private(set) var textStorageAttributeApplicationCount = 0
+        private let documentLifecycleRegistrationID = UUID()
+        private weak var documentLifecycleSession: EditorCommandSession?
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -221,6 +229,46 @@ struct MacTextAdapter: NSViewRepresentable {
             // 内部置換が発生させた再入通知は、外側の変更処理が最終本文を通知する。
             // ここで再度後処理や onTextChange を行うと、IME確定後に中間本文が通知される。
             guard !isApplyingPluginReplacement else { return }
+
+            synchronizeCommittedText(from: textView)
+        }
+
+        /// 作品遷移前に、表示中の未確定入力を旧作品のモデルへ同期して入力を止める。
+        /// `unmarkText()` 自体がdelegate通知を発生させないIME実装もあるため、
+        /// 確定後の全文はこの境界から明示的にも通知する。
+        func prepareForDocumentTransition() -> Bool {
+            guard let textView else { return true }
+            if textView.hasMarkedText() {
+                textView.unmarkText()
+            }
+            guard !textView.hasMarkedText() else { return false }
+            synchronizeCommittedText(from: textView)
+            textView.isEditable = false
+            return true
+        }
+
+        func resumeAfterDocumentTransition() {
+            textView?.isEditable = true
+        }
+
+        func registerDocumentLifecycle(with session: EditorCommandSession) {
+            guard documentLifecycleSession !== session else { return }
+            unregisterDocumentLifecycle()
+            documentLifecycleSession = session
+            session.registerDocumentLifecycleHandler(
+                id: documentLifecycleRegistrationID,
+                prepare: { [weak self] in self?.prepareForDocumentTransition() ?? true },
+                resume: { [weak self] in self?.resumeAfterDocumentTransition() }
+            )
+        }
+
+        func unregisterDocumentLifecycle() {
+            documentLifecycleSession?.unregisterDocumentLifecycleHandler(id: documentLifecycleRegistrationID)
+            documentLifecycleSession = nil
+        }
+
+        private func synchronizeCommittedText(from textView: NSTextView) {
+            guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
 
             pipeline.didChange(context: MacEditorContext(textView: textView))
 

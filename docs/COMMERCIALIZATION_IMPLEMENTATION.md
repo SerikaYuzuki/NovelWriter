@@ -1,6 +1,6 @@
 # 商業化基盤 実装状況
 
-**基準日: 2026-08-07 / 状態: 商業化準備中（公開可能ではない）**
+**基準日: 2026-08-08 / 状態: 商業化準備中（公開可能ではない）**
 
 本書は[商業化総合監査](COMMERCIALIZATION_AUDIT_2026-07-19.md)を実装へ落とすための進捗表である。設計の正は[DESIGN.md](DESIGN.md)、個別判断は[DECISIONS.md](DECISIONS.md)を優先する。
 
@@ -11,6 +11,7 @@
 | Brand | 日本語名「ふみにわ」、配布名`FUMINIWA`、bundle ID、Document Type / UTTypeを移行 | `.novelpkg` v1〜v3、NovelKit系名称、legacy toolbar IDは互換資産として維持。商標クリアランスは別途必要 |
 | Preference migration | 旧bundle domainからrecent URL、section、Editor設定をallowlistで一度だけ移行 | 新値を上書きせず、旧domainと旧作品を削除・一括移動しない |
 | Safe Launch | `loading` / `ready` / `recovery`を分離。読込失敗時は原稿もrecent URLも変更しない | Recoveryは再試行、Finder表示、別作品選択、明示的新規作成を提供 |
+| Lifecycle safety | 同時bootstrapを共有Taskへ合流。作品切替・別名保存・資料・snapshotをFIFO化し、古い確認操作をsessionで拒否。切替前にフォーム／IMEを旧作品へ確定してWorkbench変更を止め、終了要求後の作品操作を遮断 | 外部rename／削除、同期・別プロセス競合の検出は後続Gate。待機TaskのcancellationとSave As確定失敗時に残るcopyの案内／cleanupはP2 follow-up |
 | Payload integrity | manifest参照の話本文、world参照本文を必須valid UTF-8としてfail-closed。存在するメモもvalid UTF-8を要求 | 空メモのファイル省略は互換仕様として維持。完全なpackage validatorではない |
 | Product truth | 実処理のないAI panel、AI状態、`Cmd+J`を出荷UIから撤去 | AIはプライバシー・同意・費用・失敗時挙動を設計してから任意機能として再検討 |
 | Native UX | chromeはシステムLight／Darkへ追従。本文キャンバスは独立した利用者設定で既定暗色 | 下部は保存状態、再試行、話／全体文字数、検索不一致だけを示す |

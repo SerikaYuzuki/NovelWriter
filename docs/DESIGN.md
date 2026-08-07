@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.54
+# ふみにわ 設計書 v0.55
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -420,7 +420,11 @@ ContentView
 - 保存はアトミックに行い、データ破損を起こしにくくする
 - 自動保存はデバウンス(例: 入力停止2秒後 + 話切り替え時 + アプリ非アクティブ時)
 - `Cmd+S`は自動保存・終了前保存と同じrevision直列化経路で直ちに保存する。`ready`でない間は保存しない
-- 将来的にスナップショット保存を追加する
+- スナップショットの保存・一覧・復元を提供し、復元前に現在状態を別snapshotへ退避する
+- 作品の開く／新規／別名保存／復元／資料操作はFIFOに直列化する。現在作品に属する非同期操作は呼び出し時のsession tokenを保持し、待機中に作品・URL・世代が変わった場合は別作品へ適用せず中止する(D-041)
+- 別名保存のURL切替、snapshot復元の退避・書き戻し・installは通常保存と同じ排他境界で確定する。lock順はdocument operation gate → revision保存直列化とし、逆順取得しない
+- 作品切替・別名保存・復元・終了前は、フォームと表示中のIME変換を旧作品へ確定してモデルへ同期し、最終保存／installまでWorkbench全体の変更を停止する。同じ子IDを持つ複製作品も本文install世代でEditorを再読込し、本文が変わらない別名保存ではcaret／Undoを維持する。終了要求後は新しい作品操作を受け付けない(D-041)
+- 削除確認やsnapshot／資料の一覧項目は、表示時のsession tokenを対象値と一体で保持する。同じIDを持つ複製作品へ古い確認を適用しない
 
 ### 6.5 世界観ノート
 
@@ -549,7 +553,7 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 
 ### 商業化基盤: Product Trust / Package Safety / Release
 
-- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)
+- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)、起動／作品ライフサイクルの競合防止(D-041)
 - **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **公開前に残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA、法務・プライバシー・価格・サポート。現段階を商業公開可能とは扱わない
 
@@ -657,7 +661,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearanceは実装済み(D-038〜D-040)。
+Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
 次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QA、法務・プライバシー・価格・サポートが残るため、現段階を商業公開可能とは表現しない。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
@@ -687,6 +691,18 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.55 (2026-08-08)
+
+PRレビューで発見した起動と作品ライフサイクルの競合を、対象作品の固定を含めて解消した(D-041)。
+
+- 同時bootstrapを一つの実行Taskへ合流し、初回I/O中のFinder openまで待ってから起動完了とする
+- 開く／新規／別名保存／資料／snapshot／終了前保存をFIFOの高レベル操作境界へ集約
+- 呼び出し元session tokenが古くなった復元・別名保存・資料操作等をRepository変更前に拒否
+- 別名保存のURL切替とsnapshot復元のinstallを保存排他区間内で確定
+- IME変換を旧作品へ確定してから入力を止め、終了要求後の作品操作を遮断
+- 章／話／人物／プロット／伏線／世界観ノートの古い削除確認もsession tokenで拒否
+- 復元×Finder open、旧snapshot要求×作品切替、別名保存中の編集／追記保存失敗を決定論的回帰テストで固定
 
 ### v0.54 (2026-08-07)
 

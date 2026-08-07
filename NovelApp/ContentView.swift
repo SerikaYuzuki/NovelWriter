@@ -13,6 +13,7 @@ struct ContentView: View {
                 StartupLoadingView()
             case .ready:
                 NovelWorkbenchView()
+                    .disabled(appState.isDocumentTransitionInProgress)
             case let .recovery(context):
                 StartupRecoveryView(context: context)
             }
@@ -63,8 +64,9 @@ extension Notification.Name {
 }
 
 #Preview {
+    let editorCommandSession = EditorCommandSession()
     let appState = AppState(
-        dependencies: AppDependencies(),
+        dependencies: AppDependencies(editorCommandSession: editorCommandSession),
         initialStartupState: .ready
     )
     return ContentView()
@@ -74,5 +76,5 @@ extension Notification.Name {
         .environment(SnapshotMenuPresenter(appState: appState))
         .environment(ExportPresenter(appState: appState))
         .environment(EditorSearchSession())
-        .environment(EditorCommandSession())
+        .environment(editorCommandSession)
 }

@@ -24,19 +24,24 @@ final class DocumentPanelPresenter {
     }
 
     /// 「新規」。既定保存先へ作品を作成する。失敗時はアラートで知らせる。
-    func presentNewDocument() {
-        guard appState.startupState.permitsDocumentChoice else { return }
+    func presentNewDocument(expectedSession: DocumentSessionToken? = nil) {
+        guard appState.permitsDocumentChoice else { return }
+        let session = expectedSession ?? appState.documentSessionToken
         Task {
-            let success = await appState.createNewDocument()
+            let success = await appState.createNewDocument(expectedSession: session)
             if !success {
-                alertMessage = "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
+                alertMessage = if appState.documentSessionToken != session {
+                    "作品が切り替わったため、新規作品は作成しませんでした。"
+                } else {
+                    "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
+                }
             }
         }
     }
 
     /// 「開く…」。`.novelpkg` パッケージを選ばせ、`AppState.openDocument(at:)` へ渡す。
     func presentOpenPanel() {
-        guard appState.startupState.permitsDocumentChoice else { return }
+        guard appState.permitsDocumentChoice else { return }
         let panel = NSOpenPanel()
         panel.title = "作品を開く"
         panel.prompt = "開く"
@@ -66,7 +71,8 @@ final class DocumentPanelPresenter {
 
     /// 「別名で保存…」。既定ファイル名は現在の作品タイトルとし、拡張子は `.novelpkg` を強制する。
     func presentSaveAsPanel() {
-        guard appState.startupState.isReady else { return }
+        guard appState.permitsDocumentInteraction else { return }
+        let session = appState.documentSessionToken
         let panel = NSSavePanel()
         panel.title = "別名で保存"
         panel.prompt = "保存"
@@ -83,10 +89,19 @@ final class DocumentPanelPresenter {
         if url.pathExtension.lowercased() != Self.packageExtension {
             url = url.deletingPathExtension().appendingPathExtension(Self.packageExtension)
         }
+        let destinationURL = url.standardizedFileURL
 
         Task {
-            let success = await appState.saveDocument(as: url)
-            if !success {
+            let result = await appState.saveDocumentResult(as: destinationURL, expectedSession: session)
+            switch result {
+            case .saved:
+                break
+            case .switchedButLatestEditsFailed:
+                alertMessage =
+                    "保存先は切り替わりましたが、最新の編集を保存できませんでした。下部の「再試行」で保存してください。"
+            case .staleSession:
+                alertMessage = "作品が切り替わったため、別名保存は行いませんでした。"
+            case .failedBeforeSwitch:
                 alertMessage = "別名で保存できませんでした。保存先の空き容量やアクセス権限を確認してください。"
             }
         }
@@ -94,7 +109,7 @@ final class DocumentPanelPresenter {
 
     /// 「Finder で表示」。現在の保存先を Finder で選択状態にする。
     func revealInFinder() {
-        guard appState.startupState.isReady else { return }
+        guard appState.permitsDocumentInteraction else { return }
         NSWorkspace.shared.activateFileViewerSelecting([appState.documentURL])
     }
 }

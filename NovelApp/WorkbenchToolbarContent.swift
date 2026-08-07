@@ -236,8 +236,9 @@ struct SnapshotPopover: View {
                     .font(.headline)
                 Spacer()
                 Button {
+                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.createSnapshot()
+                        _ = await appState.createSnapshot(expectedSession: session)
                         await presenter.refresh()
                     }
                 } label: {
@@ -257,10 +258,10 @@ struct SnapshotPopover: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(presenter.snapshots) { snapshot in
+                List(presenter.snapshots) { item in
                     HStack(spacing: 8) {
-                        Button(snapshot.displayName) {
-                            presenter.snapshotPendingRestore = snapshot
+                        Button(item.snapshot.displayName) {
+                            presenter.requestRestore(item)
                             overlayState.presented = nil
                         }
                         .buttonStyle(.plain)
@@ -269,7 +270,8 @@ struct SnapshotPopover: View {
                         Spacer()
 
                         Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                            guard item.session == appState.documentSessionToken else { return }
+                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
                         } label: {
                             Label("Finderで表示", systemImage: "folder")
                         }
@@ -355,11 +357,20 @@ struct ChapterContextMenuContent: View {
 }
 
 /// File メニューからスナップショット一覧・復元へ到達するための薄い状態。
+struct SnapshotRestoreRequest: Identifiable, Equatable {
+    var snapshot: DocumentSnapshotInfo
+    var session: DocumentSessionToken
+
+    var id: URL {
+        snapshot.id
+    }
+}
+
 @MainActor
 @Observable
 final class SnapshotMenuPresenter {
-    var snapshots: [DocumentSnapshotInfo] = []
-    var snapshotPendingRestore: DocumentSnapshotInfo?
+    var snapshots: [SnapshotRestoreRequest] = []
+    var snapshotPendingRestore: SnapshotRestoreRequest?
     var restoreErrorMessage: String?
 
     private let appState: AppState
@@ -369,11 +380,34 @@ final class SnapshotMenuPresenter {
     }
 
     func refresh() async {
-        snapshots = await appState.listSnapshots()
+        let session = appState.documentSessionToken
+        let loadedSnapshots = await appState.listSnapshots(expectedSession: session)
+        guard appState.documentSessionToken == session else { return }
+
+        snapshots = loadedSnapshots.map {
+            SnapshotRestoreRequest(snapshot: $0, session: session)
+        }
+        if snapshotPendingRestore?.session != session {
+            snapshotPendingRestore = nil
+        }
     }
 
-    func restore(_ snapshot: DocumentSnapshotInfo) async {
-        let success = await appState.restoreSnapshot(at: snapshot.url)
+    func requestRestore(_ request: SnapshotRestoreRequest) {
+        guard request.session == appState.documentSessionToken,
+              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else
+        {
+            restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
+            return
+        }
+        snapshotPendingRestore = request
+    }
+
+    func restore(_ request: SnapshotRestoreRequest) async {
+        snapshotPendingRestore = nil
+        let success = await appState.restoreSnapshot(
+            at: request.snapshot.url,
+            expectedSession: request.session
+        )
         await refresh()
         if !success {
             restoreErrorMessage = "スナップショットを復元できませんでした。保存に失敗したか、ファイルにアクセスできない可能性があります。"

@@ -170,7 +170,7 @@ struct AppStateEpisodeSelectionTests {
         state.selectChapter(original.chapters[1].id)
         state.selectEpisode(secondEpisode, in: original.chapters[1].id)
         state.updateSelectedEpisodeContent("復元前の編集")
-        #expect(await state.saveBeforeTermination())
+        #expect(await state.saveNow())
 
         #expect(await state.restoreSnapshot(at: snapshotURL))
         #expect(state.selectedChapterID == original.chapters.first?.id)

@@ -25,6 +25,7 @@ struct NovelWorkbenchView: View {
     @State private var selectedAttachmentFileName: String?
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
+    @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
 
     var body: some View {
@@ -56,13 +57,13 @@ struct NovelWorkbenchView: View {
             "このスナップショットに戻しますか？",
             isPresented: snapshotRestoreDialogIsPresented,
             presenting: snapshotMenuPresenter.snapshotPendingRestore
-        ) { snapshot in
+        ) { request in
             Button("戻す", role: .destructive) {
-                Task { await snapshotMenuPresenter.restore(snapshot) }
+                Task { await snapshotMenuPresenter.restore(request) }
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { snapshot in
-            Text("「\(snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+        } message: { request in
+            Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
         }
         .alert(
             "復元できませんでした",
@@ -94,6 +95,7 @@ struct NovelWorkbenchView: View {
         .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
             guard appState.supportsAttachments else { return }
             appState.selectProjectSection(.references)
+            attachmentImportSession = appState.documentSessionToken
             isImportingAttachment = true
         }
     }
@@ -163,6 +165,16 @@ struct NovelWorkbenchView: View {
 
     @MainActor
     private func importAttachment(from result: Result<[URL], Error>) async {
+        let expectedSession = attachmentImportSession
+        attachmentImportSession = nil
+        guard let expectedSession else {
+            attachmentImportMessage = OperationMessage(
+                title: "取り込めませんでした",
+                body: "作品を確認できないため、資料を変更していません。もう一度お試しください。"
+            )
+            return
+        }
+
         do {
             guard let sourceURL = try result.get().first else { return }
             let didAccess = sourceURL.startAccessingSecurityScopedResource()
@@ -172,7 +184,19 @@ struct NovelWorkbenchView: View {
                 }
             }
 
-            if let attachment = await appState.addAttachment(from: sourceURL) {
+            let attachment = await appState.addAttachment(
+                from: sourceURL,
+                expectedSession: expectedSession
+            )
+            guard appState.documentSessionToken == expectedSession else {
+                attachmentImportMessage = OperationMessage(
+                    title: attachment == nil ? "取り込みませんでした" : "元の作品に取り込みました",
+                    body: "操作中に別の作品へ切り替わりました。現在の資料は変更していません。"
+                )
+                return
+            }
+
+            if let attachment {
                 selectedAttachmentFileName = attachment.fileName
                 attachmentImportMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
             } else {
@@ -302,17 +326,17 @@ struct ProjectSidebarView: View {
 private struct WorldbuildingOutlineView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var notePendingDeletion: WorldNote?
+    @State private var notePendingDeletion: SessionBoundValue<WorldNote>?
 
     var body: some View {
         VStack(spacing: 0) {
             List(selection: selectionBinding) {
-                ForEach(appState.document.worldNotes) { note in
-                    WorldNoteRow(note: note)
-                        .tag(note.id)
+                ForEach(sessionBoundWorldNotes) { item in
+                    WorldNoteRow(note: item.value)
+                        .tag(item.value.id)
                         .contextMenu {
                             Button(role: .destructive) {
-                                notePendingDeletion = note
+                                notePendingDeletion = item
                             } label: {
                                 Label("削除", systemImage: "trash")
                             }
@@ -335,19 +359,29 @@ private struct WorldbuildingOutlineView: View {
         }
         .onDeleteCommand {
             guard let note = appState.selectedWorldNote else { return }
-            notePendingDeletion = note
+            notePendingDeletion = SessionBoundValue(
+                value: note,
+                session: appState.documentSessionToken
+            )
         }
         .confirmationDialog(
             "世界観ノートを削除しますか？",
             isPresented: noteDeletionDialogIsPresented,
             presenting: notePendingDeletion
-        ) { note in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteWorldNote(id: note.id)
+                appState.deleteWorldNote(id: request.value.id, expectedSession: request.session)
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { note in
-            Text("「\(displayTitle(for: note))」を削除します。")
+        } message: { request in
+            Text("「\(displayTitle(for: request.value))」を削除します。")
+        }
+    }
+
+    private var sessionBoundWorldNotes: [SessionBoundValue<WorldNote>] {
+        let session = appState.documentSessionToken
+        return appState.document.worldNotes.map {
+            SessionBoundValue(value: $0, session: session)
         }
     }
 
@@ -405,6 +439,7 @@ private struct WorldNoteDetailView: View {
     var body: some View {
         Group {
             if let note = appState.selectedWorldNote {
+                let session = appState.documentSessionToken
                 VStack(alignment: .leading, spacing: 16) {
                     WorkbenchLabeledField("タイトル") {
                         TextField("ノートのタイトル", text: titleBinding(for: note))
@@ -414,12 +449,19 @@ private struct WorldNoteDetailView: View {
                     ZStack {
                         Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                         EditorView(
-                            chapterKey: note.id,
+                            chapterKey: SessionBoundEditorKey(
+                                value: note.id,
+                                generation: appState.editorContentGeneration
+                            ),
                             initialText: note.content,
                             commandSession: editorCommandSession,
                             configuration: editorSettings.configuration,
                             onTextChange: { content in
-                                appState.updateWorldNoteContent(content, for: note.id)
+                                appState.updateWorldNoteContent(
+                                    content,
+                                    for: note.id,
+                                    expectedSession: session
+                                )
                             }
                         )
                         .frame(maxWidth: editorMaximumWidth)

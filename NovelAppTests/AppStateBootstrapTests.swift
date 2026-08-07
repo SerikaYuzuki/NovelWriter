@@ -121,6 +121,93 @@ struct AppStateBootstrapTests {
         #expect(await repository.saveCount == 1)
     }
 
+    @Test("同時bootstrapは先行処理を待ち、Finder作品を起動処理に上書きさせない")
+    func concurrentBootstrapWaitsForSharedCompletion() async {
+        let repository = BootstrapRepository()
+        let defaults = makeUserDefaults()
+        let finderURL = packageURL("待機中のFinder作品")
+        let finderDocument = NovelDocument.newDocument(title: "Finderから")
+        await repository.seed(finderDocument, at: finderURL)
+        await repository.pauseNextSave()
+        let state = makeState(repository: repository, defaults: defaults)
+
+        let initialBootstrap = Task { @MainActor in
+            await state.bootstrap()
+        }
+        await repository.waitUntilSaveIsPaused()
+
+        var finderBootstrapDidStart = false
+        var finderBootstrapDidReturn = false
+        let finderBootstrap = Task { @MainActor in
+            finderBootstrapDidStart = true
+            await state.bootstrap(opening: finderURL)
+            finderBootstrapDidReturn = true
+        }
+
+        // 後続bootstrapが先行I/Oへjoinする機会を与える。先行処理がまだ保存中のため、
+        // delegateがfinishBootstrap()できる状態へ戻ってはならない。
+        while !finderBootstrapDidStart {
+            await Task.yield()
+        }
+        #expect(!finderBootstrapDidReturn)
+        #expect(state.startupState == .loading)
+
+        await repository.resumeSave()
+        await initialBootstrap.value
+        await finderBootstrap.value
+
+        #expect(finderBootstrapDidReturn)
+        #expect(state.startupState == .ready)
+        #expect(state.document == finderDocument)
+        #expect(state.documentURL == finderURL.standardizedFileURL)
+        #expect(await repository.saveCount == 1)
+        #expect(await repository.loadCount == 1)
+    }
+
+    @Test("先行bootstrapも起動中に追加されたFinder読込の完了まで戻らない")
+    func initialBootstrapWaitsForQueuedFinderLoad() async {
+        let repository = BootstrapRepository()
+        let finderURL = packageURL("読込待機中のFinder作品")
+        await repository.seed(NovelDocument.newDocument(title: "Finderから"), at: finderURL)
+        await repository.pauseNextSave()
+        await repository.pauseNextLoad()
+        let state = makeState(repository: repository, defaults: makeUserDefaults())
+
+        var initialBootstrapDidReturn = false
+        let initialBootstrap = Task { @MainActor in
+            await state.bootstrap()
+            initialBootstrapDidReturn = true
+        }
+        await repository.waitUntilSaveIsPaused()
+
+        var finderBootstrapDidStart = false
+        var finderBootstrapDidReturn = false
+        let finderBootstrap = Task { @MainActor in
+            finderBootstrapDidStart = true
+            await state.bootstrap(opening: finderURL)
+            finderBootstrapDidReturn = true
+        }
+        while !finderBootstrapDidStart {
+            await Task.yield()
+        }
+
+        await repository.resumeSave()
+        await repository.waitUntilLoadIsPaused()
+
+        // Finder読込も共有Taskの一部であり、どちらの呼び出し元もdelegateへ
+        // bootstrap完了を通知できる状態へ戻ってはならない。
+        #expect(!initialBootstrapDidReturn)
+        #expect(!finderBootstrapDidReturn)
+
+        await repository.resumeLoad()
+        await initialBootstrap.value
+        await finderBootstrap.value
+
+        #expect(initialBootstrapDidReturn)
+        #expect(finderBootstrapDidReturn)
+        #expect(state.documentURL == finderURL.standardizedFileURL)
+    }
+
     @Test("Finder指定URLはrecentより優先する")
     func finderURLTakesPriorityOverRecentDocument() async {
         let repository = BootstrapRepository()
@@ -187,6 +274,10 @@ private actor BootstrapRepository: DocumentRepository {
     private var documents: [String: NovelDocument] = [:]
     private var loadFails: Bool
     private var saveFails: Bool
+    private var shouldPauseNextLoad = false
+    private var shouldPauseNextSave = false
+    private var pausedLoadContinuation: CheckedContinuation<Void, Never>?
+    private var pausedSaveContinuation: CheckedContinuation<Void, Never>?
     private(set) var loadCount = 0
     private(set) var saveCount = 0
 
@@ -197,6 +288,12 @@ private actor BootstrapRepository: DocumentRepository {
 
     func load(from url: URL) async throws -> NovelDocument {
         loadCount += 1
+        if shouldPauseNextLoad {
+            shouldPauseNextLoad = false
+            await withCheckedContinuation { continuation in
+                pausedLoadContinuation = continuation
+            }
+        }
         guard !loadFails, let document = documents[url.standardizedFileURL.path] else {
             throw BootstrapRepositoryError.loadFailed
         }
@@ -205,6 +302,12 @@ private actor BootstrapRepository: DocumentRepository {
 
     func save(_ document: NovelDocument, to url: URL) async throws {
         saveCount += 1
+        if shouldPauseNextSave {
+            shouldPauseNextSave = false
+            await withCheckedContinuation { continuation in
+                pausedSaveContinuation = continuation
+            }
+        }
         guard !saveFails else { throw BootstrapRepositoryError.saveFailed }
         documents[url.standardizedFileURL.path] = document
     }
@@ -215,6 +318,36 @@ private actor BootstrapRepository: DocumentRepository {
 
     func setLoadFailure(_ shouldFail: Bool) {
         loadFails = shouldFail
+    }
+
+    func pauseNextSave() {
+        shouldPauseNextSave = true
+    }
+
+    func pauseNextLoad() {
+        shouldPauseNextLoad = true
+    }
+
+    func waitUntilSaveIsPaused() async {
+        while pausedSaveContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func waitUntilLoadIsPaused() async {
+        while pausedLoadContinuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resumeSave() {
+        pausedSaveContinuation?.resume()
+        pausedSaveContinuation = nil
+    }
+
+    func resumeLoad() {
+        pausedLoadContinuation?.resume()
+        pausedLoadContinuation = nil
     }
 }
 

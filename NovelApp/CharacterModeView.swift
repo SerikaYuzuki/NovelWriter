@@ -6,16 +6,16 @@ import SwiftUI
 struct CharacterListView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var characterPendingDeletion: NovelCore.Character?
+    @State private var characterPendingDeletion: SessionBoundValue<NovelCore.Character>?
 
     var body: some View {
         List(selection: characterSelectionBinding) {
-            ForEach(appState.document.characters) { character in
-                CharacterRow(character: character)
-                    .tag(character.id)
+            ForEach(sessionBoundCharacters) { item in
+                CharacterRow(character: item.value)
+                    .tag(item.value.id)
                     .contextMenu {
                         Button(role: .destructive) {
-                            characterPendingDeletion = character
+                            characterPendingDeletion = item
                         } label: {
                             Label("削除", systemImage: "trash")
                         }
@@ -37,19 +37,29 @@ struct CharacterListView: View {
         .workbenchGlassOutlineStyle()
         .onDeleteCommand {
             guard let character = appState.selectedCharacter else { return }
-            characterPendingDeletion = character
+            characterPendingDeletion = SessionBoundValue(
+                value: character,
+                session: appState.documentSessionToken
+            )
         }
         .confirmationDialog(
             "キャラクターを削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
             presenting: characterPendingDeletion
-        ) { character in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteCharacter(id: character.id)
+                appState.deleteCharacter(id: request.value.id, expectedSession: request.session)
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { character in
-            Text("「\(character.name)」を削除します。")
+        } message: { request in
+            Text("「\(request.value.name)」を削除します。")
+        }
+    }
+
+    private var sessionBoundCharacters: [SessionBoundValue<NovelCore.Character>] {
+        let session = appState.documentSessionToken
+        return appState.document.characters.map {
+            SessionBoundValue(value: $0, session: session)
         }
     }
 

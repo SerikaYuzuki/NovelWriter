@@ -1,3 +1,4 @@
+import EditorKit
 import Foundation
 import NovelCore
 import NovelStorage
@@ -22,15 +23,20 @@ struct AppDependencies {
     /// 既定の保存先ディレクトリの探索に使う。
     let fileManager: FileManager
 
+    /// 表示中の本文エディタを、作品遷移前にIME確定・モデル同期・入力停止する境界。
+    let editorCommandSession: EditorCommandSession
+
     init(
         repository: DocumentRepository = NovelpkgRepository(),
         attachmentManager: AttachmentManaging? = nil,
         userDefaults: UserDefaults = .standard,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        editorCommandSession: EditorCommandSession = EditorCommandSession()
     ) {
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
         self.userDefaults = userDefaults
         self.fileManager = fileManager
+        self.editorCommandSession = editorCommandSession
     }
 }

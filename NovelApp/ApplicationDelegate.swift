@@ -10,6 +10,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private var pendingOpenURL: URL?
     private var didFinishBootstrap = false
+    private var terminationReplyTask: Task<Void, Never>?
 
     func attach(appState: AppState) {
         self.appState = appState
@@ -53,15 +54,33 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Task { @MainActor in
+        beginTerminationRequest { shouldTerminate in
+            sender.reply(toApplicationShouldTerminate: shouldTerminate)
+        }
+    }
+
+    /// AppKitへ返すreplyを一つに集約する。internalなのは、重複要求でreplyが
+    /// 二重送信されないことをNSApplicationへ副作用を出さずテストするため。
+    func beginTerminationRequest(
+        reply: @escaping @MainActor (Bool) -> Void
+    ) -> NSApplication.TerminateReply {
+        guard terminationReplyTask == nil else { return .terminateLater }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
             guard let appState else {
-                sender.reply(toApplicationShouldTerminate: true)
+                reply(true)
                 return
             }
 
             let shouldTerminate = await appState.saveBeforeTermination()
-            sender.reply(toApplicationShouldTerminate: shouldTerminate)
+            if !shouldTerminate {
+                // 取消後の次の終了要求は、新しいsingle-flightとして再試行できる。
+                terminationReplyTask = nil
+            }
+            reply(shouldTerminate)
         }
+        terminationReplyTask = task
 
         return .terminateLater
     }

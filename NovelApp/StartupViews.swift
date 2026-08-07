@@ -12,13 +12,13 @@ struct StartupLoadingView: View {
             VStack(spacing: 6) {
                 Text("ふみにわ")
                     .font(.title2.weight(.semibold))
-                Text("昨日の続きへ戻っています…")
+                Text("作品を準備しています…")
                     .foregroundStyle(.secondary)
             }
 
             ProgressView()
                 .controlSize(.small)
-                .accessibilityLabel("作品を読み込み中")
+                .accessibilityLabel("作品を準備中")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(minWidth: 640, minHeight: 420)
@@ -33,6 +33,7 @@ struct StartupRecoveryView: View {
     let context: StartupRecoveryContext
 
     @State private var confirmsNewDocument = false
+    @State private var newDocumentSession: DocumentSessionToken?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -61,6 +62,7 @@ struct StartupRecoveryView: View {
                 }
 
                 Button("新規作品を作る…") {
+                    newDocumentSession = appState.documentSessionToken
                     confirmsNewDocument = true
                 }
             }
@@ -74,7 +76,9 @@ struct StartupRecoveryView: View {
             isPresented: $confirmsNewDocument
         ) {
             Button("新規作品を作る") {
-                documentPanelPresenter.presentNewDocument()
+                guard let newDocumentSession else { return }
+                documentPanelPresenter.presentNewDocument(expectedSession: newDocumentSession)
+                self.newDocumentSession = nil
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
