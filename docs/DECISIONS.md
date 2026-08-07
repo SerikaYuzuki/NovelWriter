@@ -99,7 +99,7 @@
 - **日付**: 2026-07-08 / **状態**: 承認(D-008 の具体化、Phase 1-C で導入)
 - **内容**: `NovelWriter.xcodeproj` はコミットせず、リポジトリルートの `project.yml` から `xcodegen generate` で生成する。正は常に `project.yml`。
 - **理由**: pbxproj の手書き・手動管理はエラーの温床で、diff も読めない。project.yml なら宣言的でレビュー可能、AIエージェントにも扱いやすい。
-- **補足**: 開発者(と `Scripts/check.sh`)は `brew install xcodegen` が必要。将来 XcodeGen が Xcode の新形式に追従できなくなったら再評価。
+- **補足**: 開発者(と `Scripts/check.sh`)は `brew install xcodegen` が必要。将来 XcodeGen が Xcode の新形式に追従できなくなったら再評価。プロジェクト名だけは **D-038** により `FUMINIWA.xcodeproj` へ改称したが、生成物をコミットせず `project.yml` を正とする契約は維持する。
 
 ## D-016: 新規作品の既定保存先と自動保存の方針
 
@@ -110,6 +110,7 @@
   - 「最近開いた作品」は UserDefaults にファイルパスで記録(D-011 により Sandbox 不要のため、これで足りる)
 - **理由**: 執筆中のキーストロークごとのディスクI/Oを避けつつ、データ喪失ウィンドウを最大2秒に抑える。章操作は頻度が低く保存コストが小さいので即時が安全。
 - **既知の制限**: ~~アプリがアクティブなまま Cmd+Q した場合、最後の編集から2秒未満だと未保存になりうる~~ → **D-017(Phase 3)で解消済み**(`applicationShouldTerminate` での終了前保存)。
+- **改訂**: 既定保存先の製品フォルダ名だけは **D-038** により `~/Documents/FUMINIWA` へ変更した。既存の `~/Documents/NovelWriter` 内の作品は移動・削除せず、記録済みURLからその場で開く。
 
 ## D-017: Phase 3 の終了前保存とスナップショット保存
 
@@ -321,3 +322,26 @@
   3. PDF再開時も、実装済みの共通原稿展開、`NovelDocument` 値スナップショット、アトミック書込み、`NovelExport → NovelCore` の依存境界を維持する。macOS固有レンダラは `NovelExport/Platform/macOS/` に閉じ込め、公開APIへAppKit型を出さない。
   4. 未実装形式をUIに先出ししない。Fileメニューとtoolbarは現在利用可能なTXT / Markdown / EPUBだけを表示する。
 - **理由**: 現時点の製品価値はAI支援を先に完成させる方が高く、PDF組版を挟むとAI実装の開始が遅れる。PDFを曖昧な未完成状態で同梱せず、既に品質ゲートを通った3形式でPhase 5を閉じ、AI後に独立した受け入れ条件で実装する方が進捗と品質の両方を明確にできるため。
+
+## D-038: 製品名を「ふみにわ / FUMINIWA」へ変更し、保存形式と旧設定は互換資産として維持する
+
+- **日付**: 2026-08-07 / **状態**: 承認(商業化基盤で実装)
+- **内容**:
+  1. 日本語の表示名と広報名を **「ふみにわ」**、英字ロゴ・配布物・アプリbundle・実行ファイル・Xcode project / schemeを **`FUMINIWA`**、Swiftのブランド型名を `Fuminiwa` とする。初出では必要に応じて「ふみにわ（FUMINIWA）」と併記する。
+  2. bundle identifierは商業配布前に `dev.serikayuzuki.fuminiwa` へ変更する。旧bundle domain `dev.serikayuzuki.NovelWriter` の最近開いた作品、選択セクション、Editor設定8項目はallowlist方式で一度だけ移行する。新しい値を旧値で上書きせず、旧domainと旧ファイルを削除しない。
+  3. 新規作品の既定保存先はReleaseで `~/Documents/FUMINIWA`、DebugでApplication Support配下の `FUMINIWA/Drafts` とする。既存の `NovelWriter` フォルダや作品は一括移動せず、移行した絶対URLから元の場所のまま開く。
+  4. `.novelpkg`、formatVersion v1〜v3、manifest、内部パス、`NovelKit` / `NovelCore` / `NovelStorage` / `NovelExport` / `EditorKit`等のドメイン名は変更しない。Finder上では同じ拡張子をUTType `dev.serikayuzuki.fuminiwa.novelpackage` の「ふみにわ作品」として宣言する。
+  5. toolbar customization ID `novelwriter.workbench.v3` は永続互換IDとして維持する。過去ADR、旧成果物名、旧UserDefaults key、監査時点の証跡も履歴として書き換えない。
+- **理由**: 既存の無料OSS `novelWriter` との検索・口コミ・問い合わせ上の混同を避け、商業化前に独自ブランドを確立する。一方、作品形式や設定識別子まで見た目に合わせて一括改名すると、原稿・最近開いた作品・Editor設定・toolbar配置・将来のWindows互換を壊す。外向きのブランドと内向きの互換境界を分けることで、改名とデータ継続性を両立する。
+- **販売前条件**: コード上の採用は名称の法的な利用可能性を保証しない。第9類・第42類等の商標、App Store、ドメイン、SNS、既存の `fuminiwa design` 等との役務・表示上の距離を、最初の署名済み外部配布前に弁理士を含めて確認する。
+
+## D-039: 起動は Loading / Ready / Recovery の三状態とし、読込失敗時は原稿を置き換えない
+
+- **日付**: 2026-08-07 / **状態**: 承認(商業化 Safe Launch Gateで実装)
+- **内容**:
+  1. 起動状態を `loading` / `ready` / `recovery` に分け、`ready`になるまで編集可能なWorkbenchを生成しない。初期 `NovelDocument` は内部の一時値にすぎず、bootstrap完了前のユーザー入力を受け付けない。
+  2. 前回作品、Finderから指定された作品、またはその付随データの読込に失敗した場合、新規作品へ自動fallbackせず `recovery` で停止する。失敗したURLとrecent preferenceは変更せず、原稿への保存も行わない。
+  3. Recoveryでは「再試行」「Finderで表示」「別の作品を開く」「利用者が明示した新規作品作成」を提供する。新規作品は保存成功後だけ現在作品として採用し、その後にだけrecent URLを更新する。
+  4. `bootstrap()`は一度だけ起動処理を開始し、SwiftUIのtask再評価や通知再登録で作品を二重作成しない。`Cmd+S`、終了前保存、自動保存は`ready`な作品だけを対象とする。
+  5. manifestが参照する本文・世界観本文、または存在するメモpayloadが読めない／UTF-8でない場合は空文字へ変換せず型付きエラーにする。仕様上省略可能な空メモの欠損は維持する。さらに広いduplicate ID、symlink、孤児payload、resource limit、修復コピーは後続のPackage Validator Gateで扱う。
+- **理由**: 起動直後の編集可能placeholderは、前回作品の非同期読込で入力を上書きし得る。また読込失敗を空の新規作品へ見せかけrecentまで更新すると、利用者には原稿消失に見え、次の自動保存が復旧余地を狭める。執筆アプリでは「開けない」ことを明示する方が「空で開けた」ように装うより安全である。

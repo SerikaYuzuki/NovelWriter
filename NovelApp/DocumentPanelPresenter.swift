@@ -8,14 +8,7 @@ import Observation
 /// `NSOpenPanel` / `NSSavePanel` の生成と結果の取り扱いをここに閉じ込め、
 /// 実際の作品ライフサイクル操作は 4.5-2a で実装済みの `AppState` の
 /// 既存API(`openDocument(at:)` / `createNewDocument()` / `saveDocument(as:)`)
-/// だけを呼ぶ。パネル自身は `.novelpkg` という保存形式を一切知らず、
-/// 選んだ/入力された URL を渡すだけにする。
-///
-/// - Note: `.novelpkg` はフォルダパッケージだが、`UTExportedTypeDeclarations` /
-///   `CFBundleDocumentTypes` を宣言するには物理 Info.plist が必要になり、
-///   現行の `GENERATE_INFOPLIST_FILE`(project.yml、Info.plist を物理ファイルとして
-///   持たない方針)から外れてビルド設定が複雑化する。v1 では `UTType` フィルタを
-///   使わず、拡張子検証によるフォールバックで代替する(PHASE5.md 4.5-2b の注記どおり)。
+/// だけを呼ぶ。`.novelpkg`のUTTypeはD-038でInfo.plistと同時に宣言する。
 @MainActor
 @Observable
 final class DocumentPanelPresenter {
@@ -45,8 +38,9 @@ final class DocumentPanelPresenter {
         let panel = NSOpenPanel()
         panel.title = "作品を開く"
         panel.prompt = "開く"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [.fuminiwaNovelPackage]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.treatsFilePackagesAsDirectories = false
 
@@ -73,6 +67,7 @@ final class DocumentPanelPresenter {
         let panel = NSSavePanel()
         panel.title = "別名で保存"
         panel.prompt = "保存"
+        panel.allowedContentTypes = [.fuminiwaNovelPackage]
         panel.nameFieldStringValue = "\(appState.document.title).\(Self.packageExtension)"
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false

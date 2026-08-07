@@ -123,7 +123,7 @@ final class AppState {
                 try await repository.save(doc, to: url)
             } catch {
                 // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
-                print("NovelWriter: 保存に失敗しました(\(url.path)): \(error)")
+                print("[FUMINIWA] 保存に失敗しました(\(url.path)): \(error)")
                 throw error
             }
         },
@@ -134,8 +134,8 @@ final class AppState {
     /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
     @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
 
-    private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
-    private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
+    private static let recentDocumentPathKey = AppPreferenceKey.recentDocumentPath
+    private static let projectSectionKey = AppPreferenceKey.projectSection
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
     init(dependencies: AppDependencies) {
@@ -172,7 +172,7 @@ final class AppState {
         attachments = []
     }
 
-    /// 起動時の読み込み/新規作成を行う。`NovelWriterApp` から一度だけ呼ばれる想定。
+    /// 起動時の読み込み/新規作成を行う。`FuminiwaApp` から一度だけ呼ばれる想定。
     ///
     /// UserDefaults に前回開いていたファイルパスがあればそれを読み込む。
     /// 無ければ(または読み込みに失敗すれば)新規作品を作り、既定の保存先へ保存する。
@@ -198,7 +198,7 @@ final class AppState {
                     return
                 } catch {
                     // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                    print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
+                    print("[FUMINIWA] 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
                 }
             }
             #else
@@ -215,7 +215,7 @@ final class AppState {
                 return
             } catch {
                 // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
+                print("[FUMINIWA] 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
             }
             #endif
         }
@@ -256,7 +256,7 @@ final class AppState {
             loadedDocument = try await repository.load(from: targetURL)
             loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
         } catch {
-            print("NovelWriter: 作品の読み込みに失敗しました(\(targetURL.path)): \(error)")
+            print("[FUMINIWA] 作品の読み込みに失敗しました(\(targetURL.path)): \(error)")
             return false
         }
 
@@ -282,7 +282,7 @@ final class AppState {
             try await repository.save(newDocument, to: newURL)
             newAttachments = try await loadAttachmentsThrowing(for: newURL)
         } catch {
-            print("NovelWriter: 新規作品の保存に失敗しました(\(newURL.path)): \(error)")
+            print("[FUMINIWA] 新規作品の保存に失敗しました(\(newURL.path)): \(error)")
             return false
         }
 
@@ -323,7 +323,7 @@ final class AppState {
                 }
             }
         } catch {
-            print("NovelWriter: 別名保存に失敗しました(\(destinationURL.path)): \(error)")
+            print("[FUMINIWA] 別名保存に失敗しました(\(destinationURL.path)): \(error)")
             return false
         }
 
@@ -1158,7 +1158,7 @@ final class AppState {
                 attachments = await loadAttachments(for: documentURL)
                 return attachment
             } catch {
-                print("NovelWriter: 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
+                print("[FUMINIWA] 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
                 return nil
             }
         }
@@ -1176,7 +1176,7 @@ final class AppState {
                 attachments = await loadAttachments(for: documentURL)
                 return true
             } catch {
-                print("NovelWriter: 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
+                print("[FUMINIWA] 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
                 return false
             }
         }
@@ -1198,7 +1198,7 @@ final class AppState {
         do {
             return try await repository.saveSnapshot(document, to: documentURL)
         } catch {
-            print("NovelWriter: スナップショット保存に失敗しました(\(documentURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット保存に失敗しました(\(documentURL.path)): \(error)")
             return nil
         }
     }
@@ -1210,7 +1210,7 @@ final class AppState {
         do {
             return try await repository.listSnapshots(in: documentURL)
         } catch {
-            print("NovelWriter: スナップショット一覧の取得に失敗しました(\(documentURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット一覧の取得に失敗しました(\(documentURL.path)): \(error)")
             return []
         }
     }
@@ -1229,7 +1229,7 @@ final class AppState {
             restoredDocument = try await repository.load(from: snapshotURL)
             restoredAttachments = try await loadAttachmentsThrowing(for: snapshotURL)
         } catch {
-            print("NovelWriter: スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
+            print("[FUMINIWA] スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
             return false
         }
 
@@ -1239,7 +1239,7 @@ final class AppState {
         do {
             _ = try await repository.saveSnapshot(document, to: documentURL)
         } catch {
-            print("NovelWriter: 復元前のスナップショット退避に失敗しました(\(documentURL.path)): \(error)")
+            print("[FUMINIWA] 復元前のスナップショット退避に失敗しました(\(documentURL.path)): \(error)")
             return false
         }
 
@@ -1249,7 +1249,7 @@ final class AppState {
                 try await repository.restoreSnapshot(from: snapshotURL, into: packageURL)
             }
         } catch {
-            print("NovelWriter: スナップショットの復元に失敗しました(\(snapshotURL.path)): \(error)")
+            print("[FUMINIWA] スナップショットの復元に失敗しました(\(snapshotURL.path)): \(error)")
             return false
         }
 
@@ -1309,7 +1309,7 @@ final class AppState {
         do {
             return try await loadAttachmentsThrowing(for: url)
         } catch {
-            print("NovelWriter: 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
+            print("[FUMINIWA] 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
             return []
         }
     }
@@ -1382,13 +1382,13 @@ final class AppState {
         #if DEBUG
         if let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             return applicationSupport
-                .appendingPathComponent("NovelWriter", isDirectory: true)
+                .appendingPathComponent("FUMINIWA", isDirectory: true)
                 .appendingPathComponent("Drafts", isDirectory: true)
         }
         #endif
         return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("NovelWriter", isDirectory: true)
+            .appendingPathComponent("FUMINIWA", isDirectory: true)
     }
 
     private static func defaultSaveURL(forTitle title: String, fileManager: FileManager) -> URL {

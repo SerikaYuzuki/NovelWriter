@@ -1,5 +1,5 @@
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor

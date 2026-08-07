@@ -45,12 +45,12 @@ final class EditorSettings {
 
     private let userDefaults: UserDefaults
 
-    private static let fontNameKey = "dev.serikayuzuki.NovelWriter.editor.fontName"
-    private static let fontSizeKey = "dev.serikayuzuki.NovelWriter.editor.fontSize"
-    private static let lineHeightKey = "dev.serikayuzuki.NovelWriter.editor.lineHeight"
-    private static let widthModeKey = "dev.serikayuzuki.NovelWriter.editor.widthMode"
-    private static let textColorKey = "dev.serikayuzuki.NovelWriter.editor.textColor"
-    private static let backgroundColorKey = "dev.serikayuzuki.NovelWriter.editor.backgroundColor"
+    private static let fontNameKey = AppPreferenceKey.editorFontName
+    private static let fontSizeKey = AppPreferenceKey.editorFontSize
+    private static let lineHeightKey = AppPreferenceKey.editorLineHeight
+    private static let widthModeKey = AppPreferenceKey.editorWidthMode
+    private static let textColorKey = AppPreferenceKey.editorTextColor
+    private static let backgroundColorKey = AppPreferenceKey.editorBackgroundColor
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults

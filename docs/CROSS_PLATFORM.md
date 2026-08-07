@@ -72,13 +72,13 @@ Windows 版は同じリポジトリの `Windows/` 配下に置く。ツールチ
 
 ```text
 Windows/
-├── NovelWriter.Windows.sln
-├── NovelWriter.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
-├── NovelWriter.Storage.Novelpkg (.novelpkg の読み書き)
-├── NovelWriter.Export           (Core のみに依存する出力)
-├── NovelWriter.Editor           (UI 非依存のEditor rules / actions)
-├── NovelWriter.Editor.WinUI     (IME、Undo、選択範囲、native adapter)
-├── NovelWriter.App.WinUI        (window、navigation、picker、AppState 相当)
+├── Fuminiwa.Windows.sln
+├── Fuminiwa.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
+├── Fuminiwa.Storage.Novelpkg (.novelpkg の読み書き)
+├── Fuminiwa.Export           (Core のみに依存する出力)
+├── Fuminiwa.Editor           (UI 非依存のEditor rules / actions)
+├── Fuminiwa.Editor.WinUI     (IME、Undo、選択範囲、native adapter)
+├── Fuminiwa.App.WinUI        (window、navigation、picker、AppState 相当)
 └── Tests
 ```
 

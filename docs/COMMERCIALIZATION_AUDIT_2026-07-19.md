@@ -1,10 +1,11 @@
-# NovelWriter 商業化総合監査レポート
+# ふみにわ（旧称NovelWriter）商業化総合監査レポート
 
 - 監査日: 2026-07-19
 - 対象: macOS版の現行仕様・実装・保存形式・配布物・UI/UX・商品戦略・運用
 - 結論: **優れた技術試作ではあるが、現状のまま有償販売できる製品ではない**
 - 本文中の優先度: `P0` = 課金・一般配布前に必須、`P1` = 有償ベータ〜1.0必須、`P2` = 差別化と定着、`P3` = 検証後の拡張
 - この文書は監査と提案のみを行い、実装変更は含まない
+- **2026-08-07追補**: 製品名は「ふみにわ / FUMINIWA」に決定した。本文の`NovelWriter`は監査時点の旧称であり、競合`novelWriter`とは別物を指す。名称変更の実装状況はD-038以降を正とし、商標・ストア・ドメインの最終clearanceは引き続き販売前条件とする。
 
 ## 読み方
 
@@ -1507,7 +1508,7 @@ NovelWriterを商業化するうえで、最大の機会は「AIを載せた多�
 
 | 所見 | 根拠 |
 |---|---|
-| 編集可能placeholderを表示後に非同期bootstrap | [NovelWriterApp.swift L47-L60](../NovelApp/NovelWriterApp.swift#L47-L60)、[AppState.swift L147-L153](../NovelApp/AppState.swift#L147-L153) |
+| 編集可能placeholderを表示後に非同期bootstrap | [FuminiwaApp.swift](../NovelApp/FuminiwaApp.swift)、[AppState.swift L147-L153](../NovelApp/AppState.swift#L147-L153) |
 | 前回作品のload失敗後に新規作成・recent更新 | [AppState.swift L175-L236](../NovelApp/AppState.swift#L175-L236) |
 | Episode本文/メモの読込失敗を空へ変換 | [NovelpkgRepository.swift L104-L127](../NovelKit/Sources/NovelStorage/NovelpkgRepository.swift#L104-L127) |
 | WorldNote本文の読込失敗を空へ変換 | [NovelpkgRepository+World.swift L20-L24](../NovelKit/Sources/NovelStorage/NovelpkgRepository+World.swift#L20-L24) |

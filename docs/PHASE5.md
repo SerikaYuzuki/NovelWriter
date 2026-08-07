@@ -135,7 +135,7 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 | UI 応答性 | `DocumentSaveCoordinator.saveNow` 中も MainActor ハートビート可能(常時テスト) |
 | 採否 | **改善しない**(予算内。APFS の `clonefile` により同一ボリューム上の attachments/snapshots 引き継ぎは実バイトコピーにならない) |
 
-計測手順: `./Scripts/measure-save-performance.sh`(環境変数 `NOVELWRITER_PERF_TEST=1`。`check.sh` には含めない)。詳細は D-027。
+計測手順: `./Scripts/measure-save-performance.sh`(環境変数 `FUMINIWA_PERF_TEST=1`。旧`NOVELWRITER_PERF_TEST`も互換入力として受理し、`check.sh` には含めない)。詳細は D-027 / D-038。
 ## Phase 5: 出力
 
 ### 5-1: Export Core + プレーンテキスト / Markdown【完了】

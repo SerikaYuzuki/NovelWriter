@@ -1,6 +1,6 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
@@ -246,19 +246,19 @@ struct AppStateDocumentLifecycleTests {
     }
 
     private func makeUserDefaults() -> UserDefaults {
-        let suiteName = "NovelWriterLifecycleTests.\(UUID().uuidString)"
+        let suiteName = "FUMINIWALifecycleTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
 
     private func recentDocumentPath(in defaults: UserDefaults) -> String? {
-        defaults.string(forKey: "dev.serikayuzuki.NovelWriter.recentDocumentPath")
+        defaults.string(forKey: AppPreferenceKey.recentDocumentPath)
     }
 
     private func packageURL(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("NovelWriterLifecycleTests", isDirectory: true)
+            .appendingPathComponent("FUMINIWALifecycleTests", isDirectory: true)
             .appendingPathComponent("\(name).novelpkg", isDirectory: true)
     }
 

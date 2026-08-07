@@ -1,11 +1,11 @@
 # XcodeGen プロジェクト仕様(docs/DECISIONS.md D-008)。
 #
-# `NovelWriter.xcodeproj` はこのファイルから生成する生成物であり、
+# `FUMINIWA.xcodeproj` はこのファイルから生成する生成物であり、
 # リポジトリにはコミットしない(.gitignore を参照)。正は常にこのファイル。
 #
 # 変更したら以下で再生成する:
 #   xcodegen generate
-name: NovelWriter
+name: FUMINIWA
 
 options:
   bundleIdPrefix: dev.serikayuzuki
@@ -18,7 +18,7 @@ packages:
     path: NovelKit
 
 schemes:
-  NovelApp:
+  FUMINIWA:
     build:
       targets:
         NovelApp: all
@@ -46,25 +46,24 @@ targets:
         product: NovelExport
     settings:
       base:
-        PRODUCT_NAME: NovelWriter
-        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.NovelWriter
+        PRODUCT_NAME: FUMINIWA
+        PRODUCT_MODULE_NAME: FUMINIWA
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        # Info.plist は物理ファイルを持たず、Xcode の現行方式(GENERATE_INFOPLIST_FILE)
-        # でビルド設定から生成する。
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: NovelWriter
-        INFOPLIST_KEY_NSHumanReadableCopyright: ""
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        # UTType / Document Types と表示名ローカライズを配布契約として管理するため、
+        # 物理Info.plistを正とする(D-038)。
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: NovelApp/Info.plist
         # コード署名: ローカル実行用に自動署名。CIビルドチェックでは
         # `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` を
         # 引数で渡して署名なしビルドにする(Scripts/check.sh)。
         CODE_SIGN_STYLE: Automatic
         # App Sandbox は採用しない(docs/DECISIONS.md D-011)。entitlements
         # ファイルを一切持たせないことで、Sandbox capability を付与しない。
-        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_HARDENED_RUNTIME: YES
   NovelAppTests:
     type: bundle.unit-test
     platform: macOS
@@ -77,5 +76,5 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NovelWriter.app/Contents/MacOS/NovelWriter"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"

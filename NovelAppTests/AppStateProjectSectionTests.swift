@@ -1,16 +1,16 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
 struct AppStateProjectSectionTests {
     @Test("保存済みの企画選択は作品情報へ移行する")
     func planningSelectionMigratesToProjectInfo() throws {
-        let suiteName = "NovelWriterProjectSection.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAProjectSection.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
-        defaults.set("planning", forKey: "dev.serikayuzuki.NovelWriter.projectSection")
+        defaults.set("planning", forKey: AppPreferenceKey.projectSection)
 
         let state = AppState(
             dependencies: AppDependencies(
@@ -21,7 +21,7 @@ struct AppStateProjectSectionTests {
         )
 
         #expect(state.workspaceSelection.section == .projectInfo)
-        #expect(defaults.string(forKey: "dev.serikayuzuki.NovelWriter.projectSection") == "projectInfo")
+        #expect(defaults.string(forKey: AppPreferenceKey.projectSection) == "projectInfo")
     }
 
     @Test("表示ショートカットは企画なしの7項目へ再割当する")

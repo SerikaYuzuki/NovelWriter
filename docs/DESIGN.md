@@ -1,11 +1,11 @@
-# 小説執筆アプリ 設計書 v0.52
+# ふみにわ 設計書 v0.53
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
 
 ## 1. 目的
 
-本アプリは、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
+**ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
 macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。将来的には Windows、iOS / iPadOS 対応、AI支援、PDF出力、校正、要約、差分管理などを追加できるようにする。
 
 初期段階では、以下を最優先する。
@@ -43,7 +43,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 ## 3. モジュール構成
 
 ```text
-NovelWriter
+FUMINIWA
 ├── NovelApp                     (Xcode アプリターゲット)
 │   ├── AppDependencies.swift
 │   ├── AppState.swift
@@ -665,6 +665,16 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.53 (2026-08-07)
+
+製品名を「ふみにわ / FUMINIWA」へ変更し、外向きのブランドと既存作品の互換境界を分離した(D-038)。
+
+- Xcode project / scheme / app bundle / executableを`FUMINIWA`、日本語表示名を「ふみにわ」へ変更
+- 旧bundle domainのrecent URLとEditor設定をallowlist方式で移行し、旧作品は移動しない
+- 新規作品の既定フォルダを`FUMINIWA`へ変更
+- `.novelpkg` v1〜v3とNovelKit系ドメイン名、legacy toolbar IDは維持
+- 同じ`.novelpkg`を「ふみにわ作品」として扱うUTType / Document Typesを追加
 
 ### v0.52 (2026-07-16)
 

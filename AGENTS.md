@@ -1,6 +1,6 @@
 # AGENTS.md — AIエージェント向け作業ガイド
 
-macOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
+**ふみにわ（FUMINIWA）**はmacOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
 
 **設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** OS 間互換・Windows 実装は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を追加で読む。次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
@@ -22,7 +22,7 @@ NovelKit/            ローカル Swift Package(ライブラリ群 + 全テス�
   Sources/EditorKit/     エディタ(EditorView / プラグイン / IndentRules / MacTextAdapter)
   Sources/NovelUI/       共有 SwiftUI 部品(まだ薄い)
   Sources/PreviewSupport/ Preview 用固定データ(まだ薄い)
-project.yml          XcodeGen 定義。NovelWriter.xcodeproj は生成物(コミット禁止)
+project.yml          XcodeGen 定義。FUMINIWA.xcodeproj は生成物(コミット禁止)
 Scripts/check.sh     ローカルCI。マージ前に必ず全通しすること
 docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 ```

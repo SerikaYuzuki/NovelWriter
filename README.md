@@ -1,6 +1,6 @@
-# NovelWriter
+# ふみにわ（FUMINIWA）
 
-macOS ファーストのマルチプラットフォーム小説執筆アプリ。長編・中編小説を快適に書き、同じ `.novelpkg` をmacOSとWindowsで安全に扱えることを目指す。
+ことばを育て、物語を編む。macOS ファーストのマルチプラットフォーム小説執筆アプリです。長編・中編小説を快適に書き、同じ `.novelpkg` をmacOSとWindowsで安全に扱えることを目指します。
 
 - **macOS UI**: SwiftUI(アプリシェル) + AppKit の `NSTextView`(本文エディタ実体、`NSViewRepresentable` 経由)
 - **Windows UI(計画)**: WinUI 3 + C# / .NET。同一リポジトリの `Windows/` 配下へ実装する
@@ -49,15 +49,15 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 
 ## アプリの生成と実行
 
-Xcode プロジェクト(`NovelWriter.xcodeproj`)は [XcodeGen](https://github.com/yonaskolb/XcodeGen) で `project.yml` から生成する生成物であり、リポジトリにはコミットしない(正は常に `project.yml`。D-008)。
+Xcode プロジェクト(`FUMINIWA.xcodeproj`)は [XcodeGen](https://github.com/yonaskolb/XcodeGen) で `project.yml` から生成する生成物であり、リポジトリにはコミットしない(正は常に `project.yml`。D-008 / D-038)。
 
 ```bash
 brew install xcodegen
 xcodegen generate
-open NovelWriter.xcodeproj
+open FUMINIWA.xcodeproj
 ```
 
-Xcode 上でスキーム `NovelApp` を選択し Run すれば起動する。`project.yml` を変更したときは `xcodegen generate` を再実行してプロジェクトを作り直すこと。
+Xcode 上でスキーム `FUMINIWA` を選択し Run すれば起動する。`project.yml` を変更したときは `xcodegen generate` を再実行してプロジェクトを作り直すこと。
 
 ## 開発方針
 

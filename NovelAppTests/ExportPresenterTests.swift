@@ -1,7 +1,7 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
 import NovelExport
-@testable import NovelWriter
 import Testing
 
 @MainActor

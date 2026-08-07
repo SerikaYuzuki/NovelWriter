@@ -1,5 +1,6 @@
 import AppKit
 import EditorKit
+import Foundation
 import SwiftUI
 
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
@@ -26,10 +27,10 @@ import SwiftUI
 ///   ペアが食い違うことはない(delegate のような `@State` 外の `weak` 参照とは
 ///   性質が異なる)。
 @main
-struct NovelWriterApp: App {
+struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var appState: AppState
-    @State private var editorSettings = EditorSettings()
+    @State private var editorSettings: EditorSettings
     @State private var documentPanelPresenter: DocumentPanelPresenter
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
     @State private var exportPresenter: ExportPresenter
@@ -37,8 +38,12 @@ struct NovelWriterApp: App {
     @State private var editorCommandSession = EditorCommandSession()
 
     init() {
-        let appState = AppState(dependencies: AppDependencies())
+        let defaults = UserDefaults.standard
+        LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
+
+        let appState = AppState(dependencies: AppDependencies(userDefaults: defaults))
         _appState = State(initialValue: appState)
+        _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
