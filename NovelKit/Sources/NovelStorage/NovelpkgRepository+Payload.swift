@@ -21,15 +21,18 @@ extension NovelpkgRepository {
             let memoDirectoryURL = isLegacyChapter ? notesURL : episodeNotesURL
             let contentDirectoryName = isLegacyChapter ? chaptersDirectoryName : episodesDirectoryName
             let memoDirectoryName = isLegacyChapter ? notesDirectoryName : episodeNotesDirectoryName
+            let payloadDirectories = EpisodePayloadDirectories(
+                contentURL: contentDirectoryURL,
+                memoURL: memoDirectoryURL,
+                contentName: contentDirectoryName,
+                memoName: memoDirectoryName
+            )
 
             let episodes = try episodeEntries.map { episodeEntry in
                 try readEpisode(
                     entry: episodeEntry,
                     packageURL: packageURL,
-                    contentDirectoryURL: contentDirectoryURL,
-                    memoDirectoryURL: memoDirectoryURL,
-                    contentDirectoryName: contentDirectoryName,
-                    memoDirectoryName: memoDirectoryName,
+                    payloadDirectories: payloadDirectories,
                     fileManager: fileManager
                 )
             }
@@ -102,22 +105,19 @@ extension NovelpkgRepository {
     private static func readEpisode(
         entry: NovelpkgManifest.EpisodeEntry,
         packageURL: URL,
-        contentDirectoryURL: URL,
-        memoDirectoryURL: URL,
-        contentDirectoryName: String,
-        memoDirectoryName: String,
+        payloadDirectories: EpisodePayloadDirectories,
         fileManager: FileManager
     ) throws -> Episode {
         let fileName = "\(entry.id.uuidString).md"
         let content = try readRequiredUTF8Payload(
-            at: contentDirectoryURL.appendingPathComponent(fileName),
-            relativePath: "\(contentDirectoryName)/\(fileName)",
+            at: payloadDirectories.contentURL.appendingPathComponent(fileName),
+            relativePath: "\(payloadDirectories.contentName)/\(fileName)",
             packageURL: packageURL,
             fileManager: fileManager
         )
         let memo = try readOptionalUTF8Payload(
-            at: memoDirectoryURL.appendingPathComponent(fileName),
-            relativePath: "\(memoDirectoryName)/\(fileName)",
+            at: payloadDirectories.memoURL.appendingPathComponent(fileName),
+            relativePath: "\(payloadDirectories.memoName)/\(fileName)",
             packageURL: packageURL,
             fileManager: fileManager
         )
@@ -127,5 +127,12 @@ extension NovelpkgRepository {
             content: content,
             memo: memo
         )
+    }
+
+    private struct EpisodePayloadDirectories {
+        var contentURL: URL
+        var memoURL: URL
+        var contentName: String
+        var memoName: String
     }
 }
