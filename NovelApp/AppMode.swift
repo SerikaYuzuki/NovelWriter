@@ -109,34 +109,6 @@ enum PlotOutlineSelection: Hashable, Sendable {
     case chapter(ChapterID)
 }
 
-enum AIAssistantTab: String, CaseIterable, Identifiable {
-    case chat
-    case suggestions
-    case selectionActions
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .chat:
-            "チャット"
-        case .suggestions:
-            "提案"
-        case .selectionActions:
-            "選択範囲"
-        }
-    }
-}
-
-struct AIAssistantPanelState: Equatable {
-    var isExpanded = false
-    var height: CGFloat = 280
-    var inputText = ""
-    var selectedTab: AIAssistantTab = .chat
-}
-
 enum CharacterProfileField {
     case role
     case age

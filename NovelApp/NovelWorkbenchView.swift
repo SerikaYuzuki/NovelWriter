@@ -6,8 +6,8 @@ import UniformTypeIdentifiers
 /// セクションに応じて2列または3列となるワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
 ///
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
-/// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。下部の
-/// AI Assistant Panel は従来どおり split の外に置く。上部 chrome は
+/// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
+/// 下部には保存状態と文字数だけを伝えるステータスバーを置く。上部 chrome は
 /// `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
@@ -32,9 +32,8 @@ struct NovelWorkbenchView: View {
             workbenchSplitView
                 .id(usesTwoColumnLayout)
 
-            AIAssistantPanelView()
+            WorkbenchStatusBarView()
         }
-        .preferredColorScheme(.dark)
         .toolbar(id: "novelwriter.workbench.v3") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
@@ -52,13 +51,6 @@ struct NovelWorkbenchView: View {
         }
         .onChange(of: showsWritingActions) { _, isWriting in
             editorSearchSession.isSearchPresented = isWriting
-        }
-        .background {
-            Button("AI Assistant") {
-                appState.aiAssistantPanel.isExpanded.toggle()
-            }
-            .keyboardShortcut("j", modifiers: .command)
-            .hidden()
         }
         .confirmationDialog(
             "このスナップショットに戻しますか？",
@@ -462,100 +454,13 @@ private struct WorldNoteDetailView: View {
     }
 }
 
-struct AIAssistantPanelView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AssistantStatusBarView()
-
-            if appState.aiAssistantPanel.isExpanded {
-                Divider()
-                ResizeHandle()
-                expandedContent
-                    .frame(height: appState.aiAssistantPanel.height)
-            }
-        }
-        .background(.bar)
-    }
-
-    private var expandedContent: some View {
-        VStack(spacing: 0) {
-            Picker("AI Assistant", selection: selectedTabBinding) {
-                ForEach(AIAssistantTab.allCases) { tab in
-                    Text(tab.title)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(8)
-
-            Divider()
-
-            Group {
-                switch appState.aiAssistantPanel.selectedTab {
-                case .chat:
-                    AssistantChatView()
-                case .suggestions:
-                    AssistantSuggestionsView()
-                case .selectionActions:
-                    SelectionActionsView()
-                }
-            }
-        }
-    }
-
-    private var selectedTabBinding: Binding<AIAssistantTab> {
-        Binding(
-            get: { appState.aiAssistantPanel.selectedTab },
-            set: { appState.aiAssistantPanel.selectedTab = $0 }
-        )
-    }
-}
-
-private struct ResizeHandle: View {
-    @Environment(AppState.self) private var appState
-
-    @State private var dragStartHeight: CGFloat?
-
-    var body: some View {
-        Rectangle()
-            .fill(.clear)
-            .frame(height: 6)
-            .overlay {
-                Capsule()
-                    .fill(.secondary.opacity(0.35))
-                    .frame(width: 44, height: 2)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        let baseHeight = dragStartHeight ?? appState.aiAssistantPanel.height
-                        dragStartHeight = baseHeight
-                        let proposedHeight = baseHeight - value.translation.height
-                        appState.aiAssistantPanel.height = min(max(proposedHeight, 240), 360)
-                    }
-                    .onEnded { _ in
-                        dragStartHeight = nil
-                    }
-            )
-    }
-}
-
-private struct AssistantStatusBarView: View {
+private struct WorkbenchStatusBarView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                appState.aiAssistantPanel.isExpanded.toggle()
-            } label: {
-                statusContent
-            }
-            .buttonStyle(.plain)
+            statusContent
 
             if appState.saveState == .failed {
                 Button("再試行") {
@@ -577,17 +482,14 @@ private struct AssistantStatusBarView: View {
             if appState.workspaceSelection.section == .structure, editorSearchSession.didMissSearch {
                 Text("見つかりません")
             }
-            Text("行 -- / 列 --")
             Spacer()
-            Label("AI 未接続", systemImage: "sparkles")
-            Text("通常")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .monospacedDigit()
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 
     private var chapterCountText: String {
@@ -597,60 +499,6 @@ private struct AssistantStatusBarView: View {
 
     private var totalCountText: String {
         "全体 \(appState.document.manuscriptCharacterCount)字"
-    }
-}
-
-private struct AssistantChatView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ContentUnavailableView(
-                "AIは未接続です",
-                systemImage: "sparkles",
-                description: Text("ここにチャットと回答を表示します。")
-            )
-            TextField("AIに相談", text: inputBinding)
-                .textFieldStyle(.roundedBorder)
-                .padding([.horizontal, .bottom], 12)
-        }
-    }
-
-    private var inputBinding: Binding<String> {
-        Binding(
-            get: { appState.aiAssistantPanel.inputText },
-            set: { appState.aiAssistantPanel.inputText = $0 }
-        )
-    }
-}
-
-private struct AssistantSuggestionsView: View {
-    var body: some View {
-        ContentUnavailableView(
-            "提案はありません",
-            systemImage: "list.bullet.rectangle",
-            description: Text("AI接続後に提案を表示します。")
-        )
-    }
-}
-
-private struct SelectionActionsView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            ContentUnavailableView(
-                "選択中のテキストがありません",
-                systemImage: "text.cursor",
-                description: Text("本文を選択すると操作を使えます。")
-            )
-            HStack {
-                Button("言い換え") {}
-                Button("要約") {}
-                Button("矛盾確認") {}
-                Button("伏線確認") {}
-            }
-            .disabled(true)
-        }
-        .padding()
     }
 }
 

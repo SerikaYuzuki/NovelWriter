@@ -14,9 +14,11 @@
 
 ## ステータス
 
-**Phase 5まで完了(PDFは延期)**。章／話の階層管理、本文編集、話メモ、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、文字数表示、話内検索、スナップショット保存・復元、作品の新規・開く・別名保存、`.novelpkg` v3への自動保存とCmd+Q時の終了前保存が動く。Editorプラグイン基盤と日本語小説向け自動字下げ(改行で全角スペース、`「`/`『`で字下げ解除、IME変換中は不介入)も実装済み。UIは3列NavigationSplitViewと一段native toolbarのワークベンチになった。
+**Phase 5まで完了(PDFは未実装)**。章／話の階層管理、本文編集、話メモ、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、文字数表示、話内検索、スナップショット保存・復元、作品の新規・開く・別名保存、`.novelpkg` v3への自動保存、`Cmd+S`明示保存、Cmd+Q時の終了前保存が動く。Editorプラグイン基盤と日本語小説向け自動字下げ(改行で全角スペース、`「`/`『`で字下げ解除、IME変換中は不介入)も実装済み。UIはシステムLight／Darkへ追従するNavigationSplitView、一段native toolbar、保存／文字数status barのワークベンチになった。
 
-プレーンテキスト / Markdown / EPUB 3は、Fileメニューまたはツールバーから現在の原稿スナップショットを書き出せる。次はPhase 6のAI支援設計・実装へ進み、PDFはその後のPhase 6.5で実装する(D-037)。
+商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。未実装AIのplaceholderと`Cmd+J`は、プライバシー・同意を含む実機能が設計されるまで出荷UIへ表示しない(D-038〜D-040)。
+
+次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QA、法務・プライバシー・価格・サポートが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
 Windows並行トラックはW0として、言語非依存schema・golden fixture・portable filename契約の固定から始める。W0完了後、Windows上でWinUI版のCore / Storage実装へ進む(D-036)。
 
@@ -61,6 +63,6 @@ Xcode 上でスキーム `FUMINIWA` を選択し Run すれば起動する。`pr
 
 ## 開発方針
 
-- まずは macOS 版の執筆体験を最優先で作り込む。次はAI支援、PDF、iOS / iPadOSの順を既定とする(需要によりPhase 7は再判定)
-- Windows版はmacOS側のPhase 6と並行してW0から開始し、保存schema・fixture・純粋ロジック仕様を共有する。W1以降のWinUI実装とWindows固有検証はWindows上で行う
+- まずはmacOS版の原稿保全と商業配布Gateを優先する。AIとPDFは公開Gate後に、需要・費用・プライバシーを別々に評価する
+- Windows版はmacOS側の商業化基盤と並行してW0から開始し、保存schema・fixture・純粋ロジック仕様を共有する。W0はまだ未完了で、W1以降のWinUI実装とWindows固有検証はWindows上で行う
 - Issue / PR を作る際は [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) / [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) を使う

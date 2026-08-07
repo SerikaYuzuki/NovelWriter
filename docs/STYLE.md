@@ -5,12 +5,13 @@
 
 ## 1. ビジュアルテーマ
 
-**「夜の書斎」**。長時間の執筆に集中できる、暗く静かで、文具のように控えめな道具。
+**「静かな書斎」**。長時間の執筆に集中でき、文具のように控えめな道具。Dark外観では従来の「夜の書斎」、Light外観では紙と朝光を思わせる「朝の書斎」として、同じ情報階層を保つ。
 
 - 主役は常に本文テキスト。UI は一歩引く(彩度の高い色・強い装飾・過剰なアニメーションを使わない)
 - **ネイティブ macOS ファースト**: 標準コントロール・セマンティックカラー・システム素材を最優先。カスタム描画は「標準で表現できない場合」の最終手段
-- **ダークテーマを既定かつ主対象**にする。ライトテーマ個別対応は当面スコープ外。ただし将来のため、固定色の乱用ではなくトークンとセマンティックカラーを使う
-- 画面は Project Sidebar / Outline / Editor / AI Assistant Panel の4領域ワークベンチとして扱い、本文の横幅を最優先する
+- Sidebar、Outline、toolbar、form等のchromeはmacOSのシステムLight／Dark外観へ追従する。アプリ全体へ`.preferredColorScheme(.dark)`を指定しない
+- 本文エディタのキャンバスはchromeと独立した利用者設定とし、既定は従来どおり「夜の書斎」の暗色キャンバスにする。システム外観を変えても利用者の本文配色を勝手に上書きしない
+- 画面は Project Sidebar / Outline / Editor と下部status barのワークベンチとして扱い、本文の横幅を最優先する。未実装AI用の領域は予約表示しない(D-040)
 
 ## 2. カラー
 
@@ -26,7 +27,7 @@
 | トークン | Dark | 用途 |
 |---|---|---|
 | `canvas` | `#171719` | ワークベンチ全体の最背面。直接指定はルート付近のみ |
-| `surface` | `#202126` | Outline / Editor chrome / AI panel の面 |
+| `surface` | `#202126` | Dark時の面の参考値。通常のchromeはシステム素材を使う |
 | `surfaceRaised` | `#292A30` | ポップオーバー、選択中カード、入力欄の一段上の面 |
 | `border` | `#3A3B42` | hairline 境界。基本は `.separator` を優先 |
 | `accent`(藍) | `#8CA7DF` | 選択・リンク・主ボタン。Assets の AccentColor に登録 |
@@ -67,7 +68,7 @@
 - **8pt グリッド**(例外的に 4pt 刻みまで可)。マジックナンバー(7, 13, 18…)禁止
 - ウィンドウ・ペインの外周余白: 20pt / グループ間: 16pt / グループ内: 8pt
 - 角丸: カード・ポップオーバー内パネル = 8pt、小さなチップ = 4pt。それ以外の角丸を発明しない
-- 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / AI panel collapsed 28pt / AI panel expanded 280pt(240〜360pt) / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
+- 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / 下部status bar 28pt / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - Outline系paneは`.thinMaterial`を共通surfaceとし、背面のwindow surfaceがわずかに見える状態を保つ。不透明な`.bar`への統一は禁止
@@ -82,7 +83,8 @@
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
 - **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
 - **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
-- **AI Assistant Panel**: collapsed はステータスバー、expanded はチャット入力・提案一覧・選択テキスト操作の3領域。入力欄は下端に固定し、本文領域を覆わない
+- **Workbench status bar**: 保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない
+- **Startup / Recovery**: `loading`では作品を読み込んでいることだけを静かに示し、編集操作を出さない。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
 - **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成
@@ -90,7 +92,7 @@
 
 ## 6. 深さ・階層
 
-- 階層はまず**素材**で表現する: Project Sidebar / Outline / detail chrome = `.thinMaterial`、AI collapsed status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま。本文キャンバスだけ不透明
+- 階層はまず**素材**で表現する: Project Sidebar / Outline / detail chrome = `.thinMaterial`、status bar = `.bar`、一時 UI(ポップオーバー)= 標準のまま。本文キャンバスだけ不透明
 - 影は「浮いている最中」(ドラッグ中のカード等)専用。常設の drop shadow は禁止
 - 境界線は `.separator` の hairline(1px)。太い枠線・二重枠を使わない
 - ラベルと入力が横に張り付いて見える配置を避ける。長文は縦積み(ラベル→8pt→入力)にする
@@ -104,7 +106,7 @@
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
-- AI Assistant Panel: Cmd+J など既存ショートカットと衝突しないキーで開閉。expanded 中も Esc で入力フォーカス解除できる
+- 保存: `Cmd+S`はFileメニューの「保存」と一致させ、`ready`な作品だけを同じ保存直列化経路で保存する
 
 ## 8. 文言(日本語 UI ライティング)
 
@@ -117,14 +119,15 @@
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
 - [ ] セマンティックカラー以外の色は、本文書のトークン(canvas / surface / surfaceRaised / border / accent / warning / success / danger / キャラ10色)だけか
-- [ ] ダークテーマでコントラストを確認したか(固定 hex の白・黒・グレーが紛れていないか)
+- [ ] システムのLight／Dark両方でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。アプリ全体の外観を固定していないか
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
-- [ ] Project Sidebar / Outline / Editor / AI Assistant Panel の幅と優先順位が崩れていないか
+- [ ] Project Sidebar / Outline / Editor / status bar の幅と優先順位が崩れていないか
 - [ ] Project Sidebarを含むOutlineが共通のtranslucent materialで、Reduce Transparencyでも読めるか
 - [ ] 上部が一段の native toolbar で、Sidebar 開閉 / 作品名 + 章数 / 編集操作 / 右端検索の既定配置になっているか
 - [ ] カスタマイズ可能な toolbar 操作すべてに、メニューまたは文脈メニューの代替入口があるか
-- [ ] AI Assistant Panel を閉じた状態でも保存状態・文字数・AI状態が読めるか
+- [ ] status barが保存状態・話／全体文字数・検索不一致だけを正確に示し、未実装機能の入口を含んでいないか
+- [ ] Loading / Recovery中に編集・保存可能なWorkbenchが露出せず、Recoveryの4導線がキーボードとVoiceOverで使えるか
 - [ ] 空状態は `ContentUnavailableView` + 規約どおりの文言か
 - [ ] 常設の影・独自ハイライト・0.5s 超のアニメーションを追加していないか
 - [ ] 破壊的ボタンに `role: .destructive` と確認ダイアログがあるか

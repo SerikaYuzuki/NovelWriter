@@ -4,7 +4,7 @@
 
 > **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。列方針はUI-REF-3で更新済みで、今後は [PHASE5.md](PHASE5.md) を正とする。
 
-**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 / UI-REF-1〜6 / UI-POL-4 / Phase 5書き出し入口まで完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。次はPhase 6へ進む。
+**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 / UI-REF-1〜6 / UI-POL-4 / Phase 5書き出し入口まで完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。未実装AIの入口はD-040で撤去し、次はPackage Validator Gateへ進む。
 
 本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
 
@@ -15,7 +15,7 @@
 - 章／話追加、話メモ、スナップショット、話内検索など、執筆中に頻繁に使う操作を近くへ置く
 - macOS 標準のツールバーカスタマイズを使い、編集操作をユーザーごとに並べ替え・追加・削除できるようにする
 
-この刷新で、現在の `EditorTopBarView` と、その下へ展開する2段目の `SearchBar` は廃止する。保存状態は下部の collapsed status bar、選択中の章名は Outline の選択行を正とし、上部で重複表示しない。
+この刷新で、現在の `EditorTopBarView` と、その下へ展開する2段目の `SearchBar` は廃止する。保存状態は下部のstatus bar、選択中の章名は Outline の選択行を正とし、上部で重複表示しない。
 
 ## 2. 既定レイアウト
 
@@ -67,10 +67,11 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.plot.card.add` | プロットカードを追加 | プロットセクション時のみ表示 | 移動・削除可 | 選択中の章または未割り当てへ追加 |
 | `workbench.attachment.add` | 資料を取り込む | 資料セクション時のみ表示 | 固定・Outline上 | 資料のfileImporterを開く |
 | `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
-| `workbench.ai.toggle` | AI Assistant | 初期非表示 | 追加・移動・削除可 | 下部AIパネルを開閉 |
 | Editor search | 話内を検索 | 表示 | 右端固定 | 選択話の本文検索 |
 
 `ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。UI-POL-4で既定配置を変更したため、toolbar 全体の ID は `novelwriter.workbench.v3` へ版上げした。Phase 5の `workbench.export` 追加では既存配置をリセットせず、Fileメニューの代替入口を保証したうえでv3を維持する。
+
+旧設計の`workbench.ai.toggle`と`Cmd+J`はD-040で撤去済みであり、別機能へIDやショートカットを再利用しない。AIを実装する場合は、プライバシーと送信同意を含む新しい製品契約を先に定義する。
 
 ## 4. カスタマイズ方針
 
@@ -102,7 +103,6 @@ macOS ではツールバー自体を非表示にでき、項目も削除でき�
 | 資料を取り込む | 資料メニュー（どのセクションからでも資料へ切り替えて importer を開く） |
 | ノートを追加 | 世界観メニュー |
 | 話内検索 | 編集 > 検索 / Cmd+F |
-| AI Assistant | 表示メニュー / Cmd+J |
 
 ツールバーから項目を削除しても機能そのものは無効にならない。
 
@@ -200,7 +200,7 @@ WindowGroup
 
 **完了条件:** 全セクションへ到達でき、列幅・Sidebar 開閉・章選択・本文編集が維持される。狭いウィンドウでも Editor の最小幅を守る。
 
-**実装メモ**: `NovelWorkbenchView` を `NavigationSplitView` + 下部 AI Panel に再構成。執筆は Outline / Editor、登場人物は一覧 / シート、プロットは伏線ナビゲータ / ボード、資料は一覧 / 詳細、その他は概要 / section surface。`SidebarCommands()` を追加。人物・プロットの入れ子 split を撤去。
+**実装メモ**: `NovelWorkbenchView` を `NavigationSplitView`へ再構成。執筆は Outline / Editor、登場人物は一覧 / シート、プロットは伏線ナビゲータ / ボード、資料は一覧 / 詳細、その他は概要 / section surface。`SidebarCommands()` を追加し、人物・プロットの入れ子 split を撤去した。当初の下部AI PanelはD-040で非展開型status barへ置き換えた。
 
 ### Toolbar-2: 一段ツールバー + カスタマイズ【完了】
 
