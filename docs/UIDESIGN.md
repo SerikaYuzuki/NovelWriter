@@ -2,10 +2,12 @@
 
 **状態: 完了。** UI2-1〜UI2-5 と凍結確認の軽微な調整を完了し、次は Phase 5(出力)へ進む。
 
+> **現行設計との差分(2026-08-07):** 本書はPhase UI2当時の完了記録である。未実装AI panel／AI状態／`Cmd+J`はD-040で出荷UIから撤去し、下端は保存状態と文字数だけを示すstatus barへ変更した。chromeはシステムLight／Darkへ追従する。新規作業は [DESIGN.md](DESIGN.md)、[TOOLBAR.md](TOOLBAR.md)、D-040を正とし、本書のAI実装指示を使わない。
+
 > **完了後の上部 chrome 改定:** UI2-3 で実装したペイン内 `EditorTopBarView` は当時の完了記録として以下に残す。次期設計では D-024 / [TOOLBAR.md](TOOLBAR.md) がこれを置き換え、3列に追従する一体型 native toolbar へ段階移行する。
 
-GUI を「モードを切り替える画面」から、長時間の執筆・構造整理・AI支援が同じ机の上でつながる **macOS専用ワークベンチ** へ刷新する。
-**実行エージェント(Codex 等)はこのファイルを現在進行中の作業指示書として使うこと。** 前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md)(特に D-021)。
+GUI を「モードを切り替える画面」から、長時間の執筆・構造整理を同じ机の上で行う **macOS専用ワークベンチ** へ刷新した。当時検討したAI支援部分は上記のとおり後続判断で撤去済みである。
+前提は [../AGENTS.md](../AGENTS.md)、現行設計は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md)(特に D-040)を参照する。
 
 旧 Phase UI(3モード制)は D-019 として完了済みだが、本方針で破棄する。D-019 の内容は消さず、履歴として残す。
 

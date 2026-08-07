@@ -2,7 +2,7 @@
 
 **契約版: 1 / 対象: macOS (SwiftUI + AppKit)・Windows (WinUI 3)**
 
-**状態: 契約承認、W0未完了。** 現行macOS writerが本書のportable filename・path traversal要件をすべて保証済みという意味ではない。Windows W1へ進む前にW0でschema・golden fixture・macOS側の検証と必要な補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。
+**状態: 契約承認、W0未完了。** macOS readerは2026-08-07時点で参照payloadの欠損・I/O失敗・invalid UTF-8をfail-closedにする補修まで完了したが、portable filename、duplicate ID／不正参照、symlink、resource limit、孤児payload等の完全なPackage Validatorは未実装である。Windows W1へ進む前にW0でschema・golden fixture・macOS側の残りの補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。
 
 本書は、macOS 版と将来の Windows 版が同じ作品を安全に開き、編集し、再保存するための言語・UI フレームワーク非依存の契約である。アーキテクチャ全体は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md) D-036 を正とする。
 
@@ -56,7 +56,8 @@
 - 同一 `formatVersion` の追加機能は、既存の `project.json` / `world.json` と同様に独立したルート項目として追加する。古い writer が失う可能性のある新フィールドを `manifest.json` へ安易に足さない
 - 通常保存、別名保存、スナップショット、OS 間 round-trip のすべてで、既知でない非hiddenのルートファイル／ディレクトリを保持する。将来の正式なルート項目はhidden名にせず、`.DS_Store`等のOSメタデータは互換データに含めない
 - package 内の symlink / junction / reparse point を辿って package 外を読み書きしない。`..` や絶対パスとして解釈できる入力を拒否する
-- 壊れた JSON や不正参照を黙って正常値に見せない。現行仕様で救済が明記された「本文ファイル欠損は空本文」以外は、型付きエラーまたは明示的な修復導線にする
+- 壊れた JSON や不正参照を黙って正常値に見せない。manifestが参照する話本文と`world.json`が参照する世界観本文は必須で、欠損・I/O失敗・invalid UTF-8を型付きエラーにする。空の話メモはファイル省略可能だが、メモファイルが存在する場合はvalid UTF-8を要求する
+- 旧実装の「本文ファイル欠損は空本文」という救済はD-039で廃止した。修復が必要な作品は元packageを直接変更せず、後続のPackage Validatorが作る検証済み修復コピーを利用者に選ばせる
 
 ### 2.5 保存の成立条件
 
@@ -72,13 +73,13 @@ Windows 版は同じリポジトリの `Windows/` 配下に置く。ツールチ
 
 ```text
 Windows/
-├── NovelWriter.Windows.sln
-├── NovelWriter.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
-├── NovelWriter.Storage.Novelpkg (.novelpkg の読み書き)
-├── NovelWriter.Export           (Core のみに依存する出力)
-├── NovelWriter.Editor           (UI 非依存のEditor rules / actions)
-├── NovelWriter.Editor.WinUI     (IME、Undo、選択範囲、native adapter)
-├── NovelWriter.App.WinUI        (window、navigation、picker、AppState 相当)
+├── Fuminiwa.Windows.sln
+├── Fuminiwa.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
+├── Fuminiwa.Storage.Novelpkg (.novelpkg の読み書き)
+├── Fuminiwa.Export           (Core のみに依存する出力)
+├── Fuminiwa.Editor           (UI 非依存のEditor rules / actions)
+├── Fuminiwa.Editor.WinUI     (IME、Undo、選択範囲、native adapter)
+├── Fuminiwa.App.WinUI        (window、navigation、picker、AppState 相当)
 └── Tests
 ```
 
@@ -117,7 +118,8 @@ Windows 実装着手前の W0 で、`CompatibilityFixtures/` に次を追加す�
 2. macOS reader / writerが共通fixtureを読み書きし、既知データ・添付・スナップショット・非hidden未知ルート項目をMac内round-tripで失わない
 3. 現行macOS実装に残る次の差分を補修し、失敗fixtureで検証する
    - package rootと既知pathの各componentでsymlinkを辿らない。Windows側でjunction / reparse pointを拒否するための期待結果もfixtureに定義する
-   - invalid UTF-8、I/O失敗、壊れたJSON、不正参照、重複ID、version別必須項目の欠落を、空値や旧versionとして黙って救済しない。空メモのファイル省略等、互換のため残す救済だけをschemaに列挙する
+   - **macOS補修済み、fixture体系への統合は未完了**: manifest / world参照payloadの欠損・I/O失敗・invalid UTF-8と、存在するメモのinvalid UTF-8を空値へ救済しない。空メモのファイル省略だけを維持する
+   - **未完了**: 壊れたJSON、不正参照、重複ID、version別必須項目の欠落を、空値や旧versionとして黙って救済しない。互換のため残す救済だけをschemaに列挙する
    - Windows予約名、既知ルート名のcase variant、大小文字／Unicode正規化衝突、component / full path予算を添付取込時とpackage検証時に拒否する
    - 通常保存・別名保存・snapshot作成／復元で保存先basenameに依存しない短い一時名を使い、置換前に一時packageの最低限の構造を検証する。失敗注入で既存packageとdirty状態の保持を確認する
    - UUID・IDファイル名・日時のcanonical出力とreaderの受理範囲をschemaどおり検証する
@@ -144,7 +146,7 @@ macOS の `./Scripts/check.sh` と、W1で追加する `pwsh -File Windows/Scrip
 4. **W3: 執筆支援 parity** — メモ、人物、プロット、伏線、世界観、資料、検索、スナップショット
 5. **W4: Export / 配布** — Phase 5 の共通規則に合わせた出力と Windows 配布
 
-macOS の次タスク Phase 6 と Windows の W0 は独立に進められる。Windows reader / writerが存在する前の `.novelpkg` schema変更は、本書・schema・fixture・macOS検証を同じPRで更新する。W1以降はWindows検証も完了条件へ加える。
+macOS の次タスクPackage Validator GateはW0の一部と重なるため、同じschema・fixture・失敗分類を使って進める。ただしPackage Validatorの一部を実装しただけでW0完了とはしない。Windows reader / writerが存在する前の `.novelpkg` schema変更は、本書・schema・fixture・macOS検証を同じPRで更新する。W1以降はWindows検証も完了条件へ加える。
 
 W1開始時にWindows用ADRを追加し、対象.NET SDK、Windows App SDK / WinUI 3のversion、最低対応Windows、packaged / unpackaged配布方針を固定する。`global.json`と中央package管理でローカルビルドを再現可能にする。W2開始前にnative editor controlを選定し、日本語IME composition・Undo / Redo・選択範囲・アクセシビリティの状態遷移とテスト方針を記録する。
 

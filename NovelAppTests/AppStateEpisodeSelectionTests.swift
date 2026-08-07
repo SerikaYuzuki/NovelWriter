@@ -1,6 +1,6 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
@@ -170,7 +170,7 @@ struct AppStateEpisodeSelectionTests {
         state.selectChapter(original.chapters[1].id)
         state.selectEpisode(secondEpisode, in: original.chapters[1].id)
         state.updateSelectedEpisodeContent("復元前の編集")
-        #expect(await state.saveBeforeTermination())
+        #expect(await state.saveNow())
 
         #expect(await state.restoreSnapshot(at: snapshotURL))
         #expect(state.selectedChapterID == original.chapters.first?.id)
@@ -186,12 +186,13 @@ struct AppStateEpisodeSelectionTests {
                 repository: repository,
                 userDefaults: defaults ?? makeUserDefaults(),
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
     }
 
     private func makeUserDefaults() -> UserDefaults {
-        let suiteName = "NovelWriterEpisodeSelection.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAEpisodeSelection.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
@@ -199,7 +200,7 @@ struct AppStateEpisodeSelectionTests {
 
     private func packageURL(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("NovelWriterEpisodeSelectionTests", isDirectory: true)
+            .appendingPathComponent("FUMINIWAEpisodeSelectionTests", isDirectory: true)
             .appendingPathComponent("\(name).novelpkg", isDirectory: true)
     }
 

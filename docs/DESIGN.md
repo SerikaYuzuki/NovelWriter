@@ -1,11 +1,11 @@
-# 小説執筆アプリ 設計書 v0.52
+# ふみにわ 設計書 v0.55
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
 
 ## 1. 目的
 
-本アプリは、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
+**ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
 macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。将来的には Windows、iOS / iPadOS 対応、AI支援、PDF出力、校正、要約、差分管理などを追加できるようにする。
 
 初期段階では、以下を最優先する。
@@ -13,6 +13,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 - 小説本文を快適に書けること
 - 章単位で管理できること
 - データが壊れにくいこと
+- 開けない原稿を空の新規作品に見せかけず、利用者が安全に復旧できること
 - 後から機能追加しやすい設計にすること
 - AIエージェントが実装しやすいよう、責務を分離すること
 
@@ -43,7 +44,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 ## 3. モジュール構成
 
 ```text
-NovelWriter
+FUMINIWA
 ├── NovelApp                     (Xcode アプリターゲット)
 │   ├── AppDependencies.swift
 │   ├── AppState.swift
@@ -178,6 +179,8 @@ NovelStorage の設計方針:
 - 書き込みは `FileWrapper` またはテンポラリ書き出し + `replaceItemAt` でアトミックに行い、破損リスクを減らす
 - 将来的にスナップショット保存を追加できるようにする
 - App Sandbox は採用しない(GitHub 直接配布のため → D-011)。セキュリティスコープ付きブックマークは不要。将来 App Store 配布に切り替える場合のみ再考する
+- manifestが参照する話本文と`world.json`が参照する世界観本文は必須payloadとして読み、欠損・I/O失敗・invalid UTF-8を空文字にしない。空の話メモはファイル省略可能だが、メモファイルが存在する場合はvalid UTF-8を要求する(D-039)
+- duplicate ID、不正参照、symlink、resource limit、孤児payloadの保全と修復コピーは次のPackage Validator Gateで一体的に実装する。上記payload検査だけでW0完了または完全なpackage検証済みとは扱わない
 
 ### 4.3 EditorKit
 
@@ -287,7 +290,7 @@ public protocol EditorContext {
 
 初期実装: `SidebarRow`
 
-将来的に追加するもの: Project Sidebar 行 / Outline 行 / AI Assistant status item / 検索バー / 設定画面部品 / キャラクターカード / プロットカード
+将来的に追加するもの: Project Sidebar 行 / Outline 行 / 検索バー / 設定画面部品 / キャラクターカード / プロットカード。AI用部品はプライバシー・同意・失敗時挙動を含む機能設計が承認されるまで追加しない(D-040)
 
 NovelUI は可能な限りプラットフォーム非依存にする。
 
@@ -325,25 +328,26 @@ App本体は具象クラスを直接作りすぎない。
 @Observable
 final class AppState {
     var document: NovelDocument
+    var startupState: AppStartupState
     var selectedChapterID: ChapterID?
     var selectedEpisodeID: EpisodeID?
     var workspaceSelection: WorkspaceSelection
     var outlinePresentation: OutlinePresentationState
-    var aiAssistantPanel: AIAssistantPanelState
 }
 ```
 
 主な責務:
 
 - 現在開いている作品
+- 起動の`loading` / `ready` / `recovery`状態と、安全な再試行・別作品選択・明示的新規作成
 - 現在作品の保存完了後にだけ新規作成・別 URL 読み込み・別名保存を確定するトランザクション
 - 選択中の章ID / 話ID
 - 選択中のProject SidebarセクションとOutline項目
 - Outline検索バーの表示状態
-- 下部AI Assistant Panelの開閉・高さ・入力状態
 - 選択中章 / 話の取得
 - 選択中話本文・メモの更新
 - 最近開いた作品の記録(ファイルパス)
+- `Cmd+S`、自動保存、終了前保存を同じ`DocumentSaveCoordinator`へ合流させる明示保存
 
 章選択は `ChapterID` で管理する。`Chapter` オブジェクトそのものを選択状態として持たない。
 
@@ -355,19 +359,23 @@ UIの正は `WorkspaceSelection`(Project Sidebar + Outline)に寄せる。旧3�
 
 ```text
 ContentView
-└── NovelWorkbenchView
+├── loading: StartupLoadingView
+├── recovery: StartupRecoveryView
+└── ready: NovelWorkbenchView
     ├── NavigationSplitView
     │   ├── ProjectSidebarView
     │   ├── content(Outline / セクション一覧)
     │   │   └── OutlineContainerView / CharacterListView / …
     │   └── detail(Editor / セクション詳細)
     │       └── EditorPaneView / CharacterDetailView / …
-    └── AIAssistantPanelView
+    └── WorkbenchStatusBarView
 ```
 
-主な操作: Project Sidebar のセクション選択 / Outline での章・シーン選択 / 章追加 / 章並べ替え / 本文編集 / 検索 / 下部AI Assistant Panel の開閉 / 自動保存
+主な操作: Project Sidebar のセクション選択 / Outline での章・話選択 / 章追加 / 章並べ替え / 本文編集 / 検索 / 明示保存 / 自動保存
 
-新UIの画面構成は D-021 / D-024 / D-032 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。下部にはいずれも AI Assistant Panel を置く。本文執筆では content に章一覧、detail に本文を出す。
+新UIの画面構成は D-021 / D-024 / D-032 / D-040 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。下部は保存状態・文字数・検索結果だけを示すstatus barとする。未実装AIのplaceholderや開閉導線は置かない。本文執筆では content に章一覧、detail に本文を出す。
+
+起動中は編集可能なWorkbenchを生成しない。前回作品またはFinder指定作品を開けなかった場合はRecovery画面で止まり、recent URLとディスク上の作品を保持したまま、再試行・Finder表示・別作品選択・明示的新規作成を提示する(D-039)。
 
 `ContentView` 自体は肥大化させず、状態の受け渡しと共通コマンドの入口に留める。本文エディタの実体は従来どおり EditorKit の `EditorView` であり、App側の `EditorPaneView` は本文と選択反映を担当する。
 
@@ -379,8 +387,10 @@ ContentView
 
 ### 6.1 作品管理
 
-- 起動時に最近の作品を読み込む
-- 作品がなければ新規作品を作成する
+- 起動時は`loading`で最近の作品またはFinder指定作品を読み込み、成功後だけ`ready`にする
+- 読み込みに失敗したら新規作品へ自動fallbackせず`recovery`にし、失敗したURLとrecent記録を保持する
+- 最近の作品がない場合だけ新規作品を先に保存し、保存成功後に現在作品として採用する
+- Recoveryからの再試行・別作品選択・明示的新規作成を提供する
 - 保存は `.novelpkg` 形式で行う
 - 将来的には複数作品を選択して開けるようにする
 
@@ -409,7 +419,12 @@ ContentView
 - 章順と章内の話順は `manifest.json` で管理する
 - 保存はアトミックに行い、データ破損を起こしにくくする
 - 自動保存はデバウンス(例: 入力停止2秒後 + 話切り替え時 + アプリ非アクティブ時)
-- 将来的にスナップショット保存を追加する
+- `Cmd+S`は自動保存・終了前保存と同じrevision直列化経路で直ちに保存する。`ready`でない間は保存しない
+- スナップショットの保存・一覧・復元を提供し、復元前に現在状態を別snapshotへ退避する
+- 作品の開く／新規／別名保存／復元／資料操作はFIFOに直列化する。現在作品に属する非同期操作は呼び出し時のsession tokenを保持し、待機中に作品・URL・世代が変わった場合は別作品へ適用せず中止する(D-041)
+- 別名保存のURL切替、snapshot復元の退避・書き戻し・installは通常保存と同じ排他境界で確定する。lock順はdocument operation gate → revision保存直列化とし、逆順取得しない
+- 作品切替・別名保存・復元・終了前は、フォームと表示中のIME変換を旧作品へ確定してモデルへ同期し、最終保存／installまでWorkbench全体の変更を停止する。同じ子IDを持つ複製作品も本文install世代でEditorを再読込し、本文が変わらない別名保存ではcaret／Undoを維持する。終了要求後は新しい作品操作を受け付けない(D-041)
+- 削除確認やsnapshot／資料の一覧項目は、表示時のsession tokenを対象値と一体で保持する。同じIDを持つ複製作品へ古い確認を適用しない
 
 ### 6.5 世界観ノート
 
@@ -434,7 +449,7 @@ ContentView
 
 ### 7.4 書き出し
 
-現在利用可能な形式はプレーンテキスト / Markdown / EPUB 3。PDFはAI支援実装後のPhase 6.5へ延期する(D-037)。
+現在利用可能な形式はプレーンテキスト / Markdown / EPUB 3。PDFは未実装のまま公開UIへ出さず、商業公開Gateの後にAIとは独立して需要と実装費を再評価する(D-037 / D-040)。
 
 書き出しは `.novelpkg` の内部構造を読まない独立した `NovelExport` 機能として実装する。入力は `NovelDocument` の不変スナップショットだけとし、本文・作品名・章名・話名だけを対象にする。TXT / Markdown / EPUBは同じ共通原稿展開を使い、生成物を同じ親の一時ファイルへ完成させてから置き換える。EPUBは横書きの最小仕様に留め、画像埋め込み・縦書きは対象外とする。Phase 6.5のPDFもこの境界を再利用する。詳細な仕様は [PHASE5.md](PHASE5.md) を正とする。
 
@@ -446,9 +461,11 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 
 方針:
 
+- AIは任意機能とし、アカウント・ネットワーク・AI契約なしで執筆／保存／書き出しを完結できるようにする
 - 本文編集をブロックしない
 - AIが失敗しても執筆機能は壊れない
-- AI処理結果は下部の AI Assistant Panel に出す(D-021)
+- 送信対象と送信前preview、明示同意、provider、保存期間、学習利用、費用上限、取消・失敗時挙動を実装前に固定する
+- 未実装の間はpanel、入力欄、状態、ショートカットを出荷UIへ置かない。結果表示面は機能設計後に改めて決める(D-040)
 - 本文への反映はユーザー確認後にする
 
 ## 8. 開発ロードマップ
@@ -515,7 +532,7 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 - Project Sidebar(作品情報 / 執筆 / プロット / 登場人物 / 世界観 / 資料 / 設定)
 - Outline(原稿・章・シーン一覧、文字数、更新状態、ドラッグ並び替え、スクロール連動検索)
 - Editor Pane(広い本文領域、章タイトル、検索、履歴、プレビュー、保存状態)
-- AI Assistant Panel(下部開閉パネル + collapsed status bar)
+- AI Assistant Panel(下部開閉パネル + collapsed status bar。履歴上は実装済みだが、未実装機能を先出ししないD-040により出荷UIから撤去)
 - 旧3モード制と右インスペクタ中心の導線を撤去
 
 ### Phase 4.5: 安定化・作品ライフサイクル
@@ -534,13 +551,20 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 - プレーンテキスト / Markdown / EPUB 3出力
 - ネイティブ保存パネル、進捗、失敗・キャンセル表示
 
+### 商業化基盤: Product Trust / Package Safety / Release
+
+- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)、起動／作品ライフサイクルの競合防止(D-041)
+- **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
+- **公開前に残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA、法務・プライバシー・価格・サポート。現段階を商業公開可能とは扱わない
+
 ### Phase 6: AI支援
 
 - 要約 / 講評 / 矛盾検出 / 伏線確認 / 文章改善提案
+- 商業公開Gateの後に、プライバシー・同意・費用・provider契約を先に決める。placeholder UIは先行させない(D-040)
 
 ### Phase 6.5: PDF出力
 
-- AI支援実装後に、A4横書き・章／話見出し・ページ番号・日本語／絵文字対応のPDFを追加する(D-037)
+- 商業公開Gateの後に、AIとは独立して需要を再評価し、A4横書き・章／話見出し・ページ番号・日本語／絵文字対応のPDFを追加する(D-037 / D-040)
 - `NovelExport/Platform/macOS/` に実装を閉じ込め、既存の共通原稿展開とアトミック書込みを再利用する
 
 ### Phase 7: iOS / iPadOS 対応
@@ -559,7 +583,7 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 - W3: 執筆支援機能の parity
 - W4: Export と Windows 配布
 
-Windows トラックは macOS の Phase 6 / 7 と独立に進めてよい。ただし W1 より先に W0 を完了し、保存形式変更は両 OS の fixture を更新する。
+Windows トラックは macOS の商業化基盤 / Phase 6 / 7 と独立に進めてよい。ただし W1 より先に W0 を完了し、保存形式変更は両 OS の fixture を更新する。
 
 ## 9. 実装ルール
 
@@ -637,13 +661,15 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。次は **Phase 6「AI支援の設計・プライバシー方針」**。PDFはPhase 6.5へ延期した(D-037、[PHASE5.md](PHASE5.md))。
+Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
+
+次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QA、法務・プライバシー・価格・サポートが残るため、現段階を商業公開可能とは表現しない。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
 Windows 並行トラックは **W0「schema / golden fixture / portable filename 契約の固定」**から開始する。詳細と完了条件は [CROSS_PLATFORM.md](CROSS_PLATFORM.md) を正とし、W0完了後にWindows上でW1(Core + Storage)へ進む。
 
-Phase UI2 の完了記録は **[UIDESIGN.md](UIDESIGN.md)**。新UIは Project Sidebar / Outline / Editor / AI Assistant Panel の4領域ワークベンチ(→ D-021)として成立した。
+Phase UI2 の完了記録は **[UIDESIGN.md](UIDESIGN.md)**。現在の出荷UIは Project Sidebar / Outline / Editor と下部status barで構成し、当時のAI Assistant placeholderはD-040により撤去済みである。
 
 Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を参照。4-1〜4-6 すべて完了済み(Nice to have の未実施分は PHASE4.md のチェックボックスに残してあり、一部は UIDESIGN.md の Nice に引き継いだ)。
 
@@ -665,6 +691,38 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.55 (2026-08-08)
+
+PRレビューで発見した起動と作品ライフサイクルの競合を、対象作品の固定を含めて解消した(D-041)。
+
+- 同時bootstrapを一つの実行Taskへ合流し、初回I/O中のFinder openまで待ってから起動完了とする
+- 開く／新規／別名保存／資料／snapshot／終了前保存をFIFOの高レベル操作境界へ集約
+- 呼び出し元session tokenが古くなった復元・別名保存・資料操作等をRepository変更前に拒否
+- 別名保存のURL切替とsnapshot復元のinstallを保存排他区間内で確定
+- IME変換を旧作品へ確定してから入力を止め、終了要求後の作品操作を遮断
+- 章／話／人物／プロット／伏線／世界観ノートの古い削除確認もsession tokenで拒否
+- 復元×Finder open、旧snapshot要求×作品切替、別名保存中の編集／追記保存失敗を決定論的回帰テストで固定
+
+### v0.54 (2026-08-07)
+
+商業化基盤のSafe LaunchとProduct Truth方針を現行設計へ反映した(D-039 / D-040)。
+
+- 起動をLoading / Ready / Recoveryの三状態にし、読込失敗時はrecent URLと原稿を変更しない
+- manifest / world参照payloadと存在するメモにvalid UTF-8を要求し、空文字への黙示救済を停止
+- 未実装AIのpanel・状態・`Cmd+J`を出荷UIから撤去し、下端を保存／文字数status barへ限定
+- chromeはシステムLight／Darkへ追従し、本文キャンバス設定とは分離。`Cmd+S`を保存直列化へ接続
+- 直近の次タスクをPackage Validator Gateへ変更し、残る配布・法務・サポートGateを明記
+
+### v0.53 (2026-08-07)
+
+製品名を「ふみにわ / FUMINIWA」へ変更し、外向きのブランドと既存作品の互換境界を分離した(D-038)。
+
+- Xcode project / scheme / app bundle / executableを`FUMINIWA`、日本語表示名を「ふみにわ」へ変更
+- 旧bundle domainのrecent URLとEditor設定をallowlist方式で移行し、旧作品は移動しない
+- 新規作品の既定フォルダを`FUMINIWA`へ変更
+- `.novelpkg` v1〜v3とNovelKit系ドメイン名、legacy toolbar IDは維持
+- 同じ`.novelpkg`を「ふみにわ作品」として扱うUTType / Document Typesを追加
 
 ### v0.52 (2026-07-16)
 

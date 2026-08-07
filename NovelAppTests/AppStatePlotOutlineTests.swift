@@ -1,6 +1,6 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
@@ -87,7 +87,7 @@ struct AppStatePlotOutlineTests {
     }
 
     private func makeState() -> AppState {
-        let suiteName = "NovelWriterPlotOutline.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAPlotOutline.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return AppState(
@@ -95,7 +95,8 @@ struct AppStatePlotOutlineTests {
                 repository: PlotOutlineRepository(),
                 userDefaults: defaults,
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
     }
 }

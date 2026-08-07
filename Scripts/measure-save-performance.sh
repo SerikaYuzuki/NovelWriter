@@ -16,7 +16,7 @@ echo "    Fixture: 1MB body + 100MB attachment + 20 snapshots"
 echo "    Budget:  overwrite save <= 15s (see SavePerformanceBudget)"
 echo
 
-export NOVELWRITER_PERF_TEST=1
+export FUMINIWA_PERF_TEST=1
 
 # 計測ログ(print)を確実に見るため、該当テストだけを実行する。
 (cd NovelKit && swift test --filter overwriteSaveOfRepresentativePackageStaysWithinBudget)

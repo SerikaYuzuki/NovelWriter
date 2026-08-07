@@ -6,7 +6,7 @@ import Testing
 /// Phase 4.5-3b: 代表パッケージでの保存性能予算と計測。
 ///
 /// 既定の `swift test` / `Scripts/check.sh` では重い I/O を走らせない。
-/// 実測は `NOVELWRITER_PERF_TEST=1 ./Scripts/measure-save-performance.sh` で行う。
+/// 実測は `FUMINIWA_PERF_TEST=1 ./Scripts/measure-save-performance.sh` で行う。
 enum SavePerformanceBudget {
     /// 本文サイズ(UTF-8 バイト)。
     static let bodyByteCount = 1_000_000
@@ -29,7 +29,8 @@ private struct PreparedRepresentativePackage {
 
 private enum SavePerformanceFixture {
     static var isEnabled: Bool {
-        ProcessInfo.processInfo.environment["NOVELWRITER_PERF_TEST"] == "1"
+        ProcessInfo.processInfo.environment["FUMINIWA_PERF_TEST"] == "1"
+            || ProcessInfo.processInfo.environment["NOVELWRITER_PERF_TEST"] == "1"
     }
 
     static func makeBodyContent(byteCount: Int) -> String {
@@ -102,7 +103,7 @@ private enum SavePerformanceFixture {
     "代表パッケージ(1MB本文・100MB添付・20スナップショット)の上書き保存が予算内",
     .enabled(
         if: SavePerformanceFixture.isEnabled,
-        "NOVELWRITER_PERF_TEST=1 のときだけ実行(Scripts/measure-save-performance.sh)"
+        "FUMINIWA_PERF_TEST=1 のときだけ実行(Scripts/measure-save-performance.sh)"
     )
 )
 func overwriteSaveOfRepresentativePackageStaysWithinBudget() async throws {
@@ -131,7 +132,7 @@ func overwriteSaveOfRepresentativePackageStaysWithinBudget() async throws {
     let elapsed = startedAt.duration(to: clock.now)
 
     print(
-        "NovelWriter perf: setup(snapshots)="
+        "FUMINIWA perf: setup(snapshots)="
             + "\(String(format: "%.3f", SavePerformanceFixture.seconds(from: prepared.setupElapsed)))s "
             + "overwrite save elapsed="
             + "\(String(format: "%.3f", SavePerformanceFixture.seconds(from: elapsed)))s "

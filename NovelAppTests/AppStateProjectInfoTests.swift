@@ -1,13 +1,13 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
 struct AppStateProjectInfoTests {
     @Test("作品情報のタイトルとあらすじ更新はモデルへ反映される")
     func projectInfoUpdatesDocumentMetadata() throws {
-        let suiteName = "NovelWriterProjectInfo.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAProjectInfo.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         let state = AppState(
@@ -15,7 +15,8 @@ struct AppStateProjectInfoTests {
                 repository: ProjectInfoRepository(),
                 userDefaults: defaults,
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
 
         state.updateDocumentTitle("")

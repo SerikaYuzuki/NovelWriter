@@ -115,6 +115,68 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("world.json").path))
 }
 
+@Test func missingReferencedWorldNoteBodyThrowsTypedError() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("MissingWorldBody.novelpkg")
+    let repository = NovelpkgRepository()
+    let note = WorldNote(title: "欠損するノート", content: "本文")
+    let document = NovelDocument(
+        title: "世界観本文欠損",
+        chapters: [Chapter(title: "第1章")],
+        worldNotes: [note]
+    )
+    try await repository.save(document, to: packageURL)
+
+    let relativePath = "world-notes/\(note.id.rawValue.uuidString).md"
+    try FileManager.default.removeItem(at: packageURL.appendingPathComponent(relativePath))
+
+    do {
+        _ = try await repository.load(from: packageURL)
+        Issue.record("world.json が参照する本文が無いのに load が成功してしまった")
+    } catch let error as NovelpkgError {
+        guard case let .payloadUnreadable(url, path, reason) = error else {
+            Issue.record("想定外のエラー: \(error)")
+            return
+        }
+        #expect(url == packageURL)
+        #expect(path == relativePath)
+        #expect(reason == "必須ファイルが見つかりません")
+    }
+}
+
+@Test func invalidUTF8WorldNoteBodyThrowsTypedError() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("InvalidWorldBody.novelpkg")
+    let repository = NovelpkgRepository()
+    let note = WorldNote(title: "壊れたノート", content: "置き換える本文")
+    let document = NovelDocument(
+        title: "世界観UTF-8破損",
+        chapters: [Chapter(title: "第1章")],
+        worldNotes: [note]
+    )
+    try await repository.save(document, to: packageURL)
+
+    let relativePath = "world-notes/\(note.id.rawValue.uuidString).md"
+    try Data([0xF0, 0x28, 0x8C, 0x28]).write(to: packageURL.appendingPathComponent(relativePath))
+
+    do {
+        _ = try await repository.load(from: packageURL)
+        Issue.record("不正UTF-8の世界観本文を load できてしまった")
+    } catch let error as NovelpkgError {
+        guard case let .payloadUnreadable(url, path, reason) = error else {
+            Issue.record("想定外のエラー: \(error)")
+            return
+        }
+        #expect(url == packageURL)
+        #expect(path == relativePath)
+        #expect(reason == "UTF-8 として解釈できません")
+    }
+}
+
 @Test func worldNotesArePreservedBySnapshotRestoreAndSaveCopy() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

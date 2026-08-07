@@ -38,6 +38,15 @@ public final class DocumentSaveCoordinator {
         case failed
     }
 
+    /// 保存を排出してから排他操作を行う複合境界の結果。
+    public enum ExclusiveOperationResult<Value: Sendable>: Sendable {
+        /// 操作前の保存に失敗したため、排他操作を開始しなかった。
+        case saveFailedBeforeOperation
+        /// 排他操作は完了した。`savedAfterOperation`は、操作中に増えたrevisionを
+        /// 新しい保存先へ排出できたかを表す。
+        case completed(value: Value, savedAfterOperation: Bool)
+    }
+
     /// 現在保存すべき本文モデルと保存先URLを取得する。
     /// 取得できない(例: 呼び出し元が既に解放されている)場合は `nil`。
     public typealias CurrentStateProvider = () -> (document: NovelDocument, url: URL)?
@@ -127,42 +136,40 @@ public final class DocumentSaveCoordinator {
             }
         }
 
-        guard savedRevision < saveRevision else {
-            return true
+        return await saveDirtyRevisions()
+    }
+
+    /// 保存排出とpackage排他操作を一つの境界にする。
+    ///
+    /// `saveNow(); performExclusive { ... }` の二段呼び出しでは、二つの`await`境界の
+    /// 間で別の保存が旧URLへ完了し、そのrevisionを新URLへ書き戻せない可能性がある。
+    /// このAPIは先に排他区間を取得し、その区間を保持したままdirtyを保存してから
+    /// `operation`を実行する。`flushAfter`を指定すると、操作中に増えたrevisionも
+    /// 排他を解放する前に（operationが切り替えた新しいcurrent URLへ）保存する。
+    ///
+    /// - Important: `operation`内から`saveNow()`または別の排他APIを呼ばないこと。
+    public func performExclusiveAfterFlushing<T: Sendable>(
+        flushAfter: Bool = false,
+        _ operation: () async throws -> T
+    ) async rethrows -> ExclusiveOperationResult<T> {
+        debouncedSaveTask?.cancel()
+        debouncedSaveTask = nil
+        await acquireExclusiveRegion()
+
+        guard await saveDirtyRevisions() else {
+            releaseExclusiveRegion()
+            return .saveFailedBeforeOperation
         }
 
-        isSaving = true
-        saveEventHandler(.saving)
-        var succeeded = true
-
-        while savedRevision < saveRevision {
-            let revision = saveRevision
-            guard let (document, url) = currentState() else {
-                // 呼び出し元が既に解放されているなど、保存対象を取得できない。
-                // これ以上ループしても仕方ないので抜ける。
-                break
-            }
-
-            do {
-                try await saveOperation(document, url)
-                savedRevision = max(savedRevision, revision)
-            } catch {
-                succeeded = false
-                break
-            }
+        do {
+            let value = try await operation()
+            let savedAfterOperation = flushAfter ? await saveDirtyRevisions() : true
+            releaseExclusiveRegion()
+            return .completed(value: value, savedAfterOperation: savedAfterOperation)
+        } catch {
+            releaseExclusiveRegion()
+            throw error
         }
-
-        // ここから return までの間に `await` は無い。他の呼び出しがこの間に
-        // 割り込んで `isSaving` や `waiters` を観測することはできない。
-        isSaving = false
-        saveEventHandler(succeeded ? .saved : .failed)
-        let pendingWaiters = waiters
-        waiters.removeAll()
-        for waiter in pendingWaiters {
-            waiter.resume(returning: succeeded)
-        }
-
-        return succeeded
     }
 
     /// 保存経路と直列化された排他区間で `operation` を実行する(Phase 4 レビュー F-A)。
@@ -199,6 +206,42 @@ public final class DocumentSaveCoordinator {
             releaseExclusiveRegion()
             throw error
         }
+    }
+
+    /// `isSaving == false`の状態から、現在のdirty revisionが無くなるまで保存する。
+    /// `isExclusiveRunning`中からも呼べるため、公開`saveNow()`の排他待ちは行わない。
+    private func saveDirtyRevisions() async -> Bool {
+        guard savedRevision < saveRevision else { return true }
+
+        isSaving = true
+        saveEventHandler(.saving)
+        var succeeded = true
+
+        while savedRevision < saveRevision {
+            let revision = saveRevision
+            guard let (document, url) = currentState() else {
+                succeeded = false
+                break
+            }
+
+            do {
+                try await saveOperation(document, url)
+                savedRevision = max(savedRevision, revision)
+            } catch {
+                succeeded = false
+                break
+            }
+        }
+
+        // ここからreturnまでawaitは無く、owner終了とwaiter通知は一続きに確定する。
+        isSaving = false
+        saveEventHandler(succeeded ? .saved : .failed)
+        let pendingWaiters = waiters
+        waiters.removeAll()
+        for waiter in pendingWaiters {
+            waiter.resume(returning: succeeded)
+        }
+        return succeeded
     }
 
     /// 実行中の保存(owner)と、他の `performExclusive` 区間の両方が無い状態に

@@ -8,7 +8,7 @@ struct FlagSectionView: View {
 
     let onChapterJump: (ChapterID) -> Void
 
-    @State private var flagPendingDeletion: Flag?
+    @State private var flagPendingDeletion: SessionBoundValue<Flag>?
 
     var body: some View {
         HSplitView {
@@ -22,13 +22,13 @@ struct FlagSectionView: View {
             "伏線を削除しますか？",
             isPresented: flagDeletionDialogIsPresented,
             presenting: flagPendingDeletion
-        ) { flag in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteFlag(id: flag.id)
+                appState.deleteFlag(id: request.value.id, expectedSession: request.session)
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { flag in
-            Text("「\(flag.title)」を削除します。")
+        } message: { request in
+            Text("「\(request.value.title)」を削除します。")
         }
     }
 
@@ -56,18 +56,18 @@ struct FlagTrackerView: View {
 private struct FlagListView: View {
     @Environment(AppState.self) private var appState
 
-    @Binding var flagPendingDeletion: Flag?
+    @Binding var flagPendingDeletion: SessionBoundValue<Flag>?
     @State private var showsResolvedFlags = false
 
     var body: some View {
         VStack(spacing: 0) {
             List(selection: flagSelectionBinding) {
                 Section {
-                    ForEach(unresolvedFlags) { flag in
-                        FlagRow(flag: flag, plantedTitle: chapterTitle(for: flag.plantedChapterID))
-                            .tag(flag.id)
+                    ForEach(sessionBoundUnresolvedFlags) { item in
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
+                            .tag(item.value.id)
                             .contextMenu {
-                                deleteButton(for: flag)
+                                deleteButton(for: item)
                             }
                     }
                 } header: {
@@ -76,11 +76,11 @@ private struct FlagListView: View {
                 }
 
                 DisclosureGroup(isExpanded: $showsResolvedFlags) {
-                    ForEach(resolvedFlags) { flag in
-                        FlagRow(flag: flag, plantedTitle: chapterTitle(for: flag.plantedChapterID))
-                            .tag(flag.id)
+                    ForEach(sessionBoundResolvedFlags) { item in
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
+                            .tag(item.value.id)
                             .contextMenu {
-                                deleteButton(for: flag)
+                                deleteButton(for: item)
                             }
                     }
                 } label: {
@@ -108,7 +108,9 @@ private struct FlagListView: View {
                 }
 
                 Button(role: .destructive) {
-                    flagPendingDeletion = appState.selectedFlag
+                    flagPendingDeletion = appState.selectedFlag.map {
+                        SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                    }
                 } label: {
                     Label("削除", systemImage: "trash")
                 }
@@ -128,6 +130,14 @@ private struct FlagListView: View {
         appState.document.flags.filter(\.isResolved)
     }
 
+    private var sessionBoundUnresolvedFlags: [SessionBoundValue<Flag>] {
+        sessionBound(unresolvedFlags)
+    }
+
+    private var sessionBoundResolvedFlags: [SessionBoundValue<Flag>] {
+        sessionBound(resolvedFlags)
+    }
+
     private var flagSelectionBinding: Binding<FlagID?> {
         Binding(
             get: { appState.selectedFlagID },
@@ -135,12 +145,17 @@ private struct FlagListView: View {
         )
     }
 
-    private func deleteButton(for flag: Flag) -> some View {
+    private func deleteButton(for item: SessionBoundValue<Flag>) -> some View {
         Button(role: .destructive) {
-            flagPendingDeletion = flag
+            flagPendingDeletion = item
         } label: {
             Label("削除", systemImage: "trash")
         }
+    }
+
+    private func sessionBound(_ flags: [Flag]) -> [SessionBoundValue<Flag>] {
+        let session = appState.documentSessionToken
+        return flags.map { SessionBoundValue(value: $0, session: session) }
     }
 
     private func chapterTitle(for chapterID: ChapterID?) -> String? {

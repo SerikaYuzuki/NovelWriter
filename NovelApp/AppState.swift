@@ -37,6 +37,15 @@ enum DocumentSaveState: Equatable {
     }
 }
 
+/// 「別名で保存」の利用者向け結果。保存状態や現在sessionを後から推測せず、
+/// URL切替を確定した同じライフサイクル操作から事実を返す。
+enum SaveDocumentAsResult: Equatable {
+    case saved
+    case staleSession
+    case failedBeforeSwitch
+    case switchedButLatestEditsFailed
+}
+
 /// AppStateのactor分離に依存せず、破棄時に通知登録を解除するtoken holder。
 private final class NotificationObserverToken {
     var value: NSObjectProtocol?
@@ -79,6 +88,10 @@ final class AppState {
     private(set) var plotOutlineSelection: PlotOutlineSelection = .unassigned
     /// 原稿パッケージの保存状態。表示はこの値だけを正とする。
     private(set) var saveState: DocumentSaveState
+    /// 起動中の編集可能placeholderをUIへ露出しないための三状態(D-039)。
+    private(set) var startupState: AppStartupState
+    /// Finderからの作品オープンに失敗したときだけ使う安全な利用者向け文言。
+    var externalDocumentOpenErrorMessage: String?
 
     /// Project Sidebar と Outline の選択状態。UI2 以降の画面選択の正。
     private(set) var workspaceSelection: WorkspaceSelection {
@@ -89,18 +102,30 @@ final class AppState {
 
     /// Outline の検索バーなど、表示専用の一時状態。
     var outlinePresentation = OutlinePresentationState()
-    /// 下部 AI Assistant Panel の開閉・入力状態。
-    var aiAssistantPanel = AIAssistantPanelState()
-
     /// 現在の作品に取り込まれている資料一覧。
     private(set) var attachments: [Attachment]
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
     private(set) var documentURL: URL
+    /// 非同期UI操作が、呼び出し元と同じ作品を対象にしているか確認する世代値。
+    private(set) var documentSessionToken: DocumentSessionToken
+    /// EditorViewへ本文を再流込する世代。作品install/復元時だけ進め、
+    /// 同じ本文を保つ別名保存ではcaretとUndoを維持する。
+    private(set) var editorContentGeneration: UInt64
 
     private let repository: DocumentRepository
     private let attachmentManager: AttachmentManaging?
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
+    /// 表示中のEditorKitへ、作品遷移前のIME確定・モデル同期・入力停止を依頼する。
+    private let editorCommandSession: EditorCommandSession
+    /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
+    @ObservationIgnored private let documentOperationGate = DocumentOperationGate()
+    /// 終了前保存を要求した後に、新しい作品遷移を開始させない。
+    @ObservationIgnored private var isTerminationPending = false
+    /// 重複した終了要求を同じ保存結果へ合流させるsingle-flight Task。
+    @ObservationIgnored private var terminationTask: Task<Bool, Never>?
+    /// 最終入力確定後から保存・install完了まで、旧UIからのdocument変更を拒否する。
+    private(set) var isDocumentTransitionInProgress = false
     /// 章をまたいで戻ったときに復元する、章ごとの最後の話選択。
     @ObservationIgnored
     private var lastSelectedEpisodeByChapter: [ChapterID: EpisodeID] = [:]
@@ -114,7 +139,7 @@ final class AppState {
     private lazy var saveCoordinator: DocumentSaveCoordinator = .init(
         debounceNanoseconds: Self.autosaveDebounceNanoseconds,
         currentState: { [weak self] in
-            guard let self else { return nil }
+            guard let self, startupState.isReady else { return nil }
             return (document, documentURL)
         },
         saveOperation: { [weak self] doc, url in
@@ -123,7 +148,7 @@ final class AppState {
                 try await repository.save(doc, to: url)
             } catch {
                 // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
-                print("NovelWriter: 保存に失敗しました(\(url.path)): \(error)")
+                print("[FUMINIWA] 保存に失敗しました(\(url.path)): \(error)")
                 throw error
             }
         },
@@ -133,22 +158,39 @@ final class AppState {
     )
     /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
     @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
+    /// SwiftUIのtask再評価で同時に呼ばれたbootstrapを、同じ完了へ合流させる。
+    /// 単なるstartedフラグでは後続呼び出しだけが先にreturnできるため、実行中Taskを保持する。
+    @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
+    @ObservationIgnored private var hasCompletedBootstrap = false
+    /// 初回I/O中に別のtaskが受け取ったFinder URL。初回処理の後に同じTask内で開く。
+    @ObservationIgnored private var pendingBootstrapOpenURL: URL?
 
-    private static let recentDocumentPathKey = "dev.serikayuzuki.NovelWriter.recentDocumentPath"
-    private static let projectSectionKey = "dev.serikayuzuki.NovelWriter.projectSection"
+    private static let recentDocumentPathKey = AppPreferenceKey.recentDocumentPath
+    private static let projectSectionKey = AppPreferenceKey.projectSection
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
-    init(dependencies: AppDependencies) {
+    init(
+        dependencies: AppDependencies,
+        initialStartupState: AppStartupState = .loading
+    ) {
         repository = dependencies.repository
         attachmentManager = dependencies.attachmentManager
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager
+        editorCommandSession = dependencies.editorCommandSession
 
         // 実際の状態は `bootstrap()` で確立する。ここでは(ウィンドウ表示を
         // ブロックしないよう)空の新規作品をプレースホルダとして持たせておく。
         let placeholder = NovelDocument.newDocument()
+        let placeholderURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
         document = placeholder
-        documentURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
+        documentURL = placeholderURL
+        documentSessionToken = DocumentSessionToken(
+            generation: 0,
+            documentID: placeholder.id,
+            documentURL: placeholderURL.standardizedFileURL
+        )
+        editorContentGeneration = 0
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
@@ -157,6 +199,8 @@ final class AppState {
         selectedWorldNoteID = nil
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
+        startupState = initialStartupState
+        externalDocumentOpenErrorMessage = nil
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         let initialSection: ProjectSection = if storedSection == "planning" {
             .projectInfo
@@ -172,71 +216,216 @@ final class AppState {
         attachments = []
     }
 
-    /// 起動時の読み込み/新規作成を行う。`NovelWriterApp` から一度だけ呼ばれる想定。
+    /// 起動時の読み込み/新規作成を行う。SwiftUIのtask再評価による同時呼び出しは
+    /// 一つの実行と完了へ合流する。
     ///
     /// UserDefaults に前回開いていたファイルパスがあればそれを読み込む。
-    /// 無ければ(または読み込みに失敗すれば)新規作品を作り、既定の保存先へ保存する。
-    func bootstrap() async {
+    /// Finderから指定されたURLはrecentより優先する。読込失敗時は新規作品へ
+    /// fallbackせずRecoveryで停止し、原稿とrecent URLを変更しない(D-039)。
+    func bootstrap(opening requestedURL: URL? = nil) async {
+        if hasCompletedBootstrap {
+            if let requestedURL {
+                _ = await openExternalDocument(at: requestedURL)
+            }
+            return
+        }
+
+        if let requestedURL {
+            pendingBootstrapOpenURL = requestedURL
+        }
+        if let bootstrapTask {
+            await bootstrapTask.value
+            return
+        }
+
+        let initialOpenURL = pendingBootstrapOpenURL
+        pendingBootstrapOpenURL = nil
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performBootstrap(opening: initialOpenURL)
+        }
+        bootstrapTask = task
+        await task.value
+    }
+
+    /// 初回状態の確立と、そのI/O中に届いたFinder openを一つの完了境界として処理する。
+    /// これにより、どの`bootstrap()`呼び出しもdelegateへ早すぎる完了を返さない。
+    private func performBootstrap(opening requestedURL: URL?) async {
         observeResignActive()
+
+        await establishInitialStartupState(opening: requestedURL)
+
+        while let pendingOpenURL = pendingBootstrapOpenURL {
+            pendingBootstrapOpenURL = nil
+            _ = await openExternalDocument(at: pendingOpenURL)
+        }
+
+        hasCompletedBootstrap = true
+        bootstrapTask = nil
+    }
+
+    private func establishInitialStartupState(opening requestedURL: URL?) async {
+        if let requestedURL {
+            await loadStartupDocument(at: requestedURL, source: .finder)
+            return
+        }
 
         if let path = userDefaults.string(forKey: Self.recentDocumentPathKey), !path.isEmpty {
             let url = URL(fileURLWithPath: path)
             #if DEBUG
             if Self.shouldSkipRecentDocumentInDebug(url, fileManager: fileManager) {
-                userDefaults.removeObject(forKey: Self.recentDocumentPathKey)
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .protectedLocationInDebugBuild,
+                        source: .recentDocument,
+                        documentURL: url
+                    )
+                )
+                return
             } else {
-                do {
-                    let loaded = try await repository.load(from: url)
-                    document = loaded
-                    documentURL = url
-                    setInitialSelection(for: loaded)
-                    selectedCharacterID = loaded.characters.first?.id
-                    selectedPlotCardID = loaded.plotCards.first?.id
-                    selectedFlagID = loaded.flags.first?.id
-                    attachments = await loadAttachments(for: url)
-                    saveState = .saved
-                    return
-                } catch {
-                    // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                    print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
-                }
+                await loadStartupDocument(at: url, source: .recentDocument)
+                return
             }
             #else
-            do {
-                let loaded = try await repository.load(from: url)
-                document = loaded
-                documentURL = url
-                setInitialSelection(for: loaded)
-                selectedCharacterID = loaded.characters.first?.id
-                selectedPlotCardID = loaded.plotCards.first?.id
-                selectedFlagID = loaded.flags.first?.id
-                attachments = await loadAttachments(for: url)
-                saveState = .saved
-                return
-            } catch {
-                // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                print("NovelWriter: 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
-            }
+            await loadStartupDocument(at: url, source: .recentDocument)
+            return
             #endif
         }
 
-        let newDocument = NovelDocument.newDocument()
-        let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
-        document = newDocument
-        documentURL = newURL
-        setInitialSelection(for: newDocument)
-        selectedCharacterID = nil
-        selectedPlotCardID = nil
-        selectedFlagID = nil
-        attachments = []
+        await createInitialDocumentForStartup()
+    }
 
-        saveCoordinator.markDirty()
-        await saveCoordinator.saveNow()
-        attachments = await loadAttachments(for: newURL)
-        rememberDocumentURL(newURL)
+    /// Recovery画面の「再試行」。同じ原本URLまたは同じ新規保存先を再利用する。
+    func retryStartup() async {
+        guard !isTerminationPending else { return }
+        await documentOperationGate.perform {
+            await retryStartupSerially()
+        }
+    }
+
+    private func retryStartupSerially() async {
+        guard case let .recovery(context) = startupState else { return }
+        startupState = .loading
+
+        switch context.reason {
+        case .cannotOpenDocument, .protectedLocationInDebugBuild:
+            guard let url = context.documentURL else {
+                startupState = .recovery(context)
+                return
+            }
+            await loadStartupDocument(at: url, source: context.source)
+        case .cannotCreateDocument:
+            await createInitialDocumentForStartup(at: context.documentURL)
+        }
+    }
+
+    /// Finder / Open Withから渡された作品を、現在作品を守る通常の切替経路で開く。
+    @discardableResult
+    func openExternalDocument(at url: URL) async -> Bool {
+        let success = await openDocument(at: url)
+        if !success, startupState.isReady {
+            externalDocumentOpenErrorMessage = "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
+        }
+        return success
+    }
+
+    private func loadStartupDocument(at url: URL, source: StartupDocumentSource) async {
+        let targetURL = url.standardizedFileURL
+        do {
+            let loadedDocument = try await repository.load(from: targetURL)
+            let loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
+            installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
+        } catch {
+            print("[FUMINIWA] 起動作品を開けませんでした(\(targetURL.lastPathComponent)): \(error)")
+            startupState = .recovery(
+                StartupRecoveryContext(
+                    reason: .cannotOpenDocument,
+                    source: source,
+                    documentURL: targetURL
+                )
+            )
+        }
+    }
+
+    private func createInitialDocumentForStartup(at preferredURL: URL? = nil) async {
+        let newDocument = NovelDocument.newDocument()
+        let newURL = preferredURL
+            ?? Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+
+        do {
+            try await repository.save(newDocument, to: newURL)
+            let newAttachments = try await loadAttachmentsThrowing(for: newURL)
+            installDocument(newDocument, at: newURL, attachments: newAttachments)
+        } catch {
+            print("[FUMINIWA] 起動時の新規作品を保存できませんでした(\(newURL.lastPathComponent)): \(error)")
+            startupState = .recovery(
+                StartupRecoveryContext(
+                    reason: .cannotCreateDocument,
+                    source: .initialDocument,
+                    documentURL: newURL
+                )
+            )
+        }
     }
 
     // MARK: - 作品ライフサイクル
+
+    private func performForCurrentDocument<T>(
+        expectedSession: DocumentSessionToken? = nil,
+        ifStale staleValue: T,
+        operation: @MainActor () async -> T
+    ) async -> T {
+        guard !isTerminationPending else { return staleValue }
+        let originSession = expectedSession ?? documentSessionToken
+        return await documentOperationGate.perform {
+            guard documentSessionToken == originSession else { return staleValue }
+            return await operation()
+        }
+    }
+
+    /// 確認ダイアログなど、`await`を持たないUI操作を元の作品だけへ適用する。
+    /// Save Asを含む作品世代の変更後や終了処理開始後は、IDが同じでも拒否する。
+    private func permitsMutation(expectedSession: DocumentSessionToken?) -> Bool {
+        guard !isTerminationPending, !isDocumentTransitionInProgress else { return false }
+        guard let expectedSession else { return true }
+        return documentSessionToken == expectedSession
+    }
+
+    /// 表示中Editorが確定済み本文をモデルへ同期するための判定。
+    ///
+    /// 終了要求後は新しいUI操作を止める一方、既に表示中のIME marked textは
+    /// 最終保存へ含める必要がある。固定sessionとの一致だけを確認し、終了処理中の
+    /// `prepareForDocumentTransition()`から届く最後のcallbackは受け入れる。
+    private func permitsEditorSynchronization(expectedSession: DocumentSessionToken?) -> Bool {
+        guard !isDocumentTransitionInProgress else { return false }
+        guard let expectedSession else { return !isTerminationPending }
+        return documentSessionToken == expectedSession
+    }
+
+    var permitsDocumentInteraction: Bool {
+        startupState.isReady && !isDocumentTransitionInProgress
+    }
+
+    var permitsDocumentChoice: Bool {
+        startupState.permitsDocumentChoice && !isDocumentTransitionInProgress && !isTerminationPending
+    }
+
+    /// TextField等のfirst responderとEditorKit本文を同じ同期区間で確定し、
+    /// 次の保存・installが終わるまで旧Workbenchからの変更を閉じる。
+    private func beginDocumentTransition() -> Bool {
+        guard !isDocumentTransitionInProgress else { return false }
+        if let keyWindow = NSApp.keyWindow, !keyWindow.makeFirstResponder(nil) {
+            return false
+        }
+        guard editorCommandSession.prepareForDocumentTransition() else { return false }
+        isDocumentTransitionInProgress = true
+        return true
+    }
+
+    private func endDocumentTransition() {
+        isDocumentTransitionInProgress = false
+        editorCommandSession.resumeAfterDocumentTransition()
+    }
 
     /// 現在の作品を失わず、指定 URL の作品へ切り替える。
     ///
@@ -245,9 +434,27 @@ final class AppState {
     /// 一切置き換えない。
     @discardableResult
     func openDocument(at url: URL) async -> Bool {
+        guard !isTerminationPending else { return false }
+        return await documentOperationGate.perform {
+            await openDocumentSerially(at: url)
+        }
+    }
+
+    private func openDocumentSerially(at url: URL) async -> Bool {
         let targetURL = url.standardizedFileURL
-        guard targetURL != documentURL.standardizedFileURL else {
+        let hadReadyDocument = startupState.isReady
+        var didBeginTransition = false
+        defer {
+            if didBeginTransition {
+                endDocumentTransition()
+            }
+        }
+
+        guard !hadReadyDocument || targetURL != documentURL.standardizedFileURL else {
             return await saveCoordinator.saveNow()
+        }
+        if !hadReadyDocument {
+            startupState = .loading
         }
 
         let loadedDocument: NovelDocument
@@ -256,14 +463,26 @@ final class AppState {
             loadedDocument = try await repository.load(from: targetURL)
             loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
         } catch {
-            print("NovelWriter: 作品の読み込みに失敗しました(\(targetURL.path)): \(error)")
+            print("[FUMINIWA] 作品の読み込みに失敗しました(\(targetURL.lastPathComponent)): \(error)")
+            if !hadReadyDocument {
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .cannotOpenDocument,
+                        source: .chosenDocument,
+                        documentURL: targetURL
+                    )
+                )
+            }
             return false
         }
 
-        // 読み込み待ちの間に現在作品が編集されても、ここで最新 revision まで保存する。
-        // saveNow() から復帰した後は状態置換まで await しないため、未保存編集が
-        // 切り替えとの隙間に入り込むことはない。
-        guard await saveCoordinator.saveNow() else { return false }
+        // 読み込み待ちの間に現在作品が編集されても、ここで全入力を確定・停止し、
+        // 最新revisionを保存してから切り替える。
+        if hadReadyDocument {
+            guard beginDocumentTransition() else { return false }
+            didBeginTransition = true
+            guard await saveCoordinator.saveNow() else { return false }
+        }
 
         installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
         return true
@@ -271,8 +490,29 @@ final class AppState {
 
     /// 新規作品を既定保存先へ作成し、保存成功後にだけ現在作品として採用する。
     @discardableResult
-    func createNewDocument() async -> Bool {
-        guard await saveCoordinator.saveNow() else { return false }
+    func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
+            await createNewDocumentSerially()
+        }
+    }
+
+    private func createNewDocumentSerially() async -> Bool {
+        let hadReadyDocument = startupState.isReady
+        var didBeginTransition = false
+        defer {
+            if didBeginTransition {
+                endDocumentTransition()
+            }
+        }
+        let previousRecoveryContext: StartupRecoveryContext? = if case let .recovery(context) = startupState {
+            context
+        } else {
+            nil
+        }
+
+        if !hadReadyDocument {
+            startupState = .loading
+        }
 
         let newDocument = NovelDocument.newDocument()
         let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
@@ -282,13 +522,28 @@ final class AppState {
             try await repository.save(newDocument, to: newURL)
             newAttachments = try await loadAttachmentsThrowing(for: newURL)
         } catch {
-            print("NovelWriter: 新規作品の保存に失敗しました(\(newURL.path)): \(error)")
+            print("[FUMINIWA] 新規作品の保存に失敗しました(\(newURL.lastPathComponent)): \(error)")
+            if !hadReadyDocument {
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .cannotCreateDocument,
+                        source: .initialDocument,
+                        documentURL: newURL
+                    )
+                )
+            } else if let previousRecoveryContext {
+                startupState = .recovery(previousRecoveryContext)
+            }
             return false
         }
 
-        // 新規作品の書き込み中にも現在作品は編集できる。切り替え直前にもう一度
-        // 保存キューを排出し、その編集を現在の保存先へ確実に残す。
-        guard await saveCoordinator.saveNow() else { return false }
+        // 新規作品の書き込み中にも現在作品は編集できる。切り替え直前に全入力を
+        // 確定・停止し、最新revisionを現在の保存先へ確実に残す。
+        if hadReadyDocument {
+            guard beginDocumentTransition() else { return false }
+            didBeginTransition = true
+            guard await saveCoordinator.saveNow() else { return false }
+        }
 
         installDocument(newDocument, at: newURL, attachments: newAttachments)
         return true
@@ -300,18 +555,39 @@ final class AppState {
     /// スナップショット・未知項目も保存層に引き継がせる。コピー中に生じた編集は
     /// dirty revision として残り、保存先切り替え後に新 URL へ保存される。
     @discardableResult
-    func saveDocument(as url: URL) async -> Bool {
+    func saveDocument(as url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
+        await saveDocumentResult(as: url, expectedSession: expectedSession) == .saved
+    }
+
+    /// Presenterが非同期完了後の可変状態から失敗理由を推測しないための結果付き経路。
+    func saveDocumentResult(
+        as url: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> SaveDocumentAsResult {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: .staleSession) {
+            await saveDocumentSerially(as: url)
+        }
+    }
+
+    private func saveDocumentSerially(as url: URL) async -> SaveDocumentAsResult {
+        guard startupState.isReady else { return .failedBeforeSwitch }
         let destinationURL = url.standardizedFileURL
         let sourceURL = documentURL
 
         guard destinationURL != sourceURL.standardizedFileURL else {
-            return await saveCoordinator.saveNow()
+            return await saveCoordinator.saveNow() ? .saved : .failedBeforeSwitch
         }
-        guard await saveCoordinator.saveNow() else { return false }
 
-        let documentSnapshot = document
+        var didBeginTransition = false
+        defer {
+            if didBeginTransition {
+                endDocumentTransition()
+            }
+        }
+
         do {
-            try await saveCoordinator.performExclusive {
+            let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                let documentSnapshot = document
                 if let copyingRepository = repository as? DocumentCopyingRepository {
                     try await copyingRepository.saveCopy(
                         documentSnapshot,
@@ -321,19 +597,31 @@ final class AppState {
                 } else {
                     try await repository.save(documentSnapshot, to: destinationURL)
                 }
+
+                // copy中も入力は継続できる。保存先を切り替える直前にIMEを旧sessionへ
+                // 確定し、Editor keyの更新と事後保存が終わるまで入力を止める。
+                guard beginDocumentTransition() else { return false }
+                didBeginTransition = true
+
+                // URL・recent・session世代の切替までを保存排他区間に含める。
+                // コピー中に待機した通常保存が、旧URLへ再開する隙間を作らない。
+                documentURL = destinationURL
+                rememberDocumentURL(destinationURL)
+                advanceDocumentSession(document: document, url: destinationURL)
+                return true
+            }
+
+            switch result {
+            case .saveFailedBeforeOperation:
+                return .failedBeforeSwitch
+            case let .completed(didSwitch, savedAfterOperation):
+                guard didSwitch else { return .failedBeforeSwitch }
+                return savedAfterOperation ? .saved : .switchedButLatestEditsFailed
             }
         } catch {
-            print("NovelWriter: 別名保存に失敗しました(\(destinationURL.path)): \(error)")
-            return false
+            print("[FUMINIWA] 別名保存に失敗しました(\(destinationURL.path)): \(error)")
+            return .failedBeforeSwitch
         }
-
-        // コピー成功までは URL と最近使った作品を変更しない。コピー待ちの間に
-        // 入った編集は同じ document 値に残っているため、切り替え後の saveNow()
-        // が新 URL へ追記する。
-        documentURL = destinationURL
-        rememberDocumentURL(destinationURL)
-        _ = await saveCoordinator.saveNow()
-        return true
     }
 
     // MARK: - 選択中章
@@ -387,6 +675,7 @@ final class AppState {
 
     /// 世界観ノートを追加し、追加したノートを選択する。
     func addWorldNote() {
+        guard permitsDocumentInteraction else { return }
         let note = WorldNote(title: "")
         document.worldNotes.append(note)
         selectedWorldNoteID = note.id
@@ -396,6 +685,7 @@ final class AppState {
 
     /// 世界観ノートを選択する。選択前の本文はdidChangeでモデルへ反映済みとする。
     func selectWorldNote(_ id: WorldNoteID?) {
+        guard permitsDocumentInteraction else { return }
         guard id == nil || document.worldNotes.contains(where: { $0.id == id }) else { return }
         guard selectedWorldNoteID != id else { return }
         selectedWorldNoteID = id
@@ -404,6 +694,7 @@ final class AppState {
 
     /// 世界観ノートのタイトルを更新する。空タイトルは編集中の値として許可する。
     func updateWorldNoteTitle(_ title: String, for id: WorldNoteID) {
+        guard permitsDocumentInteraction else { return }
         guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
               document.worldNotes[index].title != title else { return }
         document.worldNotes[index].title = title
@@ -412,7 +703,12 @@ final class AppState {
     }
 
     /// 世界観ノートの本文を更新する。モデル反映は即時、保存だけをデバウンスする。
-    func updateWorldNoteContent(_ content: String, for id: WorldNoteID) {
+    func updateWorldNoteContent(
+        _ content: String,
+        for id: WorldNoteID,
+        expectedSession: DocumentSessionToken? = nil
+    ) {
+        guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
         guard let index = document.worldNotes.firstIndex(where: { $0.id == id }),
               document.worldNotes[index].content != content else { return }
         document.worldNotes[index].content = content
@@ -421,8 +717,10 @@ final class AppState {
     }
 
     /// 世界観ノートを削除し、隣接ノートへ選択を移す。
-    func deleteWorldNote(id: WorldNoteID) {
-        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return }
+    @discardableResult
+    func deleteWorldNote(id: WorldNoteID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        guard let index = document.worldNotes.firstIndex(where: { $0.id == id }) else { return false }
         document.worldNotes.remove(at: index)
         if selectedWorldNoteID == id {
             let fallbackIndex = min(index, max(document.worldNotes.count - 1, 0))
@@ -432,10 +730,12 @@ final class AppState {
         }
         saveCoordinator.markDirty()
         flushSaveImmediately()
+        return true
     }
 
     /// 世界観ノートの並び順を更新する。
     func moveWorldNotes(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.worldNotes.move(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -453,6 +753,7 @@ final class AppState {
     /// 章を選択する。最後に選択していた話、なければ先頭の話も選択する。
     /// 選択が変わるたびに即座に保存する(docs/DESIGN.md 6.4)。
     func selectChapter(_ id: ChapterID?) {
+        guard permitsDocumentInteraction else { return }
         guard id != selectedChapterID else { return }
         setSelection(chapterID: id, episodeID: id.flatMap(preferredEpisodeID(in:)))
         flushSaveImmediately()
@@ -460,6 +761,7 @@ final class AppState {
 
     /// プロット画面の章Outline選択を更新する。章を選んだときは執筆側の章選択も揃える。
     func selectPlotOutline(_ selection: PlotOutlineSelection) {
+        guard permitsDocumentInteraction else { return }
         guard selection != plotOutlineSelection else { return }
         plotOutlineSelection = selection
         if case let .chapter(chapterID) = selection {
@@ -470,6 +772,7 @@ final class AppState {
 
     /// 話を選択する。`chapterID` を省略した場合は現在の章を対象にする。
     func selectEpisode(_ id: EpisodeID?, in chapterID: ChapterID? = nil) {
+        guard permitsDocumentInteraction else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID else { return }
         guard let id else {
@@ -489,6 +792,7 @@ final class AppState {
 
     /// 章を末尾に追加し、追加した章を選択状態にする。
     func addChapter() {
+        guard permitsDocumentInteraction else { return }
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
         setSelection(chapterID: newID, episodeID: nil)
@@ -500,6 +804,7 @@ final class AppState {
     ///
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
+        guard permitsDocumentInteraction else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID,
               let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
@@ -512,6 +817,7 @@ final class AppState {
 
     /// 選択中話のタイトルを更新する。
     func updateSelectedEpisodeTitle(_ title: String) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedEpisodeID, let selectedChapterID else { return }
         guard selectedEpisode?.title != title else { return }
         document.updateEpisodeTitle(title, for: selectedEpisodeID, in: selectedChapterID)
@@ -521,6 +827,7 @@ final class AppState {
 
     /// 話のタイトルを更新する。
     func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
+        guard permitsDocumentInteraction else { return }
         guard document.episode(episodeID)?.episode.title != title else { return }
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
@@ -529,6 +836,7 @@ final class AppState {
 
     /// 作品タイトルを更新する。空タイトルも編集中は許可し、保存はデバウンスする。
     func updateDocumentTitle(_ title: String) {
+        guard permitsDocumentInteraction else { return }
         guard document.title != title else { return }
         document.title = title
         saveCoordinator.markDirty()
@@ -537,6 +845,7 @@ final class AppState {
 
     /// 作品あらすじを更新する。保存形式の詳細はNovelStorageに閉じ込める。
     func updateDocumentSynopsis(_ synopsis: String) {
+        guard permitsDocumentInteraction else { return }
         guard document.synopsis != synopsis else { return }
         document.synopsis = synopsis
         saveCoordinator.markDirty()
@@ -545,6 +854,7 @@ final class AppState {
 
     /// 話タイトルの編集を確定し、空タイトルを既定値へ戻す。
     func commitEpisodeTitleEditing() {
+        guard permitsDocumentInteraction else { return }
         for chapter in document.chapters {
             for episode in chapter.episodes {
                 let normalizedTitle = normalizedEpisodeTitle(episode.title)
@@ -559,6 +869,7 @@ final class AppState {
 
     /// 章タイトルを更新する。タイトル編集中は頻繁に呼ばれるため保存はデバウンスする。
     func updateChapterTitle(_ title: String, for id: ChapterID) {
+        guard permitsDocumentInteraction else { return }
         guard document.chapters.first(where: { $0.id == id })?.title != title else { return }
         document.updateTitle(title, for: id)
         saveCoordinator.markDirty()
@@ -567,6 +878,7 @@ final class AppState {
 
     /// タイトル編集の確定時に、未保存分を即時保存へ寄せる。
     func commitChapterTitleEditing() {
+        guard permitsDocumentInteraction else { return }
         for chapter in document.chapters {
             let normalizedTitle = normalizedChapterTitle(chapter.title)
             if chapter.title != normalizedTitle {
@@ -578,10 +890,12 @@ final class AppState {
     }
 
     /// 章を削除し、隣接章へ選択を移す。最後の1章は削除しない。
-    func deleteChapter(id: ChapterID) {
-        guard document.chapters.count > 1 else { return }
-        guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return }
-        guard document.removeChapter(id: id) != nil else { return }
+    @discardableResult
+    func deleteChapter(id: ChapterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        guard document.chapters.count > 1 else { return false }
+        guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return false }
+        guard document.removeChapter(id: id) != nil else { return false }
 
         if selectedChapterID == id {
             let fallbackIndex = min(originalIndex, document.chapters.count - 1)
@@ -598,10 +912,12 @@ final class AppState {
 
         saveCoordinator.markDirty()
         flushSaveImmediately()
+        return true
     }
 
     /// 章を並べ替える(`List.onMove` からそのまま呼べる形)。
     func moveChapters(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -609,7 +925,12 @@ final class AppState {
 
     /// 話を削除し、同じ章の隣接話へ選択を移す。
     @discardableResult
-    func deleteEpisode(id episodeID: EpisodeID, from chapterID: ChapterID? = nil) -> Bool {
+    func deleteEpisode(
+        id episodeID: EpisodeID,
+        from chapterID: ChapterID? = nil,
+        expectedSession: DocumentSessionToken? = nil
+    ) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
         let sourceChapterID = chapterID ?? selectedChapterID
         guard let sourceChapterID,
               let originalIndex = document.episode(episodeID)?.chapterID == sourceChapterID
@@ -630,6 +951,7 @@ final class AppState {
 
     /// 章内の話を並べ替える。
     func moveEpisodes(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -643,6 +965,7 @@ final class AppState {
         to destinationChapterID: ChapterID,
         before targetEpisodeID: EpisodeID? = nil
     ) -> Bool {
+        guard permitsDocumentInteraction else { return false }
         guard document.moveEpisode(
             id: episodeID,
             from: sourceChapterID,
@@ -662,8 +985,24 @@ final class AppState {
     /// `EditorView` から編集中に本文を書き戻すことはしない)。
     func updateSelectedEpisodeContent(_ content: String) {
         guard let selectedChapterID, let selectedEpisodeID else { return }
-        guard selectedEpisode?.content != content else { return }
-        document.updateEpisodeContent(content, for: selectedEpisodeID, in: selectedChapterID)
+        updateEpisodeContent(content, for: selectedEpisodeID, in: selectedChapterID)
+    }
+
+    /// 表示時に固定した話・章・作品セッションへ本文を反映する。
+    ///
+    /// 作品遷移前のIME確定通知が、遷移先の「現在選択」へ流れ込まないよう、
+    /// EditorViewのcallbackはこのAPIへ固定IDとsessionを渡す。
+    func updateEpisodeContent(
+        _ content: String,
+        for episodeID: EpisodeID,
+        in chapterID: ChapterID,
+        expectedSession: DocumentSessionToken? = nil
+    ) {
+        guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
+        guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
+              let episode = chapter.episodes.first(where: { $0.id == episodeID }),
+              episode.content != content else { return }
+        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
@@ -671,6 +1010,7 @@ final class AppState {
     /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
     /// `TextEditor` から通常の Binding 更新で呼ばれる。
     func updateSelectedEpisodeMemo(_ memo: String) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedChapterID, let selectedEpisodeID else { return }
         guard selectedEpisode?.memo != memo else { return }
         document.updateEpisodeMemo(memo, for: selectedEpisodeID, in: selectedChapterID)
@@ -682,6 +1022,7 @@ final class AppState {
 
     /// 登場人物を追加し、追加した人物を選択状態にする。
     func addCharacter() {
+        guard permitsDocumentInteraction else { return }
         let newID = document.addCharacter(name: "名無し")
         selectedCharacterID = newID
         saveCoordinator.markDirty()
@@ -690,6 +1031,7 @@ final class AppState {
 
     /// 登場人物を選択する。
     func selectCharacter(_ id: CharacterID?) {
+        guard permitsDocumentInteraction else { return }
         selectedCharacterID = id
     }
 
@@ -709,6 +1051,7 @@ final class AppState {
         personality: String? = nil,
         background: String? = nil
     ) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedCharacterID, let current = selectedCharacter else { return }
         let nextName = name ?? current.name
         let nextKana = kana ?? current.kana
@@ -766,6 +1109,7 @@ final class AppState {
         personality: String? = nil,
         background: String? = nil
     ) {
+        guard permitsDocumentInteraction else { return }
         updateSelectedCharacter(
             role: role.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.role,
             age: age.map(Self.nilIfBlank(_:)) ?? selectedCharacter?.age,
@@ -780,6 +1124,7 @@ final class AppState {
     }
 
     func updateSelectedCharacterProfileField(_ field: CharacterProfileField, value: String) {
+        guard permitsDocumentInteraction else { return }
         guard var current = selectedCharacter else { return }
         let normalized = Self.nilIfBlank(value)
 
@@ -826,6 +1171,7 @@ final class AppState {
 
     /// 選択中の登場人物カラーを更新する。`nil` はカラーなしを表す。
     func updateSelectedCharacterColor(_ colorHex: String?) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedCharacterID, let current = selectedCharacter else { return }
         guard current.colorHex != colorHex else { return }
 
@@ -851,6 +1197,7 @@ final class AppState {
 
     /// 登場人物名の編集確定時に、空名を正規化して即時保存へ寄せる。
     func commitCharacterEditing() {
+        guard permitsDocumentInteraction else { return }
         for character in document.characters {
             let normalizedName = NovelDocument.normalizedCharacterName(character.name)
             if character.name != normalizedName {
@@ -877,9 +1224,11 @@ final class AppState {
     }
 
     /// 登場人物を削除する。
-    func deleteCharacter(id: CharacterID) {
-        guard let originalIndex = document.characters.firstIndex(where: { $0.id == id }) else { return }
-        guard document.removeCharacter(id: id) != nil else { return }
+    @discardableResult
+    func deleteCharacter(id: CharacterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        guard let originalIndex = document.characters.firstIndex(where: { $0.id == id }) else { return false }
+        guard document.removeCharacter(id: id) != nil else { return false }
 
         if selectedCharacterID == id {
             let fallbackIndex = min(originalIndex, document.characters.count - 1)
@@ -889,10 +1238,12 @@ final class AppState {
 
         saveCoordinator.markDirty()
         flushSaveImmediately()
+        return true
     }
 
     /// 登場人物を並べ替える。
     func moveCharacters(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.moveCharacters(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -902,6 +1253,7 @@ final class AppState {
 
     /// プロットカードを追加し、追加したカードを選択状態にする。
     func addPlotCard(chapterID: ChapterID? = nil) {
+        guard permitsDocumentInteraction else { return }
         let newID = document.addPlotCard(title: "新しいカード", chapterID: chapterID)
         selectedPlotCardID = newID
         saveCoordinator.markDirty()
@@ -910,11 +1262,13 @@ final class AppState {
 
     /// プロットカードを選択する。
     func selectPlotCard(_ id: PlotCardID?) {
+        guard permitsDocumentInteraction else { return }
         selectedPlotCardID = id
     }
 
     /// 選択中のプロットカードを更新する。
     func updateSelectedPlotCard(title: String? = nil, memo: String? = nil, chapterID: ChapterID? = nil) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedPlotCardID, let current = selectedPlotCard else { return }
         let nextTitle = title ?? current.title
         let nextMemo = memo ?? current.memo
@@ -931,6 +1285,7 @@ final class AppState {
 
     /// 選択中のプロットカードの章紐付けを更新する。`nil` は未紐付けを表す。
     func updateSelectedPlotCardChapter(_ chapterID: ChapterID?) {
+        guard permitsDocumentInteraction else { return }
         guard let selectedPlotCardID, let current = selectedPlotCard else { return }
         guard current.chapterID != chapterID else { return }
 
@@ -941,6 +1296,7 @@ final class AppState {
 
     /// プロットカードタイトルの編集確定時に、空タイトルを正規化して即時保存へ寄せる。
     func commitPlotCardEditing() {
+        guard permitsDocumentInteraction else { return }
         for card in document.plotCards {
             let normalizedTitle = NovelDocument.normalizedPlotCardTitle(card.title)
             if card.title != normalizedTitle {
@@ -952,9 +1308,11 @@ final class AppState {
     }
 
     /// プロットカードを削除する。
-    func deletePlotCard(id: PlotCardID) {
-        guard let originalIndex = document.plotCards.firstIndex(where: { $0.id == id }) else { return }
-        guard document.removePlotCard(id: id) != nil else { return }
+    @discardableResult
+    func deletePlotCard(id: PlotCardID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        guard let originalIndex = document.plotCards.firstIndex(where: { $0.id == id }) else { return false }
+        guard document.removePlotCard(id: id) != nil else { return false }
 
         if selectedPlotCardID == id {
             let fallbackIndex = min(originalIndex, document.plotCards.count - 1)
@@ -964,10 +1322,12 @@ final class AppState {
 
         saveCoordinator.markDirty()
         flushSaveImmediately()
+        return true
     }
 
     /// プロットカードを並べ替える。
     func movePlotCards(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.movePlotCards(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -975,6 +1335,7 @@ final class AppState {
 
     /// プロットカードを章レーン内/レーン間で移動する。
     func movePlotCard(id: PlotCardID, toChapter chapterID: ChapterID?, before targetID: PlotCardID? = nil) {
+        guard permitsDocumentInteraction else { return }
         document.movePlotCard(id: id, toChapter: chapterID, before: targetID)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -984,6 +1345,7 @@ final class AppState {
     /// 存在しないカード／章、および現在と同じ所属先へのdropは拒否する。
     @discardableResult
     func movePlotCardFromOutline(id: PlotCardID, to selection: PlotOutlineSelection) -> Bool {
+        guard permitsDocumentInteraction else { return false }
         guard let card = document.plotCards.first(where: { $0.id == id }) else { return false }
 
         let destinationChapterID: ChapterID?
@@ -1012,6 +1374,7 @@ final class AppState {
 
     /// 伏線を追加し、追加した伏線を選択状態にする。
     func addFlag() {
+        guard permitsDocumentInteraction else { return }
         let newID = document.addFlag(title: "新しい伏線", plantedChapterID: selectedChapterID)
         selectedFlagID = newID
         saveCoordinator.markDirty()
@@ -1020,11 +1383,13 @@ final class AppState {
 
     /// 伏線を選択する。
     func selectFlag(_ id: FlagID?) {
+        guard permitsDocumentInteraction else { return }
         selectedFlagID = id
     }
 
     /// 選択中の伏線を更新する。
     func updateSelectedFlag(title: String? = nil, note: String? = nil) {
+        guard permitsDocumentInteraction else { return }
         guard var next = selectedFlag else { return }
         let nextTitle = title ?? next.title
         let nextNote = note ?? next.note
@@ -1040,6 +1405,7 @@ final class AppState {
 
     /// 選択中の伏線の章紐付けを更新する。
     func updateSelectedFlagChapters(plantedChapterID: ChapterID? = nil, resolvedChapterID: ChapterID? = nil) {
+        guard permitsDocumentInteraction else { return }
         guard var next = selectedFlag else { return }
         let nextPlantedChapterID = plantedChapterID ?? next.plantedChapterID
         let nextResolvedChapterID = resolvedChapterID ?? next.resolvedChapterID
@@ -1057,6 +1423,7 @@ final class AppState {
 
     /// 選択中の伏線の張った章を更新する。`nil` は未設定を表す。
     func updateSelectedFlagPlantedChapter(_ chapterID: ChapterID?) {
+        guard permitsDocumentInteraction else { return }
         guard var next = selectedFlag else { return }
         guard next.plantedChapterID != chapterID else { return }
 
@@ -1068,6 +1435,7 @@ final class AppState {
 
     /// 選択中の伏線の回収章を更新する。`nil` は未設定を表す。
     func updateSelectedFlagResolvedChapter(_ chapterID: ChapterID?) {
+        guard permitsDocumentInteraction else { return }
         guard var next = selectedFlag else { return }
         guard next.resolvedChapterID != chapterID else { return }
 
@@ -1079,6 +1447,7 @@ final class AppState {
 
     /// 選択中の伏線の回収状態を反転する。
     func toggleSelectedFlagResolved() {
+        guard permitsDocumentInteraction else { return }
         guard var next = selectedFlag else { return }
         next.isResolved.toggle()
         next.resolvedChapterID = next.isResolved ? selectedChapterID : nil
@@ -1089,6 +1458,7 @@ final class AppState {
 
     /// 伏線タイトルの編集確定時に、空タイトルを正規化して即時保存へ寄せる。
     func commitFlagEditing() {
+        guard permitsDocumentInteraction else { return }
         for flag in document.flags {
             let normalizedTitle = NovelDocument.normalizedFlagTitle(flag.title)
             if flag.title != normalizedTitle {
@@ -1102,9 +1472,11 @@ final class AppState {
     }
 
     /// 伏線を削除する。
-    func deleteFlag(id: FlagID) {
-        guard let originalIndex = document.flags.firstIndex(where: { $0.id == id }) else { return }
-        guard document.removeFlag(id: id) != nil else { return }
+    @discardableResult
+    func deleteFlag(id: FlagID, expectedSession: DocumentSessionToken? = nil) -> Bool {
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        guard let originalIndex = document.flags.firstIndex(where: { $0.id == id }) else { return false }
+        guard document.removeFlag(id: id) != nil else { return false }
 
         if selectedFlagID == id {
             let fallbackIndex = min(originalIndex, document.flags.count - 1)
@@ -1113,10 +1485,12 @@ final class AppState {
 
         saveCoordinator.markDirty()
         flushSaveImmediately()
+        return true
     }
 
     /// 伏線を並べ替える。
     func moveFlags(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsDocumentInteraction else { return }
         document.moveFlags(fromOffsets: fromOffsets, toOffset: toOffset)
         saveCoordinator.markDirty()
         flushSaveImmediately()
@@ -1130,8 +1504,13 @@ final class AppState {
     }
 
     /// 資料一覧を保存層から再読み込みする。
-    func reloadAttachments() async {
-        attachments = await loadAttachments(for: documentURL)
+    func reloadAttachments(expectedSession: DocumentSessionToken? = nil) async {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: ()) {
+            let packageURL = documentURL
+            attachments = await saveCoordinator.performExclusive {
+                await loadAttachments(for: packageURL)
+            }
+        }
     }
 
     /// 外部ファイルを現在の作品へ資料として取り込む。
@@ -1148,17 +1527,27 @@ final class AppState {
     ///   `performExclusive` の中から `saveNow()` を呼ぶと、排他区間そのものを
     ///   待つ形になりデッドロックする。
     @discardableResult
-    func addAttachment(from sourceURL: URL) async -> Attachment? {
+    func addAttachment(
+        from sourceURL: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Attachment? {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: nil) {
+            await addAttachmentSerially(from: sourceURL)
+        }
+    }
+
+    private func addAttachmentSerially(from sourceURL: URL) async -> Attachment? {
         guard let attachmentManager else { return nil }
         guard await saveCoordinator.saveNow() else { return nil }
+        let packageURL = documentURL
 
         return await saveCoordinator.performExclusive {
             do {
-                let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: documentURL)
-                attachments = await loadAttachments(for: documentURL)
+                let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: packageURL)
+                attachments = await loadAttachments(for: packageURL)
                 return attachment
             } catch {
-                print("NovelWriter: 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
+                print("[FUMINIWA] 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
                 return nil
             }
         }
@@ -1166,17 +1555,27 @@ final class AppState {
 
     /// 作品から資料を削除する。添付操作と保存の直列化は `addAttachment` と同じ理由
     /// (Phase 4 レビュー F-A)。
-    func deleteAttachment(_ attachment: Attachment) async -> Bool {
+    func deleteAttachment(
+        _ attachment: Attachment,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Bool {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
+            await deleteAttachmentSerially(attachment)
+        }
+    }
+
+    private func deleteAttachmentSerially(_ attachment: Attachment) async -> Bool {
         guard let attachmentManager else { return false }
         guard await saveCoordinator.saveNow() else { return false }
+        let packageURL = documentURL
 
         return await saveCoordinator.performExclusive {
             do {
-                try await attachmentManager.deleteAttachment(named: attachment.fileName, from: documentURL)
-                attachments = await loadAttachments(for: documentURL)
+                try await attachmentManager.deleteAttachment(named: attachment.fileName, from: packageURL)
+                attachments = await loadAttachments(for: packageURL)
                 return true
             } catch {
-                print("NovelWriter: 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
+                print("[FUMINIWA] 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
                 return false
             }
         }
@@ -1191,26 +1590,45 @@ final class AppState {
     ///
     /// まず通常保存を完了させてから、対応リポジトリにスナップショット作成を依頼する。
     /// 非対応リポジトリの場合は `nil` を返す。
-    func createSnapshot() async -> URL? {
+    func createSnapshot(expectedSession: DocumentSessionToken? = nil) async -> URL? {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: nil) {
+            await createSnapshotSerially()
+        }
+    }
+
+    private func createSnapshotSerially() async -> URL? {
         guard let repository = repository as? SnapshottingDocumentRepository else { return nil }
         guard await saveCoordinator.saveNow() else { return nil }
+        let documentSnapshot = document
+        let packageURL = documentURL
 
         do {
-            return try await repository.saveSnapshot(document, to: documentURL)
+            return try await saveCoordinator.performExclusive {
+                try await repository.saveSnapshot(documentSnapshot, to: packageURL)
+            }
         } catch {
-            print("NovelWriter: スナップショット保存に失敗しました(\(documentURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット保存に失敗しました(\(packageURL.path)): \(error)")
             return nil
         }
     }
 
     /// 現在の作品パッケージに保存されているスナップショットを新しい順で返す。
-    func listSnapshots() async -> [DocumentSnapshotInfo] {
+    func listSnapshots(expectedSession: DocumentSessionToken? = nil) async -> [DocumentSnapshotInfo] {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: []) {
+            await listSnapshotsSerially()
+        }
+    }
+
+    private func listSnapshotsSerially() async -> [DocumentSnapshotInfo] {
         guard let repository = repository as? SnapshottingDocumentRepository else { return [] }
+        let packageURL = documentURL
 
         do {
-            return try await repository.listSnapshots(in: documentURL)
+            return try await saveCoordinator.performExclusive {
+                try await repository.listSnapshots(in: packageURL)
+            }
         } catch {
-            print("NovelWriter: スナップショット一覧の取得に失敗しました(\(documentURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット一覧の取得に失敗しました(\(packageURL.path)): \(error)")
             return []
         }
     }
@@ -1220,7 +1638,16 @@ final class AppState {
     /// 復元は破壊的でないよう、現在状態を先にスナップショット化してから書き戻す。
     /// 失敗時は `documentURL` / 本文 / 資料一覧を切り替えない(docs/PHASE5.md 4.5-3a)。
     @discardableResult
-    func restoreSnapshot(at snapshotURL: URL) async -> Bool {
+    func restoreSnapshot(
+        at snapshotURL: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Bool {
+        await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
+            await restoreSnapshotSerially(at: snapshotURL)
+        }
+    }
+
+    private func restoreSnapshotSerially(at snapshotURL: URL) async -> Bool {
         guard let repository = repository as? SnapshottingDocumentRepository else { return false }
 
         let restoredDocument: NovelDocument
@@ -1229,31 +1656,36 @@ final class AppState {
             restoredDocument = try await repository.load(from: snapshotURL)
             restoredAttachments = try await loadAttachmentsThrowing(for: snapshotURL)
         } catch {
-            print("NovelWriter: スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
+            print("[FUMINIWA] スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
             return false
         }
 
+        guard beginDocumentTransition() else { return false }
+        defer { endDocumentTransition() }
         guard await saveCoordinator.saveNow() else { return false }
 
-        // 復元前の現在状態を退避する。ここが失敗したら現在作品を書き換えない。
-        do {
-            _ = try await repository.saveSnapshot(document, to: documentURL)
-        } catch {
-            print("NovelWriter: 復元前のスナップショット退避に失敗しました(\(documentURL.path)): \(error)")
-            return false
-        }
-
+        // ここから復元結果のinstallまでは編集面を閉じる。復元中の入力が退避後に
+        // 失われることを防ぎ、保存Coordinatorにも現在作品を公開しない(D-041)。
+        let currentDocument = document
         let packageURL = documentURL
+        startupState = .loading
+
+        // 復元前退避と書き戻しを同じ保存排他区間で行う。通常保存が間へ入り、
+        // snapshot directoryやpackage全体を別revisionで置換することを防ぐ。
         do {
             try await saveCoordinator.performExclusive {
+                _ = try await repository.saveSnapshot(currentDocument, to: packageURL)
                 try await repository.restoreSnapshot(from: snapshotURL, into: packageURL)
+                // 待機中の通常保存が復元前モデルを同じpackageへ戻さないよう、
+                // 復元結果のinstallも排他区間内で確定する。
+                installDocument(restoredDocument, at: packageURL, attachments: restoredAttachments)
             }
         } catch {
-            print("NovelWriter: スナップショットの復元に失敗しました(\(snapshotURL.path)): \(error)")
+            startupState = .ready
+            print("[FUMINIWA] スナップショットの退避または復元に失敗しました(\(snapshotURL.path)): \(error)")
             return false
         }
 
-        installDocument(restoredDocument, at: packageURL, attachments: restoredAttachments)
         return true
     }
 
@@ -1261,11 +1693,47 @@ final class AppState {
 
     /// アプリ終了前に、保留中のデバウンス保存をキャンセルして現在状態を保存する。
     func saveBeforeTermination() async -> Bool {
-        await saveCoordinator.saveNow()
+        if let terminationTask {
+            return await terminationTask.value
+        }
+
+        isTerminationPending = true
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return true }
+            let succeeded = await documentOperationGate.perform {
+                await saveBeforeTerminationSerially()
+            }
+            if !succeeded {
+                // 終了が取り消された後は、利用者が保存先や作品を変更して復旧できる。
+                isTerminationPending = false
+                terminationTask = nil
+            }
+            return succeeded
+        }
+        terminationTask = task
+        return await task.value
+    }
+
+    private func saveBeforeTerminationSerially() async -> Bool {
+        guard startupState.isReady else { return true }
+        guard beginDocumentTransition() else { return false }
+        let succeeded = await saveCoordinator.saveNow()
+        if !succeeded {
+            endDocumentTransition()
+        }
+        return succeeded
+    }
+
+    /// Fileメニューの明示保存。自動保存と同じ直列化経路を使う。
+    @discardableResult
+    func saveNow() async -> Bool {
+        guard startupState.isReady else { return false }
+        return await saveCoordinator.saveNow()
     }
 
     /// 保存失敗後に、現在の未保存 revision を明示的に再試行する。
     func retrySave() {
+        guard startupState.isReady else { return }
         flushSaveImmediately()
     }
 
@@ -1273,6 +1741,7 @@ final class AppState {
     /// `saveCoordinator.saveNow()` 自体がデバウンスのキャンセルと dirty 分の
     /// 保存until-cleanを面倒見るため、ここでは呼び出すだけでよい。
     private func flushSaveImmediately() {
+        guard startupState.isReady else { return }
         Task { await self.saveCoordinator.saveNow() }
     }
 
@@ -1309,7 +1778,7 @@ final class AppState {
         do {
             return try await loadAttachmentsThrowing(for: url)
         } catch {
-            print("NovelWriter: 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
+            print("[FUMINIWA] 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
             return []
         }
     }
@@ -1322,13 +1791,24 @@ final class AppState {
     private func installDocument(_ newDocument: NovelDocument, at url: URL, attachments newAttachments: [Attachment]) {
         document = newDocument
         documentURL = url
+        advanceDocumentSession(document: newDocument, url: url)
+        editorContentGeneration &+= 1
         setInitialSelection(for: newDocument)
         selectedCharacterID = newDocument.characters.first?.id
         selectedPlotCardID = newDocument.plotCards.first?.id
         selectedFlagID = newDocument.flags.first?.id
         attachments = newAttachments
         saveState = .saved
+        startupState = .ready
         rememberDocumentURL(url)
+    }
+
+    private func advanceDocumentSession(document: NovelDocument, url: URL) {
+        documentSessionToken = DocumentSessionToken(
+            generation: documentSessionToken.generation &+ 1,
+            documentID: document.id,
+            documentURL: url.standardizedFileURL
+        )
     }
 
     private func setInitialSelection(for newDocument: NovelDocument) {
@@ -1361,6 +1841,7 @@ final class AppState {
     }
 
     private func observeResignActive() {
+        guard resignActiveObserver.value == nil else { return }
         resignActiveObserver.value = NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,
             object: nil,
@@ -1382,13 +1863,13 @@ final class AppState {
         #if DEBUG
         if let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             return applicationSupport
-                .appendingPathComponent("NovelWriter", isDirectory: true)
+                .appendingPathComponent("FUMINIWA", isDirectory: true)
                 .appendingPathComponent("Drafts", isDirectory: true)
         }
         #endif
         return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("NovelWriter", isDirectory: true)
+            .appendingPathComponent("FUMINIWA", isDirectory: true)
     }
 
     private static func defaultSaveURL(forTitle title: String, fileManager: FileManager) -> URL {

@@ -1,10 +1,29 @@
 import Foundation
+@testable import FUMINIWA
 import NovelCore
-@testable import NovelWriter
 import Testing
 
 @MainActor
 struct AppStateSaveStateTests {
+    @Test("明示保存はデバウンスを待たず現在revisionを保存する")
+    func manualSaveFlushesCurrentRevision() async {
+        let repository = ControllableRepository(shouldFail: false)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: makeUserDefaults(),
+                fileManager: .default
+            ),
+            initialStartupState: .ready
+        )
+
+        state.updateSelectedEpisodeContent("今すぐ保存")
+
+        #expect(await state.saveNow())
+        #expect(state.saveState == .saved)
+        #expect(await repository.saveCount == 1)
+    }
+
     @Test("保存失敗は状態に反映され、次の保存で再試行できる")
     func saveFailureCanBeRetried() async {
         let repository = ControllableRepository(shouldFail: true)
@@ -13,7 +32,8 @@ struct AppStateSaveStateTests {
                 repository: repository,
                 userDefaults: makeUserDefaults(),
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
 
         state.updateSelectedEpisodeContent("保存対象")
@@ -30,7 +50,7 @@ struct AppStateSaveStateTests {
     }
 
     private func makeUserDefaults() -> UserDefaults {
-        let suiteName = "NovelWriterTests.\(UUID().uuidString)"
+        let suiteName = "FUMINIWASaveStateTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
@@ -39,6 +59,7 @@ struct AppStateSaveStateTests {
 
 private actor ControllableRepository: DocumentRepository {
     private var shouldFail: Bool
+    private(set) var saveCount = 0
 
     init(shouldFail: Bool) {
         self.shouldFail = shouldFail
@@ -53,6 +74,7 @@ private actor ControllableRepository: DocumentRepository {
     }
 
     func save(_: NovelDocument, to _: URL) async throws {
+        saveCount += 1
         if shouldFail {
             throw TestRepositoryError.saveFailed
         }

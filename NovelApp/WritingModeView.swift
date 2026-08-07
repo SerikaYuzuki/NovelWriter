@@ -15,7 +15,7 @@ struct WritingModeView: View {
 struct OutlineContainerView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var chapterPendingDeletion: Chapter?
+    @State private var chapterPendingDeletion: SessionBoundValue<Chapter>?
     @State private var episodePendingDeletion: EpisodeDeletionRequest?
 
     var body: some View {
@@ -52,13 +52,13 @@ struct OutlineContainerView: View {
             "章を削除しますか？",
             isPresented: deletionDialogIsPresented,
             presenting: chapterPendingDeletion
-        ) { chapter in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteChapter(id: chapter.id)
+                appState.deleteChapter(id: request.value.id, expectedSession: request.session)
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { chapter in
-            Text("「\(chapter.title)」を削除します。")
+        } message: { request in
+            Text("「\(request.value.title)」を削除します。")
         }
         .confirmationDialog(
             "話を削除しますか？",
@@ -66,7 +66,11 @@ struct OutlineContainerView: View {
             presenting: episodePendingDeletion
         ) { request in
             Button("削除", role: .destructive) {
-                _ = appState.deleteEpisode(id: request.episode.id, from: request.chapterID)
+                _ = appState.deleteEpisode(
+                    id: request.episode.id,
+                    from: request.chapterID,
+                    expectedSession: request.session
+                )
             }
             Button("キャンセル", role: .cancel) {}
         } message: { request in
@@ -107,6 +111,7 @@ struct OutlineContainerView: View {
 struct EpisodeDeletionRequest: Identifiable {
     let episode: Episode
     let chapterID: ChapterID
+    let session: DocumentSessionToken
 
     var id: EpisodeID {
         episode.id
@@ -116,13 +121,14 @@ struct EpisodeDeletionRequest: Identifiable {
 struct OutlineView: View {
     @Environment(AppState.self) private var appState
 
-    @Binding var chapterPendingDeletion: Chapter?
+    @Binding var chapterPendingDeletion: SessionBoundValue<Chapter>?
     @Binding var episodePendingDeletion: EpisodeDeletionRequest?
 
     var body: some View {
         List(selection: selectionBinding) {
             Section("原稿") {
-                ForEach(filteredChapters) { chapter in
+                ForEach(sessionBoundChapters) { chapterItem in
+                    let chapter = chapterItem.value
                     OutlineChapterRow(chapter: chapter)
                         .contextMenu {
                             Button {
@@ -151,7 +157,7 @@ struct OutlineView: View {
                             }
 
                             Button(role: .destructive) {
-                                chapterPendingDeletion = chapter
+                                chapterPendingDeletion = chapterItem
                             } label: {
                                 Label("章を削除", systemImage: "trash")
                             }
@@ -159,7 +165,8 @@ struct OutlineView: View {
                         }
                         .tag(WritingOutlineSelection.chapter(chapter.id))
 
-                    ForEach(filteredEpisodes(in: chapter)) { episode in
+                    ForEach(sessionBoundEpisodes(in: chapter, session: chapterItem.session)) { episodeRequest in
+                        let episode = episodeRequest.episode
                         OutlineEpisodeRow(episode: episode, chapterID: chapter.id)
                             .contextMenu {
                                 Button {
@@ -189,10 +196,7 @@ struct OutlineView: View {
                                 }
 
                                 Button(role: .destructive) {
-                                    episodePendingDeletion = EpisodeDeletionRequest(
-                                        episode: episode,
-                                        chapterID: chapter.id
-                                    )
+                                    episodePendingDeletion = episodeRequest
                                 } label: {
                                     Label("話を削除", systemImage: "trash")
                                 }
@@ -244,12 +248,28 @@ struct OutlineView: View {
         }
     }
 
+    private var sessionBoundChapters: [SessionBoundValue<Chapter>] {
+        let session = appState.documentSessionToken
+        return filteredChapters.map {
+            SessionBoundValue(value: $0, session: session)
+        }
+    }
+
     private func filteredEpisodes(in chapter: Chapter) -> [Episode] {
         let query = appState.outlinePresentation.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return chapter.episodes }
         guard !chapter.title.localizedStandardContains(query) else { return chapter.episodes }
         return chapter.episodes.filter { episode in
             episode.title.localizedStandardContains(query) || episode.content.localizedStandardContains(query)
+        }
+    }
+
+    private func sessionBoundEpisodes(
+        in chapter: Chapter,
+        session: DocumentSessionToken
+    ) -> [EpisodeDeletionRequest] {
+        filteredEpisodes(in: chapter).map {
+            EpisodeDeletionRequest(episode: $0, chapterID: chapter.id, session: session)
         }
     }
 
@@ -561,18 +581,29 @@ struct EditorPaneView: View {
 
     var body: some View {
         Group {
-            if let episode = appState.selectedEpisode {
+            if let episode = appState.selectedEpisode,
+               let chapterID = appState.selectedChapterID
+            {
+                let session = appState.documentSessionToken
                 VStack(spacing: 0) {
                     ZStack {
                         Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                         EditorView(
-                            chapterKey: episode.id,
+                            chapterKey: SessionBoundEditorKey(
+                                value: episode.id,
+                                generation: appState.editorContentGeneration
+                            ),
                             initialText: episode.content,
                             selectionRequest: editorSearchSession.selectionRequest,
                             commandSession: editorCommandSession,
                             configuration: editorSettings.configuration,
                             onTextChange: { newText in
-                                appState.updateSelectedEpisodeContent(newText)
+                                appState.updateEpisodeContent(
+                                    newText,
+                                    for: episode.id,
+                                    in: chapterID,
+                                    expectedSession: session
+                                )
                             }
                         )
                         .frame(maxWidth: editorMaximumWidth)
@@ -644,7 +675,12 @@ private struct EditorAccessoryBar: View {
         .controlSize(.small)
         .padding(8)
         .workbenchGlassChromeStyle()
-        .disabled(commandSession.pendingCommand != nil || pendingOperation != nil || notationSheet != nil)
+        .disabled(
+            commandSession.isDocumentTransitionPrepared ||
+                commandSession.pendingCommand != nil ||
+                pendingOperation != nil ||
+                notationSheet != nil
+        )
         .onChange(of: commandSession.selectionSnapshot) { _, snapshot in
             guard let pendingOperation, snapshot?.id == pendingOperation.id else { return }
             handleSelectionSnapshot(snapshot, for: pendingOperation)

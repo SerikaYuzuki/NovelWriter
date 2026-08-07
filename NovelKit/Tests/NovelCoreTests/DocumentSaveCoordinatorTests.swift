@@ -17,6 +17,7 @@ struct DocumentSaveCoordinatorTests {
     @MainActor
     private final class PausableSaveSpy {
         private(set) var savedTitles: [String] = []
+        private(set) var savedURLs: [URL] = []
         private var errorToThrowOnce: (any Error)?
         private var shouldPauseNextCall = false
         private var gate: CheckedContinuation<Void, Never>?
@@ -38,7 +39,7 @@ struct DocumentSaveCoordinatorTests {
             gate = nil
         }
 
-        func perform(_ document: NovelDocument, _: URL) async throws {
+        func perform(_ document: NovelDocument, _ url: URL) async throws {
             if shouldPauseNextCall {
                 shouldPauseNextCall = false
                 await withCheckedContinuation { continuation in
@@ -52,6 +53,7 @@ struct DocumentSaveCoordinatorTests {
             }
 
             savedTitles.append(document.title)
+            savedURLs.append(url)
         }
     }
 
@@ -59,7 +61,7 @@ struct DocumentSaveCoordinatorTests {
     @MainActor
     private final class MutableDocumentState {
         var document: NovelDocument
-        let url = URL(fileURLWithPath: "/tmp/DocumentSaveCoordinatorTests.novelpkg")
+        var url = URL(fileURLWithPath: "/tmp/DocumentSaveCoordinatorTests.novelpkg")
 
         init(title: String) {
             document = NovelDocument(title: title, chapters: [Chapter(title: "第1章")])
@@ -342,6 +344,65 @@ struct DocumentSaveCoordinatorTests {
 
         #expect(observedOverlap == false)
         #expect(completionOrder == ["first", "second"])
+    }
+
+    @Test func exclusiveFlushRoutesOperationTimeEditsToUpdatedURL() async {
+        let state = MutableDocumentState(title: "v1")
+        let sourceURL = URL(fileURLWithPath: "/tmp/Source.novelpkg")
+        let destinationURL = URL(fileURLWithPath: "/tmp/Destination.novelpkg")
+        state.url = sourceURL
+        let spy = PausableSaveSpy()
+        let coordinator = makeCoordinator(state: state, spy: spy)
+        let operationGate = PausableGate()
+        coordinator.markDirty()
+
+        let exclusiveTask = Task {
+            await coordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                state.url = destinationURL
+                await operationGate.wait()
+            }
+        }
+        while !operationGate.isWaiting {
+            await Task.yield()
+        }
+
+        #expect(spy.savedTitles == ["v1"])
+        #expect(spy.savedURLs == [sourceURL])
+        state.document.title = "v2"
+        coordinator.markDirty()
+        let ordinarySave = Task { await coordinator.saveNow() }
+        await Task.yield()
+        #expect(spy.savedTitles == ["v1"])
+
+        operationGate.release()
+        let result = await exclusiveTask.value
+        #expect(await ordinarySave.value)
+        if case let .completed(value: _, savedAfterOperation) = result {
+            #expect(savedAfterOperation)
+        } else {
+            Issue.record("排他操作は完了する必要があります")
+        }
+        #expect(spy.savedTitles == ["v1", "v2"])
+        #expect(spy.savedURLs == [sourceURL, destinationURL])
+    }
+
+    @Test func exclusiveFlushSkipsOperationWhenInitialSaveFails() async {
+        let state = MutableDocumentState(title: "保存失敗")
+        let spy = PausableSaveSpy()
+        spy.throwOnNextCall(SpyError())
+        let coordinator = makeCoordinator(state: state, spy: spy)
+        coordinator.markDirty()
+        var operationDidRun = false
+
+        let result = await coordinator.performExclusiveAfterFlushing {
+            operationDidRun = true
+        }
+
+        if case .saveFailedBeforeOperation = result {
+            #expect(!operationDidRun)
+        } else {
+            Issue.record("保存失敗時に排他操作を開始してはいけません")
+        }
     }
 
     /// Phase 4.5-3b: 保存処理の await 中も MainActor が他の仕事を進められること。

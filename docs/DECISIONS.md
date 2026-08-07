@@ -99,7 +99,7 @@
 - **日付**: 2026-07-08 / **状態**: 承認(D-008 の具体化、Phase 1-C で導入)
 - **内容**: `NovelWriter.xcodeproj` はコミットせず、リポジトリルートの `project.yml` から `xcodegen generate` で生成する。正は常に `project.yml`。
 - **理由**: pbxproj の手書き・手動管理はエラーの温床で、diff も読めない。project.yml なら宣言的でレビュー可能、AIエージェントにも扱いやすい。
-- **補足**: 開発者(と `Scripts/check.sh`)は `brew install xcodegen` が必要。将来 XcodeGen が Xcode の新形式に追従できなくなったら再評価。
+- **補足**: 開発者(と `Scripts/check.sh`)は `brew install xcodegen` が必要。将来 XcodeGen が Xcode の新形式に追従できなくなったら再評価。プロジェクト名だけは **D-038** により `FUMINIWA.xcodeproj` へ改称したが、生成物をコミットせず `project.yml` を正とする契約は維持する。
 
 ## D-016: 新規作品の既定保存先と自動保存の方針
 
@@ -110,6 +110,7 @@
   - 「最近開いた作品」は UserDefaults にファイルパスで記録(D-011 により Sandbox 不要のため、これで足りる)
 - **理由**: 執筆中のキーストロークごとのディスクI/Oを避けつつ、データ喪失ウィンドウを最大2秒に抑える。章操作は頻度が低く保存コストが小さいので即時が安全。
 - **既知の制限**: ~~アプリがアクティブなまま Cmd+Q した場合、最後の編集から2秒未満だと未保存になりうる~~ → **D-017(Phase 3)で解消済み**(`applicationShouldTerminate` での終了前保存)。
+- **改訂**: 既定保存先の製品フォルダ名だけは **D-038** により `~/Documents/FUMINIWA` へ変更した。既存の `~/Documents/NovelWriter` 内の作品は移動・削除せず、記録済みURLからその場で開く。
 
 ## D-017: Phase 3 の終了前保存とスナップショット保存
 
@@ -121,6 +122,7 @@
 - **理由**: D-016 の Cmd+Q 直後の未保存ウィンドウを解消しつつ、高速な章操作や並べ替えで保存処理が重なって古い状態が後勝ちするリスクを下げる。スナップショットの置き場所は保存形式の詳細なので、App 側からは抽象プロトコル越しに扱う。
 - **補足**(実装レビューで確定): revision ベースの保存直列化は NovelCore の `DocumentSaveCoordinator`(@MainActor)に切り出した。保存処理と保存対象の取得はクロージャ注入とし、NovelCore の依存ゼロ原則(9.1)を維持。「実行中の保存がある場合は owner が dirty ゼロになるまでループし、待機側は owner の結果を受け取る」方式で、保存完了直後の隙間に入った変更が保存されないまま成功が返る競合(初版実装に存在)を排除。この interleaving はユニットテストで回帰保証している(`DocumentSaveCoordinatorTests`)。
 - **補足2**(Phase 4 レビューで追加): 添付ファイルの追加・削除のように「パッケージ全置換の保存と重なるとデータを失う操作」のため、`performExclusive(_:)` を追加した。実行中の保存の完了を待ってから排他区間を開始し、区間中は新しい保存を一切開始させない(区間中に来た保存要求は区間終了後に通常手順で実行)。**排他区間の中で `saveNow()` を呼ぶとデッドロックする**ため、保存の排出は区間の前に行うこと(添付操作の呼び出し側パターンは `AppState.addAttachment` を参照)。
+- **補足3**(D-041レビューで追加): 別名保存のように「保存排出後のURL切替」と「操作中に増えたrevisionの新URLへの保存」を一つの不可分な境界にする場合は、二段の`saveNow(); performExclusive { ... }`ではなく`performExclusiveAfterFlushing(flushAfter:)`を使う。排他を取得したまま事前保存、package操作、URL切替、事後保存を順に行い、旧URLへ保存が再開する隙間を作らない。
 
 ## D-018: Phase 4 メタデータの保存配置とフォーマットバージョン方針
 
@@ -153,7 +155,7 @@
 
 ## D-021: UI は4領域ワークベンチ + 下部AI Assistant Panel に刷新する
 
-- **日付**: 2026-07-08 / **状態**: 承認(D-019 を置き換え。実行計画は docs/UIDESIGN.md)
+- **日付**: 2026-07-08 / **状態**: 一部破棄(Project Sidebar / Outline / EditorのWorkbenchは維持。AI Assistant Panelの常設はD-040で破棄し、chrome外観方針はD-040へ更新)
 - **内容**:
   - 画面は **Project Sidebar / Outline / Editor / AI Assistant Panel** の4領域を基本構造にする
   - 左の Project Sidebar は 作品情報 / 企画 / 執筆 / プロット / 登場人物 / 世界観 / 資料 / 設定 をアイコン + ラベルで並べる。幅は固定気味にし、macOS のサイドバーらしい静かなナビゲーションにする
@@ -166,6 +168,7 @@
 - **理由**: 小説執筆では「本文を書く」「章やシーンを並べ替える」「人物・資料・プロットを参照する」「AIに相談する」が頻繁に往復する。3モード制は各機能を広く使える一方で、作業中の文脈が切り替わりやすい。4領域ワークベンチなら、章構造と本文を常に見ながら、必要な補助機能を Project Sidebar と下部パネルから呼び出せる。特にAI支援は将来の中核機能になるため、右インスペクタではなく下部パネルとして本文の横幅を圧迫しない構造にする。
 - **非目標(この決定ではやらない)**: AIプロバイダ接続の本実装、シーン永続モデル、世界観モデル、複数ウィンドウ、iOS UI、縦書き。
 - **補足**(レビューで明確化): 本文中の「ダークテーマ」は**ダーク基調のデザイン方向**の意であり、STYLE.md 1章の「ダーク/ライト両対応(セマンティックカラーで自動化)」の原則は維持する。ライト外観を意図的に壊す実装(ダーク前提の固定色など)は不可。
+- **改訂**(2026-08-07): 未実装AIのplaceholder panel、AI状態表示、`Cmd+J`は商業化時の機能誤認を避けるためD-040で出荷UIから撤去した。下端は保存状態と文字数を伝えるstatus barとして維持する。
 
 ## D-022: 出力の前に作品ライフサイクルと保存状態を安定化し、出力は独立モジュールにする
 
@@ -314,10 +317,61 @@
 
 ## D-037: Phase 5はTXT / Markdown / EPUBで完了し、PDFはAI実装後へ延期する
 
-- **日付**: 2026-07-16 / **状態**: 承認(Phase 5の3形式とmacOSアプリ統合は実装済み、PDFは未実装)
+- **日付**: 2026-07-16 / **状態**: 一部破棄(Phase 5の3形式完了と未実装形式を露出しない方針は維持。AI→PDFの固定順はD-040で破棄)
 - **内容**:
   1. D-022でPhase 5 v1に含めたPDFを今回の完了条件から外す。Phase 5はプレーンテキスト、Markdown、EPUB 3、3形式のmacOSアプリ統合までで完了とする。
   2. PDFはPhase 6のAI支援を設計・実装した後の **Phase 6.5** として再開する。現時点では `ExportFormat`、形式選択UI、テストfixtureにPDFを追加しない。
   3. PDF再開時も、実装済みの共通原稿展開、`NovelDocument` 値スナップショット、アトミック書込み、`NovelExport → NovelCore` の依存境界を維持する。macOS固有レンダラは `NovelExport/Platform/macOS/` に閉じ込め、公開APIへAppKit型を出さない。
   4. 未実装形式をUIに先出ししない。Fileメニューとtoolbarは現在利用可能なTXT / Markdown / EPUBだけを表示する。
 - **理由**: 現時点の製品価値はAI支援を先に完成させる方が高く、PDF組版を挟むとAI実装の開始が遅れる。PDFを曖昧な未完成状態で同梱せず、既に品質ゲートを通った3形式でPhase 5を閉じ、AI後に独立した受け入れ条件で実装する方が進捗と品質の両方を明確にできるため。
+- **改訂**(2026-08-07): 商業化の優先順位を原稿保全・配布品質へ変更したため、AI実装をPDF着手の技術的前提にはしない。AIとPDFはいずれも商業公開Gateの後に、需要・費用・プライバシーを別々に評価して着手する(D-040)。
+
+## D-038: 製品名を「ふみにわ / FUMINIWA」へ変更し、保存形式と旧設定は互換資産として維持する
+
+- **日付**: 2026-08-07 / **状態**: 承認(商業化基盤で実装)
+- **内容**:
+  1. 日本語の表示名と広報名を **「ふみにわ」**、英字ロゴ・配布物・アプリbundle・実行ファイル・Xcode project / schemeを **`FUMINIWA`**、Swiftのブランド型名を `Fuminiwa` とする。初出では必要に応じて「ふみにわ（FUMINIWA）」と併記する。
+  2. bundle identifierは商業配布前に `dev.serikayuzuki.fuminiwa` へ変更する。旧bundle domain `dev.serikayuzuki.NovelWriter` の最近開いた作品、選択セクション、Editor設定6項目（計8キー）はallowlist方式で一度だけ移行する。新しい値を旧値で上書きせず、旧domainと旧ファイルを削除しない。
+  3. 新規作品の既定保存先はReleaseで `~/Documents/FUMINIWA`、DebugでApplication Support配下の `FUMINIWA/Drafts` とする。既存の `NovelWriter` フォルダや作品は一括移動せず、移行した絶対URLから元の場所のまま開く。
+  4. `.novelpkg`、formatVersion v1〜v3、manifest、内部パス、`NovelKit` / `NovelCore` / `NovelStorage` / `NovelExport` / `EditorKit`等のドメイン名は変更しない。Finder上では同じ拡張子をUTType `dev.serikayuzuki.fuminiwa.novelpackage` の「ふみにわ作品」として宣言する。
+  5. toolbar customization ID `novelwriter.workbench.v3` は永続互換IDとして維持する。過去ADR、旧成果物名、旧UserDefaults key、監査時点の証跡も履歴として書き換えない。
+- **理由**: 既存の無料OSS `novelWriter` との検索・口コミ・問い合わせ上の混同を避け、商業化前に独自ブランドを確立する。一方、作品形式や設定識別子まで見た目に合わせて一括改名すると、原稿・最近開いた作品・Editor設定・toolbar配置・将来のWindows互換を壊す。外向きのブランドと内向きの互換境界を分けることで、改名とデータ継続性を両立する。
+- **販売前条件**: コード上の採用は名称の法的な利用可能性を保証しない。第9類・第42類等の商標、App Store、ドメイン、SNS、既存の `fuminiwa design` 等との役務・表示上の距離を、最初の署名済み外部配布前に弁理士を含めて確認する。
+
+## D-039: 起動は Loading / Ready / Recovery の三状態とし、読込失敗時は原稿を置き換えない
+
+- **日付**: 2026-08-07 / **状態**: 承認(商業化 Safe Launch Gateで実装)
+- **内容**:
+  1. 起動状態を `loading` / `ready` / `recovery` に分け、`ready`になるまで編集可能なWorkbenchを生成しない。初期 `NovelDocument` は内部の一時値にすぎず、bootstrap完了前のユーザー入力を受け付けない。
+  2. 前回作品、Finderから指定された作品、またはその付随データの読込に失敗した場合、新規作品へ自動fallbackせず `recovery` で停止する。失敗したURLとrecent preferenceは変更せず、原稿への保存も行わない。
+  3. Recoveryでは「再試行」「Finderで表示」「別の作品を開く」「利用者が明示した新規作品作成」を提供する。新規作品は保存成功後だけ現在作品として採用し、その後にだけrecent URLを更新する。
+  4. `bootstrap()`は一度だけ起動処理を開始し、同時呼び出しは実行中Taskの完了へ合流する。初回I/O中のFinder URLも起動完了前に処理し、SwiftUIのtask再評価や通知再登録で作品を二重作成・巻き戻ししない(D-041)。`Cmd+S`、終了前保存、自動保存は`ready`な作品だけを対象とする。
+  5. manifestが参照する本文・世界観本文、または存在するメモpayloadが読めない／UTF-8でない場合は空文字へ変換せず型付きエラーにする。仕様上省略可能な空メモの欠損は維持する。さらに広いduplicate ID、symlink、孤児payload、resource limit、修復コピーは後続のPackage Validator Gateで扱う。
+- **理由**: 起動直後の編集可能placeholderは、前回作品の非同期読込で入力を上書きし得る。また読込失敗を空の新規作品へ見せかけrecentまで更新すると、利用者には原稿消失に見え、次の自動保存が復旧余地を狭める。執筆アプリでは「開けない」ことを明示する方が「空で開けた」ように装うより安全である。
+
+## D-040: 実在する機能だけを出荷UIへ出し、システム外観と明示保存を製品契約にする
+
+- **日付**: 2026-08-07 / **状態**: 承認(商業化 Product Truth Gateで実装)
+- **内容**:
+  1. 実処理を持たないAI Assistant placeholder、AI状態、入力欄、`Cmd+J`は出荷UIから除く。AIは将来も**任意機能**とし、アカウント・ネットワーク・AI契約なしで既存の執筆／保存／書き出しが完結することを維持する。
+  2. AIを再びUIへ出す前に、送信対象と送信前preview、明示同意、provider、保存期間、学習利用、費用上限、取消・失敗時の挙動、生成結果の採用確認を設計・文書化する。設定だけでなく最初の送信時にも同意を取り、本文を黙って送信・置換しない。
+  3. Workbench下端は保存状態、保存失敗の再試行、選択話／作品全体の文字数、検索結果だけを示す非展開型status barとする。未実装機能の入口や状態は置かない。
+  4. アプリのSidebar、Outline、toolbar、form等のchromeはmacOSのシステムLight／Dark外観へ追従し、アプリ全体へ`.preferredColorScheme(.dark)`を強制しない。本文エディタのキャンバスはchromeから独立した利用者設定とし、従来どおり暗色を既定にできる。
+  5. Fileメニューの`Cmd+S`は`AppState.saveNow()`を経由し、自動保存・終了前保存と同じrevision直列化へ合流する。起動状態が`ready`でない間は実行しない。
+  6. 直近の開発順はAIやPDFではなくPackage Validator Gateを優先する。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピーを一単位とし、外部変更／競合検出は続く独立Gateとして扱う。その後に署名・公証・更新・法務・サポート等の公開Gateを通す。AIとPDFの順序は、公開Gate後に需要とリスクを別々に評価する。
+- **置き換える範囲**: D-021のAI Assistant Panel常設を破棄し、chrome外観方針をシステム追従へ更新する。D-037の「AI実装後にPDF」という固定順も破棄する。D-021の3列Workbench、D-037のPhase 5完了範囲と「未実装機能を先出ししない」原則は維持する。
+- **理由**: placeholderは利用者に「使える」「本文が送信されるかもしれない」という誤解を同時に生む。執筆アプリの信用は機能数より原稿保全、表示の正直さ、OS慣習への追従、利用者が選べることから生まれる。AIやPDFの順番を商業公開の前提にせず、原稿保全と配布品質を先に完了させる。
+
+## D-041: 作品ライフサイクルを直列化し、古いUI操作を別作品へ適用しない
+
+- **日付**: 2026-08-08 / **状態**: 承認(PRレビューの原稿保全修正で実装)
+- **内容**:
+  1. `bootstrap()`の同時呼び出しは実行中Taskを共有し、初回I/O中に届いたFinder URLの処理まで同じ完了境界へ含める。後続呼び出しだけが先に戻ってdelegateを起動完了扱いにしない。
+  2. 開く、新規作成、別名保存、Recovery再試行、資料操作、スナップショット操作、終了前保存は、AppStateのFIFOなdocument operation gateで`await`を越えて直列化する。Finder openは通常の「開く」経路へ合流させ、二重にgateを取得しない。
+  3. 現在作品に属する操作は、呼び出し時の`generation + document ID + standardized URL`をsession tokenとして保持する。gate待機中に作品、保存先、または復元世代が変わった操作は、Repositoryを変更する前に失敗として破棄する。スナップショット、資料、章／話／人物／プロット／伏線／世界観ノートの確認UIも、一覧項目を表示した時点のtokenを対象値と一体で引き継ぐ。
+  4. 別名保存はpackage copyだけでなくURL、recent、session世代の切替まで保存排他区間で確定し、コピー中の編集を新URLへ保存する。この最終保存に失敗した場合は成功扱いにせず、保存先を切り替えた事実と再試行方法を利用者へ伝える。復元は固定した現在URLに対する復元前退避、書き戻し、メモリ状態のinstallを一つの保存排他区間で行う。
+  5. 開く、新規、別名保存、復元、終了前保存では、first responderとEditorKitの公開command境界を通じて表示中のフォーム入力／IME変換を旧作品へ確定・モデル同期し、最終保存とinstallが終わるまでWorkbench全体の変更を拒否する。本文callbackは表示時の章／話／ノートIDとsessionへ固定し、同じ子IDを持つ複製作品でも本文install世代をEditor keyへ含めて再読込する。別名保存は本文install世代を変えず、caretとUndoを維持する。AppKit型や本文BindingをAppStateへ公開しない。
+  6. 終了要求を受けた時点で新しい作品ライフサイクル操作の受付を停止する。重複した終了要求は同じsingle-flight Taskと一度のAppKit replyへ合流する。先行操作がgateを抜けた後に最後の保存を行い、失敗して終了を取り消す場合だけ受付とエディタを戻す。
+  7. lock順は常にdocument operation gate → `DocumentSaveCoordinator`とする。通常の自動保存／明示保存は外側gateへ入れず、既存のrevision保存直列化へ流す。gate付きpublic API同士を呼び出さない。
+- **理由**: `@MainActor`は一つの同期区間を守るが、Repository I/Oの`await`中には別TaskがAppStateへ入れる。Aの復元待ち中にFinderからBを開くと、再開後に動的な`documentURL`を読み直してBへAのsnapshotを書き戻せた。また同時bootstrapの片方だけが早く完了すると、Finderで開いたBを遅い初回処理がAへ巻き戻せた。操作全体の順序と対象作品を別々に固定しなければ、順序だけを直列化しても待機中の古い確認操作が新作品へ誤適用される。さらにD-005によりIME変換中の本文はモデルへ未反映なので、破壊的遷移の直前に旧エディタ自身から確定させなければ、通常保存だけでは未確定文字を保全できない。
+- **既知の制限**: FIFO gateの待機Taskはcancellationを明示処理せず、待機後にsession検査または操作を続ける。現行UIの破壊操作は自動cancelされず安全性はsession検査で保つが、構造化Taskへ移す際にcancellation-aware waiterを追加する。また別名保存はcopy完了後のfirst responder／IME確定に失敗すると現在作品へ切り替えない一方、作成済みの保存先copyが残り得るため、後続で案内または安全なcleanup方針を決める。

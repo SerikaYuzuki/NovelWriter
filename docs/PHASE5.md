@@ -1,6 +1,6 @@
 # Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
 
-**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5完了。Phase 5の提供形式はTXT / Markdown / EPUB 3で、PDFはAI実装後のPhase 6.5へ延期(D-037)。次はPhase 6。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md)、UI磨き上げは [UIPOLISH.md](UIPOLISH.md) に記録した(4.5-1c はリネームのみの独立タスクで、どのタイミングで挟んでもよい)。
+**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5完了。Phase 5の提供形式はTXT / Markdown / EPUB 3で、PDFは対象外。D-037の「AI実装後にPDF」という固定順はD-040で破棄され、次はPackage Validator Gate。AIとPDFは公開Gate後に別々に再評価する。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md)、UI磨き上げは [UIPOLISH.md](UIPOLISH.md) に記録した。
 
 本書は、Phase UI2 完了後の実装指示書兼完了記録である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022 / D-037)。
 
@@ -109,6 +109,8 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 **実装メモ**: パネルの生成・結果処理は `NovelApp/DocumentPanelPresenter.swift` に分離し、`AppState.openDocument(at:)` / `createNewDocument()` / `saveDocument(as:)`(4.5-2a で実装済み)だけを呼ぶ。`.novelpkg` 用の `UTType` フィルタは、project.yml が `GENERATE_INFOPLIST_FILE` ベースで物理 Info.plist を持たない方針のため見送り、拡張子検証によるフォールバックとした(開くパネルはディレクトリ選択 + `.novelpkg` 拡張子チェック、保存パネルは既定ファイル名に作品タイトルを入れ拡張子を強制)。失敗(読み込み/新規作成/別名保存)はアラートで通知し、キャンセルは状態を変えない。Cmd+Shift+S の割当変更は D-025 を参照。
 
+> **改訂(2026-08-07):** D-038で物理Info.plist、UTType、Document Typeを導入した。上記は4.5-2b実装時点の履歴であり、現行の開く／保存パネルは`DocumentType.novelPackage`を正として絞り込む。
+
 ### 4.5-3a: スナップショットの復旧導線【完了】
 
 - [x] スナップショットを一覧・Finder 表示できる入口を作る。復元は確認付きで現在の作品へ戻し、元の状態を先にスナップショット化する
@@ -135,7 +137,7 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 | UI 応答性 | `DocumentSaveCoordinator.saveNow` 中も MainActor ハートビート可能(常時テスト) |
 | 採否 | **改善しない**(予算内。APFS の `clonefile` により同一ボリューム上の attachments/snapshots 引き継ぎは実バイトコピーにならない) |
 
-計測手順: `./Scripts/measure-save-performance.sh`(環境変数 `NOVELWRITER_PERF_TEST=1`。`check.sh` には含めない)。詳細は D-027。
+計測手順: `./Scripts/measure-save-performance.sh`(環境変数 `FUMINIWA_PERF_TEST=1`。旧`NOVELWRITER_PERF_TEST`も互換入力として受理し、`check.sh` には含めない)。詳細は D-027 / D-038。
 ## Phase 5: 出力
 
 ### 5-1: Export Core + プレーンテキスト / Markdown【完了】
@@ -158,7 +160,7 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 ### 5-3: PDF【Phase 6.5へ延期】
 
-ユーザー判断により、PDFは現時点で実装せず、Phase 6のAI支援実装後に再開する(D-037)。以下は再開時の受け入れ条件として保持し、Phase 5の未完了項目には数えない。
+ユーザー判断により、PDFはPhase 5では実装しない(D-037)。当初の「Phase 6のAI支援実装後」という固定順はD-040で破棄した。以下は将来、PDFの需要を独立評価して再開する場合の受け入れ条件として保持し、Phase 5の未完了項目には数えない。
 
 - [ ] PDF レンダラを `NovelExport/Platform/macOS/` に閉じ込め、公開 API は Data / URL ベースに保つ
 - [ ] A4、余白、章見出し、話見出し、本文、ページ番号の固定レイアウトを実装する
@@ -179,6 +181,6 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 ## Phase 5 完了後の順序
 
-Phase 5完了後は **Phase 6 (AI支援) の設計・プライバシー方針と実装**へ進む。その後に **Phase 6.5 (PDF)** を再開する(D-037)。iPadでの執筆需要が明確な場合だけ、D-013に従ってPhase 7の順序を再判定する。
+Phase 5完了後の現行順序は、商業化の **Package Validator Gate**、続いて **External Change / Conflict Gate** と公開Gateである(D-040)。AI支援とPDFは公開Gate後に需要・費用・プライバシー・権利リスクを別々に評価する。iPadでの執筆需要が明確な場合だけ、D-013に従ってPhase 7の順序を再判定する。
 
 次の大きな機能を始める前に、Phase 4.5-3 の性能記録、出力の不具合、未実施の Nice to have を棚卸しし、「安定化 PR」と新機能を混ぜない。

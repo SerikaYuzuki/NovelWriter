@@ -22,20 +22,20 @@ import NovelCore
 ///   置換することでアトミックに行う(docs/DESIGN.md 6.4)
 /// - 既存パッケージへの上書き保存では、既存の `attachments/` を新しい
 ///   パッケージへそのまま引き継ぐ(添付ファイルを失わない)
-/// - 話ファイルが1つ欠けていても、読み込み全体は失敗させない。欠けた話は
-///   空本文として読み込む(データ救出優先)。manifest に記載のない本文は
-///   読み込み時に無視する(削除はしない)
+/// - manifest が参照する話本文は必須とし、欠損・I/O 失敗・不正 UTF-8 を
+///   空本文に読み替えない。manifest に記載のない本文は読み込み時に無視する
+///   (削除はしない)
 public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
     /// 読み込みは v1 / v2 / v3 を受理する。
     public static let currentFormatVersion = "3"
 
     private static let manifestFileName = "manifest.json"
-    private static let episodesDirectoryName = "episodes"
-    private static let episodeNotesDirectoryName = "episode-notes"
+    static let episodesDirectoryName = "episodes"
+    static let episodeNotesDirectoryName = "episode-notes"
     // v1 / v2 の読み込みと、v3保存時に既知項目として除外するために残す。
-    private static let chaptersDirectoryName = "chapters"
-    private static let notesDirectoryName = "notes"
+    static let chaptersDirectoryName = "chapters"
+    static let notesDirectoryName = "notes"
     /// `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
     static let attachmentsDirectoryName = "attachments"
     /// `NovelpkgRepository+Snapshots.swift` からも参照するため internal。
@@ -53,9 +53,9 @@ public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyin
 
     /// 指定した `.novelpkg` パッケージから作品を読み込む。
     ///
-    /// - Throws: パッケージやマニフェストが存在しない、あるいはマニフェストが
-    ///   壊れている・非対応バージョンの場合は ``NovelpkgError``。
-    ///   個々の話本文ファイルが欠けている場合はエラーにせず、空本文として扱う。
+    /// - Throws: パッケージやマニフェストが存在しない、マニフェストが壊れている、
+    ///   非対応バージョン、または参照された payload を安全に読めない場合は
+    ///   ``NovelpkgError``。
     public func load(from url: URL) async throws -> NovelDocument {
         try await Task.detached(priority: .utility) {
             try Self.performLoad(from: url)
@@ -97,37 +97,7 @@ extension NovelpkgRepository {
             throw NovelpkgError.unsupportedFormatVersion(manifest.formatVersion)
         }
 
-        let episodesURL = url.appendingPathComponent(episodesDirectoryName, isDirectory: true)
-        let episodeNotesURL = url.appendingPathComponent(episodeNotesDirectoryName, isDirectory: true)
-        let chaptersURL = url.appendingPathComponent(chaptersDirectoryName, isDirectory: true)
-        let notesURL = url.appendingPathComponent(notesDirectoryName, isDirectory: true)
-        let chapters: [Chapter] = manifest.chapters.map { entry in
-            let episodeEntries = entry.episodes ?? [
-                NovelpkgManifest.EpisodeEntry(id: entry.id, title: Episode.defaultTitle)
-            ]
-            let isLegacyChapter = entry.episodes == nil
-            let episodes = episodeEntries.map { episodeEntry in
-                let contentURL: URL
-                let memoURL: URL
-                if isLegacyChapter {
-                    // v1 / v2 は章IDを話IDとして再利用し、読み込みを安定させる。
-                    contentURL = chaptersURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
-                    memoURL = notesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
-                } else {
-                    contentURL = episodesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
-                    memoURL = episodeNotesURL.appendingPathComponent("\(episodeEntry.id.uuidString).md")
-                }
-                let content = (try? String(contentsOf: contentURL, encoding: .utf8)) ?? ""
-                let memo = (try? String(contentsOf: memoURL, encoding: .utf8)) ?? ""
-                return Episode(
-                    id: EpisodeID(rawValue: episodeEntry.id),
-                    title: episodeEntry.title,
-                    content: content,
-                    memo: memo
-                )
-            }
-            return Chapter(id: ChapterID(rawValue: entry.id), title: entry.title, episodes: episodes)
-        }
+        let chapters = try readChapters(from: manifest, packageURL: url, fileManager: fileManager)
 
         let metadata = try readDocumentMetadata(from: url, chapters: chapters)
 

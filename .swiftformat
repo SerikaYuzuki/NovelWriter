@@ -1,4 +1,4 @@
-# NovelWriter — SwiftFormat 設定
+# FUMINIWA — SwiftFormat 設定
 #
 # 対象: NovelKit/Sources, NovelKit/Tests
 # (将来 NovelApp/ を追加した場合も、この設定のままで対象に含まれる想定。

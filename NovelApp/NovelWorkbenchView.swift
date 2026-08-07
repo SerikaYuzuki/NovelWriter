@@ -6,8 +6,8 @@ import UniformTypeIdentifiers
 /// セクションに応じて2列または3列となるワークベンチのルート(docs/TOOLBAR.md Toolbar-1 / Toolbar-2)。
 ///
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
-/// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。下部の
-/// AI Assistant Panel は従来どおり split の外に置く。上部 chrome は
+/// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
+/// 下部には保存状態と文字数だけを伝えるステータスバーを置く。上部 chrome は
 /// `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
@@ -25,6 +25,7 @@ struct NovelWorkbenchView: View {
     @State private var selectedAttachmentFileName: String?
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
+    @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
 
     var body: some View {
@@ -32,9 +33,8 @@ struct NovelWorkbenchView: View {
             workbenchSplitView
                 .id(usesTwoColumnLayout)
 
-            AIAssistantPanelView()
+            WorkbenchStatusBarView()
         }
-        .preferredColorScheme(.dark)
         .toolbar(id: "novelwriter.workbench.v3") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
@@ -53,24 +53,17 @@ struct NovelWorkbenchView: View {
         .onChange(of: showsWritingActions) { _, isWriting in
             editorSearchSession.isSearchPresented = isWriting
         }
-        .background {
-            Button("AI Assistant") {
-                appState.aiAssistantPanel.isExpanded.toggle()
-            }
-            .keyboardShortcut("j", modifiers: .command)
-            .hidden()
-        }
         .confirmationDialog(
             "このスナップショットに戻しますか？",
             isPresented: snapshotRestoreDialogIsPresented,
             presenting: snapshotMenuPresenter.snapshotPendingRestore
-        ) { snapshot in
+        ) { request in
             Button("戻す", role: .destructive) {
-                Task { await snapshotMenuPresenter.restore(snapshot) }
+                Task { await snapshotMenuPresenter.restore(request) }
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { snapshot in
-            Text("「\(snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+        } message: { request in
+            Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
         }
         .alert(
             "復元できませんでした",
@@ -102,6 +95,7 @@ struct NovelWorkbenchView: View {
         .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
             guard appState.supportsAttachments else { return }
             appState.selectProjectSection(.references)
+            attachmentImportSession = appState.documentSessionToken
             isImportingAttachment = true
         }
     }
@@ -171,6 +165,16 @@ struct NovelWorkbenchView: View {
 
     @MainActor
     private func importAttachment(from result: Result<[URL], Error>) async {
+        let expectedSession = attachmentImportSession
+        attachmentImportSession = nil
+        guard let expectedSession else {
+            attachmentImportMessage = OperationMessage(
+                title: "取り込めませんでした",
+                body: "作品を確認できないため、資料を変更していません。もう一度お試しください。"
+            )
+            return
+        }
+
         do {
             guard let sourceURL = try result.get().first else { return }
             let didAccess = sourceURL.startAccessingSecurityScopedResource()
@@ -180,7 +184,19 @@ struct NovelWorkbenchView: View {
                 }
             }
 
-            if let attachment = await appState.addAttachment(from: sourceURL) {
+            let attachment = await appState.addAttachment(
+                from: sourceURL,
+                expectedSession: expectedSession
+            )
+            guard appState.documentSessionToken == expectedSession else {
+                attachmentImportMessage = OperationMessage(
+                    title: attachment == nil ? "取り込みませんでした" : "元の作品に取り込みました",
+                    body: "操作中に別の作品へ切り替わりました。現在の資料は変更していません。"
+                )
+                return
+            }
+
+            if let attachment {
                 selectedAttachmentFileName = attachment.fileName
                 attachmentImportMessage = OperationMessage(title: "取り込みました", body: attachment.fileName)
             } else {
@@ -310,17 +326,17 @@ struct ProjectSidebarView: View {
 private struct WorldbuildingOutlineView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var notePendingDeletion: WorldNote?
+    @State private var notePendingDeletion: SessionBoundValue<WorldNote>?
 
     var body: some View {
         VStack(spacing: 0) {
             List(selection: selectionBinding) {
-                ForEach(appState.document.worldNotes) { note in
-                    WorldNoteRow(note: note)
-                        .tag(note.id)
+                ForEach(sessionBoundWorldNotes) { item in
+                    WorldNoteRow(note: item.value)
+                        .tag(item.value.id)
                         .contextMenu {
                             Button(role: .destructive) {
-                                notePendingDeletion = note
+                                notePendingDeletion = item
                             } label: {
                                 Label("削除", systemImage: "trash")
                             }
@@ -343,19 +359,29 @@ private struct WorldbuildingOutlineView: View {
         }
         .onDeleteCommand {
             guard let note = appState.selectedWorldNote else { return }
-            notePendingDeletion = note
+            notePendingDeletion = SessionBoundValue(
+                value: note,
+                session: appState.documentSessionToken
+            )
         }
         .confirmationDialog(
             "世界観ノートを削除しますか？",
             isPresented: noteDeletionDialogIsPresented,
             presenting: notePendingDeletion
-        ) { note in
+        ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteWorldNote(id: note.id)
+                appState.deleteWorldNote(id: request.value.id, expectedSession: request.session)
             }
             Button("キャンセル", role: .cancel) {}
-        } message: { note in
-            Text("「\(displayTitle(for: note))」を削除します。")
+        } message: { request in
+            Text("「\(displayTitle(for: request.value))」を削除します。")
+        }
+    }
+
+    private var sessionBoundWorldNotes: [SessionBoundValue<WorldNote>] {
+        let session = appState.documentSessionToken
+        return appState.document.worldNotes.map {
+            SessionBoundValue(value: $0, session: session)
         }
     }
 
@@ -413,6 +439,7 @@ private struct WorldNoteDetailView: View {
     var body: some View {
         Group {
             if let note = appState.selectedWorldNote {
+                let session = appState.documentSessionToken
                 VStack(alignment: .leading, spacing: 16) {
                     WorkbenchLabeledField("タイトル") {
                         TextField("ノートのタイトル", text: titleBinding(for: note))
@@ -422,12 +449,19 @@ private struct WorldNoteDetailView: View {
                     ZStack {
                         Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                         EditorView(
-                            chapterKey: note.id,
+                            chapterKey: SessionBoundEditorKey(
+                                value: note.id,
+                                generation: appState.editorContentGeneration
+                            ),
                             initialText: note.content,
                             commandSession: editorCommandSession,
                             configuration: editorSettings.configuration,
                             onTextChange: { content in
-                                appState.updateWorldNoteContent(content, for: note.id)
+                                appState.updateWorldNoteContent(
+                                    content,
+                                    for: note.id,
+                                    expectedSession: session
+                                )
                             }
                         )
                         .frame(maxWidth: editorMaximumWidth)
@@ -462,100 +496,13 @@ private struct WorldNoteDetailView: View {
     }
 }
 
-struct AIAssistantPanelView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AssistantStatusBarView()
-
-            if appState.aiAssistantPanel.isExpanded {
-                Divider()
-                ResizeHandle()
-                expandedContent
-                    .frame(height: appState.aiAssistantPanel.height)
-            }
-        }
-        .background(.bar)
-    }
-
-    private var expandedContent: some View {
-        VStack(spacing: 0) {
-            Picker("AI Assistant", selection: selectedTabBinding) {
-                ForEach(AIAssistantTab.allCases) { tab in
-                    Text(tab.title)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(8)
-
-            Divider()
-
-            Group {
-                switch appState.aiAssistantPanel.selectedTab {
-                case .chat:
-                    AssistantChatView()
-                case .suggestions:
-                    AssistantSuggestionsView()
-                case .selectionActions:
-                    SelectionActionsView()
-                }
-            }
-        }
-    }
-
-    private var selectedTabBinding: Binding<AIAssistantTab> {
-        Binding(
-            get: { appState.aiAssistantPanel.selectedTab },
-            set: { appState.aiAssistantPanel.selectedTab = $0 }
-        )
-    }
-}
-
-private struct ResizeHandle: View {
-    @Environment(AppState.self) private var appState
-
-    @State private var dragStartHeight: CGFloat?
-
-    var body: some View {
-        Rectangle()
-            .fill(.clear)
-            .frame(height: 6)
-            .overlay {
-                Capsule()
-                    .fill(.secondary.opacity(0.35))
-                    .frame(width: 44, height: 2)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        let baseHeight = dragStartHeight ?? appState.aiAssistantPanel.height
-                        dragStartHeight = baseHeight
-                        let proposedHeight = baseHeight - value.translation.height
-                        appState.aiAssistantPanel.height = min(max(proposedHeight, 240), 360)
-                    }
-                    .onEnded { _ in
-                        dragStartHeight = nil
-                    }
-            )
-    }
-}
-
-private struct AssistantStatusBarView: View {
+private struct WorkbenchStatusBarView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                appState.aiAssistantPanel.isExpanded.toggle()
-            } label: {
-                statusContent
-            }
-            .buttonStyle(.plain)
+            statusContent
 
             if appState.saveState == .failed {
                 Button("再試行") {
@@ -577,17 +524,14 @@ private struct AssistantStatusBarView: View {
             if appState.workspaceSelection.section == .structure, editorSearchSession.didMissSearch {
                 Text("見つかりません")
             }
-            Text("行 -- / 列 --")
             Spacer()
-            Label("AI 未接続", systemImage: "sparkles")
-            Text("通常")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .monospacedDigit()
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 
     private var chapterCountText: String {
@@ -597,60 +541,6 @@ private struct AssistantStatusBarView: View {
 
     private var totalCountText: String {
         "全体 \(appState.document.manuscriptCharacterCount)字"
-    }
-}
-
-private struct AssistantChatView: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ContentUnavailableView(
-                "AIは未接続です",
-                systemImage: "sparkles",
-                description: Text("ここにチャットと回答を表示します。")
-            )
-            TextField("AIに相談", text: inputBinding)
-                .textFieldStyle(.roundedBorder)
-                .padding([.horizontal, .bottom], 12)
-        }
-    }
-
-    private var inputBinding: Binding<String> {
-        Binding(
-            get: { appState.aiAssistantPanel.inputText },
-            set: { appState.aiAssistantPanel.inputText = $0 }
-        )
-    }
-}
-
-private struct AssistantSuggestionsView: View {
-    var body: some View {
-        ContentUnavailableView(
-            "提案はありません",
-            systemImage: "list.bullet.rectangle",
-            description: Text("AI接続後に提案を表示します。")
-        )
-    }
-}
-
-private struct SelectionActionsView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            ContentUnavailableView(
-                "選択中のテキストがありません",
-                systemImage: "text.cursor",
-                description: Text("本文を選択すると操作を使えます。")
-            )
-            HStack {
-                Button("言い換え") {}
-                Button("要約") {}
-                Button("矛盾確認") {}
-                Button("伏線確認") {}
-            }
-            .disabled(true)
-        }
-        .padding()
     }
 }
 

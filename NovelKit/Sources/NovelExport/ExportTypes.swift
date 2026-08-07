@@ -1,6 +1,6 @@
 import Foundation
 
-/// NovelWriter が書き出せる原稿形式。
+/// ふみにわが書き出せる原稿形式。
 ///
 /// 実装が利用可能になった形式だけを公開し、未実装の形式を選択可能にはしない。
 public enum ExportFormat: String, CaseIterable, Codable, Equatable, Sendable {

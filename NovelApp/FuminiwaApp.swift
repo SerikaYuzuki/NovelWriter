@@ -1,5 +1,6 @@
 import AppKit
 import EditorKit
+import Foundation
 import SwiftUI
 
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
@@ -26,22 +27,33 @@ import SwiftUI
 ///   ペアが食い違うことはない(delegate のような `@State` 外の `weak` 参照とは
 ///   性質が異なる)。
 @main
-struct NovelWriterApp: App {
+struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
     @State private var appState: AppState
-    @State private var editorSettings = EditorSettings()
+    @State private var editorSettings: EditorSettings
     @State private var documentPanelPresenter: DocumentPanelPresenter
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
-    @State private var editorCommandSession = EditorCommandSession()
+    @State private var editorCommandSession: EditorCommandSession
 
     init() {
-        let appState = AppState(dependencies: AppDependencies())
+        let defaults = UserDefaults.standard
+        LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
+
+        let editorCommandSession = EditorCommandSession()
+        let appState = AppState(
+            dependencies: AppDependencies(
+                userDefaults: defaults,
+                editorCommandSession: editorCommandSession
+            )
+        )
         _appState = State(initialValue: appState)
+        _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
+        _editorCommandSession = State(initialValue: editorCommandSession)
     }
 
     var body: some Scene {
@@ -55,8 +67,10 @@ struct NovelWriterApp: App {
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
                 .task {
-                    applicationDelegate.appState = appState
-                    await appState.bootstrap()
+                    applicationDelegate.attach(appState: appState)
+                    let startupOpenURL = applicationDelegate.takeStartupOpenURL()
+                    await appState.bootstrap(opening: startupOpenURL)
+                    applicationDelegate.finishBootstrap()
                 }
         }
         .commands {
@@ -68,11 +82,21 @@ struct NovelWriterApp: App {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
+                .disabled(!appState.permitsDocumentChoice)
 
                 Button("開く…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                .disabled(!appState.permitsDocumentChoice)
+            }
+
+            CommandGroup(replacing: .saveItem) {
+                Button("保存") {
+                    Task { await appState.saveNow() }
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             // Cmd+Shift+S は macOS の「別名で保存…」の慣習を優先する
@@ -82,43 +106,49 @@ struct NovelWriterApp: App {
                     documentPanelPresenter.presentSaveAsPanel()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("書き出す…") {
                     exportPresenter.present()
                 }
-                .disabled(exportPresenter.state.isExporting)
+                .disabled(!appState.permitsDocumentInteraction || exportPresenter.state.isExporting)
 
                 Button("Finder で表示") {
                     documentPanelPresenter.revealInFinder()
                 }
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Divider()
 
                 Button("スナップショットを保存") {
+                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.createSnapshot()
+                        _ = await appState.createSnapshot(expectedSession: session)
                         await snapshotMenuPresenter.refresh()
                     }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(!appState.permitsDocumentInteraction)
 
-                SnapshotRestoreCommands(presenter: snapshotMenuPresenter)
+                SnapshotRestoreCommands(appState: appState, presenter: snapshotMenuPresenter)
+                    .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("章") {
                 Button("章を追加") {
                     appState.addChapter()
                 }
+                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("選択中の章に話を追加") {
                     appState.addEpisode()
                 }
-                .disabled(appState.selectedChapter == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
 
                 Button("話メモ") {
                     NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                 }
-                .disabled(appState.selectedEpisode == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedEpisode == nil)
 
                 Divider()
 
@@ -135,13 +165,14 @@ struct NovelWriterApp: App {
                         }
                     )
                 }
-                .disabled(appState.selectedChapter == nil)
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
             }
 
             CommandMenu("登場人物") {
                 Button("登場人物を追加") {
                     appState.addCharacter()
                 }
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("プロット") {
@@ -152,13 +183,14 @@ struct NovelWriterApp: App {
                         appState.addPlotCard()
                     }
                 }
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("資料") {
                 Button("資料を取り込む…") {
                     NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
                 }
-                .disabled(!appState.supportsAttachments)
+                .disabled(!appState.permitsDocumentInteraction || !appState.supportsAttachments)
             }
 
             CommandMenu("世界観") {
@@ -166,6 +198,7 @@ struct NovelWriterApp: App {
                     appState.selectProjectSection(.worldbuilding)
                     appState.addWorldNote()
                 }
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandGroup(after: .textEditing) {
@@ -174,6 +207,7 @@ struct NovelWriterApp: App {
                     appState: appState,
                     editorSearchSession: editorSearchSession
                 )
+                .disabled(!appState.permitsDocumentInteraction)
             }
 
             CommandMenu("表示") {
@@ -184,14 +218,8 @@ struct NovelWriterApp: App {
                         Label(section.title, systemImage: section.systemImage)
                     }
                     .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
+                    .disabled(!appState.permitsDocumentInteraction)
                 }
-
-                Divider()
-
-                Button("AI Assistant") {
-                    appState.aiAssistantPanel.isExpanded.toggle()
-                }
-                .keyboardShortcut("j", modifiers: .command)
             }
 
             SidebarCommands()
@@ -206,6 +234,7 @@ struct NovelWriterApp: App {
 }
 
 private struct SnapshotRestoreCommands: View {
+    let appState: AppState
     @Bindable var presenter: SnapshotMenuPresenter
 
     var body: some View {
@@ -213,13 +242,14 @@ private struct SnapshotRestoreCommands: View {
             if presenter.snapshots.isEmpty {
                 Text("スナップショットはありません")
             } else {
-                ForEach(presenter.snapshots) { snapshot in
-                    Menu(snapshot.displayName) {
+                ForEach(presenter.snapshots) { item in
+                    Menu(item.snapshot.displayName) {
                         Button("この状態に戻す…") {
-                            presenter.snapshotPendingRestore = snapshot
+                            presenter.requestRestore(item)
                         }
                         Button("Finder で表示") {
-                            NSWorkspace.shared.activateFileViewerSelecting([snapshot.url])
+                            guard item.session == appState.documentSessionToken else { return }
+                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
                         }
                     }
                 }
