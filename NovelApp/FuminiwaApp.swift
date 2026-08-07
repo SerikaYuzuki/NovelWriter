@@ -60,8 +60,10 @@ struct FuminiwaApp: App {
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
                 .task {
-                    applicationDelegate.appState = appState
-                    await appState.bootstrap()
+                    applicationDelegate.attach(appState: appState)
+                    let startupOpenURL = applicationDelegate.takeStartupOpenURL()
+                    await appState.bootstrap(opening: startupOpenURL)
+                    applicationDelegate.finishBootstrap()
                 }
         }
         .commands {
@@ -73,11 +75,21 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
+                .disabled(!appState.startupState.permitsDocumentChoice)
 
                 Button("開く…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                .disabled(!appState.startupState.permitsDocumentChoice)
+            }
+
+            CommandGroup(replacing: .saveItem) {
+                Button("保存") {
+                    Task { await appState.saveNow() }
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!appState.startupState.isReady)
             }
 
             // Cmd+Shift+S は macOS の「別名で保存…」の慣習を優先する
@@ -87,15 +99,17 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentSaveAsPanel()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!appState.startupState.isReady)
 
                 Button("書き出す…") {
                     exportPresenter.present()
                 }
-                .disabled(exportPresenter.state.isExporting)
+                .disabled(!appState.startupState.isReady || exportPresenter.state.isExporting)
 
                 Button("Finder で表示") {
                     documentPanelPresenter.revealInFinder()
                 }
+                .disabled(!appState.startupState.isReady)
 
                 Divider()
 
@@ -106,24 +120,27 @@ struct FuminiwaApp: App {
                     }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(!appState.startupState.isReady)
 
                 SnapshotRestoreCommands(presenter: snapshotMenuPresenter)
+                    .disabled(!appState.startupState.isReady)
             }
 
             CommandMenu("章") {
                 Button("章を追加") {
                     appState.addChapter()
                 }
+                .disabled(!appState.startupState.isReady)
 
                 Button("選択中の章に話を追加") {
                     appState.addEpisode()
                 }
-                .disabled(appState.selectedChapter == nil)
+                .disabled(!appState.startupState.isReady || appState.selectedChapter == nil)
 
                 Button("話メモ") {
                     NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                 }
-                .disabled(appState.selectedEpisode == nil)
+                .disabled(!appState.startupState.isReady || appState.selectedEpisode == nil)
 
                 Divider()
 
@@ -140,13 +157,14 @@ struct FuminiwaApp: App {
                         }
                     )
                 }
-                .disabled(appState.selectedChapter == nil)
+                .disabled(!appState.startupState.isReady || appState.selectedChapter == nil)
             }
 
             CommandMenu("登場人物") {
                 Button("登場人物を追加") {
                     appState.addCharacter()
                 }
+                .disabled(!appState.startupState.isReady)
             }
 
             CommandMenu("プロット") {
@@ -157,13 +175,14 @@ struct FuminiwaApp: App {
                         appState.addPlotCard()
                     }
                 }
+                .disabled(!appState.startupState.isReady)
             }
 
             CommandMenu("資料") {
                 Button("資料を取り込む…") {
                     NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
                 }
-                .disabled(!appState.supportsAttachments)
+                .disabled(!appState.startupState.isReady || !appState.supportsAttachments)
             }
 
             CommandMenu("世界観") {
@@ -171,6 +190,7 @@ struct FuminiwaApp: App {
                     appState.selectProjectSection(.worldbuilding)
                     appState.addWorldNote()
                 }
+                .disabled(!appState.startupState.isReady)
             }
 
             CommandGroup(after: .textEditing) {
@@ -189,14 +209,8 @@ struct FuminiwaApp: App {
                         Label(section.title, systemImage: section.systemImage)
                     }
                     .keyboardShortcut(section.keyboardShortcut, modifiers: .command)
+                    .disabled(!appState.startupState.isReady)
                 }
-
-                Divider()
-
-                Button("AI Assistant") {
-                    appState.aiAssistantPanel.isExpanded.toggle()
-                }
-                .keyboardShortcut("j", modifiers: .command)
             }
 
             SidebarCommands()

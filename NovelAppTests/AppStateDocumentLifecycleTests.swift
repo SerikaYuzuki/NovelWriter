@@ -241,7 +241,8 @@ struct AppStateDocumentLifecycleTests {
                 repository: repository,
                 userDefaults: defaults,
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
     }
 

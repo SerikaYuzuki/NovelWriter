@@ -45,12 +45,13 @@ struct AppStateWorldNoteTests {
                 repository: WorldNoteRepository(),
                 userDefaults: makeUserDefaults(),
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
     }
 
     private func makeUserDefaults() -> UserDefaults {
-        let suiteName = "NovelWriterWorldNotes.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAWorldNotes.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults

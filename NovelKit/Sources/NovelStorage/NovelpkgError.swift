@@ -2,10 +2,9 @@ import Foundation
 
 /// `.novelpkg` パッケージの読み込み・保存で発生しうる型付きエラー。
 ///
-/// 設計方針(docs/DESIGN.md「データが壊れにくいこと」): 話ファイルが1つ欠けている
-/// 程度では読み込み全体を失敗させない(データ救出優先)。そのため `chapterFileMissing`
-/// のようなケースはエラーにはせず、空本文として読み込む。ここに定義されているのは
-/// 「読み込み・保存そのものを継続できない」種類の失敗のみ。
+/// 原稿本文など、manifest / metadata が参照する必須 payload を読めない場合は、
+/// 空文字へ読み替えず型付きエラーにする。存在する任意 payload も、I/O 失敗や
+/// 不正な UTF-8 を黙って空文字にしない。
 public enum NovelpkgError: Error, Sendable, Equatable {
     /// 指定した URL に `.novelpkg` パッケージ(フォルダ)が存在しない。
     case packageNotFound(URL)
@@ -17,6 +16,9 @@ public enum NovelpkgError: Error, Sendable, Equatable {
     /// 読み込み・デコードに失敗した(壊れている)。`manifest.json` 自体は無事な
     /// ケースなので `manifestCorrupted` とは区別する(Phase 4 レビュー F-C)。
     case metadataCorrupted(url: URL, file: String, reason: String)
+    /// 本文・メモなどの UTF-8 text payload を安全に読み込めなかった。
+    /// `relativePath` は package root からの相対パスであり、UI で対象を特定できる。
+    case payloadUnreadable(url: URL, relativePath: String, reason: String)
     /// `manifest.json` の `formatVersion` が、この実装の対応バージョンではない。
     case unsupportedFormatVersion(String)
     /// 保存処理(アトミック書き込みのための一時ディレクトリ操作など)に失敗した。
@@ -34,6 +36,8 @@ extension NovelpkgError: CustomStringConvertible {
             "manifest.json の読み込みに失敗しました(\(url.path)): \(reason)"
         case let .metadataCorrupted(url, file, reason):
             "\(file) の読み込みに失敗しました(\(url.path)): \(reason)"
+        case let .payloadUnreadable(url, relativePath, reason):
+            "\(relativePath) の読み込みに失敗しました(\(url.path)): \(reason)"
         case let .unsupportedFormatVersion(version):
             "対応していないフォーマットバージョンです: \(version)"
         case let .saveFailed(reason):

@@ -186,12 +186,13 @@ struct AppStateEpisodeSelectionTests {
                 repository: repository,
                 userDefaults: defaults ?? makeUserDefaults(),
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
     }
 
     private func makeUserDefaults() -> UserDefaults {
-        let suiteName = "NovelWriterEpisodeSelection.\(UUID().uuidString)"
+        let suiteName = "FUMINIWAEpisodeSelection.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
@@ -199,7 +200,7 @@ struct AppStateEpisodeSelectionTests {
 
     private func packageURL(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("NovelWriterEpisodeSelectionTests", isDirectory: true)
+            .appendingPathComponent("FUMINIWAEpisodeSelectionTests", isDirectory: true)
             .appendingPathComponent("\(name).novelpkg", isDirectory: true)
     }
 

@@ -18,9 +18,13 @@ extension NovelpkgRepository {
         }
 
         let notesURL = packageURL.appendingPathComponent(worldNotesDirectoryName, isDirectory: true)
-        return metadata.notes.map { entry in
+        return try metadata.notes.map { entry in
             let contentURL = notesURL.appendingPathComponent("\(entry.id.uuidString).md")
-            let content = (try? String(contentsOf: contentURL, encoding: .utf8)) ?? ""
+            let content = try readRequiredUTF8Payload(
+                at: contentURL,
+                relativePath: "\(worldNotesDirectoryName)/\(entry.id.uuidString).md",
+                packageURL: packageURL
+            )
             return WorldNote(id: WorldNoteID(rawValue: entry.id), title: entry.title, content: content)
         }
     }

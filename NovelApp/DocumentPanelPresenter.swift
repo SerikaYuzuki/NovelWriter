@@ -25,6 +25,7 @@ final class DocumentPanelPresenter {
 
     /// 「新規」。既定保存先へ作品を作成する。失敗時はアラートで知らせる。
     func presentNewDocument() {
+        guard appState.startupState.permitsDocumentChoice else { return }
         Task {
             let success = await appState.createNewDocument()
             if !success {
@@ -35,6 +36,7 @@ final class DocumentPanelPresenter {
 
     /// 「開く…」。`.novelpkg` パッケージを選ばせ、`AppState.openDocument(at:)` へ渡す。
     func presentOpenPanel() {
+        guard appState.startupState.permitsDocumentChoice else { return }
         let panel = NSOpenPanel()
         panel.title = "作品を開く"
         panel.prompt = "開く"
@@ -64,6 +66,7 @@ final class DocumentPanelPresenter {
 
     /// 「別名で保存…」。既定ファイル名は現在の作品タイトルとし、拡張子は `.novelpkg` を強制する。
     func presentSaveAsPanel() {
+        guard appState.startupState.isReady else { return }
         let panel = NSSavePanel()
         panel.title = "別名で保存"
         panel.prompt = "保存"
@@ -91,6 +94,7 @@ final class DocumentPanelPresenter {
 
     /// 「Finder で表示」。現在の保存先を Finder で選択状態にする。
     func revealInFinder() {
+        guard appState.startupState.isReady else { return }
         NSWorkspace.shared.activateFileViewerSelecting([appState.documentURL])
     }
 }

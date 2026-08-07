@@ -79,6 +79,10 @@ final class AppState {
     private(set) var plotOutlineSelection: PlotOutlineSelection = .unassigned
     /// 原稿パッケージの保存状態。表示はこの値だけを正とする。
     private(set) var saveState: DocumentSaveState
+    /// 起動中の編集可能placeholderをUIへ露出しないための三状態(D-039)。
+    private(set) var startupState: AppStartupState
+    /// Finderからの作品オープンに失敗したときだけ使う安全な利用者向け文言。
+    var externalDocumentOpenErrorMessage: String?
 
     /// Project Sidebar と Outline の選択状態。UI2 以降の画面選択の正。
     private(set) var workspaceSelection: WorkspaceSelection {
@@ -89,9 +93,6 @@ final class AppState {
 
     /// Outline の検索バーなど、表示専用の一時状態。
     var outlinePresentation = OutlinePresentationState()
-    /// 下部 AI Assistant Panel の開閉・入力状態。
-    var aiAssistantPanel = AIAssistantPanelState()
-
     /// 現在の作品に取り込まれている資料一覧。
     private(set) var attachments: [Attachment]
     /// 現在の保存先 URL(`.novelpkg` パッケージ)。
@@ -114,7 +115,7 @@ final class AppState {
     private lazy var saveCoordinator: DocumentSaveCoordinator = .init(
         debounceNanoseconds: Self.autosaveDebounceNanoseconds,
         currentState: { [weak self] in
-            guard let self else { return nil }
+            guard let self, startupState.isReady else { return nil }
             return (document, documentURL)
         },
         saveOperation: { [weak self] doc, url in
@@ -133,12 +134,17 @@ final class AppState {
     )
     /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
     @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
+    /// SwiftUIのtask再評価でbootstrapを二重実行しない。
+    @ObservationIgnored private var hasStartedBootstrap = false
 
     private static let recentDocumentPathKey = AppPreferenceKey.recentDocumentPath
     private static let projectSectionKey = AppPreferenceKey.projectSection
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
 
-    init(dependencies: AppDependencies) {
+    init(
+        dependencies: AppDependencies,
+        initialStartupState: AppStartupState = .loading
+    ) {
         repository = dependencies.repository
         attachmentManager = dependencies.attachmentManager
         userDefaults = dependencies.userDefaults
@@ -157,6 +163,8 @@ final class AppState {
         selectedWorldNoteID = nil
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
+        startupState = initialStartupState
+        externalDocumentOpenErrorMessage = nil
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         let initialSection: ProjectSection = if storedSection == "planning" {
             .projectInfo
@@ -175,65 +183,112 @@ final class AppState {
     /// 起動時の読み込み/新規作成を行う。`FuminiwaApp` から一度だけ呼ばれる想定。
     ///
     /// UserDefaults に前回開いていたファイルパスがあればそれを読み込む。
-    /// 無ければ(または読み込みに失敗すれば)新規作品を作り、既定の保存先へ保存する。
-    func bootstrap() async {
+    /// Finderから指定されたURLはrecentより優先する。読込失敗時は新規作品へ
+    /// fallbackせずRecoveryで停止し、原稿とrecent URLを変更しない(D-039)。
+    func bootstrap(opening requestedURL: URL? = nil) async {
+        guard !hasStartedBootstrap else {
+            if let requestedURL {
+                _ = await openExternalDocument(at: requestedURL)
+            }
+            return
+        }
+        hasStartedBootstrap = true
         observeResignActive()
+
+        if let requestedURL {
+            await loadStartupDocument(at: requestedURL, source: .finder)
+            return
+        }
 
         if let path = userDefaults.string(forKey: Self.recentDocumentPathKey), !path.isEmpty {
             let url = URL(fileURLWithPath: path)
             #if DEBUG
             if Self.shouldSkipRecentDocumentInDebug(url, fileManager: fileManager) {
-                userDefaults.removeObject(forKey: Self.recentDocumentPathKey)
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .protectedLocationInDebugBuild,
+                        source: .recentDocument,
+                        documentURL: url
+                    )
+                )
+                return
             } else {
-                do {
-                    let loaded = try await repository.load(from: url)
-                    document = loaded
-                    documentURL = url
-                    setInitialSelection(for: loaded)
-                    selectedCharacterID = loaded.characters.first?.id
-                    selectedPlotCardID = loaded.plotCards.first?.id
-                    selectedFlagID = loaded.flags.first?.id
-                    attachments = await loadAttachments(for: url)
-                    saveState = .saved
-                    return
-                } catch {
-                    // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                    print("[FUMINIWA] 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
-                }
+                await loadStartupDocument(at: url, source: .recentDocument)
+                return
             }
             #else
-            do {
-                let loaded = try await repository.load(from: url)
-                document = loaded
-                documentURL = url
-                setInitialSelection(for: loaded)
-                selectedCharacterID = loaded.characters.first?.id
-                selectedPlotCardID = loaded.plotCards.first?.id
-                selectedFlagID = loaded.flags.first?.id
-                attachments = await loadAttachments(for: url)
-                saveState = .saved
-                return
-            } catch {
-                // 読み込みに失敗しても執筆継続を優先し、新規作品の作成にフォールバックする。
-                print("[FUMINIWA] 前回の作品の読み込みに失敗しました(\(url.path)): \(error)")
-            }
+            await loadStartupDocument(at: url, source: .recentDocument)
+            return
             #endif
         }
 
-        let newDocument = NovelDocument.newDocument()
-        let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
-        document = newDocument
-        documentURL = newURL
-        setInitialSelection(for: newDocument)
-        selectedCharacterID = nil
-        selectedPlotCardID = nil
-        selectedFlagID = nil
-        attachments = []
+        await createInitialDocumentForStartup()
+    }
 
-        saveCoordinator.markDirty()
-        await saveCoordinator.saveNow()
-        attachments = await loadAttachments(for: newURL)
-        rememberDocumentURL(newURL)
+    /// Recovery画面の「再試行」。同じ原本URLまたは同じ新規保存先を再利用する。
+    func retryStartup() async {
+        guard case let .recovery(context) = startupState else { return }
+        startupState = .loading
+
+        switch context.reason {
+        case .cannotOpenDocument, .protectedLocationInDebugBuild:
+            guard let url = context.documentURL else {
+                startupState = .recovery(context)
+                return
+            }
+            await loadStartupDocument(at: url, source: context.source)
+        case .cannotCreateDocument:
+            await createInitialDocumentForStartup(at: context.documentURL)
+        }
+    }
+
+    /// Finder / Open Withから渡された作品を、現在作品を守る通常の切替経路で開く。
+    @discardableResult
+    func openExternalDocument(at url: URL) async -> Bool {
+        let success = await openDocument(at: url)
+        if !success, startupState.isReady {
+            externalDocumentOpenErrorMessage = "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
+        }
+        return success
+    }
+
+    private func loadStartupDocument(at url: URL, source: StartupDocumentSource) async {
+        let targetURL = url.standardizedFileURL
+        do {
+            let loadedDocument = try await repository.load(from: targetURL)
+            let loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
+            installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
+        } catch {
+            print("[FUMINIWA] 起動作品を開けませんでした(\(targetURL.lastPathComponent)): \(error)")
+            startupState = .recovery(
+                StartupRecoveryContext(
+                    reason: .cannotOpenDocument,
+                    source: source,
+                    documentURL: targetURL
+                )
+            )
+        }
+    }
+
+    private func createInitialDocumentForStartup(at preferredURL: URL? = nil) async {
+        let newDocument = NovelDocument.newDocument()
+        let newURL = preferredURL
+            ?? Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+
+        do {
+            try await repository.save(newDocument, to: newURL)
+            let newAttachments = try await loadAttachmentsThrowing(for: newURL)
+            installDocument(newDocument, at: newURL, attachments: newAttachments)
+        } catch {
+            print("[FUMINIWA] 起動時の新規作品を保存できませんでした(\(newURL.lastPathComponent)): \(error)")
+            startupState = .recovery(
+                StartupRecoveryContext(
+                    reason: .cannotCreateDocument,
+                    source: .initialDocument,
+                    documentURL: newURL
+                )
+            )
+        }
     }
 
     // MARK: - 作品ライフサイクル
@@ -246,8 +301,13 @@ final class AppState {
     @discardableResult
     func openDocument(at url: URL) async -> Bool {
         let targetURL = url.standardizedFileURL
-        guard targetURL != documentURL.standardizedFileURL else {
+        let hadReadyDocument = startupState.isReady
+
+        guard !hadReadyDocument || targetURL != documentURL.standardizedFileURL else {
             return await saveCoordinator.saveNow()
+        }
+        if !hadReadyDocument {
+            startupState = .loading
         }
 
         let loadedDocument: NovelDocument
@@ -256,14 +316,25 @@ final class AppState {
             loadedDocument = try await repository.load(from: targetURL)
             loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
         } catch {
-            print("[FUMINIWA] 作品の読み込みに失敗しました(\(targetURL.path)): \(error)")
+            print("[FUMINIWA] 作品の読み込みに失敗しました(\(targetURL.lastPathComponent)): \(error)")
+            if !hadReadyDocument {
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .cannotOpenDocument,
+                        source: .chosenDocument,
+                        documentURL: targetURL
+                    )
+                )
+            }
             return false
         }
 
         // 読み込み待ちの間に現在作品が編集されても、ここで最新 revision まで保存する。
         // saveNow() から復帰した後は状態置換まで await しないため、未保存編集が
         // 切り替えとの隙間に入り込むことはない。
-        guard await saveCoordinator.saveNow() else { return false }
+        if hadReadyDocument {
+            guard await saveCoordinator.saveNow() else { return false }
+        }
 
         installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
         return true
@@ -272,7 +343,18 @@ final class AppState {
     /// 新規作品を既定保存先へ作成し、保存成功後にだけ現在作品として採用する。
     @discardableResult
     func createNewDocument() async -> Bool {
-        guard await saveCoordinator.saveNow() else { return false }
+        let hadReadyDocument = startupState.isReady
+        let previousRecoveryContext: StartupRecoveryContext? = if case let .recovery(context) = startupState {
+            context
+        } else {
+            nil
+        }
+
+        if hadReadyDocument {
+            guard await saveCoordinator.saveNow() else { return false }
+        } else {
+            startupState = .loading
+        }
 
         let newDocument = NovelDocument.newDocument()
         let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
@@ -282,13 +364,26 @@ final class AppState {
             try await repository.save(newDocument, to: newURL)
             newAttachments = try await loadAttachmentsThrowing(for: newURL)
         } catch {
-            print("[FUMINIWA] 新規作品の保存に失敗しました(\(newURL.path)): \(error)")
+            print("[FUMINIWA] 新規作品の保存に失敗しました(\(newURL.lastPathComponent)): \(error)")
+            if !hadReadyDocument {
+                startupState = .recovery(
+                    StartupRecoveryContext(
+                        reason: .cannotCreateDocument,
+                        source: .initialDocument,
+                        documentURL: newURL
+                    )
+                )
+            } else if let previousRecoveryContext {
+                startupState = .recovery(previousRecoveryContext)
+            }
             return false
         }
 
         // 新規作品の書き込み中にも現在作品は編集できる。切り替え直前にもう一度
         // 保存キューを排出し、その編集を現在の保存先へ確実に残す。
-        guard await saveCoordinator.saveNow() else { return false }
+        if hadReadyDocument {
+            guard await saveCoordinator.saveNow() else { return false }
+        }
 
         installDocument(newDocument, at: newURL, attachments: newAttachments)
         return true
@@ -301,6 +396,7 @@ final class AppState {
     /// dirty revision として残り、保存先切り替え後に新 URL へ保存される。
     @discardableResult
     func saveDocument(as url: URL) async -> Bool {
+        guard startupState.isReady else { return false }
         let destinationURL = url.standardizedFileURL
         let sourceURL = documentURL
 
@@ -1261,11 +1357,20 @@ final class AppState {
 
     /// アプリ終了前に、保留中のデバウンス保存をキャンセルして現在状態を保存する。
     func saveBeforeTermination() async -> Bool {
-        await saveCoordinator.saveNow()
+        guard startupState.isReady else { return true }
+        return await saveCoordinator.saveNow()
+    }
+
+    /// Fileメニューの明示保存。自動保存と同じ直列化経路を使う。
+    @discardableResult
+    func saveNow() async -> Bool {
+        guard startupState.isReady else { return false }
+        return await saveCoordinator.saveNow()
     }
 
     /// 保存失敗後に、現在の未保存 revision を明示的に再試行する。
     func retrySave() {
+        guard startupState.isReady else { return }
         flushSaveImmediately()
     }
 
@@ -1273,6 +1378,7 @@ final class AppState {
     /// `saveCoordinator.saveNow()` 自体がデバウンスのキャンセルと dirty 分の
     /// 保存until-cleanを面倒見るため、ここでは呼び出すだけでよい。
     private func flushSaveImmediately() {
+        guard startupState.isReady else { return }
         Task { await self.saveCoordinator.saveNow() }
     }
 
@@ -1328,6 +1434,7 @@ final class AppState {
         selectedFlagID = newDocument.flags.first?.id
         attachments = newAttachments
         saveState = .saved
+        startupState = .ready
         rememberDocumentURL(url)
     }
 
@@ -1361,6 +1468,7 @@ final class AppState {
     }
 
     private func observeResignActive() {
+        guard resignActiveObserver.value == nil else { return }
         resignActiveObserver.value = NotificationCenter.default.addObserver(
             forName: NSApplication.willResignActiveNotification,
             object: nil,

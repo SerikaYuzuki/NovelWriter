@@ -17,7 +17,8 @@ struct AppStateProjectSectionTests {
                 repository: ProjectSectionRepository(),
                 userDefaults: defaults,
                 fileManager: .default
-            )
+            ),
+            initialStartupState: .ready
         )
 
         #expect(state.workspaceSelection.section == .projectInfo)
