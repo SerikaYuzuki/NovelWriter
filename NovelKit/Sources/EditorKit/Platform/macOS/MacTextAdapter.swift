@@ -29,6 +29,7 @@ struct MacTextAdapter: NSViewRepresentable {
     let selectionRequest: EditorSelectionRequest?
     let command: EditorCommand?
     let commandSession: EditorCommandSession
+    let aiSelectionSession: EditorAISelectionSession?
     let configuration: EditorConfiguration
     let onTextChange: (String) -> Void
 
@@ -59,6 +60,9 @@ struct MacTextAdapter: NSViewRepresentable {
 
         textView.string = initialText
         context.coordinator.registerCommandSurface(with: commandSession)
+        // 初回mountだけは、同じsessionに残っている旧surface leaseを意図的に
+        // 引き継ぐ。update経路は別ownerを奪わないclaimに限定する。
+        context.coordinator.activateAISelectionSurfaceOnMount(with: aiSelectionSession)
         commandSession.updateSelectionAvailability(
             textView.selectedRange(),
             from: context.coordinator.commandSurfaceToken
@@ -84,6 +88,7 @@ struct MacTextAdapter: NSViewRepresentable {
 
         guard let textView = context.coordinator.textView else { return }
         context.coordinator.registerCommandSurface(with: commandSession)
+        context.coordinator.registerAISelectionSurface(with: aiSelectionSession)
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
@@ -93,6 +98,7 @@ struct MacTextAdapter: NSViewRepresentable {
             // 同じAdapter実体でも表示本文が変われば別surfaceとして扱い、旧話／旧ノートで
             // 取得した選択snapshotを新しい本文へ適用できないようにする。
             context.coordinator.advanceCommandSurface()
+            context.coordinator.advanceAISelectionSurface()
             context.coordinator.currentChapterKey = chapterKey
             textView.string = initialText
             textView.setSelectedRange(NSRange(location: 0, length: 0))
@@ -119,6 +125,7 @@ struct MacTextAdapter: NSViewRepresentable {
 
     static func dismantleNSView(_: NSScrollView, coordinator: Coordinator) {
         coordinator.unregisterCommandSurface()
+        coordinator.unregisterAISelectionSurface()
         coordinator.unregisterDocumentLifecycle()
     }
 
@@ -180,6 +187,11 @@ struct MacTextAdapter: NSViewRepresentable {
         private weak var documentLifecycleSession: EditorCommandSession?
         private weak var commandSurfaceSession: EditorCommandSession?
         private(set) var commandSurfaceToken = EditorSurfaceToken()
+        let aiSelectionOwnerID = UUID()
+        weak var aiSelectionSurfaceSession: EditorAISelectionSession?
+        var aiSelectionSurfaceToken = EditorSurfaceToken()
+        var aiContentRevision: UInt64 = 0
+        var aiSelectionRevision: UInt64 = 0
         private var isPerformingUndoOrRedo = false
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
@@ -269,6 +281,7 @@ struct MacTextAdapter: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            advanceAIContentRevision()
 
             guard TextOwnershipPolicy.shouldNotifyTextChange(
                 hasMarkedText: textView.hasMarkedText()
@@ -291,6 +304,10 @@ struct MacTextAdapter: NSViewRepresentable {
         /// `unmarkText()` 自体がdelegate通知を発生させないIME実装もあるため、
         /// 確定後の全文はこの境界から明示的にも通知する。
         func prepareForDocumentTransition() -> Bool {
+            // 遷移が中止されて同じ本文へ戻る場合も、遷移前に取得したAI結果を
+            // 再利用しない。AI専用surfaceだけを更新し、notation commandの
+            // owner leaseや本文のUndo履歴には触れない。
+            advanceAISelectionSurface()
             guard let textView else { return true }
             if textView.hasMarkedText() {
                 textView.unmarkText()
@@ -337,7 +354,16 @@ struct MacTextAdapter: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            advanceAISelectionRevision()
             onSelectionChange?(textView.selectedRange(), commandSurfaceToken)
+        }
+
+        private func advanceAIContentRevision() {
+            aiContentRevision &+= 1
+        }
+
+        private func advanceAISelectionRevision() {
+            aiSelectionRevision &+= 1
         }
 
         func undoManager(for _: NSTextView) -> UndoManager? {
