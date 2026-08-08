@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.58
+# ふみにわ 設計書 v0.59
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -40,6 +40,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、AIの純粋domainだけを持つNovelAIをNovelKit内の独立targetとして扱い、署名不要の`swift test`を回せるようにする。NovelAIを追加してもprovider、sidecar、UIが実装済みとは扱わない(D-043)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
+- **AI実験構成**: 一般公開を延期している間は、`FUMINIWA_ENABLE_EXPERIMENTAL_AI`を定義する別app target／scheme `FUMINIWAExperimental`だけに実providerとAI UIを組み込む。通常の`FUMINIWA` app targetはAI adapter、Node／CLI／sidecar resource、AI menu／shortcut／設定をtarget dependencyとcompile条件の段階で含めない。このtarget分離は設計済み・未実装である(D-046)
 
 ## 3. モジュール構成
 
@@ -319,16 +320,18 @@ AI機能のprovider-neutralな純粋domainを担当する。初期targetはFound
 - 最初のtaskは利用者が明示選択した本文範囲の校正案だけとする
 - 固定指示のversionをinstruction IDで表し、`selected_text`を未信頼データとして扱い、その中の命令に従わず選択外の文脈／ファイルを参照しないことを固定する。instructionを変えるときはIDも更新して再確認する
 - instruction、exact selected textからadapterがそのまま渡す単一`applicationPrompt`を決定論的に生成する。responseはversion付きschema ID（初版`proofreading-result-v1`）とexact `applicationResponseSchema`をdomainで固定し、schema変更時もIDを更新して再確認する
-- confirmed requestはpreviewで封印したprovider、purpose、instruction ID、`applicationPrompt`、response schema ID／exact schema、budget、app-provided input文字／UTF-8 byte数だけを持つ。adapterによるprompt／schemaの再構築・追記を許可せず、document session、editor surface、episode、UTF-16範囲、source digest、pathを混ぜない
+- confirmed requestはpreviewで封印したprovider、purpose、instruction ID、`applicationPrompt`、response schema ID／exact schema、budget、app-provided input文字／UTF-8 byte数だけを持つ。adapterによるpromptの再構築／追記と、schemaのcanonical JSON value tree／digestの変更を許可しない。Provider wrapperへのstrict parse／写像とwire上のescape／key順は許容するが、property追加・削除・緩和は禁止し、document session、editor surface、episode、UTF-16範囲、source digest、pathを混ぜない
 - providerの完了eventはraw structured outputとusageをdomain境界へ渡し、exact schemaでstrict decodeした`AIResult`だけを公開する
-- domain所有executorが不変provider descriptorを照合し、同じconfirmed requestのcopy／並行呼出しをone-shot leaseで最初の1回だけ実行する。cancel済みまたはstream破棄が先行したrequestではproviderを開始しない
+- domain所有executorが不変provider descriptorを照合し、同じconfirmed requestのcopy／並行呼出しをone-shot leaseで最初の1回だけ実行権取得可能にする。cancel済みまたはstream破棄が先行したrequestでは実行権取得またはproviderの外部副作用を拒否する
 - provider能力はstreaming、cancellation、usage reportingを必須とする。`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負とし、usageを費用capそのものとして扱わない
 - domainはexecutor呼出しからのwall timeout、app-provided input、raw response、delta、decoded resultの文字／UTF-8 byte、usageを強制する。provider descriptorは不変O(1)とし、実providerのupstream token parameter、wire event／process resource limitはadapter Gateで別途保証する
 - provider adapterはdomain protocolへ適合し、SDK固有型やHTTP／process errorを公開APIへ漏らさない
 - domain自身はretry、fallback、provider選択、永続化、本文適用を行わない
 - 初期のprompt、response、diffはmemory onlyで、`.novelpkg`やsnapshotを変更しない
 
-Editorの選択snapshot、local session／surface identity、stale判定、本文適用は後続のApp / EditorKit bridgeの責務であり、NovelAIから`NSTextView`へ触れない。local identityはconfirmed outboundと別のmemory-only contextへ保持する。Codex Node sidecarとOpenRouterは別adapterとし、AppDependenciesが利用者の明示選択に基づいて一つだけを注入する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする(D-043)。
+EditorKitはopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用を所有し、NovelAIから`NSTextView`へ触れない。App側はdocument session／episode／source digestをconfirmed outboundと別のmemory-only contextへ保持し、送信前／適用前のstale判定へ結合する。Codex Node sidecarとOpenRouterは別adapterとし、AppDependenciesが利用者の明示選択に基づいて一つだけを注入する。
+
+App側にはprovider-neutralな校正operation orchestratorを一つだけ置き、Codex SDK経路とAPI経路で同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示Applyの状態機械とUIを使う。process／HTTP、credential、model設定、保持情報、typed error mappingだけをadapterごとに分離する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする(D-043 / D-046)。
 
 ## 5. App側の設計
 
@@ -337,7 +340,7 @@ Editorの選択snapshot、local session／surface identity、stale判定、本�
 依存関係を組み立てる。例: `NovelpkgRepository`、将来のAIクライアント、設定ストア。
 App本体は具象クラスを直接作りすぎない。
 
-AI adapterを組み立てる将来PRでは、CodexとOpenRouterを別の具象依存として扱い、利用者が選んだ一つだけをprovider-neutral protocolへ注入する。失敗時に別providerを自動生成・自動選択しない。D-043のsidecar GateとD-040の出荷Gateが未完了の間は、production構成へ実providerを登録しない。
+AI adapterを組み立てるPRでは、CodexとOpenRouterを別の具象依存として扱い、利用者が選んだ一つだけをprovider-neutral protocolへ注入する。失敗時に別providerを自動生成・自動選択しない。D-046の個人用Experimental Gateを通した実providerは別app target／scheme `FUMINIWAExperimental`へ登録できるが、D-043の全sidecar／配布Gateと公開Releaseの承認が未完了の間は通常の`FUMINIWA` app targetへprovider target／resource／UIを登録しない。
 
 書き出しはAppStateの保存依存ではなく `ExportPresenter` の実行境界へ注入する。保存パネル確定後に `AppState.document` を値スナップショットとして一度だけ取得し、`NovelExporter` の生成／書込みをMainActor外で実行する。
 
@@ -394,7 +397,7 @@ ContentView
 
 主な操作: Project Sidebar のセクション選択 / Outline での章・話選択 / 章追加 / 章並べ替え / 本文編集 / 検索 / 明示保存 / 自動保存
 
-新UIの画面構成は D-021 / D-024 / D-032 / D-040 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。下部は保存状態・文字数・検索結果だけを示すstatus barとする。未実装AIのplaceholderや開閉導線は置かない。本文執筆では content に章一覧、detail に本文を出す。
+新UIの画面構成は D-021 / D-024 / D-032 / D-040 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。通常Releaseの下部は保存状態・文字数・検索結果だけを示すstatus barとし、未実装AIのplaceholderや開閉導線を置かない。別app target／scheme `FUMINIWAExperimental`では、実providerへ接続済みの選択範囲校正UIだけを同じWorkbenchへ追加できる。本文執筆では content に章一覧、detail に本文を出す。
 
 起動中は編集可能なWorkbenchを生成しない。前回作品またはFinder指定作品を開けなかった場合はRecovery画面で止まり、recent URLとディスク上の作品を保持したまま、再試行・Finder表示・別作品選択・明示的新規作成を提示する(D-039)。
 
@@ -486,13 +489,15 @@ AI機能はアプリ本体から独立したFeatureとして扱う。最初の�
 - 結果は初期版ではmemory onlyとし、`.novelpkg`、snapshot、UserDefaults、通常ログへ保存しない。ただしprovider／SDK側の履歴非保持を意味しない
 - 結果を自動適用せず、局所diffを確認した明示操作だけをEditorKit commandとして1 Undo単位で反映する
 - document session、editor surface、episode、UTF-16範囲、source textのいずれかが変わった結果はstaleとし、現在選択への読み替えや本文検索による再束縛をせず適用を拒否する
-- provider実装順はCodex SDK first、OpenRouter second。両者は独立adapterとし、provider間およびOpenRouter内の自動fallbackを行わない
+- 最初の実providerはCodex SDKとし、続くHTTP API adapterの第一候補をOpenRouterとする。両者は独立adapterとし、provider間およびOpenRouter内の自動fallbackを行わない
+- CodexとOpenRouterは同じprovider-neutralなoperation orchestratorとUIを使う。選択snapshot、preview、確認、cancel、diff、stale、Copy、Applyを共有し、process／HTTP、credential、model設定、保持情報、errorだけをadapterごとに分離する
 - providerはstreaming、cancellation、usage reportingを必須とし、raw structured outputをdomainでstrict decodeする。usageは`outputTokens`必須、`inputTokens`は不明なら省略可能とし、いずれも存在値は非負に限定する。usageは事後報告であり費用上限そのものではない
-- domain executorはprovider descriptor一致とconfirmationのone-shot実行を強制する。取消済み／stream破棄後はproviderを開始せず、再試行は新しいpreviewと確認から始める
-- CodexはSwift-native SDKでないため、stable `0.147.x` TypeScript SDKをexact pinした署名済みNode sidecarを候補とする。request専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、hash固定、OS-level file隔離、cancel後のprocess tree回収、arm64／x86_64、nested signing／notarizationを実証するまで非出荷・UI非表示とする。実repositoryや検査回避用の偽Git repositoryをcwdにしない
+- domain executorはprovider descriptor一致とconfirmationのone-shot実行権を強制する。取消済み／stream破棄後はproviderの実行権または最初の外部副作用を拒否し、再試行は新しいpreviewと確認から始める
+- CodexはSwift-native SDKでないため、provider実装／更新PRごとにreviewしたstable non-alpha TypeScript SDKをsemver rangeなしでexact pinしたNode sidecarを候補とする。2026-08-09の調査baselineは`0.147.0`である。個人用Experimentalではversion／path／hashを検査した開発用Node／CLIを許可するが、lockfile／package integrity、request専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel後のprocess tree回収は緩めない。arm64／x86_64、bundling、nested signing／notarizationは公開Release Gateへ延期する。実repositoryや検査回避用の偽Git repositoryをcwdにしない
+- 利用中Codex SDKにtool完全無効化やupstream output token capがなければ、Experimental UIで未保証と明示し、FUMINIWA側のresource limitを代替の上流capと表現しない。公開Releaseでは未達Gateとして残す
 - 公開TypeScript SDKにephemeral thread optionが確認できないため、「履歴を保存しない」「zero retention」と主張しない
-- provider／serviceの保持期間、SDK／CLI local artifactの場所・範囲・保持期間、providerの料金単位とrequest上限の表示根拠は、出荷UI前の未実装技術Gateとして確認する
-- 未実装の間はpanel、入力欄、状態、設定、ショートカットを出荷UIへ置かない(D-040 / D-043)
+- provider／serviceの保持期間、SDK／CLI local artifactの場所・範囲・保持期間、providerの料金単位とrequest上限の表示根拠は、確認できた値と未保証を区別して送信前に示す
+- 別app target／scheme `FUMINIWAExperimental`だけが実装済みAI UIを表示できる。通常の`FUMINIWA` app targetではprovider target／artifactとpanel、入力欄、状態、設定、ショートカットをbuild時に除外する(D-040 / D-043 / D-046)
 
 request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
@@ -583,16 +588,18 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
-- **AIの現在地**: D-043で選択範囲校正、exact preview、明示確認、memory-only result、stale拒否、provider／sidecar Gateを技術契約化した段階。純粋domainと非出荷PoCは並行可能だが、provider、sidecar、Editor bridge、出荷UIは完成扱いにしない
-- **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
+- **AIの現在地**: D-043で選択範囲校正の安全契約を固定し、D-046で一般公開を延期して最初の実providerをCodex SDK、続くHTTP API adapterの第一候補をOpenRouterとして同一UIへ接続する方針へ変更した。EditorKit selection transactionは実装済みだが、App-level local context、fake provider統合、provider、sidecar、AI UI、Experimental target分離は未実装である
+- **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
 ### Phase 6: AI支援
 
-- **6-0（非出荷基盤）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
-- **6-1（非出荷検証）**: providerへ渡さないlocal session／surface／range snapshotとstale判定、Editorの1 Undo適用bridge、Codex Node sidecarの隔離／署名／取消PoC。D-043の全Gate未達ならproduction targetへ入れない
-- **6-2（最初の出荷機能）**: 実装面の公開Gate後に、選択範囲校正のexact preview、明示確認、cancel、diff、stale表示、明示適用を追加する
-- **6-3（独立adapter）**: OpenRouterをCodexと別PRで追加する。自動fallbackなしをfailure testで保証する
+- **6-0（純粋domain、完了）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
+- **6-1（Editor bridge、部分完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用は実装済み。続いてproviderへ渡さないApp-level document session／episode／source digestとfake provider統合を完了する
+- **6-2（共有Experimental UI）**: provider-neutralなoperation orchestratorと、exact preview、明示確認、cancel、diff、stale、Copy、明示Applyからなる一つのUIをfake providerで接続する。別app target／scheme `FUMINIWAExperimental`だけに出す
+- **6-3（Codex SDK route）**: fixed sidecar protocol、exact SDK／CLI／Node version・path・hash、lockfile／package integrity、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、resource limit、cancel／kill／orphan、artifact inventoryを実証し、最初の実providerとして共有UIへ接続する
+- **6-4（API route）**: OpenRouterをCodexとは独立したnative HTTPS adapterとして追加し、同じUIへ登録する。provider間とOpenRouter routingの自動fallbackなしをfailure testで保証する
+- **6-5（公開Release）**: Package Validator、External Change / Conflict、bundled universal runtime、hash、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常ReleaseへAI target／resource／UIを含めない
 - 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
 
 ### Phase 6.5: PDF出力
@@ -682,11 +689,12 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 - 選択snapshotの取得と本文適用はApp / EditorKit bridgeへ閉じ込め、D-005のテキスト所有権とD-041のsession tokenを迂回しない
 - 結果適用は同じdocument session、editor surface、episode、UTF-16範囲、exact sourceの一致を必要とし、staleな結果を現在選択へ再束縛しない
 - provider adapterはCodexとOpenRouterで分離し、失敗時の自動fallbackを実装しない
+- provider-neutralなoperation orchestratorとUIは一つだけとし、Codex SDKとOpenRouter APIでsnapshot、preview、確認、cancel、diff、stale、Copy、Applyの実装を分岐させない
 - provider adapterはconfirmed prompt／schemaを追記・再構築せず、実送信直前のSDK／HTTP request captureでhidden追加がないことを検証する。fakeはpreviewとsealed payloadの完全一致を検証する
 - providerの不変descriptor照合とconfirmed requestのone-shot leaseはdomain executorで行い、adapter自身にstream生成や比較値の選択をさせない。adapterは外部副作用より先にcancellation handlerを登録する
-- providerはstreaming／cancellation／usage reportingを必須とし、domainがraw structured outputをexact schemaでstrict decodeする。domain budgetに加え、adapterはupstreamのmaximum output token parameterとwire event／process limitを設定・検証する
+- providerはstreaming／cancellation／usage reportingを必須とし、domainがraw structured outputをexact schemaでstrict decodeする。domain budgetに加え、adapterは利用可能なupstream maximum output token parameterとwire event／process limitを設定・検証する。Codex SDKにupstream capがないExperimental実行では未保証とpreviewへ明示し、local limitで代替できたと扱わない
 - prompt、response、diff、provider設定で`.novelpkg` schemaを変更しない
-- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とし、一条件でも未検証なら出荷targetとUIへ含めない
+- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とする。Experimental Gate未達なら個人用AI UIへ含めず、Public Gate未達なら通常Releaseへtarget、resource、UIを含めない
 
 ## 10. AIエージェント向け実装指示の基本方針
 
@@ -710,9 +718,11 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、現段階を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+一般公開を延期したため、直近の実装は **Phase 6-1のApp-level Editor bridge** を完了して個人用Experimental AIを進める。EditorKitのIME確定済みselection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo置換は実装済みである。続いてproviderへ渡さないdocument session／episode／source digestをmemory-only contextへ結合し、送信前と適用前のstale検査をfake providerで固定する。その後はprovider-neutralな共有orchestrator／UI、Codex SDK sidecar／adapter、同一UIのOpenRouter API adapterの順に進める(D-046)。
 
-D-043のAI技術契約と`NovelAI`純粋domain、非出荷の隔離PoCは上記Gateと並行してよい。ただし直近の出荷優先順は変更せず、provider、sidecar、Editor bridge、AI UIが完成または配布可能とは表現しない。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+
+D-043の原稿・送信安全契約は個人利用でも維持する。別app target／scheme `FUMINIWAExperimental`では実処理のあるAI UIを公開Gateより先に追加できるが、通常の`FUMINIWA` app targetはcompile／link／bundle時にproviderと入口を除外する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
@@ -740,6 +750,16 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.59 (2026-08-09)
+
+一般公開を延期し、個人用Experimental AIをCodex SDKから実装して同じUIへOpenRouter API経路を追加する方針へ変更した(D-046、[AI_INTEGRATION.md](AI_INTEGRATION.md))。
+
+- 個人用`FUMINIWAExperimental` app target／schemeと通常の`FUMINIWA` app targetをbuild graphで分離
+- Editor bridge → provider-neutralな共有orchestrator／UI → Codex SDK → OpenRouter APIの順へPhase 6を更新
+- CodexとOpenRouterでsnapshot、exact preview、確認、cancel、diff、stale、Copy、Applyを共有し、自動fallbackを禁止
+- 個人用ではdual architecture、bundling、署名／公証をUI開発の前提から外す一方、Keychain、file隔離、内容非ログ、process回収、artifact inventoryを維持
+- Package ValidatorとExternal Change / Conflictは公開Release Gateとして維持
 
 ### v0.58 (2026-08-08)
 
