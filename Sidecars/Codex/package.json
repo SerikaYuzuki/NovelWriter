@@ -1,0 +1,13 @@
+{
+  "name": "fuminiwa-codex-sidecar",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node --check src/protocol.mjs && node --check src/session.mjs && node --check src/main.mjs",
+    "test": "node --test test/main.test.mjs test/protocol.test.mjs test/session.test.mjs"
+  }
+}

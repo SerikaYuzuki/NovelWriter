@@ -135,6 +135,8 @@ public struct AIConfirmedRequest: Sendable {
             )
         }
         do {
+            var scanner = AIStrictJSONScanner(structuredOutput)
+            try scanner.validate()
             let value = try JSONSerialization.jsonObject(with: Data(structuredOutput.utf8))
             guard let object = value as? [String: Any] else {
                 throw AIError.invalidResponse

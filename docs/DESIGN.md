@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.60
+# ふみにわ 設計書 v0.61
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -328,7 +328,7 @@ AI機能のprovider-neutralな純粋domainを担当する。初期targetはFound
 - confirmed requestはpreviewで封印したprovider、purpose、instruction ID、`applicationPrompt`、response schema ID／exact schema、budget、app-provided input文字／UTF-8 byte数だけを持つ。adapterによるpromptの再構築／追記と、schemaのcanonical JSON value tree／digestの変更を許可しない。Provider wrapperへのstrict parse／写像とwire上のescape／key順は許容するが、property追加・削除・緩和は禁止し、document session、editor surface、episode、UTF-16範囲、source digest、pathを混ぜない
 - providerの完了eventはraw structured outputとusageをdomain境界へ渡し、exact schemaでstrict decodeした`AIResult`だけを公開する
 - domain所有executorが不変provider descriptorを照合し、同じconfirmed requestのcopy／並行呼出しをone-shot leaseで最初の1回だけ実行権取得可能にする。cancel済みまたはstream破棄が先行したrequestでは実行権取得またはproviderの外部副作用を拒否する
-- provider能力はstreaming、cancellation、usage reportingを必須とする。`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負とし、usageを費用capそのものとして扱わない
+- provider能力はstreaming、cancellation、usage reportingを必須とする。streamingは非同期event streamを表し、部分的な置換本文を必須にはしない。`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負とし、usageを費用capそのものとして扱わない
 - domainはexecutor呼出しからのwall timeout、app-provided input、raw response、delta、decoded resultの文字／UTF-8 byte、注意点件数、usageを強制し、細切れdeltaをboundedに集約する。provider descriptorは不変O(1)とし、実providerのupstream token parameter、wire event／process resource limitはadapter Gateで別途保証する
 - provider adapterはdomain protocolへ適合し、SDK固有型やHTTP／process errorを公開APIへ漏らさない
 - domain自身はretry、fallback、provider選択、永続化、本文適用を行わない
@@ -593,7 +593,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
-- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離まで実装済み。実Codex／OpenRouter provider、Node sidecar、Keychain、network、OS-level隔離とprocess lifecycle実証は未実装である(D-043 / D-046)
+- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1のNode／Swift mock protocolまで実装済み。実Codex／OpenRouter provider、SDK／CLI接続、Keychain、network、OS-level隔離とprocess lifecycle実証は未実装である(D-043 / D-046 / D-047)
 - **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
@@ -602,7 +602,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 - **6-0（純粋domain、完了）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
 - **6-1（Editor bridge、完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、providerへ渡さないApp-level document session／episode／source digestを結合。送信前／適用前staleをfakeで固定
 - **6-2（共有Experimental UI、完了）**: provider-neutralなoperation orchestratorと、exact preview、明示確認、cancel、diff、stale、Copy、明示Applyからなる一つのUIをfake providerで接続。別app target／scheme／bundle／保存root `FUMINIWAExperimental`だけに含める
-- **6-3（Codex SDK route）**: fixed sidecar protocol、exact SDK／CLI／Node version・path・hash、lockfile／package integrity、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、resource limit、cancel／kill／orphan、artifact inventoryを実証し、最初の実providerとして共有UIへ接続する
+- **6-3（Codex SDK route、protocol mock完了）**: 本文送信前attestation付きのfixed sidecar protocol v1はNode／Swift mockで固定済み。続いてexact SDK／CLI／Node version・path・hash、lockfile／package integrity、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、resource limit、cancel／kill／orphan、artifact inventoryを実証してから、最初の実providerとして共有UIへ接続する(D-047)
 - **6-4（API route）**: OpenRouterをCodexとは独立したnative HTTPS adapterとして追加し、同じUIへ登録する。provider間とOpenRouter routingの自動fallbackなしをfailure testで保証する
 - **6-5（公開Release）**: Package Validator、External Change / Conflict、bundled universal runtime、hash、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常ReleaseへAI target／resource／UIを含めない
 - 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
@@ -728,7 +728,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar protocol／隔離feasibility** である。pure domain、Editor transaction、App local context、fake provider、共有orchestrator／UI、Experimental target分離は完了した。次は固定framing、exact SDK／CLI／Node identity、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、resource limit、cancel／kill／orphanなし、artifact inventoryをmockと実機で証明してからCodex adapterを同じUIへ接続する。その後に独立したOpenRouter API adapterを追加する(D-046)。
+一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility** である。pure domain、Editor transaction、App local context、fake provider、共有orchestrator／UI、Experimental target分離、本文送信前attestation付きNode／Swift protocol mockは完了した。次はそのprotocolへexact SDK／CLI／Node identity captureを接続し、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、resource limit、cancel／kill／orphanなし、artifact inventoryを合成入力で実証してからCodex adapterを同じUIへ接続する。その後に独立したOpenRouter API adapterを追加する(D-046 / D-047)。
 
 公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
@@ -760,6 +760,16 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.61 (2026-08-09)
+
+Codex sidecar protocol v1をNode／Swift mockで固定した(D-047、[AI_INTEGRATION.md](AI_INTEGRATION.md))。
+
+- 原稿を含まない`hello`／`ready`でruntime identityを照合した後だけconfirmed payloadの`start`を許可
+- UTF-8 LF framing、厳密field、frame／累計byte、JSON depth／surrogate／integer、budget上限を両peerでfail-closedに検証
+- valid start後の`started` → 単一terminal、cancel race、duplicate／late terminal、EOFを決定論的にテスト
+- 実instruction／schemaと合成選択だけをgolden fixtureへ使い、実原稿、credential、path、raw errorを除外
+- protocol mockは実SDK／CLI接続、OS-level隔離、process tree回収、個人用送信Gateの完了を意味しない
 
 ### v0.60 (2026-08-09)
 

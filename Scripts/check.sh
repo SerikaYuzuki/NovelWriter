@@ -10,6 +10,9 @@ swiftformat --lint .
 echo "==> SwiftLint"
 swiftlint --quiet
 
+echo "==> Codex sidecar protocol (Node)"
+./Scripts/check-codex-sidecar.sh
+
 echo "==> swift test (NovelKit)"
 (cd NovelKit && swift test)
 

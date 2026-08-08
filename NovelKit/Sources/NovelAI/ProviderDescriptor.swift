@@ -29,6 +29,7 @@ public enum AIProviderAuthentication: String, Sendable, Hashable {
 
 /// UIや呼び出し側が事前に判定できるprovider能力。
 public enum AIProviderCapability: String, Sendable, Hashable {
+    /// 非同期event streamを提供する能力。部分的な置換本文の到着は保証しない。
     case streaming
     case cancellation
     case usageReporting

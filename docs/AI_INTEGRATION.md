@@ -1,6 +1,6 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離まで実装 / 実Codex・OpenRouter provider、sidecar、Keychain、network、隔離実証は未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1のNode／Swift mockまで実装 / 実Codex・OpenRouter provider、SDK／CLI接続、Keychain、network、隔離実証は未実装**
 
 本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
@@ -82,7 +82,7 @@ providerが受け取れるのは、明示確認済みの`AIApplicationPayload`�
 
 - payload／response、provider descriptor、budget、型付きerrorの値型と、preview／confirmed requestのone-shot capability
 - 未確認draftからversion付きinstruction ID、単一`applicationPrompt`、version付きresponse schema ID、exact `applicationResponseSchema`を含むpreviewを作り、明示確認後にだけprovider／purpose／budget／app-provided input countとともに`AIApplicationPayload`をsealed confirmed requestへ移すoutbound状態遷移
-- provider-neutralな非同期event stream protocolとcancel／terminationの契約。provider descriptorはstreaming、cancellation、usage reportingを必須能力とする
+- provider-neutralな非同期event stream protocolとcancel／terminationの契約。provider descriptorはstreaming、cancellation、usage reportingを必須能力とする。ここでstreamingはstarted／terminalを非同期に受けるevent streamを表し、providerが部分的な置換本文を返すことまでは保証しない
 - adapterの外側で不変O(1)のprovider descriptorを照合し、confirmationのone-shot lease、cancel済み／stream破棄後のprovider実行権または外部副作用の開始拒否、executor呼出しからのwall-clock timeoutを所有するdomain executor
 - raw structured outputをexact schemaでstrict decodeして`AIResult`へ変換し、schema外key、欠損、型違い、不正usageをfail-closedにする完了境界
 - 初版`proofreading-result-v1`は、`replacement: string`、`summary: string`、`warnings: string[]`の3項目をすべて必須とし、追加propertyを拒否するobject schemaとする。schema shapeとは独立したdomainのrequest budgetとして注意点件数上限をconfirmed payloadへ封印し、送信前UIへ表示する。初期値とabsolute maximumはいずれも20件で、超過responseを結果UIへ渡さない
@@ -115,6 +115,8 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 公式のCodex TypeScript SDKはNode.js向けであり、Swift-native SDKではない。[公式README](https://github.com/openai/codex/tree/main/sdk/typescript)はSDKがCodex CLIをspawnし、JSONLで通信する構成とNode.js 18以降を示している。FUMINIWAではSwiftからSDKやCLIを直接呼ぶのではなく、固定protocolを持つNode sidecarを候補とし、公開Releaseではそのruntimeとsidecarをbundleして署名する。
 
+Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)を正とする(D-047)。本文を含まない`hello`／`ready`でruntime identityを検査してからだけ`start`を許可し、valid start後は`started`と単一terminalを返す。v1はtoken deltaを捏造せず、Codex結果本文は完了後だけ共有UIへ渡す。protocol mockの成功を実SDK接続、隔離、orphanなしの証明として扱わない。
+
 2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
 ### 6.0 二段階のGate
@@ -137,7 +139,7 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 - requestごとに、空で新規作成した専用`cwd`と専用`CODEX_HOME`を使い、SDKへ`workingDirectory = request専用empty cwd`と`skipGitRepoCheck: true`を明示する。作品package、実repository、Documents、利用者HOME、通常の`~/.codex`をcwdやadditional directoryにせず、Git検査を通すためだけの偽repositoryを`git init`しない。
 - 親processのenvironmentを継承しない。sidecar起動に必要な`CODEX_HOME`、専用temporary path、locale等を明示allowlistで組み立て、API key以外のtoken、proxy、Git、SSH、cloud credentialを渡さない。
-- API keyはKeychainへ保存し、request時だけ子processの許可された入力として渡す。ファイル、command line、ログ、UserDefaults、crash metadataへ書かない。
+- API keyはKeychainへ保存し、request時だけ子processの許可された入力として渡す。sidecarをkey入りargv／environmentで起動せず、artifactの独立検証とcontent-free `ready`一致後に、native supervisorが所有する別のone-shot anonymous pipeで渡す。pipeは対象process tree以外へ継承せず、delivery後と終了時にcloseする。ファイル、通常JSONL protocol、command line、ログ、UserDefaults、crash metadataへ書かない。
 - 利用中SDKが公開する範囲でtool、shell、web search、skill、MCP、additional directoryをすべて無効化し、校正用の固定input/output schema以外を受け付けない。公開APIで無効化できない能力があるExperimental実行はその事実をpreviewへ表示し、OS-level sandboxの拒否試験を必須にする。無効化できたとは表現せず、公開Release Gateは未達のままとする。
 - empty cwdだけではファイル隔離にならない。D-011によりアプリ本体がApp Sandboxを使わない現状では、子processも通常は利用者権限で他のファイルを読める。採用するOS-level sandboxで許可したcwd／`CODEX_HOME`／必要runtime以外の作品package、HOME、Documents、repositoryを読めないことを、拒否試験とfile-access traceで証明する。
 - 「workspace-write」「approvalしない」「promptで読むなと指示する」だけを隔離の証明として扱わない。
@@ -149,6 +151,7 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 - domainが強制するapp-provided input／raw response／delta／decoded resultの文字・UTF-8 byte上限とwall-clock timeoutに加え、adapterは利用中SDKが上流の`maximumOutputTokens`相当parameterを公開する場合、confirmed budgetから必ず設定する。実送信直前のSDK requestをcaptureするテストで値を確認し、usageの事後検査だけへ依存しない。
 - 利用中Codex SDKがupstream maximum output tokenまたはtool完全無効化を公開していない場合、個人用Experimentalでは「上流capなし／tool能力未保証」を送信前に明示したうえで、OS-level file隔離とFUMINIWA側のwire／event／time／process上限を強制して検証できる。ただしこれを上流token／費用capやtool無効化の代替と表現せず、公開Release Gateは未達のままとする。
 - wire上のinput／output byte数、1 event byte数、event件数、wall-clock timeout、同時request数、process memory／CPU等の上限をadapter／sidecarで固定し、超過時はprocess treeを止め、原稿を変更せず型付きerrorにする。pure domainのbudget実装だけでこのGateを完了扱いにしない。
+- SDK内部JSONLもprotocol外の別境界として検証する。exact allowlist候補のNode／SDK／CLI組合せで、選択本文とstructured outputにliteral U+2028／U+2029を含むrequestをround-tripし、record分断、parse error、本文変化が起きる組合せは送信前にrejectする。外側sidecarのLF scannerだけでSDK内部framingを保護できたと扱わない。
 - request IDで遅延eventを無効化し、cancel済みrequestのresultを別requestや再生成されたsurfaceへ配送しない。
 
 ### 6.4 履歴と診断情報
@@ -198,7 +201,7 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 1. **契約 + 純粋domain**: D-043、本書、provider-neutralなdraft → instruction ID／単一`applicationPrompt`／response schema IDとexact schemaを持つpreview → provider／purpose／budget／input countとともに`AIApplicationPayload`へ封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、domain budget、result／error、event stream protocol、fake、決定論的契約テストだけ。local identity、stale判定、実通信、process、UI、package変更なし。
 2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
 3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
-4. **Codex sidecar protocol**: 固定framing、上限、typed event、cancel、重複terminal拒否をmock SDKで検証し、Node packageとSwift capture fixtureを一致させる。
+4. **Codex sidecar protocol（完了）**: content-free attestation、固定framing、上限、typed event、cancel、重複terminal拒否をmockで検証し、実instruction／schemaと合成本文を使うNode／Swift共通fixtureを一致させた(D-047)。実SDK／CLI、credential、network、process起動は含まない。
 5. **Codex Experimental feasibility**: 固定SDK／Node／Codex、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、cancel／kill／orphan、local artifactの場所・範囲・期間を個人用test harnessで実証する。両architecture、署名、公証はこの段階の前提にしない。
 6. **Codex Experimental adapter**: sidecar fixed protocol、Keychain、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
 7. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
