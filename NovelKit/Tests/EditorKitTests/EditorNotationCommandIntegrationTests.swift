@@ -23,6 +23,7 @@ struct EditorNotationCommandIntegrationTests {
     func replacesUnicodeSelectionWithRubyAndUndo() throws {
         let (textView, coordinator) = makeHarness(initialText: "😀猫")
         let session = EditorCommandSession()
+        coordinator.registerCommandSurface(with: session)
         let selectedRange = NSRange(location: 2, length: 1)
         textView.setSelectedRange(selectedRange)
         let notation = try #require(EditorNotationRules.ruby(parentText: "猫", rubyText: "ねこ"))
@@ -43,6 +44,7 @@ struct EditorNotationCommandIntegrationTests {
         let original = "例えばこの文章"
         let (textView, coordinator) = makeHarness(initialText: original)
         let session = EditorCommandSession()
+        coordinator.registerCommandSurface(with: session)
         textView.setSelectedRange(NSRange(location: 0, length: (original as NSString).length))
         let notation = try #require(EditorNotationRules.bouten(text: original))
 
@@ -60,6 +62,7 @@ struct EditorNotationCommandIntegrationTests {
     func rejectsStaleSelectionSnapshot() throws {
         let (textView, coordinator) = makeHarness(initialText: "猫と犬")
         let session = EditorCommandSession()
+        coordinator.registerCommandSurface(with: session)
         textView.setSelectedRange(NSRange(location: 0, length: 1))
 
         let id = session.requestSelectionSnapshot()

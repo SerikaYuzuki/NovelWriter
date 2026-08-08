@@ -29,6 +29,15 @@ public struct EditorSelectionSnapshot: Sendable, Equatable {
     }
 }
 
+/// 選択transactionを、取得元のEditor surfaceへ拘束する内部token。
+///
+/// AppKit / UIKitの型や永続的な章IDをcommand APIへ持ち込まず、Adapterの実体または
+/// 表示本文が切り替わったことだけを識別する。新しいsurfaceがactiveになると、古い
+/// surfaceで取得した選択snapshotは同じ本文・同じ範囲でも失効する。
+struct EditorSurfaceToken: Sendable, Hashable {
+    let id = UUID()
+}
+
 /// SwiftUIとプラットフォームAdapterの間でEditor commandを配送する一時状態。
 ///
 /// 本文・選択の正はAdapter内のテキストビューに置き、ここにはcommandと結果だけを持つ。
@@ -39,6 +48,7 @@ public final class EditorCommandSession {
     public private(set) var selectionSnapshot: EditorSelectionSnapshot?
     public private(set) var rejectedCommandID: UUID?
     public private(set) var hasNonEmptySelection = false
+    public private(set) var hasActiveEditorSurface = false
 
     /// 作品切替・復元・終了前の境界で、現在のエディタが入力を確定して
     /// 一時的に編集を停止しているか。AppKit の型は公開APIへ出さず、
@@ -52,13 +62,16 @@ public final class EditorCommandSession {
     }
 
     private var documentLifecycleHandler: DocumentLifecycleHandler?
+    private var activeSurfaceToken: EditorSurfaceToken?
+    private var pendingCommandSurfaceToken: EditorSurfaceToken?
+    private var selectionSnapshotSurfaceToken: EditorSurfaceToken?
 
     public init() {}
 
     @discardableResult
     public func requestSelectionSnapshot() -> UUID {
         let id = UUID()
-        guard !isDocumentTransitionPrepared else {
+        guard !isDocumentTransitionPrepared, let activeSurfaceToken else {
             rejectTransaction(id: id)
             return id
         }
@@ -66,18 +79,27 @@ public final class EditorCommandSession {
         // 選択snapshotは一度に一つのtransactionだけが所有する。
         // 前回値を残すと、作品遷移後の置換が古い選択へ結び付く可能性がある。
         selectionSnapshot = nil
+        selectionSnapshotSurfaceToken = nil
         pendingCommand = .requestSelectionSnapshot(id)
+        pendingCommandSurfaceToken = activeSurfaceToken
         rejectedCommandID = nil
         return id
     }
 
     public func replaceSelection(id: UUID, text: String) {
-        guard !isDocumentTransitionPrepared, selectionSnapshot?.id == id else {
+        guard let activeSurfaceToken else {
+            rejectTransaction(id: id)
+            return
+        }
+        let matchesActiveSurface = selectionSnapshot?.id == id &&
+            selectionSnapshotSurfaceToken == activeSurfaceToken
+        guard !isDocumentTransitionPrepared, matchesActiveSurface else {
             rejectTransaction(id: id)
             return
         }
 
         pendingCommand = .replaceSelection(id: id, text: text)
+        pendingCommandSurfaceToken = activeSurfaceToken
         rejectedCommandID = nil
     }
 
@@ -115,40 +137,124 @@ public final class EditorCommandSession {
         }
     }
 
+    /// owner不在時だけ既存Coordinatorのlifecycle handlerを復帰させる。
+    /// 別surfaceのhandlerがactiveな間は、遅延updateからの奪取を許可しない。
+    @discardableResult
+    func claimDocumentLifecycleHandlerIfUnowned(
+        id: UUID,
+        prepare: @escaping () -> Bool,
+        resume: @escaping () -> Void
+    ) -> Bool {
+        if documentLifecycleHandler?.id == id {
+            return true
+        }
+        guard documentLifecycleHandler == nil else { return false }
+        registerDocumentLifecycleHandler(id: id, prepare: prepare, resume: resume)
+        return true
+    }
+
     func unregisterDocumentLifecycleHandler(id: UUID) {
         guard documentLifecycleHandler?.id == id else { return }
         documentLifecycleHandler = nil
     }
 
-    func receiveSelectionSnapshot(_ snapshot: EditorSelectionSnapshot) {
-        guard pendingCommand?.id == snapshot.id else { return }
-        selectionSnapshot = snapshot
-        pendingCommand = nil
+    /// Adapter surfaceをactiveとして登録する。既存surfaceから別tokenへ切り替わる場合は、
+    /// 旧surfaceに属するpending commandと取得済みsnapshotを先に失効させる。
+    func activateEditorSurface(_ token: EditorSurfaceToken) {
+        guard activeSurfaceToken != token else { return }
+        if activeSurfaceToken != nil, let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
+            rejectTransaction(id: transactionID)
+        }
+        activeSurfaceToken = token
+        hasActiveEditorSurface = true
+        hasNonEmptySelection = false
     }
 
-    func completeCommand(id: UUID) {
-        guard pendingCommand?.id == id else { return }
+    /// 既存surfaceが所有していないsessionだけをclaimする。SwiftUIの遅延updateで
+    /// 旧Coordinatorが新surfaceからactive leaseを奪い返すことを防ぐ。
+    @discardableResult
+    func activateEditorSurfaceIfUnowned(_ token: EditorSurfaceToken) -> Bool {
+        if activeSurfaceToken == token {
+            return true
+        }
+        guard activeSurfaceToken == nil else { return false }
+        activeSurfaceToken = token
+        hasActiveEditorSurface = true
+        hasNonEmptySelection = false
+        return true
+    }
+
+    /// 同じCoordinator内の本文切替だけが、所有中のsurface tokenを更新できる。
+    @discardableResult
+    func replaceActiveEditorSurface(
+        from currentToken: EditorSurfaceToken,
+        with nextToken: EditorSurfaceToken
+    ) -> Bool {
+        guard activeSurfaceToken == currentToken else { return false }
+        if let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
+            rejectTransaction(id: transactionID)
+        }
+        activeSurfaceToken = nextToken
+        hasActiveEditorSurface = true
+        hasNonEmptySelection = false
+        return true
+    }
+
+    /// Adapterの破棄時に、そのsurfaceへ拘束されたtransactionを失効させる。
+    /// 新surfaceが既にactiveなら、遅れて届いた旧surfaceの破棄通知は無視する。
+    func deactivateEditorSurface(_ token: EditorSurfaceToken) {
+        guard activeSurfaceToken == token else { return }
+        if let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
+            rejectTransaction(id: transactionID)
+        }
+        activeSurfaceToken = nil
+        hasActiveEditorSurface = false
+        hasNonEmptySelection = false
+    }
+
+    /// commandが現在activeなsurfaceに属する場合だけ、Adapterでの処理を許可する。
+    func canHandleCommand(id: UUID, on surfaceToken: EditorSurfaceToken) -> Bool {
+        activeSurfaceToken == surfaceToken &&
+            pendingCommand?.id == id &&
+            pendingCommandSurfaceToken == surfaceToken
+    }
+
+    func receiveSelectionSnapshot(_ snapshot: EditorSelectionSnapshot, from surfaceToken: EditorSurfaceToken) {
+        guard canHandleCommand(id: snapshot.id, on: surfaceToken) else { return }
+        selectionSnapshot = snapshot
+        selectionSnapshotSurfaceToken = surfaceToken
         pendingCommand = nil
+        pendingCommandSurfaceToken = nil
+    }
+
+    func completeCommand(id: UUID, on surfaceToken: EditorSurfaceToken) {
+        guard canHandleCommand(id: id, on: surfaceToken) else { return }
+        pendingCommand = nil
+        pendingCommandSurfaceToken = nil
         if selectionSnapshot?.id == id {
             selectionSnapshot = nil
+            selectionSnapshotSurfaceToken = nil
         }
     }
 
-    func rejectCommand(id: UUID) {
-        guard pendingCommand?.id == id else { return }
+    func rejectCommand(id: UUID, on surfaceToken: EditorSurfaceToken) {
+        guard canHandleCommand(id: id, on: surfaceToken) else { return }
         rejectTransaction(id: id)
     }
 
-    func updateSelectionAvailability(_ range: NSRange) {
+    func updateSelectionAvailability(_ range: NSRange, from surfaceToken: EditorSurfaceToken) {
+        guard activeSurfaceToken == surfaceToken else { return }
         hasNonEmptySelection = range.length > 0
     }
 
     private func rejectTransaction(id: UUID) {
         if pendingCommand?.id == id {
             pendingCommand = nil
+            pendingCommandSurfaceToken = nil
         }
         if selectionSnapshot?.id == id {
             selectionSnapshot = nil
+            selectionSnapshotSurfaceToken = nil
         }
         rejectedCommandID = id
     }

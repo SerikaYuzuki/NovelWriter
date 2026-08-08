@@ -51,14 +51,18 @@ struct MacTextAdapter: NSViewRepresentable {
         configure(textView)
 
         textView.delegate = context.coordinator
-        context.coordinator.onSelectionChange = { range in
-            commandSession.updateSelectionAvailability(range)
+        context.coordinator.onSelectionChange = { range, surfaceToken in
+            commandSession.updateSelectionAvailability(range, from: surfaceToken)
         }
         context.coordinator.textView = textView
         context.coordinator.currentChapterKey = chapterKey
 
         textView.string = initialText
-        commandSession.updateSelectionAvailability(textView.selectedRange())
+        context.coordinator.registerCommandSurface(with: commandSession)
+        commandSession.updateSelectionAvailability(
+            textView.selectedRange(),
+            from: context.coordinator.commandSurfaceToken
+        )
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
         scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
             NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
@@ -73,22 +77,25 @@ struct MacTextAdapter: NSViewRepresentable {
         // クロージャは SwiftUI の再描画のたびに再生成されるため、常に最新のものへ
         // 差し替える(Coordinator はビューのライフサイクルを通じて生き続ける)。
         context.coordinator.onTextChange = onTextChange
-        context.coordinator.onSelectionChange = { range in
-            commandSession.updateSelectionAvailability(range)
+        context.coordinator.onSelectionChange = { range, surfaceToken in
+            commandSession.updateSelectionAvailability(range, from: surfaceToken)
         }
         context.coordinator.registerDocumentLifecycle(with: commandSession)
 
         guard let textView = context.coordinator.textView else { return }
+        context.coordinator.registerCommandSurface(with: commandSession)
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
         )
 
         if shouldLoadText {
+            // 同じAdapter実体でも表示本文が変われば別surfaceとして扱い、旧話／旧ノートで
+            // 取得した選択snapshotを新しい本文へ適用できないようにする。
+            context.coordinator.advanceCommandSurface()
             context.coordinator.currentChapterKey = chapterKey
             textView.string = initialText
             textView.setSelectedRange(NSRange(location: 0, length: 0))
-            commandSession.updateSelectionAvailability(textView.selectedRange())
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
 
             // 章切り替え: 前章の undo 履歴が新しい章に効いてはならない。
@@ -96,6 +103,10 @@ struct MacTextAdapter: NSViewRepresentable {
         } else {
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView)
         }
+        commandSession.updateSelectionAvailability(
+            textView.selectedRange(),
+            from: context.coordinator.commandSurfaceToken
+        )
 
         if let scrollView = textView.enclosingScrollView {
             scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
@@ -107,6 +118,7 @@ struct MacTextAdapter: NSViewRepresentable {
     }
 
     static func dismantleNSView(_: NSScrollView, coordinator: Coordinator) {
+        coordinator.unregisterCommandSurface()
         coordinator.unregisterDocumentLifecycle()
     }
 
@@ -157,7 +169,7 @@ struct MacTextAdapter: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onTextChange: (String) -> Void
-        var onSelectionChange: ((NSRange) -> Void)?
+        var onSelectionChange: ((NSRange, EditorSurfaceToken) -> Void)?
         weak var textView: NSTextView?
         var currentChapterKey: AnyHashable?
         private var lastAppliedSelectionRequestID: UUID?
@@ -166,6 +178,9 @@ struct MacTextAdapter: NSViewRepresentable {
         private(set) var textStorageAttributeApplicationCount = 0
         private let documentLifecycleRegistrationID = UUID()
         private weak var documentLifecycleSession: EditorCommandSession?
+        private weak var commandSurfaceSession: EditorCommandSession?
+        private(set) var commandSurfaceToken = EditorSurfaceToken()
+        private var isPerformingUndoOrRedo = false
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -187,6 +202,43 @@ struct MacTextAdapter: NSViewRepresentable {
 
         init(onTextChange: @escaping (String) -> Void) {
             self.onTextChange = onTextChange
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerWillChange(_:)),
+                name: .NSUndoManagerWillUndoChange,
+                object: undoManager
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerWillChange(_:)),
+                name: .NSUndoManagerWillRedoChange,
+                object: undoManager
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerDidFinishChange(_:)),
+                name: .NSUndoManagerDidUndoChange,
+                object: undoManager
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerDidFinishChange(_:)),
+                name: .NSUndoManagerDidRedoChange,
+                object: undoManager
+            )
+        }
+
+        @objc private func undoManagerWillChange(_ notification: Notification) {
+            guard notification.object as? UndoManager === undoManager else { return }
+            isPerformingUndoOrRedo = true
+        }
+
+        @objc private func undoManagerDidFinishChange(_ notification: Notification) {
+            guard notification.object as? UndoManager === undoManager else { return }
+            defer { isPerformingUndoOrRedo = false }
+            guard let textView else { return }
+            notifyCommittedText(from: textView)
         }
 
         func textView(
@@ -229,6 +281,8 @@ struct MacTextAdapter: NSViewRepresentable {
             // 内部置換が発生させた再入通知は、外側の変更処理が最終本文を通知する。
             // ここで再度後処理や onTextChange を行うと、IME確定後に中間本文が通知される。
             guard !isApplyingPluginReplacement else { return }
+            // Undo / Redo中のdelegate通知は、操作完了通知で最終本文を一度だけ同期する。
+            guard !isPerformingUndoOrRedo else { return }
 
             synchronizeCommittedText(from: textView)
         }
@@ -251,22 +305,6 @@ struct MacTextAdapter: NSViewRepresentable {
             textView?.isEditable = true
         }
 
-        func registerDocumentLifecycle(with session: EditorCommandSession) {
-            guard documentLifecycleSession !== session else { return }
-            unregisterDocumentLifecycle()
-            documentLifecycleSession = session
-            session.registerDocumentLifecycleHandler(
-                id: documentLifecycleRegistrationID,
-                prepare: { [weak self] in self?.prepareForDocumentTransition() ?? true },
-                resume: { [weak self] in self?.resumeAfterDocumentTransition() }
-            )
-        }
-
-        func unregisterDocumentLifecycle() {
-            documentLifecycleSession?.unregisterDocumentLifecycleHandler(id: documentLifecycleRegistrationID)
-            documentLifecycleSession = nil
-        }
-
         private func synchronizeCommittedText(from textView: NSTextView) {
             guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
 
@@ -279,7 +317,7 @@ struct MacTextAdapter: NSViewRepresentable {
                 // IMEの確定挿入とR5の後処理を別Undo単位にする。これによりUndo一回で
                 // 字下げだけが戻り、確定した鉤括弧は残る。
                 textView.breakUndoCoalescing()
-                applyInternalReplacement(
+                _ = applyInternalReplacement(
                     range: range,
                     text: text,
                     caretOffset: caretOffset,
@@ -287,12 +325,19 @@ struct MacTextAdapter: NSViewRepresentable {
                 )
             }
 
+            notifyCommittedText(from: textView)
+        }
+
+        /// plugin / command / Undoが確定した最終本文だけをモデルへ渡す。
+        /// 通常入力向けのpipelineやR5後処理は再実行しない。
+        func notifyCommittedText(from textView: NSTextView) {
+            guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
             onTextChange(textView.string)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            onSelectionChange?(textView.selectedRange())
+            onSelectionChange?(textView.selectedRange(), commandSurfaceToken)
         }
 
         func undoManager(for _: NSTextView) -> UndoManager? {
@@ -353,25 +398,35 @@ struct MacTextAdapter: NSViewRepresentable {
             caretOffset: Int,
             textView: NSTextView
         ) {
-            applyInternalReplacement(range: range, text: text, caretOffset: caretOffset, textView: textView)
+            guard applyInternalReplacement(
+                range: range,
+                text: text,
+                caretOffset: caretOffset,
+                textView: textView
+            ) else { return }
+            notifyCommittedText(from: textView)
         }
 
+        @discardableResult
         func applyInternalReplacement(
             range: NSRange,
             text: String,
             caretOffset: Int,
             textView: NSTextView
-        ) {
+        ) -> Bool {
+            guard let textStorage = textView.textStorage else { return false }
+
             isApplyingPluginReplacement = true
             defer { isApplyingPluginReplacement = false }
 
-            guard textView.shouldChangeText(in: range, replacementString: text) else { return }
+            guard textView.shouldChangeText(in: range, replacementString: text) else { return false }
 
             let attributedText = NSAttributedString(string: text, attributes: textView.typingAttributes)
-            textView.textStorage?.replaceCharacters(in: range, with: attributedText)
+            textStorage.replaceCharacters(in: range, with: attributedText)
             textView.didChangeText()
 
             textView.setSelectedRange(NSRange(location: range.location + caretOffset, length: 0))
+            return true
         }
 
         /// 本文を流し直さず、表示属性だけを更新する。
@@ -410,6 +465,62 @@ struct MacTextAdapter: NSViewRepresentable {
             )
             textStorageAttributeApplicationCount += 1
         }
+    }
+}
+
+extension MacTextAdapter.Coordinator {
+    func registerDocumentLifecycle(with session: EditorCommandSession) {
+        let prepare = { [weak self] in self?.prepareForDocumentTransition() ?? true }
+        let resume: () -> Void = { [weak self] in
+            self?.resumeAfterDocumentTransition()
+        }
+        if documentLifecycleSession === session {
+            _ = session.claimDocumentLifecycleHandlerIfUnowned(
+                id: documentLifecycleRegistrationID,
+                prepare: prepare,
+                resume: resume
+            )
+            return
+        }
+        unregisterDocumentLifecycle()
+        documentLifecycleSession = session
+        session.registerDocumentLifecycleHandler(
+            id: documentLifecycleRegistrationID,
+            prepare: prepare,
+            resume: resume
+        )
+    }
+
+    func unregisterDocumentLifecycle() {
+        documentLifecycleSession?.unregisterDocumentLifecycleHandler(id: documentLifecycleRegistrationID)
+        documentLifecycleSession = nil
+    }
+
+    func registerCommandSurface(with session: EditorCommandSession) {
+        if commandSurfaceSession === session {
+            _ = session.activateEditorSurfaceIfUnowned(commandSurfaceToken)
+            return
+        }
+        unregisterCommandSurface()
+        commandSurfaceSession = session
+        session.activateEditorSurface(commandSurfaceToken)
+    }
+
+    /// 同じCoordinatorが別の章／話／世界観ノートを表示するとき、surface tokenを
+    /// 更新して旧本文の選択transactionを失効させる。
+    func advanceCommandSurface() {
+        guard let commandSurfaceSession else { return }
+        let nextToken = EditorSurfaceToken()
+        guard commandSurfaceSession.replaceActiveEditorSurface(
+            from: commandSurfaceToken,
+            with: nextToken
+        ) else { return }
+        commandSurfaceToken = nextToken
+    }
+
+    func unregisterCommandSurface() {
+        commandSurfaceSession?.deactivateEditorSurface(commandSurfaceToken)
+        commandSurfaceSession = nil
     }
 }
 
