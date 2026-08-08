@@ -4,7 +4,7 @@
 # リポジトリにはコミットしない(.gitignore を参照)。正は常にこのファイル。
 #
 # 変更したら以下で再生成する:
-#   xcodegen generate
+#   ./Scripts/generate-project.sh
 name: FUMINIWA
 
 options:

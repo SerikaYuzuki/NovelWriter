@@ -55,14 +55,16 @@ Xcode プロジェクト(`FUMINIWA.xcodeproj`)は [XcodeGen](https://github.com/
 
 ```bash
 brew install xcodegen
-xcodegen generate
+./Scripts/generate-project.sh
 open FUMINIWA.xcodeproj
 ```
 
-Xcode 上でスキーム `FUMINIWA` を選択し Run すれば起動する。`project.yml` を変更したときは `xcodegen generate` を再実行してプロジェクトを作り直すこと。
+Xcode 上でスキーム `FUMINIWA` を選択し Run すれば起動する。`project.yml` を変更したときは `./Scripts/generate-project.sh` を再実行してプロジェクトを作り直すこと。
+
+改名前のcheckoutから更新した環境では、Git管理外の旧`NovelWriter.xcodeproj`が残ることがある。生成スクリプトは旧プロジェクトを一時領域へ退避してから`FUMINIWA.xcodeproj`を生成する。Xcodeで旧ウィンドウを開いている場合は閉じ、`FUMINIWA.xcodeproj`／`FUMINIWA`スキームを開き直す。
 
 ## 開発方針
 
-- まずはmacOS版の原稿保全と商業配布Gateを優先する。AIとPDFは公開Gate後に、需要・費用・プライバシーを別々に評価する
+- 今後「商業化」として扱う作業は、実装・機能・UI/UX・原稿保全・性能・アクセシビリティ・ビルド／配布技術に限定する。価格・法務・販促・事業運用は明示依頼がない限り開発ロードマップへ含めない(D-042)
 - Windows版はmacOS側の商業化基盤と並行してW0から開始し、保存schema・fixture・純粋ロジック仕様を共有する。W0はまだ未完了で、W1以降のWinUI実装とWindows固有検証はWindows上で行う
 - Issue / PR を作る際は [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) / [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) を使う
