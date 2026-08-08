@@ -59,14 +59,14 @@ sdk_version, sdk_integrity, cli_version, cli_sha256
   digest of a canonical deployment manifest covering sidecar source, lockfile,
   and the installed SDK/dependency file tree; SRI alone is not evidence of the
   bytes actually loaded at runtime.
-- Checkpoint A mock mode does not define or compute that deployment manifest.
-  A `codex_sdk` implementation remains forbidden until a separate manifest-v1
-  contract fixes the verification root and include/exclude set, regular-file /
-  directory / symlink / hardlink policy, mode handling, canonical UTF-8 relative
-  paths and sort order, length-prefixed records, per-file size and SHA-256,
-  manifest self-exclusion, root digest, loaded-module containment, and the
-  verify-to-import/spawn TOCTOU boundary. Merely hashing `package-lock.json` or
-  the package directory name does not satisfy attestation.
+- [`MANIFEST.md`](MANIFEST.md) defines manifest v1 and Checkpoint B1 implements
+  its canonical Node builder/verifier against synthetic deployment trees. This
+  primitive does not assemble a deployment root and is not the native pre-spawn
+  verifier. A `codex_sdk` implementation remains forbidden until an allowlist
+  packager, independently trusted native verification, complete loaded-module
+  containment, and the verify-to-import/spawn TOCTOU boundary are implemented.
+  Merely hashing `package-lock.json`, trusting the self manifest, or hashing the
+  package directory name does not satisfy attestation.
 - Mock mode uses `null` for artifact hashes and SDK/CLI identity. Codex SDK mode
   requires every identity and hash to be non-null and to exactly match the
   build-time allowlist. A mismatch terminates before `start` is encoded or sent.

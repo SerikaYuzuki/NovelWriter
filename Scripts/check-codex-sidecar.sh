@@ -1,5 +1,5 @@
 #!/bin/bash
-# D-047: Codex sidecar protocolのNode実装を依存installなしで検証する。
+# D-047: Codex sidecar protocolとexact SDKの合成captureを検証する。
 set -euo pipefail
 cd "$(dirname "$0")/../Sidecars/Codex"
 
@@ -14,7 +14,20 @@ if [[ ! "$node_major" =~ ^[0-9]+$ ]] || ((node_major < 18)); then
   exit 1
 fi
 
+if [[ ! -f node_modules/@openai/codex-sdk/package.json ]]; then
+  echo "error: Codex sidecar dependencies are not installed" >&2
+  echo "run: (cd Sidecars/Codex && npm ci --ignore-scripts --no-audit --no-fund)" >&2
+  exit 1
+fi
+
 node --check src/protocol.mjs
 node --check src/session.mjs
 node --check src/main.mjs
-node --test test/main.test.mjs test/protocol.test.mjs test/session.test.mjs
+node --check src/deployment-manifest.mjs
+node --check src/codex-sdk-capture.mjs
+node --test \
+  test/main.test.mjs \
+  test/protocol.test.mjs \
+  test/session.test.mjs \
+  test/deployment-manifest.test.mjs \
+  test/codex-sdk-capture.test.mjs

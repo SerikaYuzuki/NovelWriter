@@ -42,12 +42,13 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 検証はすべてローカルで行う(GitHub Actions などのクラウド CI は使わない → docs/DECISIONS.md D-014)。マージ前に必ず以下を実行する:
 
 ```bash
+(cd Sidecars/Codex && npm ci --ignore-scripts --no-audit --no-fund)
 ./Scripts/check.sh
 ```
 
-内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocolのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト。
+内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト。
 
-必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node sidecarはまだ実Codex SDKへ接続せず、protocol mockを依存installなしで検証する。個別に実行したい場合はスクリプト内のコマンドを参照。
+必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node依存はlockfileどおり`npm ci --ignore-scripts`で展開し、インストールスクリプトを実行させない。現在のSDKテストは合成fake CLIだけを使い、実provider通信、API key、実原稿を使わない。Node 18以降は開発時captureを走らせる条件であり、実provider runtimeのallowlistではない。個別に実行したい場合はスクリプト内のコマンドを参照。
 
 ## アプリの生成と実行
 

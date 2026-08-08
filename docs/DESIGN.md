@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.61
+# ふみにわ 設計書 v0.62
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -593,7 +593,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
-- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1のNode／Swift mock protocolまで実装済み。実Codex／OpenRouter provider、SDK／CLI接続、Keychain、network、OS-level隔離とprocess lifecycle実証は未実装である(D-043 / D-046 / D-047)
+- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1のNode／Swift mock、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0の合成CLI captureまで実装済み。実Codex／OpenRouter provider、実CLI／network、native supervisor／manifest verifier、Keychain、OS-level隔離は未実装である(D-043 / D-046 / D-047)
 - **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
@@ -602,7 +602,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 - **6-0（純粋domain、完了）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
 - **6-1（Editor bridge、完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、providerへ渡さないApp-level document session／episode／source digestを結合。送信前／適用前staleをfakeで固定
 - **6-2（共有Experimental UI、完了）**: provider-neutralなoperation orchestratorと、exact preview、明示確認、cancel、diff、stale、Copy、明示Applyからなる一つのUIをfake providerで接続。別app target／scheme／bundle／保存root `FUMINIWAExperimental`だけに含める
-- **6-3（Codex SDK route、protocol mock完了）**: 本文送信前attestation付きのfixed sidecar protocol v1はNode／Swift mockで固定済み。続いてexact SDK／CLI／Node version・path・hash、lockfile／package integrity、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、resource limit、cancel／kill／orphan、artifact inventoryを実証してから、最初の実providerとして共有UIへ接続する(D-047)
+- **6-3（Codex SDK route、B1合成capture完了）**: 本文送信前attestation付きのfixed sidecar protocol v1、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0を合成CLIだけで駆動するcaptureまで固定済み。captureではliteral U+2028／U+2029を含む同じCLI出力がNode 22.23.1ではexact round-tripしNode 26.4.0ではSDK内部で分断される差、生stderr／error保持、Abortがdirect childへのsignalに留まることも再現した。続いてallowlist packager、native manifest verifier、exact Node allowlist、監査済みlauncher shim、process-group supervisor、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、resource limit、kill／group空、artifact inventoryを合成入力で実証してから、最初の実providerとして共有UIへ接続する(D-047)
 - **6-4（API route）**: OpenRouterをCodexとは独立したnative HTTPS adapterとして追加し、同じUIへ登録する。provider間とOpenRouter routingの自動fallbackなしをfailure testで保証する
 - **6-5（公開Release）**: Package Validator、External Change / Conflict、bundled universal runtime、hash、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常ReleaseへAI target／resource／UIを含めない
 - 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
@@ -728,7 +728,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility** である。pure domain、Editor transaction、App local context、fake provider、共有orchestrator／UI、Experimental target分離、本文送信前attestation付きNode／Swift protocol mockは完了した。次はそのprotocolへexact SDK／CLI／Node identity captureを接続し、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、resource limit、cancel／kill／orphanなし、artifact inventoryを合成入力で実証してからCodex adapterを同じUIへ接続する。その後に独立したOpenRouter API adapterを追加する(D-046 / D-047)。
+一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility** である。pure domain、Editor transaction、App local context、fake provider、共有orchestrator／UI、Experimental target分離、本文送信前attestation付きNode／Swift protocol mock、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0の合成CLI captureは完了した。次はallowlist packager／native manifest verifier、exact Node allowlist、監査済みlauncher shim、process-group supervisorを合成helperで固定し、Node versionで異なるUnicode処理と生error保持をboundedにしたうえで、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、resource limit、cancel／kill／group空、artifact inventoryを実証する。その後にCodex adapterを同じUIへ接続し、続いて独立したOpenRouter API adapterを追加する(D-046 / D-047)。
 
 公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
@@ -760,6 +760,15 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.62 (2026-08-09)
+
+Codex SDK 0.147.0の合成CLI captureとcanonical deployment manifest v1のNode primitiveを追加した(D-047、[AI_INTEGRATION.md](AI_INTEGRATION.md))。
+
+- SDK／CLI packageをlockfileへexact pinし、実provider通信なしでargv、stdin、response schema temporary file、environment、usage、cancel、errorをcapture
+- literal U+2028／U+2029を含む同じCLI出力がNode 22.23.1ではexact round-tripしNode 26.4.0ではSDK内部で分断される差、生stderr／error保持、direct childだけのAbortをNO-GO条件として固定
+- 合成deployment treeのcanonical record、root digest、symlink／hardlink／危険mode／改ざん／resource limit拒否を固定
+- 実配布rootのpackager、native verifier、launcher shim、process-group supervisor、credential、networkは未実装のため、実送信を引き続き禁止
 
 ### v0.61 (2026-08-09)
 

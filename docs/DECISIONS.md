@@ -440,11 +440,11 @@
 - **置き換える範囲**: D-040第6項とD-043第6・10項のうち、Package Validator、External Change / Conflict、両architecture、bundled universal runtime、nested signing／公証を**個人用Experimental UIの前提**とする部分、およびD-043第9項のupstream `maximumOutputTokens`相当parameter必須を**Codex Experimentalに限り未保証表示へ置き換える部分**だけを置き換える。version／lockfile／integrity／実行path／hash固定は個人用でも維持する。OpenRouter等、上流capを提供するadapterでは第9項を維持し、Codexも公開Releaseでは未達Gateとして残す。D-040のProduct TruthとD-043の原稿・送信安全は常時有効であり、その他の置き換えていないD-043条件も維持する。
 - **理由**: 当面は個人利用で実装を先行し、Codex SDKの改善を待ちながら実際の使用感と失敗条件を蓄積する。一方、SDK経路とAPI経路で別々のUIや適用ロジックを作ると、送信確認、stale検査、Undo、原稿保全がproviderごとに乖離する。同一の安全な操作境界へ独立adapterを差し込む構成なら、今の実験速度と将来の公開品質を両立できる。
 - **詳細**: Experimental／Public Gate、共有UI、adapter順、検証項目は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
-- **実装状況 (2026-08-09)**: 別app target／scheme／bundle ID／既定保存root、通常版とのbuild graph分離、App-level local context、fake provider、provider-neutralな共有AI UI、Codex sidecar v1のNode／Swift mock protocolまで実装した。実Codex／OpenRouter adapter、SDK／CLI接続、Keychain、network、隔離実証は未実装であり、本決定のExperimental Gateを完了した意味ではない。
+- **実装状況 (2026-08-09)**: 別app target／scheme／bundle ID／既定保存root、通常版とのbuild graph分離、App-level local context、fake provider、provider-neutralな共有AI UI、Codex sidecar v1のNode／Swift mock protocol、manifest v1のNode純粋primitive、exact SDKの合成CLI captureまで実装した。実Codex／OpenRouter adapter、実CLI／network、native supervisor／manifest verifier、Keychain、OS-level隔離は未実装であり、本決定のExperimental Gateを完了した意味ではない。
 
 ## D-047: Codex sidecar v1は本文送信前attestation付きの一request protocolとする
 
-- **日付**: 2026-08-09 / **状態**: 承認（Node／Swift mock protocolまで実装。実SDK／CLI／networkは未接続）
+- **日付**: 2026-08-09 / **状態**: 承認（Node／Swift mock protocol、manifest primitive、exact SDK合成captureまで実装。実CLI／networkは未接続）
 - **内容**:
   1. SwiftとNode sidecarの境界は、UTF-8・LF終端・厳密なfield集合・frame／累計byte上限を持つJSONL protocol v1とする。CR／CRLF、BOM、invalid UTF-8、partial EOF、duplicate JSON member、未知field／enum／version、非canonical integerをfail-closedで拒否する。
   2. 原稿を含む`start`より前に、content-freeな`hello` → `ready` handshakeを必須にする。`ready`はsidecar、Node、SDK、CLIのversion、architecture、package integrity／hashを返し、Swiftがbuild-time allowlistと完全一致させた場合だけconfirmed payloadを送れる。attestationはartifactの独立した起動前hash検査を置き換えず、別runtimeへの暗黙fallbackを許さない。
@@ -455,3 +455,4 @@
   7. 公開TypeScript SDK 0.147.0はstdout JSONL一行、stderr保持、direct child killに必要なhard cap／process-tree handleを公開しない。このprotocol mockの成功だけで実SDK feasibility、file隔離、process回収、個人用送信Gate、公開Gateの完了を宣言しない。実SDK接続前に、外側supervisor／監査済みwrapperまたは同等のOS hard limitでno-LF record、stderr flood、memory、descendant kill／waitを実証する。credentialはspawn時のargv／environmentへ入れず、artifactの独立検証とcontent-free attestation後に別のone-shot anonymous pipeから渡す。
 - **理由**: version driftを本文送信後に検出する構成や、Swift／JavaScriptの文字数差、SDKのraw error／無制限bufferをprotocol外へ放置すると、exact previewと原稿非漏洩を満たせないため。content-free preflightと小さい一request state machineを先に固定すれば、Codex SDKと将来の更新をprovider-neutral UIから切り離して検証できる。
 - **詳細**: wire形式とstateの正は[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)、AI全体のGateは[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+- **実装状況 (2026-08-09)**: protocol mockに加えて[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)のcanonical Node builder／verifierと、`@openai/codex-sdk` 0.147.0を合成CLIだけで駆動するcaptureを追加した。captureはexact prompt／schema入力を確認する一方、literal U+2028／U+2029を含む同じCLI出力がNode 22.23.1ではexact round-tripしNode 26.4.0ではSDK内部で分断されること、生stderr／errorがSDK例外へ入ること、Abortがdirect childへのsignalに留まることも固定した。packager、native verifier、exact Node allowlist、launcher shim、process supervisor、実CLI／credential／networkは未実装であり、`codex_sdk` runtime modeは引き続き禁止する。

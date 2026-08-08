@@ -1,6 +1,6 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1のNode／Swift mockまで実装 / 実Codex・OpenRouter provider、SDK／CLI接続、Keychain、network、隔離実証は未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1のNode純粋primitive、exact SDKの合成CLI captureまで実装 / 実Codex・OpenRouter provider、実CLI／network、native supervisor／manifest verifier、Keychain、OS隔離は未実装**
 
 本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
@@ -117,7 +117,9 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)を正とする(D-047)。本文を含まない`hello`／`ready`でruntime identityを検査してからだけ`start`を許可し、valid start後は`started`と単一terminalを返す。v1はtoken deltaを捏造せず、Codex結果本文は完了後だけ共有UIへ渡す。protocol mockの成功を実SDK接続、隔離、orphanなしの証明として扱わない。
 
-2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
+canonical deployment manifest v1の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする。現在は合成treeのcanonical bytes／root digestと改ざん拒否をNodeで固定した段階であり、実配布rootのallowlist copy、nativeの起動前検証、完全なloaded-module inventory、verify-to-import競合は未実装である。
+
+2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。Checkpoint B1で`@openai/codex-sdk` `0.147.0`と対応CLI packageをlockfileへexact pinし、実通信しない合成CLIだけでargv／stdin／schema temporary file／environment／usage／cancel／errorをcaptureした。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
 ### 6.0 二段階のGate
 
@@ -152,6 +154,8 @@ Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](..
 - 利用中Codex SDKがupstream maximum output tokenまたはtool完全無効化を公開していない場合、個人用Experimentalでは「上流capなし／tool能力未保証」を送信前に明示したうえで、OS-level file隔離とFUMINIWA側のwire／event／time／process上限を強制して検証できる。ただしこれを上流token／費用capやtool無効化の代替と表現せず、公開Release Gateは未達のままとする。
 - wire上のinput／output byte数、1 event byte数、event件数、wall-clock timeout、同時request数、process memory／CPU等の上限をadapter／sidecarで固定し、超過時はprocess treeを止め、原稿を変更せず型付きerrorにする。pure domainのbudget実装だけでこのGateを完了扱いにしない。
 - SDK内部JSONLもprotocol外の別境界として検証する。exact allowlist候補のNode／SDK／CLI組合せで、選択本文とstructured outputにliteral U+2028／U+2029を含むrequestをround-tripし、record分断、parse error、本文変化が起きる組合せは送信前にrejectする。外側sidecarのLF scannerだけでSDK内部framingを保護できたと扱わない。
+- 0.147.0の合成captureでは、CLI stdout内にliteral U+2028／U+2029を含む同じvalid JSONLが、Node 22.23.1ではexact round-tripし、Node 26.4.0ではSDK内部`readline`で分断されparse failureになる差を再現した。入力stdinは両方でbyte一致する。したがって`Node >= 18`だけをruntime条件にせず、exact Node version／path／hashとUnicode probeの結果をattestation allowlistへ固定する。Node 26.4.0の現組合せはNO-GOであり、互換Nodeまたは監査済みlauncher shimを選んでも他のprocess／隔離Gateは残る。
+- 同じcaptureで、nonzero exitのstderr、`turn.failed`のmessage、malformed stdoutの生値がSDK errorへ含まれることを確認した。adapterはそのerrorをUI／domain／logへ渡さず固定codeへredactする。`AbortSignal`の実証もdirect childへの`SIGTERM`到達までであり、exit待ち、SIGKILL、descendant回収の証明ではない。
 - request IDで遅延eventを無効化し、cancel済みrequestのresultを別requestや再生成されたsurfaceへ配送しない。
 
 ### 6.4 履歴と診断情報
@@ -202,10 +206,11 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
 3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
 4. **Codex sidecar protocol（完了）**: content-free attestation、固定framing、上限、typed event、cancel、重複terminal拒否をmockで検証し、実instruction／schemaと合成本文を使うNode／Swift共通fixtureを一致させた(D-047)。実SDK／CLI、credential、network、process起動は含まない。
-5. **Codex Experimental feasibility**: 固定SDK／Node／Codex、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、cancel／kill／orphan、local artifactの場所・範囲・期間を個人用test harnessで実証する。両architecture、署名、公証はこの段階の前提にしない。
-6. **Codex Experimental adapter**: sidecar fixed protocol、Keychain、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
-7. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
-8. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
+5. **Manifest primitive + exact SDK capture（B1完了）**: canonical deployment manifest v1のNode builder／verifierを合成treeで固定し、SDK／CLI package 0.147.0をexact pinして合成CLIだけでSDK argv／stdin／schema／environment／usage／cancel／errorをcaptureした。Node 22.23.1と26.4.0のUnicode出力差も固定した。packager、native verifier、実CLI、process supervisor、networkは含まず、exact Node allowlistも未決定のため実送信はNO-GOのままとする。
+6. **Codex Experimental feasibility**: 監査済みlauncher shimとnative supervisorでSDK内部framing、stderr、process group、timeout／kill／回収をboundedにし、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
+7. **Codex Experimental adapter**: sidecar fixed protocol、Keychain、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
+8. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
+9. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
 
 D-046により個人用Experimental AIをPackage Validator GateとExternal Change / Conflict Gateに先行できる。一方、両Gateは公開Releaseの優先事項として維持し、Experimentalで通った機能、UI、実通信をそのまま公開可能とは表現しない。
 
