@@ -1,8 +1,8 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1のNode純粋primitive、exact SDKの合成CLI captureまで実装 / 実Codex・OpenRouter provider、実CLI／network、native supervisor／manifest verifier、Keychain、OS隔離は未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1のNode純粋primitive、exact SDKの合成CLI capture、合成helper用Darwin native process supervisorまで実装 / 実Codex・OpenRouter provider、実CLI／network、native manifest verifier、Keychain、OS隔離、parent death後の回収は未実装**
 
-本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
+本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
 この契約を文書化したことや純粋domainを追加したことは、AI機能、Codex接続、OpenRouter接続、履歴非保持、配布可能性の完成を意味しない。
 
@@ -121,6 +121,8 @@ canonical deployment manifest v1の正は[`Sidecars/Codex/MANIFEST.md`](../Sidec
 
 2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。Checkpoint B1で`@openai/codex-sdk` `0.147.0`と対応CLI packageをlockfileへexact pinし、実通信しない合成CLIだけでargv／stdin／schema temporary file／environment／usage／cancel／errorをcaptureした。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
+Darwin native process supervisorの正は[`Sidecars/Codex/SUPERVISOR.md`](../Sidecars/Codex/SUPERVISOR.md)とする(D-048)。Checkpoint B2では、canonicalなabsolute executable／cwdと明示environmentを`posix_spawn`し、childを新process group leaderにするExperimental-only primitiveを、合成shell helperだけで検証した。stdin／stdoutは512 KiB、stderrは16 KiBを上限とし、stderr内容をresultへ保持しない。timeout／cancel／cap failureはfirst-winsでclaimし、同一groupへTERM→KILL、direct childだけを`waitpid`でreap、reap後の`ESRCH`をboundedに観測する。実SDK／CLI、network、credential、native manifest verifier、OS-level sandboxは使っておらず、実送信はNO-GOのままである。
+
 ### 6.0 二段階のGate
 
 - **個人用Experimental Gate**: Editor bridgeの誤適用防止、exact SDK／CLI／Node version・実行path・cryptographic hashとlockfile／package integrity、request専用cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file-read拒否、本文等を残さない診断、cancel／timeout／終了時のprocess tree回収、local artifact inventory、wire／event／time／process上限を実機で通す。これを満たした実処理だけを`FUMINIWA_ENABLE_EXPERIMENTAL_AI`付き`FUMINIWAExperimental` app targetの同一AI UIへ出してよい。
@@ -149,13 +151,17 @@ canonical deployment manifest v1の正は[`Sidecars/Codex/MANIFEST.md`](../Sidec
 ### 6.3 Lifecycle、取消、resource limit
 
 - SDKの`AbortSignal`へcancelを伝播し、短いgrace period後にsidecarとそこからspawnしたCodex process treeを終了する。
-- 正常終了、error、timeout、cancel、アプリ終了のすべてでprocess treeとpipeを回収し、orphanが残らないことをPID追跡付き統合テストで確認する。
+- 正常終了、error、timeout、cancel、通常のアプリ終了では、監査済みlauncher／supervisorが所有するprocess groupへsignalし、direct childのreapとpost-reap group空観測をPID追跡付き統合テストで確認する。macOSの親はgrandchildを`waitpid`／reapできないため、同一group descendantは終了観測までに限定する。appの`SIGKILL`／crash／power loss、`setsid`／`setpgid`等のgroup脱出はsame-process supervisorでは回収できず、独立helperまたは同等のOS lifecycle／containment Gateなしに一般的なorphan-freeを主張しない。
 - domainが強制するapp-provided input／raw response／delta／decoded resultの文字・UTF-8 byte上限とwall-clock timeoutに加え、adapterは利用中SDKが上流の`maximumOutputTokens`相当parameterを公開する場合、confirmed budgetから必ず設定する。実送信直前のSDK requestをcaptureするテストで値を確認し、usageの事後検査だけへ依存しない。
 - 利用中Codex SDKがupstream maximum output tokenまたはtool完全無効化を公開していない場合、個人用Experimentalでは「上流capなし／tool能力未保証」を送信前に明示したうえで、OS-level file隔離とFUMINIWA側のwire／event／time／process上限を強制して検証できる。ただしこれを上流token／費用capやtool無効化の代替と表現せず、公開Release Gateは未達のままとする。
 - wire上のinput／output byte数、1 event byte数、event件数、wall-clock timeout、同時request数、process memory／CPU等の上限をadapter／sidecarで固定し、超過時はprocess treeを止め、原稿を変更せず型付きerrorにする。pure domainのbudget実装だけでこのGateを完了扱いにしない。
 - SDK内部JSONLもprotocol外の別境界として検証する。exact allowlist候補のNode／SDK／CLI組合せで、選択本文とstructured outputにliteral U+2028／U+2029を含むrequestをround-tripし、record分断、parse error、本文変化が起きる組合せは送信前にrejectする。外側sidecarのLF scannerだけでSDK内部framingを保護できたと扱わない。
 - 0.147.0の合成captureでは、CLI stdout内にliteral U+2028／U+2029を含む同じvalid JSONLが、Node 22.23.1ではexact round-tripし、Node 26.4.0ではSDK内部`readline`で分断されparse failureになる差を再現した。入力stdinは両方でbyte一致する。したがって`Node >= 18`だけをruntime条件にせず、exact Node version／path／hashとUnicode probeの結果をattestation allowlistへ固定する。Node 26.4.0の現組合せはNO-GOであり、互換Nodeまたは監査済みlauncher shimを選んでも他のprocess／隔離Gateは残る。
 - 同じcaptureで、nonzero exitのstderr、`turn.failed`のmessage、malformed stdoutの生値がSDK errorへ含まれることを確認した。adapterはそのerrorをUI／domain／logへ渡さず固定codeへredactする。`AbortSignal`の実証もdirect childへの`SIGTERM`到達までであり、exit待ち、SIGKILL、descendant回収の証明ではない。
+- B2 supervisorはrequest timeoutをterminal claimのabsolute deadlineとし、その後も別のbounded deadlineでTERM／KILL、direct child回収、pipe drainを続ける。したがって`run`総wallはrequest timeoutを超え得る。leaderの自然終了後にlive descendantが観測された場合はcleanup後も`lingeringDescendant` failureとし、成功へ戻さない。
+- B2ではstdin／stdoutを各512 KiB、stderrを16 KiBに固定した。stderrは内容をresult／通常ログへ保持せずbyte countだけを返し、超過errorの`actualAtLeast`は観測した下限とする。secure erase、childのmemory／CPU／process件数、SDK内部record、upstream token／費用上限をこれで保証しない。
+- `pipe2(O_CLOEXEC)`はmacOS 27のDarwin runtime symbolを`dlopen`／`dlsym`でprobeし、存在しない場合は`pipe2Unavailable`でfail-closedにする。legacy `pipe`への暗黙fallbackは行わず、`POSIX_SPAWN_CLOEXEC_DEFAULT`と明示的なstandard stream mappingを併用する。このmacOS 27合成実測を、他のOS version／architectureまたは配布runtimeの保証へ一般化しない。
+- B2はdirect childの終了を`waitid(... WNOWAIT)`でanchorとして保持し、同一groupへsignalしてからdirect childだけを`waitpid`でreapし、post-reap `kill(-pgid, 0)`の`ESRCH`をboundedに観測する。anchor中の`EPERM`だけをgroup emptyとせずreap後に再検査し、reap後の非`ESRCH` groupへはPGID reuseによる誤signalを避けるため再signalしない。`ESRCH`は観測時点の証拠であり、grandchild reapやparent death cleanupの証明ではない。
 - request IDで遅延eventを無効化し、cancel済みrequestのresultを別requestや再生成されたsurfaceへ配送しない。
 
 ### 6.4 履歴と診断情報
@@ -207,10 +213,11 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
 4. **Codex sidecar protocol（完了）**: content-free attestation、固定framing、上限、typed event、cancel、重複terminal拒否をmockで検証し、実instruction／schemaと合成本文を使うNode／Swift共通fixtureを一致させた(D-047)。実SDK／CLI、credential、network、process起動は含まない。
 5. **Manifest primitive + exact SDK capture（B1完了）**: canonical deployment manifest v1のNode builder／verifierを合成treeで固定し、SDK／CLI package 0.147.0をexact pinして合成CLIだけでSDK argv／stdin／schema／environment／usage／cancel／errorをcaptureした。Node 22.23.1と26.4.0のUnicode出力差も固定した。packager、native verifier、実CLI、process supervisor、networkは含まず、exact Node allowlistも未決定のため実送信はNO-GOのままとする。
-6. **Codex Experimental feasibility**: 監査済みlauncher shimとnative supervisorでSDK内部framing、stderr、process group、timeout／kill／回収をboundedにし、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
-7. **Codex Experimental adapter**: sidecar fixed protocol、Keychain、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
-8. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
-9. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
+6. **Darwin native supervisor（B2完了）**: `posix_spawn`／new process group、3 pipe同時処理、stdin／stdout／stderr cap、first-wins cancel／timeout／failure、TERM→KILL、`waitid(WNOWAIT)` anchor、direct child `waitpid`、post-reap `ESRCH`を合成helperで固定した(D-048)。macOS 27では`pipe2` runtime symbolをprobeし、stderr内容を保持しない。実SDK／CLI、network、credential、manifest verifier、OS sandbox、parent death後の回収は含まない。
+7. **Codex Experimental isolation feasibility**: allowlist packager／native manifest verifier、exact Node runtime、監査済みlauncherとparent-death境界を追加し、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
+8. **Codex Experimental adapter**: sidecar fixed protocol、Keychain one-shot credential pipe、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
+9. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
+10. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
 
 D-046により個人用Experimental AIをPackage Validator GateとExternal Change / Conflict Gateに先行できる。一方、両Gateは公開Releaseの優先事項として維持し、Experimentalで通った機能、UI、実通信をそのまま公開可能とは表現しない。
 
@@ -229,6 +236,7 @@ D-046により個人用Experimental AIをPackage Validator GateとExternal Chang
 - CodexとOpenRouterが同じEditor snapshot／preview／diff／stale／Apply実装を通り、providerを変えても本文適用ロジックが分岐しない
 - prompt、本文、response、API key、pathがログと永続設定へ残らない
 - Experimental buildはSDK／CLI／Nodeの実行version、path、hashとlockfile／package integrityのdriftを送信前に拒否し、専用cwd／`CODEX_HOME`、file-read拒否、process tree回収を実機で再現できる
+- process lifecycleの受け入れ証拠は、direct childのreap、同一group descendantへのsignalとpost-reap `ESRCH`観測、group脱出拒否、parent death後の回収を分けて記録する。合成supervisor testだけでgrandchild reapまたは一般的なorphan-freeを宣言しない
 - 通常ReleaseのArchiveにAI menu／shortcut／設定、Codex／OpenRouter target、Node／CLI／sidecar artifactが存在せず、network／process起動経路へ到達できない
 - Codex sidecarを出荷する場合は6章の全Gateをarm64／x86_64、Archive済みnotarized appで再現できる
 - provider／service側の保持期間／学習利用、local SDK／CLI artifactの場所・範囲・保持期間を未確認のまま「履歴なし」「学習なし」「zero retention」「localに残らない」と表示しない

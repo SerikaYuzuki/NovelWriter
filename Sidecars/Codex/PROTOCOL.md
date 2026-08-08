@@ -208,12 +208,15 @@ awaitingHello -> attested -> running -> terminal
   exits. Provider exit without a terminal result becomes
   `failed/provider_unavailable`.
 - The production host must enforce a bounded grace period followed by
-  process-group termination and wait/reap of all descendants. Public Codex SDK
-  0.147.0 only kills its direct child, retains stderr without a hard cap, and
-  parses unbounded JSONL lines; therefore this mock transport alone does not
-  satisfy the Codex runtime feasibility or orphan-free release Gate. SDK wiring
-  remains forbidden until an audited supervisor/wrapper or equivalent OS hard
-  limits prove those properties.
+  process-group termination, direct-child wait/reap, and a bounded post-reap
+  group-state check. A macOS parent cannot wait/reap grandchildren, and a
+  same-process supervisor cannot clean up after parent SIGKILL/crash or members
+  that escape the group. Public Codex SDK 0.147.0 only signals its direct child,
+  retains stderr without a hard cap, and parses unbounded JSONL lines;
+  therefore this mock transport alone does not satisfy the Codex runtime
+  feasibility or orphan-free release Gate. SDK wiring remains forbidden until
+  an audited supervisor/wrapper and OS containment prove each narrower
+  lifecycle property. The native B2 boundary is specified in SUPERVISOR.md.
 
 The only model-visible values that FUMINIWA or the sidecar may derive from
 `start` are the exact confirmed application prompt, parsed exact response

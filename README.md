@@ -46,7 +46,7 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 ./Scripts/check.sh
 ```
 
-内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト。
+内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト(合成helperだけを使うDarwin process supervisorを含む)。
 
 必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node依存はlockfileどおり`npm ci --ignore-scripts`で展開し、インストールスクリプトを実行させない。現在のSDKテストは合成fake CLIだけを使い、実provider通信、API key、実原稿を使わない。Node 18以降は開発時captureを走らせる条件であり、実provider runtimeのallowlistではない。個別に実行したい場合はスクリプト内のコマンドを参照。
 
