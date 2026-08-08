@@ -119,7 +119,7 @@
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
 - [ ] セマンティックカラー以外の色は、本文書のトークン(canvas / surface / surfaceRaised / border / accent / warning / success / danger / キャラ10色)だけか
-- [ ] システムのLight／Dark両方でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。アプリ全体の外観を固定していないか
+- [ ] システム追従／明示Light／明示Darkの各設定でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。利用者の選択なしにアプリ全体の外観を固定していないか
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
 - [ ] Project Sidebar / Outline / Editor / status bar の幅と優先順位が崩れていないか
