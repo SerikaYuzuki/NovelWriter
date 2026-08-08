@@ -145,6 +145,15 @@ struct FuminiwaApp: App {
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
 
+                Button("章タイトルを編集…") {
+                    NotificationCenter.default.post(name: .presentChapterTitleEditor, object: nil)
+                }
+                .disabled(
+                    !appState.permitsDocumentInteraction ||
+                        appState.workspaceSelection.section != .structure ||
+                        appState.selectedChapter == nil
+                )
+
                 Button("話メモ") {
                     NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
                 }

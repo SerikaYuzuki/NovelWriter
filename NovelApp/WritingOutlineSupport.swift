@@ -232,7 +232,7 @@ struct ChapterOutlineContextMenu: View {
     let onDelete: () -> Void
 
     var body: some View {
-        Button("章タイトルを編集", systemImage: "pencil", action: onRename)
+        Button("章タイトルを編集…", systemImage: "pencil", action: onRename)
             .disabled(!isCurrentSession)
 
         Button {

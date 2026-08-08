@@ -252,6 +252,16 @@ struct OutlineView: View {
         .onChange(of: normalizedSearchQuery) {
             revealSearchMatches()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .presentChapterTitleEditor)) { _ in
+            guard appState.permitsDocumentInteraction,
+                  let chapter = appState.selectedChapter else { return }
+            beginEditingTitle(
+                for: SessionBoundValue(
+                    value: chapter,
+                    session: appState.documentSessionToken
+                )
+            )
+        }
     }
 
     private var filteredChapters: [Chapter] {
