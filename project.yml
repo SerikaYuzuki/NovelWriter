@@ -25,6 +25,13 @@ schemes:
     test:
       targets:
         - name: NovelAppTests
+  FUMINIWAExperimental:
+    build:
+      targets:
+        FUMINIWAExperimental: all
+    test:
+      targets:
+        - name: FUMINIWAExperimentalTests
 
 targets:
   NovelApp:
@@ -77,4 +84,57 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  FUMINIWAExperimental:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: NovelApp
+        excludes:
+          - Info.plist
+          - en.lproj/InfoPlist.strings
+          - ja.lproj/InfoPlist.strings
+      - path: NovelAppExperimental
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelAI
+    settings:
+      base:
+        PRODUCT_NAME: FUMINIWAExperimental
+        PRODUCT_MODULE_NAME: FUMINIWAExperimental
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.experimental
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: NovelAppExperimental/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+  FUMINIWAExperimentalTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: NovelAppExperimentalTests
+    dependencies:
+      - target: FUMINIWAExperimental
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWAExperimental.app/Contents/MacOS/FUMINIWAExperimental"
         BUNDLE_LOADER: "$(TEST_HOST)"

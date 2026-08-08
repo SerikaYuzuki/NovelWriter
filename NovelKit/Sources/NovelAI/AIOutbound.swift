@@ -88,6 +88,7 @@ public struct AIConfirmedRequest: Sendable {
 
     /// Provider resultがrequestのoutput budget内かを検証する。
     public func validating(_ result: AIResult) throws -> AIResult {
+        try validateWarningCount(result.warnings.count)
         let actual = result.outputCharacterCount
         guard actual <= outbound.budget.maximumOutputCharacters else {
             throw AIError.outputCharacterLimitExceeded(
@@ -150,6 +151,7 @@ public struct AIConfirmedRequest: Sendable {
             guard let warningValues = object["warnings"] as? [Any] else {
                 throw AIError.invalidResponse
             }
+            try validateWarningCount(warningValues.count)
             guard warningValues.allSatisfy({ $0 is String }) else {
                 throw AIError.invalidResponse
             }
@@ -164,6 +166,13 @@ public struct AIConfirmedRequest: Sendable {
             throw error
         } catch {
             throw AIError.invalidResponse
+        }
+    }
+
+    private func validateWarningCount(_ actual: Int) throws {
+        let limit = outbound.budget.maximumWarnings
+        guard actual <= limit else {
+            throw AIError.outputWarningCountLimitExceeded(limit: limit, actual: actual)
         }
     }
 }

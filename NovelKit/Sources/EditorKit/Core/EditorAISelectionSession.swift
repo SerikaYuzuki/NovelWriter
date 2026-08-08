@@ -174,8 +174,20 @@ public final class EditorAISelectionSession {
 
     private let identity = UUID()
     private var activeSurface: ActiveSurface?
+    private var transactionRevisionChangeHandler: (@MainActor () -> Void)?
 
     public init() {}
+
+    /// active editorの本文または選択revisionが進んだことをApp層へ通知する。
+    ///
+    /// 通知は現在のtransactionを別の本文や選択へ読み替えるものではない。呼び出し側は
+    /// ``validate(_:)``でexact identityを再検査し、送信前または適用前の表示状態へ反映する。
+    /// Platform固有のtext viewやrangeは公開しない。
+    public func setTransactionRevisionChangeHandler(
+        _ handler: (@MainActor () -> Void)?
+    ) {
+        transactionRevisionChangeHandler = handler
+    }
 
     /// 現在のactive editorから、空でないIME確定済み選択範囲を取得する。
     public func captureSelection() -> Result<EditorAISelectionTransaction, EditorAISelectionError> {
@@ -291,5 +303,12 @@ public final class EditorAISelectionSession {
         guard activeSurface?.handler.ownerID == ownerID,
               activeSurface?.handler.surfaceToken == token else { return }
         activeSurface = nil
+    }
+
+    /// 遅れて届いた旧surfaceのdelegate eventをApp層へ転送しない。
+    func activeTransactionRevisionDidChange(ownerID: UUID, token: EditorSurfaceToken) {
+        guard activeSurface?.handler.ownerID == ownerID,
+              activeSurface?.handler.surfaceToken == token else { return }
+        transactionRevisionChangeHandler?()
     }
 }

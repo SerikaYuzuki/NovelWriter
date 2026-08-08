@@ -16,9 +16,11 @@ public final class AIProviderEventContinuation: @unchecked Sendable {
     private let continuation: AsyncStream<AIProviderEvent>.Continuation
     private let deadline: ContinuousClock.Instant
     private let lock = NSLock()
+    private static let replacementDeltaFlushUTF8ByteThreshold = 256
     private var state = State.awaitingStart
     private var deltaCharacterCount = 0
     private var deltaUTF8ByteCount = 0
+    private var pendingReplacementDelta = ""
     private var upstreamCancellationHandler: (@Sendable () -> Void)?
     private var hasRegisteredUpstreamCancellationHandler = false
     private var upstreamCancellationRequested = false
@@ -78,7 +80,10 @@ public extension AIProviderEventContinuation {
         case let .success(counts):
             deltaCharacterCount = counts.characters
             deltaUTF8ByteCount = counts.utf8Bytes
-            continuation.yield(.replacementDelta(delta))
+            pendingReplacementDelta.append(delta)
+            if pendingReplacementDelta.utf8.count >= Self.replacementDeltaFlushUTF8ByteThreshold {
+                flushPendingReplacementDeltaLocked()
+            }
             lock.unlock()
         case let .failure(error):
             let cancellationHandler = finishLocked(
@@ -117,6 +122,7 @@ public extension AIProviderEventContinuation {
             if deadlineResult.exceeded {
                 cancellationHandler = deadlineResult.cancellationHandler
             } else {
+                flushPendingReplacementDeltaLocked()
                 cancellationHandler = finishLocked(
                     with: .completed(validatedResult),
                     cancelUpstream: false
@@ -201,6 +207,7 @@ extension AIProviderEventContinuation {
         state = .consumerCancelled
         timeoutTask?.cancel()
         timeoutTask = nil
+        pendingReplacementDelta = ""
         let handler = upstreamCancellationHandler
         upstreamCancellationHandler = nil
         upstreamCancellationRequested = handler == nil
@@ -333,8 +340,15 @@ private extension AIProviderEventContinuation {
         let handler = cancelUpstream ? upstreamCancellationHandler : nil
         upstreamCancellationRequested = cancelUpstream && handler == nil
         upstreamCancellationHandler = nil
+        pendingReplacementDelta = ""
         continuation.yield(event)
         continuation.finish()
         return handler
+    }
+
+    private func flushPendingReplacementDeltaLocked() {
+        guard !pendingReplacementDelta.isEmpty else { return }
+        continuation.yield(.replacementDelta(pendingReplacementDelta))
+        pendingReplacementDelta = ""
     }
 }

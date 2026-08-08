@@ -473,6 +473,10 @@ struct EditorPaneView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(EditorCommandSession.self) private var editorCommandSession
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @Environment(\.experimentalAISelectionSession) private var experimentalAISelectionSession
+    @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
+    #endif
 
     var body: some View {
         Group {
@@ -491,6 +495,7 @@ struct EditorPaneView: View {
                             initialText: episode.content,
                             selectionRequest: editorSearchSession.selectionRequest,
                             commandSession: editorCommandSession,
+                            aiSelectionSession: aiSelectionSession,
                             configuration: editorSettings.configuration,
                             onTextChange: { newText in
                                 appState.updateEpisodeContent(
@@ -499,6 +504,9 @@ struct EditorPaneView: View {
                                     in: chapterID,
                                     expectedSession: session
                                 )
+                                #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                                aiProofreadingOperation.refreshApplicability()
+                                #endif
                             }
                         )
                         .frame(maxWidth: editorMaximumWidth)
@@ -518,10 +526,23 @@ struct EditorPaneView: View {
         .onChange(of: appState.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }
+        #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        .onDisappear {
+                aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
+            }
+        #endif
     }
 
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
+    }
+
+    private var aiSelectionSession: EditorAISelectionSession? {
+        #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        experimentalAISelectionSession
+        #else
+        nil
+        #endif
     }
 }
 

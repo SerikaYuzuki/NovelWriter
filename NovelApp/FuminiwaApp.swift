@@ -36,15 +36,22 @@ struct FuminiwaApp: App {
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
     @State private var editorCommandSession: EditorCommandSession
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @State private var editorAISelectionSession: EditorAISelectionSession
+    @State private var aiProofreadingOperation: AIProofreadingOperation
+    #endif
 
     init() {
         let defaults = UserDefaults.standard
-        LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
+        if AppBuildFlavor.migratesLegacyPreferences {
+            LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
+        }
 
         let editorCommandSession = EditorCommandSession()
         let appState = AppState(
             dependencies: AppDependencies(
                 userDefaults: defaults,
+                defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
                 editorCommandSession: editorCommandSession
             )
         )
@@ -54,6 +61,19 @@ struct FuminiwaApp: App {
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
         _editorCommandSession = State(initialValue: editorCommandSession)
+        #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        let editorAISelectionSession = EditorAISelectionSession()
+        let aiProofreadingOperation = AIProofreadingOperation(
+            documentContext: AIProofreadingDocumentContextClient(appState: appState),
+            editorSelection: AIEditorSelectionClient(session: editorAISelectionSession),
+            route: .developmentFake()
+        )
+        editorAISelectionSession.setTransactionRevisionChangeHandler { [weak aiProofreadingOperation] in
+            aiProofreadingOperation?.refreshApplicability()
+        }
+        _editorAISelectionSession = State(initialValue: editorAISelectionSession)
+        _aiProofreadingOperation = State(initialValue: aiProofreadingOperation)
+        #endif
     }
 
     var body: some Scene {
@@ -66,8 +86,17 @@ struct FuminiwaApp: App {
                 .environment(exportPresenter)
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
+            #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                .environment(aiProofreadingOperation)
+                .environment(\.experimentalAISelectionSession, editorAISelectionSession)
+            #endif
                 .task {
                     applicationDelegate.attach(appState: appState)
+                    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    applicationDelegate.attachTerminationPreparation {
+                        await aiProofreadingOperation.shutdown()
+                    }
+                    #endif
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
                     await appState.bootstrap(opening: startupOpenURL)
                     applicationDelegate.finishBootstrap()
@@ -209,6 +238,20 @@ struct FuminiwaApp: App {
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
+
+            #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+            CommandMenu("AI") {
+                Button("選択範囲を校正…") {
+                    aiProofreadingOperation.preparePreview()
+                }
+                .disabled(
+                    !appState.permitsLongRunningDocumentOperation ||
+                        appState.workspaceSelection.section != .structure ||
+                        appState.selectedEpisode == nil ||
+                        aiProofreadingOperation.isRequestInFlight
+                )
+            }
+            #endif
 
             CommandGroup(after: .textEditing) {
                 Divider()

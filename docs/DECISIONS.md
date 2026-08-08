@@ -390,7 +390,7 @@
 
 ## D-043: AI統合はCodex SDK first / OpenRouter secondの純粋domainから始める
 
-- **日付**: 2026-08-08 / **状態**: 承認（pure domainとEditorKit selection transactionは実装。App-level context、provider、sidecar、AI UIは未実装）
+- **日付**: 2026-08-08 / **状態**: 承認（pure domain、EditorKit selection transaction、App-level context、fake UIは実装。実provider／sidecarは未実装）
 - **内容**:
   1. AI支援は常に任意機能とし、API key、アカウント、ネットワーク、AI providerなしで既存の執筆、保存、検索、snapshot、TXT / Markdown / EPUB書き出しを完結できる状態を維持する。
   2. 最初の機能は、Editorで利用者が明示選択した範囲だけを対象とする校正案とする。固定指示にはversionを兼ねるinstruction IDを付け、`selected_text`を未信頼の本文データとして扱い、その中の命令に従わず選択外の文脈やファイルを参照しないよう固定する。domainは指示ID、固定指示、空白／改行／約物を保持したexact selected textから単一の`applicationPrompt`を決定論的に生成し、exact JSON Schemaとversion付きresponse schema ID（初版`proofreading-result-v1`）も決定する。送信前にpromptとschemaのexact content／内訳、provider、model、送信範囲、保持／学習利用について技術的に確認できた情報をpreviewし、requestごとの明示確認を必須にする。instructionまたはschemaを変更する場合は対応するIDも更新し、preview後にprompt、schema、いずれかのID、対象または送信先が変われば確認を無効にする。
@@ -400,7 +400,7 @@
   6. CodexはSwift-native SDKではないため、公式TypeScript SDKのstable non-alphaをprovider実装／更新PRごとに再確認し、semver rangeなしのexact versionで固定したNode sidecarから利用する案だけを候補とする。2026-08-09の調査baselineは`0.147.0`である。SDK、全依存、Node runtime、Codex CLIをversion／hash固定し、requestごとのempty cwdと専用`CODEX_HOME`、`skipGitRepoCheck: true`、親environmentを継承しないallowlist、Keychain由来のAPI key、OS-level file sandbox、`AbortSignal`からprocess treeのkillまでを実装する。実repositoryや、この検査を通すためだけの偽Git repositoryをcwdにしない。arm64／x86_64、nested code signing、Hardened Runtime、notarization、file-read拒否、cancel／timeout後にorphanがないことを実機で証明するまで、sidecarは非出荷・UI非表示とする。
   7. TypeScript SDKの公開APIにはephemeral／non-persistent thread optionが確認できないため、FUMINIWA側のresultをmemory onlyにしても「履歴非保持」「zero retention」とは主張しない。provider／service側のsession保持と学習利用だけでなく保持期間を一次資料で確認し、専用`CODEX_HOME`、cwd、temporary directory等にSDK／CLIが作るartifactの場所、範囲、保持期間を実測する。providerの料金単位とrequest上限の表示根拠も含め、これらは出荷UI前の未実装技術Gateとし、FUMINIWA側の保存範囲と分けて表示する。
   8. OpenRouterはCodex sidecarと独立したadapterとして実装し、domain protocolだけを共有する。OpenRouter内のmodel／provider routing fallbackも無効にして、指定先が利用不能ならfail-closedとする。
-  9. provider descriptorは実行中に変化せずI/O／lock待機を行わないO(1)の値とし、streaming、cancellation、usage reportingを必須能力とする。完了usageの`outputTokens`は必須かつ非負、`inputTokens`は不明なら省略可能だが存在時は非負とし、欠損／不正値はfail-closedにする。usageは事後報告であって費用上限そのものではない。domainはexecutor呼出しからのwall-clock timeout、cancel済み／stream破棄後のprovider実行権または外部副作用の開始拒否、app-provided input、raw structured output、stream deltaの文字／UTF-8 byte、decoded resultとusageを強制する。adapterは最初の外部副作用より前にcancellation handlerを登録し、その登録時に既にcancel済みなら通信／subprocess等を開始しない。provider／SDKの`maximumOutputTokens`相当parameter、wire直前payload、event byte／件数、process resource limitも検証する。
+  9. provider descriptorは実行中に変化せずI/O／lock待機を行わないO(1)の値とし、streaming、cancellation、usage reportingを必須能力とする。完了usageの`outputTokens`は必須かつ非負、`inputTokens`は不明なら省略可能だが存在時は非負とし、欠損／不正値はfail-closedにする。usageは事後報告であって費用上限そのものではない。domainはexecutor呼出しからのwall-clock timeout、cancel済み／stream破棄後のprovider実行権または外部副作用の開始拒否、app-provided input、raw structured output、stream deltaの文字／UTF-8 byte、decoded resultの文字／byte／注意点件数とusageを強制する。注意点件数上限はrequest budgetへ封印してpreviewに表示し、細切れdeltaは内容を保持したままboundedに集約する。adapterは最初の外部副作用より前にcancellation handlerを登録し、その登録時に既にcancel済みなら通信／subprocess等を開始しない。provider／SDKの`maximumOutputTokens`相当parameter、wire直前payload、event byte／件数、process resource limitも検証する。
   10. AI設定、prompt、応答、diff、provider情報を`.novelpkg`へ追加せず、formatVersionを変更しない。D-040のPackage Validator → External Change / Conflict → 配布技術Gateという出荷優先順を維持する。純粋domainと隔離PoCだけは非出荷・UI非表示で並行可能だが、Gate完了前にAI対応を宣言しない。
 - **理由**: 執筆アプリが扱う原稿を、暗黙送信、古い非同期結果、agent processの広いfile access、自動provider切替から守りながら、providerの交換可能性と決定論的テストを先に確立するため。SwiftからNode／CLIを同梱する配布経路は通信成功だけでは安全性も署名可能性も証明できないため、domain契約とsidecarの出荷Gateを分離する。
 - **詳細**: request state、snapshot identity、保存範囲、sidecar Gate、PR分割は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
@@ -426,9 +426,9 @@
 
 ## D-046: 公開を延期し、個人用Experimental AIをCodex SDKから同一UIの複数provider構成で実装する
 
-- **日付**: 2026-08-09 / **状態**: 承認（方針変更。EditorKit selection transactionは実装、App bridge／provider／AI UIは未実装）
+- **日付**: 2026-08-09 / **状態**: 承認（方針変更。App bridge／fake UI／Experimental target分離まで実装、実providerは未実装）
 - **内容**:
-  1. 一般公開を当面延期し、AIはまず開発者本人だけが使う明示的な`FUMINIWAExperimental` app target／scheme（compile flagは`FUMINIWA_ENABLE_EXPERIMENTAL_AI`）で実装・検証する。通常の`FUMINIWA` app targetとsourceを共有しても、AI provider target／resourceへの依存はExperimental targetだけが持つ。D-040第6項のPackage Validator → External Change / Conflict → 配布技術Gateという順序は**公開Releaseの条件として維持**するが、実処理と安全境界が成立した個人用AI UIをその完了まで待たせる部分は本決定で置き換える。このtarget／scheme分離は設計済み・未実装であり、実装PRで生成後のtarget graphとArchive内容を検証する。
+  1. 一般公開を当面延期し、AIはまず開発者本人だけが使う明示的な`FUMINIWAExperimental` app target／scheme（compile flagは`FUMINIWA_ENABLE_EXPERIMENTAL_AI`）で実装・検証する。通常の`FUMINIWA` app targetとsourceを共有しても、AI provider target／resourceへの依存はExperimental targetだけが持つ。D-040第6項のPackage Validator → External Change / Conflict → 配布技術Gateという順序は**公開Releaseの条件として維持**するが、実処理と安全境界が成立した個人用AI UIをその完了まで待たせる部分は本決定で置き換える。target／scheme分離は実装済みで、生成後のtarget graphをローカル検査し、provider artifact追加時には両Archive内容も再検証する。
   2. 最初の実providerはD-043どおりCodex TypeScript SDKとする。Editor bridgeとfake providerで原稿誤適用防止を成立させ、共有Experimental UIをfakeで検証した後、固定protocolのNode sidecarとCodex adapterをそのUIへ接続する。続いてAPI経路の第一候補としてOpenRouter adapterを同じUIへ追加する。
   3. CodexとOpenRouterは、選択snapshot、exact preview、requestごとの送信確認、進行／cancel、校正案、局所diff、stale表示、Copy、明示Applyから成る**同一のprovider-neutral UIとoperation orchestrator**を使う。共有するのは`NovelAI`のdomain契約、App / EditorKitのlocal operation context、provider-neutralな表示状態だけとし、process／HTTP transport、credential、model設定、保持情報、error mappingはadapterごとに分離する。
   4. providerは利用者が送信前に明示選択し、previewへprovider、model、送信内容、確認できた保持情報と上限を反映する。Codex失敗時にOpenRouterへ、OpenRouter失敗時にCodexへ切り替えず、OpenRouter内部のmodel／provider routing fallbackも無効にする。providerまたはmodelの変更、再試行は新しいpreviewと明示確認を必要とする。
@@ -440,3 +440,4 @@
 - **置き換える範囲**: D-040第6項とD-043第6・10項のうち、Package Validator、External Change / Conflict、両architecture、bundled universal runtime、nested signing／公証を**個人用Experimental UIの前提**とする部分、およびD-043第9項のupstream `maximumOutputTokens`相当parameter必須を**Codex Experimentalに限り未保証表示へ置き換える部分**だけを置き換える。version／lockfile／integrity／実行path／hash固定は個人用でも維持する。OpenRouter等、上流capを提供するadapterでは第9項を維持し、Codexも公開Releaseでは未達Gateとして残す。D-040のProduct TruthとD-043の原稿・送信安全は常時有効であり、その他の置き換えていないD-043条件も維持する。
 - **理由**: 当面は個人利用で実装を先行し、Codex SDKの改善を待ちながら実際の使用感と失敗条件を蓄積する。一方、SDK経路とAPI経路で別々のUIや適用ロジックを作ると、送信確認、stale検査、Undo、原稿保全がproviderごとに乖離する。同一の安全な操作境界へ独立adapterを差し込む構成なら、今の実験速度と将来の公開品質を両立できる。
 - **詳細**: Experimental／Public Gate、共有UI、adapter順、検証項目は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+- **実装状況 (2026-08-09)**: 別app target／scheme／bundle ID／既定保存root、通常版とのbuild graph分離、App-level local context、fake provider、provider-neutralな共有AI UIまで実装した。実Codex／OpenRouter adapter、Node sidecar、Keychain、network、隔離実証は未実装であり、本決定のExperimental Gateを完了した意味ではない。

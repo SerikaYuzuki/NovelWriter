@@ -38,6 +38,9 @@ struct NovelWorkbenchView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
+    #endif
 
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
@@ -52,6 +55,17 @@ struct NovelWorkbenchView: View {
         VStack(spacing: 0) {
             workbenchSplitView
                 .id(workbenchColumnLayout)
+
+            #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+            if aiProofreadingOperation.isPanelPresented {
+                Divider()
+                AIProofreadingPanelView(
+                    operation: aiProofreadingOperation,
+                    canCaptureEditorSelection: canCaptureAIEditorSelection
+                )
+                .frame(minHeight: 224, idealHeight: 300, maxHeight: 440)
+            }
+            #endif
 
             WorkbenchStatusBarView()
         }
@@ -72,52 +86,78 @@ struct NovelWorkbenchView: View {
         }
         .onChange(of: showsWritingActions) { _, isWriting in
             editorSearchSession.isSearchPresented = isWriting
-        }
-        .confirmationDialog(
-            "このスナップショットに戻しますか？",
-            isPresented: snapshotRestoreDialogIsPresented,
-            presenting: snapshotMenuPresenter.snapshotPendingRestore
-        ) { request in
-            Button("戻す", role: .destructive) {
-                Task { await snapshotMenuPresenter.restore(request) }
+            #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+            if !isWriting {
+                aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
             }
-            Button("キャンセル", role: .cancel) {}
-        } message: { request in
-            Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+            #endif
         }
-        .alert(
-            "復元できませんでした",
-            isPresented: snapshotRestoreErrorIsPresented
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
-        }
-        .alert(item: $attachmentImportMessage) { message in
-            Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
-        }
-        .fileImporter(
-            isPresented: $isImportingAttachment,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            Task {
-                await importAttachment(from: result)
+        #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        .onChange(of: appState.documentSessionToken) { _, _ in
+                aiProofreadingOperation.documentContextDidChange()
             }
-        }
-        .task(id: appState.documentURL) {
-            await snapshotMenuPresenter.refresh()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
-            guard appState.selectedEpisode != nil else { return }
-            overlayState.presented = .memo
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
-            guard appState.supportsAttachments else { return }
-            appState.selectProjectSection(.references)
-            attachmentImportSession = appState.documentSessionToken
-            isImportingAttachment = true
-        }
+            .onChange(of: appState.selectedChapterID) { _, _ in
+                aiProofreadingOperation.documentContextDidChange()
+            }
+            .onChange(of: appState.selectedEpisodeID) { _, _ in
+                aiProofreadingOperation.documentContextDidChange()
+            }
+            .onChange(of: appState.isDocumentTransitionInProgress) { _, isTransitioning in
+                if isTransitioning {
+                    aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
+                }
+            }
+            .onDisappear {
+                // snapshot復元などでWorkbench自体が外れる場合は、個別onChangeが
+                // 新しいViewの初期値へ吸収されるため、Editor surfaceを明示的に閉じる。
+                aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
+            }
+        #endif
+            .confirmationDialog(
+                "このスナップショットに戻しますか？",
+                isPresented: snapshotRestoreDialogIsPresented,
+                presenting: snapshotMenuPresenter.snapshotPendingRestore
+            ) { request in
+                Button("戻す", role: .destructive) {
+                    Task { await snapshotMenuPresenter.restore(request) }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: { request in
+                Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+            }
+            .alert(
+                "復元できませんでした",
+                isPresented: snapshotRestoreErrorIsPresented
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
+            }
+            .alert(item: $attachmentImportMessage) { message in
+                Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
+            }
+            .fileImporter(
+                isPresented: $isImportingAttachment,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: false
+            ) { result in
+                Task {
+                    await importAttachment(from: result)
+                }
+            }
+            .task(id: appState.documentURL) {
+                await snapshotMenuPresenter.refresh()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
+                guard appState.selectedEpisode != nil else { return }
+                overlayState.presented = .memo
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
+                guard appState.supportsAttachments else { return }
+                appState.selectProjectSection(.references)
+                attachmentImportSession = appState.documentSessionToken
+                isImportingAttachment = true
+            }
     }
 
     private var searchableIsPresented: Binding<Bool> {
@@ -310,6 +350,14 @@ struct NovelWorkbenchView: View {
     private var showsWritingActions: Bool {
         appState.workspaceSelection.section == .structure
     }
+
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    private var canCaptureAIEditorSelection: Bool {
+        showsWritingActions &&
+            appState.selectedEpisode != nil &&
+            appState.permitsLongRunningDocumentOperation
+    }
+    #endif
 
     private var usesTwoColumnLayout: Bool {
         workbenchColumnLayout == .twoColumn

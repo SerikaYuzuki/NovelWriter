@@ -22,9 +22,18 @@ echo "==> iOS compile check (NovelKit)"
 
 echo "==> FUMINIWA app test (macOS, XcodeGen)"
 ./Scripts/generate-project.sh
+./Scripts/check-ai-target-separation.sh
 xcodebuild test \
   -project FUMINIWA.xcodeproj \
   -scheme FUMINIWA \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+
+echo "==> FUMINIWAExperimental app test (macOS, XcodeGen)"
+xcodebuild test \
+  -project FUMINIWA.xcodeproj \
+  -scheme FUMINIWAExperimental \
   -destination 'platform=macOS' \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO

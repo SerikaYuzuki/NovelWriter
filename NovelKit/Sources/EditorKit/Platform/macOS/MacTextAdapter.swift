@@ -358,14 +358,6 @@ struct MacTextAdapter: NSViewRepresentable {
             onSelectionChange?(textView.selectedRange(), commandSurfaceToken)
         }
 
-        private func advanceAIContentRevision() {
-            aiContentRevision &+= 1
-        }
-
-        private func advanceAISelectionRevision() {
-            aiSelectionRevision &+= 1
-        }
-
         func undoManager(for _: NSTextView) -> UndoManager? {
             undoManager
         }

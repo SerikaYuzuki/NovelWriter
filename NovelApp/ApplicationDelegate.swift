@@ -11,9 +11,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var pendingOpenURL: URL?
     private var didFinishBootstrap = false
     private var terminationReplyTask: Task<Void, Never>?
+    private var terminationPreparation: (@MainActor () async -> Void)?
 
     func attach(appState: AppState) {
         self.appState = appState
+    }
+
+    /// 終了前保存の成功後に、外部runtimeなどを停止・回収する一般的なhook。
+    /// 共有App層へAIやprovider固有型を持ち込まないため、async closureだけを保持する。
+    func attachTerminationPreparation(_ preparation: @escaping @MainActor () async -> Void) {
+        terminationPreparation = preparation
     }
 
     /// cold launchのOpen Withイベントをbootstrapへ渡し、recent URLより優先する。
@@ -69,6 +76,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             guard let appState else {
+                await terminationPreparation?()
                 reply(true)
                 return
             }
@@ -77,8 +85,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             if !shouldTerminate {
                 // 取消後の次の終了要求は、新しいsingle-flightとして再試行できる。
                 terminationReplyTask = nil
+                reply(false)
+                return
             }
-            reply(shouldTerminate)
+            await terminationPreparation?()
+            reply(true)
         }
         terminationReplyTask = task
 

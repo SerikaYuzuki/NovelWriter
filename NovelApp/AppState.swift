@@ -116,6 +116,7 @@ final class AppState {
     private let attachmentManager: AttachmentManaging?
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
+    private let defaultDocumentDirectoryName: String
     /// 表示中のEditorKitへ、作品遷移前のIME確定・モデル同期・入力停止を依頼する。
     private let editorCommandSession: EditorCommandSession
     /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
@@ -177,12 +178,17 @@ final class AppState {
         attachmentManager = dependencies.attachmentManager
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager
+        defaultDocumentDirectoryName = dependencies.defaultDocumentDirectoryName
         editorCommandSession = dependencies.editorCommandSession
 
         // 実際の状態は `bootstrap()` で確立する。ここでは(ウィンドウ表示を
         // ブロックしないよう)空の新規作品をプレースホルダとして持たせておく。
         let placeholder = NovelDocument.newDocument()
-        let placeholderURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
+        let placeholderURL = Self.defaultSaveURL(
+            forTitle: placeholder.title,
+            fileManager: dependencies.fileManager,
+            directoryName: dependencies.defaultDocumentDirectoryName
+        )
         document = placeholder
         documentURL = placeholderURL
         documentSessionToken = DocumentSessionToken(
@@ -350,7 +356,11 @@ final class AppState {
     private func createInitialDocumentForStartup(at preferredURL: URL? = nil) async {
         let newDocument = NovelDocument.newDocument()
         let newURL = preferredURL
-            ?? Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+            ?? Self.availableSaveURL(
+                forTitle: newDocument.title,
+                fileManager: fileManager,
+                directoryName: defaultDocumentDirectoryName
+            )
 
         do {
             try await repository.save(newDocument, to: newURL)
@@ -408,6 +418,12 @@ final class AppState {
 
     var permitsDocumentChoice: Bool {
         startupState.permitsDocumentChoice && !isDocumentTransitionInProgress && !isTerminationPending
+    }
+
+    /// provider待機でdocument operation gateを保持せず、開始／再検査時だけ現在作品を読むための条件。
+    /// 終了要求後は`permitsDocumentInteraction`がtrueでも新しい長時間処理を開始しない。
+    var permitsLongRunningDocumentOperation: Bool {
+        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
     }
 
     /// TextField等のfirst responderとEditorKit本文を同じ同期区間で確定し、
@@ -515,7 +531,11 @@ final class AppState {
         }
 
         let newDocument = NovelDocument.newDocument()
-        let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+        let newURL = Self.availableSaveURL(
+            forTitle: newDocument.title,
+            fileManager: fileManager,
+            directoryName: defaultDocumentDirectoryName
+        )
         let newAttachments: [Attachment]
 
         do {
@@ -1859,27 +1879,36 @@ final class AppState {
 
     // MARK: - 既定の保存先
 
-    private static func defaultDirectory(fileManager: FileManager) -> URL {
+    private static func defaultDirectory(fileManager: FileManager, directoryName: String) -> URL {
         #if DEBUG
         if let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             return applicationSupport
-                .appendingPathComponent("FUMINIWA", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
                 .appendingPathComponent("Drafts", isDirectory: true)
         }
         #endif
         return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("FUMINIWA", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
     }
 
-    private static func defaultSaveURL(forTitle title: String, fileManager: FileManager) -> URL {
-        defaultDirectory(fileManager: fileManager).appendingPathComponent("\(title).novelpkg", isDirectory: true)
+    private static func defaultSaveURL(
+        forTitle title: String,
+        fileManager: FileManager,
+        directoryName: String
+    ) -> URL {
+        defaultDirectory(fileManager: fileManager, directoryName: directoryName)
+            .appendingPathComponent("\(title).novelpkg", isDirectory: true)
     }
 
     /// 既定保存先の `<title>.novelpkg` を返す。
     /// 既に同名のパッケージが存在する場合は連番を振って重複を避ける。
-    private static func availableSaveURL(forTitle title: String, fileManager: FileManager) -> URL {
-        let directory = defaultDirectory(fileManager: fileManager)
+    private static func availableSaveURL(
+        forTitle title: String,
+        fileManager: FileManager,
+        directoryName: String
+    ) -> URL {
+        let directory = defaultDirectory(fileManager: fileManager, directoryName: directoryName)
 
         var candidate = directory.appendingPathComponent("\(title).novelpkg", isDirectory: true)
         var suffix = 2

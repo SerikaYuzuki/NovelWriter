@@ -1,6 +1,6 @@
 # AI統合 技術契約
 
-**状態: D-043 / D-046で承認した個人用Experimental契約 / EditorKit selection transactionは実装、App bridge・provider・sidecar・UIは未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離まで実装 / 実Codex・OpenRouter provider、sidecar、Keychain、network、隔離実証は未実装**
 
 本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
@@ -19,7 +19,7 @@
 9. **providerを勝手に切り替えない。** Codexの失敗、timeout、rate limit、認証失敗をOpenRouterへ自動fallbackしない。provider変更は利用者の明示操作と、新しい送信先を示すpreviewの再確認を必要とする。
 10. **未確認の保持／利用上限をUIで補わない。** provider／service側の保持期間と学習利用、SDK／CLIがlocalに作るartifactの場所・範囲・保持期間、providerの料金単位とrequest上限は一次資料と実測で確認する。個人用Experimentalでは確認済み値と未保証を送信前に区別し、公開Releaseでは根拠を固定する。未確認値を「履歴なし」「無料」「上限あり」等として表示しない。
 11. **providerが違っても操作作法を分岐させない。** Codex SDKとAPI経路（初期はOpenRouter）は、同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示ApplyのUIとoperation orchestratorを使う。provider固有のtransport、credential、model設定、保持情報、errorだけをadapterへ閉じ込める。
-12. **個人用Experimentalと公開Releaseをbuild graphで分ける。** 個人利用中は、実処理と安全条件を満たしたAI UIを別app target／scheme `FUMINIWAExperimental`で先行できる。通常の`FUMINIWA` app targetはcompile flag、target dependency、resource copyの段階でAI入口とprovider artifactを含めず、runtime flagだけに依存して隠さない。このtarget分離は設計済み・未実装であり、実装後は両Archiveのgraph／bundle inventoryを検証する。
+12. **個人用Experimentalと公開Releaseをbuild graphで分ける。** 個人利用中は、実処理と安全条件を満たしたAI UIを別app target／scheme `FUMINIWAExperimental`で先行できる。通常の`FUMINIWA` app targetはcompile flag、target dependency、resource copyの段階でAI入口とprovider artifactを含めず、runtime flagだけに依存して隠さない。target／scheme／bundle ID／既定保存rootの分離と生成projectの機械監査は実装済みである。Experimentalは旧製品のrecent URL／設定を自動移行せず、既存作品は利用者が明示的に開く。実sidecar追加時と公開判断時には両Archiveのgraph／bundle inventoryを再検証する。
 
 ## 2. 最初の利用フロー
 
@@ -85,8 +85,8 @@ providerが受け取れるのは、明示確認済みの`AIApplicationPayload`�
 - provider-neutralな非同期event stream protocolとcancel／terminationの契約。provider descriptorはstreaming、cancellation、usage reportingを必須能力とする
 - adapterの外側で不変O(1)のprovider descriptorを照合し、confirmationのone-shot lease、cancel済み／stream破棄後のprovider実行権または外部副作用の開始拒否、executor呼出しからのwall-clock timeoutを所有するdomain executor
 - raw structured outputをexact schemaでstrict decodeして`AIResult`へ変換し、schema外key、欠損、型違い、不正usageをfail-closedにする完了境界
-- 初版`proofreading-result-v1`は、`replacement: string`、`summary: string`、`warnings: string[]`の3項目をすべて必須とし、追加propertyを拒否するobject schemaとする
-- app-provided input、raw structured output、stream delta、decoded resultの文字数／UTF-8 byte数、wall-clock timeout、result usageを強制するdomain budget
+- 初版`proofreading-result-v1`は、`replacement: string`、`summary: string`、`warnings: string[]`の3項目をすべて必須とし、追加propertyを拒否するobject schemaとする。schema shapeとは独立したdomainのrequest budgetとして注意点件数上限をconfirmed payloadへ封印し、送信前UIへ表示する。初期値とabsolute maximumはいずれも20件で、超過responseを結果UIへ渡さない
+- app-provided input、raw structured output、stream delta、decoded resultの文字数／UTF-8 byte数、注意点件数、wall-clock timeout、result usageを強制するdomain budget。細切れdeltaはdomain境界でboundedなまとまりへ集約し、内容を欠落させずUI更新回数を制限する
 - 決定論的fake provider、sealed payload一致、成功／provider不一致／consumer cancel／timeout／budget超過の契約テスト
 
 含めないもの:
@@ -98,7 +98,7 @@ providerが受け取れるのは、明示確認済みの`AIApplicationPayload`�
 - `.novelpkg`、NovelStorage、snapshot、UserDefaultsの変更
 - 出荷UI、menu、toolbar、shortcut、設定画面、feature flagの利用者向け露出
 
-SDK固有型やHTTP／processのerror型をdomain APIへ漏らさない。provider adapterはdomain protocolへ適合し、AppDependenciesが明示的に1つを選んで注入する。provider descriptorは実行中に変化せず、I/O、lock待機、actor hopを行わないO(1)の値とする。完了usageの`outputTokens`は必須かつ非負、`inputTokens`は不明なら省略可能だが存在時は非負とし、欠損／不正値はtyped failureにする。usageは生成後の事後報告であって、それ単独では費用capにならない。domain層自身はfallback、retry、provider選択、永続化を行わない。EditorKitのselection transactionは実装済みであり、次はApp-level document session／episode／source digestをlocal-only validatorへ結合する。confirmed outboundの型はlocal identityで太らせない。
+SDK固有型やHTTP／processのerror型をdomain APIへ漏らさない。provider adapterはdomain protocolへ適合し、Experimental専用compositionが明示的に1つを選んで注入する。共有`AppDependencies`へproviderを追加しない。provider descriptorは実行中に変化せず、I/O、lock待機、actor hopを行わないO(1)の値とする。完了usageの`outputTokens`は必須かつ非負、`inputTokens`は不明なら省略可能だが存在時は非負とし、欠損／不正値はtyped failureにする。usageは生成後の事後報告であって、それ単独では費用capにならない。domain層自身はfallback、retry、provider選択、永続化を行わない。EditorKit transactionとApp-level document session／episode／source digestのlocal-only validatorは実装済みであり、confirmed outboundの型はlocal identityで太らせない。
 
 ## 5. Provider順序と分離
 
@@ -191,13 +191,13 @@ OpenRouterはCodex sidecarの代替経路へ埋め込まず、独立したadapte
 | request state | memoryのみ。アプリ再起動後にresumeしない |
 | 診断 | 内容を持たない分類済みmetadataだけ。保持期間はUI実装前に固定する |
 
-requestを閉じる、作品sessionが変わる、またはアプリが終了すると、FUMINIWAが保持するpreview／result／diffを破棄する。SDK／provider側の保持はこの表の対象外である。provider／service側の保持期間と学習利用、local SDK／CLI artifactの場所・範囲・保持期間、providerの料金単位とrequest上限は、Experimentalでは確認済み値と未保証を分けて送信前に表示し、公開Releaseでは一次資料と実測による根拠を固定する。価格戦略や契約判断へ拡張せず技術表示の完成条件として扱う。
+requestを閉じる、またはアプリが終了すると、FUMINIWAが保持するpreview／result／diffをすべて破棄する。作品session／対象話が変わる、作品遷移が始まる、または対象Editor surfaceが画面から外れた場合は、未送信previewを直ちに破棄し、実行中requestをcancelして遅延eventを拒否する。同じ話の本文／選択／IME状態だけが変わった場合は、送信中の編集を妨げない方を優先してrequestを別本文へ再束縛せず継続し、完了結果をstaleにする。未送信previewは本文変更通知で無効化し、通知を伴わない選択移動／IME開始も送信クリック時の最終検査で必ず拒否する。すでに完了したresult／diffだけは、現在本文へ適用できないstale表示としてpanelを閉じるまでmemory上の閲覧／Copyを許可してよいが、Applyは必ず無効にする。SDK／provider側の保持はこの表の対象外である。provider／service側の保持期間と学習利用、local SDK／CLI artifactの場所・範囲・保持期間、providerの料金単位とrequest上限は、Experimentalでは確認済み値と未保証を分けて送信前に表示し、公開Releaseでは一次資料と実測による根拠を固定する。価格戦略や契約判断へ拡張せず技術表示の完成条件として扱う。
 
 ## 9. PR分割と技術Gate
 
 1. **契約 + 純粋domain**: D-043、本書、provider-neutralなdraft → instruction ID／単一`applicationPrompt`／response schema IDとexact schemaを持つpreview → provider／purpose／budget／input countとともに`AIApplicationPayload`へ封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、domain budget、result／error、event stream protocol、fake、決定論的契約テストだけ。local identity、stale判定、実通信、process、UI、package変更なし。
-2. **Editor bridge**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用は実装済み。続いてdocument session／episode／source digestをAppのlocal operation contextへ結合し、送信前／適用前stale判定をfake providerで統合テストする。local identityをconfirmed outboundへ混ぜず、まだUIへ露出しない。
-3. **共有orchestrator + fake UI**: provider-neutralなrequest state machineをAppへ置き、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続する。別app target／scheme `FUMINIWAExperimental`だけに露出し、provider固有型をViewへ渡さない。通常の`FUMINIWA` app targetにprovider target／resource／入口が存在しないことをtarget graphとArchiveで検証する。
+2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
+3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
 4. **Codex sidecar protocol**: 固定framing、上限、typed event、cancel、重複terminal拒否をmock SDKで検証し、Node packageとSwift capture fixtureを一致させる。
 5. **Codex Experimental feasibility**: 固定SDK／Node／Codex、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、cancel／kill／orphan、local artifactの場所・範囲・期間を個人用test harnessで実証する。両architecture、署名、公証はこの段階の前提にしない。
 6. **Codex Experimental adapter**: sidecar fixed protocol、Keychain、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。

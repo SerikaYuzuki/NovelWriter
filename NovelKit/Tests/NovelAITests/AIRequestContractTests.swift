@@ -48,6 +48,7 @@ func previewContainsExactOutboundValues() throws {
     #expect(preview.applicationResponseSchema == expectedResponseSchema)
     #expect(preview.selectedText == AISelectedText(selectedText))
     #expect(preview.budget == standardBudget)
+    #expect(preview.budget.maximumWarnings == AIRequestBudget.absoluteMaximumWarnings)
     #expect(preview.selectedTextCharacterCount == 2)
     #expect(preview.selectedTextUTF8ByteCount == 7)
     #expect(preview.applicationPrompt == expectedPrompt)
@@ -60,6 +61,10 @@ func previewContainsExactOutboundValues() throws {
             preview.applicationPrompt.utf8.count + preview.applicationResponseSchema.utf8.count
     )
     #expect(preview.applicationPayload.provider == codexDescriptor)
+    #expect(
+        preview.applicationPayload.budget.maximumWarnings ==
+            AIRequestBudget.absoluteMaximumWarnings
+    )
     #expect(preview.applicationPayload.applicationPrompt == preview.applicationPrompt)
     #expect(
         preview.applicationPayload.applicationResponseSchema == preview.applicationResponseSchema

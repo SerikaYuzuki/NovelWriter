@@ -2,6 +2,16 @@
 import AppKit
 
 extension MacTextAdapter.Coordinator {
+    func advanceAIContentRevision() {
+        aiContentRevision &+= 1
+        notifyActiveTransactionRevisionDidChange()
+    }
+
+    func advanceAISelectionRevision() {
+        aiSelectionRevision &+= 1
+        notifyActiveTransactionRevisionDidChange()
+    }
+
     /// `makeNSView`の初回mount専用。新しく表示されたsurfaceをactive ownerにする。
     ///
     /// SwiftUIの遅延`updateNSView`から呼ぶと旧Coordinatorが新surfaceを奪い返せるため、
@@ -99,6 +109,13 @@ extension MacTextAdapter.Coordinator {
                 }
                 return replaceAISelection(capability, with: text)
             }
+        )
+    }
+
+    private func notifyActiveTransactionRevisionDidChange() {
+        aiSelectionSurfaceSession?.activeTransactionRevisionDidChange(
+            ownerID: aiSelectionOwnerID,
+            token: aiSelectionSurfaceToken
         )
     }
 

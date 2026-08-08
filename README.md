@@ -47,7 +47,7 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 
 内容: SwiftFormat(lint)→ SwiftLint → `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ `NovelApp`(macOS アプリ)のビルドチェック。
 
-必要なツール: Xcode、`brew install swiftformat swiftlint xcodegen`。個別に実行したい場合はスクリプト内のコマンドを参照。
+必要なツール: Xcode、`brew install swiftformat swiftlint xcodegen jq ripgrep`。個別に実行したい場合はスクリプト内のコマンドを参照。
 
 ## アプリの生成と実行
 

@@ -17,6 +17,14 @@ struct EditorAISelectionTransactionTests {
         var received: [String] = []
     }
 
+    private final class RevisionNotifications {
+        var count = 0
+
+        var isEmpty: Bool {
+            count == 0
+        }
+    }
+
     private func makeHarness(
         initialText: String,
         session: EditorAISelectionSession = EditorAISelectionSession()
@@ -184,6 +192,68 @@ struct EditorAISelectionTransactionTests {
                 .stale(.selectionChanged)
         )
         #expect(harness.textView.string == "猫と犬")
+    }
+
+    @Test("active surfaceの選択revisionだけをApp層へ通知する")
+    func activeSurfaceSelectionRevisionNotifiesAppLayer() throws {
+        let session = EditorAISelectionSession()
+        let notifications = RevisionNotifications()
+        session.setTransactionRevisionChangeHandler {
+            notifications.count += 1
+        }
+        let oldSurface = makeHarness(initialText: "旧本文", session: session)
+        let activeSurface = makeHarness(initialText: "新本文", session: session)
+        let originalRange = NSRange(location: 0, length: 1)
+        activeSurface.textView.delegate = nil
+        activeSurface.textView.setSelectedRange(originalRange)
+        activeSurface.textView.delegate = activeSurface.coordinator
+        let transaction = try session.captureSelection().get()
+
+        oldSurface.coordinator.textViewDidChangeSelection(
+            Notification(name: NSTextView.didChangeSelectionNotification, object: oldSurface.textView)
+        )
+        #expect(notifications.isEmpty)
+
+        activeSurface.textView.delegate = nil
+        activeSurface.textView.setSelectedRange(NSRange(location: 1, length: 1))
+        activeSurface.textView.setSelectedRange(originalRange)
+        activeSurface.textView.delegate = activeSurface.coordinator
+        activeSurface.coordinator.textViewDidChangeSelection(
+            Notification(name: NSTextView.didChangeSelectionNotification, object: activeSurface.textView)
+        )
+
+        #expect(notifications.count == 1)
+        #expect(
+            failure(in: session.validate(transaction)) ==
+                .stale(.selectionChanged)
+        )
+    }
+
+    @Test("IME開始のcontent revisionをApp層へ即時通知する")
+    func imeContentRevisionNotifiesAppLayer() throws {
+        let session = EditorAISelectionSession()
+        let notifications = RevisionNotifications()
+        session.setTransactionRevisionChangeHandler {
+            notifications.count += 1
+        }
+        let harness = makeHarness(initialText: "猫と犬", session: session)
+        harness.textView.delegate = nil
+        harness.textView.setSelectedRange(NSRange(location: 0, length: 1))
+        harness.textView.delegate = harness.coordinator
+        let transaction = try session.captureSelection().get()
+
+        harness.textView.delegate = nil
+        beginIMEComposition(in: harness.textView)
+        harness.textView.delegate = harness.coordinator
+        harness.coordinator.textDidChange(
+            Notification(name: NSText.didChangeNotification, object: harness.textView)
+        )
+
+        #expect(notifications.count == 1)
+        #expect(
+            failure(in: session.validate(transaction)) ==
+                .stale(.imeComposing)
+        )
     }
 }
 
