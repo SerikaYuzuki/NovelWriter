@@ -676,7 +676,8 @@ private struct EditorAccessoryBar: View {
         .padding(8)
         .workbenchGlassChromeStyle()
         .disabled(
-            commandSession.isDocumentTransitionPrepared ||
+            !commandSession.hasActiveEditorSurface ||
+                commandSession.isDocumentTransitionPrepared ||
                 commandSession.pendingCommand != nil ||
                 pendingOperation != nil ||
                 notationSheet != nil
