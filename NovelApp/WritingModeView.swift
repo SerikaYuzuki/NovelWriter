@@ -108,105 +108,66 @@ struct OutlineContainerView: View {
     }
 }
 
-struct EpisodeDeletionRequest: Identifiable {
-    let episode: Episode
-    let chapterID: ChapterID
-    let session: DocumentSessionToken
-
-    var id: EpisodeID {
-        episode.id
-    }
-}
-
 struct OutlineView: View {
     @Environment(AppState.self) private var appState
 
     @Binding var chapterPendingDeletion: SessionBoundValue<Chapter>?
     @Binding var episodePendingDeletion: EpisodeDeletionRequest?
 
+    @State private var disclosureState = OutlineDisclosureState()
+    @State private var chapterPendingRename: SessionBoundValue<Chapter>?
+    @State private var chapterTitleDraft = ""
+
     var body: some View {
         List(selection: selectionBinding) {
             Section("原稿") {
                 ForEach(sessionBoundChapters) { chapterItem in
                     let chapter = chapterItem.value
-                    OutlineChapterRow(chapter: chapter)
-                        .contextMenu {
-                            Button {
-                                appState.selectChapter(chapter.id)
-                                NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
-                            } label: {
-                                Label("話メモ", systemImage: "note.text")
-                            }
-                            .disabled(chapter.episodes.isEmpty)
-
-                            Menu {
-                                ChapterContextMenuContent(
-                                    appState: appState,
-                                    chapterID: chapter.id,
-                                    onOpenCharacter: { characterID in
-                                        appState.selectCharacter(characterID)
-                                        appState.selectProjectSection(.characters)
-                                    },
-                                    onOpenPlotCard: { cardID in
-                                        appState.selectPlotCard(cardID)
-                                        appState.selectProjectSection(.plot)
-                                    }
+                    DisclosureGroup(isExpanded: expansionBinding(for: chapter.id)) {
+                        ForEach(sessionBoundEpisodes(in: chapter, session: chapterItem.session)) { episodeRequest in
+                            let episode = episodeRequest.episode
+                            OutlineEpisodeRow(
+                                episode: episode,
+                                chapterID: chapter.id,
+                                showsSaveState: OutlineSaveStateVisibility.episode(
+                                    episode.id,
+                                    selectedEpisodeID: appState.selectedEpisodeID
                                 )
-                            } label: {
-                                Label("この章", systemImage: "doc.text.magnifyingglass")
-                            }
-
-                            Button(role: .destructive) {
-                                chapterPendingDeletion = chapterItem
-                            } label: {
-                                Label("章を削除", systemImage: "trash")
-                            }
-                            .disabled(appState.document.chapters.count <= 1)
-                        }
-                        .tag(WritingOutlineSelection.chapter(chapter.id))
-
-                    ForEach(sessionBoundEpisodes(in: chapter, session: chapterItem.session)) { episodeRequest in
-                        let episode = episodeRequest.episode
-                        OutlineEpisodeRow(episode: episode, chapterID: chapter.id)
+                            )
                             .contextMenu {
-                                Button {
-                                    appState.selectEpisode(episode.id, in: chapter.id)
-                                    NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
-                                } label: {
-                                    Label("話メモ", systemImage: "note.text")
-                                }
-
-                                Menu {
-                                    let otherChapters = appState.document.chapters.filter { $0.id != chapter.id }
-                                    if otherChapters.isEmpty {
-                                        Text("移動先の章がありません")
-                                    } else {
-                                        ForEach(otherChapters) { destination in
-                                            Button(destination.title) {
-                                                _ = appState.moveEpisode(
-                                                    id: episode.id,
-                                                    from: chapter.id,
-                                                    to: destination.id
-                                                )
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Label("別の章へ移動", systemImage: "arrow.right")
-                                }
-
-                                Button(role: .destructive) {
+                                EpisodeOutlineContextMenu(request: episodeRequest) {
                                     episodePendingDeletion = episodeRequest
-                                } label: {
-                                    Label("話を削除", systemImage: "trash")
                                 }
                             }
-                            .tag(WritingOutlineSelection.episode(episode.id))
+                            .tag(episode.id)
+                        }
+                        .onMove { offsets, destination in
+                            guard appState.outlinePresentation.searchText.isEmpty else { return }
+                            appState.moveEpisodes(in: chapter.id, fromOffsets: offsets, toOffset: destination)
+                        }
+                    } label: {
+                        OutlineChapterRow(
+                            chapter: chapter,
+                            showsSaveState: OutlineSaveStateVisibility.chapter(
+                                chapter.id,
+                                selectedChapterID: appState.selectedChapterID,
+                                selectedEpisodeID: appState.selectedEpisodeID
+                            )
+                        )
+                        .contentShape(Rectangle())
+                        .accessibilityAction(named: "章タイトルを編集") {
+                            beginEditingTitle(for: chapterItem)
+                        }
+                        .contextMenu {
+                            ChapterOutlineContextMenu(
+                                chapterItem: chapterItem,
+                                onRename: { beginEditingTitle(for: chapterItem) },
+                                onReveal: { disclosureState.reveal(chapter.id) },
+                                onDelete: { chapterPendingDeletion = chapterItem }
+                            )
+                        }
                     }
-                    .onMove { offsets, destination in
-                        guard appState.outlinePresentation.searchText.isEmpty else { return }
-                        appState.moveEpisodes(in: chapter.id, fromOffsets: offsets, toOffset: destination)
-                    }
+                    .accessibilityHint("クリックすると話一覧を開閉します")
                 }
                 .onMove { offsets, destination in
                     guard appState.outlinePresentation.searchText.isEmpty else { return }
@@ -237,6 +198,53 @@ struct OutlineView: View {
                 }
             )
         }
+        .alert("章タイトルを編集", isPresented: chapterRenameDialogIsPresented) {
+            TextField("章タイトル", text: $chapterTitleDraft)
+            Button("変更") {
+                commitChapterTitleRename()
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("章の表示名を変更します。")
+        }
+        .onAppear {
+            disclosureState.reset(
+                chapterIDs: chapterIDs,
+                revealing: appState.selectedChapterID
+            )
+            revealSearchMatches()
+        }
+        .onChange(of: appState.documentSessionToken) {
+            chapterPendingRename = nil
+            disclosureState.reset(
+                chapterIDs: chapterIDs,
+                revealing: appState.selectedChapterID
+            )
+            revealSearchMatches()
+        }
+        .onChange(of: chapterIDs) { _, newChapterIDs in
+            disclosureState.synchronize(
+                chapterIDs: newChapterIDs,
+                revealing: appState.selectedChapterID
+            )
+            if let chapterPendingRename, !newChapterIDs.contains(chapterPendingRename.value.id) {
+                self.chapterPendingRename = nil
+            }
+        }
+        .onChange(of: appState.selectedChapterID) { _, chapterID in
+            if let chapterID {
+                disclosureState.reveal(chapterID)
+            }
+        }
+        .onChange(of: appState.selectedEpisodeID) { _, episodeID in
+            if episodeID != nil, let chapterID = appState.selectedChapterID {
+                disclosureState.reveal(chapterID)
+            }
+        }
+        .onChange(of: normalizedSearchQuery) {
+            revealSearchMatches()
+        }
     }
 
     private var filteredChapters: [Chapter] {
@@ -244,7 +252,10 @@ struct OutlineView: View {
         guard !query.isEmpty else { return appState.document.chapters }
         return appState.document.chapters.filter { chapter in
             chapter.title.localizedStandardContains(query) ||
-                chapter.episodes.contains { $0.title.localizedStandardContains(query) || $0.content.localizedStandardContains(query) }
+                chapter.episodes.contains {
+                    $0.title.localizedStandardContains(query) ||
+                        $0.content.localizedStandardContains(query)
+                }
         }
     }
 
@@ -273,31 +284,71 @@ struct OutlineView: View {
         }
     }
 
-    private var selectionBinding: Binding<WritingOutlineSelection?> {
+    private var selectionBinding: Binding<EpisodeID?> {
+        Binding(
+            get: { appState.selectedEpisodeID },
+            set: { episodeID in
+                guard let episodeID,
+                      let chapter = appState.document.chapters.first(where: {
+                          $0.episodes.contains(where: { $0.id == episodeID })
+                      }) else { return }
+                appState.selectEpisode(episodeID, in: chapter.id)
+            }
+        )
+    }
+
+    private var chapterIDs: [ChapterID] {
+        appState.document.chapters.map(\.id)
+    }
+
+    private var normalizedSearchQuery: String {
+        appState.outlinePresentation.searchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func expansionBinding(for chapterID: ChapterID) -> Binding<Bool> {
         Binding(
             get: {
-                if let selectedEpisodeID = appState.selectedEpisodeID {
-                    return .episode(selectedEpisodeID)
-                }
-                return appState.selectedChapterID.map(WritingOutlineSelection.chapter)
+                disclosureState.isExpanded(chapterID)
             },
-            set: { selection in
-                switch selection {
-                case let .chapter(chapterID):
-                    appState.selectChapter(chapterID)
-                case let .episode(episodeID):
-                    appState.selectEpisode(episodeID)
-                case nil:
-                    break
+            set: { isExpanded in
+                disclosureState.setExpanded(isExpanded, for: chapterID)
+            }
+        )
+    }
+
+    private var chapterRenameDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { chapterPendingRename != nil },
+            set: { isPresented in
+                if !isPresented {
+                    chapterPendingRename = nil
                 }
             }
         )
     }
-}
 
-private enum WritingOutlineSelection: Hashable {
-    case chapter(ChapterID)
-    case episode(EpisodeID)
+    private func beginEditingTitle(for chapterItem: SessionBoundValue<Chapter>) {
+        disclosureState.reveal(chapterItem.value.id)
+        chapterTitleDraft = chapterItem.value.title
+        chapterPendingRename = chapterItem
+    }
+
+    private func commitChapterTitleRename() {
+        guard let request = chapterPendingRename else { return }
+        chapterPendingRename = nil
+        guard request.session == appState.documentSessionToken,
+              appState.document.chapters.contains(where: { $0.id == request.value.id }) else { return }
+
+        let trimmedTitle = chapterTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        appState.updateChapterTitle(trimmedTitle.isEmpty ? "無題の章" : trimmedTitle, for: request.value.id)
+        appState.commitChapterTitleEditing()
+    }
+
+    private func revealSearchMatches() {
+        guard !normalizedSearchQuery.isEmpty else { return }
+        disclosureState.reveal(filteredChapters.map(\.id))
+    }
 }
 
 private struct OutlineScrollSearchTrigger: NSViewRepresentable {
@@ -372,179 +423,6 @@ private struct OutlineScrollSearchTrigger: NSViewRepresentable {
             let frameInWindow = view.convert(view.bounds, to: nil)
             return frameInWindow.contains(location)
         }
-    }
-}
-
-private struct OutlineChapterRow: View {
-    @Environment(AppState.self) private var appState
-
-    let chapter: Chapter
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ChapterTitleField(
-                chapter: chapter,
-                onTitleChange: { title in
-                    appState.updateChapterTitle(title, for: chapter.id)
-                },
-                onCommit: {
-                    appState.commitChapterTitleEditing()
-                }
-            )
-            .lineLimit(1)
-            .truncationMode(.tail)
-
-            HStack(spacing: 8) {
-                Label("\(chapter.episodes.count)話", systemImage: "text.book.closed")
-                    .help("話数: \(chapter.episodes.count)")
-                outlineIconMetadata
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-
-    @ViewBuilder
-    private var outlineIconMetadata: some View {
-        metadataIcon(
-            systemName: "textformat.size",
-            help: "文字数: \(chapter.episodes.reduce(0) { $0 + ManuscriptMetrics.countCharacters(in: $1.content) })字"
-        )
-        metadataIcon(
-            systemName: appState.saveState.systemImage,
-            help: "保存状態: \(appState.saveState.label)"
-        )
-        metadataIcon(
-            systemName: chapter.episodes.allSatisfy(\.memo.isEmpty) ? "note.text" : "note.text.badge.plus",
-            help: chapter.episodes.allSatisfy(\.memo.isEmpty) ? "話メモ: なし" : "話メモ: あり"
-        )
-    }
-
-    private func metadataIcon(systemName: String, help: String) -> some View {
-        Image(systemName: systemName)
-            .frame(width: 16, height: 16)
-            .contentShape(Rectangle())
-            .help(help)
-    }
-}
-
-private struct OutlineEpisodeRow: View {
-    @Environment(AppState.self) private var appState
-
-    let episode: Episode
-    let chapterID: ChapterID
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            EpisodeTitleField(
-                episode: episode,
-                onTitleChange: { title in
-                    appState.updateEpisodeTitle(title, for: episode.id, in: chapterID)
-                },
-                onCommit: {
-                    appState.commitEpisodeTitleEditing()
-                }
-            )
-            .lineLimit(1)
-            .truncationMode(.tail)
-
-            HStack(spacing: 8) {
-                metadataIcon(
-                    systemName: "textformat.size",
-                    help: "文字数: \(ManuscriptMetrics.countCharacters(in: episode.content))字"
-                )
-                metadataIcon(
-                    systemName: appState.saveState.systemImage,
-                    help: "保存状態: \(appState.saveState.label)"
-                )
-                metadataIcon(
-                    systemName: episode.memo.isEmpty ? "note.text" : "note.text.badge.plus",
-                    help: episode.memo.isEmpty ? "話メモ: なし" : "話メモ: あり"
-                )
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.leading, 16)
-        .padding(.vertical, 4)
-    }
-
-    private func metadataIcon(systemName: String, help: String) -> some View {
-        Image(systemName: systemName)
-            .frame(width: 16, height: 16)
-            .contentShape(Rectangle())
-            .help(help)
-    }
-}
-
-private struct EpisodeTitleField: View {
-    let episode: Episode
-    let onTitleChange: (String) -> Void
-    let onCommit: () -> Void
-
-    @State private var draftTitle: String
-    @FocusState private var isFocused: Bool
-
-    init(episode: Episode, onTitleChange: @escaping (String) -> Void, onCommit: @escaping () -> Void) {
-        self.episode = episode
-        self.onTitleChange = onTitleChange
-        self.onCommit = onCommit
-        _draftTitle = State(initialValue: episode.title)
-    }
-
-    var body: some View {
-        TextField("話タイトル", text: $draftTitle)
-            .textFieldStyle(.plain)
-            .focused($isFocused)
-            .onChange(of: draftTitle) {
-                onTitleChange(draftTitle)
-            }
-            .onChange(of: episode.title) {
-                if !isFocused {
-                    draftTitle = episode.title
-                }
-            }
-            .onChange(of: isFocused) {
-                if !isFocused {
-                    commit()
-                }
-            }
-            .onSubmit {
-                commit()
-            }
-    }
-
-    private func commit() {
-        let normalizedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let committedTitle = normalizedTitle.isEmpty ? Episode.defaultTitle : normalizedTitle
-        if draftTitle != committedTitle {
-            draftTitle = committedTitle
-            onTitleChange(committedTitle)
-        }
-        onCommit()
-    }
-}
-
-private struct OutlineSceneRow: View {
-    let title: String
-    let characterCount: Int
-    let status: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "text.alignleft")
-                .foregroundStyle(.secondary)
-            Text(title)
-                .lineLimit(1)
-            Spacer()
-            Image(systemName: "textformat.size")
-                .help("文字数: \(characterCount)字")
-            Image(systemName: "checkmark.circle")
-                .help("状態: \(status)")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
 }
 
