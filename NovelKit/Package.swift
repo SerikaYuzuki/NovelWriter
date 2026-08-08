@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
+        .library(name: "NovelAI", targets: ["NovelAI"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
@@ -31,6 +32,10 @@ let package = Package(
         .target(
             name: "EditorKit",
             dependencies: ["NovelCore"]
+        ),
+        // NovelAI: provider-neutralな送受信契約のみ。原稿モデル・Storage・UIに依存しない。
+        .target(
+            name: "NovelAI"
         ),
         .target(
             name: "NovelUI",
@@ -55,6 +60,10 @@ let package = Package(
         .testTarget(
             name: "EditorKitTests",
             dependencies: ["EditorKit"]
+        ),
+        .testTarget(
+            name: "NovelAITests",
+            dependencies: ["NovelAI"]
         ),
         .testTarget(
             name: "NovelUITests",

@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.56
+# ふみにわ 設計書 v0.57
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -38,7 +38,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 - **配布**: GitHub Releases による直接配布。App Sandbox は採用しない(→ D-011)
 - **最低ターゲット**: macOS 14(`@Observable` の要件。実機は macOS 27 なので余裕あり)
 - **テスト**: swift-testing(`@Test`)を使用
-- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupport は NovelKit 内のターゲットとして実装し、署名不要の `swift test` を回せるようにする
+- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、AIの純粋domainだけを持つNovelAIをNovelKit内の独立targetとして扱い、署名不要の`swift test`を回せるようにする。NovelAIを追加してもprovider、sidecar、UIが実装済みとは扱わない(D-043)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
 
 ## 3. モジュール構成
@@ -59,6 +59,7 @@ FUMINIWA
     │   ├── NovelExporter.swift
     │   ├── TextRenderers.swift
     │   └── EPUBRenderer.swift
+    ├── NovelAI                     (純粋domainのみ。provider / process / UI非依存)
     ├── EditorKit
     │   ├── EditorView.swift
     │   ├── Core
@@ -139,7 +140,7 @@ public protocol DocumentRepository: Sendable {
 
 ### 4.2 NovelStorage
 
-作品データの保存・読み込みを担当する。`.novelpkg` はフォルダ形式のパッケージであり、将来的に画像・資料・AI生成メモなどを追加しやすい。
+作品データの保存・読み込みを担当する。`.novelpkg` はフォルダ形式のパッケージであり、画像・資料などを追加しやすい。AIのprompt、response、diff、provider設定はD-043の初期契約ではpackageへ追加しない。
 
 > **v3形式(D-028、UI-FIX-2a実装済み)**: 本文は `episodes/<EpisodeID>.md`、メモは `episode-notes/<EpisodeID>.md` に保存し、manifest の `chapters[].episodes[]` が話順を持つ。v1 / v2 は読み込み時に各旧章を「同じIDの章 + 本文1話」へ変換する。
 
@@ -311,12 +312,32 @@ NovelUI は可能な限りプラットフォーム非依存にする。
 - EPUBは再現可能なZIP、OPF、nav、章XHTMLを生成し、保存層や外部プロセスに依存しない
 - Phase 6.5でPDFを追加する際も共通原稿と公開APIを維持し、macOS固有コードだけを `Platform/macOS/` に置く
 
+### 4.9 NovelAI
+
+AI機能のprovider-neutralな純粋domainを担当する。初期targetはFoundationのoutbound値型、protocol、draft → version付きinstruction ID、単一`applicationPrompt`、version付きexact response schemaを持つpreview → `AIApplicationPayload`を封印したconfirmed requestの状態遷移、raw structured outputのstrict decode、結果／型付きerror、決定論的fakeだけを持ち、NovelCore、NovelStorage、EditorKit、SwiftUI、AppKit、network、subprocess、Keychain、provider SDKへ依存しない。
+
+- 最初のtaskは利用者が明示選択した本文範囲の校正案だけとする
+- 固定指示のversionをinstruction IDで表し、`selected_text`を未信頼データとして扱い、その中の命令に従わず選択外の文脈／ファイルを参照しないことを固定する。instructionを変えるときはIDも更新して再確認する
+- instruction、exact selected textからadapterがそのまま渡す単一`applicationPrompt`を決定論的に生成する。responseはversion付きschema ID（初版`proofreading-result-v1`）とexact `applicationResponseSchema`をdomainで固定し、schema変更時もIDを更新して再確認する
+- confirmed requestはpreviewで封印したprovider、purpose、instruction ID、`applicationPrompt`、response schema ID／exact schema、budget、app-provided input文字／UTF-8 byte数だけを持つ。adapterによるprompt／schemaの再構築・追記を許可せず、document session、editor surface、episode、UTF-16範囲、source digest、pathを混ぜない
+- providerの完了eventはraw structured outputとusageをdomain境界へ渡し、exact schemaでstrict decodeした`AIResult`だけを公開する
+- domain所有executorが不変provider descriptorを照合し、同じconfirmed requestのcopy／並行呼出しをone-shot leaseで最初の1回だけ実行する。cancel済みまたはstream破棄が先行したrequestではproviderを開始しない
+- provider能力はstreaming、cancellation、usage reportingを必須とする。`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負とし、usageを費用capそのものとして扱わない
+- domainはexecutor呼出しからのwall timeout、app-provided input、raw response、delta、decoded resultの文字／UTF-8 byte、usageを強制する。provider descriptorは不変O(1)とし、実providerのupstream token parameter、wire event／process resource limitはadapter Gateで別途保証する
+- provider adapterはdomain protocolへ適合し、SDK固有型やHTTP／process errorを公開APIへ漏らさない
+- domain自身はretry、fallback、provider選択、永続化、本文適用を行わない
+- 初期のprompt、response、diffはmemory onlyで、`.novelpkg`やsnapshotを変更しない
+
+Editorの選択snapshot、local session／surface identity、stale判定、本文適用は後続のApp / EditorKit bridgeの責務であり、NovelAIから`NSTextView`へ触れない。local identityはconfirmed outboundと別のmemory-only contextへ保持する。Codex Node sidecarとOpenRouterは別adapterとし、AppDependenciesが利用者の明示選択に基づいて一つだけを注入する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする(D-043)。
+
 ## 5. App側の設計
 
 ### 5.1 AppDependencies
 
 依存関係を組み立てる。例: `NovelpkgRepository`、将来のAIクライアント、設定ストア。
 App本体は具象クラスを直接作りすぎない。
+
+AI adapterを組み立てる将来PRでは、CodexとOpenRouterを別の具象依存として扱い、利用者が選んだ一つだけをprovider-neutral protocolへ注入する。失敗時に別providerを自動生成・自動選択しない。D-043のsidecar GateとD-040の出荷Gateが未完了の間は、production構成へ実providerを登録しない。
 
 書き出しはAppStateの保存依存ではなく `ExportPresenter` の実行境界へ注入する。保存パネル確定後に `AppState.document` を値スナップショットとして一度だけ取得し、`NovelExporter` の生成／書込みをMainActor外で実行する。
 
@@ -449,24 +470,31 @@ ContentView
 
 ### 7.4 書き出し
 
-現在利用可能な形式はプレーンテキスト / Markdown / EPUB 3。PDFは未実装のまま公開UIへ出さず、商業公開Gateの後にAIとは独立して需要と実装費を再評価する(D-037 / D-040)。
+現在利用可能な形式はプレーンテキスト / Markdown / EPUB 3。PDFは未実装のまま公開UIへ出さず、実装面の公開Gateの後にAIとは独立して技術的な受け入れ条件を定める(D-037 / D-040 / D-042)。
 
 書き出しは `.novelpkg` の内部構造を読まない独立した `NovelExport` 機能として実装する。入力は `NovelDocument` の不変スナップショットだけとし、本文・作品名・章名・話名だけを対象にする。TXT / Markdown / EPUBは同じ共通原稿展開を使い、生成物を同じ親の一時ファイルへ完成させてから置き換える。EPUBは横書きの最小仕様に留め、画像埋め込み・縦書きは対象外とする。Phase 6.5のPDFもこの境界を再利用する。詳細な仕様は [PHASE5.md](PHASE5.md) を正とする。
 
 ### 7.5 AI支援
 
-AI機能はアプリ本体から独立したFeatureとして扱う。
-
-想定機能: 章の要約 / 矛盾検出 / キャラクター口調チェック / 伏線チェック / 続きの提案 / 表現の言い換え / 誤字脱字チェック / 世界観メモ生成
+AI機能はアプリ本体から独立したFeatureとして扱う。最初の機能は、Editorで利用者が明示選択した範囲だけを送る校正案である。章の要約、矛盾検出、口調／伏線チェック、続きを含む生成は、この境界が安全に成立した後の別機能とする。
 
 方針:
 
-- AIは任意機能とし、アカウント・ネットワーク・AI契約なしで執筆／保存／書き出しを完結できるようにする
-- 本文編集をブロックしない
-- AIが失敗しても執筆機能は壊れない
-- 送信対象と送信前preview、明示同意、provider、保存期間、学習利用、費用上限、取消・失敗時挙動を実装前に固定する
-- 未実装の間はpanel、入力欄、状態、ショートカットを出荷UIへ置かない。結果表示面は機能設計後に改めて決める(D-040)
-- 本文への反映はユーザー確認後にする
+- AIは任意機能とし、アカウント、API key、ネットワーク、providerなしで執筆／保存／書き出しを完結できるようにする
+- version付きinstruction ID、`selected_text`を未信頼データとして扱う固定指示、exact selected text、adapterがそのまま渡す単一`applicationPrompt`、version付きexact response schema、provider、model、送信範囲、技術的に確認した保持／学習利用情報をrequestごとにpreviewし、明示確認なしに送らない。instruction／schema変更時はIDを更新して確認を取り直す
+- 送信中も本文編集をブロックせず、cancelとtyped errorを提供する。AI失敗時も原文と保存機能を維持する
+- 結果は初期版ではmemory onlyとし、`.novelpkg`、snapshot、UserDefaults、通常ログへ保存しない。ただしprovider／SDK側の履歴非保持を意味しない
+- 結果を自動適用せず、局所diffを確認した明示操作だけをEditorKit commandとして1 Undo単位で反映する
+- document session、editor surface、episode、UTF-16範囲、source textのいずれかが変わった結果はstaleとし、現在選択への読み替えや本文検索による再束縛をせず適用を拒否する
+- provider実装順はCodex SDK first、OpenRouter second。両者は独立adapterとし、provider間およびOpenRouter内の自動fallbackを行わない
+- providerはstreaming、cancellation、usage reportingを必須とし、raw structured outputをdomainでstrict decodeする。usageは`outputTokens`必須、`inputTokens`は不明なら省略可能とし、いずれも存在値は非負に限定する。usageは事後報告であり費用上限そのものではない
+- domain executorはprovider descriptor一致とconfirmationのone-shot実行を強制する。取消済み／stream破棄後はproviderを開始せず、再試行は新しいpreviewと確認から始める
+- CodexはSwift-native SDKでないため、stable `0.147.x` TypeScript SDKをexact pinした署名済みNode sidecarを候補とする。request専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、hash固定、OS-level file隔離、cancel後のprocess tree回収、arm64／x86_64、nested signing／notarizationを実証するまで非出荷・UI非表示とする。実repositoryや検査回避用の偽Git repositoryをcwdにしない
+- 公開TypeScript SDKにephemeral thread optionが確認できないため、「履歴を保存しない」「zero retention」と主張しない
+- provider／serviceの保持期間、SDK／CLI local artifactの場所・範囲・保持期間、providerの料金単位とrequest上限の表示根拠は、出荷UI前の未実装技術Gateとして確認する
+- 未実装の間はpanel、入力欄、状態、設定、ショートカットを出荷UIへ置かない(D-040 / D-043)
+
+request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
 ## 8. 開発ロードマップ
 
@@ -555,13 +583,17 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)、起動／作品ライフサイクルの競合防止(D-041)
+- **AIの現在地**: D-043で選択範囲校正、exact preview、明示確認、memory-only result、stale拒否、provider／sidecar Gateを技術契約化した段階。純粋domainと非出荷PoCは並行可能だが、provider、sidecar、Editor bridge、出荷UIは完成扱いにしない
 - **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
 ### Phase 6: AI支援
 
-- 要約 / 講評 / 矛盾検出 / 伏線確認 / 文章改善提案
-- 実装面の公開Gateの後に、provider adapter、送信先、送信範囲preview、保持／学習利用設定の検証と表示、明示確認、取消、利用上限、失敗時挙動を機能仕様として先に固定する。placeholder UIは先行させない(D-040 / D-042)
+- **6-0（非出荷基盤）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
+- **6-1（非出荷検証）**: providerへ渡さないlocal session／surface／range snapshotとstale判定、Editorの1 Undo適用bridge、Codex Node sidecarの隔離／署名／取消PoC。D-043の全Gate未達ならproduction targetへ入れない
+- **6-2（最初の出荷機能）**: 実装面の公開Gate後に、選択範囲校正のexact preview、明示確認、cancel、diff、stale表示、明示適用を追加する
+- **6-3（独立adapter）**: OpenRouterをCodexと別PRで追加する。自動fallbackなしをfailure testで保証する
+- 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
 
 ### Phase 6.5: PDF出力
 
@@ -595,6 +627,7 @@ NovelApp
 ├── NovelCore
 ├── NovelStorage
 ├── NovelExport
+├── NovelAI
 ├── NovelUI
 └── EditorKit
 
@@ -602,6 +635,7 @@ NovelStorage → NovelCore
 NovelExport  → NovelCore
 NovelUI     → NovelCore
 EditorKit   → NovelCore
+NovelAI     → 依存なし
 
 NovelCore → 依存なし
 ```
@@ -642,6 +676,18 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 - Windows 版は同一リポジトリの `Windows/` 配下に置き、共通文書と fixture を一つの変更履歴で管理する
 - OS 間互換に関わる PR は、両 OS のローカル検証結果を記録する。クラウド CI を使わない方針(D-014)は維持する
 
+### 9.6 AI統合
+
+- AIの純粋domainは`NovelAI`に置き、provider SDK、network、process、Keychain、SwiftUI、AppKit、EditorKitへ依存させない。初期domainはpreviewで封印したprompt／response schemaを含むconfirmed outboundだけをproviderへ渡し、local session／surface／range／pathを持たない
+- 選択snapshotの取得と本文適用はApp / EditorKit bridgeへ閉じ込め、D-005のテキスト所有権とD-041のsession tokenを迂回しない
+- 結果適用は同じdocument session、editor surface、episode、UTF-16範囲、exact sourceの一致を必要とし、staleな結果を現在選択へ再束縛しない
+- provider adapterはCodexとOpenRouterで分離し、失敗時の自動fallbackを実装しない
+- provider adapterはconfirmed prompt／schemaを追記・再構築せず、実送信直前のSDK／HTTP request captureでhidden追加がないことを検証する。fakeはpreviewとsealed payloadの完全一致を検証する
+- providerの不変descriptor照合とconfirmed requestのone-shot leaseはdomain executorで行い、adapter自身にstream生成や比較値の選択をさせない。adapterは外部副作用より先にcancellation handlerを登録する
+- providerはstreaming／cancellation／usage reportingを必須とし、domainがraw structured outputをexact schemaでstrict decodeする。domain budgetに加え、adapterはupstreamのmaximum output token parameterとwire event／process limitを設定・検証する
+- prompt、response、diff、provider設定で`.novelpkg` schemaを変更しない
+- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とし、一条件でも未検証なら出荷targetとUIへ含めない
+
 ## 10. AIエージェント向け実装指示の基本方針
 
 依頼するときは、以下の単位で小さく投げる。
@@ -665,6 +711,8 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
 次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、現段階を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+
+D-043のAI技術契約と`NovelAI`純粋domain、非出荷の隔離PoCは上記Gateと並行してよい。ただし直近の出荷優先順は変更せず、provider、sidecar、Editor bridge、AI UIが完成または配布可能とは表現しない。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
@@ -692,6 +740,16 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.57 (2026-08-08)
+
+AI統合をCodex SDK first / OpenRouter secondのprovider-neutralな純粋domainから始める技術契約を追加した(D-043、[AI_INTEGRATION.md](AI_INTEGRATION.md))。
+
+- 最初の機能を選択範囲校正に限定し、exact preview、requestごとの明示確認、memory-only result、自動適用禁止、stale適用拒否を固定
+- `NovelAI`をprovider／UI／Storage非依存のoutbound domain境界として追加し、初回PRをdraft／version付きinstruction IDと単一`applicationPrompt`／version付きexact response schemaのpreview／provider・purpose・budget・input countとともに封印するone-shot confirmed capability、raw structured outputのstrict decode、payload値型、protocol、fake、決定論的契約テストに限定。stale判定はlocal identityを持つ次のEditor bridgeへ分離
+- Codexの署名済みNode sidecar候補にhash固定、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、process tree回収、両architecture、署名／公証Gateを設定
+- OpenRouterを独立adapterとし、自動provider fallbackを禁止。`.novelpkg`は変更しない
+- Package ValidatorとExternal Change / Conflictを先に出荷するD-040の順序を維持し、AI基盤／PoCだけを非出荷・UI非表示で並行可能とした
 
 ### v0.56 (2026-08-08)
 
