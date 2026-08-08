@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.63
+# ふみにわ 設計書 v0.64
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -498,7 +498,7 @@ AI機能はアプリ本体から独立したFeatureとして扱う。最初の�
 - CodexとOpenRouterは同じprovider-neutralなoperation orchestratorとUIを使う。選択snapshot、preview、確認、cancel、diff、stale、Copy、Applyを共有し、process／HTTP、credential、model設定、保持情報、errorだけをadapterごとに分離する
 - providerはstreaming、cancellation、usage reportingを必須とし、raw structured outputをdomainでstrict decodeする。usageは`outputTokens`必須、`inputTokens`は不明なら省略可能とし、いずれも存在値は非負に限定する。usageは事後報告であり費用上限そのものではない
 - domain executorはprovider descriptor一致とconfirmationのone-shot実行権を強制する。取消済み／stream破棄後はproviderの実行権または最初の外部副作用を拒否し、再試行は新しいpreviewと確認から始める
-- CodexはSwift-native SDKでないため、provider実装／更新PRごとにreviewしたstable non-alpha TypeScript SDKをsemver rangeなしでexact pinしたNode sidecarを候補とする。2026-08-09の調査baselineは`0.147.0`である。個人用Experimentalではversion／path／hashを検査した開発用Node／CLIを許可するが、lockfile／package integrity、request専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel後のprocess tree回収は緩めない。arm64／x86_64、bundling、nested signing／notarizationは公開Release Gateへ延期する。実repositoryや検査回避用の偽Git repositoryをcwdにしない
+- CodexはSwift-native SDKでないため、provider実装／更新PRごとにreviewしたstable non-alpha TypeScript SDKをsemver rangeなしでexact pinしたNode sidecarを候補とする。2026-08-09の調査baselineは`0.147.0`である。B3ではarm64固定21-file packagerとExperimental native manifest verifierまでをidentity candidateとして実装したが、candidate digest／self manifestを実行承認にせず、B4でexact Node、independent compile-time digest allowlist、complete loaded inventory、immutable verify-to-use bindingを固定する。個人用Experimentalでもrequest専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel後のprocess tree回収は緩めない。arm64／x86_64、bundling、nested signing／notarizationは公開Release Gateへ延期する。実repositoryや検査回避用の偽Git repositoryをcwdにしない
 - 利用中Codex SDKにtool完全無効化やupstream output token capがなければ、Experimental UIで未保証と明示し、FUMINIWA側のresource limitを代替の上流capと表現しない。公開Releaseでは未達Gateとして残す
 - 公開TypeScript SDKにephemeral thread optionが確認できないため、「履歴を保存しない」「zero retention」と主張しない
 - provider／serviceの保持期間、SDK／CLI local artifactの場所・範囲・保持期間、providerの料金単位とrequest上限の表示根拠は、確認できた値と未保証を区別して送信前に示す
@@ -593,7 +593,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
-- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1のNode／Swift mock、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0の合成CLI capture、合成helper用Darwin native process supervisorまで実装済み。実Codex／OpenRouter provider、実CLI／network、native manifest verifier、Keychain、OS-level隔離、parent death後の回収は未実装である(D-043 / D-046 / D-047 / D-048)
+- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1、canonical deployment manifest v1、exact SDK 0.147.0の合成CLI capture、Darwin native process supervisor、arm64固定21-file packager、Experimental native manifest verifierまで実装済み。B3 digestはidentity candidateのみで、実provider／CLI／network、compile-time approved digest、exact Node、complete loaded inventory、immutable verify-to-use、Keychain、OS-level隔離、parent death後の回収は未実装である(D-043 / D-046 / D-047 / D-048 / D-049)
 - **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
@@ -602,7 +602,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 - **6-0（純粋domain、完了）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
 - **6-1（Editor bridge、完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、providerへ渡さないApp-level document session／episode／source digestを結合。送信前／適用前staleをfakeで固定
 - **6-2（共有Experimental UI、完了）**: provider-neutralなoperation orchestratorと、exact preview、明示確認、cancel、diff、stale、Copy、明示Applyからなる一つのUIをfake providerで接続。別app target／scheme／bundle／保存root `FUMINIWAExperimental`だけに含める
-- **6-3（Codex SDK route、B2合成supervisor完了）**: 本文送信前attestation付きのfixed sidecar protocol v1、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0を合成CLIだけで駆動するcaptureに加え、Darwin `posix_spawn`／new process group／3 pipe同時処理／固定cap／first-wins terminal／TERM→KILL／direct child `waitpid`／post-reap group `ESRCH`観測を合成helperで固定済み。macOS 27では`pipe2` runtime symbolをprobeし、stderr内容をresultへ保持しない。grandchild reap、group脱出、appのSIGKILL／crash／power loss、実SDK／CLI、network、credential、native manifest verifier、OS-level隔離は保証しない。続いてallowlist packager、native manifest verifier、exact Node allowlist、監査済みlauncher／parent-death境界、Keychain、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file隔離、memory／CPU／process limit、artifact inventoryを合成入力で実証してから、最初の実providerとして共有UIへ接続する(D-047 / D-048)
+- **6-3（Codex SDK route、B3 identity candidate完了）**: fixed sidecar protocol v1、canonical manifest v1、exact SDK 0.147.0の合成CLI capture、Darwin process supervisorに加え、SDK／CLI／darwin-arm64のexact metadata／SRIを検査する固定21-file packagerとSwift Experimental native verifierを実装した。packagerはreal copy中のsource hashをdestination manifestへ照合し、既存destinationを変更せず、failure後のpartial rootをtyped retained状態で残す。verifierはNode oracleと一致しfilesystem／resource／mutationをfail-closedにする。ただしcandidate digest／self manifestはauthorityでなく、x86_64、exact Node、compile-time approved digest、complete loaded inventory、immutable verify-to-import／path-based spawnは未実装である。B4でこれらruntime identity境界を固定後、launcher／parent-death、Keychain、専用cwd／`CODEX_HOME`、environment／OS file隔離、process limit、artifact inventoryを順に実証する(D-047 / D-048 / D-049)
 - **6-4（API route）**: OpenRouterをCodexとは独立したnative HTTPS adapterとして追加し、同じUIへ登録する。provider間とOpenRouter routingの自動fallbackなしをfailure testで保証する
 - **6-5（公開Release）**: Package Validator、External Change / Conflict、bundled universal runtime、hash、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常ReleaseへAI target／resource／UIを含めない
 - 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
@@ -728,7 +728,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility** である。pure domain、Editor transaction、App local context、fake provider、共有orchestrator／UI、Experimental target分離、本文送信前attestation付きNode／Swift protocol mock、canonical deployment manifest v1のNode primitive、exact SDK 0.147.0の合成CLI capture、合成helper用Darwin native process supervisorは完了した。supervisorはstdin／stdout 512 KiB、stderr 16 KiB、timeout／cancel／capのfirst-wins、同一groupへのTERM／KILL、direct child reap、post-reap `ESRCH`を固定したが、grandchild reap、group脱出、parent death後の回収を保証しない。次はallowlist packager／native manifest verifier、exact Node allowlist、監査済みlauncher／parent-death境界を固定し、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、memory／CPU／process limit、artifact inventoryを実証する。その後にCodex adapterを同じUIへ接続し、続いて独立したOpenRouter API adapterを追加する(D-046 / D-047 / D-048)。
+一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility B4** である。B3までにpure domain、Editor transaction、共有orchestrator／UI、Experimental分離、sidecar protocol、canonical manifest v1、exact SDK 0.147.0の合成capture、Darwin supervisor、arm64固定21-file packager、Experimental native verifierを完了した。B3は実SDK／CLI／key／network／原稿を使わないbuild-time identity candidateだけであり、partial destinationを再利用せず別の新規empty pathで再生成する。次はexact Node runtime／hash、candidateとは独立したcompile-time approved digest allowlist、complete loaded artifact inventory、検証済みbytesとimport／path-based spawnのimmutable bindingを固定する。その後に監査済みlauncher／parent-death、専用cwd／`CODEX_HOME`、environment allowlist、OS-level file-read拒否、memory／CPU／process limit、Keychainを実証し、Codex adapter、続いて独立したOpenRouter adapterを同じUIへ接続する(D-046 / D-047 / D-048 / D-049)。
 
 公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
@@ -760,6 +760,16 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.64 (2026-08-09)
+
+Codex deployment identityのB3として、arm64固定allowlist packagerとExperimental native manifest verifierを追加した(D-049、[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md))。
+
+- SDK／CLI 0.147.0とdarwin-arm64 packageのexact metadata／lock SRIを実行せず検査し、固定21 fileをroot 0700／directory 0755／file 0644または0755でreal copy
+- source SHA-256とdestination canonical manifestを一致させ、resultはpath／capabilityを持たないcandidate digestだけ。self manifestは非authority
+- destination作成後のfailureはrecursive cleanupせずtyped partial rootを保持し、既存destinationを変更／削除しない。partial rootは手動隔離／削除し、別の新規empty pathで再生成
+- Swift verifierはNodeの278-byte oracleと一致し、filesystem type／mode、resource cap、content／inode／directory mutationをfail-closedに検出
+- compile-time approved digest、exact Node、complete loaded inventory、immutable verify-to-use、実SDK／CLI／key／network／原稿は未実装。実送信と`codex_sdk` runtimeはNO-GO
 
 ### v0.63 (2026-08-09)
 

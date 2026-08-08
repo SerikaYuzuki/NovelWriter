@@ -24,10 +24,12 @@ node --check src/protocol.mjs
 node --check src/session.mjs
 node --check src/main.mjs
 node --check src/deployment-manifest.mjs
+node --check src/deployment-packager.mjs
 node --check src/codex-sdk-capture.mjs
 node --test \
   test/main.test.mjs \
   test/protocol.test.mjs \
   test/session.test.mjs \
   test/deployment-manifest.test.mjs \
+  test/deployment-packager.test.mjs \
   test/codex-sdk-capture.test.mjs

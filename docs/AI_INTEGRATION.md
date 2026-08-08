@@ -1,8 +1,8 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1のNode純粋primitive、exact SDKの合成CLI capture、合成helper用Darwin native process supervisorまで実装 / 実Codex・OpenRouter provider、実CLI／network、native manifest verifier、Keychain、OS隔離、parent death後の回収は未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1、exact SDKの合成CLI capture、Darwin native supervisor、arm64固定21-file packager、Experimental native manifest verifierまで実装 / 実provider／CLI／network、compile-time approved digest、exact Node runtime、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装**
 
-本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
+本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048 / D-049、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
 この契約を文書化したことや純粋domainを追加したことは、AI機能、Codex接続、OpenRouter接続、履歴非保持、配布可能性の完成を意味しない。
 
@@ -117,11 +117,13 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)を正とする(D-047)。本文を含まない`hello`／`ready`でruntime identityを検査してからだけ`start`を許可し、valid start後は`started`と単一terminalを返す。v1はtoken deltaを捏造せず、Codex結果本文は完了後だけ共有UIへ渡す。protocol mockの成功を実SDK接続、隔離、orphanなしの証明として扱わない。
 
-canonical deployment manifest v1の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする。現在は合成treeのcanonical bytes／root digestと改ざん拒否をNodeで固定した段階であり、実配布rootのallowlist copy、nativeの起動前検証、完全なloaded-module inventory、verify-to-import競合は未実装である。
+canonical deployment manifest v1とB3 packager／verifier境界の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする(D-049)。Node packagerはDarwin arm64のSDK／CLI 0.147.0に固定した21 fileと派生15 directoryを新規rootへ実コピーし、exact metadata／lock SRI、source hash、destination canonical manifestを一致させる。Swift native verifierは`FUMINIWAExperimental`だけにcompileされ、Node oracle（digest `15b98ccf…d35288`、278 bytes）とcanonical v1を一致させる。いずれもbuild-time identity candidate／primitiveであり、compile-time approved digest allowlist、exact Node executable、完全なloaded artifact inventory、immutable verify-to-import／path-based spawn bindingは未実装である。
 
 2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。Checkpoint B1で`@openai/codex-sdk` `0.147.0`と対応CLI packageをlockfileへexact pinし、実通信しない合成CLIだけでargv／stdin／schema temporary file／environment／usage／cancel／errorをcaptureした。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
-Darwin native process supervisorの正は[`Sidecars/Codex/SUPERVISOR.md`](../Sidecars/Codex/SUPERVISOR.md)とする(D-048)。Checkpoint B2では、canonicalなabsolute executable／cwdと明示environmentを`posix_spawn`し、childを新process group leaderにするExperimental-only primitiveを、合成shell helperだけで検証した。stdin／stdoutは512 KiB、stderrは16 KiBを上限とし、stderr内容をresultへ保持しない。timeout／cancel／cap failureはfirst-winsでclaimし、同一groupへTERM→KILL、direct childだけを`waitpid`でreap、reap後の`ESRCH`をboundedに観測する。実SDK／CLI、network、credential、native manifest verifier、OS-level sandboxは使っておらず、実送信はNO-GOのままである。
+Darwin native process supervisorの正は[`Sidecars/Codex/SUPERVISOR.md`](../Sidecars/Codex/SUPERVISOR.md)とする(D-048)。Checkpoint B2では、canonicalなabsolute executable／cwdと明示environmentを`posix_spawn`し、childを新process group leaderにするExperimental-only primitiveを、合成shell helperだけで検証した。stdin／stdoutは512 KiB、stderrは16 KiBを上限とし、stderr内容をresultへ保持しない。timeout／cancel／cap failureはfirst-winsでclaimし、同一groupへTERM→KILL、direct childだけを`waitpid`でreap、reap後の`ESRCH`をboundedに観測する。B3 verifierは後から独立追加され、supervisorのpath-based spawnとはまだ結合していない。実SDK／CLI、network、credential、OS-level sandboxは使っておらず、実送信はNO-GOのままである。
+
+Checkpoint B3のpackager成功値は`candidateRootDigest`であってproduction approvalではなく、root内self manifestもauthorityではない。destination作成後に失敗したrootは`partial_destination_retained`として利用不能のまま残し、自動再利用／継続／再帰cleanupをしない。呼出側がidentityを確認して手動で隔離・削除し、再生成は別の新規empty destination pathで行う。Node pathname APIとSwiftの複数回fingerprint検査は通常raceを狭めるが、same-userによるancestor／root swapや検証直後の置換を閉じない。
 
 ### 6.0 二段階のGate
 
@@ -138,6 +140,8 @@ Darwin native process supervisorの正は[`Sidecars/Codex/SUPERVISOR.md`](../Sid
 - 公開ReleaseではNode runtime、sidecar script/bundle、Codex CLI、必要なnative artifactをアプリbundle内の決めた場所にのみ同梱する。
 - 公開Releaseではhelperとすべてのnested executable／libraryをDeveloper IDで適切に署名し、Hardened Runtime、Archive、notarization、stapling、Gatekeeper検証をアプリ全体で通す。
 - 公開Releaseではarm64とx86_64の各clean Macで、初回起動、実request、cancel、更新後起動を検証する。片方のarchitectureだけの成功でuniversal配布可能としない。
+- B3 packagerはarm64の固定21 fileだけを候補rootへコピーし、caller supplied allowlist、x86_64、Node executableを含まない。返すdigest／self manifestをbuild-time allowlistとして信頼せず、B4でindependent compile-time approvalとexact Node hashを追加する。
+- B3 native verifierはexpected digestを独立引数で受け、filesystem mutationをfail-closedにするが、owner-writable treeをimmutableにせず、検証したbytesを後続import／spawnへfdで引き渡さない。B4で完全なloaded artifact inventoryとimmutable verify-to-use bindingを実証する。
 
 ### 6.2 原稿とローカルファイルの隔離
 
@@ -212,12 +216,14 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
 3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
 4. **Codex sidecar protocol（完了）**: content-free attestation、固定framing、上限、typed event、cancel、重複terminal拒否をmockで検証し、実instruction／schemaと合成本文を使うNode／Swift共通fixtureを一致させた(D-047)。実SDK／CLI、credential、network、process起動は含まない。
-5. **Manifest primitive + exact SDK capture（B1完了）**: canonical deployment manifest v1のNode builder／verifierを合成treeで固定し、SDK／CLI package 0.147.0をexact pinして合成CLIだけでSDK argv／stdin／schema／environment／usage／cancel／errorをcaptureした。Node 22.23.1と26.4.0のUnicode出力差も固定した。packager、native verifier、実CLI、process supervisor、networkは含まず、exact Node allowlistも未決定のため実送信はNO-GOのままとする。
+5. **Manifest primitive + exact SDK capture（B1完了）**: canonical deployment manifest v1のNode builder／verifierを合成treeで固定し、SDK／CLI package 0.147.0をexact pinして合成CLIだけでSDK argv／stdin／schema／environment／usage／cancel／errorをcaptureした。Node 22.23.1と26.4.0のUnicode出力差も固定した。この段階単独ではpackager、native verifier、process supervisor、networkを含まない。
 6. **Darwin native supervisor（B2完了）**: `posix_spawn`／new process group、3 pipe同時処理、stdin／stdout／stderr cap、first-wins cancel／timeout／failure、TERM→KILL、`waitid(WNOWAIT)` anchor、direct child `waitpid`、post-reap `ESRCH`を合成helperで固定した(D-048)。macOS 27では`pipe2` runtime symbolをprobeし、stderr内容を保持しない。実SDK／CLI、network、credential、manifest verifier、OS sandbox、parent death後の回収は含まない。
-7. **Codex Experimental isolation feasibility**: allowlist packager／native manifest verifier、exact Node runtime、監査済みlauncherとparent-death境界を追加し、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
-8. **Codex Experimental adapter**: sidecar fixed protocol、Keychain one-shot credential pipe、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
-9. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
-10. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
+7. **固定packager + native verifier（B3完了）**: Node packagerでarm64 0.147.0の固定21 fileをreal copyし、source hashからdestination canonical manifestのcandidate digestを作る。Swift Experimental verifierをNode oracleと一致させ、strict filesystem／resource／mutation rejectionを固定した(D-049)。partial rootは保持して手動処理し、既存destinationは変更しない。実SDK／CLI／key／network／原稿は使わず、candidateを実行承認へ昇格しない。
+8. **Immutable runtime identity（B4）**: exact Node runtime／hash、candidateとは独立したcompile-time approved digest allowlist、完全なESM／CJS／dynamic import／native addon／CLI／runtime data inventory、検証した同じbytesとimport／path-based spawnのimmutable bindingを固定する。same-user ancestor／root swapをpathname再検査だけで解決済みとしない。
+9. **Codex Experimental isolation feasibility**: 監査済みlauncherとparent-death境界、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
+10. **Codex Experimental adapter**: sidecar fixed protocol、Keychain one-shot credential pipe、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
+11. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
+12. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
 
 D-046により個人用Experimental AIをPackage Validator GateとExternal Change / Conflict Gateに先行できる。一方、両Gateは公開Releaseの優先事項として維持し、Experimentalで通った機能、UI、実通信をそのまま公開可能とは表現しない。
 
@@ -235,7 +241,9 @@ D-046により個人用Experimental AIをPackage Validator GateとExternal Chang
 - OpenRouterは単一model／provider、`allow_fallbacks = false`、`require_parameters = true`、strict schema、既知plugin無効化、routing metadata必須をwire captureで固定し、attempt 1以外、非空／未知pipeline、metadata欠損では結果を適用しない
 - CodexとOpenRouterが同じEditor snapshot／preview／diff／stale／Apply実装を通り、providerを変えても本文適用ロジックが分岐しない
 - prompt、本文、response、API key、pathがログと永続設定へ残らない
-- Experimental buildはSDK／CLI／Nodeの実行version、path、hashとlockfile／package integrityのdriftを送信前に拒否し、専用cwd／`CODEX_HOME`、file-read拒否、process tree回収を実機で再現できる
+- B3 packagerは固定21 file、exact metadata／SRI、real copy、source hash→destination manifest、既存destination不変、partial root保持を合成testで再現できる。candidate digest／self manifestが実行承認ではなく、partial rootを再利用せず別の新規empty pathで再生成することを型付きerrorで判定できる
+- B3 native verifierはNode oracleとcanonical bytes／digest／recordを一致させ、独立expected digest、symlink／hardlink／special file／危険mode／resource超過／mutationを拒否する。これだけでcompile-time allowlist、exact Node、complete loaded inventory、immutable verify-to-useを宣言しない
+- B4以降のExperimental buildはSDK／CLI／Nodeの実行version、path、hashとlockfile／package integrityのdriftを送信前に拒否し、専用cwd／`CODEX_HOME`、file-read拒否、process tree回収を実機で再現できる
 - process lifecycleの受け入れ証拠は、direct childのreap、同一group descendantへのsignalとpost-reap `ESRCH`観測、group脱出拒否、parent death後の回収を分けて記録する。合成supervisor testだけでgrandchild reapまたは一般的なorphan-freeを宣言しない
 - 通常ReleaseのArchiveにAI menu／shortcut／設定、Codex／OpenRouter target、Node／CLI／sidecar artifactが存在せず、network／process起動経路へ到達できない
 - Codex sidecarを出荷する場合は6章の全Gateをarm64／x86_64、Archive済みnotarized appで再現できる

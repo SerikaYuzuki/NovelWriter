@@ -64,14 +64,14 @@ Darwinでは、終了済みだが未reapのleaderだけが残る期間のgroup p
 - reap直後のPGID reuse raceを完全には排除できない。実装はleaderをreap直前までanchorとして保持し、reap後は観測だけを行って無関係processへsignalしないが、`ESRCH`はその瞬間の状態だけを示す。
 - 合成helperでの成功は、実Codex SDK／CLIのprocess tree、Nodeの子孫構造、network、API key、local artifact、OS-level file-read拒否を検証しない。
 
-以上のため、Checkpoint B2完了後も実送信はNO-GOである。native manifest verifier、監査済みlauncher／parent-death境界、exact Node runtime、専用cwd／`CODEX_HOME`、environment allowlist、Keychain one-shot credential pipe、OS-level sandbox、実SDK process treeとartifact inventoryを合成入力から個別に通した後で、既存のprovider-neutral UIへadapterを接続する。
+以上のため、Checkpoint B2完了後も実送信はNO-GOである。B3でnative manifest verifierを追加しても、compile-time approved digest allowlist、検証済みbytesとpath-based spawnのimmutable binding、exact Node runtime、監査済みlauncher／parent-death境界、専用cwd／`CODEX_HOME`、environment allowlist、Keychain one-shot credential pipe、OS-level sandbox、実SDK process treeとartifact inventoryは未完了である。これらを合成入力から個別に通した後で、既存のprovider-neutral UIへadapterを接続する。
 
 ## 6. 合成テストで固定する事実
 
 - canonicalなabsolute executable／cwd、exact argv／environment、stdin、stdout、stderr byte count、exit code／signal termination
 - group／world writable executableをspawn前に拒否すること
 - 親の未許可sentinel file descriptorをchildが継承しないこと
-- stdin 512 KiB、stdout 512 KiB、stderr 16 KiBの境界と1 byte超過のtyped failure
+- stdin 512 KiB、stdout 512 KiB、stderr 16 KiBの境界と超過時のtyped failure
 - stdout 512 KiBとstderr 16 KiBを同時にexact capまでfloodしてもdeadlockせずdrainすること
 - timeout、Swift Task cancel、重複`cancel()`でTERMを無視するleaderと同一group descendantをKILLし、direct childをreapしてpost-reap `ESRCH`を観測すること
 - deadline後に観測した即時exitを成功へ戻さないこと

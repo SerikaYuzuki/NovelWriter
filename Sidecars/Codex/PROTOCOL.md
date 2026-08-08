@@ -59,12 +59,13 @@ sdk_version, sdk_integrity, cli_version, cli_sha256
   digest of a canonical deployment manifest covering sidecar source, lockfile,
   and the installed SDK/dependency file tree; SRI alone is not evidence of the
   bytes actually loaded at runtime.
-- [`MANIFEST.md`](MANIFEST.md) defines manifest v1 and Checkpoint B1 implements
-  its canonical Node builder/verifier against synthetic deployment trees. This
-  primitive does not assemble a deployment root and is not the native pre-spawn
-  verifier. A `codex_sdk` implementation remains forbidden until an allowlist
-  packager, independently trusted native verification, complete loaded-module
-  containment, and the verify-to-import/spawn TOCTOU boundary are implemented.
+- [`MANIFEST.md`](MANIFEST.md) defines manifest v1. Checkpoint B3 adds a fixed
+  21-file arm64 packager and an Experimental native verifier, but the returned
+  root digest is only a build-time identity candidate. The self manifest is not
+  authoritative, and no compile-time native allowlist consumes the candidate
+  yet. A `codex_sdk` implementation remains forbidden until the exact Node
+  runtime, independently approved digest, complete loaded-artifact containment,
+  and immutable verification-to-import/path-based-spawn boundary are fixed.
   Merely hashing `package-lock.json`, trusting the self manifest, or hashing the
   package directory name does not satisfy attestation.
 - Mock mode uses `null` for artifact hashes and SDK/CLI identity. Codex SDK mode
