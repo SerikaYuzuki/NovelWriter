@@ -15,6 +15,24 @@ private struct WorkbenchColumnWidths {
     var max: CGFloat
 }
 
+enum WorkbenchColumnLayout: Hashable {
+    case twoColumn
+    case threeColumn
+
+    init(section: ProjectSection) {
+        switch section {
+        case .projectInfo, .settings:
+            self = .twoColumn
+        case .structure, .plot, .characters, .worldbuilding, .references:
+            self = .threeColumn
+        }
+    }
+
+    static func requiresSidebarFocusHandoff(from previous: ProjectSection, to next: ProjectSection) -> Bool {
+        WorkbenchColumnLayout(section: previous) != WorkbenchColumnLayout(section: next)
+    }
+}
+
 struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
@@ -27,11 +45,13 @@ struct NovelWorkbenchView: View {
     @State private var isImportingAttachment = false
     @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
+    @State private var sidebarFocusHandoffID: UUID?
+    @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             workbenchSplitView
-                .id(usesTwoColumnLayout)
+                .id(workbenchColumnLayout)
 
             WorkbenchStatusBarView()
         }
@@ -137,8 +157,33 @@ struct NovelWorkbenchView: View {
     }
 
     private var projectSidebar: some View {
-        ProjectSidebarView()
-            .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
+        ProjectSidebarView(
+            isFocused: $projectSidebarIsFocused,
+            onSelect: selectProjectSectionFromSidebar
+        )
+        .navigationSplitViewColumnWidth(min: 184, ideal: 200, max: 224)
+    }
+
+    private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
+        let previous = appState.workspaceSelection.section
+        appState.selectProjectSection(section)
+
+        guard appState.workspaceSelection.section == section,
+              WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
+
+        // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
+        // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
+        // Detail側からのプログラム遷移では呼ばれないため、標準のinactive選択を妨げない。
+        let handoffID = UUID()
+        sidebarFocusHandoffID = handoffID
+        projectSidebarIsFocused = false
+        Task { @MainActor in
+            await Task.yield()
+            guard sidebarFocusHandoffID == handoffID,
+                  appState.workspaceSelection.section == section else { return }
+            projectSidebarIsFocused = true
+            sidebarFocusHandoffID = nil
+        }
     }
 
     private var snapshotRestoreDialogIsPresented: Binding<Bool> {
@@ -267,12 +312,11 @@ struct NovelWorkbenchView: View {
     }
 
     private var usesTwoColumnLayout: Bool {
-        switch appState.workspaceSelection.section {
-        case .projectInfo, .settings:
-            true
-        case .structure, .plot, .characters, .worldbuilding, .references:
-            false
-        }
+        workbenchColumnLayout == .twoColumn
+    }
+
+    private var workbenchColumnLayout: WorkbenchColumnLayout {
+        WorkbenchColumnLayout(section: appState.workspaceSelection.section)
     }
 
     private var documentDisplayTitle: String {
@@ -300,6 +344,9 @@ struct NovelWorkbenchView: View {
 struct ProjectSidebarView: View {
     @Environment(AppState.self) private var appState
 
+    let isFocused: FocusState<Bool>.Binding
+    let onSelect: (ProjectSection) -> Void
+
     var body: some View {
         List(selection: sectionSelection) {
             ForEach(ProjectSection.allCases) { section in
@@ -307,6 +354,7 @@ struct ProjectSidebarView: View {
                     .tag(section)
             }
         }
+        .focused(isFocused)
         .workbenchGlassOutlineStyle()
     }
 
@@ -315,7 +363,7 @@ struct ProjectSidebarView: View {
             get: { appState.workspaceSelection.section },
             set: { section in
                 if let section {
-                    appState.selectProjectSection(section)
+                    onSelect(section)
                 }
             }
         )

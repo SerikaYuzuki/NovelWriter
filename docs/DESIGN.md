@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.57
+# ふみにわ 設計書 v0.58
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -582,7 +582,7 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 ### 商業化基盤: Product Trust / Package Safety / Release
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
-- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)、起動／作品ライフサイクルの競合防止(D-041)
+- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
 - **AIの現在地**: D-043で選択範囲校正、exact preview、明示確認、memory-only result、stale拒否、provider／sidecar Gateを技術契約化した段階。純粋domainと非出荷PoCは並行可能だが、provider、sidecar、Editor bridge、出荷UIは完成扱いにしない
 - **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
@@ -740,6 +740,14 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.58 (2026-08-08)
+
+章Disclosureの操作範囲と情報密度を改善し、アプリのchrome外観を利用者が選べるようにした(D-044 / D-045)。
+
+- 章名・話数・文字数・現在行の保存状態を横一列へ集約し、章label全体を話一覧の開閉領域に変更
+- 外観設定へ「システムに合わせる／ライト／ダーク」を追加し、メイン／設定ウィンドウへ即時反映・永続化
+- 本文キャンバスの本文色・背景色はアプリ外観から独立した設定として維持
 
 ### v0.57 (2026-08-08)
 

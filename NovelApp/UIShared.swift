@@ -83,8 +83,16 @@ struct WorkbenchLabeledEditor<Content: View>: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             content
+                // TextEditorの標準bezelは、この共通部品が所有するhairlineと
+                // 二重に見える。入力面はplainにして、境界は外側の1本だけにする。
+                .textEditorStyle(.plain)
+                .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(nsColor: .textBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(.separator, lineWidth: 1)
@@ -174,54 +182,6 @@ enum CharacterAppearanceDetector {
             seen.insert(candidate)
             return candidate
         }
-    }
-}
-
-struct ChapterTitleField: View {
-    let chapter: Chapter
-    let onTitleChange: (String) -> Void
-    let onCommit: () -> Void
-
-    @State private var draftTitle: String
-    @FocusState private var isFocused: Bool
-
-    init(chapter: Chapter, onTitleChange: @escaping (String) -> Void, onCommit: @escaping () -> Void) {
-        self.chapter = chapter
-        self.onTitleChange = onTitleChange
-        self.onCommit = onCommit
-        _draftTitle = State(initialValue: chapter.title)
-    }
-
-    var body: some View {
-        TextField("章タイトル", text: $draftTitle)
-            .textFieldStyle(.plain)
-            .focused($isFocused)
-            .onChange(of: draftTitle) {
-                onTitleChange(draftTitle)
-            }
-            .onChange(of: chapter.title) {
-                if !isFocused {
-                    draftTitle = chapter.title
-                }
-            }
-            .onChange(of: isFocused) {
-                if !isFocused {
-                    commit()
-                }
-            }
-            .onSubmit {
-                commit()
-            }
-    }
-
-    private func commit() {
-        let normalizedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let committedTitle = normalizedTitle.isEmpty ? "無題の章" : normalizedTitle
-        if draftTitle != committedTitle {
-            draftTitle = committedTitle
-            onTitleChange(committedTitle)
-        }
-        onCommit()
     }
 }
 

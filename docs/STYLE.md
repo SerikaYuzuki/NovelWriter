@@ -9,7 +9,7 @@
 
 - 主役は常に本文テキスト。UI は一歩引く(彩度の高い色・強い装飾・過剰なアニメーションを使わない)
 - **ネイティブ macOS ファースト**: 標準コントロール・セマンティックカラー・システム素材を最優先。カスタム描画は「標準で表現できない場合」の最終手段
-- Sidebar、Outline、toolbar、form等のchromeはmacOSのシステムLight／Dark外観へ追従する。アプリ全体へ`.preferredColorScheme(.dark)`を指定しない
+- Sidebar、Outline、toolbar、form等のchromeは既定でmacOSのシステムLight／Dark外観へ追従する。設定で利用者が明示した場合だけ、アプリのchromeをLightまたはDarkへ固定できる。特定外観を無条件に強制しない
 - 本文エディタのキャンバスはchromeと独立した利用者設定とし、既定は従来どおり「夜の書斎」の暗色キャンバスにする。システム外観を変えても利用者の本文配色を勝手に上書きしない
 - 画面は Project Sidebar / Outline / Editor と下部status barのワークベンチとして扱い、本文の横幅を最優先する。未実装AI用の領域は予約表示しない(D-040)
 
@@ -81,7 +81,7 @@
 
 - **ボタン**: 主アクション(ダイアログの実行など)= `.borderedProminent`、通常 = `.bordered`、ツールバー・行内 = `.borderless` + アイコン。破壊的操作は `role: .destructive` を必ず付ける
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
-- **Outline**: 行は「タイトル + メタ情報」の2段構成。メタ情報は文字数・更新状態・小さなアイコンまで。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
+- **Outline**: 通常の行は「タイトル + メタ情報」の2段構成。執筆Outlineの章Disclosureだけは、章名・話数・文字数・現在行の保存状態を横一列へ収めるcompact行とし、章名以外を末尾へ固定する。章label全体を開閉のhit targetにする。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
 - **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
 - **Workbench status bar**: 保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない
 - **Startup / Recovery**: `loading`では作品を読み込んでいることだけを静かに示し、編集操作を出さない。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
@@ -102,7 +102,7 @@
 - 選択・フォーカスリングは OS 標準に任せる(消さない・作らない)
 - ドラッグ中: 元位置は `opacity 0.4`、持ち上げたカードは軽い影。ドロップ先レーンは `accent` の淡いハイライト
 - アニメーション: `.snappy`(0.2s 目安)に統一。バウンスや 0.5s 超の演出は禁止
-- キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする
+- キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする。本文選択の対象にしないDisclosure headerは、同じ操作へ到達できるメニュー項目を必ず持つ
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
@@ -119,7 +119,7 @@
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
 - [ ] セマンティックカラー以外の色は、本文書のトークン(canvas / surface / surfaceRaised / border / accent / warning / success / danger / キャラ10色)だけか
-- [ ] システムのLight／Dark両方でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。アプリ全体の外観を固定していないか
+- [ ] システム追従／明示Light／明示Darkの各設定でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。利用者の選択なしにアプリ全体の外観を固定していないか
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
 - [ ] Project Sidebar / Outline / Editor / status bar の幅と優先順位が崩れていないか

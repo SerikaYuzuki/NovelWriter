@@ -35,6 +35,13 @@ final class EditorSettings {
         didSet { userDefaults.set(widthMode.rawValue, forKey: Self.widthModeKey) }
     }
 
+    var appearance: AppAppearance {
+        didSet {
+            userDefaults.set(appearance.rawValue, forKey: Self.appearanceKey)
+            appearanceApplier(appearance)
+        }
+    }
+
     var textColorHex: String {
         didSet { userDefaults.set(textColorHex, forKey: Self.textColorKey) }
     }
@@ -44,16 +51,24 @@ final class EditorSettings {
     }
 
     private let userDefaults: UserDefaults
+    private let appearanceApplier: @MainActor (AppAppearance) -> Void
 
     private static let fontNameKey = AppPreferenceKey.editorFontName
     private static let fontSizeKey = AppPreferenceKey.editorFontSize
     private static let lineHeightKey = AppPreferenceKey.editorLineHeight
     private static let widthModeKey = AppPreferenceKey.editorWidthMode
+    private static let appearanceKey = AppPreferenceKey.appearance
     private static let textColorKey = AppPreferenceKey.editorTextColor
     private static let backgroundColorKey = AppPreferenceKey.editorBackgroundColor
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        appearanceApplier: (@MainActor (AppAppearance) -> Void)? = nil
+    ) {
         self.userDefaults = userDefaults
+        self.appearanceApplier = appearanceApplier ?? { appearance in
+            appearance.applyToApplication()
+        }
 
         fontName = userDefaults.string(forKey: Self.fontNameKey) ?? EditorFontFamily.hiraginoMincho.fontName
 
@@ -70,8 +85,15 @@ final class EditorSettings {
         let storedWidthMode = userDefaults.string(forKey: Self.widthModeKey) ?? ""
         widthMode = EditorWidthMode(rawValue: storedWidthMode) ?? .unlimited
 
-        textColorHex = userDefaults.string(forKey: Self.textColorKey) ?? EditorConfiguration.defaultTextColorHex
-        backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey) ?? EditorConfiguration.defaultBackgroundColorHex
+        let storedAppearance = userDefaults.string(forKey: Self.appearanceKey) ?? ""
+        appearance = AppAppearance(rawValue: storedAppearance) ?? .system
+
+        textColorHex = userDefaults.string(forKey: Self.textColorKey)
+            ?? EditorConfiguration.defaultTextColorHex
+        backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey)
+            ?? EditorConfiguration.defaultBackgroundColorHex
+
+        self.appearanceApplier(appearance)
     }
 
     var configuration: EditorConfiguration {
@@ -162,6 +184,48 @@ enum EditorWidthMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .system:
+            "システムに合わせる"
+        case .light:
+            "ライト"
+        case .dark:
+            "ダーク"
+        }
+    }
+
+    #if canImport(AppKit)
+    var applicationAppearance: NSAppearance? {
+        switch self {
+        case .system:
+            nil
+        case .light:
+            NSAppearance(named: .aqua)
+        case .dark:
+            NSAppearance(named: .darkAqua)
+        }
+    }
+
+    @MainActor
+    func applyToApplication() {
+        NSApplication.shared.appearance = applicationAppearance
+    }
+    #else
+    @MainActor
+    func applyToApplication() {}
+    #endif
+}
+
 struct EditorSettingsView: View {
     @Environment(EditorSettings.self) private var settings
 
@@ -169,6 +233,14 @@ struct EditorSettingsView: View {
         @Bindable var settings = settings
 
         Form {
+            Picker("外観", selection: $settings.appearance) {
+                ForEach(AppAppearance.allCases) { appearance in
+                    Text(appearance.title)
+                        .tag(appearance)
+                }
+            }
+            .pickerStyle(.segmented)
+
             Picker("フォント", selection: fontFamilyBinding) {
                 ForEach(EditorFontFamily.allCases) { family in
                     Text(family.title)
