@@ -1,16 +1,21 @@
 import Foundation
-import NovelAI
+@testable import NovelAI
 import Testing
 
-private actor FailureCancellationProbe {
+private final class FailureCancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
     private var count = 0
 
     func record() {
+        lock.lock()
         count += 1
+        lock.unlock()
     }
 
     func recordedCount() -> Int {
-        count
+        lock.lock()
+        defer { lock.unlock() }
+        return count
     }
 }
 
@@ -26,6 +31,8 @@ private actor ProviderStartProbe {
     }
 }
 
+/// `descriptor`はO(1)の不変値がprovider契約だが、契約違反adapterでも
+/// executor entryのcancel／deadlineをfail-closedに保つ回帰用gate。
 private final class DescriptorGate: @unchecked Sendable {
     private let entered = DispatchSemaphore(value: 0)
     private let resume = DispatchSemaphore(value: 0)
@@ -118,6 +125,32 @@ func preCancelledExecutionNeverStartsProvider() async throws {
     #expect(await probe.recordedCount() == 0)
 }
 
+@Test("executor entryで確定したdeadlineを延長せずprovider開始を拒否する")
+func executorEntryDeadlineIsNotResetBeforeProviderStart() async throws {
+    let probe = ProviderStartProbe()
+    let provider = StartRecordingProvider(
+        descriptor: failureProviderDescriptor,
+        probe: probe
+    )
+    let request = try failureRequest(timeoutSeconds: 1)
+    let expiredEntryDeadline = ContinuousClock().now.advanced(by: .milliseconds(-1))
+
+    let events = await collectFailureEvents(
+        AIProviderExecutor.events(
+            for: request,
+            using: provider,
+            deadline: expiredEntryDeadline
+        )
+    )
+    let reuseEvents = await collectFailureEvents(
+        AIProviderExecutor.events(for: request, using: provider)
+    )
+
+    #expect(events == [.failed(.timedOut)])
+    #expect(reuseEvents == [.failed(.confirmationAlreadyUsed)])
+    #expect(await probe.recordedCount() == 0)
+}
+
 @Test("descriptor取得中のcancelはconfirmationを消費しprovider開始と再利用を拒否する")
 func cancellationDuringDescriptorReadNeverStartsProvider() async throws {
     let probe = ProviderStartProbe()
@@ -149,7 +182,7 @@ func cancellationDuringDescriptorReadNeverStartsProvider() async throws {
     #expect(await probe.recordedCount() == 0)
 }
 
-@Test("descriptor timeoutはconfirmationを消費しprovider開始と再利用を拒否する")
+@Test("descriptor取得時間をexecutor entryからのwall-clock timeoutへ含める")
 func descriptorReadIsIncludedInWallClockTimeout() async throws {
     let probe = ProviderStartProbe()
     let gate = DescriptorGate()
@@ -204,12 +237,12 @@ func confirmationIsOneShotAcrossRepeatedConfirmation() async throws {
     #expect(await probe.recordedCount() == 1)
 }
 
-@Test("adapterのtyped failureはupstream cancellationをexactly onceで実行する")
+@Test("adapterのtyped failureはexecutor stream経由でupstreamをexactly once停止する")
 func adapterFailureStopsUpstreamExactlyOnce() async throws {
     let probe = FailureCancellationProbe()
     let provider = FailureScriptProvider(descriptor: failureProviderDescriptor) { events in
         events.onUpstreamCancellation {
-            Task { await probe.record() }
+            probe.record()
         }
         events.yieldStarted()
         events.fail(.providerUnavailable)
@@ -221,7 +254,7 @@ func adapterFailureStopsUpstreamExactlyOnce() async throws {
     )
 
     #expect(events == [.started, .failed(.providerUnavailable)])
-    #expect(await waitForFailureCancellation(probe) == 1)
+    #expect(probe.recordedCount() == 1)
 }
 
 @Test("providerはraw structured outputのstrict schema検証を迂回できない")
@@ -229,7 +262,7 @@ func invalidStructuredOutputFailsClosed() async throws {
     let probe = FailureCancellationProbe()
     let provider = FailureScriptProvider(descriptor: failureProviderDescriptor) { events in
         events.onUpstreamCancellation {
-            Task { await probe.record() }
+            probe.record()
         }
         events.yieldStarted()
         events.complete(
@@ -246,7 +279,7 @@ func invalidStructuredOutputFailsClosed() async throws {
     #expect(await waitForFailureCancellation(probe) == 1)
 }
 
-@Test("domain failure後のlate cancellation handlerは最初の1件だけを実行する")
+@Test("domain failure後のlate cancellation handlerはexecutor stream経由でも最初の1件だけ実行する")
 func lateCancellationHandlerRunsOnlyOnce() async throws {
     let probe = FailureCancellationProbe()
     let request = try failureRequest(maximumOutputCharacters: 1)
@@ -254,10 +287,10 @@ func lateCancellationHandlerRunsOnlyOnce() async throws {
         events.yieldStarted()
         events.yieldReplacementDelta("超過")
         events.onUpstreamCancellation {
-            Task { await probe.record() }
+            probe.record()
         }
         events.onUpstreamCancellation {
-            Task { await probe.record() }
+            probe.record()
         }
     }
 
@@ -266,7 +299,7 @@ func lateCancellationHandlerRunsOnlyOnce() async throws {
     )
 
     #expect(events == [.started, .failed(.outputCharacterLimitExceeded(limit: 1, actual: 2))])
-    #expect(await waitForFailureCancellation(probe) == 1)
+    #expect(probe.recordedCount() == 1)
 }
 
 private func failureRequest(
@@ -307,11 +340,11 @@ private func collectFailureEvents(
 
 private func waitForFailureCancellation(_ probe: FailureCancellationProbe) async -> Int {
     for _ in 0 ..< 100 {
-        let count = await probe.recordedCount()
+        let count = probe.recordedCount()
         if count > 0 {
             return count
         }
         await Task.yield()
     }
-    return await probe.recordedCount()
+    return probe.recordedCount()
 }
