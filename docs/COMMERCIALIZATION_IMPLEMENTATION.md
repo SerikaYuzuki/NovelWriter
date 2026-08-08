@@ -13,10 +13,25 @@
 | Safe Launch | `loading` / `ready` / `recovery`を分離。読込失敗時は原稿もrecent URLも変更しない | Recoveryは再試行、Finder表示、別作品選択、明示的新規作成を提供 |
 | Lifecycle safety | 同時bootstrapを共有Taskへ合流。作品切替・別名保存・資料・snapshotをFIFO化し、古い確認操作をsessionで拒否。切替前にフォーム／IMEを旧作品へ確定してWorkbench変更を止め、終了要求後の作品操作を遮断 | 外部rename／削除、同期・別プロセス競合の検出は後続Gate。待機TaskのcancellationとSave As確定失敗時に残るcopyの案内／cleanupはP2 follow-up |
 | Payload integrity | manifest参照の話本文、world参照本文を必須valid UTF-8としてfail-closed。存在するメモもvalid UTF-8を要求 | 空メモのファイル省略は互換仕様として維持。完全なpackage validatorではない |
-| Product truth | 実処理のないAI panel、AI状態、`Cmd+J`を出荷UIから撤去 | AIはprovider adapter、送信先、送信範囲、保持／学習利用設定の検証と表示、送信確認、取消、結果レビュー、失敗時挙動を実装してから任意機能として再検討 |
+| Product truth | 実処理のないAI panel、AI状態、`Cmd+J`を出荷UIから撤去 | AIはprovider adapter、送信先／送信範囲、provider／serviceの保持期間と学習利用、local SDK／CLI artifactの場所・範囲・保持期間、料金単位とrequest上限の技術的な検証／表示、送信確認、取消、結果レビュー、失敗時挙動を実装してから任意機能として再検討 |
+| AI technical contract | D-043で初回機能を選択範囲校正に限定し、Codex SDK first / OpenRouter second、exact prompt／response schema preview、requestごとの明示確認、memory-only result、自動適用禁止、stale拒否、自動fallback禁止を固定。`NovelAI`はpreviewからconfirmed payloadを封印し、raw structured outputをstrict decodeするpure domainまで | provider、Node sidecar、Keychain、network、Editor bridge、stale validator、provider側の保持／料金表示、AI UIは未実装。`.novelpkg`は変更しない |
 | Native UX | chromeはシステムLight／Darkへ追従。本文キャンバスは独立した利用者設定で既定暗色 | 下部は保存状態、再試行、話／全体文字数、検索不一致だけを示す |
 | Explicit save | Fileメニューの`Cmd+S`を`AppState.saveNow()`へ接続 | `ready`な作品だけを自動保存・終了前保存と同じrevision直列化で保存 |
 | Build baseline | Hardened Runtimeをproject設定で有効化 | Developer ID署名・公証済み配布物、別Mac検証の完了を意味しない |
+
+## AI非出荷基盤の境界
+
+[AI_INTEGRATION.md](AI_INTEGRATION.md)とD-043は、AIを出荷した記録ではなく実装前の技術契約である。D-040の開発順を変えず、Package Validator GateとExternal Change / Conflict Gateを引き続き出荷作業として優先する。
+
+現在のAI PRで完成扱いにできる範囲は、`NovelAI`のprovider-neutralなdraft → version付きinstruction IDとadapterがそのまま渡す単一`applicationPrompt`、version付きresponse schema ID（`proofreading-result-v1`）とexact `applicationResponseSchema`のpreview → provider／purpose／budget／app-provided input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、provider descriptor照合をadapter外で行うdomain executor、raw structured outputのstrict schema decode、result／typed error、event stream protocol、決定論的fake testだけである。固定instructionは`selected_text`を未信頼データとして扱い、その中の命令に従わず選択外の文脈／ファイルを参照しない。instruction／schema変更時は対応IDを更新し、確認を取り直す。同じconfirmationのcopy／並行呼出しは最初の1回だけ実行し、再試行は新しいpreview／確認から始める。providerへ渡すconfirmed requestには、document session、editor surface、episode、UTF-16 range、source digest、path等のlocal identityを含めない。local snapshot、stale判定、IME／Undoを守る局所適用は次のEditor bridge PRで実装・統合検証する。
+
+domainで実装済みのhard guardは、app-provided inputとraw structured output、stream delta、decoded resultの文字数／UTF-8 byte数、wall-clock timeout、result usageの検証である。providerはstreaming／cancellation／usage reportingを必須とし、`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負としてfail-closedにする。ただしusageは事後報告であり費用capそのものではない。実providerの`maximumOutputTokens`相当parameter、実送信直前payload capture、wire event byte／件数、process resource limitはadapter Gateであり、現在は未実装である。
+
+Codex adapterはstable（非alpha）`0.147.x` TypeScript SDKのexact versionを使う署名済みbundled Node sidecarを候補とするが、通信成功だけでは出荷可能としない。SDK／依存／Node／Codexのhash固定、request専用empty cwdと`skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、OS-level file-read隔離、Abort後のprocess tree回収とorphanなし、arm64／x86_64、nested signing、Hardened Runtime、公証を実機で証明するまで非出荷・UI非表示とする。実repositoryや検査回避用の偽Git repositoryをcwdにしない。公開SDKにephemeral thread optionが確認できないため、FUMINIWA側のresultがmemory onlyでも「履歴非保持」と表現しない。
+
+provider／service側の保持期間と学習利用、SDK／CLIが`CODEX_HOME`、cwd、temporary directory等へ作るartifactの場所・範囲・保持期間、providerの料金単位とrequest上限の一次資料根拠は、AI UI前の技術Gateとして未実装である。これは価格戦略の検討ではなく、利用者が1 requestの送信先・保持・利用上限を確認できる機能要件である。
+
+OpenRouterは別adapter／別PRとし、Codex failureからもOpenRouter内部routingからも自動fallbackしない。送信先を変更するときはexact previewと明示確認を取り直す。純粋domainと隔離PoCは非出荷のまま並行してよいが、出荷UI、menu、shortcut、設定入口を先行させない。
 
 ## 次の一単位: Package Validator Gate
 

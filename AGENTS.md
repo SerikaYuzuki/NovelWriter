@@ -2,13 +2,14 @@
 
 **ふみにわ（FUMINIWA）**はmacOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** OS 間互換・Windows 実装は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を追加で読む。次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** OS 間互換・Windows 実装は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)、AI統合は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md) を追加で読む。次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
 ## 現在地(2026-08-08 時点)
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(出力、PDF除外)完了
 - 動くもの: 章／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+S明示保存、Cmd+Q時の終了前保存、Loading / Ready / RecoveryによるSafe Launch、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、システムLight／Darkへ追従する2列/3列NavigationSplitView + 一段native toolbar + 保存／文字数status bar
 - 商業化基盤の現在地: ブランド移行(D-038)、Safe Launchと参照payloadのvalid UTF-8検査(D-039)、未実装AIを出荷UIへ出さないProduct Truth(D-040)、起動／作品ライフサイクルの競合防止(D-041)まで実装。**実装面の公開準備完了という意味ではない**
+- AIの現在地: D-043でCodex SDK first / OpenRouter second、選択範囲校正、exact preview、明示確認、memory-only result、自動適用禁止、stale拒否、自動fallback禁止を技術契約化。最初の`NovelAI` targetはprovider-neutralなconfirmed outboundとstrict response契約だけで、実provider、sidecar、Editor bridge、stale validator、出荷UIは未実装
 - 今後「商業化」として扱う範囲は、実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術に限定する(D-042)。価格、法務、販促、決済、事業運用は、ユーザーから明示依頼がない限り調査・提案・ロードマップ化しない
 - 次: **Package Validator Gate**(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。続いて **External Change / Conflict Gate** を独立して扱う。AIとPDFは技術Gate後に独立機能として受け入れ条件を定める(D-040 / D-042)
 - Windows 並行トラックの次: **W0(schema / golden fixture / portable filename 契約の固定)**。[docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を正とする
@@ -21,6 +22,7 @@ NovelKit/            ローカル Swift Package(ライブラリ群 + 全テス�
   Sources/NovelCore/     モデル(Chapter, NovelDocument, DocumentRepository)— 依存ゼロ
   Sources/NovelStorage/  .novelpkg の読み書き(NovelpkgRepository)
   Sources/NovelExport/   TXT / Markdown / EPUB 3の生成とアトミック書き出し
+  Sources/NovelAI/       AIの純粋outbound domain(draft / preview / confirmed request / provider protocol)。実providerなし
   Sources/EditorKit/     エディタ(EditorView / プラグイン / IndentRules / MacTextAdapter)
   Sources/NovelUI/       共有 SwiftUI 部品(まだ薄い)
   Sources/PreviewSupport/ Preview 用固定データ(まだ薄い)
@@ -32,7 +34,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 
 ## 破ってはいけないルール
 
-1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / NovelExport / EditorKit / NovelUI → NovelCore のみ。違反はコンパイルで落ちるように Package.swift が組んである
+1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / NovelExport / EditorKit / NovelUI → NovelCore のみ。NovelAI は他の NovelKit target に依存しない。違反はコンパイルで落ちるように Package.swift が組んである
 2. **テキスト所有権**(D-005 / D-028): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは話切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
 3. **TextKit 2**(D-006): `NSTextView.layoutManager` に触れない(触れると TextKit 1 に暗黙フォールバックする)。`textLayoutManager` を使う
 4. **公開APIに `NSTextView` / `UITextView` を出さない**(DESIGN 9.2)。AppKit 依存コードは `EditorKit/Platform/` 配下 + `#if canImport(AppKit)` 内のみ
@@ -44,6 +46,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 10. **起動中・復旧中に編集可能なWorkbenchを出さない**(D-039)。読込失敗を新規作品へ自動fallbackせず、recent URLと原稿を保持する。manifest / world参照payloadは必須valid UTF-8、メモは欠損のみ省略可能で、存在するファイルの読込失敗を空文字へ変換しない
 11. **実在する機能だけを出荷UIへ出す**(D-040)。実処理・プライバシー・同意設計のないAI placeholder、状態、ショートカットを復活させない。`Cmd+S`は`AppState.saveNow()`系の保存直列化へ寄せる
 12. **作品ライフサイクルの対象を動的に読み直さない**(D-041)。開く／新規／別名保存／資料／snapshot／終了前保存はdocument operation gateで直列化し、現在作品に属する非同期操作と確認UIは呼び出し／表示時のsession tokenを検査する。遷移前はフォームとEditorKit境界のIMEを旧作品へ確定し、最終保存／installまでWorkbench全体の変更を止める。終了要求後は新しい作品操作を受け付けない。lock順はdocument operation gate → `DocumentSaveCoordinator`。gate付きpublic API同士の呼び出しは禁止
+13. **AIのlocal identityをproviderへ送らない**(D-043)。`NovelAI`はversion付きinstruction ID、`selected_text`を未信頼データとして扱う固定指示、exact selected textから単一`applicationPrompt`を生成し、exact `applicationResponseSchema`とschema IDもpreviewから封印する。adapterはconfirmed `AIApplicationPayload`のprompt／schemaを再構築・追記せずそのまま渡す。instructionまたはschemaを変える場合は対応IDを更新し、送信確認を取り直す。同じconfirmationはdomain executorで1回だけ実行し、再試行は新しいpreview／確認から始める。`AIConfirmedRequest`へdocument session、editor surface、episode、UTF-16 range、source digest、URL／pathを追加しない。これらは後続のApp / EditorKit bridgeがmemory-only contextで保持し、stale適用をfail-closedで拒否する。CodexとOpenRouterを自動fallbackさせず、prompt／response／diff／provider設定で`.novelpkg`を変更しない
 
 ## エディタにプラグインを足す手順(Phase 2 で確立)
 
@@ -71,4 +74,5 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 
 - 保存要求は revision ベースで直列化している(D-017)。新しい保存契機を足す場合は `AppState.saveNow()` 系の経路に寄せること
 - W0と商業化Package Validator Gateはいずれも未完了。invalid UTF-8の部分補修だけで完全なpackage検証・Windows互換・商業公開準備の完了を宣言しない
+- `NovelAI`のpure domainやCodex sidecar PoCはAI出荷を意味しない。D-043のSDK／Node／Codex hash固定、request専用empty cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel／kill／orphanなし、upstream token／event／process limit、保持期間とlocal artifact inventory、arm64／x86_64、nested signing／公証を全て実証するまでproviderとAI UIをproductionへ入れない。公開TypeScript SDKにephemeral optionが確認できないため履歴非保持を主張しない
 - `EditorContext` は delegate 呼び出しごとの本文スナップショット。超長文でのパフォーマンスは将来の最適化課題
