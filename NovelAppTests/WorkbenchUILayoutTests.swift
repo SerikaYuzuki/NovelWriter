@@ -36,6 +36,43 @@ struct WorkbenchUILayoutTests {
         #expect(!state.isExpanded(second))
     }
 
+    @Test("章行アクションで話一覧を開閉できる")
+    func disclosureTogglesFromChapterRowAction() {
+        let chapter = ChapterID()
+        let unknownChapter = ChapterID()
+        var state = OutlineDisclosureState()
+        state.reset(chapterIDs: [chapter], revealing: nil)
+
+        state.toggle(chapter)
+        #expect(state.isExpanded(chapter))
+
+        state.toggle(chapter)
+        #expect(!state.isExpanded(chapter))
+
+        state.toggle(unknownChapter)
+        #expect(!state.isExpanded(unknownChapter))
+    }
+
+    @Test("章行は章名・話数・文字数を一行表示用データへ集約する")
+    func chapterRowPresentationAggregatesMetadata() {
+        let chapter = Chapter(
+            title: "  第一章  ",
+            episodes: [
+                Episode(title: "第一話", content: "春"),
+                Episode(title: "第二話", content: "夏秋")
+            ]
+        )
+
+        let presentation = OutlineChapterRowPresentation(chapter: chapter)
+
+        #expect(presentation.title == "第一章")
+        #expect(presentation.episodeCount == 2)
+        #expect(presentation.characterCount == 3)
+        #expect(OutlineChapterRowPresentation(
+            chapter: Chapter(title: " \n ", episodes: [])
+        ).title == "無題の章")
+    }
+
     @Test("追加章と検索一致章は展開し、削除章の状態を残さない")
     func disclosureRevealsNewAndSearchMatchedChapters() {
         let first = ChapterID()

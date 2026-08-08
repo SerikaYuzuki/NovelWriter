@@ -53,8 +53,32 @@ struct OutlineDisclosureState: Equatable {
         }
     }
 
+    mutating func toggle(_ chapterID: ChapterID) {
+        guard knownChapterIDs.contains(chapterID) else { return }
+        if isExpanded(chapterID) {
+            expandedChapterIDs.remove(chapterID)
+        } else {
+            expandedChapterIDs.insert(chapterID)
+        }
+    }
+
     func isExpanded(_ chapterID: ChapterID) -> Bool {
         expandedChapterIDs.contains(chapterID)
+    }
+}
+
+struct OutlineChapterRowPresentation: Equatable {
+    let title: String
+    let episodeCount: Int
+    let characterCount: Int
+
+    init(chapter: Chapter) {
+        let trimmedTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        title = trimmedTitle.isEmpty ? "無題の章" : trimmedTitle
+        episodeCount = chapter.episodes.count
+        characterCount = chapter.episodes.reduce(0) {
+            $0 + ManuscriptMetrics.countCharacters(in: $1.content)
+        }
     }
 }
 
@@ -77,36 +101,33 @@ struct OutlineChapterRow: View {
     let showsSaveState: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(displayTitle)
+        HStack(spacing: 8) {
+            Text(presentation.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .layoutPriority(1)
+
+            Spacer(minLength: 8)
 
             HStack(spacing: 8) {
-                Text("\(chapter.episodes.count)話")
+                Text("\(presentation.episodeCount)話")
                     .monospacedDigit()
-                Text("\(characterCount)字")
+                Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                Spacer(minLength: 8)
                 if showsSaveState {
                     SaveStateMetadataIcon(scopeLabel: "現在編集中の章")
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var displayTitle: String {
-        let trimmed = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "無題の章" : trimmed
-    }
-
-    private var characterCount: Int {
-        chapter.episodes.reduce(0) {
-            $0 + ManuscriptMetrics.countCharacters(in: $1.content)
-        }
+    private var presentation: OutlineChapterRowPresentation {
+        OutlineChapterRowPresentation(chapter: chapter)
     }
 }
 

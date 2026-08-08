@@ -154,10 +154,18 @@ struct OutlineView: View {
                                 selectedEpisodeID: appState.selectedEpisodeID
                             )
                         )
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
+                        .onTapGesture {
+                            disclosureState.toggle(chapter.id)
+                        }
+                        .accessibilityAction(named: "話一覧を開閉") {
+                            disclosureState.toggle(chapter.id)
+                        }
                         .accessibilityAction(named: "章タイトルを編集") {
                             beginEditingTitle(for: chapterItem)
                         }
+                        .accessibilityHint("クリックすると話一覧を開閉します")
                         .contextMenu {
                             ChapterOutlineContextMenu(
                                 chapterItem: chapterItem,
@@ -167,7 +175,6 @@ struct OutlineView: View {
                             )
                         }
                     }
-                    .accessibilityHint("クリックすると話一覧を開閉します")
                 }
                 .onMove { offsets, destination in
                     guard appState.outlinePresentation.searchText.isEmpty else { return }

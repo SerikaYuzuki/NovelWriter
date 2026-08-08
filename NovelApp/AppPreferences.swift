@@ -7,6 +7,7 @@ import Foundation
 enum AppPreferenceKey {
     static let recentDocumentPath = "dev.serikayuzuki.fuminiwa.recentDocumentPath"
     static let projectSection = "dev.serikayuzuki.fuminiwa.projectSection"
+    static let appearance = "dev.serikayuzuki.fuminiwa.appearance"
     static let editorFontName = "dev.serikayuzuki.fuminiwa.editor.fontName"
     static let editorFontSize = "dev.serikayuzuki.fuminiwa.editor.fontSize"
     static let editorLineHeight = "dev.serikayuzuki.fuminiwa.editor.lineHeight"
