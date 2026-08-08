@@ -8,8 +8,9 @@
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(出力、PDF除外)完了
 - 動くもの: 章／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+S明示保存、Cmd+Q時の終了前保存、Loading / Ready / RecoveryによるSafe Launch、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、システムLight／Darkへ追従する2列/3列NavigationSplitView + 一段native toolbar + 保存／文字数status bar
-- 商業化基盤の現在地: ブランド移行(D-038)、Safe Launchと参照payloadのvalid UTF-8検査(D-039)、未実装AIを出荷UIへ出さないProduct Truth(D-040)、起動／作品ライフサイクルの競合防止(D-041)まで実装。**商業公開可能という意味ではない**
-- 次: **Package Validator Gate**(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。続いて **External Change / Conflict Gate** を独立して扱う。AIとPDFは公開Gate後に別々に再評価する(D-040)
+- 商業化基盤の現在地: ブランド移行(D-038)、Safe Launchと参照payloadのvalid UTF-8検査(D-039)、未実装AIを出荷UIへ出さないProduct Truth(D-040)、起動／作品ライフサイクルの競合防止(D-041)まで実装。**実装面の公開準備完了という意味ではない**
+- 今後「商業化」として扱う範囲は、実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術に限定する(D-042)。価格、法務、販促、決済、事業運用は、ユーザーから明示依頼がない限り調査・提案・ロードマップ化しない
+- 次: **Package Validator Gate**(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。続いて **External Change / Conflict Gate** を独立して扱う。AIとPDFは技術Gate後に独立機能として受け入れ条件を定める(D-040 / D-042)
 - Windows 並行トラックの次: **W0(schema / golden fixture / portable filename 契約の固定)**。[docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を正とする
 
 ## リポジトリ構成
@@ -24,6 +25,7 @@ NovelKit/            ローカル Swift Package(ライブラリ群 + 全テス�
   Sources/NovelUI/       共有 SwiftUI 部品(まだ薄い)
   Sources/PreviewSupport/ Preview 用固定データ(まだ薄い)
 project.yml          XcodeGen 定義。FUMINIWA.xcodeproj は生成物(コミット禁止)
+Scripts/generate-project.sh  旧XcodeGen生成物を退避し、現行projectを生成
 Scripts/check.sh     ローカルCI。マージ前に必ず全通しすること
 docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 ```
@@ -54,7 +56,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 
 - **GitHub Flow**: main から `feat/…` ブランチ → PR(テンプレート: .github/PULL_REQUEST_TEMPLATE.md)。main への直接 push 禁止。**作業開始直後にブランチを切り、区切りごとに WIP コミットする**(未コミットの作業ツリーは main への自動同期で消えることがある)
 - **検証はローカルのみ**(D-014。GitHub Actions は使わない): PR 前に `./Scripts/check.sh` が「All checks passed」まで通ること(SwiftFormat lint / SwiftLint / swift test / iOS向けコンパイルチェック / NovelApp ビルド)
-- Xcode プロジェクトは `xcodegen generate` で生成(D-015)。project.yml が正
+- Xcode プロジェクトは `./Scripts/generate-project.sh` で生成(D-015)。project.yml が正。旧`NovelWriter.xcodeproj`を直接開かない
 - 単体テストは swift-testing(`@Test`)。XCTest は使わない
 - コミットは意味単位で `feat:` / `fix:` / `docs:` / `chore:` / `style:` プレフィックス。本文は日本語可
 - 必要ツール: Xcode 16+、`brew install swiftformat swiftlint xcodegen`

@@ -21,7 +21,7 @@ echo "==> iOS compile check (NovelKit)"
   CODE_SIGNING_REQUIRED=NO)
 
 echo "==> FUMINIWA app test (macOS, XcodeGen)"
-xcodegen generate
+./Scripts/generate-project.sh
 xcodebuild test \
   -project FUMINIWA.xcodeproj \
   -scheme FUMINIWA \

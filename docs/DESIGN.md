@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.55
+# ふみにわ 設計書 v0.56
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -553,18 +553,19 @@ AI機能はアプリ本体から独立したFeatureとして扱う。
 
 ### 商業化基盤: Product Trust / Package Safety / Release
 
+- **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、システムLight／Dark外観への追従(D-040)、起動／作品ライフサイクルの競合防止(D-041)
 - **次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
-- **公開前に残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA、法務・プライバシー・価格・サポート。現段階を商業公開可能とは扱わない
+- **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
 ### Phase 6: AI支援
 
 - 要約 / 講評 / 矛盾検出 / 伏線確認 / 文章改善提案
-- 商業公開Gateの後に、プライバシー・同意・費用・provider契約を先に決める。placeholder UIは先行させない(D-040)
+- 実装面の公開Gateの後に、provider adapter、送信先、送信範囲preview、保持／学習利用設定の検証と表示、明示確認、取消、利用上限、失敗時挙動を機能仕様として先に固定する。placeholder UIは先行させない(D-040 / D-042)
 
 ### Phase 6.5: PDF出力
 
-- 商業公開Gateの後に、AIとは独立して需要を再評価し、A4横書き・章／話見出し・ページ番号・日本語／絵文字対応のPDFを追加する(D-037 / D-040)
+- 実装面の公開Gateの後に、AIとは独立した機能としてA4横書き・章／話見出し・ページ番号・日本語／絵文字対応のPDFを追加する(D-037 / D-040 / D-042)
 - `NovelExport/Platform/macOS/` に実装を閉じ込め、既存の共通原稿展開とアトミック書込みを再利用する
 
 ### Phase 7: iOS / iPadOS 対応
@@ -663,7 +664,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QA、法務・プライバシー・価格・サポートが残るため、現段階を商業公開可能とは表現しない。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+次は **Package Validator Gate**。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、現段階を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
@@ -691,6 +692,14 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 ---
 
 ## 変更履歴
+
+### v0.56 (2026-08-08)
+
+今後の「商業化」作業を実装・機能品質へ限定し(D-042)、改名前のXcodeGen生成物によるビルド失敗を再発防止した。
+
+- 価格、法務、販促、決済、事業運用を明示依頼がない限り開発ロードマップの対象外に変更
+- 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術を継続対象として固定
+- `Scripts/generate-project.sh`をXcodeGenの共通入口とし、旧`NovelWriter.xcodeproj`を安全に退避して`FUMINIWA.xcodeproj`を生成
 
 ### v0.55 (2026-08-08)
 
