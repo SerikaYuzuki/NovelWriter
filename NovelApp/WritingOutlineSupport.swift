@@ -98,6 +98,7 @@ enum OutlineSaveStateVisibility {
 
 struct OutlineChapterRow: View {
     let chapter: Chapter
+    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
@@ -117,6 +118,13 @@ struct OutlineChapterRow: View {
                 if showsSaveState {
                     SaveStateMetadataIcon(scopeLabel: "現在編集中の章")
                 }
+
+                AIClipboardPromptMenu(
+                    target: .chapter(
+                        chapterID: chapter.id,
+                        session: expectedSession
+                    )
+                )
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -136,32 +144,43 @@ struct OutlineEpisodeRow: View {
 
     let episode: Episode
     let chapterID: ChapterID
+    let expectedSession: DocumentSessionToken
     let showsSaveState: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            EpisodeTitleField(
-                episode: episode,
-                onTitleChange: { title in
-                    appState.updateEpisodeTitle(title, for: episode.id, in: chapterID)
-                },
-                onCommit: {
-                    appState.commitEpisodeTitleEditing()
-                }
-            )
-            .lineLimit(1)
-            .truncationMode(.tail)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                EpisodeTitleField(
+                    episode: episode,
+                    onTitleChange: { title in
+                        appState.updateEpisodeTitle(title, for: episode.id, in: chapterID)
+                    },
+                    onCommit: {
+                        appState.commitEpisodeTitleEditing()
+                    }
+                )
+                .lineLimit(1)
+                .truncationMode(.tail)
 
-            HStack(spacing: 8) {
-                Text("\(characterCount)字")
-                    .monospacedDigit()
-                Spacer(minLength: 8)
-                if showsSaveState {
-                    SaveStateMetadataIcon(scopeLabel: "現在編集中の話")
+                HStack(spacing: 8) {
+                    Text("\(characterCount)字")
+                        .monospacedDigit()
+                    Spacer(minLength: 8)
+                    if showsSaveState {
+                        SaveStateMetadataIcon(scopeLabel: "現在編集中の話")
+                    }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+            AIClipboardPromptMenu(
+                target: .episode(
+                    episodeID: episode.id,
+                    chapterID: chapterID,
+                    session: expectedSession
+                )
+            )
         }
         .padding(.vertical, 4)
     }
@@ -186,6 +205,14 @@ struct EpisodeOutlineContextMenu: View {
             Label("話メモ", systemImage: "note.text")
         }
         .disabled(!isCurrentSession)
+
+        AIClipboardPromptContextMenu(
+            target: .episode(
+                episodeID: request.episode.id,
+                chapterID: request.chapterID,
+                session: request.session
+            )
+        )
 
         Menu {
             if otherChapters.isEmpty {
@@ -252,6 +279,13 @@ struct ChapterOutlineContextMenu: View {
             Label("話メモ", systemImage: "note.text")
         }
         .disabled(!isCurrentSession || chapter.episodes.isEmpty)
+
+        AIClipboardPromptContextMenu(
+            target: .chapter(
+                chapterID: chapter.id,
+                session: chapterItem.session
+            )
+        )
 
         Menu {
             ChapterContextMenuContent(

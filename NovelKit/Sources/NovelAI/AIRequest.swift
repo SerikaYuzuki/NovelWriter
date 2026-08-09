@@ -60,6 +60,7 @@ public enum AIBudgetField: String, Sendable, Equatable {
     case maximumOutputCharacters
     case maximumOutputUTF8Bytes
     case maximumOutputTokens
+    case maximumWarnings
     case timeoutSeconds
 }
 
@@ -70,6 +71,7 @@ public struct AIRequestBudget: Sendable, Equatable {
     public let maximumOutputCharacters: Int
     public let maximumOutputUTF8Bytes: Int
     public let maximumOutputTokens: Int
+    public let maximumWarnings: Int
     public let timeoutSeconds: Int
 
     public static let absoluteMaximumInputCharacters = 20000
@@ -77,6 +79,7 @@ public struct AIRequestBudget: Sendable, Equatable {
     public static let absoluteMaximumOutputCharacters = 20000
     public static let absoluteMaximumOutputUTF8Bytes = 80000
     public static let absoluteMaximumOutputTokens = 8192
+    public static let absoluteMaximumWarnings = 20
     public static let absoluteMaximumTimeoutSeconds = 120
 
     public init(
@@ -85,6 +88,7 @@ public struct AIRequestBudget: Sendable, Equatable {
         maximumOutputCharacters: Int,
         maximumOutputUTF8Bytes: Int,
         maximumOutputTokens: Int,
+        maximumWarnings: Int = absoluteMaximumWarnings,
         timeoutSeconds: Int
     ) {
         self.maximumInputCharacters = maximumInputCharacters
@@ -92,6 +96,7 @@ public struct AIRequestBudget: Sendable, Equatable {
         self.maximumOutputCharacters = maximumOutputCharacters
         self.maximumOutputUTF8Bytes = maximumOutputUTF8Bytes
         self.maximumOutputTokens = maximumOutputTokens
+        self.maximumWarnings = maximumWarnings
         self.timeoutSeconds = timeoutSeconds
     }
 }
@@ -107,6 +112,7 @@ public enum AIError: Error, Sendable, Equatable {
     case outputCharacterLimitExceeded(limit: Int, actual: Int)
     case outputUTF8ByteLimitExceeded(limit: Int, actual: Int)
     case outputTokenLimitExceeded(limit: Int, actual: Int)
+    case outputWarningCountLimitExceeded(limit: Int, actual: Int)
     case applicationPromptEncodingFailed
     case providerMismatch
     case confirmationAlreadyUsed
@@ -191,13 +197,24 @@ public struct AIRequestDraft: Sendable, Equatable {
             (.maximumOutputCharacters, budget.maximumOutputCharacters),
             (.maximumOutputUTF8Bytes, budget.maximumOutputUTF8Bytes),
             (.maximumOutputTokens, budget.maximumOutputTokens),
+            (.maximumWarnings, budget.maximumWarnings),
             (.timeoutSeconds, budget.timeoutSeconds)
         ]
         if let invalidField = budgetValues.first(where: { $0.1 <= 0 })?.0 {
             throw AIError.invalidBudget(invalidField)
         }
 
-        let absoluteLimits = [
+        if let exceeded = absoluteBudgetLimits.first(where: { $0.actual > $0.limit }) {
+            throw AIError.budgetExceedsAbsoluteLimit(
+                field: exceeded.field,
+                limit: exceeded.limit,
+                actual: exceeded.actual
+            )
+        }
+    }
+
+    private var absoluteBudgetLimits: [AIBudgetAbsoluteLimit] {
+        [
             AIBudgetAbsoluteLimit(
                 field: .maximumInputCharacters,
                 actual: budget.maximumInputCharacters,
@@ -224,18 +241,16 @@ public struct AIRequestDraft: Sendable, Equatable {
                 limit: AIRequestBudget.absoluteMaximumOutputTokens
             ),
             AIBudgetAbsoluteLimit(
+                field: .maximumWarnings,
+                actual: budget.maximumWarnings,
+                limit: AIRequestBudget.absoluteMaximumWarnings
+            ),
+            AIBudgetAbsoluteLimit(
                 field: .timeoutSeconds,
                 actual: budget.timeoutSeconds,
                 limit: AIRequestBudget.absoluteMaximumTimeoutSeconds
             )
         ]
-        if let exceeded = absoluteLimits.first(where: { $0.actual > $0.limit }) {
-            throw AIError.budgetExceedsAbsoluteLimit(
-                field: exceeded.field,
-                limit: exceeded.limit,
-                actual: exceeded.actual
-            )
-        }
     }
 
     private func validateSelectionAndProvider(_ provider: AIProviderDescriptor) throws {

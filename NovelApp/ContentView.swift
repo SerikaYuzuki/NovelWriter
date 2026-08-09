@@ -49,10 +49,21 @@ struct ContentView: View {
             Text(appState.externalDocumentOpenErrorMessage ?? "")
         }
         .overlay(alignment: .bottomTrailing) {
-            if appState.startupState.isReady, exportPresenter.state != .idle {
-                ExportStatusView(presenter: exportPresenter)
-                    .padding(16)
+            VStack(alignment: .trailing, spacing: 8) {
+                if appState.startupState.isReady,
+                   let notice = appState.aiClipboardPromptCopyNotice
+                {
+                    AIClipboardPromptCopyNoticeView(
+                        notice: notice,
+                        onDismiss: appState.dismissAIClipboardPromptCopyNotice
+                    )
+                }
+
+                if appState.startupState.isReady, exportPresenter.state != .idle {
+                    ExportStatusView(presenter: exportPresenter)
+                }
             }
+            .padding(16)
         }
     }
 }

@@ -213,7 +213,6 @@ func deltaLimitFailsClosed() async throws {
     #expect(
         events == [
             .started,
-            .replacementDelta("修正"),
             .failed(.outputCharacterLimitExceeded(limit: 3, actual: 4))
         ]
     )

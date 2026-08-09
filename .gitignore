@@ -23,6 +23,9 @@ build/
 *.dSYM.zip
 *.dSYM
 
+# Experimental Codex sidecar dependencies (lockfile is tracked)
+/Sidecars/Codex/node_modules/
+
 # macOS
 .DS_Store
 .AppleDouble

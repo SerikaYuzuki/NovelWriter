@@ -3,6 +3,14 @@ import Foundation
 import Testing
 
 struct LegacyPreferenceMigrationTests {
+    @MainActor
+    @Test("通常targetは旧設定移行と通常版保存rootを使う")
+    func standardBuildFlavorKeepsLegacyMigrationAndDocumentRoot() {
+        #expect(AppBuildFlavor.migratesLegacyPreferences)
+        #expect(AppBuildFlavor.defaultDocumentDirectoryName == "FUMINIWA")
+        #expect(AppDependencies().defaultDocumentDirectoryName == "FUMINIWA")
+    }
+
     @Test("旧製品の許可済み設定を新しいキーへ移行する")
     func migratesAllowlistedLegacyPreferences() throws {
         let defaults = try makeUserDefaults()

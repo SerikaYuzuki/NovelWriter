@@ -92,6 +92,8 @@ final class AppState {
     private(set) var startupState: AppStartupState
     /// Finderからの作品オープンに失敗したときだけ使う安全な利用者向け文言。
     var externalDocumentOpenErrorMessage: String?
+    /// clipboardへ送った本文を保持せず、直近のcopy結果だけを表示する一時通知。
+    private(set) var aiClipboardPromptCopyNotice: AIClipboardPromptCopyNotice?
 
     /// Project Sidebar と Outline の選択状態。UI2 以降の画面選択の正。
     private(set) var workspaceSelection: WorkspaceSelection {
@@ -116,14 +118,21 @@ final class AppState {
     private let attachmentManager: AttachmentManaging?
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
+    private let defaultDocumentDirectoryName: String
     /// 表示中のEditorKitへ、作品遷移前のIME確定・モデル同期・入力停止を依頼する。
     private let editorCommandSession: EditorCommandSession
+    /// promptをsystem clipboardへ書く、テスト差し替え可能な境界。
+    private let clipboardWriter: any PlainTextClipboardWriting
+    /// active Editorから確定済み本文だけを読み取る。IME変換中は本文を返さない。
+    private let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
     /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
     @ObservationIgnored private let documentOperationGate = DocumentOperationGate()
     /// 終了前保存を要求した後に、新しい作品遷移を開始させない。
     @ObservationIgnored private var isTerminationPending = false
     /// 重複した終了要求を同じ保存結果へ合流させるsingle-flight Task。
     @ObservationIgnored private var terminationTask: Task<Bool, Never>?
+    /// copy結果の通知を一定時間後に閉じるTask。prompt本文は捕捉しない。
+    @ObservationIgnored private var aiClipboardPromptNoticeDismissTask: Task<Void, Never>?
     /// 最終入力確定後から保存・install完了まで、旧UIからのdocument変更を拒否する。
     private(set) var isDocumentTransitionInProgress = false
     /// 章をまたいで戻ったときに復元する、章ごとの最後の話選択。
@@ -177,12 +186,19 @@ final class AppState {
         attachmentManager = dependencies.attachmentManager
         userDefaults = dependencies.userDefaults
         fileManager = dependencies.fileManager
+        defaultDocumentDirectoryName = dependencies.defaultDocumentDirectoryName
         editorCommandSession = dependencies.editorCommandSession
+        clipboardWriter = dependencies.clipboardWriter
+        activeCommittedTextCapture = dependencies.activeCommittedTextCapture
 
         // 実際の状態は `bootstrap()` で確立する。ここでは(ウィンドウ表示を
         // ブロックしないよう)空の新規作品をプレースホルダとして持たせておく。
         let placeholder = NovelDocument.newDocument()
-        let placeholderURL = Self.defaultSaveURL(forTitle: placeholder.title, fileManager: dependencies.fileManager)
+        let placeholderURL = Self.defaultSaveURL(
+            forTitle: placeholder.title,
+            fileManager: dependencies.fileManager,
+            directoryName: dependencies.defaultDocumentDirectoryName
+        )
         document = placeholder
         documentURL = placeholderURL
         documentSessionToken = DocumentSessionToken(
@@ -201,6 +217,7 @@ final class AppState {
         saveState = .unsaved
         startupState = initialStartupState
         externalDocumentOpenErrorMessage = nil
+        aiClipboardPromptCopyNotice = nil
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
         let initialSection: ProjectSection = if storedSection == "planning" {
             .projectInfo
@@ -350,7 +367,11 @@ final class AppState {
     private func createInitialDocumentForStartup(at preferredURL: URL? = nil) async {
         let newDocument = NovelDocument.newDocument()
         let newURL = preferredURL
-            ?? Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+            ?? Self.availableSaveURL(
+                forTitle: newDocument.title,
+                fileManager: fileManager,
+                directoryName: defaultDocumentDirectoryName
+            )
 
         do {
             try await repository.save(newDocument, to: newURL)
@@ -408,6 +429,12 @@ final class AppState {
 
     var permitsDocumentChoice: Bool {
         startupState.permitsDocumentChoice && !isDocumentTransitionInProgress && !isTerminationPending
+    }
+
+    /// provider待機でdocument operation gateを保持せず、開始／再検査時だけ現在作品を読むための条件。
+    /// 終了要求後は`permitsDocumentInteraction`がtrueでも新しい長時間処理を開始しない。
+    var permitsLongRunningDocumentOperation: Bool {
+        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
     }
 
     /// TextField等のfirst responderとEditorKit本文を同じ同期区間で確定し、
@@ -515,7 +542,11 @@ final class AppState {
         }
 
         let newDocument = NovelDocument.newDocument()
-        let newURL = Self.availableSaveURL(forTitle: newDocument.title, fileManager: fileManager)
+        let newURL = Self.availableSaveURL(
+            forTitle: newDocument.title,
+            fileManager: fileManager,
+            directoryName: defaultDocumentDirectoryName
+        )
         let newAttachments: [Attachment]
 
         do {
@@ -645,6 +676,192 @@ final class AppState {
     var selectedEpisode: Episode? {
         guard let selectedEpisodeID else { return nil }
         return selectedChapter?.episodes.first { $0.id == selectedEpisodeID }
+    }
+
+    /// 本文右クリックで取得したexact selectionから、AIチャット用promptをコピーする。
+    ///
+    /// context menu表示後に作品や話が変わっていた場合は、同じ文字列が存在しても
+    /// 現在選択へ読み替えない。IME変換中も未確定文字を欠いたpromptを作らない。
+    @discardableResult
+    func copySelectionAIChatPrompt(
+        purpose: AIClipboardPromptPurpose,
+        selectedText: String,
+        episodeID: EpisodeID,
+        in chapterID: ChapterID,
+        expectedSession: DocumentSessionToken
+    ) -> Bool {
+        let episodeStillExists = document.chapters.first(where: { $0.id == chapterID })?
+            .episodes.contains(where: { $0.id == episodeID }) == true
+        let isCurrentSelection = isCurrentAIClipboardPromptContext(expectedSession) &&
+            workspaceSelection.section == .structure &&
+            selectedChapterID == chapterID &&
+            selectedEpisodeID == episodeID &&
+            episodeStillExists
+        guard isCurrentSelection else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+
+        switch activeCommittedTextCapture() {
+        case .captured:
+            return copyAIClipboardPrompt(
+                purpose: purpose,
+                source: .selection(text: selectedText)
+            )
+        case .compositionInProgress:
+            return failAIClipboardPromptCopy(.compositionInProgress)
+        case .notActive:
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+    }
+
+    /// 指定話のタイトルと本文だけを含むAIチャット用promptをコピーする。
+    @discardableResult
+    func copyEpisodeAIChatPrompt(
+        purpose: AIClipboardPromptPurpose,
+        episodeID: EpisodeID,
+        in chapterID: ChapterID,
+        expectedSession: DocumentSessionToken
+    ) -> Bool {
+        guard isCurrentAIClipboardPromptContext(expectedSession) else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+        guard let episode = chapter.episodes.first(where: { $0.id == episodeID }) else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+
+        let content: String
+        if workspaceSelection.section == .structure,
+           selectedChapterID == chapterID,
+           selectedEpisodeID == episodeID
+        {
+            switch activeCommittedTextCapture() {
+            case let .captured(committedText):
+                content = committedText
+            case .compositionInProgress:
+                return failAIClipboardPromptCopy(.compositionInProgress)
+            case .notActive:
+                content = episode.content
+            }
+        } else {
+            content = episode.content
+        }
+
+        return copyAIClipboardPrompt(
+            purpose: purpose,
+            source: .episode(title: episode.title, content: content)
+        )
+    }
+
+    /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むpromptをコピーする。
+    @discardableResult
+    func copyChapterAIChatPrompt(
+        purpose: AIClipboardPromptPurpose,
+        chapterID: ChapterID,
+        expectedSession: DocumentSessionToken
+    ) -> Bool {
+        guard isCurrentAIClipboardPromptContext(expectedSession) else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
+            return failAIClipboardPromptCopy(.staleContext)
+        }
+
+        var activeEpisodeContent: (id: EpisodeID, text: String)?
+        let selectedEpisodeBelongsToChapter = selectedEpisodeID.map { selectedEpisodeID in
+            chapter.episodes.contains(where: { $0.id == selectedEpisodeID })
+        } ?? false
+        let activeEpisodeID = workspaceSelection.section == .structure &&
+            selectedChapterID == chapterID && selectedEpisodeBelongsToChapter
+            ? selectedEpisodeID
+            : nil
+        if let activeEpisodeID {
+            switch activeCommittedTextCapture() {
+            case let .captured(committedText):
+                activeEpisodeContent = (activeEpisodeID, committedText)
+            case .compositionInProgress:
+                return failAIClipboardPromptCopy(.compositionInProgress)
+            case .notActive:
+                break
+            }
+        }
+
+        let episodes = chapter.episodes.map { episode in
+            AIClipboardPromptEpisode(
+                title: episode.title,
+                content: activeEpisodeContent?.id == episode.id
+                    ? activeEpisodeContent?.text ?? episode.content
+                    : episode.content
+            )
+        }
+        return copyAIClipboardPrompt(
+            purpose: purpose,
+            source: .chapter(title: chapter.title, episodes: episodes)
+        )
+    }
+
+    func dismissAIClipboardPromptCopyNotice() {
+        aiClipboardPromptNoticeDismissTask?.cancel()
+        aiClipboardPromptNoticeDismissTask = nil
+        aiClipboardPromptCopyNotice = nil
+    }
+
+    private func isCurrentAIClipboardPromptContext(_ expectedSession: DocumentSessionToken) -> Bool {
+        permitsLongRunningDocumentOperation && documentSessionToken == expectedSession
+    }
+
+    @discardableResult
+    private func copyAIClipboardPrompt(
+        purpose: AIClipboardPromptPurpose,
+        source: AIClipboardPromptSource
+    ) -> Bool {
+        do {
+            let prompt = try AIClipboardPromptBuilder.make(purpose: purpose, source: source)
+            guard clipboardWriter.writePlainText(prompt.text) else {
+                return failAIClipboardPromptCopy(.clipboardWriteFailed)
+            }
+            presentAIClipboardPromptCopyNotice(.success)
+            return true
+        } catch let error as AIClipboardPromptError {
+            return failAIClipboardPromptCopy(copyFailure(for: error))
+        } catch {
+            return failAIClipboardPromptCopy(.promptEncodingFailed)
+        }
+    }
+
+    private func copyFailure(for error: AIClipboardPromptError) -> AIClipboardPromptCopyFailure {
+        switch error {
+        case .emptyContent:
+            .emptyContent
+        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .promptUTF8ByteLimitExceeded:
+            .contentTooLarge
+        case .encodingFailed:
+            .promptEncodingFailed
+        }
+    }
+
+    @discardableResult
+    private func failAIClipboardPromptCopy(_ failure: AIClipboardPromptCopyFailure) -> Bool {
+        presentAIClipboardPromptCopyNotice(.failure(failure))
+        return false
+    }
+
+    private func presentAIClipboardPromptCopyNotice(_ outcome: AIClipboardPromptCopyOutcome) {
+        aiClipboardPromptNoticeDismissTask?.cancel()
+        let notice = AIClipboardPromptCopyNotice(outcome: outcome)
+        aiClipboardPromptCopyNotice = notice
+        aiClipboardPromptNoticeDismissTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                return
+            }
+            guard let self, aiClipboardPromptCopyNotice?.id == notice.id else { return }
+            aiClipboardPromptCopyNotice = nil
+            aiClipboardPromptNoticeDismissTask = nil
+        }
     }
 
     /// 選択中の登場人物(存在しなければ `nil`)。
@@ -1859,27 +2076,36 @@ final class AppState {
 
     // MARK: - 既定の保存先
 
-    private static func defaultDirectory(fileManager: FileManager) -> URL {
+    private static func defaultDirectory(fileManager: FileManager, directoryName: String) -> URL {
         #if DEBUG
         if let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             return applicationSupport
-                .appendingPathComponent("FUMINIWA", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
                 .appendingPathComponent("Drafts", isDirectory: true)
         }
         #endif
         return fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("FUMINIWA", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
     }
 
-    private static func defaultSaveURL(forTitle title: String, fileManager: FileManager) -> URL {
-        defaultDirectory(fileManager: fileManager).appendingPathComponent("\(title).novelpkg", isDirectory: true)
+    private static func defaultSaveURL(
+        forTitle title: String,
+        fileManager: FileManager,
+        directoryName: String
+    ) -> URL {
+        defaultDirectory(fileManager: fileManager, directoryName: directoryName)
+            .appendingPathComponent("\(title).novelpkg", isDirectory: true)
     }
 
     /// 既定保存先の `<title>.novelpkg` を返す。
     /// 既に同名のパッケージが存在する場合は連番を振って重複を避ける。
-    private static func availableSaveURL(forTitle title: String, fileManager: FileManager) -> URL {
-        let directory = defaultDirectory(fileManager: fileManager)
+    private static func availableSaveURL(
+        forTitle title: String,
+        fileManager: FileManager,
+        directoryName: String
+    ) -> URL {
+        let directory = defaultDirectory(fileManager: fileManager, directoryName: directoryName)
 
         var candidate = directory.appendingPathComponent("\(title).novelpkg", isDirectory: true)
         var suffix = 2

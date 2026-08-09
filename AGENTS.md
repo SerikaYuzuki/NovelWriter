@@ -4,14 +4,14 @@
 
 **設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** OS 間互換・Windows 実装は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)、AI統合は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md) を追加で読む。次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
-## 現在地(2026-08-08 時点)
+## 現在地(2026-08-09 時点)
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(出力、PDF除外)完了
-- 動くもの: 章Disclosure／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+S明示保存、Cmd+Q時の終了前保存、Loading / Ready / RecoveryによるSafe Launch、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、システム追従／ライト／ダークを選べる2列/3列NavigationSplitView + 一段native toolbar + 保存／文字数status bar
+- 動くもの: 章Disclosure／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+S明示保存、Cmd+Q時の終了前保存、Loading / Ready / RecoveryによるSafe Launch、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、校正／アドバイス×本文選択／話／章のAIチャット用clipboard prompt copy、システム追従／ライト／ダークを選べる2列/3列NavigationSplitView + 一段native toolbar + 保存／文字数status bar
 - 商業化基盤の現在地: ブランド移行(D-038)、Safe Launchと参照payloadのvalid UTF-8検査(D-039)、未実装AIを出荷UIへ出さないProduct Truth(D-040)、起動／作品ライフサイクルの競合防止(D-041)、アプリ外観選択(D-044)、章Disclosure改善(D-045)まで実装。**実装面の公開準備完了という意味ではない**
-- AIの現在地: D-043でCodex SDK first / OpenRouter second、選択範囲校正、exact preview、明示確認、memory-only result、自動適用禁止、stale拒否、自動fallback禁止を技術契約化。最初の`NovelAI` targetはprovider-neutralなconfirmed outboundとstrict response契約だけで、実provider、sidecar、Editor bridge、stale validator、出荷UIは未実装
+- AIの現在地: 通常版は校正／アドバイス用promptを本文選択／話／章からsystem clipboardへ明示コピーするだけで、provider／network／key／process／`NovelAI`依存は0件。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界で、応答取込／Apply／履歴非保持／secure eraseは提供しない。Experimental側は`NovelAI`、Editor transaction、fake UI、Codex sidecar B1〜B4-Dを研究成果として保持する。production catalogは空、production channel／factory／callsiteと実Node／SDK／CLI／network／credential／実原稿は0件。B4-E以降とCodex／OpenRouter実providerは最新stable SDK／APIの明示再評価まで延期した(D-054)
 - 今後「商業化」として扱う範囲は、実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術に限定する(D-042)。価格、法務、販促、決済、事業運用は、ユーザーから明示依頼がない限り調査・提案・ロードマップ化しない
-- 次: **Package Validator Gate**(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。続いて **External Change / Conflict Gate** を独立して扱う。AIとPDFは技術Gate後に独立機能として受け入れ条件を定める(D-040 / D-042)
+- 次: 公開Releaseの **Package Validator Gate**、続いて **External Change / Conflict Gate**。B4-Eは現行taskではなく、利用者が最新stable SDK／APIの再評価を明示した場合だけ新Decisionから再開する。B4-Dまでの結果は[docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)、通常版clipboard支援は[docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)を正とする(D-040 / D-043 / D-046〜D-054)
 - Windows 並行トラックの次: **W0(schema / golden fixture / portable filename 契約の固定)**。[docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を正とする
 
 ## リポジトリ構成
@@ -44,9 +44,11 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。chromeは既定でシステムLight／Darkへ追従し、利用者が明示した場合だけLight／Darkへ固定できる。本文キャンバスの利用者設定とは分離する(D-040 / D-044)。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反
 9. **`.novelpkg` の互換契約を変更する場合は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) と golden fixture を同時に更新する**(D-036)。OS 固有パス・bookmark・handle・UI設定を package に保存しない。Windows 実装後は双方向 round-trip を完了条件にする
 10. **起動中・復旧中に編集可能なWorkbenchを出さない**(D-039)。読込失敗を新規作品へ自動fallbackせず、recent URLと原稿を保持する。manifest / world参照payloadは必須valid UTF-8、メモは欠損のみ省略可能で、存在するファイルの読込失敗を空文字へ変換しない
-11. **実在する機能だけを出荷UIへ出す**(D-040)。実処理・プライバシー・同意設計のないAI placeholder、状態、ショートカットを復活させない。`Cmd+S`は`AppState.saveNow()`系の保存直列化へ寄せる
+11. **実在する機能だけをUIへ出す**(D-040 / D-046 / D-054)。provider処理・プライバシー・同意設計のないAI placeholder、状態、送信shortcutを復活させない。通常版に許可するAI支援は、実際にplain textをsystem clipboardへ書く「校正用／アドバイス用プロンプトをコピー」だけで、AI実行済みと見える文言を使わない。保持中のprovider UIは`FUMINIWAExperimental`だけとし、通常の`FUMINIWA` app targetにはprovider入口、dependency、artifactを含めない。`Cmd+S`は`AppState.saveNow()`系の保存直列化へ寄せる
 12. **作品ライフサイクルの対象を動的に読み直さない**(D-041)。開く／新規／別名保存／資料／snapshot／終了前保存はdocument operation gateで直列化し、現在作品に属する非同期操作と確認UIは呼び出し／表示時のsession tokenを検査する。遷移前はフォームとEditorKit境界のIMEを旧作品へ確定し、最終保存／installまでWorkbench全体の変更を止める。終了要求後は新しい作品操作を受け付けない。lock順はdocument operation gate → `DocumentSaveCoordinator`。gate付きpublic API同士の呼び出しは禁止
-13. **AIのlocal identityをproviderへ送らない**(D-043)。`NovelAI`はversion付きinstruction ID、`selected_text`を未信頼データとして扱う固定指示、exact selected textから単一`applicationPrompt`を生成し、exact `applicationResponseSchema`とschema IDもpreviewから封印する。adapterはconfirmed `AIApplicationPayload`のprompt／schemaを再構築・追記せずそのまま渡す。instructionまたはschemaを変える場合は対応IDを更新し、送信確認を取り直す。同じconfirmationはdomain executorで1回だけ実行し、再試行は新しいpreview／確認から始める。`AIConfirmedRequest`へdocument session、editor surface、episode、UTF-16 range、source digest、URL／pathを追加しない。これらは後続のApp / EditorKit bridgeがmemory-only contextで保持し、stale適用をfail-closedで拒否する。CodexとOpenRouterを自動fallbackさせず、prompt／response／diff／provider設定で`.novelpkg`を変更しない
+13. **将来provider統合を再開してもlocal identityをproviderへ送らない**(D-043 / D-054)。`NovelAI`はversion付きinstruction ID、exact prompt／schema、one-shot confirmationを維持し、`AIConfirmedRequest`へdocument session、editor surface、episode、UTF-16 range、source digest、URL／pathを追加しない。CodexとOpenRouterを自動fallbackさせず、prompt／response／diff／provider設定で`.novelpkg`を変更しない。現在は実providerを接続せず、この契約を休眠中の安全境界として保持する
+14. **provider統合のUI／適用ロジックを分岐させない**(D-046 / D-054)。再開時も選択snapshot、exact preview、送信確認、cancel、diff、stale、Copy、明示Applyは一つのprovider-neutral orchestrator／UIを使い、process／HTTP、credential、model設定、保持情報、typed errorだけをadapterごとに分離する。B4-E、Codex／OpenRouter adapter、network、key、実原稿送信は最新stable SDK／APIの明示再評価と新Decisionまで実装しない
+15. **clipboard prompt支援をprovider機能へ拡張しない**(D-054)。通常版のprompt生成は`NovelAI`、Experimental source、provider、network、Keychain、subprocessへ依存させない。選択／話／章の明示scope以外の原稿、metadata、local identity、URL／pathを加えず、コピー後の自動送信／paste／chat起動／response取込／Applyを行わない。system clipboardを履歴非保持またはsecure erase可能と扱わない
 
 ## エディタにプラグインを足す手順(Phase 2 で確立)
 
@@ -62,7 +64,7 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 - Xcode プロジェクトは `./Scripts/generate-project.sh` で生成(D-015)。project.yml が正。旧`NovelWriter.xcodeproj`を直接開かない
 - 単体テストは swift-testing(`@Test`)。XCTest は使わない
 - コミットは意味単位で `feat:` / `fix:` / `docs:` / `chore:` / `style:` プレフィックス。本文は日本語可
-- 必要ツール: Xcode 16+、`brew install swiftformat swiftlint xcodegen`
+- 必要ツール: Xcode 16+、Node.js 18+、`brew install swiftformat swiftlint xcodegen jq ripgrep`
 
 ## 設計判断のしかた
 
@@ -74,5 +76,5 @@ docs/                DESIGN.md(設計)/ DECISIONS.md(決定記録)
 
 - 保存要求は revision ベースで直列化している(D-017)。新しい保存契機を足す場合は `AppState.saveNow()` 系の経路に寄せること
 - W0と商業化Package Validator Gateはいずれも未完了。invalid UTF-8の部分補修だけで完全なpackage検証・Windows互換・商業公開準備の完了を宣言しない
-- `NovelAI`のpure domainやCodex sidecar PoCはAI出荷を意味しない。D-043のSDK／Node／Codex hash固定、request専用empty cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel／kill／orphanなし、upstream token／event／process limit、保持期間とlocal artifact inventory、arm64／x86_64、nested signing／公証を全て実証するまでproviderとAI UIをproductionへ入れない。公開TypeScript SDKにephemeral optionが確認できないため履歴非保持を主張しない
+- `NovelAI`、Experimental fake UI、B1〜B4-Dは削除せず保持するが、AI公開、provider利用可能、実runtime B4-D完了を意味しない。production catalogは空、具象production channel／factory／callsiteは0件、B4-C childはresumeされず、B4-Dへ変換されない。candidate／self manifest／B4-B／B4-C observation／local probeをapprovalへ昇格させず、complete inventory、immutable binding、OS隔離、parent-death、anti-rollbackを解決済みとしない。B4-E以降は延期中であり、最新stable SDK／APIの明示再評価なしに再開しない。通常版clipboard支援の成功をprovider安全性、履歴非保持、外部AIのprivacyへ一般化しない
 - `EditorContext` は delegate 呼び出しごとの本文スナップショット。超長文でのパフォーマンスは将来の最適化課題

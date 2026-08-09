@@ -38,12 +38,15 @@ private let concurrencyBudget = AIRequestBudget(
     timeoutSeconds: 30
 )
 
-@Test("actor-isolated providerもSwift 6でprotocolへ準拠できる")
-func actorProviderCanConform() async throws {
+@Test("actor providerの不変stored descriptorはactor hopなしでprotocolへ準拠できる")
+func actorProviderStoredDescriptorCanConform() async throws {
     let provider = ConcurrentAIProvider(descriptor: concurrencyProviderDescriptor)
     let request = try AIRequestDraft(selectedText: "校正対象", budget: concurrencyBudget)
         .preview(for: concurrencyProviderDescriptor)
         .confirmForSending()
+
+    // `await`なしで読めることをcompile-timeで固定する。
+    #expect(provider.descriptor == concurrencyProviderDescriptor)
 
     let events = await collectConcurrencyEvents(
         AIProviderExecutor.events(for: request, using: provider)

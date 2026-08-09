@@ -12,6 +12,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
+    #endif
 
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
@@ -72,6 +75,24 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             }
             .customizationBehavior(.reorderable)
             .defaultCustomization(.visible)
+
+            #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+            ToolbarItem(id: WorkbenchToolbarItemID.aiProofreading) {
+                Button {
+                    aiProofreadingOperation.preparePreview()
+                } label: {
+                    Label("選択範囲を校正…", systemImage: "wand.and.sparkles")
+                }
+                .help("選択範囲をAIで校正…")
+                .disabled(
+                    appState.selectedEpisode == nil ||
+                        !appState.permitsLongRunningDocumentOperation ||
+                        aiProofreadingOperation.isRequestInFlight
+                )
+            }
+            .customizationBehavior(.reorderable)
+            .defaultCustomization(.visible)
+            #endif
         }
 
         if showsPlotActions {
@@ -186,6 +207,9 @@ enum WorkbenchToolbarItemID {
     static let plotCardAdd = "workbench.plot.card.add"
     static let attachmentAdd = "workbench.attachment.add"
     static let export = "workbench.export"
+    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    static let aiProofreading = "workbench.ai.proofreading"
+    #endif
 }
 
 enum WorkbenchOverlay: Hashable {
