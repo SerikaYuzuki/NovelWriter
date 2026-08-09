@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.71
+# ふみにわ 設計書 v0.72
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -617,14 +617,14 @@ clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_AS
 
 ### Phase 7: iOS / iPadOS 対応
 
-着手決定済み(D-056)。実装順と詳細な受け入れ条件は **[IOS.md](IOS.md)** を正とする。
+IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機QAは **[IOS.md](IOS.md)** を正とする。
 
-- **IOS-1 Build Graph**: iOS / iPadOS 17 app / test targetを追加し、通常macOS版と同じ5つのNovelKit productだけをlinkする。`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialはcompile／link／bundleしない
-- **IOS-2 Shared App Boundary**: platform-neutralな作品／保存／session処理を共有し、Files picker、scene lifecycle、first responder確定、clipboardを小さなiOS adapterへ分離する
-- **IOS-3 UITextView Adapter**: TextKit 2、text view所有権、`IMEGuardPlugin → IndentPlugin`、共有`IndentRules`、D-055のR1' / R3 / R4 / R5、Undo / Redo、末尾96pt表示余白とcaret revealを実`UITextView`で成立させる
-- **IOS-4 Document MVP / Adaptive Shell**: 外部原本を変更しないapp-private import / edit / export、Safe Launch / Recovery、iPadの適応的複数列、iPhoneの`NavigationStack`を接続する
-- **IOS-5 Clipboard Prompt**: 校正／アドバイス×本文選択／話／章を`UIPasteboard`へ明示コピーする。AI provider、送信、応答、Applyは持たない
-- **IOS-6 Parity / Release QA**: 残るmacOS機能、round-trip、実機IME、scene遷移、VoiceOver / Dynamic Type、性能と配布を検証する
+- **IOS-1 Build Graph（実装済み）**: iOS / iPadOS 17 app / test targetを追加し、通常macOS版と同じ5つのNovelKit productだけをlinkする。`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialはcompile／link／bundleしない
+- **IOS-2 Shared App Boundary（実装済み）**: 作品／保存／session処理と、Files picker、scene lifecycle、first responder確定、clipboardを小さなiOS adapterへ分離する
+- **IOS-3 UITextView Adapter（実装済み）**: TextKit 2、text view所有権、`IMEGuardPlugin → IndentPlugin`、共有`IndentRules`、D-055のR1' / R3 / R4 / R5、Undo / Redo、末尾96pt表示余白とcaret revealを実`UITextView`で成立させる
+- **IOS-4 Document MVP / Adaptive Shell（実装済み）**: 外部原本を変更しないapp-private import / edit / export、Safe Launch / Recovery、iPadの適応的複数列、iPhoneの段階遷移を接続する
+- **IOS-5 Clipboard Prompt（実装済み）**: 校正／アドバイス×本文選択／話／章を`UIPasteboard`へ明示コピーする。AI provider、送信、応答、Applyは持たない
+- **IOS-6 Parity / Release QA（未完了）**: 残るmacOS機能、round-trip、実機IME、scene遷移、VoiceOver / Dynamic Type、性能と配布を検証する
 
 MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
@@ -752,7 +752,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-D-056により **Phase 7 iOS / iPadOS実装へ着手する**。直近の実装順は[IOS.md](IOS.md)のIOS-1 Build Graphから始め、IOS-2 Shared App Boundary、IOS-3 UITextView Adapter、IOS-4 app-private Document MVP / Adaptive Shell、IOS-5 Clipboard Promptへ進む。iOS targetは通常macOS版と同じ5 productだけをlinkし、`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`で検証する。
+D-056の **Phase 7 IOS-1〜5は実装済み**。iOS targetは通常macOS版と同じ5 productだけをlinkし、`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続し、Simulator統合テストで検証した。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
 
 D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
 
@@ -788,6 +788,16 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.72 (2026-08-10)
+
+Phase 7のIOS-1〜5を実装し、Simulator / generic iOS device / ローカルCIで検証した。実機・Accessibility / Release QAは未完了としてIOS-6へ分離した。
+
+- iOS / iPadOS 17 app / test targetと、通常5 productだけをlinkする生成project／target separation検査を追加
+- app-privateな新規／取込／revision保存／書出、Safe Launch / Recovery、適応的なiPhone / iPadシェルを追加
+- `UITextView` + TextKit 2 adapterで共有`IndentRules`、D-055後の括弧入力、IME pending確定、Undo / Redo、96pt表示余白、caret revealを実装
+- 校正／アドバイス×本文選択／話／章のclipboard prompt copyだけを追加し、provider／network／credentialを通常iOS targetから除外
+- 実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、完全round-tripをIOS-6の未完了条件として維持
 
 ### v0.71 (2026-08-10)
 

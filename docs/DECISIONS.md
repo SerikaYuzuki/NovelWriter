@@ -579,7 +579,7 @@
 
 ## D-056: Phase 7をiOS 17のapp-private文書MVPとして着手する
 
-- **日付**: 2026-08-10 / **状態**: 承認（ユーザー判断。Phase 5完了後のiOS / iPadOS実装を開始）
+- **日付**: 2026-08-10 / **状態**: 承認（IOS-1〜5実装済み。実機・Accessibility / Release QAは未完了）
 - **内容**:
   1. D-013でPhase 5完了後としていたPhase 7へ着手する。iOS / iPadOS 17以降を対象にiPhone / iPad共通の通常app targetを追加し、iPadはProject Sidebar / Outline / Editorの適応的な複数列、iPhoneは`NavigationStack`による段階遷移を基本とする。macOSのView階層、toolbar、file panelを縮小して機械移植せず、`NovelDocument`、document session、保存、入力の意味を共有する。
   2. 最初の文書境界は **app-private import / edit / export** とする。Files pickerで選んだ`.novelpkg`はsecurity-scoped access中にアプリ専用stagingへコピーし、原本を変更せず、読み込み成功後だけapp-private作品としてinstallする。自動保存とrecentはapp-private URLだけを対象にし、利用者の明示操作で別の`.novelpkg`として外部へ書き出す。外部URL、bookmark、provider固有identifier、pathをpackageへ保存しない。

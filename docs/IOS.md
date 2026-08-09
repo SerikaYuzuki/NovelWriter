@@ -1,6 +1,6 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: 着手決定（D-056）
+> **状態**: IOS-1〜5実装済み（Simulator / generic device / ローカルCI検証済み。実機・Accessibility / Release QAは未完了）
 >
 > **対象**: iOS / iPadOS 17 以降
 >
@@ -13,6 +13,16 @@ macOS版で確立した`NovelCore`、`.novelpkg` v3、`NovelExport`、EditorPlug
 Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。
 
 AI providerは接続しない。利用者が選んだ原稿から校正用／アドバイス用のplain text promptを作り、system clipboardへ明示コピーする機能だけを通常iOS版へ含める。
+
+### 1.1 現在地（2026-08-10）
+
+- `FUMINIWAIOS` app / test target、iPhone / iPad対応Info.plist、通常5 productだけの依存境界を実装した
+- app-privateな新規作成／取込／revision保存／書出、Loading / Ready / Recovery、適応的な`NavigationSplitView`を実装した
+- `UITextView` + TextKit 2 adapterを追加し、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5、IME pending確定、Undo / Redo、末尾96pt表示余白、caret revealを接続した
+- 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
+- generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、全ローカルCIを通過した
+
+IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
 
 ## 2. 製品スコープ
 
@@ -168,13 +178,13 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 ## 8. 実装PR順
 
-1. **IOS-0 設計固定**: D-056、本書、DESIGNのPhase 7と完了条件を同期する
-2. **IOS-1 Build Graph**: iOS 17 app / test target、Info.plist / UTType、通常5 productだけのlink、生成project検査、generic iOS buildを追加する
-3. **IOS-2 Shared App Boundary**: AppStateのplatform-neutral処理と、file picker、lifecycle、first responder commit、clipboard等のadapter境界を分離する
-4. **IOS-3 UITextView Adapter**: TextKit 2、所有権、selection、command session、R1' / R3 / R4 / R5、Undo / Redo、viewportを実装する
-5. **IOS-4 Document MVP / Shell**: app-private新規／取込／保存／書出、Safe Launch / Recovery、iPhone / iPad navigationを接続する
-6. **IOS-5 Clipboard Prompt**: 6種類のprompt copyとcontext / edit menu、VoiceOver / keyboard入口を接続する
-7. **IOS-6 Parity / Release QA**: 残るmacOS機能、export、実機IME、アクセシビリティ、background／termination、性能を検証する
+1. **IOS-0 設計固定（完了）**: D-056、本書、DESIGNのPhase 7と完了条件を同期する
+2. **IOS-1 Build Graph（実装済み）**: iOS 17 app / test target、Info.plist / UTType、通常5 productだけのlink、生成project検査、generic iOS buildを追加する
+3. **IOS-2 Shared App Boundary（実装済み）**: 作品／保存／session処理と、file picker、lifecycle、first responder commit、clipboard等のadapter境界を分離する
+4. **IOS-3 UITextView Adapter（実装済み）**: TextKit 2、所有権、selection、command session、R1' / R3 / R4 / R5、Undo / Redo、viewportを実装する
+5. **IOS-4 Document MVP / Shell（実装済み）**: app-private新規／取込／保存／書出、Safe Launch / Recovery、iPhone / iPad navigationを接続する
+6. **IOS-5 Clipboard Prompt（実装済み）**: 6種類のprompt copyとcontext / edit menu、VoiceOver / keyboard入口を接続する
+7. **IOS-6 Parity / Release QA（未完了）**: 残るmacOS機能、export、実機IME、アクセシビリティ、background／termination、性能を検証する
 
 各PRは意味単位で小さく保ち、生成物をコミットしない。ローカル検証だけを使い、`Scripts/check.sh`へ段階的にiOS app build / test、target separation検査を追加する。
 
