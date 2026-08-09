@@ -11,9 +11,9 @@ import Testing
 /// SwiftUI の `NSViewRepresentable.Context` はテストから直接構築できないため、
 /// `makeNSView` を経由せず、実 `NSTextView` + `Coordinator` を直接組み立てて
 /// `NSTextViewDelegate` の実装(`textView(_:shouldChangeTextIn:replacementString:)`)を
-/// 実際にAppKitが呼ぶのと同じ形で駆動する。ヘッドレスなユニットテスト環境では
-/// 実際のキーイベント合成が信頼できないため、この形が最も安定して production の
-/// 経路(プラグインパイプライン → undo登録 → textStorage書き換え)を検証できる。
+/// 直接駆動するテストに加え、実 `insertText` とmarked rangeを使ってAppKitの通常入力・
+/// IME確定経路も駆動する。ヘッドレスな環境でもproductionの入力通知順、プラグイン、
+/// undo登録、textStorage書き換えをまとめて検証する。
 @MainActor
 struct MacTextAdapterIntegrationTests {
     /// 実 `NSTextView`(TextKit 2)+ `Coordinator` の組み立て結果。
@@ -390,6 +390,98 @@ struct MacTextAdapterIntegrationTests {
 }
 
 extension MacTextAdapterIntegrationTests {
+    @Test("AppKitの実入力経路でも字下げ直後の「で全角スペースが消える")
+    func appKitInsertTextRemovesIndentBeforeOpeningBracket() {
+        let harness = makeHarness(initialText: "\u{3000}")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.insertText(
+            "「",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        #expect(textView.string == "「")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「"])
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        #expect(textView.string == "　")
+    }
+
+    @Test("IMEがinsertTextで「を確定しても段落字下げが消える")
+    func imeInsertTextCommitRemovesIndentBeforeOpeningBracket() {
+        let harness = makeHarness(initialText: "\u{3000}")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.setMarkedText(
+            "「",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 0)
+        )
+        let markedRange = textView.markedRange()
+        #expect(markedRange == NSRange(location: 1, length: 1))
+
+        textView.insertText("「", replacementRange: markedRange)
+
+        #expect(textView.string == "「")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「"])
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        #expect(textView.string == "　")
+    }
+
+    @Test("AppKitから開閉括弧が別々に入力されても文中の空ペア内へキャレットを置く")
+    func appKitSequentialBracketInputPlacesCaretInsideMidSentence() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.insertText(
+            "「",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        textView.insertText(
+            "」",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        if textView.string != "彼はと言った", harness.coordinator.undoManager.canUndo {
+            harness.coordinator.undoManager.undo()
+        }
+        #expect(textView.string == "彼はと言った")
+    }
+
+    @Test("IMEがinsertTextで括弧ペアを確定しても文中のペア内へキャレットを置く")
+    func imeInsertTextCommitPlacesCaretInsideMidSentencePair() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.setMarkedText(
+            "「」",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: 2, length: 0)
+        )
+        let markedRange = textView.markedRange()
+        #expect(markedRange == NSRange(location: 2, length: 2))
+
+        textView.insertText("「」", replacementRange: markedRange)
+
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(harness.changes.received == ["彼は「」と言った"])
+    }
+
     @Test("active editor surfaceがない選択取得要求は即時拒否する")
     func selectionRequestWithoutActiveSurfaceIsRejected() {
         let session = EditorCommandSession()

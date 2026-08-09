@@ -264,6 +264,12 @@ struct MacTextAdapter: NSViewRepresentable {
             // 自分自身が確定させた置換を適用中の再入呼び出し。パイプラインには
             // 通さず、そのまま許可する(上記 `isApplyingPluginReplacement` 参照)。
             guard !isApplyingPluginReplacement else { return true }
+            // 実際のIME確定は、marked textを保持したままこのdelegateへ入り、
+            // `insertText`完了後にmarked rangeを解放する。確定前の時点で記録し、
+            // 続くtextDidChangeからR5後処理を一度だけ実行する。
+            if textView.hasMarkedText() {
+                hasPendingIMECommit = true
+            }
             guard let replacementString else { return true }
 
             let context = MacEditorContext(textView: textView)
