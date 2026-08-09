@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.69
+# ふみにわ 設計書 v0.71
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -6,7 +6,7 @@
 ## 1. 目的
 
 **ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
-macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。将来的には Windows、iOS / iPadOS 対応、AI支援、PDF出力、校正、要約、差分管理などを追加できるようにする。
+macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版と将来の Windows WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。Phase 7でiOS / iPadOS対応へ着手し、Windows、PDF出力、校正、要約、差分管理なども独立した境界で追加できるようにする。
 
 初期段階では、以下を最優先する。
 
@@ -23,7 +23,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 
 - まずは macOS版を優先するが、保存形式とドメイン仕様は Windows / iOS からも実装できる言語非依存の契約にする
 - Apple 向けライブラリ群は Swift の multiplatform library として作成し、Windows 版は同じ境界を .NET class library で再実装する
-- iOS / iPadOS は後から対応する
+- iOS / iPadOS はPhase 7として着手し、Swiftの共有domain／保存／editor ruleを再利用しつつ端末別の適応UIを実装する(D-056)
 - Windows 版は WinUI 3 + C# / .NET で別実装し、Swift ソースの直接共有ではなく schema・fixture・純粋ロジックの入出力仕様を共有する
 - AppKit / UIKit などのプラットフォーム依存処理は EditorKit 内に閉じ込める
 - NovelCore はプラットフォーム非依存の純粋なモデル層にする
@@ -33,10 +33,11 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 ### 2.2 技術スタック(決定事項)
 
 - **macOS UI**: SwiftUI をアプリシェルに採用。ただし本文エディタの実体は AppKit の `NSTextView`(`NSViewRepresentable` 経由)。SwiftUI の `TextEditor` は日本語IME・長文性能・制御性の面で本用途に不適のため使用しない
+- **iOS / iPadOS UI**: SwiftUIの適応シェル + UIKitの`UITextView`(`UIViewRepresentable`経由)。iPadは複数列、iPhoneは`NavigationStack`を基本とし、本文はTextKit 2、共有`IndentRules`、app-private import / edit / export境界で実装する(→ [IOS.md](IOS.md), D-056)
 - **Windows UI (将来)**: WinUI 3 + C# / .NET。Windows 固有コードは `Windows/` 配下へ置き、macOS と同じ保存・ドメイン境界を対応する .NET class library で再実装する(→ [CROSS_PLATFORM.md](CROSS_PLATFORM.md), D-036)
-- **テキストエンジン**: TextKit 2 を明示採用(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager` への誤アクセスによる TextKit 1 フォールバックを防ぐため、デバッグビルドでアサーションを入れる
-- **配布**: GitHub Releases による直接配布。App Sandbox は採用しない(→ D-011)
-- **最低ターゲット**: macOS 14(`@Observable` の要件。実機は macOS 27 なので余裕あり)
+- **テキストエンジン**: macOSの`NSTextView`とiOSの`UITextView`をTextKit 2で明示使用する(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager`への誤アクセスによるTextKit 1フォールバックを防ぐ
+- **macOS配布**: GitHub Releases による直接配布。macOS App Sandbox は採用しない(→ D-011)。iOSの配布判断へこの非Sandbox決定を流用しない
+- **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、AIの純粋domainだけを持つNovelAIをNovelKit内の独立targetとして扱い、署名不要の`swift test`を回せるようにする。NovelAIを追加してもprovider、sidecar、UIが実装済みとは扱わない(D-043)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
@@ -50,6 +51,10 @@ FUMINIWA
 │   ├── AppDependencies.swift
 │   ├── AppState.swift
 │   └── ContentView.swift
+│
+├── NovelAppIOS                  (FUMINIWAIOS targetのiPhone / iPad source)
+│   ├── iOS platform adapters
+│   └── adaptive navigation shell
 │
 ├── NovelAppExperimental         (Experimental targetだけが追加compile)
 │   ├── AIProofreadingOperation.swift
@@ -77,8 +82,10 @@ FUMINIWA
     │   │   ├── IndentPlugin.swift
     │   │   └── IMEGuardPlugin.swift
     │   └── Platform
-    │       └── macOS
-    │           └── MacTextAdapter.swift
+    │       ├── macOS
+    │       │   └── MacTextAdapter.swift
+    │       └── iOS
+    │           └── IOSTextAdapter.swift
     ├── NovelUI
     │   └── SidebarRow.swift
     └── PreviewSupport
@@ -191,7 +198,7 @@ NovelStorage の設計方針:
 
 ### 4.3 EditorKit
 
-本文エディタを提供する。初期実装では macOS の `NSTextView` を SwiftUI から利用する。iOS は後から `UITextView` アダプタを追加する。
+本文エディタを提供する。macOSは`NSTextView`、Phase 7のiOS / iPadOSは`UITextView`をSwiftUIから利用し、どちらも薄いplatform adapterとして同じ`EditorView`公開APIと純粋ruleへ接続する。
 
 EditorKit の責務:
 
@@ -610,9 +617,16 @@ clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_AS
 
 ### Phase 7: iOS / iPadOS 対応
 
-- UITextView アダプタ(EditorKit/Platform/iOS)
-- iOS アプリターゲット + UI 調整
-- Phase 5 完了後に着手(需要次第で Phase 6 と順序入れ替え可 → D-013)
+着手決定済み(D-056)。実装順と詳細な受け入れ条件は **[IOS.md](IOS.md)** を正とする。
+
+- **IOS-1 Build Graph**: iOS / iPadOS 17 app / test targetを追加し、通常macOS版と同じ5つのNovelKit productだけをlinkする。`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialはcompile／link／bundleしない
+- **IOS-2 Shared App Boundary**: platform-neutralな作品／保存／session処理を共有し、Files picker、scene lifecycle、first responder確定、clipboardを小さなiOS adapterへ分離する
+- **IOS-3 UITextView Adapter**: TextKit 2、text view所有権、`IMEGuardPlugin → IndentPlugin`、共有`IndentRules`、D-055のR1' / R3 / R4 / R5、Undo / Redo、末尾96pt表示余白とcaret revealを実`UITextView`で成立させる
+- **IOS-4 Document MVP / Adaptive Shell**: 外部原本を変更しないapp-private import / edit / export、Safe Launch / Recovery、iPadの適応的複数列、iPhoneの`NavigationStack`を接続する
+- **IOS-5 Clipboard Prompt**: 校正／アドバイス×本文選択／話／章を`UIPasteboard`へ明示コピーする。AI provider、送信、応答、Applyは持たない
+- **IOS-6 Parity / Release QA**: 残るmacOS機能、round-trip、実機IME、scene遷移、VoiceOver / Dynamic Type、性能と配布を検証する
+
+MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
 ### Windows 並行トラック: WinUI 版
 
@@ -632,6 +646,13 @@ Windows トラックは macOS の商業化基盤 / Phase 6 / 7 と独立に進�
 
 ```text
 NovelApp (通常FUMINIWA)
+├── NovelCore
+├── NovelStorage
+├── NovelExport
+├── NovelUI
+└── EditorKit
+
+FUMINIWAIOS
 ├── NovelCore
 ├── NovelStorage
 ├── NovelExport
@@ -662,15 +683,15 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 - AppKit / UIKit は EditorKit の Platform 配下に閉じ込める。将来のPDF用AppKit実装はNovelExportのPlatform配下に閉じ込める
 - WinUI / Windows App SDK 型は Windows 側の App / Editor project に閉じ込め、Core・保存 schema・Export の公開 API に出さない
 - Public API に `NSTextView` や `UITextView` を出さない
-- iOS未実装部分はダミーViewでよい
+- Phase 7の中間PRではtarget graphを先に固定するためiOS placeholderを許可するが、IOS-3完了時に`EditorView`のUIKit分岐を実`IOSTextAdapter`へ置き換える
 
 ### 9.3 保存形式
 
 - 保存形式の詳細は NovelStorage に閉じ込める
 - App側は `DocumentRepository` のみを見る
 - `.novelpkg` の内部構造をApp側に漏らさない
-- `.novelpkg` は macOS / Windows 間の公開互換境界とし、詳細は [CROSS_PLATFORM.md](CROSS_PLATFORM.md) を正とする
-- schema 変更時は言語非依存 fixture を先に更新する。Windows reader / writerの実装前はschema・fixture・macOS検証、実装後はmacOS → Windows、Windows → macOS、双方向round-tripまでを完了条件にする
+- `.novelpkg` は macOS / iOS / Windows 間の公開互換境界とし、詳細は [CROSS_PLATFORM.md](CROSS_PLATFORM.md) を正とする
+- schema 変更時は言語非依存 fixture を先に更新する。iOS実装後はmacOS → iOS → macOS、Windows reader / writer実装後はmacOS → Windows、Windows → macOSのround-tripまでを完了条件にする
 - OS 固有パス・bookmark・handle・UI設定を package に保存しない。未知ルート項目はどちらの writer も保持する
 
 ### 9.4 Editor拡張
@@ -715,7 +736,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 悪い例: 「小説アプリを全部作って」
 
-良い例: 「EditorKit に EditorPlugin プロトコルを追加し、macOS の NSTextViewDelegate から shouldChange を呼び出す MacTextAdapter を実装してください。既存の EditorView は薄い Facade として保ってください。iOS は未実装で構いません。」
+良い例: 「`EditorView`の公開APIと共有`IndentRules`を変えず、UIKitの通知順だけを吸収するTextKit 2の`IOSTextAdapter`を追加してください。R1' / R3 / R4 / D-055後のR5を実`UITextView`で統合testしてください。」
 
 作業単位:
 
@@ -731,11 +752,13 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
+D-056により **Phase 7 iOS / iPadOS実装へ着手する**。直近の実装順は[IOS.md](IOS.md)のIOS-1 Build Graphから始め、IOS-2 Shared App Boundary、IOS-3 UITextView Adapter、IOS-4 app-private Document MVP / Adaptive Shell、IOS-5 Clipboard Promptへ進む。iOS targetは通常macOS版と同じ5 productだけをlinkし、`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`で検証する。
+
 D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
 
 B4-Dまでのpure domain、Editor transaction、fake UI、Experimental分離、sidecar protocol、canonical manifest、合成capture、Darwin supervisor、B3、B4-A〜Dは削除せず研究成果として保持する。production catalogは空、production channel／factory／callsiteと実Node／SDK／CLI／network／credential／実原稿は0件である。B4-E以降は直近taskではなく、利用者がその時点の最新stable SDK／APIを明示的に再評価すると決めた場合だけ、新Decisionとthreat modelから再開する。結果と未達Gateは[Codex SDK feasibility実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。
 
-公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+公開Releaseトラックの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder／Files移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。Phase 7 MVPは外部原本を直接編集せずapp-private作業コピーへ限定し、両Gate完了前にopen-in-place対応を宣言しない。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
 D-043の原稿・送信安全契約は将来provider統合を再開する場合も維持する。`FUMINIWAExperimental`の研究コードは保持するが実providerへ接続せず、通常の`FUMINIWA` app targetはcompile／link／bundle時にproviderと入口を除外する。通常版に許可するのはD-054の非通信clipboard prompt支援だけである。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
@@ -749,10 +772,10 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 
 ## 12. 非目標
 
-初期段階では以下はやらない。
+現行ロードマップでは以下はやらない。
 
 - 縦書き対応(執筆・出力とも非対応で確定 → D-012)
-- iOS完全対応(Phase 7 まで着手しない。CIでのコンパイル保証のみ → D-013)
+- iOS / iPadOSでの外部原本のopen-in-place(Package Validator / External Change / Conflict後に別Decision → D-056)
 - クラウド同期
 - 複数作品同時編集・ライブラリ管理UI
 - AI本文自動書き換え
@@ -760,11 +783,22 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 - リアルタイム共同編集
 - 独自レンダリングエンジン
 
-まずは、macOSで快適に小説を書ける最小機能を完成させる。
+Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-privateな最小執筆環境を完成させる。
 
 ---
 
 ## 変更履歴
+
+### v0.71 (2026-08-10)
+
+Phase 5完了後のPhase 7へ着手し、iOS / iPadOS 17のapp-private文書MVPを決定した(D-056、[IOS.md](IOS.md))。
+
+- iPadの適応的複数列とiPhoneの`NavigationStack`、通常5 productだけをlinkするiOS targetを計画
+- 外部`.novelpkg`を原本へ書き戻さず、app-private作業コピーとして取り込み／編集／保存／書き出すMVP境界を固定
+- open-in-placeをPackage ValidatorとExternal Change / Conflict後の別Decisionへ分離
+- `UITextView` + TextKit 2で共有`IndentRules`を使い、旧R2／旧R5を戻さずD-055後のR1' / R3 / R4 / R5を実機IMEで検証する契約を追加
+- 通常iOS targetの`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを0件とし、D-054のclipboard prompt copyだけを許可
+- IOS-1〜6のPR順とBuild、Document safety、Editor、Clipboard / Accessibilityの完了条件を追加
 
 ### v0.70 (2026-08-10)
 
