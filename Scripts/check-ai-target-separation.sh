@@ -35,9 +35,12 @@ jq -e '
   .objects as $objects |
   packageProducts($objects; "NovelApp") ==
     ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
+  packageProducts($objects; "FUMINIWAIOS") ==
+    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
   packageProducts($objects; "FUMINIWAExperimental") ==
     ["EditorKit", "NovelAI", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
   packageProducts($objects; "NovelAppTests") == [] and
+  packageProducts($objects; "FUMINIWAIOSTests") == [] and
   packageProducts($objects; "FUMINIWAExperimentalTests") == []
 ' "$audit_tmp" >/dev/null
 
@@ -63,8 +66,18 @@ jq -e '
     .PRODUCT_BUNDLE_IDENTIFIER == "dev.serikayuzuki.fuminiwa.experimental" and
     .INFOPLIST_FILE == "NovelAppExperimental/Info.plist"
   )) and
+  (configurationSettings($objects; "FUMINIWAIOS") | all(
+    .PRODUCT_NAME == "FUMINIWA" and
+    .PRODUCT_MODULE_NAME == "FUMINIWAIOS" and
+    .PRODUCT_BUNDLE_IDENTIFIER == "dev.serikayuzuki.fuminiwa.ios" and
+    .INFOPLIST_FILE == "NovelAppIOS/Info.plist"
+  )) and
   (configurationSettings($objects; "NovelAppTests") | all(
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
+    .BUNDLE_LOADER == "$(TEST_HOST)"
+  )) and
+  (configurationSettings($objects; "FUMINIWAIOSTests") | all(
+    .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
   )) and
   (configurationSettings($objects; "FUMINIWAExperimentalTests") | all(
@@ -84,6 +97,7 @@ jq -e '
         ($objects[$configuration].buildSettings.SWIFT_ACTIVE_COMPILATION_CONDITIONS // "")];
   .objects as $objects |
   (conditions($objects; "NovelApp") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
+  (conditions($objects; "FUMINIWAIOS") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
   (conditions($objects; "FUMINIWAExperimental") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI")))
 ' "$audit_tmp" >/dev/null
 
@@ -123,9 +137,26 @@ jq -e '
   all(test("NovelAI|Experimental|node_modules|sidecar|Codex"; "i") | not)
 ' "$audit_tmp" >/dev/null
 
+jq -e '
+  def target($objects; $name):
+    $objects | to_entries[] |
+      select(.value.isa == "PBXNativeTarget" and .value.name == $name) |
+      .value;
+  def buildFileRefs($objects; $name):
+    [target($objects; $name).buildPhases[] as $phase |
+      $objects[$phase].files[]? as $buildFile |
+      $objects[$buildFile].fileRef // empty];
+  def refLabel($objects; $id):
+    ($objects[$id].path // $objects[$id].name // "");
+  .objects as $objects |
+  [buildFileRefs($objects; "FUMINIWAIOS")[] | refLabel($objects; .)] |
+  all(test("NovelAI|Experimental|node_modules|sidecar|Codex"; "i") | not)
+' "$audit_tmp" >/dev/null
+
 standard_scheme="FUMINIWA.xcodeproj/xcshareddata/xcschemes/FUMINIWA.xcscheme"
 experimental_scheme="FUMINIWA.xcodeproj/xcshareddata/xcschemes/FUMINIWAExperimental.xcscheme"
-for scheme in "$standard_scheme" "$experimental_scheme"; do
+ios_scheme="FUMINIWA.xcodeproj/xcshareddata/xcschemes/FUMINIWAIOS.xcscheme"
+for scheme in "$standard_scheme" "$experimental_scheme" "$ios_scheme"; do
   if [[ ! -f "$scheme" ]]; then
     echo "error: expected shared scheme is missing: $scheme" >&2
     exit 1
@@ -139,6 +170,12 @@ if rg -F -q 'FUMINIWAExperimental' "$standard_scheme"; then
 fi
 rg -F -q 'BlueprintName = "FUMINIWAExperimental"' "$experimental_scheme"
 rg -F -q 'BlueprintName = "FUMINIWAExperimentalTests"' "$experimental_scheme"
+rg -F -q 'BlueprintName = "FUMINIWAIOS"' "$ios_scheme"
+rg -F -q 'BlueprintName = "FUMINIWAIOSTests"' "$ios_scheme"
+if rg -F -q 'FUMINIWAExperimental' "$ios_scheme"; then
+  echo "error: the iOS scheme references an Experimental target" >&2
+  exit 1
+fi
 
 if [[ "$(plutil -extract CFBundleDocumentTypes.0.LSHandlerRank raw NovelApp/Info.plist)" != "Owner" ]]; then
   echo "error: the standard app must remain the document owner" >&2
@@ -146,6 +183,18 @@ if [[ "$(plutil -extract CFBundleDocumentTypes.0.LSHandlerRank raw NovelApp/Info
 fi
 if [[ "$(plutil -extract CFBundleDocumentTypes.0.LSHandlerRank raw NovelAppExperimental/Info.plist)" != "Alternate" ]]; then
   echo "error: the Experimental app must not replace the standard document owner" >&2
+  exit 1
+fi
+if [[ "$(plutil -extract CFBundleDocumentTypes.0.LSHandlerRank raw NovelAppIOS/Info.plist)" != "Alternate" ]]; then
+  echo "error: the iOS app must not replace the macOS document owner" >&2
+  exit 1
+fi
+if [[ "$(plutil -extract LSSupportsOpeningDocumentsInPlace raw NovelAppIOS/Info.plist)" != "false" ]]; then
+  echo "error: the iOS MVP must keep external packages copy-in rather than open-in-place" >&2
+  exit 1
+fi
+if rg -n 'URLSession|Network\.framework|NWConnection|OpenRouter|codex_sdk' NovelAppIOS; then
+  echo "error: the iOS app contains a provider or network callsite" >&2
   exit 1
 fi
 
@@ -168,4 +217,4 @@ jq -e '
   (dependencies($package; "NovelAI") == [])
 ' "$package_tmp" >/dev/null
 
-echo "==> Standard and Experimental AI build graph separation verified"
+echo "==> Standard, iOS and Experimental AI build graph separation verified"

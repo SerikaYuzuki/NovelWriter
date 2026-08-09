@@ -11,6 +11,7 @@ options:
   bundleIdPrefix: dev.serikayuzuki
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 
 packages:
@@ -32,6 +33,13 @@ schemes:
     test:
       targets:
         - name: FUMINIWAExperimentalTests
+  FUMINIWAIOS:
+    build:
+      targets:
+        FUMINIWAIOS: all
+    test:
+      targets:
+        - name: FUMINIWAIOSTests
 
 targets:
   NovelApp:
@@ -137,4 +145,53 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWAExperimental.app/Contents/MacOS/FUMINIWAExperimental"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  FUMINIWAIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovelAppIOS
+        excludes:
+          - Info.plist
+      - path: NovelApp/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentOperationGate.swift
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+    settings:
+      base:
+        PRODUCT_NAME: FUMINIWA
+        PRODUCT_MODULE_NAME: FUMINIWAIOS
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.ios
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: NovelAppIOS/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+  FUMINIWAIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovelAppIOSTests
+    dependencies:
+      - target: FUMINIWAIOS
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"

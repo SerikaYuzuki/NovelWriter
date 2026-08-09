@@ -41,4 +41,30 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO
 
+echo "==> Select iPhone Simulator for iOS tests"
+ios_simulator_id="$(xcrun simctl list devices available -j | jq -r '
+  [.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone")))] |
+  first | .udid // empty
+')"
+if [[ -z "$ios_simulator_id" ]]; then
+  echo "error: an available iPhone Simulator is required for iOS tests" >&2
+  exit 1
+fi
+
+echo "==> EditorKit test (iOS Simulator)"
+(cd NovelKit && xcodebuild test \
+  -scheme NovelKit-Package \
+  -destination "platform=iOS Simulator,id=$ios_simulator_id" \
+  -only-testing:EditorKitTests \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO)
+
+echo "==> FUMINIWA iOS app test (XcodeGen)"
+xcodebuild test \
+  -project FUMINIWA.xcodeproj \
+  -scheme FUMINIWAIOS \
+  -destination "platform=iOS Simulator,id=$ios_simulator_id" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+
 echo "==> All checks passed"

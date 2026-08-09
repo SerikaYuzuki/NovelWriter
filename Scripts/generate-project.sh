@@ -42,4 +42,4 @@ if [[ ! -d "$current_project" ]]; then
   exit 1
 fi
 
-echo "==> Generated $current_project (schemes: FUMINIWA, FUMINIWAExperimental)"
+echo "==> Generated $current_project (schemes: FUMINIWA, FUMINIWAExperimental, FUMINIWAIOS)"
