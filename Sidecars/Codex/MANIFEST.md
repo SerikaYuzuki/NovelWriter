@@ -1,5 +1,9 @@
 # FUMINIWA Codex canonical deployment manifest v1
 
+**Status: retained B1-B4-D feasibility artifact. D-054 defers B4-E and all
+production provider/runtime work until an explicit re-evaluation of the latest
+stable SDK/API. This manifest is not an active deployment plan.**
+
 This document defines the bytes measured by `sidecar_bundle_sha256` in Codex
 sidecar protocol v1. It is a supply-chain identity format, not a package
 installer, a code-signing replacement, or an OS sandbox.
@@ -442,8 +446,10 @@ temporarily substitute and restore a root or child, or mutate the candidate
 after verification. The Node module containing its verifier is also not an
 independent trust anchor if it was itself loaded from the unverified tree.
 
-Before runtime mode `codex_sdk` can be enabled, B4 and later isolation Gates
-must establish all of the following:
+If provider integration is explicitly resumed after the D-054 re-evaluation,
+runtime mode `codex_sdk` must remain disabled until B4 and later isolation Gates
+establish all of the following. These items are dormant requirements, not the
+current implementation backlog:
 
 1. B4-A's empty production catalog is populated only by an independently
    reviewed native-source change. The candidate, proposal, observed runtime, and
@@ -464,7 +470,9 @@ must establish all of the following:
    concrete production channel/factory/call site exists, native identity is not
    connected, and concatenating `hello` and `start` into the existing one-shot
    supervisor input remains forbidden.
-5. B4-E closes the linker/loader, native broker/helper, and OS read/exec policy.
+5. B4-E, if still required by the newly evaluated SDK boundary, closes the
+   linker/loader, native broker/helper, and OS read/exec policy. B4-E is
+   currently unimplemented and deferred.
    No process can modify or substitute the verified root between verification
    and import/path-based spawn. The verified bytes must be bound immutably to
    the bytes actually evaluated or executed. The chosen mechanism must be

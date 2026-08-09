@@ -1,6 +1,6 @@
 # Codex Darwin process supervisor 契約
 
-**状態: Checkpoint B2 の合成helper向けnative primitiveを実装 / 実Codex SDK・CLI、network、credential、native manifest verifier、OS-level sandboxは未接続**
+**状態: Checkpoint B2 の合成helper向けnative primitiveをB4-Dまでの研究成果として保持 / D-054によりB4-E以降と実Codex SDK・CLI、network、credential、OS-level sandbox接続は最新stable SDK／APIの明示再評価まで延期**
 
 本書は、`FUMINIWAExperimental`だけにcompileされるDarwin process supervisorの起動、I/O上限、終了競合、process group cleanupと、その保証外を定める。Swift／Node間のwire契約は[PROTOCOL.md](PROTOCOL.md)、配布rootのcanonical manifestは[MANIFEST.md](MANIFEST.md)、AI全体のGateは[AI_INTEGRATION.md](../../docs/AI_INTEGRATION.md)を正とする。
 
@@ -8,7 +8,7 @@ Checkpoint B2の成功は、実providerへ原稿を送れること、Codex proce
 
 B4-Cの`CodexSuspendedProcessIdentityInspector`はB2 transportを実行可能にする拡張ではなく、別のprobe-only primitiveである(D-052)。固定条件でsuspended childを作ってactual identityを観測し、成功時もresumeせずkill／direct reapする。PID／path／FD／capabilityをB2へ引き渡さず、production catalogも空のままである。B4-C timeoutも同期Security API／inspection workerのasync hard return上限ではなく、本書のB2 interactive process lifecycle保証と混同しない。
 
-B4-Dの`CodexSyntheticInteractiveTransport`もB2またはB4-Cを実行可能にする接続ではなく、Experimental-only／mock-onlyのabstract sequencing primitiveである(D-053)。具象production channel／factory／callsiteを持たず、B2 supervisorをspawnせず、B4-C childをresumeまたはchannelへ変換しない。content-free `hello`、isolated exact `ready`後だけのsealed `start`、terminal／EOF、cancel／cleanupをin-memory channelで固定しただけである。B2の完成済みstdinへ`hello`と`start`を連結することは禁止し、B4-Eのapproval／actual identity／closed execution closure／OS隔離が終わるまで実runtimeへ接続しない。
+B4-Dの`CodexSyntheticInteractiveTransport`もB2またはB4-Cを実行可能にする接続ではなく、Experimental-only／mock-onlyのabstract sequencing primitiveである(D-053)。具象production channel／factory／callsiteを持たず、B2 supervisorをspawnせず、B4-C childをresumeまたはchannelへ変換しない。content-free `hello`、isolated exact `ready`後だけのsealed `start`、terminal／EOF、cancel／cleanupをin-memory channelで固定しただけである。B2の完成済みstdinへ`hello`と`start`を連結することは禁止する。B4-Eのapproval／actual identity／closed execution closure／OS隔離は未実装のままD-054で延期し、最新stable SDK／APIの再評価と新Decisionなしに実runtimeへ接続しない。
 
 ## 1. 実装境界
 
@@ -68,7 +68,7 @@ Darwinでは、終了済みだが未reapのleaderだけが残る期間のgroup p
 - reap直後のPGID reuse raceを完全には排除できない。実装はleaderをreap直前までanchorとして保持し、reap後は観測だけを行って無関係processへsignalしないが、`ESRCH`はその瞬間の状態だけを示す。
 - 合成helperでの成功は、実Codex SDK／CLIのprocess tree、Nodeの子孫構造、network、API key、local artifact、OS-level file-read拒否を検証しない。
 
-以上のため、Checkpoint B2完了後も実送信はNO-GOである。B3でnative manifest verifierを追加しても、compile-time approved digest allowlist、検証済みbytesとpath-based spawnのimmutable binding、exact Node runtime、監査済みlauncher／parent-death境界、専用cwd／`CODEX_HOME`、environment allowlist、Keychain one-shot credential pipe、OS-level sandbox、実SDK process treeとartifact inventoryは未完了である。これらを合成入力から個別に通した後で、既存のprovider-neutral UIへadapterを接続する。
+以上のため、Checkpoint B2完了後も実送信はNO-GOである。B3でnative manifest verifierを追加しても、compile-time approved digest allowlist、検証済みbytesとpath-based spawnのimmutable binding、exact Node runtime、監査済みlauncher／parent-death境界、専用cwd／`CODEX_HOME`、environment allowlist、Keychain one-shot credential pipe、OS-level sandbox、実SDK process treeとartifact inventoryは未完了である。D-054により接続作業自体を延期しており、将来再開する場合も最新stable境界を再評価し、未達Gateを個別に通す前にprovider-neutral UIへadapterを接続しない。
 
 ## 6. 合成テストで固定する事実
 

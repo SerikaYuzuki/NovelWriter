@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.68
+# ふみにわ 設計書 v0.69
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -40,7 +40,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を Windows の WinUI 
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、AIの純粋domainだけを持つNovelAIをNovelKit内の独立targetとして扱い、署名不要の`swift test`を回せるようにする。NovelAIを追加してもprovider、sidecar、UIが実装済みとは扱わない(D-043)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
-- **AI実験構成**: `FUMINIWA_ENABLE_EXPERIMENTAL_AI`を定義する別app target／scheme `FUMINIWAExperimental`だけに`NovelAI`、fake provider、共通AI UIを組み込む。通常の`FUMINIWA` app targetはAI adapter、Node／CLI／sidecar resource、AI menu／shortcut／設定をtarget dependencyとcompile条件の段階で含めない。別bundle ID／既定保存rootと生成projectの分離監査まで実装し、旧製品のrecent URL／設定はExperimentalへ自動移行しない(D-046)
+- **AI支援構成**: provider統合の研究コードは`FUMINIWA_ENABLE_EXPERIMENTAL_AI`を定義する別app target／scheme `FUMINIWAExperimental`だけに`NovelAI`、fake provider、共通AI UIとして保持する。実providerとB4-E以降はD-054により最新stable SDKの明示再評価まで延期する。通常の`FUMINIWA` app targetはAI adapter、Node／CLI／sidecar resource、provider UIをtarget dependencyとcompile条件の段階で含めない。一方、provider／network／key／process／`NovelAI`へ依存しないAIチャット用clipboard prompt copyは通常版の実機能として扱う(D-046 / D-054)
 
 ## 3. モジュール構成
 
@@ -320,7 +320,7 @@ NovelUI は可能な限りプラットフォーム非依存にする。
 
 ### 4.9 NovelAI
 
-AI機能のprovider-neutralな純粋domainを担当する。初期targetはFoundationのoutbound値型、protocol、draft → version付きinstruction ID、単一`applicationPrompt`、version付きexact response schemaを持つpreview → `AIApplicationPayload`を封印したconfirmed requestの状態遷移、raw structured outputのstrict decode、結果／型付きerror、決定論的fakeだけを持ち、NovelCore、NovelStorage、EditorKit、SwiftUI、AppKit、network、subprocess、Keychain、provider SDKへ依存しない。
+将来provider統合を再開する場合のprovider-neutralな純粋domainを担当する。B4-Dまでの実装とtestは保持するが、D-054により実provider、B4-E以降、結果適用UIへの実通信接続は延期中である。初期targetはFoundationのoutbound値型、protocol、draft → version付きinstruction ID、単一`applicationPrompt`、version付きexact response schemaを持つpreview → `AIApplicationPayload`を封印したconfirmed requestの状態遷移、raw structured outputのstrict decode、結果／型付きerror、決定論的fakeだけを持ち、NovelCore、NovelStorage、EditorKit、SwiftUI、AppKit、network、subprocess、Keychain、provider SDKへ依存しない。
 
 - 最初のtaskは利用者が明示選択した本文範囲の校正案だけとする
 - 固定指示のversionをinstruction IDで表し、`selected_text`を未信頼データとして扱い、その中の命令に従わず選択外の文脈／ファイルを参照しないことを固定する。instructionを変えるときはIDも更新して再確認する
@@ -336,7 +336,7 @@ AI機能のprovider-neutralな純粋domainを担当する。初期targetはFound
 
 EditorKitはopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用を所有し、NovelAIから`NSTextView`へ触れない。App側はdocument session／episode／source digestをconfirmed outboundと別のmemory-only contextへ保持し、送信前／適用前のstale判定へ結合する。Codex Node sidecarとOpenRouterは別adapterとし、AppDependenciesが利用者の明示選択に基づいて一つだけを注入する。
 
-App側にはprovider-neutralな校正operation orchestratorを一つだけ置き、Codex SDK経路とAPI経路で同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示Applyの状態機械とUIを使う。process／HTTP、credential、model設定、保持情報、typed error mappingだけをadapterごとに分離する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする(D-043 / D-046)。
+provider統合を再開する場合、App側にはprovider-neutralな校正operation orchestratorを一つだけ置き、Codex SDK経路とAPI経路で同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示Applyの状態機械とUIを使う。process／HTTP、credential、model設定、保持情報、typed error mappingだけをadapterごとに分離する。現在の通常版clipboard支援はこのdomain／orchestratorを使わず、prompt生成とsystem clipboard writeだけを独立して持つ。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)と[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする(D-043 / D-046 / D-054)。
 
 ## 5. App側の設計
 
@@ -402,7 +402,7 @@ ContentView
 
 主な操作: Project Sidebar のセクション選択 / Outline での章・話選択 / 章追加 / 章並べ替え / 本文編集 / 検索 / 明示保存 / 自動保存
 
-新UIの画面構成は D-021 / D-024 / D-032 / D-040 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。通常Releaseの下部は保存状態・文字数・検索結果だけを示すstatus barとし、未実装AIのplaceholderや開閉導線を置かない。別app target／scheme `FUMINIWAExperimental`では、実providerへ接続済みの選択範囲校正UIだけを同じWorkbenchへ追加できる。本文執筆では content に章一覧、detail に本文を出す。
+新UIの画面構成は D-021 / D-024 / D-032 / D-040 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。通常Releaseの下部は保存状態・文字数・検索結果だけを示すstatus barとし、provider処理のないAI panel、状態、送信導線を置かない。D-054のclipboard支援は実在する非通信機能なので、各章／話の操作と本文context menuに「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」を置いてよい。別app target／scheme `FUMINIWAExperimental`のprovider UIは研究コードとして保持するが、実provider接続は延期中である。本文執筆では content に章一覧、detail に本文を出す。
 
 起動中は編集可能なWorkbenchを生成しない。前回作品またはFinder指定作品を開けなかった場合はRecovery画面で止まり、recent URLとディスク上の作品を保持したまま、再試行・Finder表示・別作品選択・明示的新規作成を提示する(D-039)。
 
@@ -484,27 +484,23 @@ ContentView
 
 ### 7.5 AI支援
 
-AI機能はアプリ本体から独立したFeatureとして扱う。最初の機能は、Editorで利用者が明示選択した範囲だけを送る校正案である。章の要約、矛盾検出、口調／伏線チェック、続きを含む生成は、この境界が安全に成立した後の別機能とする。
+AI支援は任意機能とし、アカウント、API key、ネットワーク、providerなしで執筆／保存／書き出しを完結できるようにする。D-054により、現在の通常版ではFUMINIWAがAIを実行するのではなく、利用者が任意のAI chatへ手動で渡すplain text promptをsystem clipboardへコピーする。
 
-方針:
+現在の方針:
 
-- AIは任意機能とし、アカウント、API key、ネットワーク、providerなしで執筆／保存／書き出しを完結できるようにする
-- version付きinstruction ID、`selected_text`を未信頼データとして扱う固定指示、exact selected text、adapterがそのまま渡す単一`applicationPrompt`、version付きexact response schema、provider、model、送信範囲、技術的に確認した保持／学習利用情報をrequestごとにpreviewし、明示確認なしに送らない。instruction／schema変更時はIDを更新して確認を取り直す
-- 送信中も本文編集をブロックせず、cancelとtyped errorを提供する。AI失敗時も原文と保存機能を維持する
-- 結果は初期版ではmemory onlyとし、`.novelpkg`、snapshot、UserDefaults、通常ログへ保存しない。ただしprovider／SDK側の履歴非保持を意味しない
-- 結果を自動適用せず、局所diffを確認した明示操作だけをEditorKit commandとして1 Undo単位で反映する
-- document session、editor surface、episode、UTF-16範囲、source textのいずれかが変わった結果はstaleとし、現在選択への読み替えや本文検索による再束縛をせず適用を拒否する
-- 最初の実providerはCodex SDKとし、続くHTTP API adapterの第一候補をOpenRouterとする。両者は独立adapterとし、provider間およびOpenRouter内の自動fallbackを行わない
-- CodexとOpenRouterは同じprovider-neutralなoperation orchestratorとUIを使う。選択snapshot、preview、確認、cancel、diff、stale、Copy、Applyを共有し、process／HTTP、credential、model設定、保持情報、errorだけをadapterごとに分離する
-- providerはstreaming、cancellation、usage reportingを必須とし、raw structured outputをdomainでstrict decodeする。usageは`outputTokens`必須、`inputTokens`は不明なら省略可能とし、いずれも存在値は非負に限定する。usageは事後報告であり費用上限そのものではない
-- domain executorはprovider descriptor一致とconfirmationのone-shot実行権を強制する。取消済み／stream破棄後はproviderの実行権または最初の外部副作用を拒否し、再試行は新しいpreviewと確認から始める
-- CodexはSwift-native SDKでないため、provider実装／更新PRごとにreviewしたstable non-alpha TypeScript SDKをsemver rangeなしでexact pinしたNode sidecarを候補とする。2026-08-09の調査baselineは`0.147.0`である。B3ではarm64固定21-file packagerとExperimental native manifest verifierをidentity candidateとして実装し、B4-Aではcandidate生成から独立したempty production catalog付きapproval契約を固定した。B4-Bではcanonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを512 MiB上限で観測する非実行Experimental native inspectorを追加した。B4-Cでは固定argv／empty environment／`/private/var/empty`／null stdioでchildを`POSIX_SPAWN_START_SUSPENDED`起動し、actual PIDのprocess／dynamic code identityを照合するExperimental-only probeを追加した(D-052)。成功時もresumeせず`SIGKILL` + direct `waitpid`で回収し、architecture／CDHashの非authority観測だけを返す。B4-DではExperimental-only／mock-onlyのabstract interactive transportを追加し、content-freeに開いたfresh 1-request channelへ`hello`だけを書き、exact request／runtimeの単独`ready`とdecoder frame boundaryを照合した後にだけexact sealed `start`を書くsequencing契約を固定した(D-053)。応答は`started` → 単一terminal → EOFを必須とし、terminal後は最大1秒のEOF drainでduplicate／late／partial／missing EOFをfail-closedにする。production catalogは空のままで、具体production channel／factory／callsite、process／Node／SDK／CLI／network／key／実原稿は0件。B4-C childはresumeされずB4-Dへ変換されていないため、これを実runtime B4-Dの完了／GOと扱わない。candidate／self manifest／B4-B／B4-C observation／local probeを自動承認せず、anti-rollbackも未実装である。same-uid外部`SIGCONT`拒否、B4-B SHA／approvalとの結合、Node version、complete inventory、immutable verify-to-use、OS-level隔離は未達である。次のB4-Eでclosed linker／native broker／helperとapproval／identity／OS-level read／exec隔離を結合する。個人用Experimentalでもrequest専用empty cwd + `skipGitRepoCheck: true`／専用`CODEX_HOME`、environment allowlist、Keychain、OS-level file隔離、cancel後のprocess tree回収は緩めない。arm64／x86_64、bundling、nested signing／notarizationは公開Release Gateへ延期する。実repositoryや検査回避用の偽Git repositoryをcwdにしない
-- 利用中Codex SDKにtool完全無効化やupstream output token capがなければ、Experimental UIで未保証と明示し、FUMINIWA側のresource limitを代替の上流capと表現しない。公開Releaseでは未達Gateとして残す
-- 公開TypeScript SDKにephemeral thread optionが確認できないため、「履歴を保存しない」「zero retention」と主張しない
-- provider／serviceの保持期間、SDK／CLI local artifactの場所・範囲・保持期間、providerの料金単位とrequest上限の表示根拠は、確認できた値と未保証を区別して送信前に示す
-- 別app target／scheme `FUMINIWAExperimental`だけが実装済みAI UIを表示できる。通常の`FUMINIWA` app targetではprovider target／artifactとpanel、入力欄、状態、設定、ショートカットをbuild時に除外する(D-040 / D-043 / D-046)
+- purposeは「校正」と「アドバイス」、scopeはIME確定済みの本文選択、1話、1章とする
+- 選択scopeはexact non-empty selectionだけ、話scopeは話タイトル／本文だけ、章scopeは章タイトルと配列順の各話タイトル／本文だけを含む
+- 作品名、あらすじ、メモ、人物、プロット、伏線、世界観、資料、ID、session、range、digest、URL／pathを暗黙にpromptへ加えない
+- 対象本文を命令ではなく引用データとして扱う固定指示を持ち、校正は意味／文体を保つ修正案、アドバイスは長所／課題／具体策を求める
+- 各章／話と本文context menuから「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」へ到達できるようにする
+- FUMINIWAはAI chatを開かず、自動paste／送信を行わず、response、diff、Apply、Undo、cancel、retryを扱わない
+- system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界であり、secure erase、履歴非保持、外部AIの保持／学習利用を保証しない
+- promptや本文をログ、UserDefaults、snapshot、`.novelpkg`へ保存せず、copy操作で本文、モデル、revision、Undoを変更しない
+- 通常版clipboard支援は`NovelAI`、Experimental AI source、Codex／OpenRouter、Node／CLI／sidecar、network、Keychain、subprocessへ依存しない
 
-request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+`NovelAI`、Editor transaction、fake provider／共有UI、Codex sidecar B1〜B4-Dは研究成果として保持する。production catalogは空、production channel／factory／callsiteと実provider接続は0件である。B4-E以降とCodex／OpenRouter adapterは最新stable SDK／APIを利用者が明示的に再評価すると決めるまで延期し、0.147.0のcaptureやB4-Dのmock成功から自動再開しない。
+
+clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)、延期したSDK調査の結果は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。provider統合を再開する場合のrequest state、snapshot、sidecar Gate、保存範囲は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
 ## 8. 開発ロードマップ
 
@@ -592,20 +588,18 @@ request state、snapshot、provider／sidecar Gate、保存範囲、PR分割は[
 ### 商業化基盤: Product Trust / Package Safety / Release
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
-- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、未実装AIの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)
-- **AIの現在地**: `NovelAI`、EditorKit selection transaction、App-level local context、fake provider、provider-neutralな共有UI、`FUMINIWAExperimental` target分離、Codex sidecar v1、canonical deployment manifest v1、exact SDK 0.147.0の合成CLI capture、Darwin native process supervisor、arm64固定21-file packager、Experimental native manifest verifier、B4-A compile-time approval契約、B4-B非実行exact Node inspector、B4-C probe-only suspended actual-process identity、B4-D Experimental-only／mock-only abstract interactive transport sequencingまで実装済み。B4-Dはcontent-free factory、fresh one-request class-bound channel、run開始時のabsolute request deadline、独立30秒以下のattestation timeout、単独`ready`のexact照合後だけのsealed `start`、`started` → 単一terminal → EOF、terminal後最大1秒のEOF drain、cancel／timeout first-wins、global live-channel reuse拒否、cleanup安全error優先とraw error redactionを合成54 testで固定し、5 suites 54/54、Experimental全体205/205を通した。ただし具体production channel／factory／callsiteは0件、process／Node／SDK／CLI／network／key／実原稿も0件で、B4-C childはresumeもtransportへの変換もされていない。production catalogは意図的に空で、承認済みcandidate／Node／SDK／CLIと実行経路は0件。Node version、complete loaded inventory、immutable verify-to-use、Keychain、OS-level隔離、parent death後の回収は未実装であり、これは実runtime B4-D完了／GOではない(D-043 / D-046〜D-053)
+- **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、provider-backed AI placeholderの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)、provider非依存のclipboard prompt支援(D-054)
+- **AIの現在地**: 通常版は校正／アドバイス×本文選択／話／章のpromptをsystem clipboardへ明示コピーするだけで、provider／network／key／process／`NovelAI`依存は0件。Experimental側は`NovelAI`、EditorKit selection transaction、fake provider／共有UI、Codex sidecar v1からB4-D abstract mock interactive sequencingまでを研究成果として保持する。B4-D 5 suitesは54/54、Experimental全体は205/205を通したが、production catalogは空、production channel／factory／callsite、実Node／SDK／CLI／network／key／実原稿は0件である。実provider、B4-E以降、Codex／OpenRouter adapterは最新stable SDK／APIの明示再評価まで延期する(D-043 / D-046〜D-054)
 - **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
 ### Phase 6: AI支援
 
-- **6-0（純粋domain、完了）**: `NovelAI`のprovider-neutralなdraft／instruction IDと単一`applicationPrompt`／response schema IDとexact schemaを持つpreview／provider・purpose・budget・input countとともに`AIApplicationPayload`を封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、budget、result／error、event stream protocol、決定論的fake。local identity、stale判定、network、process、UI、`.novelpkg`変更なし
-- **6-1（Editor bridge、完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、providerへ渡さないApp-level document session／episode／source digestを結合。送信前／適用前staleをfakeで固定
-- **6-2（共有Experimental UI、完了）**: provider-neutralなoperation orchestratorと、exact preview、明示確認、cancel、diff、stale、Copy、明示Applyからなる一つのUIをfake providerで接続。別app target／scheme／bundle／保存root `FUMINIWAExperimental`だけに含める
-- **6-3（Codex SDK route、B4-D abstract interactive sequencing完了）**: fixed protocol／manifest、SDK 0.147.0合成capture、Darwin supervisor、B3 packager／verifier、B4-A empty approval contract、B4-B非実行Node inspector、B4-C suspended identity probeに加え、B4-DのExperimental-only／mock-only abstract transportを実装した。content-free factory openは引数を受けずfresh one-request class-bound channelを返し、process-wide weak registryがlive channelの再利用を拒否する。run entryでsealed payload budgetだけからabsolute request deadlineを固定し、独立したattestation timeout（最大30秒）内に`hello`だけを書き、exact request／runtimeの単独`ready`とframe boundaryを確認した後にだけexact sealed `start`を書く。`started` → 単一terminal → EOF、terminal後最大1秒のEOF drain、cancel／timeout first-wins、late delivery抑止、atomic channel cancellation、cleanup safety error優先／raw error redactionを固定した。ただし具体production channel／factory／callsite、process／Node／SDK／CLI／network／key／実原稿は0件で、production catalogは空、B4-C childはresumeもB4-Dへの変換もされていない。次はB4-E closed execution closure／native broker／helperとapproval／identity／OS-level read／exec隔離であり、残Gate完了まで`codex_sdk`と実送信はNO-GOである(D-047〜D-053)
-- **6-4（API route）**: OpenRouterをCodexとは独立したnative HTTPS adapterとして追加し、同じUIへ登録する。provider間とOpenRouter routingの自動fallbackなしをfailure testで保証する
-- **6-5（公開Release）**: Package Validator、External Change / Conflict、bundled universal runtime、hash、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常ReleaseへAI target／resource／UIを含めない
-- 要約、講評、矛盾検出、伏線確認、続きの提案は選択範囲校正の安全境界を流用できるか個別に設計し、暗黙に送信範囲を拡張しない
+- **6-C（clipboard prompt支援、通常版）**: 校正／アドバイス×本文選択／話／章の6組合せを決定論的にplain textへ組み立て、利用者の明示操作でsystem clipboardへコピーする。provider、network、key、process、`NovelAI`、応答取込、Applyなし。scope外data、path、local identityを含めず、clipboard共有境界を明記する(D-054)
+- **6-P0〜P2（provider研究基盤、完了・保持）**: `NovelAI` pure domain、EditorKit／App local transaction、fake provider／共有Experimental UIを保持する。通常版clipboard支援から依存しない
+- **6-P3（Codex SDK feasibility、B4-Dで凍結）**: protocol／manifest、SDK 0.147.0合成capture、Darwin supervisor、B3、B4-A〜Dを保持する。production catalogは空で、具象runtime接続と実原稿送信は0件。結果と未達Gateは[実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする
+- **6-P4（実provider、延期）**: B4-E、Codex adapter、OpenRouter adapter、実network／credential／原稿送信は、利用者が最新stable SDK／APIの再評価を明示的に決めるまで着手しない。再開時は旧version／hash／architectureを採用値として引き継がず、新Decisionとthreat modelから始める
+- **6-R（公開Release、未判断）**: providerを再開した場合もPackage Validator、External Change / Conflict、runtime identity／隔離、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常Releaseへprovider target／resource／UIを含めない
 
 ### Phase 6.5: PDF出力
 
@@ -695,6 +689,13 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ### 9.6 AI統合
 
+- 通常版の現行AI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。校正／アドバイス用promptの生成とsystem clipboard writeだけを実装し、provider、network、Keychain、subprocess、`NovelAI`、Experimental sourceへ依存させない
+- clipboardへ含める原稿scopeは明示選択、1話、1章に限定し、作品metadata、メモ、人物、プロット、伏線、世界観、資料、local identity、URL／pathを暗黙追加しない。copy操作で本文、Undo、revision、`.novelpkg`を変更しない
+- 章／話の操作はdocument sessionと対象ID、本文操作はEditorKitの生存中surface／valid selection／IME状態をactivation時に検査し、別作品や現在選択へ読み替えない
+- system clipboardは共有境界であり、履歴非保持、他deviceへの非同期、secure erase、外部AIの保持／学習利用を保証しない。自動送信、chat起動、response取込、Applyを追加しない
+
+以下はD-054により凍結中のprovider統合を将来再開する場合の契約である。
+
 - AIの純粋domainは`NovelAI`に置き、provider SDK、network、process、Keychain、SwiftUI、AppKit、EditorKitへ依存させない。初期domainはpreviewで封印したprompt／response schemaを含むconfirmed outboundだけをproviderへ渡し、local session／surface／range／pathを持たない
 - 選択snapshotの取得と本文適用はApp / EditorKit bridgeへ閉じ込め、D-005のテキスト所有権とD-041のsession tokenを迂回しない
 - 結果適用は同じdocument session、editor surface、episode、UTF-16範囲、exact sourceの一致を必要とし、staleな結果を現在選択へ再束縛しない
@@ -704,7 +705,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 - providerの不変descriptor照合とconfirmed requestのone-shot leaseはdomain executorで行い、adapter自身にstream生成や比較値の選択をさせない。adapterは外部副作用より先にcancellation handlerを登録する
 - providerはstreaming／cancellation／usage reportingを必須とし、domainがraw structured outputをexact schemaでstrict decodeする。domain budgetに加え、adapterは利用可能なupstream maximum output token parameterとwire event／process limitを設定・検証する。Codex SDKにupstream capがないExperimental実行では未保証とpreviewへ明示し、local limitで代替できたと扱わない
 - prompt、response、diff、provider設定で`.novelpkg` schemaを変更しない
-- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とする。Experimental Gate未達なら個人用AI UIへ含めず、Public Gate未達なら通常Releaseへtarget、resource、UIを含めない
+- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とする。ただしB4-E以降を現行taskにせず、再開には最新stable SDK／APIの明示再評価と新Decisionを必要とする。Experimental Gate未達なら個人用provider UIへ含めず、Public Gate未達なら通常Releaseへprovider target、resource、UIを含めない
 
 ## 10. AIエージェント向け実装指示の基本方針
 
@@ -728,11 +729,13 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-一般公開を延期したため、直近の個人用AI実装は **Phase 6-3のCodex SDK sidecar隔離feasibility B4-E** である。B4-Dまでにpure domain、Editor transaction、共有orchestrator／UI、Experimental分離、sidecar protocol、canonical manifest v1、exact SDK 0.147.0の合成capture、Darwin supervisor、B3 packager／verifier、empty compile-time approval contract、非実行exact Node inspector、probe-only suspended actual-process identity、abstract mock interactive sequencingを完了した。B4-Dはcontent-free factory open、fresh one-request channel、単独`ready`照合後だけのsealed `start`、`started` → 単一terminal → EOF、first-wins cancellationとcleanup境界を合成で固定しただけで、具体production channel／factory／callsiteとprocess／Node／SDK／CLI／network／key／実原稿は0件である。B4-C childはactual identity観測後もresumeせず回収され、B4-D transportへ変換されない。production catalogは空で、candidate／self manifest／proposal／B4-B／B4-C observation／local probeを自動承認せず、anti-rollbackを実装済みとは扱わない。次はB4-Eでclosed execution closure／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合し、complete loaded artifact inventoryとimmutable verify-to-useを固定する。その後も監査済みlauncher／parent-death、専用cwd／`CODEX_HOME`、environment allowlist、memory／CPU／process limit、Keychainを実証し、全Gate後にCodex adapter、続いて独立したOpenRouter adapterを同じUIへ接続する(D-046〜D-053)。
+D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
+
+B4-Dまでのpure domain、Editor transaction、fake UI、Experimental分離、sidecar protocol、canonical manifest、合成capture、Darwin supervisor、B3、B4-A〜Dは削除せず研究成果として保持する。production catalogは空、production channel／factory／callsiteと実Node／SDK／CLI／network／credential／実原稿は0件である。B4-E以降は直近taskではなく、利用者がその時点の最新stable SDK／APIを明示的に再評価すると決めた場合だけ、新Decisionとthreat modelから再開する。結果と未達Gateは[Codex SDK feasibility実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。
 
 公開Releaseの次Gateは引き続き **Package Validator Gate** である。duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
-D-043の原稿・送信安全契約は個人利用でも維持する。別app target／scheme `FUMINIWAExperimental`では実処理のあるAI UIを公開Gateより先に追加できるが、通常の`FUMINIWA` app targetはcompile／link／bundle時にproviderと入口を除外する。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+D-043の原稿・送信安全契約は将来provider統合を再開する場合も維持する。`FUMINIWAExperimental`の研究コードは保持するが実providerへ接続せず、通常の`FUMINIWA` app targetはcompile／link／bundle時にproviderと入口を除外する。通常版に許可するのはD-054の非通信clipboard prompt支援だけである。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
 Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
 
@@ -761,6 +764,17 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 
 ## 変更履歴
 
+### v0.69 (2026-08-09)
+
+実provider統合を最新stable SDK／APIの明示再評価まで延期し、通常版のAI支援をAIチャット用clipboard prompt copyへ切り替えた(D-054、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md))。
+
+- B1〜B4-DのExperimentalコード、fixture、test、Decisionを削除せず、production catalog空／production runtime接続0の研究成果として[日付固定レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)へ記録
+- B4-E、Codex／OpenRouter adapter、network、credential、実原稿送信を現行ロードマップから外し、再開時は旧0.147.0の値を流用せず最新stable境界をゼロから再評価
+- 通常版で校正／アドバイス×本文選択／話／章のplain text promptを明示操作でsystem clipboardへコピーする非通信境界を追加
+- promptへscope外data、local identity、URL／pathを加えず、provider、network、key、process、`NovelAI`、response、diff、Applyへ依存しない
+- system clipboardを他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有面として明記し、履歴非保持、secure erase、外部AIの保持／学習利用を保証しない
+- provider延期をPDFその他の独立機能の永久blockerにせず、公開Releaseの次GateはPackage Validator、続いてExternal Change / Conflictを維持
+
 ### v0.68 (2026-08-09)
 
 Codex content GateのB4-Dとして、Experimental限定／mock限定のabstract interactive transport sequencing契約を追加した(D-053、[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md))。
@@ -772,7 +786,7 @@ Codex content GateのB4-Dとして、Experimental限定／mock限定のabstract 
 - cleanup安全errorを先行結果より優先し、raw channel／factory errorを分類codeへredact。同一transportの並行runとglobal live-channel reuseを拒否し、settled後のcancelはno-op
 - 合成B4-D 5 suitesの54 testは54/54、`FUMINIWAExperimental`全体は205/205 pass。具象production channel／factory／callsite、process／Node／SDK／CLI／network／key／実原稿は0件
 - production catalogは空のままで、B4-C childは一度もresumeされずB4-Dへ変換されない。これはtransport sequencing feasibilityであり、実runtime B4-Dの完了／GOではない
-- 次はB4-E closed execution closure／native broker／helper + approval／identity／OS-level read／exec隔離。残Gate完了まで`codex_sdk`と実送信はNO-GO
+- v0.68時点の後続候補はB4-E closed execution closure／native broker／helper + approval／identity／OS-level read／exec隔離だった。v0.69／D-054で実装を延期し、残Gate完了まで`codex_sdk`と実送信をNO-GOとする境界だけを維持
 
 ### v0.67 (2026-08-09)
 

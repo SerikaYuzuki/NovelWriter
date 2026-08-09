@@ -25,6 +25,7 @@ public struct EditorView: View {
     private let selectionRequest: EditorSelectionRequest?
     private let commandSession: EditorCommandSession
     private let aiSelectionSession: EditorAISelectionSession?
+    private let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     private let configuration: EditorConfiguration
     private let onTextChange: (String) -> Void
 
@@ -39,6 +40,8 @@ public struct EditorView: View {
     ///   - commandSession: 選択取得・置換をAdapterへ配送する一時状態。本文のBindingには使わない。
     ///   - aiSelectionSession: 長時間のAI処理へ渡す選択範囲を、取得元のEditorへ
     ///     拘束するsession。未使用時は`nil`のままにする。
+    ///   - selectionContextMenuCommands: 標準の本文context menuへ追加する、
+    ///     AppKit非依存の選択範囲command。空配列なら標準menuだけを表示する。
     ///   - configuration: エディタの表示設定。本文は流し直さず、表示属性だけを更新する。
     ///   - onTextChange: 本文が変更されるたびに、そのときの全文を渡して呼び出される
     ///     コールバック。IME 変換中には呼ばれない。
@@ -48,6 +51,7 @@ public struct EditorView: View {
         selectionRequest: EditorSelectionRequest? = nil,
         commandSession: EditorCommandSession = EditorCommandSession(),
         aiSelectionSession: EditorAISelectionSession? = nil,
+        selectionContextMenuCommands: [EditorSelectionContextMenuCommand] = [],
         configuration: EditorConfiguration = EditorConfiguration(),
         onTextChange: @escaping (String) -> Void
     ) {
@@ -56,6 +60,7 @@ public struct EditorView: View {
         self.selectionRequest = selectionRequest
         self.commandSession = commandSession
         self.aiSelectionSession = aiSelectionSession
+        self.selectionContextMenuCommands = selectionContextMenuCommands
         self.configuration = configuration
         self.onTextChange = onTextChange
     }
@@ -69,6 +74,7 @@ public struct EditorView: View {
             command: commandSession.pendingCommand,
             commandSession: commandSession,
             aiSelectionSession: aiSelectionSession,
+            selectionContextMenuCommands: selectionContextMenuCommands,
             configuration: configuration,
             onTextChange: onTextChange
         )

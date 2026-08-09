@@ -30,6 +30,7 @@ struct MacTextAdapter: NSViewRepresentable {
     let command: EditorCommand?
     let commandSession: EditorCommandSession
     let aiSelectionSession: EditorAISelectionSession?
+    let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     let configuration: EditorConfiguration
     let onTextChange: (String) -> Void
 
@@ -55,6 +56,7 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.onSelectionChange = { range, surfaceToken in
             commandSession.updateSelectionAvailability(range, from: surfaceToken)
         }
+        context.coordinator.selectionContextMenuCommands = selectionContextMenuCommands
         context.coordinator.textView = textView
         context.coordinator.currentChapterKey = chapterKey
 
@@ -84,6 +86,7 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.onSelectionChange = { range, surfaceToken in
             commandSession.updateSelectionAvailability(range, from: surfaceToken)
         }
+        context.coordinator.selectionContextMenuCommands = selectionContextMenuCommands
         context.coordinator.registerDocumentLifecycle(with: commandSession)
 
         guard let textView = context.coordinator.textView else { return }
@@ -177,6 +180,7 @@ struct MacTextAdapter: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onTextChange: (String) -> Void
         var onSelectionChange: ((NSRange, EditorSurfaceToken) -> Void)?
+        var selectionContextMenuCommands: [EditorSelectionContextMenuCommand] = []
         weak var textView: NSTextView?
         var currentChapterKey: AnyHashable?
         private var lastAppliedSelectionRequestID: UUID?
@@ -516,12 +520,23 @@ extension MacTextAdapter.Coordinator {
 
     func registerCommandSurface(with session: EditorCommandSession) {
         if commandSurfaceSession === session {
-            _ = session.activateEditorSurfaceIfUnowned(commandSurfaceToken)
+            guard session.activateEditorSurfaceIfUnowned(commandSurfaceToken) else { return }
+            registerCommittedTextCaptureHandler(with: session)
             return
         }
         unregisterCommandSurface()
         commandSurfaceSession = session
         session.activateEditorSurface(commandSurfaceToken)
+        registerCommittedTextCaptureHandler(with: session)
+    }
+
+    /// このCoordinatorのtokenが、共有command sessionの現在のactive ownerかを確認する。
+    ///
+    /// 旧Coordinatorが保持するmenu actionから、別surfaceへ移ったownershipを
+    /// coordinator-localなrevisionだけで見落とさないための読み取り専用境界。
+    func ownsActiveCommandSurface() -> Bool {
+        guard let commandSurfaceSession else { return false }
+        return commandSurfaceSession.isActiveEditorSurface(commandSurfaceToken)
     }
 
     /// 同じCoordinatorが別の章／話／世界観ノートを表示するとき、surface tokenを
@@ -534,11 +549,20 @@ extension MacTextAdapter.Coordinator {
             with: nextToken
         ) else { return }
         commandSurfaceToken = nextToken
+        registerCommittedTextCaptureHandler(with: commandSurfaceSession)
     }
 
     func unregisterCommandSurface() {
         commandSurfaceSession?.deactivateEditorSurface(commandSurfaceToken)
         commandSurfaceSession = nil
+    }
+
+    private func registerCommittedTextCaptureHandler(with session: EditorCommandSession) {
+        session.registerCommittedTextCaptureHandler(for: commandSurfaceToken) { [weak self] in
+            guard let textView = self?.textView else { return .notActive }
+            guard !textView.hasMarkedText() else { return .compositionInProgress }
+            return .captured(textView.string)
+        }
     }
 }
 

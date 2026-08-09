@@ -14,13 +14,15 @@
 
 ## ステータス
 
-**Phase 5まで完了(PDFは未実装)**。章／話の階層管理、本文編集、話メモ、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、文字数表示、話内検索、スナップショット保存・復元、作品の新規・開く・別名保存、`.novelpkg` v3への自動保存、`Cmd+S`明示保存、Cmd+Q時の終了前保存が動く。Editorプラグイン基盤と日本語小説向け自動字下げ(改行で全角スペース、`「`/`『`で字下げ解除、IME変換中は不介入)も実装済み。UIはシステムLight／Darkへ追従するNavigationSplitView、一段native toolbar、保存／文字数status barのワークベンチになった。
+**Phase 5まで完了(PDFは未実装)**。章／話の階層管理、本文編集、話メモ、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、文字数表示、話内検索、スナップショット保存・復元、作品の新規・開く・別名保存、`.novelpkg` v3への自動保存、`Cmd+S`明示保存、Cmd+Q時の終了前保存が動く。Editorプラグイン基盤と日本語小説向け自動字下げ(改行で全角スペース、`「`/`『`で字下げ解除、IME変換中は不介入)も実装済み。UIはシステムLight／Darkへ追従するNavigationSplitView、一段native toolbar、保存／文字数status barのワークベンチになった。通常版では、本文選択／話／章から校正用・アドバイス用のプロンプトをsystem clipboardへコピーできる。
 
-商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。未実装AIのplaceholderと`Cmd+J`は、プライバシー・同意を含む実機能が設計されるまで出荷UIへ表示しない(D-038〜D-040)。
+商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。実処理のないprovider panelと`Cmd+J`は出荷UIから撤去した。通常版に追加するAI支援は「校正用／アドバイス用プロンプトをコピー」という実在する非通信操作だけで、FUMINIWA自身がAIを実行・送信したようには表示しない(D-038〜D-040 / D-054)。
 
-個人用AIのExperimental基盤は、Codex sidecar protocol、exact SDK 0.147.0の合成capture、Darwin process supervisor、B3 deployment packager／verifier、B4-A empty approval contract、B4-B非実行exact Node inspector、B4-C probe-only suspended actual-process identityに加え、B4-DのExperimental-only／mock-only abstract interactive transport sequencingまで合成検証した。B4-Dはcontent-free factoryからfresh one-request channelを開き、sealed payload budget由来のabsolute request deadline、最大30秒の独立attestation timeout、単独`ready`のexact request／runtime／frame-boundary照合後だけのsealed `start`、`started` → 単一terminal → EOF、terminal後最大1秒のEOF drain、cancel／timeout first-wins、global live-channel reuse拒否、cleanup安全error優先とraw error redactionを固定した。B4-D 5 suitesは54/54、Experimental全体は205/205 passした。ただし具体production channel／factory／callsiteとprocess／Node／SDK／CLI／network／key／実原稿は0件で、production catalogは空、B4-C childは一度もresumeされずB4-Dへ変換されていない。これはtransport sequencing feasibilityだけで実runtime B4-Dの完了／GOではない。次はB4-E closed execution closure／native broker／helperとapproval／identity／OS-level read／exec隔離であり、残Gate完了まで`codex_sdk` runtimeと実送信はNO-GOである。通常版のtarget構成は変更していない(D-046〜D-053)。
+個人用AIのExperimental基盤は、Codex sidecar protocolからB4-DのExperimental-only／mock-only abstract interactive transport sequencingまで合成検証した。B4-D 5 suitesは54/54、Experimental全体は205/205 passしたが、production catalogは空で、具象production channel／factory／callsite、実Node／SDK／CLI、network、key、実原稿は0件である。D-054によりB4-E以降と実provider統合は、利用者が最新stable SDK／APIの再評価を明示的に決めるまで延期した。コードとtestは研究成果として保持し、通常版へ接続しない。実装結果と未達Gateは[Codex SDK feasibility実装レポート](docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を参照。
 
-次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QA、法務・プライバシー・価格・サポートが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+通常版のclipboard支援はprovider、network、key、process、`NovelAI`へ依存しない。コピー後のsystem clipboardは他アプリ、clipboard manager、Universal Clipboard等から読まれ得る共有境界で、FUMINIWAは自動送信、自動paste、応答取込、Apply、履歴非保持、secure eraseを提供しない。対象scopeとprivacy契約は[AIチャット用クリップボード支援](docs/CLIPBOARD_AI_ASSIST.md)を参照。
+
+次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QAが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
 Windows並行トラックはW0として、言語非依存schema・golden fixture・portable filename契約の固定から始める。W0完了後、Windows上でWinUI版のCore / Storage実装へ進む(D-036)。
 

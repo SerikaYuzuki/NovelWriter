@@ -1,10 +1,18 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1、exact SDKの合成CLI capture、Darwin native supervisor、arm64固定21-file packager、Experimental native manifest verifier、B4-A compile-time approval契約、B4-B非実行exact Node inspector、B4-C probe-only suspended actual-process identity、B4-D Experimental-only／mock-only abstract interactive transport sequencingまで実装 / production catalogは意図的に空、具象production channel／factory／callsite、実provider／CLI／network、approved runtime、Node version、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装。B4-Dはtransport sequencing feasibilityであり実runtime完了／GOではない**
+**状態: B4-Dまでのprovider統合研究を保持して凍結 / production catalogは空、具象production channel／factory／callsite、実provider／CLI／network、approved runtime、Node version、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装 / B4-E以降は最新stable SDK／APIの明示再評価まで延期 / 通常版の現行AI支援はprovider非依存のclipboard prompt copy**
 
-本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048 / D-049 / D-050 / D-051 / D-052 / D-053、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
+本書は、ふみにわ（FUMINIWA）が将来provider統合を再開するときの実装境界と安全条件、およびB4-Dまでに固定した研究成果を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046〜D-054、現行のAI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)、実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
 この契約を文書化したことや純粋domainを追加したことは、AI機能、Codex接続、OpenRouter接続、履歴非保持、配布可能性の完成を意味しない。
+
+## 0. 現在の判断
+
+D-054により、Codex／OpenRouterの実provider統合、B4-E以降、network、credential、実原稿送信は現在の実装ロードマップから外した。B1〜B4-Dのコード、fixture、test、本書の安全契約は削除せず保持するが、利用者がその時点の最新stable SDK／APIを明示的に再評価すると決めるまで、新しいproduction runtime、adapter、approval entryを追加しない。
+
+通常版`FUMINIWA`の現行AI支援は、校正／アドバイス×本文選択／話／章のplain text promptをsystem clipboardへ明示コピーする非通信機能である。provider、network、API key、subprocess、`NovelAI`、本書のconfirmed outbound／response／Apply境界へ依存しない。system clipboardへ出た内容はFUMINIWAのmemory-only境界の外にあり、他アプリ、clipboard manager、Universal Clipboard等から読まれ得る。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
+
+B4-Dまでの実装結果、commit、検証値、未達Gate、再評価条件は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)へ日付固定で記録する。以下のprovider契約は休眠中だが、再開時に安全条件を省略しないため保持する。
 
 ## 1. 製品原則
 
@@ -102,10 +110,10 @@ SDK固有型やHTTP／processのerror型をdomain APIへ漏らさない。provid
 
 ## 5. Provider順序と分離
 
-実装順は次のとおりとする。これは自動fallback順ではない。
+provider統合を明示的に再開する場合の候補順は次のとおりとする。D-054により現在はいずれも延期中であり、これは現行task、自動fallback順、または旧versionの採用承認ではない。
 
-1. **Codex SDK adapter**: 第一候補。公式TypeScript SDKを固定protocolのNode sidecarから使用する。個人用Experimentalはversion／pathを検査した開発用runtime、公開Releaseは署名済みbundled runtimeを使う。
-2. **OpenRouter adapter**: 第二候補。Codex adapterと別target／別具象型で実装し、provider-neutral domain protocolだけを共有する。
+1. **Codex SDK adapter候補**: 再評価時の公式stable境界が安全条件を満たす場合の第一候補。旧0.147.0／Node sidecar構成を自動採用せず、nativeまたはより小さい公式境界も含めて再設計する。
+2. **OpenRouter adapter候補**: Codex adapterと別target／別具象型で実装し、provider-neutral domain protocolだけを共有する。Codex再開の有無から自動的に着手しない。
 
 利用者が選んだadapterだけを1 requestに使う。Codexが利用不能でもOpenRouterを呼ばず、OpenRouter内でもmodel/provider routingのfallbackを無効にしてfail-closedにする。providerを変える場合は、送信先、model、保持期間／学習利用、料金単位／request上限の確認済み表示を更新し、exact previewから明示確認を取り直す。
 
@@ -146,7 +154,7 @@ Checkpoint B4-Bは`CodexNodeExecutableInspector`を`FUMINIWAExperimental`だけ�
 
 code signatureはrequested architectureを`SecStaticCodeCreateWithPathAndAttributes`の`kSecCodeAttributeArchitecture`へ渡し、Security frameworkのstrict／all-architectures／no-network検証とrequested sliceの20-byte CDHashを観測する。universal Mach-Oとarchitecture別CDHashもobservationに留まり、approvalではない。valid／unsigned／invalid／unavailableのいずれもobservationに封印するが、invalid署名を承認する意味ではない。open後、hash／Mach-O後、signature後にdevice／inode／mode／owner／size／timestamp／flagsとcanonical path／`F_GETPATH`を再検査するが、return後のsame-user swapを防ぐimmutable bindingではない。observationはpath／FD／process handle／launch capabilityを返さず、Node versionやactual child identityも証明しない。
 
-B4-Aに加え、B4-Bもprocess、SDK／CLI import／execution、provider、network、credential、実原稿を一切使わず、通常`FUMINIWA` targetを変更しない。B4-B observationはpath／FD／process handle／launch capabilityを返さず、invalid／unsigned／unavailable signatureも非authority観測に留め、production catalogを空のまま維持する。B4-Cは別のprobe-only primitiveとしてactual childをsuspended起動・照合・kill／direct reapするが、observationをauthority／capabilityへ昇格させずcatalogを空に維持する。B4-Dはさらに別のExperimental-only／mock-only abstract transportとして、content-free `hello` → isolated exact `ready` → sealed `start` → `started` → single terminal → EOFのsequencingとcancellation／cleanupを合成で固定した。具体production channel／factory／callsite、process／Node／SDK／CLI／network／key／実原稿は0件で、B4-C childをresumeまたはtransportへ変換していない。次はB4-E closed execution closure／native broker／helperとapproval／identity／OS-level read／exec隔離である。B4-Eと残るD-043／D-046 Gateが完了するまで`codex_sdk`と実送信はNO-GOである。
+B4-Aに加え、B4-Bもprocess、SDK／CLI import／execution、provider、network、credential、実原稿を一切使わず、通常`FUMINIWA` targetを変更しない。B4-B observationはpath／FD／process handle／launch capabilityを返さず、invalid／unsigned／unavailable signatureも非authority観測に留め、production catalogを空のまま維持する。B4-Cは別のprobe-only primitiveとしてactual childをsuspended起動・照合・kill／direct reapするが、observationをauthority／capabilityへ昇格させずcatalogを空に維持する。B4-Dはさらに別のExperimental-only／mock-only abstract transportとして、content-free `hello` → isolated exact `ready` → sealed `start` → `started` → single terminal → EOFのsequencingとcancellation／cleanupを合成で固定した。具体production channel／factory／callsite、process／Node／SDK／CLI／network／key／実原稿は0件で、B4-C childをresumeまたはtransportへ変換していない。B4-E closed execution closure／native broker／helperとapproval／identity／OS-level read／exec隔離は未実装のままD-054で延期した。最新stable SDK／APIを別Decisionで再評価し、残るD-043／D-046 Gateを完了するまで`codex_sdk`と実送信はNO-GOである。
 
 ### B4-C suspended actual-process identity probe
 
@@ -170,9 +178,11 @@ responseは`started` → `completed`または`failed`の単一terminal → EOF�
 
 channelのatomic `requestCancellation(cancelFrame:)`はphaseに応じたoptional cancel frameとpending read／writeのunblockを1回の所有者として処理する。finalizing中のcancelはdelivery破棄だけを記録し、I/Oを追加しない。同じtransportの並行runはopen前に拒否し、settled後のcancelはno-opである。factory／channelの生errorやcontentを上位へ漏らさず、固定したoperation／cleanup errorへredactする。
 
-合成B4-D 5 suites／54 testは54/54、`FUMINIWAExperimental`全体は205/205 passした。これはabstract mock channelのprotocol／race／cleanup／redactionの証拠であり、actual process identity／approval／loader closure／OS containmentと結合した実runtime B4-Dの完了やGOではない。次はB4-Eでclosed execution closure／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合する。
+合成B4-D 5 suites／54 testは54/54、`FUMINIWAExperimental`全体は205/205 passした。これはabstract mock channelのprotocol／race／cleanup／redactionの証拠であり、actual process identity／approval／loader closure／OS containmentと結合した実runtime B4-Dの完了やGOではない。B4-Eは未実装のまま延期し、このB4-D snapshotを[実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)へ保存する。
 
 ### 6.0 二段階のGate
+
+以下はprovider統合を再開する場合の受け入れGateであり、現在のclipboard prompt支援には適用しない。D-054によりExperimental Gateへ進む実装自体を延期している。
 
 - **個人用Experimental Gate**: Editor bridgeの誤適用防止、exact SDK／CLI／Node version・実行path・cryptographic hashとlockfile／package integrity、request専用cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file-read拒否、本文等を残さない診断、cancel／timeout／終了時のprocess tree回収、local artifact inventory、wire／event／time／process上限を実機で通す。これを満たした実処理だけを`FUMINIWA_ENABLE_EXPERIMENTAL_AI`付き`FUMINIWAExperimental` app targetの同一AI UIへ出してよい。
 - **公開Release Gate**: Experimental Gateに加え、runtime／SDK／CLI／sidecarのbundle固定と起動前hash検証、arm64／x86_64、nested signing、Hardened Runtime、Archive、notarization、stapling、Gatekeeper、clean Mac更新検証をすべて通す。通常の`Release`へAIを含める判断は別のDecision更新を必要とする。
@@ -188,7 +198,7 @@ channelのatomic `requestCancellation(cancelFrame:)`はphaseに応じたoptional
 - 公開Releaseではhelperとすべてのnested executable／libraryをDeveloper IDで適切に署名し、Hardened Runtime、Archive、notarization、stapling、Gatekeeper検証をアプリ全体で通す。
 - 公開Releaseではarm64とx86_64の各clean Macで、初回起動、実request、cancel、更新後起動を検証する。片方のarchitectureだけの成功でuniversal配布可能としない。
 - B3 packagerはarm64の固定21 fileだけを候補rootへコピーし、caller supplied allowlist、x86_64、Node executableを含まない。B4-Aのcompile-time approval契約へ返すdigest／self manifestを自動登録せず、B4-B／B4-C observationとlocal probe identityもapprovalへ昇格させず、empty production catalogを維持する。
-- B3 native verifierはexpected digestを独立引数で受け、filesystem mutationをfail-closedにするが、owner-writable treeをimmutableにせず、検証したbytesを後続import／spawnへfdで引き渡さない。B4-Bでexact Node path上の実行物の非実行観測、B4-Cでactual process identityのprobe、B4-Dでabstract mock interactive sequencingまで実証した。B4-Eで完全なloaded artifact inventory、immutable verify-to-use binding、approval／identity／OS read／exec隔離を結合する。
+- B3 native verifierはexpected digestを独立引数で受け、filesystem mutationをfail-closedにするが、owner-writable treeをimmutableにせず、検証したbytesを後続import／spawnへfdで引き渡さない。B4-Bでexact Node path上の実行物の非実行観測、B4-Cでactual process identityのprobe、B4-Dでabstract mock interactive sequencingまで実証した。完全なloaded artifact inventory、immutable verify-to-use binding、approval／identity／OS read／exec隔離を結合するB4-Eは未実装で、最新stable SDK／APIの明示再評価まで延期する。
 
 ### 6.2 原稿とローカルファイルの隔離
 
@@ -259,6 +269,8 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 
 ## 9. PR分割と技術Gate
 
+1〜11はB4-Dまでの完了記録として保持する。12〜16はD-054により現在のbacklogから外し、最新stable SDK／APIの明示再評価後に必要性と順序を決め直す。通常版clipboard prompt支援はこのprovider PR列へ含めず、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)の独立した非通信境界で実装する。
+
 1. **契約 + 純粋domain**: D-043、本書、provider-neutralなdraft → instruction ID／単一`applicationPrompt`／response schema IDとexact schemaを持つpreview → provider／purpose／budget／input countとともに`AIApplicationPayload`へ封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、domain budget、result／error、event stream protocol、fake、決定論的契約テストだけ。local identity、stale判定、実通信、process、UI、package変更なし。
 2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
 3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
@@ -270,13 +282,13 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 9. **Exact Node inspector（B4-B完了）**: catalogを空のまま、canonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを最大512 MiBでnative観測する(D-051)。invalid署名やuniversal Mach-Oを含むobservationをapprovalへ昇格させず、path／FD／capabilityを返さず、spawnしない。
 10. **Suspended identity probe（B4-C完了）**: 固定argv／empty environment／`/private/var/empty`／null stdio／新PGIDで`START_SUSPENDED` childを作り、actual PIDのprocess identityとdynamic SecCode／no-network exact caller-supplied CDHash／非ad-hocを二重照合する。成功時もresumeせずkill／direct reapし、architecture／CDHashだけの非authority observationを返す(D-052)。
 11. **Interactive content Gate（B4-D sequencing完了）**: Experimental-only／mock-onlyのabstract channelでcontent-free open、isolated exact `ready`後のsealed `start`、`started` → terminal → EOF、cancellation／cleanupを固定した。具象process transportとのnative identity結合は未実装で、実runtime B4-DのGOではない。
-12. **Closed execution closure（B4-E、次）**: closed linker／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合し、evaluated／conditional artifact、CLI、library、runtime dataを閉じ、検証済みbytesと実際のimport／path-based spawnを不可分にする。same-user ancestor／root swapをpathname再検査だけで解決済みとしない。
-13. **Codex Experimental isolation feasibility**: 監査済みlauncherとparent-death境界、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
-14. **Codex Experimental adapter**: sidecar fixed protocol、Keychain one-shot credential pipe、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
-15. **OpenRouter adapter**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
-16. **公開Release Gate**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常ReleaseへAI target／resource／UIを含めない。
+12. **Closed execution closure（B4-E、延期）**: closed linker／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合し、evaluated／conditional artifact、CLI、library、runtime dataを閉じ、検証済みbytesと実際のimport／path-based spawnを不可分にする。same-user ancestor／root swapをpathname再検査だけで解決済みとしない。再評価後のSDK境界でなお必要な場合だけ設計する。
+13. **Codex Experimental isolation feasibility（延期）**: 監査済みlauncherとparent-death境界、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
+14. **Codex Experimental adapter（延期）**: sidecar fixed protocol、Keychain one-shot credential pipe、typed error、利用可能なupstream parameter、wire event／process resource limit、実送信直前capture、redacted diagnosticsをdomainと共有UIへ接続する。
+15. **OpenRouter adapter（延期）**: native HTTPS、provider別Keychain、request capture、routing固定、upstream token capをCodexとは独立して実装し、同じUIへ登録する。自動fallbackなしを双方向のfailure testで固定する。
+16. **公開Release Gate（provider再開時だけ）**: bundled runtime／hash、arm64／x86_64、nested signing、公証、clean Mac QAを完了し、公開AIを有効化するDecisionを別途承認する。それまでは通常Releaseへprovider target／resource／UIを含めない。
 
-D-046により個人用Experimental AIをPackage Validator GateとExternal Change / Conflict Gateに先行できる。一方、両Gateは公開Releaseの優先事項として維持し、Experimentalで通った機能、UI、実通信をそのまま公開可能とは表現しない。
+D-046の個人用Experimental先行方針はD-054で延期した。Package Validator GateとExternal Change / Conflict Gateは公開Releaseの優先事項として維持し、B4-DまでのExperimental成果を実通信可能または公開可能とは表現しない。
 
 ## 10. 最低受け入れ条件
 
@@ -296,7 +308,7 @@ D-046により個人用Experimental AIをPackage Validator GateとExternal Chang
 - B3 native verifierはNode oracleとcanonical bytes／digest／recordを一致させ、独立expected digest、symlink／hardlink／special file／危険mode／resource超過／mutationを拒否する。これだけでcompile-time allowlist、exact Node、complete loaded inventory、immutable verify-to-useを宣言しない
 - B4-Aのproduction catalogが空であり、candidate／self manifest／B4-B observation／local probeからentryが自動生成されず、lookupが常にfail-closedであることを決定論的に検証できる。policy generationだけでanti-rollbackを主張しない
 - deployment candidateと、`evaluatedSource`／`resolutionMetadata`／`executable`／`conditional`／`provenance`／`requestData`／`operatingSystemTrust`／`forbidden`のroleが混同されず、`exactFile`／`boundedRequestData`／`operatingSystemProvided`／`forbidden`のcontent identityとの不正な組合せを拒否する。README等のprovenanceをevaluated sourceと数えたり、request dataをartifact digestへ混ぜたりしない
-- B4-BのExperimental native inspectorがcanonical raw path／`realpath`／`F_GETPATH`、regular file／owner／mode／`nlink`、512 MiB size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを非実行で観測し、invalid signatureやuniversal Mach-Oも非authorityに留め、catalogを空に維持する。B4-Cのprobeはactual suspended identity、非ad-hoc dynamic code、success／failureのkill／direct reap、constructor／`main` marker 0を再現する。timeoutはbest-effort lifecycle境界でasync hard return上限ではなく、same-uid外部`SIGCONT`、mapped-vnode／in-place mutation、B4-B SHA／approval結合、Node versionは未達である。B4-Dのabstract mock transportはinteractive `hello`／`ready`／`start`／terminal／EOFを再現するが、実processとの結合はしない。B4-Eはclosed load／execを個別に再現する。専用cwd／`CODEX_HOME`、より広いfile isolation、parent-death後を含むprocess回収は、続くExperimental isolation／lifecycle Gateで別途再現する
+- B4-BのExperimental native inspectorがcanonical raw path／`realpath`／`F_GETPATH`、regular file／owner／mode／`nlink`、512 MiB size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを非実行で観測し、invalid signatureやuniversal Mach-Oも非authorityに留め、catalogを空に維持する。B4-Cのprobeはactual suspended identity、非ad-hoc dynamic code、success／failureのkill／direct reap、constructor／`main` marker 0を再現する。timeoutはbest-effort lifecycle境界でasync hard return上限ではなく、same-uid外部`SIGCONT`、mapped-vnode／in-place mutation、B4-B SHA／approval結合、Node versionは未達である。B4-Dのabstract mock transportはinteractive `hello`／`ready`／`start`／terminal／EOFを再現するが、実processとの結合はしない。再開時にB4-E相当が必要ならclosed load／execを個別に再現し、専用cwd／`CODEX_HOME`、より広いfile isolation、parent-death後を含むprocess回収も独立Gateで再現する
 - process lifecycleの受け入れ証拠は、direct childのreap、同一group descendantへのsignalとpost-reap `ESRCH`観測、group脱出拒否、parent death後の回収を分けて記録する。合成supervisor testだけでgrandchild reapまたは一般的なorphan-freeを宣言しない
 - 通常ReleaseのArchiveにAI menu／shortcut／設定、Codex／OpenRouter target、Node／CLI／sidecar artifactが存在せず、network／process起動経路へ到達できない
 - Codex sidecarを出荷する場合は6章の全Gateをarm64／x86_64、Archive済みnotarized appで再現できる

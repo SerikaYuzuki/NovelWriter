@@ -29,13 +29,21 @@ struct AppDependencies {
     /// 表示中の本文エディタを、作品遷移前にIME確定・モデル同期・入力停止する境界。
     let editorCommandSession: EditorCommandSession
 
+    /// 利用者が明示したprompt copyだけをsystem clipboardへ書く境界。
+    let clipboardWriter: any PlainTextClipboardWriting
+
+    /// 表示中Editorの確定済み全文を、本文所有権を破らず読み取る境界。
+    let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
+
     init(
         repository: DocumentRepository = NovelpkgRepository(),
         attachmentManager: AttachmentManaging? = nil,
         userDefaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
         defaultDocumentDirectoryName: String = AppBuildFlavor.defaultDocumentDirectoryName,
-        editorCommandSession: EditorCommandSession = EditorCommandSession()
+        editorCommandSession: EditorCommandSession = EditorCommandSession(),
+        clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
+        activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil
     ) {
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
@@ -43,5 +51,9 @@ struct AppDependencies {
         self.fileManager = fileManager
         self.defaultDocumentDirectoryName = defaultDocumentDirectoryName
         self.editorCommandSession = editorCommandSession
+        self.clipboardWriter = clipboardWriter
+        self.activeCommittedTextCapture = activeCommittedTextCapture ?? {
+            editorCommandSession.captureActiveCommittedText()
+        }
     }
 }

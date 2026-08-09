@@ -129,6 +129,7 @@ struct OutlineView: View {
                             OutlineEpisodeRow(
                                 episode: episode,
                                 chapterID: chapter.id,
+                                expectedSession: episodeRequest.session,
                                 showsSaveState: OutlineSaveStateVisibility.episode(
                                     episode.id,
                                     selectedEpisodeID: appState.selectedEpisodeID
@@ -148,6 +149,7 @@ struct OutlineView: View {
                     } label: {
                         OutlineChapterRow(
                             chapter: chapter,
+                            expectedSession: chapterItem.session,
                             showsSaveState: OutlineSaveStateVisibility.chapter(
                                 chapter.id,
                                 selectedChapterID: appState.selectedChapterID,
@@ -496,6 +498,11 @@ struct EditorPaneView: View {
                             selectionRequest: editorSearchSession.selectionRequest,
                             commandSession: editorCommandSession,
                             aiSelectionSession: aiSelectionSession,
+                            selectionContextMenuCommands: selectionPromptCommands(
+                                episodeID: episode.id,
+                                chapterID: chapterID,
+                                session: session
+                            ),
                             configuration: editorSettings.configuration,
                             onTextChange: { newText in
                                 appState.updateEpisodeContent(
@@ -535,6 +542,39 @@ struct EditorPaneView: View {
 
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
+    }
+
+    private func selectionPromptCommands(
+        episodeID: EpisodeID,
+        chapterID: ChapterID,
+        session: DocumentSessionToken
+    ) -> [EditorSelectionContextMenuCommand] {
+        [
+            EditorSelectionContextMenuCommand(
+                title: "選択範囲の校正用プロンプトをコピー",
+                systemImageName: "checkmark.bubble"
+            ) { snapshot in
+                appState.copySelectionAIChatPrompt(
+                    purpose: .proofreading,
+                    selectedText: snapshot.text,
+                    episodeID: episodeID,
+                    in: chapterID,
+                    expectedSession: session
+                )
+            },
+            EditorSelectionContextMenuCommand(
+                title: "選択範囲のアドバイス用プロンプトをコピー",
+                systemImageName: "lightbulb"
+            ) { snapshot in
+                appState.copySelectionAIChatPrompt(
+                    purpose: .advice,
+                    selectedText: snapshot.text,
+                    episodeID: episodeID,
+                    in: chapterID,
+                    expectedSession: session
+                )
+            }
+        ]
     }
 
     private var aiSelectionSession: EditorAISelectionSession? {

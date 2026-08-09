@@ -29,6 +29,16 @@ public struct EditorSelectionSnapshot: Sendable, Equatable {
     }
 }
 
+/// activeなEditor surfaceから、IME確定済みの最新全文を同期取得した結果。
+///
+/// 読み取り専用であり、本文、選択、Undo履歴を変更しない。`compositionInProgress`を
+/// 空文字や直前のmodel値へfallbackさせず、呼び出し側へ明示する。
+public enum EditorCommittedTextCaptureResult: Sendable, Equatable {
+    case notActive
+    case compositionInProgress
+    case captured(String)
+}
+
 /// 選択transactionを、取得元のEditor surfaceへ拘束する内部token。
 ///
 /// AppKit / UIKitの型や永続的な章IDをcommand APIへ持ち込まず、Adapterの実体または
@@ -61,7 +71,13 @@ public final class EditorCommandSession {
         let resume: () -> Void
     }
 
+    private struct CommittedTextCaptureHandler {
+        let surfaceToken: EditorSurfaceToken
+        let capture: @MainActor () -> EditorCommittedTextCaptureResult
+    }
+
     private var documentLifecycleHandler: DocumentLifecycleHandler?
+    private var committedTextCaptureHandler: CommittedTextCaptureHandler?
     private var activeSurfaceToken: EditorSurfaceToken?
     private var pendingCommandSurfaceToken: EditorSurfaceToken?
     private var selectionSnapshotSurfaceToken: EditorSurfaceToken?
@@ -101,6 +117,23 @@ public final class EditorCommandSession {
         pendingCommand = .replaceSelection(id: id, text: text)
         pendingCommandSurfaceToken = activeSurfaceToken
         rejectedCommandID = nil
+    }
+
+    /// activeなEditorが所有するIME確定済み全文を、同期・読み取り専用で取得する。
+    ///
+    /// platform viewを公開せず、現在のsurface ownerが登録したhandlerだけを呼ぶ。
+    /// active surfaceがない、またはownerに対応するhandlerがない場合は`notActive`を返す。
+    public func captureActiveCommittedText() -> EditorCommittedTextCaptureResult {
+        guard let activeSurfaceToken, let committedTextCaptureHandler else { return .notActive }
+        guard committedTextCaptureHandler.surfaceToken == activeSurfaceToken else { return .notActive }
+        return committedTextCaptureHandler.capture()
+    }
+
+    /// 指定surfaceが、このsessionの現在のactive ownerかを読み取り専用で確認する。
+    ///
+    /// tokenはEditorKit内部型のままとし、AppKitのviewやownerを公開APIへ漏らさない。
+    func isActiveEditorSurface(_ surfaceToken: EditorSurfaceToken) -> Bool {
+        activeSurfaceToken == surfaceToken
     }
 
     /// 現在表示中のエディタでIME変換を確定し、確定本文をモデルへ同期してから
@@ -165,6 +198,7 @@ public final class EditorCommandSession {
         if activeSurfaceToken != nil, let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
             rejectTransaction(id: transactionID)
         }
+        committedTextCaptureHandler = nil
         activeSurfaceToken = token
         hasActiveEditorSurface = true
         hasNonEmptySelection = false
@@ -178,6 +212,7 @@ public final class EditorCommandSession {
             return true
         }
         guard activeSurfaceToken == nil else { return false }
+        committedTextCaptureHandler = nil
         activeSurfaceToken = token
         hasActiveEditorSurface = true
         hasNonEmptySelection = false
@@ -194,6 +229,7 @@ public final class EditorCommandSession {
         if let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
             rejectTransaction(id: transactionID)
         }
+        committedTextCaptureHandler = nil
         activeSurfaceToken = nextToken
         hasActiveEditorSurface = true
         hasNonEmptySelection = false
@@ -207,9 +243,24 @@ public final class EditorCommandSession {
         if let transactionID = pendingCommand?.id ?? selectionSnapshot?.id {
             rejectTransaction(id: transactionID)
         }
+        committedTextCaptureHandler = nil
         activeSurfaceToken = nil
         hasActiveEditorSurface = false
         hasNonEmptySelection = false
+    }
+
+    /// 現在のsurface ownerだけが、同期全文取得handlerを登録・更新できる。
+    @discardableResult
+    func registerCommittedTextCaptureHandler(
+        for surfaceToken: EditorSurfaceToken,
+        capture: @escaping @MainActor () -> EditorCommittedTextCaptureResult
+    ) -> Bool {
+        guard activeSurfaceToken == surfaceToken else { return false }
+        committedTextCaptureHandler = CommittedTextCaptureHandler(
+            surfaceToken: surfaceToken,
+            capture: capture
+        )
+        return true
     }
 
     /// commandが現在activeなsurfaceに属する場合だけ、Adapterでの処理を許可する。

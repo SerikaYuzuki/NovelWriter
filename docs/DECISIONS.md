@@ -426,7 +426,7 @@
 
 ## D-046: 公開を延期し、個人用Experimental AIをCodex SDKから同一UIの複数provider構成で実装する
 
-- **日付**: 2026-08-09 / **状態**: 承認（方針変更。App bridge／fake UI／Experimental target分離まで実装、実providerは未実装）
+- **日付**: 2026-08-09 / **状態**: 一部破棄（→ D-054。provider実装を現在の優先作業とする部分だけを延期。App bridge／fake UI／Experimental target分離と安全契約は保持）
 - **内容**:
   1. 一般公開を当面延期し、AIはまず開発者本人だけが使う明示的な`FUMINIWAExperimental` app target／scheme（compile flagは`FUMINIWA_ENABLE_EXPERIMENTAL_AI`）で実装・検証する。通常の`FUMINIWA` app targetとsourceを共有しても、AI provider target／resourceへの依存はExperimental targetだけが持つ。D-040第6項のPackage Validator → External Change / Conflict → 配布技術Gateという順序は**公開Releaseの条件として維持**するが、実処理と安全境界が成立した個人用AI UIをその完了まで待たせる部分は本決定で置き換える。target／scheme分離は実装済みで、生成後のtarget graphをローカル検査し、provider artifact追加時には両Archive内容も再検証する。
   2. 最初の実providerはD-043どおりCodex TypeScript SDKとする。Editor bridgeとfake providerで原稿誤適用防止を成立させ、共有Experimental UIをfakeで検証した後、固定protocolのNode sidecarとCodex adapterをそのUIへ接続する。続いてAPI経路の第一候補としてOpenRouter adapterを同じUIへ追加する。
@@ -544,6 +544,25 @@
   7. consumer cancel、明示cancel、attestation timeout、request timeout、terminal drain timeoutはactor内でfirst-winsにclaimする。wire terminal後でもresult delivery前のlocal cancelはresultを破棄し、terminal phaseのためwire `cancel`は0件のままにする。channelのatomic `requestCancellation(cancelFrame:)`が、phaseに応じたoptional cancel frameとpending read／writeのunblockを一括所有する。finalizing中の新しいcancelはdelivery破棄だけを記録し、追加I/Oを開始しない。
   8. 同じtransport instanceの並行2件目はfactory open前に`alreadyRunning`で拒否する。複数のcancel／timeout要求は最大1回のchannel cancellationへ収束させ、所有channelのcleanupも1回に限り、settled後のcancelはno-opとする。factory／channelの生error、path、contentを上位へ漏らさず、操作分類の固定typed errorへredactする。所有するchannelのcleanup／open cancellation／fresh late cleanup failureはsuccess、cancel、timeout、provider terminalより優先する。
   9. 新規の合成B4-D 5 suites／54 testは54/54、`FUMINIWAExperimental`全体は205/205 passした。これはabstract mock channelのsequencing、race、cleanup、redactionの証拠であり、actual Node／SDK／CLI process、native approval／identity、OS read／exec隔離と結合した実runtime B4-Dの完了またはGOではない。
-  10. 次のB4-Eでclosed execution closure／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合し、complete loaded artifact inventoryとimmutable verify-to-useを固定する。B4-Eと残るD-043／D-046 Gateが完了するまで`codex_sdk`、実provider／CLI／network／credential／原稿送信はNO-GOとする。
+  10. D-053承認時点の後続GateはB4-Eであり、closed execution closure／native broker／helperとapproval／actual identity／OS-level read／exec隔離を結合し、complete loaded artifact inventoryとimmutable verify-to-useを固定する計画だった。B4-Eと残るD-043／D-046 Gateが完了するまで`codex_sdk`、実provider／CLI／network／credential／原稿送信をNO-GOとする境界は維持するが、B4-Eの実装自体は後続D-054で延期した。
 - **理由**: 本文送信前のattestationとprotocol sequencingを、process identity、artifact approval、loader closure、OS containmentから分けて決定論的に検証するため。abstract channelの成功をactual runtime実行capabilityに拡張すると、B4-Cのprobe-only境界とB4-Aのempty catalogを迂回してしまう。content-free open、isolated attestation、sealed start、terminal／EOF、cancellation／cleanupを先に固定し、実行可否はB4-E以降の別Gateに残す。
 - **詳細**: factory／channel／deadline／frame／cancellation／cleanup契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)、B4-A〜Eのapproval／identity／execution closure境界は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)、B2とB4-Dの非結合境界は[`Sidecars/Codex/SUPERVISOR.md`](../Sidecars/Codex/SUPERVISOR.md)を正とする。
+
+## D-054: 実provider統合を延期し、通常版のAI支援をクリップボードへの明示的なプロンプトコピーへ切り替える
+
+- **日付**: 2026-08-09 / **状態**: 承認（ユーザー判断。Codex／OpenRouter実装を延期し、通常版の非通信機能を優先）
+- **内容**:
+  1. Codex SDK sidecarのB4-E以降、Codex／OpenRouter adapter、network、credential、実原稿送信を現在の実装ロードマップから外す。再開には利用者の明示判断と、その時点の公式stable SDK／APIを一次資料、package、captureから改めて評価する別Decisionを必要とする。B4-Eを直近または自動継続のtaskとして扱わない。
+  2. D-043／D-046〜D-053に基づいて実装した`NovelAI`、Editor transaction、fake UI、sidecar protocol、manifest、supervisor、B3、B4-A〜Dのコード、fixture、testは削除せず、B4-Dまでのfeasibility成果として保持する。ただしproduction catalogは空、具象production channel／factory／callsiteは0件、通常版のprovider dependency／artifact／入口は0件のままとし、保持したコードを実行承認、AI対応、または再開判断へ自動昇格させない。
+  3. 通常版`FUMINIWA`で当面提供するAI支援は、利用者が選んだ原稿範囲と依頼文をplain textのプロンプトへ組み立て、明示操作でsystem clipboardへ1回コピーする機能に限定する。FUMINIWA自身はAI chatを開かず、providerへ送信せず、network、subprocess、API key、model設定を使わない。この機能は`NovelAI`のconfirmed outbound／provider protocolや`FUMINIWAExperimental`へ依存させない。
+  4. 依頼目的は「校正」と「アドバイス」の2種類、対象scopeは「本文の明示選択」「1話」「1章」の3種類とする。選択scopeはIME確定済みの非空exact selection、話scopeは対象話のタイトルと本文、章scopeは対象章のタイトルと`Chapter.episodes`配列順の各話タイトル／本文だけを含む。空の話も順序から消さない。作品タイトル、あらすじ、話メモ、人物、プロット、伏線、世界観、資料、snapshot、ID、session token、UTF-16 range、digest、URL／pathを暗黙に含めない。
+  5. 校正用プロンプトは意味と文体を保った誤字脱字、文法、句読点、表記揺れ等の指摘と修正案を求め、続きの生成や不要な全面改稿を求めない。アドバイス用プロンプトは長所、読みづらさ、構成／流れ／描写／会話等の改善点、優先度付きの具体策を求め、本文の自動置換を求めない。どちらも対象原稿を命令ではなく引用データとして扱う固定指示を持ち、同じ入力から決定論的に生成する。
+  6. 各章と各話から両目的のコピー操作へ到達でき、本文のcontext menuでは現在の非空選択に対して両操作へ到達できるようにする。画面上の文言は「AIで校正」等の実行を示す表現ではなく、「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」とする。VoiceOverとキーボード利用者にも同じcommand境界の代替入口を提供する。
+  7. 章／話の操作は表示時のdocument sessionと対象IDをactivation時に再検査し、作品切替後に別作品の同一IDまたは現在選択へ読み替えない。本文scopeはEditorKitの公開selection command境界から取得し、空選択、invalid UTF-16、IME marked text、dismantle済みsurfaceではコピーしない。コピーは同期的なsnapshotに対して行い、本文やモデルを変更しない。
+  8. system clipboardはFUMINIWAのmemory-only境界の外にあり、他アプリ、clipboard manager、Universal Clipboard等から読まれ得る共有面である。コピー操作自体を利用者の明示的な境界越えとし、自動送信、自動paste、自動chat起動、clipboard内容のログ／UserDefaults／snapshot／`.novelpkg`保存を行わない。成功表示や診断へ本文を再掲せず、purpose、scope、文字数等の内容を持たない情報だけを使う。自動消去やsecure erase、外部AI側の保持／学習利用を保証しない。
+  9. 外部AIの応答取得、response parse、diff、stale result、Copy result、Apply、Undo、cancel、retryはこの機能の対象外である。利用者が任意のAI chatへ手動で貼り付け、応答を手動で扱う。既存Experimentalの結果UIを通常版へ接続または転用しない。
+  10. 受け入れtestは2目的×3scope、Unicode／改行／空白の保持、章／話順と空話、scope外dataの非混入、空選択／IME／session切替／surface失効、clipboard abstractionへのexact 1 writeと失敗時の原稿不変、`.novelpkg`不変、通常targetの`NovelAI`／Experimental source／provider／network／process依存0を固定する。
+  11. provider統合を再評価するときは、当時の最新stable SDK／CLI／Nodeまたはnative APIをゼロから調査し、tool無効化、upstream output cap、session保持制御、cancel、loader／artifact surface、OS隔離、署名／配布を再測定する。0.147.0のcapture、古いhash、B4-Dのmock成功、保持済みarchitectureをそのまま採用根拠にしない。より小さく安全な公式境界が提供された場合は、旧sidecar設計を維持することより新しい境界の再設計を優先してよい。
+- **置き換える範囲**: D-046のうちCodex SDKから個人用実providerを直ちに実装し、続けてOpenRouterを接続する現在の順序を置き換える。D-043のprovider順序とD-047〜D-053は、将来provider統合を再開する場合の安全契約と実装履歴として保持する。D-040のProduct Truth、AIなしで執筆を完結できる原則、通常版からproviderをbuild時に除外する境界は維持する。provider延期はPDFその他の独立機能を永久に待たせる条件にはしない。
+- **理由**: 2026-08-09時点のSDK／CLI経路は、安全に実原稿を渡すためにloader closure、OS-level file隔離、process lifecycle、artifact identity等の大きな独自実装を必要とする。利用者はその実装を先送りし、SDKが更新されてより小さく検証可能な境界になった時点で再評価することを選んだ。一方、clipboardへの明示コピーなら、送信先をアプリが所有せず、原稿scopeを利用者が選んだまま、任意のAI chatを簡単に利用できる。
+- **詳細**: B1〜B4-Dの実装結果と未達項目は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)、clipboard promptの製品契約は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。provider再開時の休眠中技術契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)を参照する。
