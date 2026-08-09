@@ -14,10 +14,14 @@ Checkpoint B3 implements two narrower identity primitives:
 The resulting digest is a **build-time identity candidate**, not a production
 approval or an execution capability. B4-A now provides the Experimental native
 compile-time approval contract, but its nested production catalog is
-intentionally empty and consumes no candidate. B3/B4-A do not bundle or approve
-the exact Node executable, prove a complete loaded-artifact inventory, bind
-verified bytes immutably to Node import or path-based spawn, connect the SDK/CLI,
-or authorize protocol runtime mode `codex_sdk`.
+intentionally empty and consumes no candidate. B4-B adds an Experimental-only,
+non-executing exact Node inspector for the supplied path. It observes bounded
+filesystem, byte, Mach-O, and Security identities, but returns no path, file
+descriptor, process handle, or launch capability. B3/B4-B do not bundle or
+approve Node, prove its version or actual-process identity, prove a complete
+loaded-artifact inventory, bind verified bytes immutably to Node import or
+path-based spawn, connect the SDK/CLI, or authorize protocol runtime mode
+`codex_sdk`.
 
 ## Verification root and covered set
 
@@ -331,6 +335,50 @@ older signed app, older catalog, or previously approved runtime cannot be used
 after downgrade. Revocation and anti-rollback require a separate signed update
 floor and tamper-resistant persistent-state decision.
 
+## B4-B exact Node executable observation
+
+B4-B adds `CodexNodeExecutableInspector` only to `FUMINIWAExperimental`. Its
+input is one caller-supplied absolute path and one requested architecture. Its
+output is a non-authority observation containing the requested architecture,
+Mach-O container and contained architectures, byte count, SHA-256, owner user
+ID, permission mode, and code-signature observation. It intentionally returns
+no path, file descriptor, process handle, approved identity, or launch
+capability, and it does not mutate B4-A's empty production catalog.
+
+The input path must be NFC raw UTF-8, absolute, at most `PATH_MAX - 1` bytes,
+and contain no NUL, backslash, control, illegal, format, U+2028, or U+2029
+character. The raw bytes must equal `realpath`, and an
+`O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK` descriptor's `F_GETPATH`.
+The object must be a non-hard-linked regular file owned by the effective user,
+with an owner execute bit and without set-id, sticky, group-write, or
+world-write bits.
+
+The inspector hashes the complete descriptor with bounded `pread` calls and
+rejects empty files or files over 512 MiB. It strictly parses 64-bit thin,
+fat32, and fat64 Mach-O containers, including byte order, CPU type/subtype,
+slice bounds, alignment, overlap, duplicate architectures, executable file
+type, reserved fields, and bounded load-command sizes. Only arm64 and x86_64
+are recognized, and the requested architecture must be present. The limits are
+64 slices and 4,096 load commands per parsed slice.
+
+Security observation uses `SecStaticCodeCreateWithPathAndAttributes` with
+`kSecCodeAttributeArchitecture` set to the requested `arm64` or `x86_64`
+slice. Validity is checked with strict, all-architectures, single-threaded, and
+no-network flags; signing information supplies the requested slice's 20-byte
+CDHash when available. A universal Mach-O and its architecture-selected CDHash
+remain observations only. `valid`, `unsigned`, `invalid`, and `unavailable`
+results are recorded rather than promoted; in particular, returning an invalid
+or unsigned observation is not approval to execute it.
+
+Before returning, the inspector repeats descriptor/path identity checks around
+hash/Mach-O reading and Security observation. Device, inode, mode, link count,
+owner/group, size, mtime, ctime, birthtime, flags, generation, canonical path,
+and `F_GETPATH` must remain stable. These checks detect the exercised mutation
+races, but they do not prevent a same-user process from swapping the path or
+bytes after the observation returns. B4-B does not inspect Node's version,
+spawn Node, inspect an actual process, retain the verified descriptor for use,
+or bind later imports and executable loads to these bytes.
+
 ## TOCTOU and loaded-module containment boundary
 
 The filesystem checks narrow accidental build and verification races; they do
@@ -347,13 +395,14 @@ must establish all of the following:
 1. B4-A's empty production catalog is populated only by an independently
    reviewed native-source change. The candidate, proposal, observed runtime, and
    generated self file are never authority.
-2. B4-B inspects the exact Node executable version, architecture, canonical
-   path, bytes, ownership/mode, and code identity independently. It does not
-   spawn Node or promote the observation.
-3. B4-C starts a child suspended and validates the actual process identity before
-   user code can run. Mismatch is killed and reaped before resume. A path hash or
-   pre-spawn signature check alone is insufficient and actual Node identity does
-   not bind later JavaScript or CLI loads.
+2. B4-B non-executingly observes the supplied canonical path, bounded bytes,
+   ownership/mode/link count, strict thin/fat Mach-O architecture, and
+   architecture-selected Security validity/CDHash. It does not inspect Node's
+   version, spawn Node, promote the observation, or retain a use capability.
+3. B4-C, the next checkpoint, starts a child suspended and validates the actual
+   process identity before user code can run. Mismatch is killed and reaped
+   before resume. A path hash or pre-spawn signature check alone is insufficient,
+   and actual Node identity does not bind later JavaScript or CLI loads.
 4. B4-D uses an interactive transport: spawn without request data, send only
    content-free `hello`, validate native identity and exact `ready`, and only then
    permit manuscript-bearing `start`. Concatenating `hello` and `start` into the
@@ -379,13 +428,19 @@ primitive and `codex_sdk` mode remains forbidden.
 
 ## Local test command
 
-The manifest oracle, filesystem rejection, packager copy, and B4-A policy suites
-use synthetic values or temporary trees. One packager preflight reads the
-checked-in installed metadata and lockfile without importing or launching the
-SDK/CLI. B4-A spawns no process and leaves the standard target unchanged. No test
-in this Gate uses a credential, network, real manuscript, or `codex_sdk` runtime.
+The manifest oracle, filesystem rejection, packager copy, B4-A policy, and B4-B
+Node inspector suites use synthetic values, synthetic Mach-O bytes, or temporary
+trees. One packager preflight reads the checked-in installed metadata and
+lockfile without importing or launching the SDK/CLI. B4-A/B4-B spawn no process
+and leave the standard target unchanged. The production catalog remains empty.
+One content-free Security smoke test observes the OS-provided universal
+`/usr/bin/git` without spawning it and checks separate arm64 and x86_64 CDHashes.
+This OS executable and its architecture-selected values remain observations and
+never approvals. No test in this Gate executes Node, SDK, CLI, or provider code,
+or uses a credential, network, real manuscript, or `codex_sdk` runtime.
 
 ```sh
 node --test test/deployment-manifest.test.mjs test/deployment-packager.test.mjs
-# Swift verifier tests run as part of the FUMINIWAExperimental test target.
+# Swift verifier, approval, and Node inspector tests run as part of the
+# FUMINIWAExperimental test target.
 ```

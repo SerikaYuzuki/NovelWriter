@@ -1,8 +1,8 @@
 # AI統合 技術契約
 
-**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1、exact SDKの合成CLI capture、Darwin native supervisor、arm64固定21-file packager、Experimental native manifest verifier、B4-A compile-time approval契約まで実装 / production catalogは意図的に空、実provider／CLI／network、approved runtime、exact Node inspector、suspended launch、interactive transport、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装**
+**状態: pure domain、EditorKit transaction、App local context、fake provider、Experimental共通UI、target分離、Codex sidecar protocol v1、manifest v1、exact SDKの合成CLI capture、Darwin native supervisor、arm64固定21-file packager、Experimental native manifest verifier、B4-A compile-time approval契約、B4-B非実行exact Node inspectorまで実装 / production catalogは意図的に空、実provider／CLI／network、approved runtime、Node version、suspended actual-process identity、interactive transport、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装**
 
-本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048 / D-049 / D-050、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
+本書は、ふみにわ（FUMINIWA）へAI支援を追加するときの実装境界と安全条件を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046 / D-047 / D-048 / D-049 / D-050 / D-051、AIの実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
 この契約を文書化したことや純粋domainを追加したことは、AI機能、Codex接続、OpenRouter接続、履歴非保持、配布可能性の完成を意味しない。
 
@@ -117,7 +117,7 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)を正とする(D-047)。本文を含まない`hello`／`ready`でruntime identityを検査してからだけ`start`を許可し、valid start後は`started`と単一terminalを返す。v1はtoken deltaを捏造せず、Codex結果本文は完了後だけ共有UIへ渡す。protocol mockの成功を実SDK接続、隔離、orphanなしの証明として扱わない。
 
-canonical deployment manifest v1とB3 packager／verifier境界の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする(D-049)。Node packagerはDarwin arm64のSDK／CLI 0.147.0に固定した21 fileと派生15 directoryを新規rootへ実コピーし、exact metadata／lock SRI、source hash、destination canonical manifestを一致させる。Swift native verifierは`FUMINIWAExperimental`だけにcompileされ、Node oracle（digest `15b98ccf…d35288`、278 bytes）とcanonical v1を一致させる。いずれもbuild-time identity candidate／primitiveである。B4-Aでnative compile-time approvalの型とvalidationを追加したが、production catalogは意図的に空であり、approved digest、exact Node executable、完全なloaded artifact inventory、immutable verify-to-import／path-based spawn bindingはまだ存在しない。
+canonical deployment manifest v1とB3 packager／verifier境界の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする(D-049)。Node packagerはDarwin arm64のSDK／CLI 0.147.0に固定した21 fileと派生15 directoryを新規rootへ実コピーし、exact metadata／lock SRI、source hash、destination canonical manifestを一致させる。Swift native verifierは`FUMINIWAExperimental`だけにcompileされ、Node oracle（digest `15b98ccf…d35288`、278 bytes）とcanonical v1を一致させる。いずれもbuild-time identity candidate／primitiveである。B4-Aでnative compile-time approvalの型とvalidationを追加し、B4-Bでcanonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを512 MiB上限で観測する非実行native inspectorを追加した。production catalogは意図的に空で、inspector resultは非authority、approved digest／runtime、Node version、actual process identity、完全なloaded artifact inventory、immutable verify-to-import／path-based spawn bindingはまだ存在しない。
 
 2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。Checkpoint B1で`@openai/codex-sdk` `0.147.0`と対応CLI packageをlockfileへexact pinし、実通信しない合成CLIだけでargv／stdin／schema temporary file／environment／usage／cancel／errorをcaptureした。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
@@ -127,7 +127,7 @@ Checkpoint B3のpackager成功値は`candidateRootDigest`であってproduction 
 
 ### B4 approvalとinventory role
 
-Checkpoint B4-Aは、`FUMINIWAExperimental` native hostにproduction approvalのcompile-time契約を実装した(D-050)。`CodexRuntimeApprovalPolicy`はそのcanonical／validated shapeであり、それ自体はapproval authorityではない。`CodexRuntimeApprovalProposal`もreview用の非authority値で、private initializerの`CodexApprovedRuntimeIdentity`を生成できるproduction approval authorityはnested `ProductionCatalog`だけである。catalogは空なので、承認済みcandidate／Node／SDK／CLI、lookup成功、launch capabilityは0件である。B3 candidate／self manifest、proposal、packager／verifierの観測値、content-free `ready`、localにprobeしたversion／path／SHA-256／CDHash／署名をcatalogへ自動登録しない。policy generationは永続的なrevocationやanti-rollbackではなく、旧app／旧catalogへのdowngrade防止を実装済みとは表現しない。
+Checkpoint B4-Aは、`FUMINIWAExperimental` native hostにproduction approvalのcompile-time契約を実装した(D-050)。`CodexRuntimeApprovalPolicy`はそのcanonical／validated shapeであり、それ自体はapproval authorityではない。`CodexRuntimeApprovalProposal`もreview用の非authority値で、private initializerの`CodexApprovedRuntimeIdentity`を生成できるproduction approval authorityはnested `ProductionCatalog`だけである。catalogは空なので、承認済みcandidate／Node／SDK／CLI、lookup成功、launch capabilityは0件である。B3 candidate／self manifest、proposal、packager／verifierの観測値、content-free `ready`、B4-BのSHA-256／Mach-O／requested architecture別CDHash／署名observation、local probeをcatalogへ自動登録しない。policy generationは永続的なrevocationやanti-rollbackではなく、旧app／旧catalogへのdowngrade防止を実装済みとは表現しない。
 
 deployment candidateはB3 canonical manifestへ含めた全file／directoryの集合であり、それ自体はapproval inventoryではない。approval inventoryは実装と同じroleを分離する。
 
@@ -142,7 +142,11 @@ deployment candidateはB3 canonical manifestへ含めた全file／directoryの�
 
 content identityは`exactFile`、`boundedRequestData`、`operatingSystemProvided`、`forbidden`を区別する。固定artifactはexact size／digest、可変request dataは専用場所・型・上限、OS提供物は明示trust policyを必要とし、禁止対象はread／evaluate／executeしない。roleとcontent identityの不正な組合せはpolicy validationで拒否する。
 
-B4-Aはprocess、SDK／CLI import／execution、provider、network、credential、実原稿を一切使わず、通常`FUMINIWA` targetを変更しない。次はB4-B exact Node inspector、B4-C suspended launch、B4-D interactive `hello` → `ready` → `start`、B4-E closed linker／broker／helperとOS-level read／exec隔離の順である。B4-Eと残るD-043／D-046 Gateが完了するまで`codex_sdk`はNO-GOである。
+Checkpoint B4-Bは`CodexNodeExecutableInspector`を`FUMINIWAExperimental`だけに追加した(D-051)。入力されたabsolute pathのraw UTF-8 bytesをNFC／bounded／controlなしに限定し、`realpath`とopen descriptorの`F_GETPATH`までbyte一致させる。regular file、`nlink == 1`、effective user owner、set-id／sticky／group／world writeなし、owner execute bitありを要求し、最大512 MiBのdescriptor bytesをSHA-256する。thin 64-bit／fat32／fat64 Mach-Oのarchitecture／slice／alignment／overlap／load commandをstrictかつboundedにparseし、requested arm64／x86_64を含まないcontainerは拒否する。
+
+code signatureはrequested architectureを`SecStaticCodeCreateWithPathAndAttributes`の`kSecCodeAttributeArchitecture`へ渡し、Security frameworkのstrict／all-architectures／no-network検証とrequested sliceの20-byte CDHashを観測する。universal Mach-Oとarchitecture別CDHashもobservationに留まり、approvalではない。valid／unsigned／invalid／unavailableのいずれもobservationに封印するが、invalid署名を承認する意味ではない。open後、hash／Mach-O後、signature後にdevice／inode／mode／owner／size／timestamp／flagsとcanonical path／`F_GETPATH`を再検査するが、return後のsame-user swapを防ぐimmutable bindingではない。observationはpath／FD／process handle／launch capabilityを返さず、Node versionやactual child identityも証明しない。
+
+B4-Aに加え、B4-Bもprocess、SDK／CLI import／execution、provider、network、credential、実原稿を一切使わず、通常`FUMINIWA` targetを変更しない。B4-B observationはpath／FD／process handle／launch capabilityを返さず、invalid／unsigned／unavailable signatureも非authority観測に留め、production catalogを空のまま維持する。次はB4-C suspended actual-process identity、B4-D interactive `hello` → `ready` → `start`、B4-E closed linker／broker／helperとOS-level read／exec隔離の順である。B4-Eと残るD-043／D-046 Gateが完了するまで`codex_sdk`はNO-GOである。
 
 ### 6.0 二段階のGate
 
@@ -159,8 +163,8 @@ B4-Aはprocess、SDK／CLI import／execution、provider、network、credential�
 - 公開ReleaseではNode runtime、sidecar script/bundle、Codex CLI、必要なnative artifactをアプリbundle内の決めた場所にのみ同梱する。
 - 公開Releaseではhelperとすべてのnested executable／libraryをDeveloper IDで適切に署名し、Hardened Runtime、Archive、notarization、stapling、Gatekeeper検証をアプリ全体で通す。
 - 公開Releaseではarm64とx86_64の各clean Macで、初回起動、実request、cancel、更新後起動を検証する。片方のarchitectureだけの成功でuniversal配布可能としない。
-- B3 packagerはarm64の固定21 fileだけを候補rootへコピーし、caller supplied allowlist、x86_64、Node executableを含まない。B4-Aのcompile-time approval契約へ返すdigest／self manifestを自動登録せず、empty production catalogを維持する。local probe identityもapprovalではない。
-- B3 native verifierはexpected digestを独立引数で受け、filesystem mutationをfail-closedにするが、owner-writable treeをimmutableにせず、検証したbytesを後続import／spawnへfdで引き渡さない。B4-B〜Eでexact Node、完全なloaded artifact inventory、interactive content Gate、immutable verify-to-use bindingを順に実証する。
+- B3 packagerはarm64の固定21 fileだけを候補rootへコピーし、caller supplied allowlist、x86_64、Node executableを含まない。B4-Aのcompile-time approval契約へ返すdigest／self manifestを自動登録せず、B4-B observationとlocal probe identityもapprovalへ昇格させず、empty production catalogを維持する。
+- B3 native verifierはexpected digestを独立引数で受け、filesystem mutationをfail-closedにするが、owner-writable treeをimmutableにせず、検証したbytesを後続import／spawnへfdで引き渡さない。B4-Bではexact Node path上の実行物を非実行で観測するところまで完了した。B4-C〜Eでactual process identity、完全なloaded artifact inventory、interactive content Gate、immutable verify-to-use bindingを順に実証する。
 
 ### 6.2 原稿とローカルファイルの隔離
 
@@ -239,8 +243,8 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 6. **Darwin native supervisor（B2完了）**: `posix_spawn`／new process group、3 pipe同時処理、stdin／stdout／stderr cap、first-wins cancel／timeout／failure、TERM→KILL、`waitid(WNOWAIT)` anchor、direct child `waitpid`、post-reap `ESRCH`を合成helperで固定した(D-048)。macOS 27では`pipe2` runtime symbolをprobeし、stderr内容を保持しない。実SDK／CLI、network、credential、manifest verifier、OS sandbox、parent death後の回収は含まない。
 7. **固定packager + native verifier（B3完了）**: Node packagerでarm64 0.147.0の固定21 fileをreal copyし、source hashからdestination canonical manifestのcandidate digestを作る。Swift Experimental verifierをNode oracleと一致させ、strict filesystem／resource／mutation rejectionを固定した(D-049)。partial rootは保持して手動処理し、既存destinationは変更しない。実SDK／CLI／key／network／原稿は使わず、candidateを実行承認へ昇格しない。
 8. **Compile-time approval contract（B4-A完了）**: candidate生成と独立したnative catalog contract、validation、inventory role、空のproduction catalogを固定した(D-050)。承認済みartifactと実行経路は0件で、process／SDK／CLI／network／credential／原稿を使わない。anti-rollbackは未実装である。
-9. **Exact Node inspector（B4-B）**: catalogを空のまま、exact Nodeのcanonical identity、SHA-256、Mach-O architecture／署名、path／owner／mode等をnativeで検査する。観測値をapprovalへ昇格させず、まだspawnしない。
-10. **Suspended launch（B4-C）**: user code実行前にactual child identityを検査し、不一致時はresumeせずdirect childを回収する。path hashや事前署名検査だけでNode以外のJS／CLIまで拘束できたと扱わない。
+9. **Exact Node inspector（B4-B完了）**: catalogを空のまま、canonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを最大512 MiBでnative観測する(D-051)。invalid署名やuniversal Mach-Oを含むobservationをapprovalへ昇格させず、path／FD／capabilityを返さず、spawnしない。
+10. **Suspended launch（B4-C、次）**: user code実行前にactual child identityを検査し、不一致時はresumeせずdirect childを回収する。path hashや事前署名検査だけでNode以外のJS／CLIまで拘束できたと扱わない。
 11. **Interactive content Gate（B4-D）**: content-freeにspawnし、`hello`だけを送り、native identityとexact `ready`一致後にだけmanuscript-bearing `start`を書けるtransportへ分離する。現B2の完成済みstdinへ`hello`と`start`を連結しない。
 12. **Closed execution closure（B4-E）**: closed linker／native broker／helperとOS-level read／exec隔離を結合し、evaluated／conditional artifact、CLI、library、runtime dataを閉じ、検証済みbytesと実際のimport／path-based spawnを不可分にする。same-user ancestor／root swapをpathname再検査だけで解決済みとしない。
 13. **Codex Experimental isolation feasibility**: 監査済みlauncherとparent-death境界、SDK内部framing、request専用empty cwd + `skipGitRepoCheck: true`／`CODEX_HOME`、environment allowlist、OS-level file isolation、memory／CPU／process limit、local artifactの場所・範囲・期間を合成入力から順に実証する。両architecture、署名、公証はこの段階の前提にしない。
@@ -266,9 +270,9 @@ D-046により個人用Experimental AIをPackage Validator GateとExternal Chang
 - prompt、本文、response、API key、pathがログと永続設定へ残らない
 - B3 packagerは固定21 file、exact metadata／SRI、real copy、source hash→destination manifest、既存destination不変、partial root保持を合成testで再現できる。candidate digest／self manifestが実行承認ではなく、partial rootを再利用せず別の新規empty pathで再生成することを型付きerrorで判定できる
 - B3 native verifierはNode oracleとcanonical bytes／digest／recordを一致させ、独立expected digest、symlink／hardlink／special file／危険mode／resource超過／mutationを拒否する。これだけでcompile-time allowlist、exact Node、complete loaded inventory、immutable verify-to-useを宣言しない
-- B4-Aのproduction catalogが空であり、candidate／self manifest／observed runtime／local probeからentryが自動生成されず、lookupが常にfail-closedであることを決定論的に検証できる。policy generationだけでanti-rollbackを主張しない
+- B4-Aのproduction catalogが空であり、candidate／self manifest／B4-B observation／local probeからentryが自動生成されず、lookupが常にfail-closedであることを決定論的に検証できる。policy generationだけでanti-rollbackを主張しない
 - deployment candidateと、`evaluatedSource`／`resolutionMetadata`／`executable`／`conditional`／`provenance`／`requestData`／`operatingSystemTrust`／`forbidden`のroleが混同されず、`exactFile`／`boundedRequestData`／`operatingSystemProvided`／`forbidden`のcontent identityとの不正な組合せを拒否する。README等のprovenanceをevaluated sourceと数えたり、request dataをartifact digestへ混ぜたりしない
-- B4-B〜EのExperimental buildはSDK／CLI／Nodeの実行version、path、hashとlockfile／package integrityのdriftをcontent-freeに拒否し、suspended actual identity、interactive `hello`／`ready`／`start`、closed load／execを個別に再現できる。専用cwd／`CODEX_HOME`、より広いfile isolation、parent-death後を含むprocess回収は、続くExperimental isolation／lifecycle Gateで別途再現する
+- B4-BのExperimental native inspectorがcanonical raw path／`realpath`／`F_GETPATH`、regular file／owner／mode／`nlink`、512 MiB size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを非実行で観測し、invalid signatureやuniversal Mach-Oも非authorityに留め、catalogを空に維持する。B4-C〜EはNode versionを含むsuspended actual identity、interactive `hello`／`ready`／`start`、closed load／execを個別に再現できる。専用cwd／`CODEX_HOME`、より広いfile isolation、parent-death後を含むprocess回収は、続くExperimental isolation／lifecycle Gateで別途再現する
 - process lifecycleの受け入れ証拠は、direct childのreap、同一group descendantへのsignalとpost-reap `ESRCH`観測、group脱出拒否、parent death後の回収を分けて記録する。合成supervisor testだけでgrandchild reapまたは一般的なorphan-freeを宣言しない
 - 通常ReleaseのArchiveにAI menu／shortcut／設定、Codex／OpenRouter target、Node／CLI／sidecar artifactが存在せず、network／process起動経路へ到達できない
 - Codex sidecarを出荷する場合は6章の全Gateをarm64／x86_64、Archive済みnotarized appで再現できる

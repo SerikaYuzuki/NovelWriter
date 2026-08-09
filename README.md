@@ -18,7 +18,7 @@
 
 商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。未実装AIのplaceholderと`Cmd+J`は、プライバシー・同意を含む実機能が設計されるまで出荷UIへ表示しない(D-038〜D-040)。
 
-個人用AIのExperimental基盤は、Codex sidecar protocol、exact SDK 0.147.0の合成capture、Darwin process supervisor、arm64向け固定21-file deployment packager、native canonical manifest verifierに加え、B4-Aのcompile-time approval契約まで合成検証した。production catalogは意図的に空で、B3 candidate／self manifest／local runtime probeを承認へ自動昇格させず、承認済みNode／SDK／CLIと実行経路は0件である。次のB4-B〜Eでexact Node inspector、suspended launch、interactive `hello`／`ready`／`start`、closed linker／broker／helperとOS隔離を順に固定するまで、`codex_sdk` runtime、実SDK／CLI、key、network、原稿送信はNO-GOである。通常版のtarget構成は変更していない(D-046〜D-050)。
+個人用AIのExperimental基盤は、Codex sidecar protocol、exact SDK 0.147.0の合成capture、Darwin process supervisor、arm64向け固定21-file deployment packager、native canonical manifest verifier、B4-Aのcompile-time approval契約に加え、B4-Bの非実行exact Node native inspectorまで合成検証した。inspectorはcanonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを512 MiB上限で観測するが、path／FD／launch capabilityを返さず、invalid signatureやuniversal Mach-Oを含む観測値は非authorityである。production catalogは意図的に空で、B3 candidate／self manifest／B4-B observation／local runtime probeを承認へ自動昇格させず、承認済みNode／SDK／CLIと実行経路は0件である。次のB4-C〜Eでsuspended actual-process identity、interactive `hello`／`ready`／`start`、closed linker／broker／helperとOS隔離を順に固定するまで、`codex_sdk` runtime、Node version実証、complete loaded inventory／immutable binding、実SDK／CLI、key、network、原稿送信はNO-GOである。通常版のtarget構成は変更していない(D-046〜D-051)。
 
 次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QA、法務・プライバシー・価格・サポートが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
@@ -48,7 +48,7 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 ./Scripts/check.sh
 ```
 
-内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest／固定allowlist packager・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト(合成helperだけを使うDarwin process supervisorとnative manifest verifierを含む)。
+内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest／固定allowlist packager・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト(合成helperだけを使うDarwin process supervisor、native manifest verifier、合成Mach-O／filesystemとspawnしないOS universal Security smokeを使う非実行Node inspectorを含む)。
 
 必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node依存はlockfileどおり`npm ci --ignore-scripts`で展開し、インストールスクリプトを実行させない。現在のSDKテストは合成fake CLIだけを使い、実provider通信、API key、実原稿を使わない。Node 18以降は開発時captureを走らせる条件であり、実provider runtimeのallowlistではない。個別に実行したい場合はスクリプト内のコマンドを参照。
 
