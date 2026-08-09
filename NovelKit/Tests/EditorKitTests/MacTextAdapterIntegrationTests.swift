@@ -749,10 +749,11 @@ extension MacTextAdapterIntegrationTests {
 
         textView.setMarkedText(
             "「」",
-            selectedRange: NSRange(location: 1, length: 0),
+            selectedRange: NSRange(location: 2, length: 0),
             replacementRange: NSRange(location: 1, length: 0)
         )
         #expect(textView.string == "　「」")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
         #expect(textView.hasMarkedText())
 
         textView.unmarkText()

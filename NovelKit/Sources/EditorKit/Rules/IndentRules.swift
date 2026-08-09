@@ -107,10 +107,14 @@ public enum IndentRules {
 
         guard isSingleOpeningBracket || isMatchingPair else { return .allow }
 
+        let caretOffset = isMatchingPair
+            ? 1
+            : caretOffsetInLine - fullWidthSpace.utf16.count
+
         return .replace(
             range: NSRange(location: line.nsRange.location, length: fullWidthSpace.utf16.count),
             text: "",
-            caretOffset: caretOffsetInLine - fullWidthSpace.utf16.count
+            caretOffset: caretOffset
         )
     }
 
