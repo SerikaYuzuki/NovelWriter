@@ -21,10 +21,14 @@ descriptor, process handle, or launch capability. B4-C adds a separate
 Experimental-only, probe-only suspended actual-process observation. It never
 resumes the child, kills and directly reaps it on success as well as ordinary
 post-spawn failure, and returns only architecture and CDHash as non-authority
-values. The production catalog remains empty. B3/B4-C do not bundle or approve
-Node, prove its version, prove a complete loaded-artifact inventory, bind B4-B
-bytes or an approval immutably to the observed process or later imports,
-connect the SDK/CLI, or authorize protocol runtime mode `codex_sdk`.
+values. B4-D adds a separate Experimental-only, mock-only abstract interactive
+transport. It verifies content-free `hello` -> isolated exact `ready` -> sealed
+`start` sequencing with synthetic in-memory channels, but supplies no concrete
+production channel, factory, call site, process binding, or execution
+capability. The production catalog remains empty. B3 through B4-D do not bundle
+or approve Node, prove its version, prove a complete loaded-artifact inventory,
+bind B4-B bytes or an approval immutably to the observed process or later
+imports, connect the SDK/CLI, or authorize protocol runtime mode `codex_sdk`.
 
 ## Verification root and covered set
 
@@ -452,10 +456,14 @@ must establish all of the following:
    identity, and kills/reaps it without resume. Its result remains non-authority.
    The probe does not defeat an external same-UID `SIGCONT`, bind B4-B SHA or an
    approval to the mapped vnode, or bind later JavaScript and CLI loads.
-4. B4-D, the next checkpoint, uses an interactive transport: spawn without request data, send only
-   content-free `hello`, validate native identity and exact `ready`, and only then
-   permit manuscript-bearing `start`. Concatenating `hello` and `start` into the
-   existing one-shot supervisor input is forbidden.
+4. B4-D fixes the interactive sequencing contract with an abstract mock-only
+   transport. Its argument-free factory opens a fresh one-request channel,
+   writes only content-free `hello`, requires one isolated exact `ready`, and
+   only then writes the sealed `start`. It requires `started`, one terminal,
+   and EOF, and fixes cancellation, timeout, cleanup, and redaction races. No
+   concrete production channel/factory/call site exists, native identity is not
+   connected, and concatenating `hello` and `start` into the existing one-shot
+   supervisor input remains forbidden.
 5. B4-E closes the linker/loader, native broker/helper, and OS read/exec policy.
    No process can modify or substitute the verified root between verification
    and import/path-based spawn. The verified bytes must be bound immutably to
@@ -478,11 +486,13 @@ primitive and `codex_sdk` mode remains forbidden.
 ## Local test command
 
 The manifest oracle, filesystem rejection, packager copy, B4-A policy, B4-B
-Node inspector, and B4-C suspended identity suites use synthetic values,
+Node inspector, B4-C suspended identity, and B4-D interactive transport suites
+use synthetic values,
 synthetic Mach-O bytes, temporary trees, a synthetic ad-hoc helper, or an
 OS-signed helper. One packager preflight reads the checked-in installed metadata
 and lockfile without importing or launching the SDK/CLI. B4-A/B4-B spawn no
-process; B4-C never resumes its child and kills/directly reaps it. All remain
+process; B4-C never resumes its child and kills/directly reaps it; B4-D uses
+only in-memory test channels and has no production conformer. All remain
 Experimental-only and leave the standard target unchanged. The production
 catalog remains empty.
 One content-free Security smoke test observes the OS-provided universal

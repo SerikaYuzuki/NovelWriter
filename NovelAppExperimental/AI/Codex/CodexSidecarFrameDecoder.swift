@@ -8,6 +8,10 @@ struct CodexSidecarFrameDecoder: Sendable {
     private var isUnavailable = false
     private var acceptedByteCount = 0
 
+    var isAtFrameBoundary: Bool {
+        buffer.isEmpty
+    }
+
     mutating func append(_ chunk: Data) throws -> [String] {
         guard !isUnavailable else {
             throw CodexSidecarLocalError.decoderUnavailable

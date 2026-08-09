@@ -8,6 +8,8 @@ Checkpoint B2の成功は、実providerへ原稿を送れること、Codex proce
 
 B4-Cの`CodexSuspendedProcessIdentityInspector`はB2 transportを実行可能にする拡張ではなく、別のprobe-only primitiveである(D-052)。固定条件でsuspended childを作ってactual identityを観測し、成功時もresumeせずkill／direct reapする。PID／path／FD／capabilityをB2へ引き渡さず、production catalogも空のままである。B4-C timeoutも同期Security API／inspection workerのasync hard return上限ではなく、本書のB2 interactive process lifecycle保証と混同しない。
 
+B4-Dの`CodexSyntheticInteractiveTransport`もB2またはB4-Cを実行可能にする接続ではなく、Experimental-only／mock-onlyのabstract sequencing primitiveである(D-053)。具象production channel／factory／callsiteを持たず、B2 supervisorをspawnせず、B4-C childをresumeまたはchannelへ変換しない。content-free `hello`、isolated exact `ready`後だけのsealed `start`、terminal／EOF、cancel／cleanupをin-memory channelで固定しただけである。B2の完成済みstdinへ`hello`と`start`を連結することは禁止し、B4-Eのapproval／actual identity／closed execution closure／OS隔離が終わるまで実runtimeへ接続しない。
+
 ## 1. 実装境界
 
 - `CodexProcessSupervisor`はactorであり、同じinstance上の実行中sessionを1件に限定する。並行する2件目はspawn前に`alreadyRunning`で拒否する。完了後の同じinstanceによる後続実行は許可される。
