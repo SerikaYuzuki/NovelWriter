@@ -237,6 +237,26 @@ struct IndentRulesTests {
         let lineStart = ("\(family)\n" as NSString).length
         let action = IndentRules.postChangeAction(in: text, caretLocation: (text as NSString).length)
 
-        #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "『", caretOffset: 1))
+        #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "", caretOffset: 1))
+    }
+
+    @Test("IME確定後のR5判定は括弧ペア内のキャレットでも字下げを削除する")
+    func postChangeActionRemovesIndentBeforeBracketPairWithCaretInside() {
+        let text = "本文\n　「」"
+        let lineStart = ("本文\n" as NSString).length
+
+        let action = IndentRules.postChangeAction(in: text, caretLocation: lineStart + 2)
+
+        #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "", caretOffset: 1))
+    }
+
+    @Test("IME確定後のR5判定は括弧ペア後のキャレット位置を保つ")
+    func postChangeActionRemovesIndentBeforeBracketPairWithCaretAfterPair() {
+        let text = "本文\n　『』"
+        let lineStart = ("本文\n" as NSString).length
+
+        let action = IndentRules.postChangeAction(in: text, caretLocation: (text as NSString).length)
+
+        #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "", caretOffset: 2))
     }
 }

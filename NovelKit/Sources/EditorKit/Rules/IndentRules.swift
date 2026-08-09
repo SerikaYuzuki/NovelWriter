@@ -86,23 +86,31 @@ public enum IndentRules {
 
     /// IME確定後の本文に、行頭の字下げと鉤括弧が並んでいる場合の後処理を判定する。
     ///
-    /// `caretLocation` は鉤括弧直後のキャレット位置。行全体を走査せず、キャレットの
-    /// ある行がちょうど `　「` / `　『` である場合だけ、行頭の全角スペースを削除する。
+    /// `caretLocation` は鉤括弧直後、または括弧ペア内のキャレット位置。行全体を走査せず、
+    /// キャレットのある行が `　「` / `　『` / `　「」` / `　『』` のいずれかである場合だけ、
+    /// 行頭の全角スペースを削除する。
     public static func postChangeAction(in text: String, caretLocation: Int) -> Action {
         guard let line = lineBounds(at: caretLocation, in: text) else { return .allow }
-        guard caretLocation == line.nsRange.location + line.nsRange.length else { return .allow }
-        guard line.content.count == 2 else { return .allow }
-
         let characters = Array(line.content)
-        guard characters[0] == fullWidthSpace, characters[1] == "「" || characters[1] == "『" else {
+        guard characters.count >= 2, characters[0] == fullWidthSpace else {
             return .allow
         }
 
-        let bracket = String(characters[1])
+        let caretOffsetInLine = caretLocation - line.nsRange.location
+        let isSingleOpeningBracket = characters.count == 2
+            && (characters[1] == "「" || characters[1] == "『")
+            && caretOffsetInLine == line.nsRange.length
+        let isMatchingPair = characters.count == 3
+            && ((characters[1] == "「" && characters[2] == "」")
+                || (characters[1] == "『" && characters[2] == "』"))
+            && (caretOffsetInLine == 2 || caretOffsetInLine == line.nsRange.length)
+
+        guard isSingleOpeningBracket || isMatchingPair else { return .allow }
+
         return .replace(
             range: NSRange(location: line.nsRange.location, length: fullWidthSpace.utf16.count),
-            text: bracket,
-            caretOffset: bracket.utf16.count
+            text: "",
+            caretOffset: caretOffsetInLine - fullWidthSpace.utf16.count
         )
     }
 

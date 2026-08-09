@@ -730,7 +730,7 @@ extension MacTextAdapterIntegrationTests {
 
         harness.coordinator.undoManager.undo()
 
-        // Undo一回で自動字下げ解除が戻り、全角スペースが復元される。
+        // Undo一回でIME確定前の字下げ状態に戻る。
         #expect(textView.string == "　")
         #expect(harness.changes.received == ["「", "　"])
 
@@ -739,6 +739,37 @@ extension MacTextAdapterIntegrationTests {
 
         #expect(textView.string == "「")
         #expect(harness.changes.received == ["「", "　", "「"])
+    }
+
+    @Test("IME確定後の括弧ペアでも字下げを削除し、Undoで戻せる")
+    func imeCommitRemovesIndentBeforeBracketPairAndSupportsUndo() {
+        let harness = makeHarness(initialText: "　")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.setMarkedText(
+            "「」",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 0)
+        )
+        #expect(textView.string == "　「」")
+        #expect(textView.hasMarkedText())
+
+        textView.unmarkText()
+
+        #expect(textView.string == "「」")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「」"])
+
+        harness.coordinator.undoManager.undo()
+
+        #expect(textView.string == "　")
+        #expect(harness.changes.received == ["「」", "　"])
+
+        harness.coordinator.undoManager.redo()
+
+        #expect(textView.string == "「」")
+        #expect(harness.changes.received == ["「」", "　", "「」"])
     }
 }
 #endif
