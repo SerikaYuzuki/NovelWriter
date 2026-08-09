@@ -123,6 +123,27 @@ struct IndentRulesTests {
         #expect(action == .replace(range: NSRange(location: 0, length: 1), text: "『』", caretOffset: 1))
     }
 
+    @Test("R3: 字下げがない行頭の括弧ペアでもキャレットを括弧内に置く")
+    func r3PlacesCaretInsidePairWithoutIndent() {
+        let action = IndentRules.action(
+            for: "「」",
+            in: "",
+            range: NSRange(location: 0, length: 0)
+        )
+
+        #expect(action == .replace(range: NSRange(location: 0, length: 0), text: "「」", caretOffset: 1))
+    }
+
+    @Test("R3: 文中の括弧ペアでもキャレットを括弧内に置く")
+    func r3PlacesCaretInsidePairMidSentence() {
+        let text = "彼はと言った"
+        let range = NSRange(location: ("彼は" as NSString).length, length: 0)
+
+        let action = IndentRules.action(for: "『』", in: text, range: range)
+
+        #expect(action == .replace(range: range, text: "『』", caretOffset: 1))
+    }
+
     @Test("R3: 複数行中の字下げ行でも、その行だけが対象になる")
     func r3OnlyAffectsCurrentIndentedLine() {
         let text = "前の行\n\u{3000}"
@@ -258,5 +279,26 @@ struct IndentRulesTests {
         let action = IndentRules.postChangeAction(in: text, caretLocation: (text as NSString).length)
 
         #expect(action == .replace(range: NSRange(location: lineStart, length: 1), text: "", caretOffset: 1))
+    }
+
+    @Test("IME確定後は字下げなしの文中でもキャレットを括弧内へ移す")
+    func postChangeActionMovesCaretInsideMidSentencePair() {
+        let text = "😀彼は「」と言った"
+        let openingLocation = ("😀彼は" as NSString).length
+        let caretLocation = ("😀彼は「」" as NSString).length
+
+        let action = IndentRules.postChangeAction(in: text, caretLocation: caretLocation)
+
+        #expect(action == .moveCaret(location: openingLocation + 1))
+    }
+
+    @Test("IME確定時にすでに括弧内ならキャレットを動かさない")
+    func postChangeActionLeavesCaretAlreadyInsidePair() {
+        let text = "彼は「」と言った"
+        let caretLocation = ("彼は「" as NSString).length
+
+        let action = IndentRules.postChangeAction(in: text, caretLocation: caretLocation)
+
+        #expect(action == .allow)
     }
 }

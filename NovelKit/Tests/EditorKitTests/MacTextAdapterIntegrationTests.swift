@@ -122,6 +122,29 @@ struct MacTextAdapterIntegrationTests {
         #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
     }
 
+    @Test("字下げなしの文中で「」を入力してもキャレットが括弧内に来る")
+    func bracketPairPlacesCaretInsideMidSentence() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        let handled = harness.coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange(),
+            replacementString: "「」"
+        )
+
+        #expect(!handled)
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+
+        #expect(textView.string == "彼はと言った")
+        #expect(harness.changes.received == ["彼は「」と言った", "彼はと言った"])
+    }
+
     @Test("プラグインによる置換後、Undoで置換前の本文に戻る")
     func undoRevertsPluginReplacement() {
         let harness = makeHarness(initialText: "こんにちは")
@@ -771,6 +794,27 @@ extension MacTextAdapterIntegrationTests {
 
         #expect(textView.string == "「」")
         #expect(harness.changes.received == ["「」", "　", "「」"])
+    }
+
+    @Test("IME確定後は字下げなしの文中でもキャレットを括弧内へ移す")
+    func imeCommitPlacesCaretInsideMidSentencePair() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.setMarkedText(
+            "『』",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: 2, length: 0)
+        )
+        #expect(textView.string == "彼は『』と言った")
+        #expect(textView.selectedRange() == NSRange(location: 4, length: 0))
+
+        textView.unmarkText()
+
+        #expect(textView.string == "彼は『』と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(harness.changes.received == ["彼は『』と言った"])
     }
 }
 #endif
