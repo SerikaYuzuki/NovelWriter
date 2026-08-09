@@ -12,11 +12,12 @@ Checkpoint B3 implements two narrower identity primitives:
   canonical bytes matching the Node v1 oracle.
 
 The resulting digest is a **build-time identity candidate**, not a production
-approval or an execution capability. No compile-time native digest allowlist
-consumes it yet. B3 does not bundle or verify the exact Node executable, prove a
-complete loaded-artifact inventory, bind verified bytes immutably to Node
-import or path-based spawn, connect the SDK/CLI, or authorize protocol runtime
-mode `codex_sdk`.
+approval or an execution capability. B4-A now provides the Experimental native
+compile-time approval contract, but its nested production catalog is
+intentionally empty and consumes no candidate. B3/B4-A do not bundle or approve
+the exact Node executable, prove a complete loaded-artifact inventory, bind
+verified bytes immutably to Node import or path-based spawn, connect the SDK/CLI,
+or authorize protocol runtime mode `codex_sdk`.
 
 ## Verification root and covered set
 
@@ -101,8 +102,9 @@ covered. If the root-level name exists, it must be a non-hard-linked regular
 file; a directory, symlink, or special file at that name is rejected. The file
 may contain the canonical bytes for inspection, but a verifier never trusts it
 as input: it regenerates the manifest from the tree and compares the resulting
-root digest with an independently supplied expected value. B3 does not yet
-provide the compile-time native allowlist that will own the approved value.
+root digest with an independently supplied expected value. B4-A provides the
+closed compile-time policy type, but the empty production catalog contains no
+approved value and never imports this self file.
 
 ## Fixed package identity and copy operation
 
@@ -260,8 +262,8 @@ regenerate the canonical bytes and compare the result with an independently
 supplied 64-character lowercase SHA-256 value using a full-byte accumulated
 comparison. They do not read the expected digest from the self file or fall
 back to another root or runtime. The Swift API is internal and Experimental;
-it does not hard-code the 21 paths and is not yet wired to a compile-time
-approved digest or the supervisor.
+it does not hard-code the 21 paths and is not wired to an approved catalog entry
+or the supervisor. The B4-A production catalog is deliberately empty.
 
 The cross-language five-record oracle has 278 canonical bytes and digest:
 
@@ -279,6 +281,56 @@ resolve below the verified root, and have a regular-file record. This helper
 checks only the supplied inventory. It cannot prove that the inventory is
 complete or that previously evaluated module bytes equal the file now on disk.
 
+## B4-A approval contract and inventory roles
+
+B4-A adds Experimental-only native types with an intentionally asymmetric trust
+boundary:
+
+- `CodexRuntimeApprovalPolicy` validates the closed compile-time policy shape;
+- `CodexRuntimeApprovalProposal` is review material and is never authority; and
+- `CodexApprovedRuntimeIdentity` has a private initializer owned by its nested
+  `ProductionCatalog`.
+
+`ProductionCatalog` is intentionally empty. There are zero approved candidate
+roots, Node runtimes, SDK/CLI combinations, successful lookups, or launch
+capabilities. A candidate digest, this self file, a verifier result, a proposal,
+a `ready` frame, or an exactly observed local version/path/SHA-256/CDHash/signing
+identity cannot populate the catalog. Promotion requires an independent,
+reviewed native-source change; generation and observation cannot approve their
+own output.
+
+A **deployment candidate** is the complete B3 copied and canonically measured
+set. It is not itself an approval inventory and does not imply that every file is
+evaluated. Approval records use these distinct roles:
+
+- `evaluatedSource`: JavaScript or equivalent source that may actually be
+  evaluated;
+- `resolutionMetadata`: package/module metadata that affects resolution;
+- `executable`: Node, CLI, broker, or helper executable code;
+- `conditional`: lazy/dynamic modules, native addons, libraries, or runtime data
+  that may be reached only on some paths;
+- `provenance`: lockfiles, licenses, and other origin evidence that is not
+  runtime source;
+- `requestData`: prompt, schema, selected manuscript, response, credential, and
+  request identifiers, which are never artifact identity;
+- `operatingSystemTrust`: an explicit Apple sealed-OS trust boundary, not an
+  implicit wildcard; and
+- `forbidden`: any artifact whose read, evaluation, or execution must fail.
+
+Content identity is separately classified as `exactFile`, `boundedRequestData`,
+`operatingSystemProvided`, or `forbidden`. Exact artifacts require their fixed
+identity; bounded request data requires a later dedicated
+location/type/resource policy;
+OS-provided content requires an explicit host trust policy; forbidden content
+must not be read, evaluated, or executed. Invalid role/content-identity
+combinations fail policy validation. Request data never enters the deployment
+digest, and OS trust never becomes an unbounded ambient allowlist.
+
+Policy generation is not persistent monotonic state. B4-A makes no claim that an
+older signed app, older catalog, or previously approved runtime cannot be used
+after downgrade. Revocation and anti-rollback require a separate signed update
+floor and tamper-resistant persistent-state decision.
+
 ## TOCTOU and loaded-module containment boundary
 
 The filesystem checks narrow accidental build and verification races; they do
@@ -292,23 +344,31 @@ independent trust anchor if it was itself loaded from the unverified tree.
 Before runtime mode `codex_sdk` can be enabled, B4 and later isolation Gates
 must establish all of the following:
 
-1. Build-time generation records the root digest in an independently reviewed
-   native-host allowlist. The generated self file is never the authority.
-2. The exact Node executable version, architecture, path, and bytes are pinned
-   independently; the arm64 SDK/CLI candidate does not stand in for Node.
-3. The native host consumes the independently approved digest and verifies the
-   artifact before spawning any code from it. A content-free `ready` attestation
-   repeats identity checking but does not replace native pre-spawn verification.
-4. No process can modify or substitute the verified root between verification
+1. B4-A's empty production catalog is populated only by an independently
+   reviewed native-source change. The candidate, proposal, observed runtime, and
+   generated self file are never authority.
+2. B4-B inspects the exact Node executable version, architecture, canonical
+   path, bytes, ownership/mode, and code identity independently. It does not
+   spawn Node or promote the observation.
+3. B4-C starts a child suspended and validates the actual process identity before
+   user code can run. Mismatch is killed and reaped before resume. A path hash or
+   pre-spawn signature check alone is insufficient and actual Node identity does
+   not bind later JavaScript or CLI loads.
+4. B4-D uses an interactive transport: spawn without request data, send only
+   content-free `hello`, validate native identity and exact `ready`, and only then
+   permit manuscript-bearing `start`. Concatenating `hello` and `start` into the
+   existing one-shot supervisor input is forbidden.
+5. B4-E closes the linker/loader, native broker/helper, and OS read/exec policy.
+   No process can modify or substitute the verified root between verification
    and import/path-based spawn. The verified bytes must be bound immutably to
    the bytes actually evaluated or executed. The chosen mechanism must be
    demonstrated for the actual app bundle and
    development deployment; owner-writable mode alone does not close this gap.
-5. A complete, static inventory covers every ESM/CJS module, dynamic import,
-   native addon, CLI executable, library, and runtime data file. Resolution
-   outside the root, ambient/global fallback, and new imports after attestation
-   are rejected.
-6. The verification-to-import/spawn sequence, retained-partial handling, and
+6. A complete, enforced inventory covers every ESM/CJS module, resolution
+   metadata, dynamic import, native addon, CLI executable, library, and runtime
+   data file. Resolution outside the root, ambient/global fallback, and new
+   imports after attestation are rejected.
+7. The verification-to-import/spawn sequence, retained-partial handling, and
    complete
    loaded-file inventory are exercised under mutation and path-substitution
    tests before any manuscript-bearing `start` can be encoded or sent.
@@ -319,10 +379,11 @@ primitive and `codex_sdk` mode remains forbidden.
 
 ## Local test command
 
-The manifest oracle, filesystem rejection, and packager copy suites use
-synthetic temporary trees. One packager preflight reads the checked-in installed
-metadata and lockfile without importing or launching the SDK/CLI. No test in
-this Gate uses a credential, network, real manuscript, or `codex_sdk` runtime.
+The manifest oracle, filesystem rejection, packager copy, and B4-A policy suites
+use synthetic values or temporary trees. One packager preflight reads the
+checked-in installed metadata and lockfile without importing or launching the
+SDK/CLI. B4-A spawns no process and leaves the standard target unchanged. No test
+in this Gate uses a credential, network, real manuscript, or `codex_sdk` runtime.
 
 ```sh
 node --test test/deployment-manifest.test.mjs test/deployment-packager.test.mjs

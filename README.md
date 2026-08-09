@@ -18,7 +18,7 @@
 
 商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。未実装AIのplaceholderと`Cmd+J`は、プライバシー・同意を含む実機能が設計されるまで出荷UIへ表示しない(D-038〜D-040)。
 
-個人用AIのExperimental基盤は、Codex sidecar protocol、exact SDK 0.147.0の合成capture、Darwin process supervisorに加え、arm64向け固定21-file deployment packagerとnative canonical manifest verifierまで合成検証した。これはbuild-time identity candidateであり、実SDK／CLI／key／network／原稿を使わず、通常版にも含めない。次のB4でexact Node runtime、compile-time approved digest allowlist、検証済みbytesとimport／spawnのimmutable binding、完全なloaded artifact inventoryを固定するまで`codex_sdk` runtimeと実送信はNO-GOである(D-046〜D-049)。
+個人用AIのExperimental基盤は、Codex sidecar protocol、exact SDK 0.147.0の合成capture、Darwin process supervisor、arm64向け固定21-file deployment packager、native canonical manifest verifierに加え、B4-Aのcompile-time approval契約まで合成検証した。production catalogは意図的に空で、B3 candidate／self manifest／local runtime probeを承認へ自動昇格させず、承認済みNode／SDK／CLIと実行経路は0件である。次のB4-B〜Eでexact Node inspector、suspended launch、interactive `hello`／`ready`／`start`、closed linker／broker／helperとOS隔離を順に固定するまで、`codex_sdk` runtime、実SDK／CLI、key、network、原稿送信はNO-GOである。通常版のtarget構成は変更していない(D-046〜D-050)。
 
 次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QA、法務・プライバシー・価格・サポートが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
 
