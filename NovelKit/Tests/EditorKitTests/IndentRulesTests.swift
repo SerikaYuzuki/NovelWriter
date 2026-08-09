@@ -144,6 +144,26 @@ struct IndentRulesTests {
         #expect(action == .replace(range: range, text: "『』", caretOffset: 1))
     }
 
+    @Test("R3: 開き括弧直後へ対応する閉じ括弧を入力すると空ペア内へキャレットを置く")
+    func r3PlacesCaretInsideSequentiallyEnteredPair() {
+        let text = "彼は「と言った"
+        let range = NSRange(location: ("彼は「" as NSString).length, length: 0)
+
+        let action = IndentRules.action(for: "」", in: text, range: range)
+
+        #expect(action == .replace(range: range, text: "」", caretOffset: 0))
+    }
+
+    @Test("R3対象外: 内容の後ろへ閉じ括弧を入力すると通常どおり閉じる")
+    func r3AllowsClosingBracketAfterContent() {
+        let text = "彼は「そう"
+        let range = NSRange(location: (text as NSString).length, length: 0)
+
+        let action = IndentRules.action(for: "」", in: text, range: range)
+
+        #expect(action == .allow)
+    }
+
     @Test("R3: 複数行中の字下げ行でも、その行だけが対象になる")
     func r3OnlyAffectsCurrentIndentedLine() {
         let text = "前の行\n\u{3000}"

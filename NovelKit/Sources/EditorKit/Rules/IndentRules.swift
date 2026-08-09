@@ -12,7 +12,8 @@ import Foundation
 /// 常に `.allow` を返すので、呼び出し側でそのまま素通しできる。
 ///
 /// - 改行1文字の挿入(`replacement == "\n"`)
-/// - 鉤括弧1文字または括弧ペアの挿入(`replacement == "「"` / `"『"` / `"「」"` / `"『』"`)
+/// - 鉤括弧1文字または括弧ペアの挿入
+///   (`replacement == "「"` / `"」"` / `"『"` / `"』"` / `"「」"` / `"『』"`)
 public enum IndentRules {
     /// 字下げに用いる全角スペース(U+3000)。
     public static let fullWidthSpace: Character = "\u{3000}"
@@ -54,6 +55,8 @@ public enum IndentRules {
             newlineAction(in: text, range: range)
         case "「", "『", "「」", "『』":
             bracketAction(replacement: replacement, in: text, range: range)
+        case "」", "』":
+            closingBracketAction(replacement: replacement, in: text, range: range)
         default:
             .allow
         }
@@ -98,6 +101,26 @@ public enum IndentRules {
     private enum BracketPairCaretPosition {
         case inside
         case after(openingLocation: Int)
+    }
+
+    /// 開き括弧の直後へ対応する閉じ括弧を入力した場合、空ペア内へキャレットを置く。
+    private static func closingBracketAction(
+        replacement: String,
+        in text: String,
+        range: NSRange
+    ) -> Action {
+        guard range.length == 0, Range(range, in: text) != nil, range.location >= 1 else {
+            return .allow
+        }
+
+        let precedingRange = NSRange(location: range.location - 1, length: 1)
+        guard let preceding = substring(in: text, range: precedingRange) else { return .allow }
+        let isMatchingEmptyPair = (preceding == "「" && replacement == "」")
+            || (preceding == "『" && replacement == "』")
+        guard isMatchingEmptyPair else { return .allow }
+
+        // 閉じ括弧は挿入しつつ、キャレットを挿入位置(開閉括弧の間)に残す。
+        return .replace(range: range, text: replacement, caretOffset: 0)
     }
 
     // MARK: - R5: IME確定後の鉤括弧
