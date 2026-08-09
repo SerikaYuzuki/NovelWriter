@@ -566,3 +566,13 @@
 - **置き換える範囲**: D-046のうちCodex SDKから個人用実providerを直ちに実装し、続けてOpenRouterを接続する現在の順序を置き換える。D-043のprovider順序とD-047〜D-053は、将来provider統合を再開する場合の安全契約と実装履歴として保持する。D-040のProduct Truth、AIなしで執筆を完結できる原則、通常版からproviderをbuild時に除外する境界は維持する。provider延期はPDFその他の独立機能を永久に待たせる条件にはしない。
 - **理由**: 2026-08-09時点のSDK／CLI経路は、安全に実原稿を渡すためにloader closure、OS-level file隔離、process lifecycle、artifact identity等の大きな独自実装を必要とする。利用者はその実装を先送りし、SDKが更新されてより小さく検証可能な境界になった時点で再評価することを選んだ。一方、clipboardへの明示コピーなら、送信先をアプリが所有せず、原稿scopeを利用者が選んだまま、任意のAI chatを簡単に利用できる。
 - **詳細**: B1〜B4-Dの実装結果と未達項目は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)、clipboard promptの製品契約は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。provider再開時の休眠中技術契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)を参照する。
+
+## D-055: 本文末尾に表示専用の執筆余白を確保し、IME確定後の括弧ペアも字下げ解除する
+
+- **日付**: 2026-08-10 / **状態**: 承認（ユーザー要望。EditorKitへ実装）
+- **内容**:
+  1. macOS本文エディタは、既存の`textContainerInset` 16pt四方を維持したうえで、本文末尾の下に96ptの執筆用表示余白を常に確保する。この余白は`NSClipView.contentInsets`によるスクロール領域であり、本文へ改行、全角／半角スペース、属性付き文字を追加せず、`.novelpkg`、文字数、検索、書き出しを変更しない。
+  2. 改行や字下げを`EditorPlugin`の内部置換として適用した後は、置換後の選択範囲を`scrollRangeToVisible`へ明示的に渡す。複数回の改行でもキャレットを画面外へ残さず、下端の表示余白を使って執筆位置の下に空間を残す。
+  3. D-033のR5を、IME確定後の `　「` / `　『` だけでなく、対応する括弧ペア `　「」` / `　『』` にも適用する。キャレットが括弧内またはペア直後にある場合、行頭の全角スペースだけを正規の置換経路で削除する。IME変換中の不介入、TextKit 2、UTF-16 range、Undo / Redoの既存契約は維持する。
+- **理由**: プラグインが標準入力を置き換える改行経路では、複数改行後のキャレット表示をAppKitの暗黙動作だけに任せられず、本文末尾では見える位置の下にも執筆余地が必要になる。また日本語IMEが `「」` を一度に確定すると、直接入力時のR3をIMEGuardが止める一方、単一括弧だけを対象にしたR5にも一致せず、段落字下げが残っていたため。
+- **詳細**: 表示規約は[STYLE.md](STYLE.md)、入力規則と本文編集の受け入れ条件は[DESIGN.md](DESIGN.md) 4.5 / 6.3を正とする。
