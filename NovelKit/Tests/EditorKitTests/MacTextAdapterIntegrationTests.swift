@@ -11,9 +11,9 @@ import Testing
 /// SwiftUI の `NSViewRepresentable.Context` はテストから直接構築できないため、
 /// `makeNSView` を経由せず、実 `NSTextView` + `Coordinator` を直接組み立てて
 /// `NSTextViewDelegate` の実装(`textView(_:shouldChangeTextIn:replacementString:)`)を
-/// 実際にAppKitが呼ぶのと同じ形で駆動する。ヘッドレスなユニットテスト環境では
-/// 実際のキーイベント合成が信頼できないため、この形が最も安定して production の
-/// 経路(プラグインパイプライン → undo登録 → textStorage書き換え)を検証できる。
+/// 直接駆動するテストに加え、実 `insertText` とmarked rangeを使ってAppKitの通常入力・
+/// IME確定経路も駆動する。ヘッドレスな環境でもproductionの入力通知順、プラグイン、
+/// undo登録、textStorage書き換えをまとめて検証する。
 @MainActor
 struct MacTextAdapterIntegrationTests {
     /// 実 `NSTextView`(TextKit 2)+ `Coordinator` の組み立て結果。
@@ -120,6 +120,29 @@ struct MacTextAdapterIntegrationTests {
         #expect(!handled)
         #expect(textView.string == "「」")
         #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+    }
+
+    @Test("字下げなしの文中で「」を入力してもキャレットが括弧内に来る")
+    func bracketPairPlacesCaretInsideMidSentence() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        let handled = harness.coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange(),
+            replacementString: "「」"
+        )
+
+        #expect(!handled)
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+
+        #expect(textView.string == "彼はと言った")
+        #expect(harness.changes.received == ["彼は「」と言った", "彼はと言った"])
     }
 
     @Test("プラグインによる置換後、Undoで置換前の本文に戻る")
@@ -367,6 +390,98 @@ struct MacTextAdapterIntegrationTests {
 }
 
 extension MacTextAdapterIntegrationTests {
+    @Test("AppKitの実入力経路でも字下げ直後の「で全角スペースが消える")
+    func appKitInsertTextRemovesIndentBeforeOpeningBracket() {
+        let harness = makeHarness(initialText: "\u{3000}")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.insertText(
+            "「",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        #expect(textView.string == "「")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「"])
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        #expect(textView.string == "　")
+    }
+
+    @Test("IMEがinsertTextで「を確定しても段落字下げが消える")
+    func imeInsertTextCommitRemovesIndentBeforeOpeningBracket() {
+        let harness = makeHarness(initialText: "\u{3000}")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.setMarkedText(
+            "「",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 0)
+        )
+        let markedRange = textView.markedRange()
+        #expect(markedRange == NSRange(location: 1, length: 1))
+
+        textView.insertText("「", replacementRange: markedRange)
+
+        #expect(textView.string == "「")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「"])
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        #expect(textView.string == "　")
+    }
+
+    @Test("AppKitから開閉括弧が別々に入力されても文中の空ペア内へキャレットを置く")
+    func appKitSequentialBracketInputPlacesCaretInsideMidSentence() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.insertText(
+            "「",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        textView.insertText(
+            "」",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+
+        #expect(harness.coordinator.undoManager.canUndo)
+        harness.coordinator.undoManager.undo()
+        if textView.string != "彼はと言った", harness.coordinator.undoManager.canUndo {
+            harness.coordinator.undoManager.undo()
+        }
+        #expect(textView.string == "彼はと言った")
+    }
+
+    @Test("IMEがinsertTextで括弧ペアを確定しても文中のペア内へキャレットを置く")
+    func imeInsertTextCommitPlacesCaretInsideMidSentencePair() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.setMarkedText(
+            "「」",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: 2, length: 0)
+        )
+        let markedRange = textView.markedRange()
+        #expect(markedRange == NSRange(location: 2, length: 2))
+
+        textView.insertText("「」", replacementRange: markedRange)
+
+        #expect(textView.string == "彼は「」と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(harness.changes.received == ["彼は「」と言った"])
+    }
+
     @Test("active editor surfaceがない選択取得要求は即時拒否する")
     func selectionRequestWithoutActiveSurfaceIsRejected() {
         let session = EditorCommandSession()
@@ -730,7 +845,7 @@ extension MacTextAdapterIntegrationTests {
 
         harness.coordinator.undoManager.undo()
 
-        // Undo一回で自動字下げ解除が戻り、全角スペースが復元される。
+        // Undo一回でIME確定前の字下げ状態に戻る。
         #expect(textView.string == "　")
         #expect(harness.changes.received == ["「", "　"])
 
@@ -739,6 +854,59 @@ extension MacTextAdapterIntegrationTests {
 
         #expect(textView.string == "「")
         #expect(harness.changes.received == ["「", "　", "「"])
+    }
+
+    @Test("IME確定後の括弧ペアでも字下げを削除し、Undoで戻せる")
+    func imeCommitRemovesIndentBeforeBracketPairAndSupportsUndo() {
+        let harness = makeHarness(initialText: "　")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
+
+        textView.setMarkedText(
+            "「」",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: 1, length: 0)
+        )
+        #expect(textView.string == "　「」")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(textView.hasMarkedText())
+
+        textView.unmarkText()
+
+        #expect(textView.string == "「」")
+        #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+        #expect(harness.changes.received == ["「」"])
+
+        harness.coordinator.undoManager.undo()
+
+        #expect(textView.string == "　")
+        #expect(harness.changes.received == ["「」", "　"])
+
+        harness.coordinator.undoManager.redo()
+
+        #expect(textView.string == "「」")
+        #expect(harness.changes.received == ["「」", "　", "「」"])
+    }
+
+    @Test("IME確定後は字下げなしの文中でもキャレットを括弧内へ移す")
+    func imeCommitPlacesCaretInsideMidSentencePair() {
+        let harness = makeHarness(initialText: "彼はと言った")
+        let textView = harness.textView
+        textView.setSelectedRange(NSRange(location: 2, length: 0))
+
+        textView.setMarkedText(
+            "『』",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: 2, length: 0)
+        )
+        #expect(textView.string == "彼は『』と言った")
+        #expect(textView.selectedRange() == NSRange(location: 4, length: 0))
+
+        textView.unmarkText()
+
+        #expect(textView.string == "彼は『』と言った")
+        #expect(textView.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(harness.changes.received == ["彼は『』と言った"])
     }
 }
 #endif
