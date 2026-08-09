@@ -17,11 +17,14 @@ compile-time approval contract, but its nested production catalog is
 intentionally empty and consumes no candidate. B4-B adds an Experimental-only,
 non-executing exact Node inspector for the supplied path. It observes bounded
 filesystem, byte, Mach-O, and Security identities, but returns no path, file
-descriptor, process handle, or launch capability. B3/B4-B do not bundle or
-approve Node, prove its version or actual-process identity, prove a complete
-loaded-artifact inventory, bind verified bytes immutably to Node import or
-path-based spawn, connect the SDK/CLI, or authorize protocol runtime mode
-`codex_sdk`.
+descriptor, process handle, or launch capability. B4-C adds a separate
+Experimental-only, probe-only suspended actual-process observation. It never
+resumes the child, kills and directly reaps it on success as well as ordinary
+post-spawn failure, and returns only architecture and CDHash as non-authority
+values. The production catalog remains empty. B3/B4-C do not bundle or approve
+Node, prove its version, prove a complete loaded-artifact inventory, bind B4-B
+bytes or an approval immutably to the observed process or later imports,
+connect the SDK/CLI, or authorize protocol runtime mode `codex_sdk`.
 
 ## Verification root and covered set
 
@@ -379,6 +382,52 @@ bytes after the observation returns. B4-B does not inspect Node's version,
 spawn Node, inspect an actual process, retain the verified descriptor for use,
 or bind later imports and executable loads to these bytes.
 
+## B4-C suspended actual-process observation
+
+B4-C adds `CodexSuspendedProcessIdentityInspector` only to
+`FUMINIWAExperimental`. It accepts a canonical absolute executable path, a
+requested architecture, an exact lowercase 20-byte CDHash supplied by the
+caller, and a timeout of at most 30 seconds. The expected architecture and
+CDHash are non-authority assertions for this probe; they are not a catalog
+entry, an approval, or permission to use the process.
+
+The probe preflights the path and an `O_NOFOLLOW` descriptor for canonical
+`realpath`/`F_GETPATH`, regular type, one link, root or effective-user owner,
+safe mode, owner execute permission, and the 512 MiB executable limit. It then
+uses `POSIX_SPAWN_START_SUSPENDED`, `CLOEXEC_DEFAULT`, a new process group,
+empty/default signal state, and an exact architecture bin preference. The only
+argument is the exact executable path, the environment is empty, cwd is
+`/private/var/empty`, and all three standard streams are `/dev/null`.
+
+The actual PID is checked twice, with stable before/after snapshots, for PID,
+direct PPID, PID-equal PGID, effective/real/saved UID and GID, start time,
+canonical executable path, `SSTOP`, and requested architecture. A dynamic PID
+guest `SecCode` is checked with no network access and an exact CDHash
+requirement; dynamic valid status, 20-byte CDHash, and code path must agree, and
+ad-hoc, unsigned, or invalid code is rejected. The measured environment did not
+provide a usable success contract for `kSecCSMatchGuestRequirementInKernel`, so
+B4-C does not claim an immutable kernel binding to the mapped vnode or immunity
+to in-place mutation.
+
+There is no `SIGCONT`, resume API, protocol pipe, returned PID/path/descriptor,
+handle, or capability. A success candidate and every ordinary post-spawn
+failure are sent `SIGKILL` and directly `waitpid`-reaped; cleanup failure wins
+over success. Only after successful reap may the probe return architecture and
+CDHash. Timeout/cancel terminalize phase checks and cause the watchdog to start
+kill/reap, but this is a best-effort lifecycle bound, not an asynchronous hard
+return bound for synchronous Security calls, the inspection worker, or blocking
+`waitpid`.
+
+A same-UID external process can still send `SIGCONT`; B4-C has no independent
+resume-denial or re-stop containment. The synthetic ad-hoc helper's constructor
+and `main` markers remain zero before rejection/reap, and an OS-signed helper
+passes identity observation and is reaped without resume, but these cooperative
+tests are not an adversarial proof of zero user-code execution. No test uses
+real Node, SDK, CLI, network, credential, manuscript, or `codex_sdk` mode. Node
+version, composition with B4-B SHA/approval, complete loaded closure,
+verification-to-use immutability, dyld/helper/parent-death containment, and OS
+read/exec isolation remain later Gates.
+
 ## TOCTOU and loaded-module containment boundary
 
 The filesystem checks narrow accidental build and verification races; they do
@@ -399,11 +448,11 @@ must establish all of the following:
    ownership/mode/link count, strict thin/fat Mach-O architecture, and
    architecture-selected Security validity/CDHash. It does not inspect Node's
    version, spawn Node, promote the observation, or retain a use capability.
-3. B4-C, the next checkpoint, starts a child suspended and validates the actual
-   process identity before user code can run. Mismatch is killed and reaped
-   before resume. A path hash or pre-spawn signature check alone is insufficient,
-   and actual Node identity does not bind later JavaScript or CLI loads.
-4. B4-D uses an interactive transport: spawn without request data, send only
+3. B4-C starts a child suspended, validates the actual process and dynamic code
+   identity, and kills/reaps it without resume. Its result remains non-authority.
+   The probe does not defeat an external same-UID `SIGCONT`, bind B4-B SHA or an
+   approval to the mapped vnode, or bind later JavaScript and CLI loads.
+4. B4-D, the next checkpoint, uses an interactive transport: spawn without request data, send only
    content-free `hello`, validate native identity and exact `ready`, and only then
    permit manuscript-bearing `start`. Concatenating `hello` and `start` into the
    existing one-shot supervisor input is forbidden.
@@ -428,16 +477,21 @@ primitive and `codex_sdk` mode remains forbidden.
 
 ## Local test command
 
-The manifest oracle, filesystem rejection, packager copy, B4-A policy, and B4-B
-Node inspector suites use synthetic values, synthetic Mach-O bytes, or temporary
-trees. One packager preflight reads the checked-in installed metadata and
-lockfile without importing or launching the SDK/CLI. B4-A/B4-B spawn no process
-and leave the standard target unchanged. The production catalog remains empty.
+The manifest oracle, filesystem rejection, packager copy, B4-A policy, B4-B
+Node inspector, and B4-C suspended identity suites use synthetic values,
+synthetic Mach-O bytes, temporary trees, a synthetic ad-hoc helper, or an
+OS-signed helper. One packager preflight reads the checked-in installed metadata
+and lockfile without importing or launching the SDK/CLI. B4-A/B4-B spawn no
+process; B4-C never resumes its child and kills/directly reaps it. All remain
+Experimental-only and leave the standard target unchanged. The production
+catalog remains empty.
 One content-free Security smoke test observes the OS-provided universal
 `/usr/bin/git` without spawning it and checks separate arm64 and x86_64 CDHashes.
 This OS executable and its architecture-selected values remain observations and
-never approvals. No test in this Gate executes Node, SDK, CLI, or provider code,
-or uses a credential, network, real manuscript, or `codex_sdk` runtime.
+never approvals. The B4-C synthetic ad-hoc helper's constructor/`main` markers
+remain zero before rejection/reap. No test in this Gate executes Node, SDK, CLI,
+or provider code, or uses a credential, network, real manuscript, or
+`codex_sdk` runtime.
 
 ```sh
 node --test test/deployment-manifest.test.mjs test/deployment-packager.test.mjs
