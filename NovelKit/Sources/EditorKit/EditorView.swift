@@ -3,8 +3,7 @@ import SwiftUI
 /// 本文エディタを提供する SwiftUI View。
 ///
 /// macOS では `NSTextView`(TextKit 2)をラップした実装(`MacTextAdapter`)を表示する。
-/// iOS 版はまだ実装しておらず、プレースホルダの View を表示する
-/// (docs/DESIGN.md 7章 Phase 7 で `UITextView` アダプタに置き換える予定)。
+/// iOS / iPadOS では `UITextView`(TextKit 2)をラップした`IOSTextAdapter`を表示する。
 ///
 /// Public API に `NSTextView` / `UITextView` を一切出さない(docs/DESIGN.md 9.2)。
 ///
@@ -79,22 +78,17 @@ public struct EditorView: View {
             onTextChange: onTextChange
         )
         #elseif canImport(UIKit)
-        UnimplementedEditorView()
+        IOSTextAdapter(
+            chapterKey: chapterKey,
+            initialText: initialText,
+            selectionRequest: selectionRequest,
+            command: commandSession.pendingCommand,
+            commandSession: commandSession,
+            aiSelectionSession: aiSelectionSession,
+            selectionContextMenuCommands: selectionContextMenuCommands,
+            configuration: configuration,
+            onTextChange: onTextChange
+        )
         #endif
     }
 }
-
-#if canImport(UIKit) && !canImport(AppKit)
-/// iOS 版はまだ実装していないことを示すプレースホルダ View。
-///
-/// `UITextView` アダプタは docs/DESIGN.md ロードマップの Phase 7 で追加する
-/// (docs/DECISIONS.md D-013)。それまでは iOS 向けビルドが通ることだけを保証する。
-struct UnimplementedEditorView: View {
-    var body: some View {
-        Text("iOS版は未実装です")
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding()
-    }
-}
-#endif
