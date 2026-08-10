@@ -31,6 +31,7 @@ extension IOSTextAdapter.Coordinator {
         range: NSRange,
         replacementText text: String
     ) -> Bool {
+        guard textView.isEditable else { return false }
         guard !isApplyingPluginReplacement else { return true }
 
         // iOSのIMEもmarked rangeを保持したまま確定入力へ入る場合がある。
@@ -129,19 +130,55 @@ extension IOSTextAdapter.Coordinator {
 
     func prepareForDocumentTransition() -> Bool {
         advanceAISelectionSurface()
-        guard let textView else { return true }
+        guard let textView else {
+            isEditingSuspendedForDocumentTransition = true
+            return true
+        }
         if textView.markedTextRange != nil {
             hasPendingIMECommit = true
             textView.unmarkText()
         }
         guard textView.markedTextRange == nil else { return false }
         synchronizeCommittedText(from: textView)
-        textView.isEditable = false
+        isEditingSuspendedForDocumentTransition = true
+        applyEffectiveEditability(to: textView)
         return true
     }
 
     func resumeAfterDocumentTransition() {
-        textView?.isEditable = true
+        isEditingSuspendedForDocumentTransition = false
+        if let textView {
+            applyEffectiveEditability(to: textView)
+        }
+    }
+
+    /// 利用者の入力権限と、作品遷移中の一時停止を別々に保持する。
+    ///
+    /// 変換中に読み取り専用へ切り替わる場合は、先に現在のmarked textを
+    /// 確定して`onTextChange`へ通知する。本文・選択範囲・Undo履歴は流し直さない。
+    func updateDesiredEditability(_ isEditable: Bool, textView: UITextView) {
+        guard desiredIsEditable != isEditable else {
+            applyEffectiveEditability(to: textView)
+            return
+        }
+
+        desiredIsEditable = isEditable
+        advanceCommandSurface()
+        advanceAISelectionSurface()
+
+        if !isEditable, textView.markedTextRange != nil {
+            hasPendingIMECommit = true
+            textView.unmarkText()
+            if textView.markedTextRange == nil {
+                synchronizeCommittedText(from: textView)
+            }
+        }
+        applyEffectiveEditability(to: textView)
+    }
+
+    private func applyEffectiveEditability(to textView: UITextView) {
+        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        textView.isSelectable = true
     }
 
     func notifyCommittedText(from textView: UITextView) {

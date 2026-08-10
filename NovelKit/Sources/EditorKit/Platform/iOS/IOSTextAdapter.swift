@@ -27,6 +27,26 @@ final class IOSTextView: UITextView {
         super.init(frame: .zero, textContainer: nil)
     }
 
+    override func insertText(_ text: String) {
+        guard isEditable else { return }
+        super.insertText(text)
+    }
+
+    override func deleteBackward() {
+        guard isEditable else { return }
+        super.deleteBackward()
+    }
+
+    override func paste(_ sender: Any?) {
+        guard isEditable else { return }
+        super.paste(sender)
+    }
+
+    override func cut(_ sender: Any?) {
+        guard isEditable else { return }
+        super.cut(sender)
+    }
+
     override func unmarkText() {
         let wasComposing = markedTextRange != nil
         super.unmarkText()
@@ -68,6 +88,7 @@ struct IOSTextAdapter: UIViewRepresentable {
     let aiSelectionSession: EditorAISelectionSession?
     let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     let configuration: EditorConfiguration
+    let isEditable: Bool
     let onTextChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -97,6 +118,7 @@ struct IOSTextAdapter: UIViewRepresentable {
             from: context.coordinator.commandSurfaceToken
         )
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
         textView.undoManager?.removeAllActions()
         context.coordinator.registerDocumentLifecycle(with: commandSession)
 
@@ -112,6 +134,7 @@ struct IOSTextAdapter: UIViewRepresentable {
         context.coordinator.registerDocumentLifecycle(with: commandSession)
         context.coordinator.registerCommandSurface(with: commandSession)
         context.coordinator.registerAISelectionSurface(with: aiSelectionSession)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
 
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
@@ -201,6 +224,8 @@ struct IOSTextAdapter: UIViewRepresentable {
         var aiSelectionRevision: UInt64 = 0
         var isPerformingUndoOrRedo = false
         var hasPendingIMECommit = false
+        var desiredIsEditable = true
+        var isEditingSuspendedForDocumentTransition = false
         var pendingIMENewline: IOSPendingIMENewline?
         var pendingUndoRegistrations: [IOSPendingUndoRegistration] = []
         var isPendingUndoFlushScheduled = false

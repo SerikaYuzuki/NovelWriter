@@ -26,6 +26,7 @@ public struct EditorView: View {
     private let aiSelectionSession: EditorAISelectionSession?
     private let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     private let configuration: EditorConfiguration
+    private let isEditable: Bool
     private let onTextChange: (String) -> Void
 
     /// - Parameters:
@@ -42,6 +43,9 @@ public struct EditorView: View {
     ///   - selectionContextMenuCommands: 標準の本文context menuへ追加する、
     ///     AppKit非依存の選択範囲command。空配列なら標準menuだけを表示する。
     ///   - configuration: エディタの表示設定。本文は流し直さず、表示属性だけを更新する。
+    ///   - isEditable: `false`なら本文の選択・copy・scrollは維持し、
+    ///     通常入力とcommand置換だけを停止する。作品遷移の一時停止とは別に扱い、
+    ///     遷移完了後もこの値が`false`なら編集可能に戻さない。
     ///   - onTextChange: 本文が変更されるたびに、そのときの全文を渡して呼び出される
     ///     コールバック。IME 変換中には呼ばれない。
     public init(
@@ -52,6 +56,7 @@ public struct EditorView: View {
         aiSelectionSession: EditorAISelectionSession? = nil,
         selectionContextMenuCommands: [EditorSelectionContextMenuCommand] = [],
         configuration: EditorConfiguration = EditorConfiguration(),
+        isEditable: Bool = true,
         onTextChange: @escaping (String) -> Void
     ) {
         self.chapterKey = chapterKey
@@ -61,6 +66,7 @@ public struct EditorView: View {
         self.aiSelectionSession = aiSelectionSession
         self.selectionContextMenuCommands = selectionContextMenuCommands
         self.configuration = configuration
+        self.isEditable = isEditable
         self.onTextChange = onTextChange
     }
 
@@ -75,6 +81,7 @@ public struct EditorView: View {
             aiSelectionSession: aiSelectionSession,
             selectionContextMenuCommands: selectionContextMenuCommands,
             configuration: configuration,
+            isEditable: isEditable,
             onTextChange: onTextChange
         )
         #elseif canImport(UIKit)
@@ -87,6 +94,7 @@ public struct EditorView: View {
             aiSelectionSession: aiSelectionSession,
             selectionContextMenuCommands: selectionContextMenuCommands,
             configuration: configuration,
+            isEditable: isEditable,
             onTextChange: onTextChange
         )
         #endif

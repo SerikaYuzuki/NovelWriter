@@ -14,6 +14,7 @@ struct EditorViewConstructionTests {
         let view = EditorView(
             chapterKey: "chapter-1",
             initialText: "本文",
+            isEditable: false,
             onTextChange: { text in receivedText = text }
         )
 
