@@ -4,19 +4,22 @@ import Testing
 import UIKit
 
 @MainActor
+@Suite(.serialized)
 struct IOSTextAdapterIntegrationTests {
-    private final class Changes {
+    final class Changes {
         var received: [String] = []
         var contextMenuSnapshots: [EditorSelectionContextMenuSnapshot] = []
     }
 
-    private struct Harness {
+    struct Harness {
         let textView: IOSTextView
         let coordinator: IOSTextAdapter.Coordinator
         let changes: Changes
+        let undoManager: UndoManager
+        let window: UIWindow
     }
 
-    private func makeHarness(initialText: String) -> Harness {
+    func makeHarness(initialText: String) -> Harness {
         let textView = IOSTextView()
         textView.isEditable = true
         textView.isSelectable = true
@@ -29,8 +32,35 @@ struct IOSTextAdapterIntegrationTests {
         )
         coordinator.textView = textView
         textView.delegate = coordinator
-        textView.editorUndoManager.removeAllActions()
-        return Harness(textView: textView, coordinator: coordinator, changes: changes)
+        textView.editorCoordinator = coordinator
+        coordinator.lastNotifiedCommittedText = initialText
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
+        window.rootViewController = viewController
+        textView.frame = viewController.view.bounds
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        _ = textView.becomeFirstResponder()
+        guard let undoManager = textView.undoManager else {
+            fatalError("windowへ接続したUITextViewにnative UndoManagerがありません")
+        }
+        undoManager.removeAllActions()
+        return Harness(
+            textView: textView,
+            coordinator: coordinator,
+            changes: changes,
+            undoManager: undoManager,
+            window: window
+        )
+    }
+
+    func advanceMainRunLoop() async {
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform {
+                continuation.resume()
+            }
+        }
     }
 
     @Test("iOS本文エディタはTextKit 2で生成される")
@@ -38,6 +68,42 @@ struct IOSTextAdapterIntegrationTests {
         let harness = makeHarness(initialText: "本文")
 
         #expect(harness.textView.textLayoutManager != nil)
+    }
+
+    @Test("iOS 26以降のmulti-range入力delegateを実装する")
+    func respondsToMultiRangeInputDelegate() {
+        let harness = makeHarness(initialText: "本文")
+
+        #expect(
+            harness.coordinator.responds(
+                to: NSSelectorFromString("textView:shouldChangeTextInRanges:replacementText:")
+            )
+        )
+    }
+
+    @available(iOS 26.0, *)
+    @Test("multi-range入力経路でも改行字下げと鉤括弧へ介入する")
+    func multiRangeInputUsesCurrentIndentRules() {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        textView.selectedRange = NSRange(location: 2, length: 0)
+
+        let newlineHandledBySystem = harness.coordinator.textView(
+            textView,
+            shouldChangeTextInRanges: [NSValue(range: textView.selectedRange)],
+            replacementText: "\n"
+        )
+        #expect(!newlineHandledBySystem)
+        #expect(textView.text == "本文\n　")
+
+        let bracketHandledBySystem = harness.coordinator.textView(
+            textView,
+            shouldChangeTextInRanges: [NSValue(range: textView.selectedRange)],
+            replacementText: "「」"
+        )
+        #expect(!bracketHandledBySystem)
+        #expect(textView.text == "本文\n「」")
+        #expect(textView.selectedRange == NSRange(location: 4, length: 0))
     }
 
     @Test("Enterは常時改行と全角スペースを挿入し、キャレットを末尾へ置く")
@@ -57,13 +123,13 @@ struct IOSTextAdapterIntegrationTests {
         #expect(textView.selectedRange == NSRange(location: (textView.text as NSString).length, length: 0))
         #expect(harness.changes.received.last == textView.text)
 
-        #expect(textView.editorUndoManager.canUndo)
-        textView.editorUndoManager.undo()
+        #expect(harness.undoManager.canUndo)
+        harness.undoManager.undo()
         #expect(textView.text == "本文\n　　")
         #expect(harness.changes.received.last == "本文\n　　")
 
-        #expect(textView.editorUndoManager.canRedo)
-        textView.editorUndoManager.redo()
+        #expect(harness.undoManager.canRedo)
+        harness.undoManager.redo()
         #expect(textView.text == "本文\n　　\n　")
         #expect(harness.changes.received.last == "本文\n　　\n　")
     }
@@ -87,6 +153,17 @@ struct IOSTextAdapterIntegrationTests {
 
         #expect(!openingHandledBySystem)
         #expect(!closingHandledBySystem)
+        #expect(textView.text == "「」")
+        #expect(textView.selectedRange == NSRange(location: 1, length: 0))
+
+        harness.undoManager.undo()
+        #expect(textView.text == "「")
+        harness.undoManager.undo()
+        #expect(textView.text == "　")
+
+        harness.undoManager.redo()
+        #expect(textView.text == "「")
+        harness.undoManager.redo()
         #expect(textView.text == "「」")
         #expect(textView.selectedRange == NSRange(location: 1, length: 0))
     }
@@ -125,9 +202,11 @@ struct IOSTextAdapterIntegrationTests {
         #expect(textView.text == "前😀「」後")
         #expect(textView.selectedRange == NSRange(location: insertionLocation + 1, length: 0))
     }
+}
 
+extension IOSTextAdapterIntegrationTests {
     @Test("IME確定後の括弧ペアは行頭字下げを消し、キャレットをペア内へ置く")
-    func imeCommitAppliesPostChangeD055Rules() {
+    func imeCommitAppliesPostChangeD055Rules() async {
         let harness = makeHarness(initialText: "　")
         let textView = harness.textView
         textView.selectedRange = NSRange(location: 1, length: 0)
@@ -139,23 +218,27 @@ struct IOSTextAdapterIntegrationTests {
         #expect(harness.changes.received.isEmpty)
 
         textView.unmarkText()
-        harness.coordinator.textViewDidChange(textView)
+        for _ in 0 ..< 6 {
+            await advanceMainRunLoop()
+        }
 
         #expect(textView.text == "「」")
         #expect(textView.selectedRange == NSRange(location: 1, length: 0))
         #expect(harness.changes.received.last == "「」")
 
-        #expect(textView.editorUndoManager.canUndo)
-        textView.editorUndoManager.undo()
-        #expect(textView.text == "　「」")
-        #expect(textView.selectedRange == NSRange(location: 3, length: 0))
-        #expect(harness.changes.received.last == "　「」")
+        for _ in 0 ..< 2 {
+            #expect(harness.undoManager.canUndo)
+            harness.undoManager.undo()
+            #expect(textView.text == "　「」")
+            #expect(textView.selectedRange == NSRange(location: 3, length: 0))
+            #expect(harness.changes.received.last == "　「」")
 
-        #expect(textView.editorUndoManager.canRedo)
-        textView.editorUndoManager.redo()
-        #expect(textView.text == "「」")
-        #expect(textView.selectedRange == NSRange(location: 1, length: 0))
-        #expect(harness.changes.received.last == "「」")
+            #expect(harness.undoManager.canRedo)
+            harness.undoManager.redo()
+            #expect(textView.text == "「」")
+            #expect(textView.selectedRange == NSRange(location: 1, length: 0))
+            #expect(harness.changes.received.last == "「」")
+        }
     }
 
     @Test("Editor commandはexact選択を置換し、Undo対象として登録する")
@@ -184,11 +267,55 @@ struct IOSTextAdapterIntegrationTests {
 
         #expect(textView.text == "本文を……択")
         #expect(textView.selectedRange == NSRange(location: 5, length: 0))
-        #expect(textView.editorUndoManager.canUndo)
+        #expect(harness.undoManager.canUndo)
 
-        textView.editorUndoManager.undo()
+        harness.undoManager.undo()
         #expect(textView.text == "本文を選択")
         #expect(harness.changes.received.last == "本文を選択")
+    }
+
+    @Test("標準文字入力はnative UndoManagerでUndoとRedoを往復する")
+    func standardInputUsesNativeUndoManager() {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        textView.selectedRange = NSRange(location: 2, length: 0)
+        textView.insertText("追")
+
+        #expect(textView.text == "本文追")
+        #expect(harness.undoManager.canUndo)
+
+        harness.undoManager.undo()
+        #expect(textView.text == "本文")
+        #expect(harness.changes.received.last == "本文")
+
+        #expect(harness.undoManager.canRedo)
+        harness.undoManager.redo()
+        #expect(textView.text == "本文追")
+        #expect(harness.changes.received.last == "本文追")
+    }
+
+    @Test("標準pasteはnative UndoManagerでUndoとRedoを往復する")
+    func standardPasteUsesNativeUndoManager() async {
+        let harness = makeHarness(initialText: "本文")
+        let textView = harness.textView
+        textView.selectedRange = NSRange(location: 2, length: 0)
+        textView.paste(itemProviders: [NSItemProvider(object: "本文" as NSString)])
+
+        for _ in 0 ..< 20 where textView.text != "本文本文" {
+            await Task.yield()
+        }
+
+        #expect(textView.text == "本文本文")
+        #expect(harness.undoManager.canUndo)
+
+        harness.undoManager.undo()
+        #expect(textView.text == "本文")
+        #expect(harness.changes.received.last == "本文")
+
+        #expect(harness.undoManager.canRedo)
+        harness.undoManager.redo()
+        #expect(textView.text == "本文本文")
+        #expect(harness.changes.received.last == "本文本文")
     }
 
     @Test("確定全文captureはUITextViewが所有する最新本文を読み取り専用で返す")
@@ -204,7 +331,7 @@ struct IOSTextAdapterIntegrationTests {
 
         #expect(result == .captured("UITextViewが所有する本文😀"))
         #expect(textView.selectedRange == selection)
-        #expect(!textView.editorUndoManager.canUndo)
+        #expect(!harness.undoManager.canUndo)
         #expect(harness.changes.received.isEmpty)
     }
 
@@ -240,7 +367,7 @@ struct IOSTextAdapterIntegrationTests {
             EditorSelectionContextMenuSnapshot(text: "😀猫", range: range)
         ])
         #expect(textView.text == "前😀猫後")
-        #expect(!textView.editorUndoManager.canUndo)
+        #expect(!harness.undoManager.canUndo)
         #expect(harness.changes.received.isEmpty)
     }
 

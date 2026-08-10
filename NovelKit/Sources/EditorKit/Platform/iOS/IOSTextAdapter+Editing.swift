@@ -50,9 +50,12 @@ extension IOSTextAdapter.Coordinator {
         )
     }
 
-    /// UIKitのプログラム入力は常にUndoを自動登録するとは限らないため、置換前の
-    /// exact本文と選択を専用UndoManagerへ明示登録する。Undo中の逆置換も同じ
-    /// 関数を通り、UndoManagerの標準挙動によってRedoが登録される。
+    /// `UITextView`のnative UndoManagerを唯一の履歴所有者にする。標準typing／pasteと
+    /// Plugin置換を別managerへ分断せず、話切替時だけ同じmanagerをclearする。
+    ///
+    /// UIKitの自動登録はIME確定とPlugin置換を同じ暗黙groupへ入れるとRedoのselectionを
+    /// 壊すことがある。Plugin置換中だけ自動登録を止め、同じnative managerへexactな
+    /// 逆置換を一件登録する。標準typing／pasteの自動登録には介入しない。
     @discardableResult
     private func performInternalReplacement(
         range: NSRange,
@@ -69,9 +72,10 @@ extension IOSTextAdapter.Coordinator {
 
         let originalSelection = textView.selectedRange
         let replacedText = String(source[sourceRange])
+        let undoManager = textView.undoManager
         observedInternalTextChange = false
         isApplyingPluginReplacement = true
-        defer { isApplyingPluginReplacement = false }
+        undoManager?.disableUndoRegistration()
 
         textView.selectedRange = range
         if text.isEmpty {
@@ -81,6 +85,8 @@ extension IOSTextAdapter.Coordinator {
         } else {
             textView.insertText(text)
         }
+        undoManager?.enableUndoRegistration()
+        isApplyingPluginReplacement = false
 
         guard textView.text == expected else {
             textView.selectedRange = originalSelection
@@ -98,7 +104,8 @@ extension IOSTextAdapter.Coordinator {
                 inverseRange: NSRange(location: range.location, length: (text as NSString).length),
                 replacedText: replacedText,
                 originalSelection: originalSelection,
-                textView: textView
+                textView: textView,
+                surfaceToken: commandSurfaceToken
             )
         }
         return true
@@ -108,16 +115,102 @@ extension IOSTextAdapter.Coordinator {
         inverseRange: NSRange,
         replacedText: String,
         originalSelection: NSRange,
-        textView: UITextView
+        textView: UITextView,
+        surfaceToken: EditorSurfaceToken
     ) {
-        textView.undoManager?.registerUndo(withTarget: self) { [weak textView] coordinator in
+        guard commandSurfaceToken == surfaceToken else { return }
+        guard let undoManager = textView.undoManager else { return }
+        let pendingRegistration = IOSPendingUndoRegistration(
+            inverseRange: inverseRange,
+            replacedText: replacedText,
+            originalSelection: originalSelection,
+            surfaceToken: surfaceToken
+        )
+        let isWaitingForUIKitGroup = undoManager.groupingLevel > 0 &&
+            !undoManager.isUndoing &&
+            !undoManager.isRedoing
+        guard undoManager.isUndoRegistrationEnabled, !isWaitingForUIKitGroup else {
+            pendingUndoRegistrations.append(pendingRegistration)
+            schedulePendingUndoFlush()
+            return
+        }
+
+        performUndoRegistration(
+            pendingRegistration,
+            textView: textView,
+            undoManager: undoManager
+        )
+    }
+
+    private func performUndoRegistration(
+        _ pending: IOSPendingUndoRegistration,
+        textView: UITextView,
+        undoManager: UndoManager
+    ) {
+        let registration = { [weak textView, undoManager, self] in
             guard let textView else { return }
-            _ = coordinator.performInternalReplacement(
-                range: inverseRange,
-                text: replacedText,
-                resultingSelection: originalSelection,
-                textView: textView
+            undoManager.registerUndo(withTarget: self) { [weak textView] coordinator in
+                guard let textView,
+                      coordinator.commandSurfaceToken == pending.surfaceToken,
+                      coordinator.textView === textView else { return }
+                _ = coordinator.performInternalReplacement(
+                    range: pending.inverseRange,
+                    text: pending.replacedText,
+                    resultingSelection: pending.originalSelection,
+                    textView: textView
+                )
+            }
+        }
+
+        // IMEの暗黙groupが閉じた後のR5は独立groupにする。Undo／Redo中はmanagerが
+        // 作成済みの逆方向groupへ登録する必要があるため、明示groupを追加しない。
+        let needsExplicitGroup = undoManager.groupingLevel == 0 &&
+            !undoManager.isUndoing &&
+            !undoManager.isRedoing
+        guard needsExplicitGroup else {
+            registration()
+            return
+        }
+
+        let groupsByEvent = undoManager.groupsByEvent
+        undoManager.groupsByEvent = false
+        undoManager.beginUndoGrouping()
+        registration()
+        undoManager.endUndoGrouping()
+        undoManager.groupsByEvent = groupsByEvent
+    }
+
+    func flushPendingUndoRegistrations() {
+        guard !pendingUndoRegistrations.isEmpty,
+              let textView,
+              let undoManager = textView.undoManager else { return }
+        let isWaitingForUIKitGroup = undoManager.groupingLevel > 0 &&
+            !undoManager.isUndoing &&
+            !undoManager.isRedoing
+        guard undoManager.isUndoRegistrationEnabled, !isWaitingForUIKitGroup else { return }
+
+        let registrations = pendingUndoRegistrations
+        pendingUndoRegistrations.removeAll()
+        for registration in registrations where registration.surfaceToken == commandSurfaceToken {
+            registerUndo(
+                inverseRange: registration.inverseRange,
+                replacedText: registration.replacedText,
+                originalSelection: registration.originalSelection,
+                textView: textView,
+                surfaceToken: registration.surfaceToken
             )
+        }
+    }
+
+    func schedulePendingUndoFlush() {
+        guard !isPendingUndoFlushScheduled else { return }
+        isPendingUndoFlushScheduled = true
+        RunLoop.main.perform { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isPendingUndoFlushScheduled = false
+                self.flushPendingUndoRegistrations()
+            }
         }
     }
 }

@@ -7,12 +7,44 @@ extension IOSTextAdapter.Coordinator {
         shouldChangeTextIn range: NSRange,
         replacementText text: String
     ) -> Bool {
+        shouldChangeText(in: textView, range: range, replacementText: text)
+    }
+
+    @available(iOS 26.0, *)
+    func textView(
+        _ textView: UITextView,
+        shouldChangeTextInRanges ranges: [NSValue],
+        replacementText text: String
+    ) -> Bool {
+        // D-055の規則は単一caret／selectionのUTF-16 rangeを前提とする。
+        // multi-caret入力はUIKitへ委ね、単一rangeだけを従来と同じhandlerへ収束させる。
+        guard ranges.count == 1 else { return true }
+        return shouldChangeText(
+            in: textView,
+            range: ranges[0].rangeValue,
+            replacementText: text
+        )
+    }
+
+    private func shouldChangeText(
+        in textView: UITextView,
+        range: NSRange,
+        replacementText text: String
+    ) -> Bool {
         guard !isApplyingPluginReplacement else { return true }
 
         // iOSのIMEもmarked rangeを保持したまま確定入力へ入る場合がある。
         // 確定前に記録し、marked range解放後だけD-055のR5を適用する。
         if textView.markedTextRange != nil {
             hasPendingIMECommit = true
+            let sourceText = textView.text ?? ""
+            if text == "\n", Range(range, in: sourceText) != nil {
+                pendingIMENewline = IOSPendingIMENewline(
+                    sourceText: sourceText,
+                    replacementRange: range,
+                    surfaceToken: commandSurfaceToken
+                )
+            }
         }
 
         let action = pipeline.shouldChange(
@@ -49,6 +81,10 @@ extension IOSTextAdapter.Coordinator {
         }
         guard !isPerformingUndoOrRedo else { return }
 
+        if hasPendingIMECommit {
+            schedulePendingIMECommitSynchronization(from: textView)
+            return
+        }
         synchronizeCommittedText(from: textView)
     }
 
@@ -63,7 +99,31 @@ extension IOSTextAdapter.Coordinator {
             !isApplyingPluginReplacement &&
             !isPerformingUndoOrRedo
         if shouldSynchronizeIMECommit {
-            synchronizeCommittedText(from: textView)
+            schedulePendingIMECommitSynchronization(from: textView)
+        }
+    }
+
+    func textViewDidEndComposition(
+        _ textView: UITextView,
+        surfaceToken: EditorSurfaceToken
+    ) {
+        guard commandSurfaceToken == surfaceToken,
+              hasPendingIMECommit,
+              textView.markedTextRange == nil,
+              !isApplyingPluginReplacement,
+              !isPerformingUndoOrRedo else { return }
+        synchronizeCommittedText(from: textView)
+    }
+
+    private func schedulePendingIMECommitSynchronization(from textView: UITextView) {
+        let surfaceToken = commandSurfaceToken
+        RunLoop.main.perform { [weak self, weak textView] in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let textView,
+                      self.textView === textView else { return }
+                self.textViewDidEndComposition(textView, surfaceToken: surfaceToken)
+            }
         }
     }
 
@@ -86,7 +146,10 @@ extension IOSTextAdapter.Coordinator {
 
     func notifyCommittedText(from textView: UITextView) {
         guard textView.markedTextRange == nil, !isApplyingPluginReplacement else { return }
-        onTextChange(textView.text)
+        let committedText = textView.text ?? ""
+        guard lastNotifiedCommittedText != committedText else { return }
+        lastNotifiedCommittedText = committedText
+        onTextChange(committedText)
     }
 
     private func synchronizeCommittedText(from textView: UITextView) {
@@ -95,11 +158,58 @@ extension IOSTextAdapter.Coordinator {
         pipeline.didChange(context: IOSEditorContext(textView: textView))
 
         if hasPendingIMECommit {
+            let committedNewline = pendingIMENewline
             hasPendingIMECommit = false
+            pendingIMENewline = nil
+            if let committedNewline {
+                applyPostIMENewlineIndent(committedNewline, to: textView)
+            }
             applyPostIMEChange(to: textView)
         }
 
         notifyCommittedText(from: textView)
+    }
+
+    private func applyPostIMENewlineIndent(
+        _ pending: IOSPendingIMENewline,
+        to textView: UITextView
+    ) {
+        guard commandSurfaceToken == pending.surfaceToken else { return }
+
+        let sourceBeforeReplacement = (pending.sourceText as NSString).replacingCharacters(
+            in: pending.replacementRange,
+            with: ""
+        )
+        let insertionRange = NSRange(location: pending.replacementRange.location, length: 0)
+        guard case let .replace(ruleRange, replacement, caretOffset) = IndentRules.action(
+            for: "\n",
+            in: sourceBeforeReplacement,
+            range: insertionRange
+        ), ruleRange == insertionRange else { return }
+
+        let committedText = (pending.sourceText as NSString).replacingCharacters(
+            in: pending.replacementRange,
+            with: "\n"
+        )
+        let committedSelection = NSRange(
+            location: pending.replacementRange.location + 1,
+            length: 0
+        )
+        guard textView.text == committedText,
+              textView.selectedRange == committedSelection else { return }
+
+        _ = applyInternalReplacement(
+            range: NSRange(location: pending.replacementRange.location, length: 1),
+            text: replacement,
+            caretOffset: caretOffset,
+            textView: textView
+        )
+    }
+
+    func discardPendingPlatformEdits() {
+        hasPendingIMECommit = false
+        pendingIMENewline = nil
+        pendingUndoRegistrations.removeAll()
     }
 
     private func applyPostIMEChange(to textView: UITextView) {

@@ -2,20 +2,51 @@
 import SwiftUI
 import UIKit
 
+struct IOSPendingIMENewline {
+    let sourceText: String
+    let replacementRange: NSRange
+    let surfaceToken: EditorSurfaceToken
+}
+
+struct IOSPendingUndoRegistration {
+    let inverseRange: NSRange
+    let replacedText: String
+    let originalSelection: NSRange
+    let surfaceToken: EditorSurfaceToken
+}
+
 /// 話ごとのUndo履歴を所有する、EditorKit内部だけの`UITextView`。
 ///
 /// `textContainer: nil`で初期化するとiOS 16以降はTextKit 2になる。`layoutManager`は
 /// 参照せず、生成直後に`textLayoutManager`の存在を検査する(D-006)。
 @MainActor
 final class IOSTextView: UITextView {
-    let editorUndoManager = UndoManager()
-
-    override var undoManager: UndoManager? {
-        editorUndoManager
-    }
+    weak var editorCoordinator: IOSTextAdapter.Coordinator?
 
     init() {
         super.init(frame: .zero, textContainer: nil)
+    }
+
+    override func unmarkText() {
+        let wasComposing = markedTextRange != nil
+        super.unmarkText()
+        guard wasComposing,
+              markedTextRange == nil,
+              let coordinator = editorCoordinator else { return }
+        let surfaceToken = coordinator.commandSurfaceToken
+
+        // UIKitがunmark直後にselection／change通知を送らない経路も拾う。
+        // 次のMainActor turnまで待ち、通知が先に同期を完了した場合はpending guardで
+        // 二重適用しない。
+        RunLoop.main.perform { [weak self, weak coordinator] in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let coordinator,
+                      self.editorCoordinator === coordinator,
+                      self.markedTextRange == nil else { return }
+                coordinator.textViewDidEndComposition(self, surfaceToken: surfaceToken)
+            }
+        }
     }
 
     @available(*, unavailable)
@@ -54,9 +85,11 @@ struct IOSTextAdapter: UIViewRepresentable {
         }
         context.coordinator.selectionContextMenuCommands = selectionContextMenuCommands
         context.coordinator.textView = textView
+        textView.editorCoordinator = context.coordinator
         context.coordinator.currentChapterKey = chapterKey
 
         textView.text = initialText
+        context.coordinator.lastNotifiedCommittedText = initialText
         context.coordinator.registerCommandSurface(with: commandSession)
         context.coordinator.activateAISelectionSurfaceOnMount(with: aiSelectionSession)
         commandSession.updateSelectionAvailability(
@@ -64,7 +97,7 @@ struct IOSTextAdapter: UIViewRepresentable {
             from: context.coordinator.commandSurfaceToken
         )
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
-        textView.editorUndoManager.removeAllActions()
+        textView.undoManager?.removeAllActions()
         context.coordinator.registerDocumentLifecycle(with: commandSession)
 
         return textView
@@ -86,13 +119,15 @@ struct IOSTextAdapter: UIViewRepresentable {
         )
 
         if shouldLoadText {
+            context.coordinator.discardPendingPlatformEdits()
             context.coordinator.advanceCommandSurface()
             context.coordinator.advanceAISelectionSurface()
             context.coordinator.currentChapterKey = chapterKey
             textView.text = initialText
+            context.coordinator.lastNotifiedCommittedText = initialText
             textView.selectedRange = NSRange(location: 0, length: 0)
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
-            textView.editorUndoManager.removeAllActions()
+            textView.undoManager?.removeAllActions()
         } else {
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView)
         }
@@ -105,7 +140,11 @@ struct IOSTextAdapter: UIViewRepresentable {
         context.coordinator.applyEditorCommandIfNeeded(command, session: commandSession, textView: textView)
     }
 
-    static func dismantleUIView(_: IOSTextView, coordinator: Coordinator) {
+    static func dismantleUIView(_ textView: IOSTextView, coordinator: Coordinator) {
+        textView.delegate = nil
+        textView.editorCoordinator = nil
+        coordinator.discardPendingPlatformEdits()
+        coordinator.textView = nil
         coordinator.unregisterCommandSurface()
         coordinator.unregisterAISelectionSurface()
         coordinator.unregisterDocumentLifecycle()
@@ -162,7 +201,11 @@ struct IOSTextAdapter: UIViewRepresentable {
         var aiSelectionRevision: UInt64 = 0
         var isPerformingUndoOrRedo = false
         var hasPendingIMECommit = false
+        var pendingIMENewline: IOSPendingIMENewline?
+        var pendingUndoRegistrations: [IOSPendingUndoRegistration] = []
+        var isPendingUndoFlushScheduled = false
         var observedInternalTextChange = false
+        var lastNotifiedCommittedText: String?
 
         let pipeline = EditorPluginPipeline(plugins: [IMEGuardPlugin(), IndentPlugin()])
 
@@ -196,18 +239,29 @@ struct IOSTextAdapter: UIViewRepresentable {
                 name: .NSUndoManagerDidRedoChange,
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(undoManagerDidCloseGroup(_:)),
+                name: .NSUndoManagerDidCloseUndoGroup,
+                object: nil
+            )
         }
 
         @objc private func undoManagerWillChange(_ notification: Notification) {
-            guard notification.object as? UndoManager === textView?.editorUndoManager else { return }
+            guard notification.object as? UndoManager === textView?.undoManager else { return }
             isPerformingUndoOrRedo = true
         }
 
         @objc private func undoManagerDidFinishChange(_ notification: Notification) {
-            guard notification.object as? UndoManager === textView?.editorUndoManager else { return }
+            guard notification.object as? UndoManager === textView?.undoManager else { return }
             defer { isPerformingUndoOrRedo = false }
             guard let textView else { return }
             notifyCommittedText(from: textView)
+        }
+
+        @objc private func undoManagerDidCloseGroup(_ notification: Notification) {
+            guard notification.object as? UndoManager === textView?.undoManager else { return }
+            flushPendingUndoRegistrations()
         }
     }
 }
