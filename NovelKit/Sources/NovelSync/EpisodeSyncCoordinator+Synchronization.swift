@@ -94,6 +94,13 @@ private extension EpisodeSyncCoordinator {
         authority: EpisodeLeaseAuthority,
         snapshot: EpisodeRemoteSnapshot
     ) async throws {
+        if current.conflict != nil {
+            // A persisted fork is already the durable source of truth. A fresh
+            // process must surface it before an App layer can install the
+            // package's (usually remote) body as another local revision.
+            try await applyFence(snapshot, expectedAuthority: authority)
+            return
+        }
         if snapshot.lease?.authority == authority {
             state = .restoredUnverified(context(for: current))
         } else {

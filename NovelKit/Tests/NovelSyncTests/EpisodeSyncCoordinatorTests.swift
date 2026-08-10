@@ -293,6 +293,63 @@ struct EpisodeSyncCoordinatorTests {
         }
     }
 
+    @Test("fresh process surfaces a durable conflict before any new local capture")
+    func restorePreservesDurableConflict() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let original = makeCoordinator(
+            server: server,
+            journal: journal,
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await original.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        _ = try await original.recordLocalContent(
+            "durable local fork",
+            createdAt: SyncTestValues.date.addingTimeInterval(1)
+        )
+
+        let pending = try #require(await journal.storedRecord(for: SyncTestValues.key))
+        let remote = try #require(pending.lastKnownRemoteHead)
+        let conflict = EpisodeConflict(
+            base: remote,
+            local: pending.localHead,
+            remote: remote
+        )
+        let conflictedRecord = try EpisodeSyncJournalRecord(
+            key: pending.key,
+            branchID: pending.branchID,
+            lastKnownRemoteHead: pending.lastKnownRemoteHead,
+            localHead: pending.localHead,
+            pendingRevisions: pending.pendingRevisions,
+            sealedPublish: pending.sealedPublish,
+            lease: pending.lease,
+            conflict: conflict,
+            mode: .forcedFork
+        )
+        try await journal.save(conflictedRecord)
+
+        let restarted = makeCoordinator(
+            server: server,
+            journal: journal,
+            replica: SyncTestValues.replicaA,
+            session: SyncEditSessionID()
+        )
+        _ = try await restarted.restore()
+        let restored = try await restarted.synchronize()
+        let restoredConflict = try #require(syncConflict(from: restored))
+        #expect(restoredConflict.local.content == "durable local fork")
+        #expect(restoredConflict.remote.content == "base")
+
+        let preserved = try #require(await journal.storedRecord(for: SyncTestValues.key))
+        #expect(preserved.pendingRevisions.map(\.content) == ["durable local fork"])
+        #expect(preserved.conflict?.local.content == "durable local fork")
+    }
+
     @Test("initial link mismatch is an explicit base-unknown conflict and never auto-publishes")
     func initialLinkMismatchIsConflict() async throws {
         let server = InMemoryEpisodeSyncServer()
