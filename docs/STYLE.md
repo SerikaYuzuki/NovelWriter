@@ -12,7 +12,7 @@
 - Sidebar、Outline、toolbar、form等のchromeは、macOSではシステムLight／Dark外観への追従を既定とする。iOS / iPadOSはD-057により初回だけDarkを既定とし、いずれも設定からシステム追従／Light／Darkを選び直せる。特定外観だけで成立する固定色UIにしない
 - 本文エディタのキャンバスはchromeと独立した利用者設定とし、既定は従来どおり「夜の書斎」の暗色キャンバスにする。システム外観を変えても利用者の本文配色を勝手に上書きしない
 - 画面は Project Sidebar / Outline / Editor と下部status barのワークベンチとして扱い、本文の横幅を最優先する。未実装AI用の領域は予約表示しない(D-040)
-- iOS / iPadOSは作品棚から作品ホームへ入り、作品情報または執筆を選んでからOutline / Editorへ進む。作品棚はapp-private作業コピーだけを表示し、外部providerは標準pickerへの入口として表現する(D-057)
+- iOS / iPadOSは作品棚から作品ホームへ入り、作品情報／執筆／プロット／登場人物／世界観／資料／設定を選んでから各Outline / Detailへ進む。作品棚はapp-private作業コピーだけを表示し、外部providerは標準pickerへの入口として表現する(D-057 / D-058)
 
 ## 2. カラー
 
@@ -73,6 +73,8 @@
 - 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / 下部status bar 28pt / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
+- iOS Editorは本文面積を優先し、保存状態を上部のnative toolbarへ置く。重複する「本文」見出し、話タイトル入力、文字カウンター、独立した下部status barを常設しない
+- iOSの執筆補助バーはEditor直下に置き、ソフトウェアキーボード表示中はIME直上へ追従する。バーとsafe areaの背景は本文キャンバスと同じ不透明色にし、chrome用materialで本文を分断しない。4操作は各44pt以上のhit targetを持つ
 - Outline系paneは`.thinMaterial`を共通surfaceとし、背面のwindow surfaceがわずかに見える状態を保つ。不透明な`.bar`への統一は禁止
 - detail chrome(見出しバー、フォーム背面、GroupBox周辺)も`workbenchGlassChromeStyle()`(=`.thinMaterial`)へ寄せる。原稿および世界観ノートの`EditorView`背景だけは不透明キャンバスを維持する
 - 執筆Outlineは`OutlineContainerView`全体へglassを付け、内側Listは`workbenchOutlineListStyle()`だけを使い二重materialを避ける
@@ -85,7 +87,8 @@
 - **Project Sidebar**: アイコン + ラベル。選択は OS 標準の sidebar selection を優先。常設説明文を置かず、ラベルは短い名詞にする
 - **Outline**: 通常の行は「タイトル + メタ情報」の2段構成。執筆Outlineの章Disclosureだけは、章名・話数・文字数・現在行の保存状態を横一列へ収めるcompact行とし、章名以外を末尾へ固定する。章label全体を開閉のhit targetにする。検索バーは通常非表示で、表示時も一覧を押し下げすぎない。Project Sidebarを含むOutline背景は共通のtranslucent materialとする
 - **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
-- **Workbench status bar**: 保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない
+- **Workbench status bar**: macOSでは保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない。iOS EditorはD-058によりstatus barを常設せず、保存状態を上部へ移し、文字数を重複表示しない
+- **iOS Editor accessory**: `……` / `――` / `ルビ` / `傍点`の短いlabelを横並びにし、本文キャンバスと同じ背景を使う。選択が必要な操作は無効状態を見た目とVoiceOver valueの両方で伝え、toolbarだけを唯一の入口にしない
 - **Startup / Recovery**: `loading`では作品を読み込んでいることだけを静かに示し、編集操作を出さない。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
@@ -129,6 +132,8 @@
 - [ ] 上部が一段の native toolbar で、Sidebar 開閉 / 作品名 + 章数 / 編集操作 / 右端検索の既定配置になっているか
 - [ ] カスタマイズ可能な toolbar 操作すべてに、メニューまたは文脈メニューの代替入口があるか
 - [ ] status barが保存状態・話／全体文字数・検索不一致だけを正確に示し、未実装機能の入口を含んでいないか
+- [ ] iOS Editorでは保存状態が上部にあり、重複する本文見出し／話タイトル入力／文字カウンターがなく、執筆補助バーの背景とsafe areaが本文キャンバスへ連続しているか
+- [ ] `……` / `――` / `ルビ` / `傍点`が44pt以上、VoiceOverで識別可能、IME／stale selection時に本文を変更せず、Undo 1回で戻せるか
 - [ ] Loading / Recovery中に編集・保存可能なWorkbenchが露出せず、Recoveryの4導線がキーボードとVoiceOverで使えるか
 - [ ] 空状態は `ContentUnavailableView` + 規約どおりの文言か
 - [ ] 常設の影・独自ハイライト・0.5s 超のアニメーションを追加していないか

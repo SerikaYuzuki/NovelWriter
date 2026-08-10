@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.73
+# ふみにわ 設計書 v0.74
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -419,7 +419,7 @@ ContentView
 
 補足: v1 では `DocumentGroup`(ドキュメントベースApp)は使わず、単一ウィンドウ + 明示的な Repository 構成とする。オートセーブやバージョン管理を自前で持つ代わりに、ウィンドウ管理・状態管理がシンプルになる。複数作品対応の際に再評価する。
 
-iOS / iPadOSはD-057により、app-private作品棚をrootとする。作品棚は同時に複数作品を編集するdocument UIではなく、`Application Support/FUMINIWA/Works`直下の作業コピーから現在作品を1つ選ぶ入口である。iPhoneは作品棚 → 作品ホーム → 作品情報または執筆Outline → Editorの`NavigationStack`、iPadは同じ情報階層を適応的なsplitへ展開する。Files / iCloud Drive等は標準pickerから作業コピーへ取り込む入口だけを出し、外部原本を独自一覧へ混ぜない。
+iOS / iPadOSはD-057 / D-058により、app-private作品棚をrootとする。作品棚は同時に複数作品を編集するdocument UIではなく、`Application Support/FUMINIWA/Works`直下の作業コピーから現在作品を1つ選ぶ入口である。iPhoneは作品棚 → 作品ホーム → 作品情報／執筆／プロット／登場人物／世界観／資料／設定の各画面へ進む`NavigationStack`、iPadは同じ情報階層をProject Sidebar / Outline / Detailへ適応的に展開する。Files / iCloud Drive等は標準pickerから作業コピーへ取り込む入口だけを出し、外部原本を独自一覧へ混ぜない。
 
 ## 6. 初期機能要件
 
@@ -451,6 +451,7 @@ iOS / iPadOSはD-057により、app-private作品棚をrootとする。作品棚
 - 改行時に自動インデントできる
 - 本文データへ空行を追加せず、本文末尾の下に常時96ptの執筆用表示余白を確保する
 - プラグイン置換で改行や字下げを適用した後は、移動後のキャレットを明示的に可視範囲へスクロールする
+- iOS Editorは重複する本文見出し／話タイトル入力／文字カウンターを常設せず、保存状態を上部toolbarへ置く。本文直下またはIME直上に`……` / `――` / `ルビ` / `傍点`の執筆補助バーを置き、`EditorCommandSession`から選択snapshotを取得してUndo可能な1置換として実行する(D-058)
 
 ### 6.4 保存
 
@@ -628,6 +629,7 @@ IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機Q
 - **IOS-5 Clipboard Prompt（実装済み）**: 校正／アドバイス×本文選択／話／章を`UIPasteboard`へ明示コピーする。AI provider、送信、応答、Applyは持たない
 - **IOS-6 Parity / Release QA（未完了）**: 残るmacOS機能、round-trip、実機IME、scene遷移、VoiceOver / Dynamic Type、性能と配布を検証する
 - **Library-first shell（D-057）**: app-private作品棚、作品ホーム、作品情報／執筆OutlineからEditorへ進む段階導線と、初回Dark／System・Light・Dark選択を追加する。外部providerは標準pickerからの取込だけとする
+- **Feature parity shell（D-058）**: プロット／伏線、登場人物、世界観、資料、設定を既存domainと保存境界へ接続し、iPhoneの段階画面とiPadのProject Sidebar / Outline / Detailから選べるようにする。iOS Editorは保存状態を上部へ移し、本文キャンバスと同じ背景の執筆補助バーから4つの明示commandを実行する
 
 MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
@@ -755,7 +757,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
 
-D-056の **Phase 7 IOS-1〜5は実装済み**。iOS targetは通常macOS版と同じ5 productだけをlinkし、`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続し、Simulator統合テストで検証した。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
+D-056の **Phase 7 IOS-1〜5は実装済み**で、D-058によりIOS-6の機能parityとしてプロット／伏線、登場人物、世界観、資料、設定と4つの執筆補助commandをiOS導線へ接続した。iOS targetは通常macOS版と同じ5 productだけをlinkし、`NovelAI`、Experimental、provider／SDK／Node／CLI／sidecar／network／credentialを含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続している。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
 
 D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
 
@@ -791,6 +793,16 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.74 (2026-08-11)
+
+iOS / iPadOSの作品ホーム以降をD-058の機能parity導線へ拡張し、Editor chromeと執筆補助を整理した。
+
+- プロット／伏線、登場人物、世界観、資料、設定を既存`NovelDocument`／Repositoryとrevision保存へ接続
+- iPhoneは各一覧／詳細への段階遷移、iPadはProject Sidebar / Outline / Detailから同じ機能へ到達
+- iOS Editorの重複した本文見出し、話タイトル入力、文字カウンターを外し、保存状態を上部toolbarへ移動
+- 本文キャンバスと同じ背景の執筆補助バーへ`……` / `――` / `ルビ` / `傍点`を追加し、selection commandとUndoの既存契約を再利用
+- `.novelpkg` schema、EditorKitの字下げ／鉤括弧、TextKit 2、通常版のAI依存境界は変更しない
 
 ### v0.73 (2026-08-10)
 

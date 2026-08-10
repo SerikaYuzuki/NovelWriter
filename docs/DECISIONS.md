@@ -608,3 +608,19 @@
 - **置き換える範囲**: D-056の段階遷移とapp-private import / edit / exportを具体化し、DESIGN 12章の「ライブラリ管理UI」をapp-private作品棚に限って対象へ移す。D-044のシステム追従既定はmacOSと、iOSで利用者が「システムに合わせる」を選んだ後について維持する。open-in-place、外部provider横断一覧、独自cloud同期、複数作品同時編集は引き続き対象外である。
 - **理由**: 既存実装はapp-private領域へ新規・取込作品を蓄積していたが、recent 1件しか再選択できず、起動直後に章一覧を出すため作品選択と機能選択の情報階層が欠けていた。作品棚と作品ホームを分ければ、原本を直接編集しない安全境界を保ったまま、利用者が「どの作品で何をするか」を先に選べる。Darkを初回既定にする要望も、変更可能な外観設定とsemantic colorを維持すれば、固定色のDark専用UIにせず実現できる。
 - **詳細**: 画面階層、文書境界、アクセシビリティと受け入れ条件は[IOS.md](IOS.md)、色・余白・外観規約は[STYLE.md](STYLE.md)を正とする。
+
+## D-058: iOSの作品機能を実画面へ接続し、執筆補助を本文直下へ置く
+
+- **日付**: 2026-08-11 / **状態**: 承認（ユーザー要望。iOS機能parityとして実装）
+- **内容**:
+  1. iOS / iPadOSの作品ホームとProject Sidebarへ、既存の`NovelDocument`へ実際に保存される **プロット、登場人物、世界観、資料、設定** を追加する。プロット画面には章別の`PlotCard`と作品全体の`Flag`をまとめ、macOS版と同じ「プロット／伏線」の意味を保つ。未接続のplaceholderや将来機能は並べない。
+  2. iPhoneは作品ホームから各一覧、選択項目の編集画面へ`NavigationStack`で進む。iPadはProject Sidebar / Outline / Detailを基本にし、Editor表示中に別セクションや項目へ移る前はD-041 / D-056のEditor同期境界でIME確定と旧話の全文captureを完了する。同期に失敗した場合は遷移しない。
+  3. プロットカード、伏線、登場人物、世界観ノートは既存のIDと配列順を唯一の正とし、追加、選択、編集、削除、並べ替えを同じrevision保存経路へ流す。世界観本文は既存の`world.json` + `world-notes/<WorldNoteID>.md`、資料は`AttachmentManaging`境界を使い、App層からpackage内部構造を読まない。
+  4. 資料の取り込みは利用者が選んだ外部URLへsecurity-scoped accessを得ている間だけ行い、現在のapp-private作業コピーへ複製する。作品操作gate → 保存直列化のlock順、呼び出し時の作品identity、失敗時に現在作品を維持する契約を守る。資料の一覧、削除、共有は実在するRepository機能だけを出す。
+  5. iOS Editor上の重複した「本文」見出し、話タイトル入力、文字カウンターを外す。話タイトルはOutline／navigationの文脈を正とし、保存チェック／保存状態は上部のnative toolbarへ移す。本文面積を優先し、下部に別のstatus barを重ねない。
+  6. Editor直下、ソフトウェアキーボード表示時はIMEの直上に、本文キャンバスと同じ背景を持つ執筆補助バーを置く。操作は`……`、`――`、`ルビ`、`傍点`の4つとし、D-030 / D-034の`EditorCommandSession`、選択snapshot、`EditorNotationRules`、正規のselection replacementをそのまま使う。App側が本文Bindingを直接変更せず、各実行はUndo 1回で戻せる。
+  7. `……`と`――`は現在選択を置換し、空選択ではcaretへ挿入する。ルビは選択文字列を親文字として入力sheetへ渡し、確定時に`｜親文字《ルビ》`へ置換する。傍点は非空選択をgrapheme単位の`｜字《・》`へ変換し、改行と空白はそのまま保つ。IME変換中、surface失効、作品／話切替、古いselection snapshotでは本文を変更せず、明示的に再試行できる状態へ戻す。
+  8. 執筆補助バーの背景を本文キャンバスへ揃えることはiOS Editor固有の例外とし、Project Sidebar / Outline / Formは引き続きsemantic colorとsystem materialを使う。4操作は44pt以上のhit target、Dynamic Type、VoiceOver label、hardware keyboardからの代替入口を持つ。`.novelpkg` schema、EditorPlugin pipeline、字下げ／鉤括弧のR1' / R3 / R4 / R5、TextKit 2、通常版のAI依存境界は変更しない。
+- **置き換える範囲**: D-057の「作品ホームには作品情報、執筆、書き出しだけを出す」は、当時未接続だった機能をplaceholderとして出さないための制限だった。本Decisionにより実装・保存まで接続したプロット、登場人物、世界観、資料、設定を追加対象へ移す。macOSのstatus bar規約は維持し、iOS Editorだけ保存状態を上部へ移して文字カウンターを常設しない。
+- **理由**: 作品棚と作品ホームで「どの作品で何をするか」は選べるようになったが、既存packageに保存されている小説支援データへiOSから到達できず、Editorにも話文脈と文字数の重複表示が残っていた。既存domainとcommand境界を再利用すれば、入力規則をUIKitへ複製せず、本文面積を優先したiOSらしい段階導線と、macOS版と同じ明示的な執筆補助を安全に提供できる。
+- **詳細**: 端末別の情報階層、資料操作、Editor受け入れ条件は[IOS.md](IOS.md)、背景とtoolbarの規約は[STYLE.md](STYLE.md)、commandとnotationの正はD-030 / D-034および[DESIGN.md](DESIGN.md) 6.3を参照する。

@@ -1,6 +1,6 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線を追加（Simulator / generic device / ローカルCI検証済み。実機・Accessibility / Release QAは未完了）
+> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線とD-058の作品機能／執筆補助parityを追加（Simulator / generic device / ローカルCI検証済み。実機・Accessibility / Release QAは未完了）
 >
 > **対象**: iOS / iPadOS 17 以降
 >
@@ -19,7 +19,9 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - `FUMINIWAIOS` app / test target、iPhone / iPad対応Info.plist、通常5 productだけの依存境界を実装した
 - app-privateな新規作成／取込／revision保存／書出、Loading / Ready / Recovery、適応的な`NavigationSplitView`を実装した
 - app-private作業コピーを再選択できる作品棚と、作品ホーム→作品情報／執筆→Outline→Editorの段階導線をD-057で追加した
+- プロット／伏線、登場人物、世界観、資料、設定を既存domainと保存へ接続し、作品ホームとiPad Project Sidebarから選べるようにした
 - `UITextView` + TextKit 2 adapterを追加し、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5、IME pending確定、Undo / Redo、末尾96pt表示余白、caret revealを接続した
+- iOS Editorの保存状態を上部へ移し、本文キャンバスと同じ背景のIME直上バーから`……` / `――` / `ルビ` / `傍点`をselection commandとして実行できるようにした
 - 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
 - generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、全ローカルCIを通過した
 
@@ -38,6 +40,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - `UITextView` + TextKit 2で日本語IME、Undo / Redo、R1' / R3 / R4 / R5、自動保存前の確定本文同期を成立させる
 - iPadはProject Sidebar / Outline / Editorの適応的な複数列、iPhoneは`NavigationStack`によるProject / Outline / Editorの段階遷移にする
 - 起点は作品棚とし、作品ホームで作品情報／執筆／書き出しを選ぶ。iPhoneは作品棚→作品ホーム→執筆Outline→Editor、iPadは同じ階層を適応的な複数列へ展開する
+- 作品ホームでプロット／伏線、登場人物、世界観、資料、設定を選び、既存packageデータを追加／編集／削除／並べ替えできる
 - iOS chromeは初回Darkを既定とし、システム追従／Light／Darkへ変更できる。外観設定はpackageへ保存しない
 - 校正／アドバイス×本文選択／話／章の6種類のprompt copyを提供する
 - Dynamic Type、VoiceOver、ハードウェアキーボード、ソフトウェアキーボード、scene非アクティブ化を検証する
@@ -78,6 +81,7 @@ FUMINIWAIOS ─X─ provider SDK / Node / CLI / sidecar / network / credential
 - `NovelpkgRepository`と`.novelpkg` v3の互換境界
 - `NovelExport`のTXT / Markdown / EPUB 3生成
 - `EditorView`のplatform-neutral公開API、`EditorCommandSession`、selection command
+- `EditorNotationRules`のルビ／傍点表現、PlotCard / Flag / Character / WorldNote / Attachmentのdomain契約
 - `IndentRules`、`IMEGuardPlugin`、`IndentPlugin`、UTF-16 range規約
 - clipboard prompt builder、purpose / scope、snapshot・session検査、成功／失敗結果
 
@@ -122,6 +126,13 @@ UIKit型をNovelCore、NovelStorage、NovelExport、EditorKitの公開APIへ出�
 
 app-private MVPの完成をopen-in-place、iCloud同期、File Provider競合対応の完成とは表現しない。
 
+### 4.5 資料
+
+- 資料一覧は現在のapp-private作業コピーに対して`AttachmentManaging`から取得し、App層でpackage内部pathを組み立てない
+- 取り込み前に最新本文を同じ保存直列化経路で確定し、外部URLのsecurity-scoped access中だけRepositoryへ複製を依頼する
+- 一覧、削除確認、共有は表示時の作品identityと資料IDを保持し、待機中に作品が変わった操作を別作品へ適用しない
+- 外部原本の資料を直接編集したり、任意の外部path／bookmarkをpackageへ保存したりしない
+
 ## 5. iOS本文エディタ契約
 
 ### 5.1 TextKit 2とテキスト所有権
@@ -153,26 +164,35 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - software keyboard、hardware keyboard、safe area、端末回転でキャレットをkeyboard下へ残さない
 - 表示設定の変更は本文を流し直さず、IME変換中ならcomposition終了後まで保留する
 
+### 5.4 Editor chromeと執筆補助
+
+- Editor上の重複した「本文」見出し、話タイトル入力、文字カウンターを外し、話タイトルはOutline／navigationの文脈を正とする
+- 保存チェック／保存状態は上部のnative toolbarへ移し、下部status barを本文へ重ねない
+- Editor直下、software keyboard表示時はIME直上に、本文キャンバスと同じ不透明背景の執筆補助バーを置く
+- `……` / `――`はselection replacement、`ルビ`はsheet確定後の`｜親文字《ルビ》`、`傍点`は非空selectionのgraphemeを`｜字《・》`へ変換する
+- commandは`EditorCommandSession`からexact selection snapshotを取り、App側のBindingを直接変更せず、1回のUndo / Redoで往復できる
+- IME変換中、pending command中、surface失効、作品／話のidentity不一致、stale snapshotでは置換しない。字下げ／鉤括弧のplugin pipelineへ4操作を追加しない
+
 ## 6. 適応UI
 
 ### 共通の情報階層
 
 - 起動後はapp-private作業コピーを「このデバイスの作品」として作品棚へ表示する
 - Files / iCloud Drive / 他社File Providerは「取り込む…」から標準pickerを開き、選択後の作業コピーだけを作品棚へ加える
-- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「作品を書き出す」を提示する
-- 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する
+- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する
+- 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
-- Plot、登場人物、世界観、資料等はiOS実画面へ接続するまでplaceholderとして作品ホームへ出さない
+- 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
 
 ### iPad
 
-- 横幅が十分ならProject Sidebar / Outline / Detail(Editor)の3列を基本とする
+- 横幅が十分ならProject Sidebar / Outline / Detailの3列を基本とする。作品情報と設定だけはOutlineを持たない2列にする
 - 幅が狭い場合は`NavigationSplitView`の標準collapseへ従う
 - hardware keyboardの保存、検索、Undo / Redo等を標準commandへ接続する
 
 ### iPhone
 
-- `NavigationStack`で作品棚 → 作品ホーム → Outline → Editorへ進む。作品情報は作品ホームから直接開く
+- `NavigationStack`で作品棚 → 作品ホーム → 各機能のOutline → Detailへ進む。作品情報と設定は作品ホームから直接開く
 - 本文編集中は本文を最優先し、章／話操作は戻る導線または明示menuへ置く
 - navigation pop、scene非アクティブ化、作品切替の前にIME確定とsession検査を行う
 
@@ -205,7 +225,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 4. **IOS-3 UITextView Adapter（実装済み）**: TextKit 2、所有権、selection、command session、R1' / R3 / R4 / R5、Undo / Redo、viewportを実装する
 5. **IOS-4 Document MVP / Shell（実装済み）**: app-private新規／取込／保存／書出、Safe Launch / Recovery、iPhone / iPad navigationを接続する
 6. **IOS-5 Clipboard Prompt（実装済み）**: 6種類のprompt copyとcontext / edit menu、VoiceOver / keyboard入口を接続する
-7. **IOS-6 Parity / Release QA（未完了）**: 残るmacOS機能、export、実機IME、アクセシビリティ、background／termination、性能を検証する
+7. **IOS-6 Parity / Release QA（進行中）**: D-058のプロット／伏線、登場人物、世界観、資料、設定、執筆補助commandは実装済み。残るmacOS機能、完全round-trip、実機IME、アクセシビリティ、background／termination、性能を検証する
 
 各PRは意味単位で小さく保ち、生成物をコミットしない。ローカル検証だけを使い、`Scripts/check.sh`へ段階的にiOS app build / test、target separation検査を追加する。
 
@@ -234,6 +254,9 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - R1'、R3、R4、D-055拡張後のR5を、直接入力、一括ペア、開閉別入力、IME確定、emoji前後で満たす
 - plugin置換とIME後処理がUndo / Redo可能で、話切替後に別話のundo履歴を適用しない
 - 末尾96pt余白とscrollは表示だけを変え、保存本文、文字数、検索、exportを変えない
+- Editor上部に保存状態があり、重複した本文見出し／話タイトル入力／文字カウンターがない
+- `……` / `――` / `ルビ` / `傍点`がselection snapshotから正しいUTF-16置換を行い、各操作をUndo / Redoできる
+- 執筆補助バーは本文キャンバスと連続し、software keyboard表示時にIME直上から操作できる
 
 ### Clipboard / Accessibility
 
@@ -242,6 +265,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - VoiceOver、Dynamic Type、software / hardware keyboardで同じ主要操作へ到達できる
 - 作品棚→作品ホーム→Outline→Editorの順序をVoiceOverで理解でき、行のタイトルと章／話／文字数を読み分けられる
 - System／Light／Darkの各外観、Increase Contrast、Reduce Transparencyで作品棚と作品ホームを判読できる
+- プロット／伏線、登場人物、世界観、資料、設定の一覧／追加／編集／削除へVoiceOverとDynamic Typeで到達できる
 
 ## 10. Phase 7 MVP完了の定義
 
