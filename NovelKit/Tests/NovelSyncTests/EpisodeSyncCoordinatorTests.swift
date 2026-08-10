@@ -125,7 +125,7 @@ struct EpisodeSyncCoordinatorTests {
         #expect(await server.currentHead(for: SyncTestValues.key) == finalContext.localHead)
     }
 
-    @Test("a native edit completed during conflict discovery replaces only the durable local fork")
+    @Test("a native edit completed during conflict discovery extends the durable local fork")
     func lateNativeEditIsPreservedInConflict() async throws {
         let server = InMemoryEpisodeSyncServer()
         let journal = InMemoryEpisodeSyncJournal()
@@ -171,17 +171,27 @@ struct EpisodeSyncCoordinatorTests {
         let updated = try #require(syncConflict(from: preserved))
         #expect(updated.local.content == "late native X")
         #expect(updated.remote == original.remote)
-        #expect(await journal.storedRecord(for: SyncTestValues.key)?.pendingRevisions.map(\.content) == [
-            "late native X"
-        ])
+        let preservedRecord = try #require(await journal.storedRecord(for: SyncTestValues.key))
+        #expect(preservedRecord.pendingRevisions.map(\.content) == ["local L", "late native X"])
+        #expect(updated.local.parentRevisionIDs == [original.local.revisionID])
 
-        // remote本文をすでにmaterialize済みなら、既存Xをremoteで置換しない。
-        _ = try await mac.preserveConflictLocalContent(
-            updated.remote.content,
+        let coalesced = try await mac.preserveConflictLocalContent(
+            "later native Y",
             expectedConflict: updated,
             createdAt: SyncTestValues.date.addingTimeInterval(2)
         )
-        #expect(await journal.storedRecord(for: SyncTestValues.key)?.conflict?.local.content == "late native X")
+        let latest = try #require(syncConflict(from: coalesced))
+        let coalescedRecord = try #require(await journal.storedRecord(for: SyncTestValues.key))
+        #expect(coalescedRecord.pendingRevisions.map(\.content) == ["local L", "later native Y"])
+        #expect(latest.local.parentRevisionIDs == [original.local.revisionID])
+
+        // remote本文をすでにmaterialize済みなら、既存Yをremoteで置換しない。
+        _ = try await mac.preserveConflictLocalContent(
+            latest.remote.content,
+            expectedConflict: latest,
+            createdAt: SyncTestValues.date.addingTimeInterval(3)
+        )
+        #expect(await journal.storedRecord(for: SyncTestValues.key)?.conflict?.local.content == "later native Y")
         await #expect(throws: EpisodeSyncCoordinatorError.conflictSuperseded) {
             _ = try await mac.preserveConflictLocalContent(
                 "stale",

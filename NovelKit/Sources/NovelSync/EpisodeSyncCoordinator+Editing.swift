@@ -36,7 +36,7 @@ public extension EpisodeSyncCoordinator {
         let digest = SyncContentDigest(content: content)
         if digest != expectedConflict.local.contentDigest,
            digest != expectedConflict.remote.contentDigest {
-            try appendLocalRevision(content: content, createdAt: createdAt, to: &record)
+            try appendConflictLocalRevision(content: content, createdAt: createdAt, to: &record)
             record.mode = .forcedFork
             self.record = record
             try await journal.save(record)

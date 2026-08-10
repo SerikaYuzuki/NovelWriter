@@ -56,6 +56,54 @@ extension EpisodeSyncCoordinator {
         }
     }
 
+    /// conflict発見前から存在した最初のlocal forkはimmutableに残し、
+    /// その後native editorへ入った未送信tailだけをcoalesceする。
+    func appendConflictLocalRevision(
+        content: String,
+        createdAt: Date,
+        to record: inout EpisodeSyncJournalRecord
+    ) throws {
+        guard SyncContentDigest(content: content) != record.localHead.contentDigest else { return }
+        let parents = conflictTailParents(in: &record)
+        let revision = try makeRevision(
+            content: content,
+            parents: parents,
+            branchID: record.branchID,
+            createdAt: createdAt
+        )
+        record.localHead = revision
+        record.pendingRevisions.append(revision)
+        if let conflict = record.conflict {
+            record.conflict = EpisodeConflict(
+                base: conflict.base,
+                local: revision,
+                remote: conflict.remote
+            )
+        }
+    }
+
+    func conflictTailParents(
+        in record: inout EpisodeSyncJournalRecord
+    ) -> [SyncRevisionID] {
+        if let sealed = record.sealedPublish {
+            let sealedIDs = Set(sealed.revisionIDs)
+            if let tailIndex = record.pendingRevisions.firstIndex(where: {
+                !sealedIDs.contains($0.revisionID)
+            }) {
+                let parents = record.pendingRevisions[tailIndex].parentRevisionIDs
+                record.pendingRevisions.removeSubrange(tailIndex...)
+                return parents
+            }
+            return [sealed.candidateHeadRevisionID]
+        }
+        if record.pendingRevisions.count > 1 {
+            let parents = record.pendingRevisions[1].parentRevisionIDs
+            record.pendingRevisions.removeSubrange(1...)
+            return parents
+        }
+        return [record.localHead.revisionID]
+    }
+
     func coalescedParents(
         in record: inout EpisodeSyncJournalRecord
     ) -> [SyncRevisionID] {
