@@ -255,6 +255,9 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
             return error
         }
         if let adapterError = error as? CloudKitSyncAdapterError {
+            if adapterError.isTransientTransportFailure {
+                return EpisodeSyncTransportError.unavailable
+            }
             if adapterError == .zoneUnavailable || adapterError == .zoneReset {
                 zoneLifecycle = .blocked(adapterError)
             }

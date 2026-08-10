@@ -243,7 +243,14 @@ struct AppleDeviceSyncMetadataStoreTests {
         let blocked = AppleDeviceSyncBlockedServices(
             replicaID: snapshot.replicaID,
             reason: .accountUnavailable,
-            metadataStore: restartedStore
+            metadataStore: restartedStore,
+            journalFactory: AppleDeviceSyncJournalFactory(
+                rootURL: restartedStore.rootURL.appendingPathComponent(
+                    AppleDeviceSyncServices.journalDirectoryName,
+                    isDirectory: true
+                ),
+                metadataStore: restartedStore
+            )
         )
         #expect(
             await blocked.localStatus(for: boundLocator)
@@ -271,14 +278,9 @@ struct AppleDeviceSyncMetadataStoreTests {
             to: cloudTestWorkID,
             allowedEpisodeIDs: [cloudTestEpisodeID]
         )
-        let gate = AppleDeviceSyncAccountGate(
-            expectedScope: scope,
-            scopeResolver: { scope }
-        )
         let journalRoot = root.appendingPathComponent("journals-v1", isDirectory: true)
         let factory = AppleDeviceSyncJournalFactory(
             rootURL: journalRoot,
-            accountGate: gate,
             metadataStore: store
         )
         let firstJournal = try await factory.journal(for: firstBinding.binding)
@@ -300,6 +302,7 @@ struct AppleDeviceSyncMetadataStoreTests {
         )
         let firstRecord = try EpisodeSyncJournalRecord(
             key: cloudTestKey,
+            localWorkingCopyID: firstBinding.binding.localWorkingCopyID,
             branchID: cloudTestBranchID,
             lastKnownRemoteHead: nil,
             localHead: firstRevision,
@@ -307,6 +310,7 @@ struct AppleDeviceSyncMetadataStoreTests {
         )
         let secondRecord = try EpisodeSyncJournalRecord(
             key: cloudTestKey,
+            localWorkingCopyID: secondBinding.binding.localWorkingCopyID,
             branchID: cloudTestBranchID,
             lastKnownRemoteHead: remoteRevision,
             localHead: secondRevision,

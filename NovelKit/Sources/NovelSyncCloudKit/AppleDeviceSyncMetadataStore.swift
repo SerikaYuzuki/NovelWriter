@@ -107,7 +107,7 @@ actor AppleDeviceSyncMetadataStore {
     nonisolated let replicaID: SyncReplicaID
     nonisolated let initialBoundLocators: Set<AppleLocalDocumentLocator>
 
-    let rootURL: URL
+    nonisolated let rootURL: URL
     let metadataURL: URL
     let fileManager: FileManager
     var document: AppleDeviceSyncMetadataDocument

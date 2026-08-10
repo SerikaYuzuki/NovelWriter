@@ -123,7 +123,10 @@ enum CloudKitErrorMapper {
     }
 
     static func isTransient(_ error: any Error) -> Bool {
-        switch map(error) {
+        if let adapterError = error as? CloudKitSyncAdapterError {
+            return adapterError.isTransientTransportFailure
+        }
+        return switch map(error) {
         case .temporarilyUnavailable, .accountUnavailable(.temporarilyUnavailable):
             true
         case let .partialFailure(kinds):
@@ -179,5 +182,18 @@ enum CloudKitErrorMapper {
     private static func partialFailureKinds(from error: CKError) -> Set<CloudKitPartialFailureKind> {
         guard let itemErrors = error.partialErrorsByItemID else { return [] }
         return Set(itemErrors.values.map(failureKind))
+    }
+}
+
+extension CloudKitSyncAdapterError {
+    var isTransientTransportFailure: Bool {
+        switch self {
+        case .temporarilyUnavailable, .accountUnavailable(.temporarilyUnavailable):
+            true
+        case let .partialFailure(kinds):
+            !kinds.isEmpty && kinds.allSatisfy { $0 == .temporarilyUnavailable }
+        default:
+            false
+        }
     }
 }

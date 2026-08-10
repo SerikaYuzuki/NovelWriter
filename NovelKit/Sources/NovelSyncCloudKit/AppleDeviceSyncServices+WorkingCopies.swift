@@ -46,6 +46,16 @@ public extension AppleDeviceSyncServices {
         }
     }
 
+    func resolveLocal(
+        _ locator: AppleLocalDocumentLocator
+    ) async throws -> AppleLocalResolvedWorkingCopy? {
+        try await AppleLocalResolvedWorkingCopy.resolve(
+            locator,
+            metadataStore: metadataStore,
+            journalFactory: journalFactory
+        )
+    }
+
     /// bindingだけをAppへ渡さず、account/work/source continuity確認と
     /// binding時のepisode allowlist、copy専用journalを一つの境界で組み立てる。
     func resolve(

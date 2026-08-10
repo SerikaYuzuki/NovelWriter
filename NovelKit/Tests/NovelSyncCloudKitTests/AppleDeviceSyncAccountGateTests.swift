@@ -104,6 +104,26 @@ struct AppleDeviceSyncAccountGateTests {
         #expect(mapped as? AppleDeviceSyncServicesError == unrelated)
     }
 
+    @Test("episode transport maps only transient CloudKit failures to unavailability")
+    func transientCloudKitFailuresMapToTransportUnavailability() {
+        let transientErrors: [CloudKitSyncAdapterError] = [
+            .temporarilyUnavailable(retryAfterSeconds: 2),
+            .accountUnavailable(.temporarilyUnavailable),
+            .partialFailure([.temporarilyUnavailable])
+        ]
+        for error in transientErrors {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(error)
+            #expect(mapped as? EpisodeSyncTransportError == .unavailable)
+        }
+
+        let permanent = CloudKitSyncAdapterError.partialFailure([
+            .temporarilyUnavailable,
+            .permissionFailure
+        ])
+        let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(permanent)
+        #expect(mapped as? CloudKitSyncAdapterError == permanent)
+    }
+
     private func accountScope(_ userRecordName: String) -> AppleCloudAccountScope {
         AppleCloudAccountScope(
             containerIdentifier: "iCloud.dev.serikayuzuki.fuminiwa.sync",

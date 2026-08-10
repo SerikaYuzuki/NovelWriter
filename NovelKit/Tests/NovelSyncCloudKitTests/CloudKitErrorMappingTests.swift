@@ -58,5 +58,23 @@ struct CloudKitErrorMappingTests {
                 == .temporarilyUnavailable(retryAfterSeconds: 2.5)
         )
         #expect(CloudKitErrorMapper.isTransient(error))
+        #expect(
+            CloudKitErrorMapper.isTransient(
+                CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+            )
+        )
+        #expect(
+            CloudKitErrorMapper.isTransient(
+                CloudKitSyncAdapterError.partialFailure([.temporarilyUnavailable])
+            )
+        )
+        #expect(
+            !CloudKitErrorMapper.isTransient(
+                CloudKitSyncAdapterError.partialFailure([
+                    .temporarilyUnavailable,
+                    .permissionFailure
+                ])
+            )
+        )
     }
 }

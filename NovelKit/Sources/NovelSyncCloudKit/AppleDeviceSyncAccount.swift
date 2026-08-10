@@ -239,6 +239,9 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
     }
 
     static func mappedEpisodeTransportError(_ error: any Error) -> any Error {
+        if CloudKitErrorMapper.isTransient(error) {
+            return EpisodeSyncTransportError.unavailable
+        }
         guard let servicesError = error as? AppleDeviceSyncServicesError,
               case .blocked = servicesError else { return error }
         // A previously verified writer may continue into its durable offline
@@ -286,24 +289,24 @@ actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
 
 actor AppleDeviceSyncJournalFactory {
     private let rootURL: URL
-    private let accountGate: AppleDeviceSyncAccountGate
     private let metadataStore: AppleDeviceSyncMetadataStore
     private var journals: [LocalWorkingCopyID: AppleDeviceSyncJournalBoundary] = [:]
 
     init(
         rootURL: URL,
-        accountGate: AppleDeviceSyncAccountGate,
         metadataStore: AppleDeviceSyncMetadataStore
     ) {
         self.rootURL = rootURL
-        self.accountGate = accountGate
         self.metadataStore = metadataStore
     }
 
     func journal(
         for binding: SyncWorkingCopyBinding
     ) async throws -> any EpisodeSyncJournal {
-        try await accountGate.requireAvailable()
+        // A journal is an app-private durability boundary scoped by the exact
+        // local working-copy binding. Cloud account availability only fences
+        // remote transport; it must never prevent an existing copy from
+        // recording a detached local revision.
         guard await metadataStore.contains(binding) else {
             throw AppleDeviceSyncServicesError.bindingNotFound
         }
