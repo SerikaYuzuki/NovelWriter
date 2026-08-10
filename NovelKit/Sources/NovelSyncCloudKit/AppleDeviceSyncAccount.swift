@@ -1,0 +1,230 @@
+import CloudKit
+import Foundation
+import NovelSync
+
+enum AppleCloudAccountScopeResolver {
+    static func resolve(containerIdentifier: String) async throws -> AppleCloudAccountScope {
+        guard containerIdentifier.hasPrefix("iCloud."),
+              containerIdentifier.utf8.count <= 255 else {
+            throw CloudKitSyncAdapterError.invalidConfiguration
+        }
+        let container = CKContainer(identifier: containerIdentifier)
+        let status: CKAccountStatus
+        do {
+            status = try await container.accountStatus()
+        } catch {
+            throw mappedAccountError(error)
+        }
+        switch status {
+        case .available:
+            break
+        case .noAccount:
+            throw CloudKitSyncAdapterError.accountUnavailable(.noAccount)
+        case .restricted:
+            throw CloudKitSyncAdapterError.accountUnavailable(.restricted)
+        case .couldNotDetermine:
+            throw CloudKitSyncAdapterError.accountUnavailable(.couldNotDetermine)
+        case .temporarilyUnavailable:
+            throw CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+        @unknown default:
+            throw CloudKitSyncAdapterError.accountUnavailable(.couldNotDetermine)
+        }
+
+        do {
+            let userRecordID = try await container.userRecordID()
+            return AppleCloudAccountScope(
+                containerIdentifier: containerIdentifier,
+                userRecordName: userRecordID.recordName
+            )
+        } catch {
+            throw mappedAccountError(error)
+        }
+    }
+
+    private static func mappedAccountError(_ error: any Error) -> any Error {
+        if let adapterError = error as? CloudKitSyncAdapterError {
+            return adapterError
+        }
+        let mapped = CloudKitErrorMapper.map(error)
+        if CloudKitErrorMapper.isTransient(error) {
+            return CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+        }
+        return mapped
+    }
+}
+
+actor AppleDeviceSyncAccountGate {
+    typealias ScopeResolver = @Sendable () async throws -> AppleCloudAccountScope
+
+    private let expectedScope: AppleCloudAccountScope
+    private let scopeResolver: ScopeResolver
+    private var currentAvailability: AppleDeviceSyncAvailability = .ready
+
+    init(
+        expectedScope: AppleCloudAccountScope,
+        scopeResolver: @escaping ScopeResolver
+    ) {
+        self.expectedScope = expectedScope
+        self.scopeResolver = scopeResolver
+    }
+
+    func availability() -> AppleDeviceSyncAvailability {
+        currentAvailability
+    }
+
+    func requireAvailable() throws {
+        guard case .ready = currentAvailability else {
+            if case let .blocked(reason) = currentAvailability {
+                throw AppleDeviceSyncServicesError.blocked(reason)
+            }
+            return
+        }
+    }
+
+    /// account changeを一度観測してblockedになったruntimeは再利用しない。
+    /// 元accountへ戻った場合もfactoryを作り直し、scopeとengine stateを再検証する。
+    func observeAccountChange() async -> AppleDeviceSyncAvailability {
+        guard case .ready = currentAvailability else { return currentAvailability }
+        do {
+            let currentScope = try await scopeResolver()
+            if currentScope != expectedScope {
+                currentAvailability = .blocked(.differentCloudAccount)
+            }
+        } catch {
+            currentAvailability = .blocked(.accountUnavailable)
+        }
+        return currentAvailability
+    }
+}
+
+actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
+    private let transport: CloudKitEpisodeSyncTransport
+    private let accountGate: AppleDeviceSyncAccountGate
+
+    init(
+        transport: CloudKitEpisodeSyncTransport,
+        accountGate: AppleDeviceSyncAccountGate
+    ) {
+        self.transport = transport
+        self.accountGate = accountGate
+    }
+
+    func fetchSnapshot(for key: EpisodeSyncKey) async throws -> EpisodeRemoteSnapshot {
+        try await accountGate.requireAvailable()
+        return try await transport.fetchSnapshot(for: key)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for key: EpisodeSyncKey
+    ) async throws -> EpisodeRevision {
+        try await accountGate.requireAvailable()
+        return try await transport.fetchRevision(id, for: key)
+    }
+
+    func claimLease(_ request: EpisodeLeaseClaimRequest) async throws -> EpisodeLeaseClaimResult {
+        try await accountGate.requireAvailable()
+        return try await transport.claimLease(request)
+    }
+
+    func releaseLease(
+        key: EpisodeSyncKey,
+        expectedAuthority: EpisodeLeaseAuthority
+    ) async throws -> EpisodeRemoteSnapshot {
+        try await accountGate.requireAvailable()
+        return try await transport.releaseLease(key: key, expectedAuthority: expectedAuthority)
+    }
+
+    func publish(_ request: EpisodePublishRequest) async throws -> EpisodePublishResult {
+        try await accountGate.requireAvailable()
+        return try await transport.publish(request)
+    }
+
+    func createWork(_ descriptor: SyncWorkDescriptor) async throws {
+        try await accountGate.requireAvailable()
+        try await transport.createWork(descriptor)
+    }
+
+    func listWorks() async throws -> [SyncWorkDescriptor] {
+        try await accountGate.requireAvailable()
+        return try await transport.listWorks()
+    }
+}
+
+actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
+    private let journal: FileEpisodeSyncJournal
+    private let accountGate: AppleDeviceSyncAccountGate
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private let binding: SyncWorkingCopyBinding
+
+    init(
+        journal: FileEpisodeSyncJournal,
+        accountGate: AppleDeviceSyncAccountGate,
+        metadataStore: AppleDeviceSyncMetadataStore,
+        binding: SyncWorkingCopyBinding
+    ) {
+        self.journal = journal
+        self.accountGate = accountGate
+        self.metadataStore = metadataStore
+        self.binding = binding
+    }
+
+    func load(for key: EpisodeSyncKey) async throws -> EpisodeSyncJournalRecord? {
+        try await requireUsableBinding()
+        return try await journal.load(for: key)
+    }
+
+    func save(_ record: EpisodeSyncJournalRecord) async throws {
+        try await requireUsableBinding()
+        try await journal.save(record)
+    }
+
+    private func requireUsableBinding() async throws {
+        try await accountGate.requireAvailable()
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+    }
+}
+
+actor AppleDeviceSyncJournalFactory {
+    private let rootURL: URL
+    private let accountGate: AppleDeviceSyncAccountGate
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private var journals: [LocalWorkingCopyID: AppleDeviceSyncJournalBoundary] = [:]
+
+    init(
+        rootURL: URL,
+        accountGate: AppleDeviceSyncAccountGate,
+        metadataStore: AppleDeviceSyncMetadataStore
+    ) {
+        self.rootURL = rootURL
+        self.accountGate = accountGate
+        self.metadataStore = metadataStore
+    }
+
+    func journal(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any EpisodeSyncJournal {
+        try await accountGate.requireAvailable()
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+        if let existing = journals[binding.localWorkingCopyID] {
+            return existing
+        }
+        let bindingRoot = rootURL.appendingPathComponent(
+            binding.localWorkingCopyID.rawValue.uuidString,
+            isDirectory: true
+        )
+        let fileJournal = try FileEpisodeSyncJournal(rootURL: bindingRoot)
+        let boundary = AppleDeviceSyncJournalBoundary(
+            journal: fileJournal,
+            accountGate: accountGate,
+            metadataStore: metadataStore,
+            binding: binding
+        )
+        journals[binding.localWorkingCopyID] = boundary
+        return boundary
+    }
+}

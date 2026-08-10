@@ -1,0 +1,66 @@
+{
+  "protocolVersion": 1,
+  "cases": [
+    {
+      "name": "japanese-non-overlap",
+      "base": "吾輩は猫である。名前はまだない。",
+      "local": "吾輩は黒猫である。名前はまだない。",
+      "remote": "吾輩は猫である。名前はまだ無い。",
+      "expected": {
+        "kind": "merged",
+        "content": "吾輩は黒猫である。名前はまだ無い。"
+      }
+    },
+    {
+      "name": "emoji-combining-scalars",
+      "base": "A😀B é C",
+      "local": "A🐈B é C",
+      "remote": "A😀B é Ｃ",
+      "expected": {
+        "kind": "merged",
+        "content": "A🐈B é Ｃ"
+      }
+    },
+    {
+      "name": "full-width-whitespace",
+      "base": "甲乙丙",
+      "local": "甲　乙丙",
+      "remote": "甲乙　丙",
+      "expected": {
+        "kind": "merged",
+        "content": "甲　乙　丙"
+      }
+    },
+    {
+      "name": "same-insertion-point",
+      "base": "甲乙",
+      "local": "甲A乙",
+      "remote": "甲B乙",
+      "expected": {
+        "kind": "conflict",
+        "reason": "sameInsertionPoint"
+      }
+    },
+    {
+      "name": "overlap",
+      "base": "abcdef",
+      "local": "abXXef",
+      "remote": "abcYYf",
+      "expected": {
+        "kind": "conflict",
+        "reason": "overlappingChanges"
+      }
+    },
+    {
+      "name": "resource-limit-metadata",
+      "limit": {
+        "maximumInputUTF8Bytes": 4194304,
+        "maximumInputScalarCount": 1000000
+      },
+      "expected": {
+        "kind": "conflict",
+        "reason": "inputLimitExceeded"
+      }
+    }
+  ]
+}

@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "NovelCore", targets: ["NovelCore"]),
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
+        .library(name: "NovelSync", targets: ["NovelSync"]),
+        .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
+        .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
         .library(name: "NovelAI", targets: ["NovelAI"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
@@ -28,6 +31,22 @@ let package = Package(
         .target(
             name: "NovelExport",
             dependencies: ["NovelCore"]
+        ),
+        // NovelSync: OS / transport 非依存のrevision・競合・同期状態機械。
+        // CloudKitやUI、NovelStorageを依存へ追加しない。
+        .target(
+            name: "NovelSync",
+            dependencies: ["NovelCore"]
+        ),
+        // 決定論的fake transport。製品targetからはlinkせず、同期契約testで使う。
+        .target(
+            name: "NovelSyncTesting",
+            dependencies: ["NovelSync", "NovelCore"]
+        ),
+        // Apple private CloudKit adapter。CloudKit型とchange tagをNovelSyncへ漏らさない。
+        .target(
+            name: "NovelSyncCloudKit",
+            dependencies: ["NovelSync", "NovelCore"]
         ),
         .target(
             name: "EditorKit",
@@ -56,6 +75,15 @@ let package = Package(
         .testTarget(
             name: "NovelExportTests",
             dependencies: ["NovelExport", "NovelCore"]
+        ),
+        .testTarget(
+            name: "NovelSyncTests",
+            dependencies: ["NovelSync", "NovelSyncTesting", "NovelCore"],
+            resources: [.process("Fixtures")]
+        ),
+        .testTarget(
+            name: "NovelSyncCloudKitTests",
+            dependencies: ["NovelSyncCloudKit", "NovelSync", "NovelCore"]
         ),
         .testTarget(
             name: "EditorKitTests",
