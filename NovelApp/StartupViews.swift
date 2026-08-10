@@ -44,7 +44,8 @@ struct StartupRecoveryView: View {
             )
 
             HStack(spacing: 10) {
-                if context.reason != .protectedLocationInDebugBuild {
+                if context.reason != .protectedLocationInDebugBuild,
+                   context.reason != .deviceSyncSafetyUnavailable {
                     Button("再試行") {
                         Task { await appState.retryStartup() }
                     }
@@ -57,13 +58,15 @@ struct StartupRecoveryView: View {
                     }
                 }
 
-                Button("別の作品を開く…") {
-                    documentPanelPresenter.presentOpenPanel()
-                }
+                if context.reason != .deviceSyncSafetyUnavailable {
+                    Button("別の作品を開く…") {
+                        documentPanelPresenter.presentOpenPanel()
+                    }
 
-                Button("新規作品を作る…") {
-                    newDocumentSession = appState.documentSessionToken
-                    confirmsNewDocument = true
+                    Button("新規作品を作る…") {
+                        newDocumentSession = appState.documentSessionToken
+                        confirmsNewDocument = true
+                    }
                 }
             }
         }
@@ -94,6 +97,8 @@ struct StartupRecoveryView: View {
             "新しい作品を保存できませんでした"
         case .protectedLocationInDebugBuild:
             "開発版で実原稿を自動では開きません"
+        case .deviceSyncSafetyUnavailable:
+            "本文同期の安全情報を確認できません"
         }
     }
 
@@ -121,6 +126,8 @@ struct StartupRecoveryView: View {
             "保存先の空き容量やアクセス権限を確認してください。保存に成功するまで最近使った作品は変更しません。"
         case .protectedLocationInDebugBuild:
             "実原稿への誤保存を防ぐためです。内容を確認したうえで「別の作品を開く…」から明示的に選んでください。"
+        case .deviceSyncSafetyUnavailable:
+            "以前同期した作品を誤って編集しないよう停止しました。アプリを再起動しても直らない場合は、端末の空き容量とiCloud設定を確認してください。"
         }
     }
 }

@@ -23,7 +23,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
-                    appState.addEpisode()
+                    Task {
+                        await appState.addEpisodeAfterDeviceSyncDeparture()
+                    }
                 } label: {
                     Label("話を追加", systemImage: "square.and.pencil")
                 }
@@ -111,7 +113,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if showsWritingActions || showsPlotActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
                 Button {
-                    appState.addChapter()
+                    Task {
+                        await appState.addChapterAfterDeviceSyncDeparture()
+                    }
                 } label: {
                     Label("章を追加", systemImage: "plus")
                 }

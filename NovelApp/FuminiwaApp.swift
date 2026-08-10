@@ -36,6 +36,10 @@ struct FuminiwaApp: App {
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
     @State private var editorCommandSession: EditorCommandSession
+    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @State private var deviceSyncComposition: DeviceSyncProductionComposition?
+    @State private var deviceSyncPreparationFailed: Bool
+    #endif
     #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
     @State private var editorAISelectionSession: EditorAISelectionSession
     @State private var aiProofreadingOperation: AIProofreadingOperation
@@ -48,19 +52,35 @@ struct FuminiwaApp: App {
         }
 
         let editorCommandSession = EditorCommandSession()
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        let deviceSyncComposition = try? DeviceSyncProductionComposition()
+        let deviceSyncRuntime = deviceSyncComposition?.runtime
+        #else
+        let deviceSyncRuntime: DeviceSyncRuntime? = nil
+        #endif
         let appState = AppState(
             dependencies: AppDependencies(
                 userDefaults: defaults,
                 defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
-                editorCommandSession: editorCommandSession
+                editorCommandSession: editorCommandSession,
+                deviceSyncRuntime: deviceSyncRuntime
             )
         )
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        if deviceSyncComposition == nil {
+            appState.failStartupForDeviceSyncSafety()
+        }
+        #endif
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
         _editorCommandSession = State(initialValue: editorCommandSession)
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        _deviceSyncComposition = State(initialValue: deviceSyncComposition)
+        _deviceSyncPreparationFailed = State(initialValue: deviceSyncComposition == nil)
+        #endif
         #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
         let editorAISelectionSession = EditorAISelectionSession()
         let aiProofreadingOperation = AIProofreadingOperation(
@@ -98,8 +118,21 @@ struct FuminiwaApp: App {
                     }
                     #endif
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
+                    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    guard !deviceSyncPreparationFailed, let deviceSyncComposition else {
+                        appState.failStartupForDeviceSyncSafety()
+                        return
+                    }
+                    let deviceSyncBootstrap = Task {
+                        await deviceSyncComposition.bootstrap()
+                    }
+                    #endif
                     await appState.bootstrap(opening: startupOpenURL)
                     applicationDelegate.finishBootstrap()
+                    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    await deviceSyncBootstrap.value
+                    await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    #endif
                 }
         }
         .commands {
@@ -165,12 +198,16 @@ struct FuminiwaApp: App {
 
             CommandMenu("章") {
                 Button("章を追加") {
-                    appState.addChapter()
+                    Task {
+                        await appState.addChapterAfterDeviceSyncDeparture()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
 
                 Button("選択中の章に話を追加") {
-                    appState.addEpisode()
+                    Task {
+                        await appState.addEpisodeAfterDeviceSyncDeparture()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
 
@@ -195,11 +232,11 @@ struct FuminiwaApp: App {
                         appState: appState,
                         onOpenCharacter: { characterID in
                             appState.selectCharacter(characterID)
-                            appState.selectProjectSection(.characters)
+                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
                         },
                         onOpenPlotCard: { cardID in
                             appState.selectPlotCard(cardID)
-                            appState.selectProjectSection(.plot)
+                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
                         }
                     )
                 }
@@ -233,8 +270,10 @@ struct FuminiwaApp: App {
 
             CommandMenu("世界観") {
                 Button("ノートを追加") {
-                    appState.selectProjectSection(.worldbuilding)
-                    appState.addWorldNote()
+                    Task {
+                        guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.worldbuilding) else { return }
+                        appState.addWorldNote()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
@@ -265,7 +304,7 @@ struct FuminiwaApp: App {
             CommandMenu("表示") {
                 ForEach(ProjectSection.allCases) { section in
                     Button {
-                        appState.selectProjectSection(section)
+                        Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(section) }
                     } label: {
                         Label(section.title, systemImage: section.systemImage)
                     }

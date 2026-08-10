@@ -2,6 +2,7 @@ import EditorKit
 import Foundation
 import NovelCore
 import NovelStorage
+import NovelSync
 import Observation
 
 enum IOSStartupState: Equatable {
@@ -18,6 +19,23 @@ enum IOSSaveState: Equatable {
     case failed
 }
 
+/// `UITextView` callbackを、表示時の作品・話・remote install世代へ固定する。
+///
+/// 同じworking copy・同じEpisodeIDでもremote headのinstall後は
+/// `editorContentGeneration`が変わるため、旧surfaceから遅れて届いた本文を拒否できる。
+struct IOSEpisodeEditingToken: Hashable, Sendable {
+    let documentSession: IOSDocumentSessionToken
+    let chapterID: ChapterID
+    let episodeID: EpisodeID
+    let editorContentGeneration: UInt64
+}
+
+struct IOSEditorContentKey: Hashable {
+    let documentSession: IOSDocumentSessionToken
+    let episodeID: EpisodeID
+    let editorContentGeneration: UInt64
+}
+
 @MainActor
 @Observable
 final class IOSDocumentStore {
@@ -32,12 +50,25 @@ final class IOSDocumentStore {
     var saveState: IOSSaveState = .saved
     var isDocumentTransitionInProgress = false
     private(set) var documentSessionGeneration: UInt64 = 0
+    private(set) var editorContentGeneration: UInt64 = 0
+    var deviceSyncState: IOSDeviceSyncUIState = .unconfigured
+    var deviceSyncTransferState: IOSDeviceSyncTransferState = .notApplicable
+    var deviceSyncConflict: EpisodeConflict?
+    var deviceSyncSetupState: IOSDeviceSyncSetupState = .idle
     var libraryItems: [IOSDocumentLibraryItem] = []
     private(set) var attachments: [Attachment] = []
     var isImporterPresented = false
     var pendingExportURL: URL?
     var promptCopyNotice: IOSPromptCopyNotice?
     var operationErrorMessage: String?
+    private(set) var deviceSyncStartupFailedSafely = false
+
+    func failStartupForDeviceSyncSafety() {
+        deviceSyncStartupFailedSafely = true
+        startupState = .recovery(
+            message: "本文同期の安全情報を確認できないため停止しました。アプリを再起動しても直らない場合は、端末の空き容量とiCloud設定を確認してください。"
+        )
+    }
 
     let editorCommandSession: EditorCommandSession
 
@@ -46,7 +77,17 @@ final class IOSDocumentStore {
     @ObservationIgnored let fileManager: FileManager
     @ObservationIgnored let userDefaults: UserDefaults
     @ObservationIgnored let libraryRoot: URL
+    @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored private let clipboardWriter: any IOSPlainTextClipboardWriting
+    @ObservationIgnored let deviceSyncRuntime: IOSDeviceSyncRuntime?
+    @ObservationIgnored var deviceSyncClients: [IOSDeviceSyncClientKey: IOSDeviceSyncClient] = [:]
+    @ObservationIgnored var activeDeviceSyncIdentity: IOSDeviceSyncEpisodeIdentity?
+    @ObservationIgnored var resolvedDeviceSyncLookupIdentity: IOSDeviceSyncLookupIdentity?
+    @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
+    @ObservationIgnored var pendingDeviceSyncConflictResolution: IOSPendingDeviceSyncConflictResolution?
+    @ObservationIgnored var pendingDeviceSyncNewWork: IOSPendingDeviceSyncNewWork?
+    @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
@@ -86,6 +127,8 @@ final class IOSDocumentStore {
         userDefaults: UserDefaults = .standard,
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any IOSPlainTextClipboardWriting = IOSSystemPlainTextClipboardWriter(),
+        deviceSyncRuntime: IOSDeviceSyncRuntime? = nil,
+        backgroundTaskController: any IOSBackgroundTaskControlling = IOSApplicationBackgroundTaskController(),
         libraryRoot: URL? = nil
     ) {
         self.repository = repository
@@ -94,6 +137,8 @@ final class IOSDocumentStore {
         self.userDefaults = userDefaults
         self.editorCommandSession = editorCommandSession
         self.clipboardWriter = clipboardWriter
+        self.deviceSyncRuntime = deviceSyncRuntime
+        self.backgroundTaskController = backgroundTaskController
 
         let root = libraryRoot ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
@@ -115,6 +160,13 @@ final class IOSDocumentStore {
     }
 
     func selectChapter(_ chapterID: ChapterID?) {
+        let previousSelection = (selectedChapterID, selectedEpisodeID)
+        guard chapterID == selectedChapterID || permitsSynchronousDeviceSyncSelectionMutation else { return }
+        defer {
+            if previousSelection != (selectedChapterID, selectedEpisodeID) {
+                deviceSyncSelectionDidChange()
+            }
+        }
         selectedChapterID = chapterID
         guard let chapterID else {
             selectedEpisodeID = nil
@@ -131,7 +183,10 @@ final class IOSDocumentStore {
     }
 
     func selectEpisode(_ episodeID: EpisodeID?) {
+        guard selectedEpisodeID != episodeID else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         selectedEpisodeID = episodeID
+        deviceSyncSelectionDidChange()
     }
 
     func updateDocumentTitle(_ title: String) {
@@ -158,33 +213,57 @@ final class IOSDocumentStore {
         markDocumentChanged()
     }
 
-    func updateEpisodeContent(_ content: String, chapterID: ChapterID, episodeID: EpisodeID) {
+    func updateEpisodeContent(
+        _ content: String,
+        chapterID: ChapterID,
+        episodeID: EpisodeID,
+        expectedEditingToken: IOSEpisodeEditingToken? = nil
+    ) {
+        if let expectedEditingToken {
+            guard currentEpisodeEditingToken == expectedEditingToken else { return }
+        }
         guard selectedChapterID == chapterID, selectedEpisodeID == episodeID else { return }
         guard document.episode(episodeID)?.episode.content != content else { return }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         markDocumentChanged()
+        if let expectedEditingToken {
+            scheduleDeviceSyncForEditedEpisode(
+                content: content,
+                expectedEditingToken: expectedEditingToken
+            )
+        }
     }
 
     func addChapter() {
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         let number = document.chapters.count + 1
         let chapterID = document.addChapter(title: "第\(number)章")
         let episodeID = document.addEpisode(to: chapterID)
         selectedChapterID = chapterID
         selectedEpisodeID = episodeID
+        deviceSyncSelectionDidChange()
         markDocumentChanged()
     }
 
     func addEpisode() {
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         guard let selectedChapterID else { return }
         let count = selectedChapter?.episodes.count ?? 0
         let title = count == 0 ? Episode.defaultTitle : "第\(count + 1)話"
+        let previousEpisodeID = selectedEpisodeID
         selectedEpisodeID = document.addEpisode(to: selectedChapterID, title: title)
+        if selectedEpisodeID != previousEpisodeID {
+            deviceSyncSelectionDidChange()
+        }
         markDocumentChanged()
     }
 
     func deleteEpisodes(at offsets: IndexSet, chapterID: ChapterID) {
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else { return }
         let removedIDs = offsets.compactMap { chapter.episodes.indices.contains($0) ? chapter.episodes[$0].id : nil }
+        if removedIDs.contains(where: { $0 == selectedEpisodeID }) {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+        }
         for episodeID in removedIDs {
             _ = document.removeEpisode(id: episodeID, from: chapterID)
         }
@@ -192,6 +271,7 @@ final class IOSDocumentStore {
             selectedEpisodeID = document.chapters
                 .first(where: { $0.id == chapterID })?
                 .episodes.first?.id
+            deviceSyncSelectionDidChange()
         }
         markDocumentChanged()
     }
@@ -210,6 +290,13 @@ final class IOSDocumentStore {
         guard document.episode(episodeID)?.episode.memo != memo else { return }
         document.updateEpisodeMemo(memo, for: episodeID, in: chapterID)
         markDocumentChanged()
+    }
+
+    private var permitsSynchronousDeviceSyncSelectionMutation: Bool {
+        deviceSyncRuntime == nil ||
+            activeDeviceSyncIdentity == nil ||
+            permitsDeviceSyncSelectionMutationAfterFlush ||
+            editorCommandSession.isDocumentTransitionPrepared
     }
 }
 
@@ -319,5 +406,9 @@ extension IOSDocumentStore {
 
     func advanceDocumentSessionGeneration() {
         documentSessionGeneration &+= 1
+    }
+
+    func advanceEditorContentGeneration() {
+        editorContentGeneration &+= 1
     }
 }

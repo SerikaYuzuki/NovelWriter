@@ -34,13 +34,13 @@ jq -e '
       $objects[$id].productName] | sort;
   .objects as $objects |
   packageProducts($objects; "NovelApp") ==
-    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
+    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelSyncCloudKit", "NovelUI"] and
   packageProducts($objects; "FUMINIWAIOS") ==
-    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
+    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelSyncCloudKit", "NovelUI"] and
   packageProducts($objects; "FUMINIWAExperimental") ==
-    ["EditorKit", "NovelAI", "NovelCore", "NovelExport", "NovelStorage", "NovelUI"] and
-  packageProducts($objects; "NovelAppTests") == [] and
-  packageProducts($objects; "FUMINIWAIOSTests") == [] and
+    ["EditorKit", "NovelAI", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelUI"] and
+  packageProducts($objects; "NovelAppTests") == ["NovelSyncTesting"] and
+  packageProducts($objects; "FUMINIWAIOSTests") == ["NovelSyncTesting"] and
   packageProducts($objects; "FUMINIWAExperimentalTests") == []
 ' "$audit_tmp" >/dev/null
 
@@ -58,7 +58,8 @@ jq -e '
     .PRODUCT_NAME == "FUMINIWA" and
     .PRODUCT_MODULE_NAME == "FUMINIWA" and
     .PRODUCT_BUNDLE_IDENTIFIER == "dev.serikayuzuki.fuminiwa" and
-    .INFOPLIST_FILE == "NovelApp/Info.plist"
+    .INFOPLIST_FILE == "NovelApp/Info.plist" and
+    .CODE_SIGN_ENTITLEMENTS == "NovelApp/NovelApp.entitlements"
   )) and
   (configurationSettings($objects; "FUMINIWAExperimental") | all(
     .PRODUCT_NAME == "FUMINIWAExperimental" and
@@ -70,7 +71,8 @@ jq -e '
     .PRODUCT_NAME == "FUMINIWA" and
     .PRODUCT_MODULE_NAME == "FUMINIWAIOS" and
     .PRODUCT_BUNDLE_IDENTIFIER == "dev.serikayuzuki.fuminiwa.ios" and
-    .INFOPLIST_FILE == "NovelAppIOS/Info.plist"
+    .INFOPLIST_FILE == "NovelAppIOS/Info.plist" and
+    .CODE_SIGN_ENTITLEMENTS == "NovelAppIOS/FUMINIWAIOS.entitlements"
   )) and
   (configurationSettings($objects; "NovelAppTests") | all(
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
@@ -193,6 +195,38 @@ if [[ "$(plutil -extract LSSupportsOpeningDocumentsInPlace raw NovelAppIOS/Info.
   echo "error: the iOS MVP must keep external packages copy-in rather than open-in-place" >&2
   exit 1
 fi
+if [[ "$(plutil -extract UIBackgroundModes.0 raw NovelAppIOS/Info.plist)" != "remote-notification" ]]; then
+  echo "error: the iOS app must declare remote-notification for Device Sync wakeups" >&2
+  exit 1
+fi
+for entitlements in NovelApp/NovelApp.entitlements NovelAppIOS/FUMINIWAIOS.entitlements; do
+  if ! plutil -convert json -o - "$entitlements" | jq -e \
+    '.["com.apple.developer.icloud-container-identifiers"] == ["iCloud.dev.serikayuzuki.fuminiwa.sync"]' \
+    >/dev/null; then
+    echo "error: Device Sync targets must share the fixed iCloud container" >&2
+    exit 1
+  fi
+  if ! plutil -convert json -o - "$entitlements" | jq -e \
+    '.["com.apple.developer.icloud-services"] == ["CloudKit"]' >/dev/null; then
+    echo "error: Device Sync targets must enable the CloudKit iCloud service" >&2
+    exit 1
+  fi
+done
+if plutil -convert json -o - NovelApp/NovelApp.entitlements | jq -e \
+  '.["com.apple.security.app-sandbox"] == true' >/dev/null; then
+  echo "error: Device Sync must not enable App Sandbox for the directly distributed macOS app" >&2
+  exit 1
+fi
+if ! plutil -convert json -o - NovelApp/NovelApp.entitlements | jq -e \
+  '.["com.apple.developer.aps-environment"] == "development"' >/dev/null; then
+  echo "error: the macOS app must carry the push entitlement for Device Sync" >&2
+  exit 1
+fi
+if ! plutil -convert json -o - NovelAppIOS/FUMINIWAIOS.entitlements | jq -e \
+  '.["aps-environment"] == "development"' >/dev/null; then
+  echo "error: the iOS app must carry the push entitlement for Device Sync" >&2
+  exit 1
+fi
 if rg -n 'URLSession|Network\.framework|NWConnection|OpenRouter|codex_sdk' NovelAppIOS; then
   echo "error: the iOS app contains a provider or network callsite" >&2
   exit 1
@@ -212,7 +246,7 @@ jq -e '
     reduce range(0; ($package.targets | length)) as $_
       ($roots; (. + [.[] as $name | dependencies($package; $name)[]]) | unique);
   . as $package |
-  (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport"])
+  (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport", "NovelSync", "NovelSyncCloudKit"])
     | index("NovelAI") == null) and
   (dependencies($package; "NovelAI") == [])
 ' "$package_tmp" >/dev/null

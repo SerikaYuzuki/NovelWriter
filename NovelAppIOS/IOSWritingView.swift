@@ -79,11 +79,15 @@ struct IOSAdaptiveWritingView: View {
         }
         .onChange(of: horizontalSizeClass) { _, newSizeClass in
             let currentSizeClass = presentedHorizontalSizeClass
-            presentedHorizontalSizeClass = IOSAdaptiveWritingLayoutTransition.nextSizeClass(
-                from: currentSizeClass,
-                to: newSizeClass
-            ) {
-                IOSWritingEditorIdentityBoundary(store: store).perform {}
+            guard currentSizeClass == .regular, newSizeClass != .regular else {
+                presentedHorizontalSizeClass = newSizeClass
+                return
+            }
+            Task { @MainActor in
+                guard presentedHorizontalSizeClass == currentSizeClass,
+                      await store.prepareForEditorSurfaceDeparture(),
+                      presentedHorizontalSizeClass == currentSizeClass else { return }
+                presentedHorizontalSizeClass = newSizeClass
             }
         }
     }
@@ -107,8 +111,12 @@ struct IOSAdaptiveWritingView: View {
                 regularProjectSidebar
             } content: {
                 IOSWritingOutlineList(store: store) { chapterID, episodeID in
-                    store.selectChapter(chapterID)
-                    store.selectEpisode(episodeID)
+                    Task {
+                        await store.selectEpisodeAfterDeviceSyncDeparture(
+                            chapterID: chapterID,
+                            episodeID: episodeID
+                        )
+                    }
                 }
             } detail: {
                 IOSEditorPane(store: store)
@@ -195,7 +203,7 @@ struct IOSAdaptiveWritingView: View {
             NavigationSplitView {
                 regularProjectSidebar
             } detail: {
-                IOSAppearanceSettingsView()
+                IOSSettingsView(store: store)
             }
             .navigationSplitViewStyle(.balanced)
         }
@@ -213,7 +221,11 @@ struct IOSAdaptiveWritingView: View {
             get: { regularProjectSection },
             set: { newSection in
                 guard newSection != regularProjectSection else { return }
-                IOSWritingEditorIdentityBoundary(store: store).perform {
+                let previousSection = regularProjectSection
+                Task { @MainActor in
+                    guard regularProjectSection == previousSection,
+                          await store.prepareForEditorSurfaceDeparture(),
+                          regularProjectSection == previousSection else { return }
                     regularProjectSection = newSection
                 }
             }
@@ -231,9 +243,7 @@ private struct IOSWritingOutlineList: View {
                 Section {
                     ForEach(chapter.episodes) { episode in
                         Button {
-                            editorIdentityBoundary.perform {
-                                openEpisode(chapter.id, episode.id)
-                            }
+                            openEpisode(chapter.id, episode.id)
                         } label: {
                             IOSEpisodeOutlineRow(episode: episode)
                         }
@@ -241,16 +251,21 @@ private struct IOSWritingOutlineList: View {
                         .accessibilityIdentifier("ios.outline.episode.\(episode.id)")
                     }
                     .onDelete { offsets in
-                        editorIdentityBoundary.perform {
-                            store.deleteEpisodes(at: offsets, chapterID: chapter.id)
+                        Task {
+                            await store.deleteEpisodesAfterDeviceSyncDeparture(
+                                at: offsets,
+                                chapterID: chapter.id
+                            )
                         }
                     }
                     .onMove { offsets, destination in
-                        store.moveEpisodes(
-                            in: chapter.id,
-                            fromOffsets: offsets,
-                            toOffset: destination
-                        )
+                        Task {
+                            await store.moveEpisodesAfterDeviceSyncDeparture(
+                                in: chapter.id,
+                                fromOffsets: offsets,
+                                toOffset: destination
+                            )
+                        }
                     }
                 } header: {
                     HStack(spacing: 8) {
@@ -262,9 +277,8 @@ private struct IOSWritingOutlineList: View {
                         Spacer(minLength: 8)
 
                         Button {
-                            editorIdentityBoundary.perform {
-                                store.selectChapter(chapter.id)
-                                store.addEpisode()
+                            Task {
+                                await store.addEpisodeAfterDeviceSyncDeparture(to: chapter.id)
                             }
                         } label: {
                             Label("話を追加", systemImage: "plus")
@@ -277,7 +291,12 @@ private struct IOSWritingOutlineList: View {
                 }
             }
             .onMove { offsets, destination in
-                store.moveChapters(fromOffsets: offsets, toOffset: destination)
+                Task {
+                    await store.moveChaptersAfterDeviceSyncDeparture(
+                        fromOffsets: offsets,
+                        toOffset: destination
+                    )
+                }
             }
         }
         .navigationTitle("執筆")
@@ -289,8 +308,8 @@ private struct IOSWritingOutlineList: View {
                     Text("章を追加すると、話を作って本文を書けます。")
                 } actions: {
                     Button("章を追加") {
-                        editorIdentityBoundary.perform {
-                            store.addChapter()
+                        Task {
+                            await store.addChapterAfterDeviceSyncDeparture()
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -300,8 +319,8 @@ private struct IOSWritingOutlineList: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    editorIdentityBoundary.perform {
-                        store.addChapter()
+                    Task {
+                        await store.addChapterAfterDeviceSyncDeparture()
                     }
                 } label: {
                     Label("章を追加", systemImage: "plus")

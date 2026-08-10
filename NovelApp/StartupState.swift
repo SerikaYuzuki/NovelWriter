@@ -11,6 +11,7 @@ enum StartupRecoveryReason: Equatable {
     case cannotOpenDocument
     case cannotCreateDocument
     case protectedLocationInDebugBuild
+    case deviceSyncSafetyUnavailable
 }
 
 struct StartupRecoveryContext: Equatable {

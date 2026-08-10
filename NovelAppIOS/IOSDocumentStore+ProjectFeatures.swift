@@ -20,6 +20,18 @@ extension IOSDocumentStore {
         )
     }
 
+    var currentEpisodeEditingToken: IOSEpisodeEditingToken? {
+        guard let documentSession = currentDocumentSessionToken,
+              let selectedChapterID,
+              let selectedEpisodeID else { return nil }
+        return IOSEpisodeEditingToken(
+            documentSession: documentSession,
+            chapterID: selectedChapterID,
+            episodeID: selectedEpisodeID,
+            editorContentGeneration: editorContentGeneration
+        )
+    }
+
     // MARK: - Characters
 
     @discardableResult

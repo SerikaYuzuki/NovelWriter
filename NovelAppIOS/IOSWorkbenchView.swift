@@ -36,13 +36,17 @@ struct IOSWorkbenchView: View {
                 IOSProjectInfoView(store: store)
             case let .writing(session):
                 IOSAdaptiveWritingView(store: store) { chapterID, episodeID in
-                    store.selectChapter(chapterID)
-                    store.selectEpisode(episodeID)
-                    navigation.showEditor(
-                        for: session,
-                        chapterID: chapterID,
-                        episodeID: episodeID
-                    )
+                    Task {
+                        guard await store.selectEpisodeAfterDeviceSyncDeparture(
+                            chapterID: chapterID,
+                            episodeID: episodeID
+                        ) else { return }
+                        navigation.showEditor(
+                            for: session,
+                            chapterID: chapterID,
+                            episodeID: episodeID
+                        )
+                    }
                 }
             case .plot:
                 IOSPlotFeatureView(store: store)
@@ -53,12 +57,16 @@ struct IOSWorkbenchView: View {
             case .references:
                 IOSReferencesFeatureView(store: store)
             case .settings:
-                IOSAppearanceSettingsView()
+                IOSSettingsView(store: store)
             case let .editor(_, chapterID, episodeID):
                 IOSEditorPane(store: store)
                     .onAppear {
-                        store.selectChapter(chapterID)
-                        store.selectEpisode(episodeID)
+                        Task {
+                            await store.selectEpisodeAfterDeviceSyncDeparture(
+                                chapterID: chapterID,
+                                episodeID: episodeID
+                            )
+                        }
                     }
             }
         } else {
@@ -87,11 +95,13 @@ struct IOSWorkbenchView: View {
         Binding(
             get: { navigation.path },
             set: { newPath in
-                navigation.updatePath(newPath) { departure in
-                    IOSWorkspaceEditorSynchronizer.synchronize(
-                        store: store,
-                        departure: departure
-                    )
+                guard let departure = navigation.editorDeparture(for: newPath) else {
+                    navigation.updatePath(newPath) { _ in true }
+                    return
+                }
+                Task {
+                    guard await store.flushDeviceSyncBeforeNavigationDeparture(departure) else { return }
+                    navigation.updatePath(newPath) { _ in true }
                 }
             }
         )
@@ -148,26 +158,52 @@ struct IOSEditorPane: View {
     }
 
     var body: some View {
-        if let chapter = store.selectedChapter, let episode = store.selectedEpisode {
-            EditorView(
-                chapterKey: episode.id,
-                initialText: episode.content,
-                selectionRequest: selectionRequest,
-                commandSession: store.editorCommandSession,
-                selectionContextMenuCommands: selectionCommands(for: episode.id),
-                configuration: IOSEditorFontPreference.configuration(
-                    storedRawValue: editorFontFamilyRawValue
-                ),
-                onTextChange: { text in
-                    store.updateEpisodeContent(
-                        text,
-                        chapterID: chapter.id,
-                        episodeID: episode.id
+        if let chapter = store.selectedChapter,
+           let episode = store.selectedEpisode,
+           let editingToken = store.currentEpisodeEditingToken,
+           let syncLookup = store.currentDeviceSyncLookupIdentity,
+           editingToken.chapterID == chapter.id,
+           editingToken.episodeID == episode.id
+        {
+            let isEditable = store.deviceSyncAllowsEditing(for: syncLookup)
+            VStack(spacing: 0) {
+                IOSDeviceSyncStatusBanner(
+                    state: store.deviceSyncState,
+                    transferState: store.deviceSyncTransferState,
+                    identity: store.activeDeviceSyncIdentity
+                ) { expectedIdentity in
+                    Task { await store.forceContinueOnThisIPhone(expectedIdentity: expectedIdentity) }
+                }
+
+                EditorView(
+                    chapterKey: IOSEditorContentKey(
+                        documentSession: editingToken.documentSession,
+                        episodeID: episode.id,
+                        editorContentGeneration: editingToken.editorContentGeneration
+                    ),
+                    initialText: episode.content,
+                    selectionRequest: selectionRequest,
+                    commandSession: store.editorCommandSession,
+                    selectionContextMenuCommands: selectionCommands(for: episode.id),
+                    configuration: IOSEditorFontPreference.configuration(
+                        storedRawValue: editorFontFamilyRawValue
+                    ),
+                    isEditable: isEditable,
+                    onTextChange: { text in
+                        store.updateEpisodeContent(
+                            text,
+                            chapterID: chapter.id,
+                            episodeID: episode.id,
+                            expectedEditingToken: editingToken
+                        )
+                    }
+                )
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    IOSEditorAccessoryBar(
+                        commandSession: store.editorCommandSession,
+                        isEnabled: isEditable
                     )
                 }
-            )
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                IOSEditorAccessoryBar(commandSession: store.editorCommandSession)
             }
             .navigationTitle(episode.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -194,6 +230,9 @@ struct IOSEditorPane: View {
                     chapterID: chapter.id,
                     episodeID: episode.id
                 )
+            }
+            .task(id: syncLookup) {
+                await store.prepareDeviceSync(for: syncLookup)
             }
             .onDisappear {
                 synchronizeMountedEditorBeforeDeparture()
@@ -245,6 +284,25 @@ struct IOSEditorPane: View {
                 }
                 .presentationDetents([.medium, .large])
             }
+            .sheet(isPresented: deviceSyncConflictIsPresented) {
+                if let conflict = store.deviceSyncConflict {
+                    IOSDeviceSyncConflictResolutionView(
+                        conflict: conflict,
+                        state: store.deviceSyncState,
+                        recoveredContent: store.pendingDeviceSyncConflictResolution.flatMap {
+                            $0.conflict == conflict ? $0.content : nil
+                        }
+                    ) { choice in
+                        Task {
+                            await store.resolveDeviceSyncConflict(
+                                using: choice,
+                                expectedConflict: conflict
+                            )
+                        }
+                    }
+                    .id(conflict)
+                }
+            }
         } else {
             ContentUnavailableView {
                 Label("話を選択してください", systemImage: "doc.text")
@@ -253,7 +311,9 @@ struct IOSEditorPane: View {
             } actions: {
                 if store.selectedChapter != nil {
                     Button("話を追加") {
-                        store.addEpisode()
+                        Task {
+                            await store.addEpisodeAfterDeviceSyncDeparture()
+                        }
                     }
                 }
             }
@@ -289,6 +349,13 @@ struct IOSEditorPane: View {
         Binding(
             get: { store.document.episode(episodeID)?.episode.memo ?? "" },
             set: { store.updateEpisodeMemo($0, chapterID: chapterID, episodeID: episodeID) }
+        )
+    }
+
+    private var deviceSyncConflictIsPresented: Binding<Bool> {
+        Binding(
+            get: { store.deviceSyncConflict != nil },
+            set: { _ in }
         )
     }
 

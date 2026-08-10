@@ -82,6 +82,33 @@ struct IOSWorkspaceSessionSafetyTests {
         #expect(store.currentDocumentSessionToken == newSession)
     }
 
+    @Test("remote install世代より古いEditor callbackを同じ話へ適用しない")
+    func staleEditorCallbackDoesNotCrossRemoteInstallGeneration() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let chapterID = try #require(store.selectedChapterID)
+        let episodeID = try #require(store.selectedEpisodeID)
+        let oldToken = try #require(store.currentEpisodeEditingToken)
+
+        store.document.updateEpisodeContent("新しいremote本文", for: episodeID, in: chapterID)
+        store.advanceEditorContentGeneration()
+        store.updateEpisodeContent(
+            "旧surfaceの遅延本文",
+            chapterID: chapterID,
+            episodeID: episodeID,
+            expectedEditingToken: oldToken
+        )
+
+        #expect(store.document.episode(episodeID)?.episode.content == "新しいremote本文")
+        #expect(store.currentEpisodeEditingToken != oldToken)
+    }
+
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> SessionEditorHarness {
         let host = UIHostingController(rootView: IOSEditorPane(store: store))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))

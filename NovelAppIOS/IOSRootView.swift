@@ -19,6 +19,7 @@ struct IOSRootView: View {
                 IOSRecoveryView(
                     store: store,
                     message: message,
+                    permitsDocumentRecovery: !store.deviceSyncStartupFailedSafely,
                     makeNewDocument: makeNewDocumentFromRecovery
                 )
             }
@@ -43,6 +44,7 @@ struct IOSRootView: View {
         ) { result in
             switch result {
             case let .success(urls):
+                guard !store.deviceSyncStartupFailedSafely else { return }
                 guard let url = urls.first else { return }
                 Task {
                     guard synchronizeActiveEditorBeforeDocumentChange(),
@@ -54,6 +56,7 @@ struct IOSRootView: View {
             }
         }
         .onOpenURL { url in
+            guard !store.deviceSyncStartupFailedSafely else { return }
             Task {
                 guard synchronizeActiveEditorBeforeDocumentChange(),
                       await store.handleExternalPackageURL(url) else { return }
@@ -126,6 +129,7 @@ struct IOSRootView: View {
 private struct IOSRecoveryView: View {
     let store: IOSDocumentStore
     let message: String
+    let permitsDocumentRecovery: Bool
     let makeNewDocument: () -> Void
 
     var body: some View {
@@ -134,15 +138,17 @@ private struct IOSRecoveryView: View {
         } description: {
             Text(message)
         } actions: {
-            Button("別の作品を取り込む") {
-                store.isImporterPresented = true
-            }
-            .buttonStyle(.borderedProminent)
+            if permitsDocumentRecovery {
+                Button("別の作品を取り込む") {
+                    store.isImporterPresented = true
+                }
+                .buttonStyle(.borderedProminent)
 
-            Button("新規作品を作る") {
-                makeNewDocument()
+                Button("新規作品を作る") {
+                    makeNewDocument()
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
         }
         .padding()
     }

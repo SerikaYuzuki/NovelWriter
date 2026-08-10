@@ -154,9 +154,11 @@ struct NovelWorkbenchView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
                 guard appState.supportsAttachments else { return }
-                appState.selectProjectSection(.references)
-                attachmentImportSession = appState.documentSessionToken
-                isImportingAttachment = true
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.references) else { return }
+                    attachmentImportSession = appState.documentSessionToken
+                    isImportingAttachment = true
+                }
             }
     }
 
@@ -205,19 +207,16 @@ struct NovelWorkbenchView: View {
     }
 
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
-        let previous = appState.workspaceSelection.section
-        appState.selectProjectSection(section)
-
-        guard appState.workspaceSelection.section == section,
-              WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
-
-        // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
-        // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
-        // Detail側からのプログラム遷移では呼ばれないため、標準のinactive選択を妨げない。
-        let handoffID = UUID()
-        sidebarFocusHandoffID = handoffID
-        projectSidebarIsFocused = false
         Task { @MainActor in
+            let previous = appState.workspaceSelection.section
+            guard await appState.selectProjectSectionAfterDeviceSyncDeparture(section),
+                  WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
+
+            // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
+            // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
+            let handoffID = UUID()
+            sidebarFocusHandoffID = handoffID
+            projectSidebarIsFocused = false
             await Task.yield()
             guard sidebarFocusHandoffID == handoffID,
                   appState.workspaceSelection.section == section else { return }
@@ -323,14 +322,21 @@ struct NovelWorkbenchView: View {
             EditorPaneView()
         case .characters:
             CharacterDetailView { appearance in
-                appState.selectProjectSection(.structure)
-                appState.selectEpisode(appearance.episodeID, in: appearance.chapterID)
-                editorSearchSession.requestSelection(range: appearance.range)
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    guard await appState.selectEpisodeAfterDeviceSyncDeparture(
+                        appearance.episodeID,
+                        in: appearance.chapterID
+                    ) else { return }
+                    editorSearchSession.requestSelection(range: appearance.range)
+                }
             }
         case .plot:
             PlotAndFlagSplitView { chapterID in
-                appState.selectProjectSection(.structure)
-                appState.selectChapter(chapterID)
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    await appState.selectChapterAfterDeviceSyncDeparture(chapterID)
+                }
             }
         case .references:
             AttachmentDetailView(fileName: selectedAttachmentFileName)
@@ -342,6 +348,9 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
+                    .frame(maxWidth: 560, alignment: .leading)
+                Divider()
+                DeviceSyncSettingsView()
                     .frame(maxWidth: 560, alignment: .leading)
             }
         }

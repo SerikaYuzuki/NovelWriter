@@ -148,6 +148,14 @@ final class IOSWorkspaceNavigationCoordinator {
         return true
     }
 
+    func editorDeparture(for proposedPath: [IOSWorkspaceRoute]) -> IOSWorkspaceEditorDeparture? {
+        guard proposedPath != path else { return nil }
+        let retainedCount = zip(path, proposedPath)
+            .prefix { current, proposed in current == proposed }
+            .count
+        return Self.editorDeparture(in: Array(path.dropFirst(retainedCount)))
+    }
+
     private func prepareProjectPath(for session: IOSDocumentSessionToken) {
         activeSession = session
         let startsAtProjectHome = path.first == .projectHome(session: session)

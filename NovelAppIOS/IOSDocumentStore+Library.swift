@@ -29,6 +29,7 @@ struct IOSDocumentLibraryItem: Identifiable, Equatable, Sendable {
 extension IOSDocumentStore {
     @discardableResult
     func refreshLibrary() async -> Bool {
+        guard !deviceSyncStartupFailedSafely else { return false }
         do {
             try fileManager.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
             try await reloadLibraryItems()
@@ -41,7 +42,8 @@ extension IOSDocumentStore {
 
     @discardableResult
     func openPrivateDocument(id: IOSPrivateDocumentID) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
+        guard !deviceSyncStartupFailedSafely else { return false }
+        return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let isVerified = verifiedPrivateDocumentIDs.contains(id)
             let isAvailable = libraryItems.contains { $0.id == id && $0.availability == .available }
@@ -59,6 +61,7 @@ extension IOSDocumentStore {
             let transitioned = await performDocumentTransition {
                 let loaded = try await repository.load(from: candidateURL)
                 let loadedAttachments = try await loadAttachmentsForInstall(at: candidateURL)
+                guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
                 install(loaded, at: candidateURL, attachments: loadedAttachments)
                 startupState = .ready
                 saveState = .saved
@@ -139,11 +142,13 @@ extension IOSDocumentStore {
         id: IOSPrivateDocumentID,
         rememberRecent: Bool = true
     ) async -> Bool {
+        guard !deviceSyncStartupFailedSafely else { return false }
         guard verifiedPrivateDocumentIDs.contains(id),
               libraryItems.contains(where: { $0.id == id && $0.availability == .available }),
               let url = verifiedPrivatePackageURL(for: id),
               let loaded = try? await repository.load(from: url),
               let loadedAttachments = try? await loadAttachmentsForInstall(at: url) else { return false }
+        guard !deviceSyncStartupFailedSafely else { return false }
         install(loaded, at: url, attachments: loadedAttachments, rememberRecent: rememberRecent)
         return true
     }

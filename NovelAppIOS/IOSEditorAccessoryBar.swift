@@ -76,6 +76,12 @@ final class IOSEditorAccessoryCommandState {
         rubySheet = nil
     }
 
+    func cancelPendingOperation() {
+        pendingOperation = nil
+        rubySheet = nil
+        lastReplacementID = nil
+    }
+
     func receiveRejectedCommandID(_ rejectedID: UUID?) {
         guard let rejectedID else { return }
         guard
@@ -141,13 +147,16 @@ struct IOSEditorRubySheetState: Identifiable, Equatable {
 @MainActor
 struct IOSEditorAccessoryBar: View {
     let commandSession: EditorCommandSession
+    let isEnabled: Bool
     @State private var commandState: IOSEditorAccessoryCommandState
 
     init(
         commandSession: EditorCommandSession,
+        isEnabled: Bool = true,
         commandState: IOSEditorAccessoryCommandState = IOSEditorAccessoryCommandState()
     ) {
         self.commandSession = commandSession
+        self.isEnabled = isEnabled
         _commandState = State(initialValue: commandState)
     }
 
@@ -194,7 +203,8 @@ struct IOSEditorAccessoryBar: View {
         }
         .environment(\.colorScheme, .dark)
         .disabled(
-            !commandSession.hasActiveEditorSurface ||
+            !isEnabled ||
+                !commandSession.hasActiveEditorSurface ||
                 commandSession.isDocumentTransitionPrepared ||
                 commandSession.pendingCommand != nil ||
                 commandState.isBusy ||
@@ -207,6 +217,11 @@ struct IOSEditorAccessoryBar: View {
         }
         .onChange(of: commandSession.rejectedCommandID) { _, rejectedID in
             commandState.receiveRejectedCommandID(rejectedID)
+        }
+        .onChange(of: isEnabled) { _, enabled in
+            if !enabled {
+                commandState.cancelPendingOperation()
+            }
         }
         .sheet(item: rubySheetBinding) { state in
             IOSEditorRubySheet(

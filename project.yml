@@ -59,6 +59,10 @@ targets:
         product: NovelUI
       - package: NovelKit
         product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
     settings:
       base:
         PRODUCT_NAME: FUMINIWA
@@ -72,12 +76,13 @@ targets:
         # 物理Info.plistを正とする(D-038)。
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: NovelApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NovelApp/NovelApp.entitlements
         # コード署名: ローカル実行用に自動署名。CIビルドチェックでは
         # `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` を
         # 引数で渡して署名なしビルドにする(Scripts/check.sh)。
         CODE_SIGN_STYLE: Automatic
-        # App Sandbox は採用しない(docs/DECISIONS.md D-011)。entitlements
-        # ファイルを一切持たせないことで、Sandbox capability を付与しない。
+        # App Sandbox は採用しない(docs/DECISIONS.md D-011)。Device Sync用の
+        # CloudKit / Push entitlementだけを持たせ、sandbox entitlementは付与しない。
         ENABLE_HARDENED_RUNTIME: YES
   NovelAppTests:
     type: bundle.unit-test
@@ -87,6 +92,8 @@ targets:
       - path: NovelAppTests
     dependencies:
       - target: NovelApp
+      - package: NovelKit
+        product: NovelSyncTesting
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -117,6 +124,8 @@ targets:
         product: NovelExport
       - package: NovelKit
         product: NovelAI
+      - package: NovelKit
+        product: NovelSync
     settings:
       base:
         PRODUCT_NAME: FUMINIWAExperimental
@@ -167,6 +176,10 @@ targets:
         product: NovelUI
       - package: NovelKit
         product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
     settings:
       base:
         PRODUCT_NAME: FUMINIWA
@@ -178,6 +191,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: NovelAppIOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NovelAppIOS/FUMINIWAIOS.entitlements
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
@@ -189,6 +203,8 @@ targets:
       - path: NovelAppIOSTests
     dependencies:
       - target: FUMINIWAIOS
+      - package: NovelKit
+        product: NovelSyncTesting
     settings:
       base:
         SWIFT_VERSION: "6.0"

@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelSync
 import Observation
 
 enum DocumentSaveState: Equatable {
@@ -48,11 +49,16 @@ enum SaveDocumentAsResult: Equatable {
 
 /// AppStateのactor分離に依存せず、破棄時に通知登録を解除するtoken holder。
 private final class NotificationObserverToken {
+    private let center: NotificationCenter
     var value: NSObjectProtocol?
+
+    init(center: NotificationCenter = .default) {
+        self.center = center
+    }
 
     deinit {
         if let value {
-            NotificationCenter.default.removeObserver(value)
+            center.removeObserver(value)
         }
     }
 }
@@ -90,6 +96,9 @@ final class AppState {
     private(set) var saveState: DocumentSaveState
     /// 起動中の編集可能placeholderをUIへ露出しないための三状態(D-039)。
     private(set) var startupState: AppStartupState
+    /// production syncのlocal metadataを確立できなかったprocessは、
+    /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
+    private(set) var deviceSyncStartupFailedSafely = false
     /// Finderからの作品オープンに失敗したときだけ使う安全な利用者向け文言。
     var externalDocumentOpenErrorMessage: String?
     /// clipboardへ送った本文を保持せず、直近のcopy結果だけを表示する一時通知。
@@ -113,6 +122,11 @@ final class AppState {
     /// EditorViewへ本文を再流込する世代。作品install/復元時だけ進め、
     /// 同じ本文を保つ別名保存ではcaretとUndoを維持する。
     private(set) var editorContentGeneration: UInt64
+    /// 選択中話のDevice Sync表示と本文編集権限。
+    var deviceSyncState: DeviceSyncUIState
+    var deviceSyncTransferState: DeviceSyncTransferState
+    var deviceSyncConflict: EpisodeConflict?
+    var deviceSyncSetupState: DeviceSyncSetupState = .idle
 
     private let repository: DocumentRepository
     private let attachmentManager: AttachmentManaging?
@@ -120,13 +134,23 @@ final class AppState {
     private let fileManager: FileManager
     private let defaultDocumentDirectoryName: String
     /// 表示中のEditorKitへ、作品遷移前のIME確定・モデル同期・入力停止を依頼する。
-    private let editorCommandSession: EditorCommandSession
+    let editorCommandSession: EditorCommandSession
     /// promptをsystem clipboardへ書く、テスト差し替え可能な境界。
     private let clipboardWriter: any PlainTextClipboardWriting
     /// active Editorから確定済み本文だけを読み取る。IME変換中は本文を返さない。
     private let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
+    @ObservationIgnored let deviceSyncRuntime: DeviceSyncRuntime?
+    @ObservationIgnored var deviceSyncClients: [DeviceSyncClientKey: DeviceSyncClient] = [:]
+    @ObservationIgnored var activeDeviceSyncIdentity: DeviceSyncEpisodeIdentity?
+    @ObservationIgnored var resolvedDeviceSyncLookupIdentity: DeviceSyncLookupIdentity?
+    @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
+    @ObservationIgnored var pendingDeviceSyncConflictResolution: PendingDeviceSyncConflictResolution?
+    @ObservationIgnored var pendingDeviceSyncNewWork: PendingDeviceSyncNewWork?
+    @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
+    @ObservationIgnored var permitsDeviceSyncProjectSectionMutationAfterFlush = false
     /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
-    @ObservationIgnored private let documentOperationGate = DocumentOperationGate()
+    @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     /// 終了前保存を要求した後に、新しい作品遷移を開始させない。
     @ObservationIgnored private var isTerminationPending = false
     /// 重複した終了要求を同じ保存結果へ合流させるsingle-flight Task。
@@ -145,7 +169,7 @@ final class AppState {
     /// エラーになるため。`lazy` なら初回アクセス時点で初期化が完了している)。
     /// `@Observable` の観測対象からは外す(UIの再描画とは無関係な内部実装)。
     @ObservationIgnored
-    private lazy var saveCoordinator: DocumentSaveCoordinator = .init(
+    lazy var saveCoordinator: DocumentSaveCoordinator = .init(
         debounceNanoseconds: Self.autosaveDebounceNanoseconds,
         currentState: { [weak self] in
             guard let self, startupState.isReady else { return nil }
@@ -167,6 +191,15 @@ final class AppState {
     )
     /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
     @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
+    /// スリープ直前にIME・package・journalを確定するworkspace通知のtoken。
+    @ObservationIgnored private let systemSleepObserver = NotificationObserverToken(
+        center: NSWorkspace.shared.notificationCenter
+    )
+    /// pushが欠落してもforeground/wakeでexact fenceを再検査する。
+    @ObservationIgnored private let becomeActiveObserver = NotificationObserverToken()
+    @ObservationIgnored private let systemWakeObserver = NotificationObserverToken(
+        center: NSWorkspace.shared.notificationCenter
+    )
     /// SwiftUIのtask再評価で同時に呼ばれたbootstrapを、同じ完了へ合流させる。
     /// 単なるstartedフラグでは後続呼び出しだけが先にreturnできるため、実行中Taskを保持する。
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
@@ -190,6 +223,8 @@ final class AppState {
         editorCommandSession = dependencies.editorCommandSession
         clipboardWriter = dependencies.clipboardWriter
         activeCommittedTextCapture = dependencies.activeCommittedTextCapture
+        deviceSyncRuntime = dependencies.deviceSyncRuntime
+        deviceSyncTransferState = .notApplicable
 
         // 実際の状態は `bootstrap()` で確立する。ここでは(ウィンドウ表示を
         // ブロックしないよう)空の新規作品をプレースホルダとして持たせておく。
@@ -207,6 +242,8 @@ final class AppState {
             documentURL: placeholderURL.standardizedFileURL
         )
         editorContentGeneration = 0
+        deviceSyncState = .unconfigured
+        deviceSyncConflict = nil
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
@@ -240,6 +277,7 @@ final class AppState {
     /// Finderから指定されたURLはrecentより優先する。読込失敗時は新規作品へ
     /// fallbackせずRecoveryで停止し、原稿とrecent URLを変更しない(D-039)。
     func bootstrap(opening requestedURL: URL? = nil) async {
+        guard !deviceSyncStartupFailedSafely else { return }
         if hasCompletedBootstrap {
             if let requestedURL {
                 _ = await openExternalDocument(at: requestedURL)
@@ -268,7 +306,10 @@ final class AppState {
     /// 初回状態の確立と、そのI/O中に届いたFinder openを一つの完了境界として処理する。
     /// これにより、どの`bootstrap()`呼び出しもdelegateへ早すぎる完了を返さない。
     private func performBootstrap(opening requestedURL: URL?) async {
+        guard !deviceSyncStartupFailedSafely else { return }
         observeResignActive()
+        observeSystemSleep()
+        observeDeviceSyncReactivation()
 
         await establishInitialStartupState(opening: requestedURL)
 
@@ -314,7 +355,7 @@ final class AppState {
 
     /// Recovery画面の「再試行」。同じ原本URLまたは同じ新規保存先を再利用する。
     func retryStartup() async {
-        guard !isTerminationPending else { return }
+        guard !deviceSyncStartupFailedSafely, !isTerminationPending else { return }
         await documentOperationGate.perform {
             await retryStartupSerially()
         }
@@ -333,12 +374,27 @@ final class AppState {
             await loadStartupDocument(at: url, source: context.source)
         case .cannotCreateDocument:
             await createInitialDocumentForStartup(at: context.documentURL)
+        case .deviceSyncSafetyUnavailable:
+            startupState = .recovery(context)
         }
+    }
+
+    func failStartupForDeviceSyncSafety() {
+        deviceSyncStartupFailedSafely = true
+        pendingBootstrapOpenURL = nil
+        startupState = .recovery(
+            StartupRecoveryContext(
+                reason: .deviceSyncSafetyUnavailable,
+                source: .initialDocument,
+                documentURL: nil
+            )
+        )
     }
 
     /// Finder / Open Withから渡された作品を、現在作品を守る通常の切替経路で開く。
     @discardableResult
     func openExternalDocument(at url: URL) async -> Bool {
+        guard !deviceSyncStartupFailedSafely else { return false }
         let success = await openDocument(at: url)
         if !success, startupState.isReady {
             externalDocumentOpenErrorMessage = "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
@@ -347,6 +403,7 @@ final class AppState {
     }
 
     private func loadStartupDocument(at url: URL, source: StartupDocumentSource) async {
+        guard !deviceSyncStartupFailedSafely else { return }
         let targetURL = url.standardizedFileURL
         do {
             let loadedDocument = try await repository.load(from: targetURL)
@@ -365,6 +422,7 @@ final class AppState {
     }
 
     private func createInitialDocumentForStartup(at preferredURL: URL? = nil) async {
+        guard !deviceSyncStartupFailedSafely else { return }
         let newDocument = NovelDocument.newDocument()
         let newURL = preferredURL
             ?? Self.availableSaveURL(
@@ -424,22 +482,30 @@ final class AppState {
     }
 
     var permitsDocumentInteraction: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress
+        !deviceSyncStartupFailedSafely &&
+            startupState.isReady &&
+            (!isDocumentTransitionInProgress || permitsDeviceSyncSelectionMutationAfterFlush)
     }
 
     var permitsDocumentChoice: Bool {
-        startupState.permitsDocumentChoice && !isDocumentTransitionInProgress && !isTerminationPending
+        !deviceSyncStartupFailedSafely &&
+            startupState.permitsDocumentChoice &&
+            !isDocumentTransitionInProgress &&
+            !isTerminationPending
     }
 
     /// provider待機でdocument operation gateを保持せず、開始／再検査時だけ現在作品を読むための条件。
     /// 終了要求後は`permitsDocumentInteraction`がtrueでも新しい長時間処理を開始しない。
     var permitsLongRunningDocumentOperation: Bool {
-        startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
+        !deviceSyncStartupFailedSafely &&
+            startupState.isReady &&
+            !isDocumentTransitionInProgress &&
+            !isTerminationPending
     }
 
     /// TextField等のfirst responderとEditorKit本文を同じ同期区間で確定し、
     /// 次の保存・installが終わるまで旧Workbenchからの変更を閉じる。
-    private func beginDocumentTransition() -> Bool {
+    func beginDocumentTransition() -> Bool {
         guard !isDocumentTransitionInProgress else { return false }
         if let keyWindow = NSApp.keyWindow, !keyWindow.makeFirstResponder(nil) {
             return false
@@ -449,7 +515,7 @@ final class AppState {
         return true
     }
 
-    private func endDocumentTransition() {
+    func endDocumentTransition() {
         isDocumentTransitionInProgress = false
         editorCommandSession.resumeAfterDocumentTransition()
     }
@@ -461,7 +527,7 @@ final class AppState {
     /// 一切置き換えない。
     @discardableResult
     func openDocument(at url: URL) async -> Bool {
-        guard !isTerminationPending else { return false }
+        guard !deviceSyncStartupFailedSafely, !isTerminationPending else { return false }
         return await documentOperationGate.perform {
             await openDocumentSerially(at: url)
         }
@@ -478,7 +544,9 @@ final class AppState {
         }
 
         guard !hadReadyDocument || targetURL != documentURL.standardizedFileURL else {
-            return await saveCoordinator.saveNow()
+            guard beginDocumentTransition() else { return false }
+            didBeginTransition = true
+            return await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: false)
         }
         if !hadReadyDocument {
             startupState = .loading
@@ -508,7 +576,7 @@ final class AppState {
         if hadReadyDocument {
             guard beginDocumentTransition() else { return false }
             didBeginTransition = true
-            guard await saveCoordinator.saveNow() else { return false }
+            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else { return false }
         }
 
         installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
@@ -518,7 +586,8 @@ final class AppState {
     /// 新規作品を既定保存先へ作成し、保存成功後にだけ現在作品として採用する。
     @discardableResult
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
-        await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
+        guard !deviceSyncStartupFailedSafely else { return false }
+        return await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
             await createNewDocumentSerially()
         }
     }
@@ -573,7 +642,7 @@ final class AppState {
         if hadReadyDocument {
             guard beginDocumentTransition() else { return false }
             didBeginTransition = true
-            guard await saveCoordinator.saveNow() else { return false }
+            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else { return false }
         }
 
         installDocument(newDocument, at: newURL, attachments: newAttachments)
@@ -593,14 +662,21 @@ final class AppState {
     /// Presenterが非同期完了後の可変状態から失敗理由を推測しないための結果付き経路。
     func saveDocumentResult(
         as url: URL,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: DocumentSessionToken? = nil,
+        preAdoptionValidation: (@Sendable (URL) throws -> Void)? = nil
     ) async -> SaveDocumentAsResult {
         await performForCurrentDocument(expectedSession: expectedSession, ifStale: .staleSession) {
-            await saveDocumentSerially(as: url)
+            await saveDocumentSerially(
+                as: url,
+                preAdoptionValidation: preAdoptionValidation
+            )
         }
     }
 
-    private func saveDocumentSerially(as url: URL) async -> SaveDocumentAsResult {
+    private func saveDocumentSerially(
+        as url: URL,
+        preAdoptionValidation: (@Sendable (URL) throws -> Void)? = nil
+    ) async -> SaveDocumentAsResult {
         guard startupState.isReady else { return .failedBeforeSwitch }
         let destinationURL = url.standardizedFileURL
         let sourceURL = documentURL
@@ -616,6 +692,12 @@ final class AppState {
             }
         }
 
+        guard beginDocumentTransition() else { return .failedBeforeSwitch }
+        didBeginTransition = true
+        guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
+            return .failedBeforeSwitch
+        }
+
         do {
             let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
                 let documentSnapshot = document
@@ -628,17 +710,13 @@ final class AppState {
                 } else {
                     try await repository.save(documentSnapshot, to: destinationURL)
                 }
-
-                // copy中も入力は継続できる。保存先を切り替える直前にIMEを旧sessionへ
-                // 確定し、Editor keyの更新と事後保存が終わるまで入力を止める。
-                guard beginDocumentTransition() else { return false }
-                didBeginTransition = true
-
+                try preAdoptionValidation?(destinationURL)
                 // URL・recent・session世代の切替までを保存排他区間に含める。
-                // コピー中に待機した通常保存が、旧URLへ再開する隙間を作らない。
+                // 事前にEditorと同期境界を閉じているため、旧URLへ再開する隙間を作らない。
                 documentURL = destinationURL
                 rememberDocumentURL(destinationURL)
                 advanceDocumentSession(document: document, url: destinationURL)
+                deviceSyncSelectionDidChange()
                 return true
             }
 
@@ -660,6 +738,7 @@ final class AppState {
     /// Project Sidebar のセクションを選択する。UI2 では画面の主導線として使う。
     func selectProjectSection(_ section: ProjectSection) {
         guard workspaceSelection.section != section else { return }
+        guard deviceSyncRuntime == nil || permitsDeviceSyncProjectSectionMutationAfterFlush else { return }
         workspaceSelection = WorkspaceSelection(section: section)
         if section == .worldbuilding {
             ensureWorldNoteSelection()
@@ -972,6 +1051,7 @@ final class AppState {
     func selectChapter(_ id: ChapterID?) {
         guard permitsDocumentInteraction else { return }
         guard id != selectedChapterID else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         setSelection(chapterID: id, episodeID: id.flatMap(preferredEpisodeID(in:)))
         flushSaveImmediately()
     }
@@ -980,6 +1060,9 @@ final class AppState {
     func selectPlotOutline(_ selection: PlotOutlineSelection) {
         guard permitsDocumentInteraction else { return }
         guard selection != plotOutlineSelection else { return }
+        if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+        }
         plotOutlineSelection = selection
         if case let .chapter(chapterID) = selection {
             setSelection(chapterID: chapterID, episodeID: preferredEpisodeID(in: chapterID))
@@ -992,6 +1075,8 @@ final class AppState {
         guard permitsDocumentInteraction else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID else { return }
+        guard targetChapterID == selectedChapterID && id == selectedEpisodeID ||
+            permitsSynchronousDeviceSyncSelectionMutation else { return }
         guard let id else {
             guard document.chapters.first(where: { $0.id == targetChapterID })?.episodes.isEmpty == true else { return }
             setSelection(chapterID: targetChapterID, episodeID: nil)
@@ -1010,6 +1095,7 @@ final class AppState {
     /// 章を末尾に追加し、追加した章を選択状態にする。
     func addChapter() {
         guard permitsDocumentInteraction else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
         setSelection(chapterID: newID, episodeID: nil)
@@ -1022,6 +1108,7 @@ final class AppState {
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
         guard permitsDocumentInteraction else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID,
               let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
@@ -1110,6 +1197,9 @@ final class AppState {
     @discardableResult
     func deleteChapter(id: ChapterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
+        if selectedChapterID == id {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+        }
         guard document.chapters.count > 1 else { return false }
         guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return false }
         guard document.removeChapter(id: id) != nil else { return false }
@@ -1148,6 +1238,9 @@ final class AppState {
         expectedSession: DocumentSessionToken? = nil
     ) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
+        if selectedEpisodeID == episodeID {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+        }
         let sourceChapterID = chapterID ?? selectedChapterID
         guard let sourceChapterID,
               let originalIndex = document.episode(episodeID)?.chapterID == sourceChapterID
@@ -1183,6 +1276,9 @@ final class AppState {
         before targetEpisodeID: EpisodeID? = nil
     ) -> Bool {
         guard permitsDocumentInteraction else { return false }
+        if selectedEpisodeID == episodeID, selectedChapterID != destinationChapterID {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+        }
         guard document.moveEpisode(
             id: episodeID,
             from: sourceChapterID,
@@ -1213,15 +1309,53 @@ final class AppState {
         _ content: String,
         for episodeID: EpisodeID,
         in chapterID: ChapterID,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: DocumentSessionToken? = nil,
+        expectedEditorContentGeneration: UInt64? = nil
     ) {
         guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
+        if let expectedEditorContentGeneration {
+            guard editorContentGeneration == expectedEditorContentGeneration else { return }
+        }
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+        if let expectedSession,
+           let expectedEditorContentGeneration,
+           let expectedLookup = currentDeviceSyncLookupIdentity,
+           expectedLookup.documentSession == expectedSession,
+           expectedLookup.chapterID == chapterID,
+           expectedLookup.episodeID == episodeID,
+           expectedLookup.editorContentGeneration == expectedEditorContentGeneration
+        {
+            scheduleDeviceSyncForEditedEpisode(
+                content: content,
+                expectedLookup: expectedLookup
+            )
+        }
+    }
+
+    func captureCommittedTextForDeviceSync() -> EditorCommittedTextCaptureResult {
+        activeCommittedTextCapture()
+    }
+
+    func installDeviceSyncEpisodeContent(
+        _ content: String,
+        chapterID: ChapterID,
+        episodeID: EpisodeID,
+        advancesEditorGeneration: Bool
+    ) {
+        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        saveCoordinator.markDirty()
+        if advancesEditorGeneration {
+            editorContentGeneration &+= 1
+        }
+    }
+
+    func advanceEditorContentGenerationForSurfaceTransition() {
+        editorContentGeneration &+= 1
     }
 
     /// 選択中章のメモを更新する。メモは短文想定の補助情報なので SwiftUI 側の
@@ -1563,6 +1697,9 @@ final class AppState {
     @discardableResult
     func movePlotCardFromOutline(id: PlotCardID, to selection: PlotOutlineSelection) -> Bool {
         guard permitsDocumentInteraction else { return false }
+        if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+        }
         guard let card = document.plotCards.first(where: { $0.id == id }) else { return false }
 
         let destinationChapterID: ChapterID?
@@ -1879,7 +2016,7 @@ final class AppState {
 
         guard beginDocumentTransition() else { return false }
         defer { endDocumentTransition() }
-        guard await saveCoordinator.saveNow() else { return false }
+        guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else { return false }
 
         // ここから復元結果のinstallまでは編集面を閉じる。復元中の入力が退避後に
         // 失われることを防ぎ、保存Coordinatorにも現在作品を公開しない(D-041)。
@@ -1934,7 +2071,7 @@ final class AppState {
     private func saveBeforeTerminationSerially() async -> Bool {
         guard startupState.isReady else { return true }
         guard beginDocumentTransition() else { return false }
-        let succeeded = await saveCoordinator.saveNow()
+        let succeeded = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
         if !succeeded {
             endDocumentTransition()
         }
@@ -2005,12 +2142,18 @@ final class AppState {
         return try await attachmentManager.listAttachments(in: url)
     }
 
-    private func installDocument(_ newDocument: NovelDocument, at url: URL, attachments newAttachments: [Attachment]) {
+    private func installDocument(
+        _ newDocument: NovelDocument,
+        at url: URL,
+        attachments newAttachments: [Attachment]
+    ) {
+        guard !deviceSyncStartupFailedSafely else { return }
         document = newDocument
         documentURL = url
         advanceDocumentSession(document: newDocument, url: url)
         editorContentGeneration &+= 1
         setInitialSelection(for: newDocument)
+        deviceSyncSelectionDidChange()
         selectedCharacterID = newDocument.characters.first?.id
         selectedPlotCardID = newDocument.plotCards.first?.id
         selectedFlagID = newDocument.flags.first?.id
@@ -2038,6 +2181,8 @@ final class AppState {
     }
 
     private func setSelection(chapterID: ChapterID?, episodeID: EpisodeID?) {
+        let didChange = selectedChapterID != chapterID || selectedEpisodeID != episodeID
+        guard !didChange || permitsSynchronousDeviceSyncSelectionMutation else { return }
         selectedChapterID = chapterID
         selectedEpisodeID = episodeID
         if let chapterID, let episodeID {
@@ -2047,6 +2192,16 @@ final class AppState {
             plotOutlineSelection = .chapter(chapterID)
         }
         workspaceSelection.outlineItemID = chapterID.map { OutlineItemID(rawValue: $0.rawValue.uuidString) }
+        if didChange {
+            deviceSyncSelectionDidChange()
+        }
+    }
+
+    private var permitsSynchronousDeviceSyncSelectionMutation: Bool {
+        deviceSyncRuntime == nil ||
+            activeDeviceSyncIdentity == nil ||
+            permitsDeviceSyncSelectionMutationAfterFlush ||
+            editorCommandSession.isDocumentTransitionPrepared
     }
 
     private func preferredEpisodeID(in chapterID: ChapterID) -> EpisodeID? {
@@ -2065,7 +2220,42 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.flushSaveImmediately()
+                await self?.flushDeviceSyncForBackground()
+            }
+        }
+    }
+
+    private func observeSystemSleep() {
+        guard systemSleepObserver.value == nil else { return }
+        systemSleepObserver.value = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.flushDeviceSyncForBackground()
+            }
+        }
+    }
+
+    private func observeDeviceSyncReactivation() {
+        guard becomeActiveObserver.value == nil, systemWakeObserver.value == nil else { return }
+        becomeActiveObserver.value = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
+            }
+        }
+        systemWakeObserver.value = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
             }
         }
     }

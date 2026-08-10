@@ -54,7 +54,12 @@ struct OutlineContainerView: View {
             presenting: chapterPendingDeletion
         ) { request in
             Button("削除", role: .destructive) {
-                appState.deleteChapter(id: request.value.id, expectedSession: request.session)
+                Task {
+                    await appState.deleteChapterAfterDeviceSyncDeparture(
+                        id: request.value.id,
+                        expectedSession: request.session
+                    )
+                }
             }
             Button("キャンセル", role: .cancel) {}
         } message: { request in
@@ -66,11 +71,13 @@ struct OutlineContainerView: View {
             presenting: episodePendingDeletion
         ) { request in
             Button("削除", role: .destructive) {
-                _ = appState.deleteEpisode(
-                    id: request.episode.id,
-                    from: request.chapterID,
-                    expectedSession: request.session
-                )
+                Task {
+                    await appState.deleteEpisodeAfterDeviceSyncDeparture(
+                        id: request.episode.id,
+                        from: request.chapterID,
+                        expectedSession: request.session
+                    )
+                }
             }
             Button("キャンセル", role: .cancel) {}
         } message: { request in
@@ -144,7 +151,13 @@ struct OutlineView: View {
                         }
                         .onMove { offsets, destination in
                             guard appState.outlinePresentation.searchText.isEmpty else { return }
-                            appState.moveEpisodes(in: chapter.id, fromOffsets: offsets, toOffset: destination)
+                            Task {
+                                await appState.moveEpisodesAfterDeviceSyncDeparture(
+                                    in: chapter.id,
+                                    fromOffsets: offsets,
+                                    toOffset: destination
+                                )
+                            }
                         }
                     } label: {
                         OutlineChapterRow(
@@ -180,7 +193,12 @@ struct OutlineView: View {
                 }
                 .onMove { offsets, destination in
                     guard appState.outlinePresentation.searchText.isEmpty else { return }
-                    appState.moveChapters(fromOffsets: offsets, toOffset: destination)
+                    Task {
+                        await appState.moveChaptersAfterDeviceSyncDeparture(
+                            fromOffsets: offsets,
+                            toOffset: destination
+                        )
+                    }
                 }
             }
         }
@@ -311,7 +329,12 @@ struct OutlineView: View {
                       let chapter = appState.document.chapters.first(where: {
                           $0.episodes.contains(where: { $0.id == episodeID })
                       }) else { return }
-                appState.selectEpisode(episodeID, in: chapter.id)
+                Task {
+                    await appState.selectEpisodeAfterDeviceSyncDeparture(
+                        episodeID,
+                        in: chapter.id
+                    )
+                }
             }
         )
     }
@@ -483,10 +506,20 @@ struct EditorPaneView: View {
     var body: some View {
         Group {
             if let episode = appState.selectedEpisode,
-               let chapterID = appState.selectedChapterID
+               let chapterID = appState.selectedChapterID,
+               let syncLookup = appState.currentDeviceSyncLookupIdentity
             {
                 let session = appState.documentSessionToken
+                let isEditable = appState.deviceSyncAllowsEditing(for: syncLookup)
                 VStack(spacing: 0) {
+                    DeviceSyncStatusBanner(
+                        state: appState.deviceSyncState,
+                        transferState: appState.deviceSyncTransferState,
+                        identity: appState.activeDeviceSyncIdentity
+                    ) { expectedIdentity in
+                        Task { await appState.forceContinueOnThisMac(expectedIdentity: expectedIdentity) }
+                    }
+
                     ZStack {
                         Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
                         EditorView(
@@ -504,12 +537,14 @@ struct EditorPaneView: View {
                                 session: session
                             ),
                             configuration: editorSettings.configuration,
+                            isEditable: isEditable,
                             onTextChange: { newText in
                                 appState.updateEpisodeContent(
                                     newText,
                                     for: episode.id,
                                     in: chapterID,
-                                    expectedSession: session
+                                    expectedSession: session,
+                                    expectedEditorContentGeneration: syncLookup.editorContentGeneration
                                 )
                                 #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
                                 aiProofreadingOperation.refreshApplicability()
@@ -519,7 +554,10 @@ struct EditorPaneView: View {
                         .frame(maxWidth: editorMaximumWidth)
                     }
 
-                    EditorAccessoryBar()
+                    EditorAccessoryBar(isEnabled: isEditable)
+                }
+                .task(id: syncLookup) {
+                    await appState.prepareDeviceSync(for: syncLookup)
                 }
             } else {
                 ContentUnavailableView(
@@ -533,6 +571,25 @@ struct EditorPaneView: View {
         .onChange(of: appState.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }
+        .sheet(isPresented: deviceSyncConflictIsPresented) {
+            if let conflict = appState.deviceSyncConflict {
+                DeviceSyncConflictResolutionView(
+                    conflict: conflict,
+                    state: appState.deviceSyncState,
+                    recoveredContent: appState.pendingDeviceSyncConflictResolution.flatMap {
+                        $0.conflict == conflict ? $0.content : nil
+                    }
+                ) { choice in
+                    Task {
+                        await appState.resolveDeviceSyncConflict(
+                            using: choice,
+                            expectedConflict: conflict
+                        )
+                    }
+                }
+                .id(conflict)
+            }
+        }
         #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
         .onDisappear {
                 aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
@@ -542,6 +599,13 @@ struct EditorPaneView: View {
 
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
+    }
+
+    private var deviceSyncConflictIsPresented: Binding<Bool> {
+        Binding(
+            get: { appState.deviceSyncConflict != nil },
+            set: { _ in }
+        )
     }
 
     private func selectionPromptCommands(
@@ -588,6 +652,7 @@ struct EditorPaneView: View {
 
 private struct EditorAccessoryBar: View {
     @Environment(EditorCommandSession.self) private var commandSession
+    let isEnabled: Bool
 
     @State private var pendingOperation: PendingEditorOperation?
     @State private var notationSheet: NotationSheetState?
@@ -632,7 +697,8 @@ private struct EditorAccessoryBar: View {
         .padding(8)
         .workbenchGlassChromeStyle()
         .disabled(
-            !commandSession.hasActiveEditorSurface ||
+            !isEnabled ||
+                !commandSession.hasActiveEditorSurface ||
                 commandSession.isDocumentTransitionPrepared ||
                 commandSession.pendingCommand != nil ||
                 pendingOperation != nil ||

@@ -3,6 +3,7 @@ import NovelCore
 
 extension IOSDocumentStore {
     func bootstrap() async {
+        guard !deviceSyncStartupFailedSafely else { return }
         if hasCompletedBootstrap {
             return
         }
@@ -22,16 +23,19 @@ extension IOSDocumentStore {
     }
 
     private func performBootstrap() async {
+        guard !deviceSyncStartupFailedSafely else { return }
         startupState = .loading
         do {
             try fileManager.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
             try await reloadLibraryItems()
+            guard !deviceSyncStartupFailedSafely else { return }
             let recentName = userDefaults.string(forKey: Self.lastDocumentNameKey)
             if let recentName {
                 let recentID = IOSPrivateDocumentID(packageName: recentName)
                 if Self.isValidPrivatePackageName(recentName) {
                     let didActivate = await activatePrivateDocumentIfAvailable(id: recentID)
                     if didActivate {
+                        guard !deviceSyncStartupFailedSafely else { return }
                         startupState = .ready
                         saveState = .saved
                         try await reloadLibraryItems()
@@ -40,23 +44,27 @@ extension IOSDocumentStore {
                 }
             }
 
+            guard !deviceSyncStartupFailedSafely else { return }
             startupState = .library
             saveState = .saved
             try await reloadLibraryItems()
         } catch {
+            guard !deviceSyncStartupFailedSafely else { return }
             startupState = .recovery(message: "作品を安全に開けませんでした。元の作品は変更していません。\n\(error.localizedDescription)")
         }
     }
 
     @discardableResult
     func makeNewDocument() async -> Bool {
-        await documentOperationGate.perform { [weak self] in
+        guard !deviceSyncStartupFailedSafely else { return false }
+        return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
                 let newDocument = NovelDocument.newDocument()
                 let newURL = uniquePackageURL(for: newDocument.id)
                 try await repository.save(newDocument, to: newURL)
                 let newAttachments = try await loadAttachmentsForInstall(at: newURL)
+                guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
                 install(newDocument, at: newURL, attachments: newAttachments)
                 startupState = .ready
                 saveState = .saved
@@ -70,7 +78,8 @@ extension IOSDocumentStore {
 
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
+        guard !deviceSyncStartupFailedSafely else { return false }
+        return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
                 let stagingURL = libraryRoot.appendingPathComponent(
@@ -90,6 +99,7 @@ extension IOSDocumentStore {
                     let loaded = try await repository.load(from: stagingURL)
                     try fileManager.moveItem(at: stagingURL, to: destinationURL)
                     let loadedAttachments = try await loadAttachmentsForInstall(at: destinationURL)
+                    guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
                     install(loaded, at: destinationURL, attachments: loadedAttachments)
                     startupState = .ready
                     saveState = .saved
@@ -108,12 +118,14 @@ extension IOSDocumentStore {
 
     @discardableResult
     func handleExternalPackageURL(_ url: URL) async -> Bool {
+        guard !deviceSyncStartupFailedSafely else { return false }
         await bootstrap()
+        guard !deviceSyncStartupFailedSafely else { return false }
         return await importPackage(from: url)
     }
 
     func performDocumentTransition(_ operation: () async throws -> Void) async -> Bool {
-        guard !isDocumentTransitionInProgress else { return false }
+        guard !deviceSyncStartupFailedSafely, !isDocumentTransitionInProgress else { return false }
         isDocumentTransitionInProgress = true
         operationErrorMessage = nil
 
@@ -129,10 +141,9 @@ extension IOSDocumentStore {
 
         if startupState == .ready {
             // `prepareForDocumentTransition()` は、未確定のIME入力をモデルへ同期する。
-            // 遷移中は通常の変更通知を止めているため、ここで旧作品を明示的にdirtyにし、
-            // 同期された最終本文を必ず旧URLへ保存してから候補作品を扱う。
-            saveCoordinator.markDirty()
-            guard await saveCoordinator.saveNow() else {
+            // packageを先に保存し、同期中の作品ならjournal保存・best effort publish・
+            // lease解放までを終えてから候補作品を扱う。
+            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
                 operationErrorMessage = "現在の作品を保存できなかったため、作品の切り替えを中止しました。"
                 return false
             }
@@ -224,12 +235,15 @@ extension IOSDocumentStore {
         attachments: [Attachment],
         rememberRecent: Bool = true
     ) {
+        guard !deviceSyncStartupFailedSafely else { return }
         self.document = document
         documentURL = url
         advanceDocumentSessionGeneration()
+        advanceEditorContentGeneration()
         replaceAttachments(attachments)
         selectedChapterID = document.chapters.first?.id
         selectedEpisodeID = document.chapters.first?.episodes.first?.id
+        deviceSyncSelectionDidChange()
         if rememberRecent {
             userDefaults.set(url.lastPathComponent, forKey: Self.lastDocumentNameKey)
         }
