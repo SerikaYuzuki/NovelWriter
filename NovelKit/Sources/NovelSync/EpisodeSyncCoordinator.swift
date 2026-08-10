@@ -64,6 +64,8 @@ public enum EpisodeSyncCoordinatorError: Error, Equatable, Sendable {
     case authorityGrantSuperseded
     case fenceObservationNotPending
     case remoteObservationSuperseded
+    case unresolvedConflict
+    case conflictSuperseded
 }
 
 /// 話本文の同期状態機械。native editorのIME確定と`.novelpkg`保存はApp側が先に行い、

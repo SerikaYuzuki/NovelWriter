@@ -33,7 +33,42 @@ public extension EpisodeSyncCoordinator {
 
     /// force CAS後のexact remote headを返すが、Appのinstall ackまではpublish権を有効化しない。
     func prepareForcedContinuation(expiresAt: Date) async throws -> EpisodeAuthorityGrant {
-        guard record != nil else { throw EpisodeSyncCoordinatorError.notLinked }
+        guard let record else { throw EpisodeSyncCoordinatorError.notLinked }
+        guard record.conflict == nil else {
+            throw EpisodeSyncCoordinatorError.unresolvedConflict
+        }
+        return try await prepareForcedContinuationUnchecked(expiresAt: expiresAt)
+    }
+
+    /// 競合UIが表示したexact local / remote parentを保ったまま、
+    /// 2-parent mergeをpublishするためだけにauthorityを取り直す。
+    /// 通常のforceと分け、既存forkを現在のeditor本文で上書きさせない。
+    func prepareConflictResolutionAuthority(
+        expectedConflict: EpisodeConflict,
+        expiresAt: Date
+    ) async throws -> EpisodeAuthorityGrant {
+        guard let record else { throw EpisodeSyncCoordinatorError.notLinked }
+        guard record.conflict == expectedConflict else {
+            throw EpisodeSyncCoordinatorError.conflictSuperseded
+        }
+        let current = try await transport.fetchSnapshot(for: key)
+        guard current.head?.revisionID == expectedConflict.remote.revisionID,
+              current.head?.contentDigest == expectedConflict.remote.contentDigest else {
+            try await applyFence(current, expectedAuthority: nil)
+            throw EpisodeSyncCoordinatorError.conflictSuperseded
+        }
+        let grant = try await prepareForcedContinuationUnchecked(expiresAt: expiresAt)
+        guard grant.snapshot.head?.revisionID == expectedConflict.remote.revisionID,
+              grant.snapshot.head?.contentDigest == expectedConflict.remote.contentDigest else {
+            _ = try await abandonAuthorityGrant(grant)
+            throw EpisodeSyncCoordinatorError.conflictSuperseded
+        }
+        return grant
+    }
+
+    private func prepareForcedContinuationUnchecked(
+        expiresAt: Date
+    ) async throws -> EpisodeAuthorityGrant {
         let snapshot = try await transport.fetchSnapshot(for: key)
         let result = try await requestLease(
             kind: .forceTakeover,
