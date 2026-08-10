@@ -9,24 +9,29 @@ public extension EpisodeSyncCoordinator {
             && initialRecord.sealedPublish != nil
         state = .synchronizing(context(for: initialRecord))
 
-        guard let snapshot = try await fetchSnapshotForSynchronization() else { return state }
-        guard let authority = try await synchronizationAuthority(
-            initialAuthority: initialAuthority,
-            isRestoredReplay: isRestoredReplay,
-            snapshot: snapshot
-        ) else { return state }
-        guard var current = record else { throw EpisodeSyncCoordinatorError.notLinked }
-        guard !current.pendingRevisions.isEmpty else {
-            return try await reconcileCleanRecord(current, snapshot: snapshot)
-        }
+        do {
+            guard let snapshot = try await fetchSnapshotForSynchronization() else { return state }
+            guard let authority = try await synchronizationAuthority(
+                initialAuthority: initialAuthority,
+                isRestoredReplay: isRestoredReplay,
+                snapshot: snapshot
+            ) else { return state }
+            guard var current = record else { throw EpisodeSyncCoordinatorError.notLinked }
+            guard !current.pendingRevisions.isEmpty else {
+                return try await reconcileCleanRecord(current, snapshot: snapshot)
+            }
 
-        let command = try await makePublishCommand(record: &current, authority: authority)
-        guard let result = try await publishForSynchronization(command.request) else { return state }
-        return try await applyPublishResult(
-            result,
-            sealed: command.sealed,
-            authority: authority
-        )
+            let command = try await makePublishCommand(record: &current, authority: authority)
+            guard let result = try await publishForSynchronization(command.request) else { return state }
+            return try await applyPublishResult(
+                result,
+                sealed: command.sealed,
+                authority: authority
+            )
+        } catch {
+            restoreStateAfterInterruptedSynchronization()
+            throw error
+        }
     }
 }
 
@@ -34,6 +39,17 @@ private extension EpisodeSyncCoordinator {
     struct PublishCommand {
         let sealed: EpisodeSealedPublish
         let request: EpisodePublishRequest
+    }
+
+    func restoreStateAfterInterruptedSynchronization() {
+        guard case .synchronizing = state, let current = record else { return }
+        if let pendingAuthorityGrant {
+            state = .authorityGrantedAwaitingInstall(context(for: current), pendingAuthorityGrant)
+        } else if restoredAuthorityRequiresClaim {
+            state = .restoredUnverified(context(for: current))
+        } else {
+            state = stateForRecord(current)
+        }
     }
 
     func fetchSnapshotForSynchronization() async throws -> EpisodeRemoteSnapshot? {

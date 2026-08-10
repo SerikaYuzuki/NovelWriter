@@ -7,6 +7,48 @@ import Testing
 // swiftlint:disable file_length type_body_length function_body_length
 @Suite("Episode sync coordinator")
 struct EpisodeSyncCoordinatorTests {
+    @Test("cancelled publish restores a retryable state from the durable journal")
+    func cancelledPublishDoesNotRemainSynchronizing() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let coordinator = makeCoordinator(
+            server: server,
+            journal: journal,
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await coordinator.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        _ = try await coordinator.recordLocalContent(
+            "local draft",
+            createdAt: SyncTestValues.date.addingTimeInterval(1)
+        )
+        await server.cancelNextPublish()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await coordinator.synchronize()
+        }
+        let interrupted = await coordinator.state
+        guard case let .localChanges(context) = interrupted else {
+            Issue.record("cancelled publish remained in a transient state")
+            return
+        }
+        #expect(context.localHead.content == "local draft")
+        #expect(context.pendingRevisionCount == 1)
+        #expect(await journal.storedRecord(for: SyncTestValues.key)?.sealedPublish != nil)
+
+        let retried = try await coordinator.synchronize()
+        guard case let .upToDate(context) = retried else {
+            Issue.record("sealed publish was not retryable after cancellation")
+            return
+        }
+        #expect(context.localHead.content == "local draft")
+        #expect(context.pendingRevisionCount == 0)
+    }
+
     @Test("force takeover fences old writer, preserves both forks, and publishes a two-parent merge")
     func forceTakeoverPreservesBothForks() async throws {
         let server = InMemoryEpisodeSyncServer()

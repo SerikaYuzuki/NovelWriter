@@ -18,38 +18,11 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
     private var leaseSlots: [EpisodeSyncKey: LeaseSlot] = [:]
     private var mutationCache: [SyncMutationID: CachedMutation] = [:]
     private var online = true, shouldLoseNextPublishResponse = false, shouldPauseNextPublish = false
+    private var shouldCancelNextPublish = false
     private var pausedPublishContinuation: CheckedContinuation<Void, Never>?
     private var pauseObservers: [CheckedContinuation<Void, Never>] = []
 
     public init() {}
-
-    public func setOnline(_ online: Bool) {
-        self.online = online
-    }
-
-    /// server commit後・client response前の切断を決定論的に再現する。
-    public func loseNextPublishResponseAfterCommit() {
-        shouldLoseNextPublishResponse = true
-    }
-
-    public func pauseNextPublish() {
-        shouldPauseNextPublish = true
-    }
-
-    public func waitUntilPublishIsPaused() async {
-        if pausedPublishContinuation != nil {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            pauseObservers.append(continuation)
-        }
-    }
-
-    public func resumePausedPublish() {
-        let continuation = pausedPublishContinuation
-        pausedPublishContinuation = nil
-        continuation?.resume()
-    }
 
     public func createWork(_ descriptor: SyncWorkDescriptor) async throws {
         try requireOnline()
@@ -135,6 +108,10 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
         try requireOnline()
         if let cached = try cachedResult(for: request) {
             return cached
+        }
+        if shouldCancelNextPublish {
+            shouldCancelNextPublish = false
+            throw CancellationError()
         }
         try await pauseIfRequested()
 
@@ -287,5 +264,39 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
 
     private func requireOnline() throws {
         guard online else { throw EpisodeSyncTransportError.unavailable }
+    }
+}
+
+public extension InMemoryEpisodeSyncServer {
+    func setOnline(_ online: Bool) {
+        self.online = online
+    }
+
+    /// server commit後・client response前の切断を決定論的に再現する。
+    func loseNextPublishResponseAfterCommit() {
+        shouldLoseNextPublishResponse = true
+    }
+
+    func pauseNextPublish() {
+        shouldPauseNextPublish = true
+    }
+
+    func cancelNextPublish() {
+        shouldCancelNextPublish = true
+    }
+
+    func waitUntilPublishIsPaused() async {
+        if pausedPublishContinuation != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pauseObservers.append(continuation)
+        }
+    }
+
+    func resumePausedPublish() {
+        let continuation = pausedPublishContinuation
+        pausedPublishContinuation = nil
+        continuation?.resume()
     }
 }
