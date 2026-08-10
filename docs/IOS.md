@@ -1,16 +1,16 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線とD-058の作品機能／執筆補助parityを追加（Simulator / generic device / ローカルCI検証済み。実機・Accessibility / Release QAは未完了）
+> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線とD-058の作品機能／執筆補助parityを追加。D-059の話本文Device Sync S1は承認・実装中で、実装検証、Accessibility、CloudKit外部Gate、署名済み実機、Release QAは未完了
 >
 > **対象**: iOS / iPadOS 17 以降
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md)、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md)、[DEVICE_SYNC.md](DEVICE_SYNC.md)、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)
 
 ## 1. 目的
 
 macOS版で確立した`NovelCore`、`.novelpkg` v3、`NovelExport`、EditorPluginの純粋ロジックを再利用し、iPhone / iPadで安全に日本語小説を執筆できる通常版FUMINIWAを追加する。
 
-Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。
+Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。D-059のDevice Syncも外部原本を直接編集せず、app-private packageへ話本文revisionをmaterializeする別protocolとして追加する。
 
 AI providerは接続しない。利用者が選んだ原稿から校正用／アドバイス用のplain text promptを作り、system clipboardへ明示コピーする機能だけを通常iOS版へ含める。
 
@@ -24,6 +24,7 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - iOS Editorの保存状態を上部へ移し、本文キャンバスと同じ背景のIME直上バーから`……` / `――` / `ルビ` / `傍点`をselection commandとして実行できるようにした
 - 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
 - generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、全ローカルCIを通過した
+- D-059でprivate CloudKitを使う話本文Device Sync S1を承認した。portable wire / state / journal / force / mergeの設計は固定したが、実装、container / signing、署名済み実機検証は未完了である
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
 
@@ -50,7 +51,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - Files、iCloud Drive、他社File Provider上の原本を直接編集するopen-in-place
 - 外部URLをrecentとして永続化するsecurity-scoped bookmark運用
 - `DocumentGroup` / `UIDocument`による、現在の`DocumentSaveCoordinator`と並立する別autosave所有者
-- 複数作品の同時編集、独自クラウド同期、共同編集
+- 複数作品の同時編集、Device Sync S1を超える作品library / bootstrap／構造／補助data／資料同期、共同編集
 - Files / iCloud Drive / 他社File Providerを横断して常時列挙する独自ライブラリ
 - Codex / OpenRouterその他のprovider、`NovelAI`、SDK、CLI、Node、sidecar、network、credential、model設定
 - AI chatの自動起動／送信、応答取込、diff、Apply、履歴管理、clipboard自動消去
@@ -65,14 +66,20 @@ FUMINIWAIOS
 ├── NovelStorage
 ├── NovelExport
 ├── NovelUI
-└── EditorKit
+├── EditorKit
+└── NovelSync               (Device Sync S1有効化時)
+
+FUMINIWAIOS / DeviceSyncCoordinator
+└── AppleCloudKitSync       (CloudKit / CKSyncEngine platform adapter)
 
 FUMINIWAIOS ─X─ NovelAI
 FUMINIWAIOS ─X─ NovelAppExperimental
-FUMINIWAIOS ─X─ provider SDK / Node / CLI / sidecar / network / credential
+FUMINIWAIOS ─X─ AI provider SDK / Node / CLI / sidecar / credential
 ```
 
-通常macOS版と同じ5 productだけをlinkする。`NovelKit`内に`NovelAI` targetやExperimental研究コードが残っていても、iOS app targetのdependency、compile source、resource、bundleへ含めない。`URLSession`、`Network.framework`等のprovider通信callsiteも追加しない。生成後のtarget graphとArchive内容をローカル検査で固定する。
+D-059以前のbase targetは通常macOS版と同じ5 productだけをlinkする。Device Sync S1を有効化する実装PRでは、OS / transport非依存の`NovelSync` productと、App側のApple CloudKit adapterだけを通常macOS / iOS targetへ追加できる。これはD-056 item 8の5-product固定をこの目的に限って置き換える。
+
+`NovelKit`内に`NovelAI` targetやExperimental研究コードが残っていても、iOS app targetのdependency、compile source、resource、bundleへ含めない。CloudKit通信はDevice Sync adapterだけに許可し、AI provider用の`URLSession`、`Network.framework`等のcallsiteを追加しない。生成後のtarget graphとArchive内容をローカル検査で固定する。
 
 ### 3.1 共有するもの
 
@@ -84,6 +91,7 @@ FUMINIWAIOS ─X─ provider SDK / Node / CLI / sidecar / network / credential
 - `EditorNotationRules`のルビ／傍点表現、PlotCard / Flag / Character / WorldNote / Attachmentのdomain契約
 - `IndentRules`、`IMEGuardPlugin`、`IndentPlugin`、UTF-16 range規約
 - clipboard prompt builder、purpose / scope、snapshot・session検査、成功／失敗結果
+- `NovelSync`のportable JSON、mutation / lease / CAS、state、3-way merge fixture（S1実装時）
 
 ### 3.2 iOSへ閉じ込めるもの
 
@@ -91,8 +99,9 @@ FUMINIWAIOS ─X─ provider SDK / Node / CLI / sidecar / network / credential
 - Files picker / exporter、security-scoped accessの一時的な取得と解放
 - app-private作品置場、scene lifecycle、`UIPasteboard` writer、share sheet
 - iPhone / iPadのnavigation shell、UIKit固有のcontext / edit menu接続
+- private CloudKit account、`CKSyncEngine`、record / asset mapping、push、background fetch、package外journalのApple adapter
 
-UIKit型をNovelCore、NovelStorage、NovelExport、EditorKitの公開APIへ出さない。AppKitとUIKitの差を巨大な条件分岐へ集約せず、小さなprotocol adapterでAppStateへ注入する。
+UIKit型をNovelCore、NovelStorage、NovelExport、EditorKit、NovelSyncの公開APIへ出さない。CloudKit型もNovelSyncの公開API / wire / fixtureへ出さない。AppKitとUIKitの差を巨大な条件分岐へ集約せず、小さなprotocol adapterでAppStateへ注入する。
 
 ## 4. 文書ライフサイクル
 
@@ -124,7 +133,7 @@ UIKit型をNovelCore、NovelStorage、NovelExport、EditorKitの公開APIへ出�
 - External Change / Conflict Gate: move／delete／provider同期／他プロセス変更の検出、競合時の上書き防止と復旧
 - security-scoped URL / bookmarkの寿命、file coordination / presentation、background移行を含む実機検証
 
-app-private MVPの完成をopen-in-place、iCloud同期、File Provider競合対応の完成とは表現しない。
+app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provider競合対応、またはD-059のDevice Sync完成とは表現しない。Device Sync S1が完了しても外部原本open-in-placeのGateは別に残る。
 
 ### 4.5 資料
 
@@ -132,6 +141,24 @@ app-private MVPの完成をopen-in-place、iCloud同期、File Provider競合対
 - 取り込み前に最新本文を同じ保存直列化経路で確定し、外部URLのsecurity-scoped access中だけRepositoryへ複製を依頼する
 - 一覧、削除確認、共有は表示時の作品identityと資料IDを保持し、待機中に作品が変わった操作を別作品へ適用しない
 - 外部原本の資料を直接編集したり、任意の外部path／bookmarkをpackageへ保存したりしない
+
+### 4.6 Device Sync S1
+
+Device Syncはapp-private package同士を対象とし、iCloud Drive上の原本やpackage内部を直接同期しない。iPhoneで同じ話を開くときは、remote `EpisodeControl`のholder / session / epochを確認し、writerでなければ本文をread-onlyにする。
+
+通常handoffは次の順序を崩さない。
+
+1. iPhoneが最新head / epochをfetchしてhandoffを要求する
+2. 旧writerがIMEをcommitし、native editorの全文をcaptureする
+3. 旧writerがapp-private packageとpackage外journalへlocal saveする
+4. pending本文をmutationID / expected head / lease epochでremote flushする
+5. flush確認後にだけiPhoneのfresh sessionへgrantし、epochを増やす
+6. iPhoneがgrant後のheadをfetch / verifyし、packageへ保存してから`UITextView`へinstallする
+7. remote install時にその話のUndo / Redoを破棄し、新しいbaselineからwriterを開始する
+
+旧writerが応答しない場合、iPhoneは未同期本文が別端末に残る可能性を示してから「強制的に続ける」を実行できる。forceはonlineで最新controlをfetchし、remote CASでepochをexactly 1増やす。通信不能、fetch失敗、CAS競合時はread-onlyを維持し、成功後も最新remote headをinstallするまでwriterにしない。旧writerの本文は再接続時にfenceしてbase / local / remote forkとしてpackage外journalへ保全し、時計LWWで上書きしない。offline forkは通信断前にauthorityを持っていたwriter、またはforceをまだ観測していない旧writerの継続本文だけを指し、非holderのiPhoneがofflineで開始する編集modeにはしない。
+
+S1はbinding済み作品のepisode bodyだけを扱う。作品棚にcloud libraryを混ぜず、章／話構造、タイトル、作品情報、メモ、人物、プロット、伏線、世界観、資料、snapshot、attachmentを同期済みと見せない。Product Truth、merge、offline、security / privacyの詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ## 5. iOS本文エディタ契約
 
@@ -143,6 +170,8 @@ app-private MVPの完成をopen-in-place、iCloud同期、File Provider競合対
 - モデル→Viewの本文反映はepisode keyが変わったときだけ行う
 - `markedTextRange != nil`の間はモデル通知、plugin介入、表示属性の再適用を行わない
 - 作品遷移前は旧作品のIMEを確定し、確定本文を旧sessionへ同期できなければ遷移を開始しない
+- handoff / force / remote changeでも`markedTextRange != nil`の間は外部本文を書き込まず、pending remoteとして保持する。確定後にnative全文をcaptureしてpackage / journalへ保存してからfenceまたはinstallする
+- remote headのinstallは明示的なexternal replacement境界だけで行い、その話のUndo / Redo historyを破棄する。別remote baselineへ旧transactionを適用しない
 
 ### 5.2 R1' / R3 / R4 / R5
 
@@ -183,6 +212,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
 - 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
+- Device Syncの状態／handoff／force／merge操作も実際のCloudKit adapter、journal、editor fencingまで接続した段階だけ出す。「この端末に保存」「送信待ち」「同期済み」「別端末で編集中」を区別し、単なるnetwork reachabilityを同期済みと見せない
 
 ### iPad
 
@@ -231,12 +261,14 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 各PRは意味単位で小さく保ち、生成物をコミットしない。ローカル検証だけを使い、`Scripts/check.sh`へ段階的にiOS app build / test、target separation検査を追加する。
 
+Device SyncはIOS-6と公開Release Gateを完了扱いにしない独立S1 trackとして進める。portable contract / fixture → pure `NovelSync` → durable journal → editor / save integration → Apple CloudKit adapter → normal handoff → iPhone force / merge → 外部設定・署名済み実機QAの順とし、詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。D-059以前のbase targetが5 productであることと、S1実装時に`NovelSync` / Apple adapterを追加することをtarget graph検査で区別する。
+
 ## 9. 受け入れ条件
 
 ### Build / Product Truth
 
 - iPhone / iPad simulatorとgeneric iOS device向けにappとtestがbuildできる
-- 通常iOS targetの`NovelAI`、Experimental source、provider SDK、Node / CLI / sidecar、network / credential callsiteとresourceが0件である
+- 通常iOS targetの`NovelAI`、Experimental source、AI provider SDK、Node / CLI / sidecar、AI provider用network / credential callsiteとresourceが0件である。Device Sync S1のnetwork callsiteはApple CloudKit adapterだけに閉じる
 - 画面上にprovider設定、送信、生成中、応答、Apply等の未実装UIがない
 
 ### Document safety
@@ -249,6 +281,17 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 作品棚の行identityはpackage名で一意になり、同じdocument IDを持つ複数importも別の作業コピーとして選べる
 - hidden staging、非package、symlink、path traversalを作品棚とopen対象から除外する
 - 破損した1作品を警告行へ隔離し、他作品の一覧・openを妨げない
+
+### Device Sync S1
+
+- 同じ話はremote holder / session / epochと一致する1端末だけがwriterになり、他端末はread-onlyになる
+- 通常handoffがIME commit / capture / local save / remote flush / grant / fetch / installの順で完了し、途中失敗で新端末へ書込権を渡さない
+- iPhone forceと旧Mac publishのraceでremote CASが一方だけを成立させ、旧epoch本文をbase / local / remote forkとしてpackage外journalへ残す
+- non-overlapを証明できる場合だけauto mergeし、overlapのmanual / keep local / keep remoteがすべて2-parent merge revisionを作る
+- marked text中にremote installせず、確定後のcapture / durable saveを完了してからinstallし、その話のUndo / Redoを破棄する
+- offline、push欠落、app kill、account switch、mutation応答消失から再開してもlocal / remoteのどちらも黙って失わない
+- library / bootstrap、構造、補助data、資料、live collaborationを同期済みと表示しない
+- development / production container、entitlement、profile、schema deployと、署名済みMac / iPhone実機を検証する。Simulatorと署名なしbuildだけで完了にしない
 
 ### Editor
 
@@ -272,4 +315,4 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 ## 10. Phase 7 MVP完了の定義
 
-IOS-1〜5が実装され、上記のBuild、Document safety、Editor、Clipboard / Accessibility条件をiPhone / iPad実機を含むローカル検証で満たした時点をPhase 7 MVP完了とする。IOS-6の機能parityと、Package Validator / External Change / Conflict / 配布Gateは別に追跡し、MVP完了だけでiOS一般公開準備完了とは表現しない。
+IOS-1〜5が実装され、上記のBuild、Document safety、Editor、Clipboard / Accessibility条件をiPhone / iPad実機を含むローカル検証で満たした時点をPhase 7 MVP完了とする。Device Sync S1の受け入れ条件、IOS-6の機能parity、Package Validator / External Change / Conflict / 配布Gateはそれぞれ別に追跡し、いずれか一つの完了を他の完了へ読み替えない。MVP完了だけでiOS一般公開準備完了とは表現しない。

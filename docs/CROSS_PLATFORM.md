@@ -1,16 +1,17 @@
 # クロスプラットフォーム設計契約
 
-**契約版: 1 / 対象: macOS (SwiftUI + AppKit)・Windows (WinUI 3)**
+**契約版: `.novelpkg` 1 / Device Sync protocol 1 / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: 契約承認、W0未完了。** macOS readerは2026-08-07時点で参照payloadの欠損・I/O失敗・invalid UTF-8をfail-closedにする補修まで完了したが、portable filename、duplicate ID／不正参照、symlink、resource limit、孤児payload等の完全なPackage Validatorは未実装である。Windows W1へ進む前にW0でschema・golden fixture・macOS側の残りの補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。
+**状態: `.novelpkg`契約承認、W0未完了。Device Sync S1はD-059承認・実装中。** macOS readerは2026-08-07時点で参照payloadの欠損・I/O失敗・invalid UTF-8をfail-closedにする補修まで完了したが、portable filename、duplicate ID／不正参照、symlink、resource limit、孤児payload等の完全なPackage Validatorは未実装である。Windows W1へ進む前にW0でschema・golden fixture・macOS側の残りの補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。Device Syncの進捗でW0またはPackage Validator / External Change / Conflictを完了扱いにしない。
 
-本書は、macOS 版と将来の Windows 版が同じ作品を安全に開き、編集し、再保存するための言語・UI フレームワーク非依存の契約である。アーキテクチャ全体は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md) D-036 を正とする。
+本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、live handoffは別の話単位Device Sync protocolとし、両者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ## 1. 共有するもの／OS ごとに実装するもの
 
 | 対象 | 共有方法 | 備考 |
 | --- | --- | --- |
 | `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | 最優先の互換境界。macOS が保存した作品を Windows で開き、その逆も成立させる |
+| Device Sync protocol v1 | [DEVICE_SYNC.md](DEVICE_SYNC.md)、portable JSON、state / merge fixture | 話本文revision、mutation / head / lease epoch CAS、fork / mergeの意味を共有。CloudKit型は共有しない |
 | 作品→章→話、各 ID、配列順、空要素の意味 | 仕様と fixture | Swift の型を C# から直接参照せず、同じ意味のモデルを各言語で実装する |
 | 自動字下げ、ルビ・傍点、検索、文字数、モデル操作 | 入出力例と共通テストケース | 純粋ロジックとして移植する。UTF-16 範囲と grapheme の差を fixture で固定する |
 | Export の順序・見出し・改行規則 | [PHASE5.md](PHASE5.md) と出力 fixture | レンダラ実装は Swift / C# で別でも、同じ入力から同じ論理結果を得る |
@@ -66,6 +67,7 @@
 - file lock、ウイルス対策ソフト、同期クライアント等により入れ替えできない場合は保存失敗として通知し、メモリ上の dirty 状態と既存パッケージを維持する
 - Windows writerはW1で`destination` / `temp` / `backup`の状態遷移を定義し、各rename地点へ障害注入する。commit完了後だけdirtyを解除し、rollbackにも失敗した場合はbackupを消さず回復手順を通知する。起動時の回復優先順位とsharing violationのretry上限もADRへ記録する
 - package 内部のファイルを複数端末から同時編集することは当面サポートしない。クラウド同期フォルダ利用時も競合解決機能があるとは表現しない
+- D-059のDevice Syncはこの制限の例外としてpackageを同時編集する仕組みではない。app-private packageを各端末のdurable / materialized snapshotとし、別record protocolのremote episode headを既存保存経路へinstallする。package外部変更の検出と競合解決は引き続きExternal Change / Conflict Gateで扱う
 
 ## 3. Windows / WinUI 版の層構成
 
@@ -158,3 +160,45 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - Windows でもこのリポジトリを clone し、`Windows/` を作業対象にする。同じ branch を Mac と Windows から同時に編集せず、機能単位の branch / PR で受け渡す
 - Windows 用 `AGENTS.md` はW0、ローカル検証スクリプトはW1の最初に追加し、本書、D-036、`.novelpkg` fixture を読む手順を必須化する
 - macOS 側の Codex は schema / fixture / Mac reader-writer、Windows 側の Codex は C# / WinUI と Windows 固有テストを担当し、互換 PR では双方の結果を照合する
+
+## 7. Device Syncのクロスプラットフォーム契約
+
+### 7.1 `.novelpkg`との境界
+
+- `.novelpkg`はOS間で持ち運べる作品snapshotであり、各端末のapp-private領域でdurableに保存する
+- live syncはpackageとは別の`NovelSync` protocolを使い、EpisodeIDごとのimmutable revision、remote head、soft lease、mutation receiptを扱う
+- sync work ID、device / session ID、lease epoch、remote revision ID、outbox、fork journalをpackageへ保存しない。export / importだけでremote accountへ自動再接続しない
+- remote revisionのinstallは各OSのnative editorをIME確定し、現在本文をcapture / local saveしてから行う。install時は対象話のUndo / Redoを破棄する
+- S1で`.novelpkg` schemaと`formatVersion`を変更しない。将来sync metadataをportable packageへ加える場合はD-036どおりschema / fixture / macOS / iOS / Windows round-tripを同時に更新する別Decisionを必要とする
+
+### 7.2 Portable protocol
+
+共有する正は[DEVICE_SYNC.md](DEVICE_SYNC.md)のprotocol version 1と、将来`SyncFixtures/`へ置くcanonical JSON / state / merge fixtureである。
+
+- UTF-8 JSON、lower camel case、canonical UUID、0以上のsigned 64-bit lease epochを使う
+- 本文を正規化せず、decoded bodyのexact UTF-8 bytesをSHA-256で検証する
+- `mutationID + expectedRemoteHeadRevisionID + holderDeviceID + holderSessionID + leaseEpoch`をpublish条件とし、時計LWWを禁止する
+- 通常revisionは0または1 parent、競合解決は`[remoteHead, localFork]`の2 parentを持つimmutable merge revisionとする
+- transportは同じmutationIDのretryをidempotentにし、head / epochのcompare-and-swapとrevision / receipt / controlのatomic commitを提供する
+- OSごとの日時精度、push順序、filesystem timestamp、locale、case-foldingをwinner選択へ使わない
+
+`NovelSync`のSwift型自体をWindows / Androidから参照しない。Swift、C#、Kotlinの各実装は同じfixtureから、decode結果、state遷移、CAS command、digest、merge結果／conflict分類を一致させる。diff / mergeはnormalizationしないUnicode scalar列を基準にし、UTF-16 indexやnative editor rangeをwireへ保存しない。
+
+### 7.3 Platform adapter
+
+| Platform | Domain | Transport adapter | Native editor |
+| --- | --- | --- | --- |
+| macOS | Swift `NovelSync` | private CloudKit + CKSyncEngine | NSTextView / TextKit 2 |
+| iOS / iPadOS | Swift `NovelSync` | private CloudKit + CKSyncEngine | UITextView / TextKit 2 |
+| Windows（将来） | C#でprotocolを再実装 | 未決定。CloudKit型やCloudKit Web Servicesをdomainへ持ち込まない | WinUI native editor |
+| Android（将来） | Kotlin等でprotocolを再実装 | 未決定 | Android native editor |
+
+Apple版はprivate database内の単一固定custom zoneを使い、全workをopaque `syncWorkID` field / record nameで分離する。作品ごとにzoneを増やさない。CloudKit record change tag、CKAsset、account、push、change tokenはApple adapter内だけで扱い、portable wire / fixtureへ出さない。SwiftDataはcanonical storeにしない。
+
+Windows / Android対応時は、その時点のbackendを別Decisionで選ぶ。CloudKit Web Servicesや自前serverを今から前提にせず、Apple adapterのrecord layoutをそのまま公共APIともしない。ただし別backendもmutation receipt、expected head / epoch CAS、atomic commit、immutable revision、fencingを同じ意味で提供できなければならない。
+
+### 7.4 S1範囲と実装順
+
+S1は、既に同じsync workへbinding済みで同じEpisodeIDが存在する作品のepisode body handoffだけを扱う。library / bootstrap、章・話構造、タイトル、メモ、作品補助data、資料、snapshot、attachment、live collaborationは後続である。構造が一致しない作品へ本文だけを推測installしない。
+
+Apple S1はportable contract / fixture → pure domain → package外durable journal → editor / save integration → CloudKit adapter → normal handoff → iPhone force / fork / merge → 外部設定・署名済み実機QAの順に進める。WindowsのW0〜W4は引き続き`.novelpkg` trackの順序であり、Apple S1の完了をW0 / W1へ読み替えない。一方、Windows / Androidの将来sync実装はS1 portable fixtureを入力として独立開始できる。
