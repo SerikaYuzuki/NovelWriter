@@ -31,7 +31,9 @@ final class IOSDocumentStore {
     var startupState: IOSStartupState = .loading
     var saveState: IOSSaveState = .saved
     var isDocumentTransitionInProgress = false
+    private(set) var documentSessionGeneration: UInt64 = 0
     var libraryItems: [IOSDocumentLibraryItem] = []
+    private(set) var attachments: [Attachment] = []
     var isImporterPresented = false
     var pendingExportURL: URL?
     var promptCopyNotice: IOSPromptCopyNotice?
@@ -40,6 +42,7 @@ final class IOSDocumentStore {
     let editorCommandSession: EditorCommandSession
 
     @ObservationIgnored let repository: any DocumentCopyingRepository
+    @ObservationIgnored let attachmentManager: (any AttachmentManaging)?
     @ObservationIgnored let fileManager: FileManager
     @ObservationIgnored let userDefaults: UserDefaults
     @ObservationIgnored let libraryRoot: URL
@@ -78,6 +81,7 @@ final class IOSDocumentStore {
 
     init(
         repository: any DocumentCopyingRepository = NovelpkgRepository(),
+        attachmentManager: (any AttachmentManaging)? = nil,
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
@@ -85,6 +89,7 @@ final class IOSDocumentStore {
         libraryRoot: URL? = nil
     ) {
         self.repository = repository
+        self.attachmentManager = attachmentManager ?? (repository as? any AttachmentManaging)
         self.fileManager = fileManager
         self.userDefaults = userDefaults
         self.editorCommandSession = editorCommandSession
@@ -111,9 +116,12 @@ final class IOSDocumentStore {
 
     func selectChapter(_ chapterID: ChapterID?) {
         selectedChapterID = chapterID
-        guard let chapterID,
-              let chapter = document.chapters.first(where: { $0.id == chapterID }) else
-        {
+        guard let chapterID else {
+            selectedEpisodeID = nil
+            return
+        }
+        let chapter = document.chapters.first(where: { $0.id == chapterID })
+        guard let chapter else {
             selectedEpisodeID = nil
             return
         }
@@ -203,7 +211,9 @@ final class IOSDocumentStore {
         document.updateEpisodeMemo(memo, for: episodeID, in: chapterID)
         markDocumentChanged()
     }
+}
 
+extension IOSDocumentStore {
     func copySelectionPrompt(
         text: String,
         purpose: AIClipboardPromptPurpose,
@@ -217,9 +227,13 @@ final class IOSDocumentStore {
     }
 
     func copyEpisodePrompt(purpose: AIClipboardPromptPurpose, expectedEpisodeID: EpisodeID) {
-        guard selectedEpisodeID == expectedEpisodeID,
-              let episode = synchronizedSelectedEpisodeForPrompt() else
-        {
+        guard selectedEpisodeID == expectedEpisodeID else {
+            if promptCopyNotice == nil {
+                showPromptFailure(.staleContext)
+            }
+            return
+        }
+        guard let episode = synchronizedSelectedEpisodeForPrompt() else {
             if promptCopyNotice == nil {
                 showPromptFailure(.staleContext)
             }
@@ -233,9 +247,13 @@ final class IOSDocumentStore {
             showPromptFailure(.staleContext)
             return
         }
-        guard synchronizedSelectedEpisodeForPrompt() != nil,
-              let chapter = document.chapters.first(where: { $0.id == expectedChapterID }) else
-        {
+        guard synchronizedSelectedEpisodeForPrompt() != nil else {
+            if promptCopyNotice == nil {
+                showPromptFailure(.staleContext)
+            }
+            return
+        }
+        guard let chapter = document.chapters.first(where: { $0.id == expectedChapterID }) else {
             if promptCopyNotice == nil {
                 showPromptFailure(.staleContext)
             }
@@ -286,10 +304,20 @@ final class IOSDocumentStore {
     private func showPromptFailure(_ failure: IOSPromptCopyFailure) {
         promptCopyNotice = IOSPromptCopyNotice(failure: failure)
     }
+}
 
-    private func markDocumentChanged() {
+extension IOSDocumentStore {
+    func markDocumentChanged() {
         guard startupState == .ready, !isDocumentTransitionInProgress else { return }
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+    }
+
+    func replaceAttachments(_ attachments: [Attachment]) {
+        self.attachments = attachments
+    }
+
+    func advanceDocumentSessionGeneration() {
+        documentSessionGeneration &+= 1
     }
 }

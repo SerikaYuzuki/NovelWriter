@@ -8,44 +8,23 @@ import UIKit
 @MainActor
 @Suite("iOS workspace navigation", .serialized)
 struct IOSWorkspaceNavigationTests {
-    @Test("作品切替は古いeditor経路を新しい作品ホームへ収束させる")
-    func documentChangeReplacesStaleEditorPath() {
-        let firstDocumentID = IOSPrivateDocumentID(packageName: "first.novelpkg")
-        let secondDocumentID = IOSPrivateDocumentID(packageName: "second.novelpkg")
-        let chapterID = ChapterID()
-        let episodeID = EpisodeID()
-        let navigation = IOSWorkspaceNavigationCoordinator()
-        navigation.showProjectHome(for: firstDocumentID)
-        navigation.showWriting(for: firstDocumentID)
-        navigation.showEditor(
-            for: firstDocumentID,
-            chapterID: chapterID,
-            episodeID: episodeID
-        )
-
-        navigation.documentDidChange(to: secondDocumentID)
-
-        #expect(navigation.activeDocumentID == secondDocumentID)
-        #expect(navigation.path == [.projectHome(documentID: secondDocumentID)])
-    }
-
     @Test("標準Back相当のpath更新はeditorを破棄する前に同期する")
     func editorPopSynchronizesBeforePathMutation() {
-        let documentID = IOSPrivateDocumentID(packageName: "work.novelpkg")
+        let session = makeSession(packageName: "work.novelpkg")
         let chapterID = ChapterID()
         let episodeID = EpisodeID()
         let navigation = IOSWorkspaceNavigationCoordinator()
-        navigation.showProjectHome(for: documentID)
-        navigation.showWriting(for: documentID)
+        navigation.showProjectHome(for: session)
+        navigation.showWriting(for: session)
         navigation.showEditor(
-            for: documentID,
+            for: session,
             chapterID: chapterID,
             episodeID: episodeID
         )
         let oldPath = navigation.path
         let proposedPath: [IOSWorkspaceRoute] = [
-            .projectHome(documentID: documentID),
-            .writing(documentID: documentID)
+            .projectHome(session: session),
+            .writing(session: session)
         ]
         var pathSeenDuringSynchronization: [IOSWorkspaceRoute] = []
         var receivedDeparture: IOSWorkspaceEditorDeparture?
@@ -60,7 +39,7 @@ struct IOSWorkspaceNavigationTests {
         #expect(pathSeenDuringSynchronization == oldPath)
         #expect(
             receivedDeparture == IOSWorkspaceEditorDeparture(
-                documentID: documentID,
+                session: session,
                 chapterID: chapterID,
                 episodeID: episodeID
             )
@@ -70,19 +49,19 @@ struct IOSWorkspaceNavigationTests {
 
     @Test("IME確定に失敗した場合はBack相当のpath更新を中止する")
     func rejectedEditorDepartureKeepsPath() {
-        let documentID = IOSPrivateDocumentID(packageName: "work.novelpkg")
+        let session = makeSession(packageName: "work.novelpkg")
         let navigation = IOSWorkspaceNavigationCoordinator()
-        navigation.showProjectHome(for: documentID)
-        navigation.showWriting(for: documentID)
+        navigation.showProjectHome(for: session)
+        navigation.showWriting(for: session)
         navigation.showEditor(
-            for: documentID,
+            for: session,
             chapterID: ChapterID(),
             episodeID: EpisodeID()
         )
         let oldPath = navigation.path
 
         let didUpdate = navigation.updatePath(
-            [.projectHome(documentID: documentID)]
+            [.projectHome(session: session)]
         ) { _ in
             false
         }
@@ -93,14 +72,14 @@ struct IOSWorkspaceNavigationTests {
 
     @Test("iPadの執筆画面離脱は現在選択中のeditor同期を要求する")
     func writingPopRequestsAdaptiveEditorSynchronization() {
-        let documentID = IOSPrivateDocumentID(packageName: "work.novelpkg")
+        let session = makeSession(packageName: "work.novelpkg")
         let navigation = IOSWorkspaceNavigationCoordinator()
-        navigation.showProjectHome(for: documentID)
-        navigation.showWriting(for: documentID)
+        navigation.showProjectHome(for: session)
+        navigation.showWriting(for: session)
         var receivedDeparture: IOSWorkspaceEditorDeparture?
 
         let didUpdate = navigation.updatePath(
-            [.projectHome(documentID: documentID)]
+            [.projectHome(session: session)]
         ) { departure in
             receivedDeparture = departure
             return true
@@ -109,7 +88,7 @@ struct IOSWorkspaceNavigationTests {
         #expect(didUpdate)
         #expect(
             receivedDeparture == IOSWorkspaceEditorDeparture(
-                documentID: documentID,
+                session: session,
                 chapterID: nil,
                 episodeID: nil
             )
@@ -156,7 +135,7 @@ struct IOSWorkspaceNavigationTests {
         #expect(await store.makeNewDocument())
         let chapterID = try #require(store.selectedChapterID)
         let episodeID = try #require(store.selectedEpisodeID)
-        let documentID = IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
+        let session = try #require(store.currentDocumentSessionToken)
 
         let host = UIHostingController(rootView: IOSEditorPane(store: store))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
@@ -184,7 +163,7 @@ struct IOSWorkspaceNavigationTests {
         let didSynchronize = IOSWorkspaceEditorSynchronizer.synchronize(
             store: store,
             departure: IOSWorkspaceEditorDeparture(
-                documentID: documentID,
+                session: session,
                 chapterID: chapterID,
                 episodeID: episodeID
             )
@@ -256,6 +235,16 @@ struct IOSWorkspaceNavigationTests {
             selectedRange: NSRange(location: (markedText as NSString).length, length: 0)
         )
         textView.delegate?.textViewDidChange?(textView)
+    }
+
+    private func makeSession(
+        packageName: String,
+        generation: UInt64 = 1
+    ) -> IOSDocumentSessionToken {
+        IOSDocumentSessionToken(
+            workingCopyID: IOSPrivateDocumentID(packageName: packageName),
+            generation: generation
+        )
     }
 
     private func makeEnvironment() -> WorkspaceTestEnvironment {

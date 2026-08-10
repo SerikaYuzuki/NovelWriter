@@ -7,10 +7,11 @@ struct IOSWritingEditorIdentityBoundary {
 
     @discardableResult
     func perform(_ operation: () -> Void) -> Bool {
+        guard let session = store.currentDocumentSessionToken else {
+            return false
+        }
         let departure = IOSWorkspaceEditorDeparture(
-            documentID: IOSPrivateDocumentID(
-                packageName: store.documentURL.lastPathComponent
-            ),
+            session: session,
             chapterID: store.selectedChapterID,
             episodeID: store.selectedEpisodeID
         )
@@ -40,12 +41,27 @@ enum IOSAdaptiveWritingLayoutTransition {
     }
 }
 
+@MainActor
 struct IOSAdaptiveWritingView: View {
     let store: IOSDocumentStore
     let openEpisode: (ChapterID, EpisodeID) -> Void
+    let expectedSession: IOSDocumentSessionToken?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var regularProjectSection: IOSRegularProjectSection? = .writing
     @State private var presentedHorizontalSizeClass: UserInterfaceSizeClass?
+    @State private var selectedPlotItem: IOSPlotSelection?
+    @State private var selectedCharacterID: CharacterID?
+    @State private var selectedWorldNoteID: WorldNoteID?
+    @State private var selectedReferenceFileName: String?
+
+    init(
+        store: IOSDocumentStore,
+        openEpisode: @escaping (ChapterID, EpisodeID) -> Void
+    ) {
+        self.store = store
+        self.openEpisode = openEpisode
+        expectedSession = store.currentDocumentSessionToken
+    }
 
     var body: some View {
         Group {
@@ -79,6 +95,13 @@ struct IOSAdaptiveWritingView: View {
     @ViewBuilder
     private var regularLayout: some View {
         switch regularProjectSection ?? .writing {
+        case .projectInfo:
+            NavigationSplitView {
+                regularProjectSidebar
+            } detail: {
+                IOSProjectInfoView(store: store)
+            }
+            .navigationSplitViewStyle(.balanced)
         case .writing:
             NavigationSplitView {
                 regularProjectSidebar
@@ -92,14 +115,83 @@ struct IOSAdaptiveWritingView: View {
             }
             .navigationSplitViewStyle(.balanced)
             .navigationTitle("執筆")
-        case .projectInfo:
+        case .plot:
             NavigationSplitView {
                 regularProjectSidebar
+            } content: {
+                IOSPlotOutlineView(
+                    store: store,
+                    selection: $selectedPlotItem,
+                    expectedSession: expectedSession,
+                    usesNavigationLinks: false
+                )
             } detail: {
-                IOSProjectInfoView(store: store)
+                IOSPlotDetailView(
+                    store: store,
+                    selection: selectedPlotItem,
+                    expectedSession: expectedSession,
+                    onDeletion: { selectedPlotItem = nil }
+                )
             }
             .navigationSplitViewStyle(.balanced)
-        case .appearance:
+        case .characters:
+            NavigationSplitView {
+                regularProjectSidebar
+            } content: {
+                IOSCharacterOutlineView(
+                    store: store,
+                    selection: $selectedCharacterID,
+                    expectedSession: expectedSession,
+                    usesNavigationLinks: false
+                )
+            } detail: {
+                IOSCharacterDetailView(
+                    store: store,
+                    characterID: selectedCharacterID,
+                    expectedSession: expectedSession,
+                    onDeletion: { selectedCharacterID = nil }
+                )
+            }
+            .navigationSplitViewStyle(.balanced)
+        case .worldbuilding:
+            NavigationSplitView {
+                regularProjectSidebar
+            } content: {
+                IOSWorldNoteOutlineView(
+                    store: store,
+                    selection: $selectedWorldNoteID,
+                    expectedSession: expectedSession,
+                    usesNavigationLinks: false
+                )
+            } detail: {
+                IOSWorldNoteDetailView(
+                    store: store,
+                    noteID: selectedWorldNoteID,
+                    expectedSession: expectedSession,
+                    onDeletion: { selectedWorldNoteID = nil }
+                )
+            }
+            .navigationSplitViewStyle(.balanced)
+        case .references:
+            NavigationSplitView {
+                regularProjectSidebar
+            } content: {
+                IOSReferencesOutlineView(
+                    store: store,
+                    selection: $selectedReferenceFileName,
+                    expectedSession: expectedSession,
+                    usesNavigationLinks: false
+                )
+            } detail: {
+                IOSReferenceDetailView(
+                    store: store,
+                    fileName: selectedReferenceFileName,
+                    expectedSession: expectedSession,
+                    onDeletion: { selectedReferenceFileName = nil }
+                )
+            }
+            .navigationSplitViewStyle(.balanced)
+        case .settings:
             NavigationSplitView {
                 regularProjectSidebar
             } detail: {
@@ -126,63 +218,6 @@ struct IOSAdaptiveWritingView: View {
                 }
             }
         )
-    }
-}
-
-private enum IOSRegularProjectSection: Hashable {
-    case writing
-    case projectInfo
-    case appearance
-}
-
-private struct IOSRegularProjectSidebar: View {
-    let store: IOSDocumentStore
-    @Binding var selection: IOSRegularProjectSection?
-
-    var body: some View {
-        List(selection: $selection) {
-            Section("この作品") {
-                Label("執筆", systemImage: "square.and.pencil")
-                    .tag(IOSRegularProjectSection.writing)
-                    .accessibilityIdentifier("ios.ipad.project.writing")
-
-                Label("作品情報", systemImage: "doc.text.magnifyingglass")
-                    .tag(IOSRegularProjectSection.projectInfo)
-                    .accessibilityIdentifier("ios.ipad.project.info")
-            }
-
-            Section("アプリ") {
-                Label("表示設定", systemImage: "circle.lefthalf.filled")
-                    .tag(IOSRegularProjectSection.appearance)
-                    .accessibilityIdentifier("ios.ipad.project.appearance")
-            }
-
-            Section("共有") {
-                Button {
-                    editorIdentityBoundary.perform {
-                        Task {
-                            await store.requestExport()
-                        }
-                    }
-                } label: {
-                    Label("作品を書き出す…", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityHint("現在の作業コピーから、共有用のnovelpkgファイルを作ります。")
-            }
-        }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(.thinMaterial)
-        .navigationTitle(displayTitle)
-    }
-
-    private var displayTitle: String {
-        let title = store.document.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "名称未設定の作品" : title
-    }
-
-    private var editorIdentityBoundary: IOSWritingEditorIdentityBoundary {
-        IOSWritingEditorIdentityBoundary(store: store)
     }
 }
 

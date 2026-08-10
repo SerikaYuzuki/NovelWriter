@@ -2,6 +2,13 @@ import SwiftUI
 import UIKit
 
 enum IOSPalette {
+    /// STYLEの`canvas`とEditorKit既定背景（#171719）を共有するiOS App側token。
+    static let editorCanvas = Color(
+        red: 23.0 / 255.0,
+        green: 23.0 / 255.0,
+        blue: 25.0 / 255.0
+    )
+
     static let accent = Color(
         uiColor: UIColor { traits in
             if traits.userInterfaceStyle == .dark {

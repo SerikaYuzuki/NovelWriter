@@ -89,10 +89,8 @@ struct IOSRootView: View {
     }
 
     private func showCurrentProjectHome() {
-        guard store.startupState == .ready else { return }
-        workspaceNavigation.showProjectHome(
-            for: IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
-        )
+        guard let session = store.currentDocumentSessionToken else { return }
+        workspaceNavigation.showProjectHome(for: session)
     }
 
     private func makeNewDocumentFromRecovery() {

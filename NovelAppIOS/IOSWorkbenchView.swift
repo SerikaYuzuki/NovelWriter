@@ -21,37 +21,39 @@ struct IOSWorkbenchView: View {
         .onAppear {
             synchronizeNavigationWithStore()
         }
-        .onChange(of: currentDocumentID) { _, _ in
+        .onChange(of: currentDocumentSession) { _, _ in
             synchronizeNavigationWithStore()
         }
     }
 
     @ViewBuilder
     private func destination(for route: IOSWorkspaceRoute) -> some View {
-        if currentDocumentID == route.documentID {
+        if currentDocumentSession == route.session {
             switch route {
-            case let .projectHome(documentID):
-                IOSProjectHomeView(
-                    store: store,
-                    openWriting: {
-                        navigation.showWriting(for: documentID)
-                    },
-                    openProjectInfo: {
-                        navigation.showProjectInfo(for: documentID)
-                    }
-                )
+            case let .projectHome(session):
+                projectHome(for: session)
             case .projectInfo:
                 IOSProjectInfoView(store: store)
-            case let .writing(documentID):
+            case let .writing(session):
                 IOSAdaptiveWritingView(store: store) { chapterID, episodeID in
                     store.selectChapter(chapterID)
                     store.selectEpisode(episodeID)
                     navigation.showEditor(
-                        for: documentID,
+                        for: session,
                         chapterID: chapterID,
                         episodeID: episodeID
                     )
                 }
+            case .plot:
+                IOSPlotFeatureView(store: store)
+            case .characters:
+                IOSCharacterFeatureView(store: store)
+            case .worldbuilding:
+                IOSWorldbuildingFeatureView(store: store)
+            case .references:
+                IOSReferencesFeatureView(store: store)
+            case .settings:
+                IOSAppearanceSettingsView()
             case let .editor(_, chapterID, episodeID):
                 IOSEditorPane(store: store)
                     .onAppear {
@@ -68,6 +70,19 @@ struct IOSWorkbenchView: View {
         }
     }
 
+    private func projectHome(for session: IOSDocumentSessionToken) -> some View {
+        IOSProjectHomeView(
+            store: store,
+            openWriting: { navigation.showWriting(for: session) },
+            openProjectInfo: { navigation.showProjectInfo(for: session) },
+            openPlot: { navigation.showPlot(for: session) },
+            openCharacters: { navigation.showCharacters(for: session) },
+            openWorldbuilding: { navigation.showWorldbuilding(for: session) },
+            openReferences: { navigation.showReferences(for: session) },
+            openSettings: { navigation.showSettings(for: session) }
+        )
+    }
+
     private var workspacePath: Binding<[IOSWorkspaceRoute]> {
         Binding(
             get: { navigation.path },
@@ -82,29 +97,28 @@ struct IOSWorkbenchView: View {
         )
     }
 
-    private var currentDocumentID: IOSPrivateDocumentID? {
-        guard store.startupState == .ready else { return nil }
-        return IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
+    private var currentDocumentSession: IOSDocumentSessionToken? {
+        store.currentDocumentSessionToken
     }
 
     private func synchronizeNavigationWithStore() {
-        guard let currentDocumentID else { return }
-        navigation.documentDidChange(to: currentDocumentID)
+        guard let currentDocumentSession else { return }
+        navigation.documentDidChange(to: currentDocumentSession)
     }
 
     private func openDocument(_ id: IOSPrivateDocumentID) {
         Task {
-            guard await store.openPrivateDocument(id: id) else { return }
-            navigation.showProjectHome(for: id)
+            guard await store.openPrivateDocument(id: id),
+                  let session = store.currentDocumentSessionToken else { return }
+            navigation.showProjectHome(for: session)
         }
     }
 
     private func makeNewDocument() {
         Task {
-            guard await store.makeNewDocument() else { return }
-            navigation.showProjectHome(
-                for: IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
-            )
+            guard await store.makeNewDocument(),
+                  let session = store.currentDocumentSessionToken else { return }
+            navigation.showProjectHome(for: session)
         }
     }
 }
@@ -115,40 +129,28 @@ struct IOSEditorPane: View {
     @State private var searchQuery = ""
     @State private var searchCursor = 0
     @State private var selectionRequest: EditorSelectionRequest?
-    @State private var mountedDocumentID: IOSPrivateDocumentID?
+    @State private var mountedSession: IOSDocumentSessionToken?
     @State private var mountedChapterID: ChapterID?
     @State private var mountedEpisodeID: EpisodeID?
 
     var body: some View {
         if let chapter = store.selectedChapter, let episode = store.selectedEpisode {
-            VStack(spacing: 0) {
-                HStack {
-                    TextField("話タイトル", text: episodeTitle(chapter.id, episode.id))
-                        .textFieldStyle(.plain)
-                    Spacer()
-                    Text("\(ManuscriptMetrics.countCharacters(in: episode.content))字")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+            EditorView(
+                chapterKey: episode.id,
+                initialText: episode.content,
+                selectionRequest: selectionRequest,
+                commandSession: store.editorCommandSession,
+                selectionContextMenuCommands: selectionCommands(for: episode.id),
+                onTextChange: { text in
+                    store.updateEpisodeContent(
+                        text,
+                        chapterID: chapter.id,
+                        episodeID: episode.id
+                    )
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-
-                Divider()
-
-                EditorView(
-                    chapterKey: episode.id,
-                    initialText: episode.content,
-                    selectionRequest: selectionRequest,
-                    commandSession: store.editorCommandSession,
-                    selectionContextMenuCommands: selectionCommands(for: episode.id),
-                    onTextChange: { text in
-                        store.updateEpisodeContent(
-                            text,
-                            chapterID: chapter.id,
-                            episodeID: episode.id
-                        )
-                    }
-                )
+            )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                IOSEditorAccessoryBar(commandSession: store.editorCommandSession)
             }
             .navigationTitle(episode.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -181,6 +183,11 @@ struct IOSEditorPane: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    IOSSaveStateLabel(state: store.saveState)
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("ios.editor.saveState")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         isMemoPresented = true
                     } label: {
@@ -190,10 +197,8 @@ struct IOSEditorPane: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     promptMenu(chapter: chapter, episode: episode)
                 }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    IOSSaveStateLabel(state: store.saveState)
-                    Spacer()
-                    if !searchQuery.isEmpty {
+                if !searchQuery.isEmpty {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
                             findPrevious(in: episode.content)
                         } label: {
@@ -242,33 +247,24 @@ struct IOSEditorPane: View {
         chapterID: ChapterID,
         episodeID: EpisodeID
     ) {
-        let currentDocumentID = IOSPrivateDocumentID(
-            packageName: store.documentURL.lastPathComponent
-        )
-        if mountedDocumentID == nil {
-            mountedDocumentID = currentDocumentID
+        guard let currentSession = store.currentDocumentSessionToken else { return }
+        if mountedSession == nil {
+            mountedSession = currentSession
         }
-        guard mountedDocumentID == currentDocumentID else { return }
+        guard mountedSession == currentSession else { return }
         mountedChapterID = chapterID
         mountedEpisodeID = episodeID
     }
 
     private func synchronizeMountedEditorBeforeDeparture() {
-        guard let mountedDocumentID else { return }
+        guard let mountedSession else { return }
         IOSWorkspaceEditorSynchronizer.synchronize(
             store: store,
             departure: IOSWorkspaceEditorDeparture(
-                documentID: mountedDocumentID,
+                session: mountedSession,
                 chapterID: mountedChapterID,
                 episodeID: mountedEpisodeID
             )
-        )
-    }
-
-    private func episodeTitle(_ chapterID: ChapterID, _ episodeID: EpisodeID) -> Binding<String> {
-        Binding(
-            get: { store.document.episode(episodeID)?.episode.title ?? "" },
-            set: { store.updateEpisodeTitle($0, chapterID: chapterID, episodeID: episodeID) }
         )
     }
 

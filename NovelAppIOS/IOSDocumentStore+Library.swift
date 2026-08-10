@@ -5,6 +5,11 @@ struct IOSPrivateDocumentID: Hashable, Sendable {
     let packageName: String
 }
 
+struct IOSDocumentSessionToken: Hashable, Sendable {
+    let workingCopyID: IOSPrivateDocumentID
+    let generation: UInt64
+}
+
 enum IOSDocumentLibraryAvailability: Equatable, Sendable {
     case available
     case unreadable
@@ -38,10 +43,9 @@ extension IOSDocumentStore {
     func openPrivateDocument(id: IOSPrivateDocumentID) async -> Bool {
         await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
-            guard verifiedPrivateDocumentIDs.contains(id),
-                  libraryItems.contains(where: { $0.id == id && $0.availability == .available }),
-                  let candidateURL = verifiedPrivatePackageURL(for: id) else
-            {
+            let isVerified = verifiedPrivateDocumentIDs.contains(id)
+            let isAvailable = libraryItems.contains { $0.id == id && $0.availability == .available }
+            guard isVerified, isAvailable, let candidateURL = verifiedPrivatePackageURL(for: id) else {
                 operationErrorMessage = "選択した作品を安全に開けませんでした。作品一覧を更新して、もう一度お試しください。"
                 return false
             }
@@ -54,7 +58,8 @@ extension IOSDocumentStore {
 
             let transitioned = await performDocumentTransition {
                 let loaded = try await repository.load(from: candidateURL)
-                install(loaded, at: candidateURL)
+                let loadedAttachments = try await loadAttachmentsForInstall(at: candidateURL)
+                install(loaded, at: candidateURL, attachments: loadedAttachments)
                 startupState = .ready
                 saveState = .saved
             }
@@ -100,9 +105,8 @@ extension IOSDocumentStore {
         candidate: (url: URL, modificationDate: Date?),
         activeDocumentSnapshot: (url: URL, document: NovelDocument)?
     ) async -> IOSDocumentLibraryItem {
-        if candidate.url.standardizedFileURL == activeDocumentSnapshot?.url,
-           let activeDocumentSnapshot
-        {
+        let isActiveDocument = candidate.url.standardizedFileURL == activeDocumentSnapshot?.url
+        if isActiveDocument, let activeDocumentSnapshot {
             return Self.libraryItem(
                 id: id,
                 document: activeDocumentSnapshot.document,
@@ -138,8 +142,9 @@ extension IOSDocumentStore {
         guard verifiedPrivateDocumentIDs.contains(id),
               libraryItems.contains(where: { $0.id == id && $0.availability == .available }),
               let url = verifiedPrivatePackageURL(for: id),
-              let loaded = try? await repository.load(from: url) else { return false }
-        install(loaded, at: url, rememberRecent: rememberRecent)
+              let loaded = try? await repository.load(from: url),
+              let loadedAttachments = try? await loadAttachmentsForInstall(at: url) else { return false }
+        install(loaded, at: url, attachments: loadedAttachments, rememberRecent: rememberRecent)
         return true
     }
 

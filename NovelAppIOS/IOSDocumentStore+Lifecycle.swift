@@ -29,13 +29,14 @@ extension IOSDocumentStore {
             let recentName = userDefaults.string(forKey: Self.lastDocumentNameKey)
             if let recentName {
                 let recentID = IOSPrivateDocumentID(packageName: recentName)
-                if Self.isValidPrivatePackageName(recentName),
-                   await activatePrivateDocumentIfAvailable(id: recentID)
-                {
-                    startupState = .ready
-                    saveState = .saved
-                    try await reloadLibraryItems()
-                    return
+                if Self.isValidPrivatePackageName(recentName) {
+                    let didActivate = await activatePrivateDocumentIfAvailable(id: recentID)
+                    if didActivate {
+                        startupState = .ready
+                        saveState = .saved
+                        try await reloadLibraryItems()
+                        return
+                    }
                 }
             }
 
@@ -55,7 +56,8 @@ extension IOSDocumentStore {
                 let newDocument = NovelDocument.newDocument()
                 let newURL = uniquePackageURL(for: newDocument.id)
                 try await repository.save(newDocument, to: newURL)
-                install(newDocument, at: newURL)
+                let newAttachments = try await loadAttachmentsForInstall(at: newURL)
+                install(newDocument, at: newURL, attachments: newAttachments)
                 startupState = .ready
                 saveState = .saved
             }
@@ -87,7 +89,8 @@ extension IOSDocumentStore {
                     try await Self.copyPackage(from: sourceURL, to: stagingURL)
                     let loaded = try await repository.load(from: stagingURL)
                     try fileManager.moveItem(at: stagingURL, to: destinationURL)
-                    install(loaded, at: destinationURL)
+                    let loadedAttachments = try await loadAttachmentsForInstall(at: destinationURL)
+                    install(loaded, at: destinationURL, attachments: loadedAttachments)
                     startupState = .ready
                     saveState = .saved
                 } catch {
@@ -215,9 +218,16 @@ extension IOSDocumentStore {
         self.pendingExportRootURL = nil
     }
 
-    func install(_ document: NovelDocument, at url: URL, rememberRecent: Bool = true) {
+    func install(
+        _ document: NovelDocument,
+        at url: URL,
+        attachments: [Attachment],
+        rememberRecent: Bool = true
+    ) {
         self.document = document
         documentURL = url
+        advanceDocumentSessionGeneration()
+        replaceAttachments(attachments)
         selectedChapterID = document.chapters.first?.id
         selectedEpisodeID = document.chapters.first?.episodes.first?.id
         if rememberRecent {

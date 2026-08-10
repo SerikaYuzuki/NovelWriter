@@ -5,6 +5,11 @@ struct IOSProjectHomeView: View {
     let store: IOSDocumentStore
     let openWriting: () -> Void
     let openProjectInfo: () -> Void
+    let openPlot: () -> Void
+    let openCharacters: () -> Void
+    let openWorldbuilding: () -> Void
+    let openReferences: () -> Void
+    let openSettings: () -> Void
 
     var body: some View {
         List {
@@ -33,6 +38,14 @@ struct IOSProjectHomeView: View {
 
             Section("この作品") {
                 IOSProjectActionRow(
+                    title: "作品情報",
+                    description: "作品タイトルとあらすじを編集します。",
+                    systemImage: "doc.text.magnifyingglass",
+                    action: openProjectInfo
+                )
+                .accessibilityIdentifier("ios.project.info")
+
+                IOSProjectActionRow(
                     title: "執筆",
                     description: "章と話を選んで本文を編集します。",
                     systemImage: "square.and.pencil",
@@ -41,12 +54,46 @@ struct IOSProjectHomeView: View {
                 .accessibilityIdentifier("ios.project.writing")
 
                 IOSProjectActionRow(
-                    title: "作品情報",
-                    description: "作品タイトルとあらすじを編集します。",
-                    systemImage: "doc.text.magnifyingglass",
-                    action: openProjectInfo
+                    title: "プロット",
+                    description: "構成カードと伏線を整理します。",
+                    systemImage: "rectangle.stack",
+                    action: openPlot
                 )
-                .accessibilityIdentifier("ios.project.info")
+                .accessibilityIdentifier("ios.project.plot")
+
+                IOSProjectActionRow(
+                    title: "登場人物",
+                    description: "人物の名前や設定を編集します。",
+                    systemImage: "person.2",
+                    action: openCharacters
+                )
+                .accessibilityIdentifier("ios.project.characters")
+
+                IOSProjectActionRow(
+                    title: "世界観",
+                    description: "舞台や用語のノートを編集します。",
+                    systemImage: "globe.asia.australia",
+                    action: openWorldbuilding
+                )
+                .accessibilityIdentifier("ios.project.worldbuilding")
+
+                IOSProjectActionRow(
+                    title: "資料",
+                    description: "作品に取り込んだ資料を管理します。",
+                    systemImage: "paperclip",
+                    action: openReferences
+                )
+                .accessibilityIdentifier("ios.project.references")
+            }
+
+            Section("アプリ") {
+                IOSProjectActionRow(
+                    title: "設定",
+                    description: "アプリの外観を選びます。",
+                    systemImage: "gearshape",
+                    action: openSettings
+                )
+                .accessibilityIdentifier("ios.project.settings")
             }
 
             Section {
