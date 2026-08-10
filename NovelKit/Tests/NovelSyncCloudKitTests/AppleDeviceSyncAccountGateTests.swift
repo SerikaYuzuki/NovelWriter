@@ -1,4 +1,5 @@
 import Foundation
+import NovelSync
 @testable import NovelSyncCloudKit
 import Testing
 
@@ -83,6 +84,24 @@ struct AppleDeviceSyncAccountGateTests {
         }
         let didWrite = await probe.didWrite
         #expect(!didWrite)
+    }
+
+    @Test("episode transport maps an account fence to provider-neutral unavailability")
+    func accountFenceMapsToTransportUnavailability() {
+        for reason in [
+            AppleDeviceSyncBlockReason.accountUnavailable,
+            .differentCloudAccount,
+            .runtimeInitializationFailed
+        ] {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(
+                AppleDeviceSyncServicesError.blocked(reason)
+            )
+            #expect(mapped as? EpisodeSyncTransportError == .unavailable)
+        }
+
+        let unrelated = AppleDeviceSyncServicesError.invalidMetadata
+        let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(unrelated)
+        #expect(mapped as? AppleDeviceSyncServicesError == unrelated)
     }
 
     private func accountScope(_ userRecordName: String) -> AppleCloudAccountScope {

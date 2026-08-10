@@ -168,8 +168,12 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
     }
 
     func fetchSnapshot(for key: EpisodeSyncKey) async throws -> EpisodeRemoteSnapshot {
-        try await accountGate.performOperation { [transport] in
-            try await transport.fetchSnapshot(for: key)
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchSnapshot(for: key)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
         }
     }
 
@@ -177,14 +181,22 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
         _ id: SyncRevisionID,
         for key: EpisodeSyncKey
     ) async throws -> EpisodeRevision {
-        try await accountGate.performOperation { [transport] in
-            try await transport.fetchRevision(id, for: key)
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchRevision(id, for: key)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
         }
     }
 
     func claimLease(_ request: EpisodeLeaseClaimRequest) async throws -> EpisodeLeaseClaimResult {
-        try await accountGate.performMutation { [transport] in
-            try await transport.claimLease(request)
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.claimLease(request)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
         }
     }
 
@@ -192,17 +204,25 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
         key: EpisodeSyncKey,
         expectedAuthority: EpisodeLeaseAuthority
     ) async throws -> EpisodeRemoteSnapshot {
-        try await accountGate.performMutation { [transport] in
-            try await transport.releaseLease(
-                key: key,
-                expectedAuthority: expectedAuthority
-            )
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.releaseLease(
+                    key: key,
+                    expectedAuthority: expectedAuthority
+                )
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
         }
     }
 
     func publish(_ request: EpisodePublishRequest) async throws -> EpisodePublishResult {
-        try await accountGate.performMutation { [transport] in
-            try await transport.publish(request)
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.publish(request)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
         }
     }
 
@@ -216,6 +236,16 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
         try await accountGate.performOperation { [transport] in
             try await transport.listWorks()
         }
+    }
+
+    static func mappedEpisodeTransportError(_ error: any Error) -> any Error {
+        guard let servicesError = error as? AppleDeviceSyncServicesError,
+              case .blocked = servicesError else { return error }
+        // A previously verified writer may continue into its durable offline
+        // fork, while a fresh/non-holder App session remains read-only. The
+        // App enforces that authority distinction; NovelSync only needs the
+        // provider-neutral transport availability signal here.
+        return EpisodeSyncTransportError.unavailable
     }
 }
 
