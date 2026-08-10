@@ -27,19 +27,7 @@ public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
         stateSerializationHandler: StateSerializationHandler?,
         signalHandler: SignalHandler?
     ) throws {
-        let serialization: CKSyncEngine.State.Serialization?
-        if let restoredState {
-            do {
-                serialization = try JSONDecoder().decode(
-                    CKSyncEngine.State.Serialization.self,
-                    from: restoredState
-                )
-            } catch {
-                throw CloudKitSyncAdapterError.invalidConfiguration
-            }
-        } else {
-            serialization = nil
-        }
+        let serialization = try Self.decodeRestoredState(restoredState)
         let delegate = CloudKitChangeTrackingDelegate(
             stateSerializationHandler: stateSerializationHandler,
             signalHandler: signalHandler
@@ -55,6 +43,20 @@ public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
         configuration.subscriptionID = CloudKitSyncSchema.subscriptionID
         self.delegate = delegate
         engine = CKSyncEngine(configuration)
+    }
+
+    static func decodeRestoredState(
+        _ restoredState: Data?
+    ) throws -> CKSyncEngine.State.Serialization? {
+        guard let restoredState else { return nil }
+        do {
+            return try JSONDecoder().decode(
+                CKSyncEngine.State.Serialization.self,
+                from: restoredState
+            )
+        } catch {
+            throw CloudKitSyncAdapterError.invalidRestoredEngineState
+        }
     }
 
     public func fetchChanges() async throws {
@@ -90,7 +92,7 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
         self.signalHandler = signalHandler
     }
 
-    func handleEvent(_ event: CKSyncEngine.Event, syncEngine _: CKSyncEngine) async {
+    func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
         switch event {
         case let .stateUpdate(update):
             guard let stateSerializationHandler else { return }
@@ -101,7 +103,9 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
                 await signalHandler?(.stateSerializationFailed)
             }
         case .accountChange:
+            async let cancellation: Void = syncEngine.cancelOperations()
             await signalHandler?(.accountChanged)
+            await cancellation
         case let .fetchedDatabaseChanges(changes):
             if changes.deletions.contains(where: { $0.zoneID == CloudKitSyncSchema.zoneID }) {
                 await signalHandler?(.zoneReset)

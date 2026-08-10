@@ -5,6 +5,7 @@ import NovelSync
 public enum AppleDeviceSyncBlockReason: String, Codable, Equatable, Sendable {
     case differentCloudAccount
     case accountUnavailable
+    case runtimeInitializationFailed
 }
 
 public enum AppleDeviceSyncAvailability: Equatable, Sendable {
@@ -94,6 +95,9 @@ actor AppleDeviceSyncMetadataStore {
     static let maximumAllowedEpisodeCount = 4096
     static let metadataFileName = "device-sync-metadata-v1.json"
 
+    nonisolated let replicaID: SyncReplicaID
+    nonisolated let initialBoundLocators: Set<AppleLocalDocumentLocator>
+
     private struct BindingRecord: Codable, Sendable {
         let locator: AppleLocalDocumentLocator
         let binding: SyncWorkingCopyBinding
@@ -140,6 +144,8 @@ actor AppleDeviceSyncMetadataStore {
             )
         }
         try Self.validate(loaded)
+        replicaID = loaded.replicaID
+        initialBoundLocators = Set(loaded.bindings.map(\.locator))
         self.rootURL = safeRoot
         self.metadataURL = metadataURL
         self.fileManager = fileManager

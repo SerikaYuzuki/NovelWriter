@@ -24,6 +24,7 @@ public enum CloudKitPartialFailureKind: String, Equatable, Hashable, Sendable {
 /// CloudKitの具象errorやrecordを公開せず、App層が安全に表示できる分類だけを返す。
 public enum CloudKitSyncAdapterError: Error, Equatable, Sendable {
     case invalidConfiguration
+    case invalidRestoredEngineState
     case unsafeAssetRoot
     case accountUnavailable(CloudKitAccountProblem)
     case temporarilyUnavailable(retryAfterSeconds: Double?)

@@ -64,7 +64,7 @@ public struct AppleResolvedWorkingCopy: Sendable {
 private actor AppleDeviceSyncSignalRelay {
     private let accountGate: AppleDeviceSyncAccountGate
     private let metadataStore: AppleDeviceSyncMetadataStore
-    private let engineStateGeneration: UInt64
+    private var engineStateGeneration: UInt64
     private let continuation: AsyncStream<AppleDeviceSyncSignal>.Continuation
 
     init(
@@ -84,15 +84,13 @@ private actor AppleDeviceSyncSignalRelay {
         case .remoteChangesAvailable:
             continuation.yield(.remoteChangesAvailable)
         case .accountChanged:
-            let availability = await accountGate.observeAccountChange()
-            if case .blocked = availability {
-                do {
-                    _ = try await metadataStore.invalidateEngineState(
-                        expectedGeneration: engineStateGeneration
-                    )
-                } catch {
-                    continuation.yield(.statePersistenceFailed)
-                }
+            let availability = await accountGate.blockForAccountChange()
+            do {
+                _ = try await metadataStore.invalidateEngineState(
+                    expectedGeneration: engineStateGeneration
+                )
+            } catch {
+                continuation.yield(.statePersistenceFailed)
             }
             continuation.yield(.accountChanged(availability))
         case .zoneReset:
@@ -102,8 +100,21 @@ private actor AppleDeviceSyncSignalRelay {
         }
     }
 
-    func statePersistenceFailed() {
-        continuation.yield(.statePersistenceFailed)
+    func updateEngineStateGeneration(_ generation: UInt64) {
+        engineStateGeneration = generation
+    }
+
+    func persistEngineState(_ state: Data) async {
+        do {
+            // falseはaccount invalidation後に届いた旧generation callback。
+            // errorではなく意図どおり無視し、新accountへstateを持ち越さない。
+            _ = try await metadataStore.saveEngineState(
+                state,
+                generation: engineStateGeneration
+            )
+        } catch {
+            continuation.yield(.statePersistenceFailed)
+        }
     }
 }
 
@@ -173,7 +184,14 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
         containerIdentifier: String,
         rootURL: URL
     ) async throws -> AppleDeviceSyncBootstrapResult {
-        let metadataStore = try AppleDeviceSyncMetadataStore(rootURL: rootURL)
+        let localBootstrap = try AppleDeviceSyncLocalBootstrap.prepare(rootURL: rootURL)
+        return try await localBootstrap.bootstrap(containerIdentifier: containerIdentifier)
+    }
+
+    static func bootstrapPrepared(
+        containerIdentifier: String,
+        metadataStore: AppleDeviceSyncMetadataStore
+    ) async throws -> AppleDeviceSyncBootstrapResult {
         let localMetadata = await metadataStore.snapshot()
         let accountScope: AppleCloudAccountScope
         do {
@@ -206,13 +224,23 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
                 )
             )
         }
-        let services = try await makeReadyServices(
-            containerIdentifier: containerIdentifier,
-            metadataStore: metadataStore,
-            metadata: metadata,
-            accountScope: accountScope
-        )
-        return .ready(services)
+        do {
+            let services = try await makeReadyServices(
+                containerIdentifier: containerIdentifier,
+                metadataStore: metadataStore,
+                metadata: metadata,
+                accountScope: accountScope
+            )
+            return .ready(services)
+        } catch let AppleDeviceSyncServicesError.blocked(reason) {
+            return .blocked(
+                AppleDeviceSyncBlockedServices(
+                    replicaID: localMetadata.replicaID,
+                    reason: reason,
+                    metadataStore: metadataStore
+                )
+            )
+        }
     }
 
     private static func makeReadyServices(
@@ -240,26 +268,24 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             continuation: streamPair.continuation
         )
         let assetRoot = safeRoot.appendingPathComponent(assetDirectoryName, isDirectory: true)
-        let cloudTransport = try CloudKitEpisodeSyncTransport(
-            containerIdentifier: containerIdentifier,
-            assetRootURL: assetRoot,
-            restoredEngineState: metadata.engineState,
-            stateSerializationHandler: { state in
-                do {
-                    // falseはaccount invalidation後に届いた旧generation callback。
-                    // errorではなく意図どおり無視し、新accountへstateを持ち越さない。
-                    _ = try await metadataStore.saveEngineState(
-                        state,
-                        generation: metadata.engineStateGeneration
-                    )
-                } catch {
-                    await relay.statePersistenceFailed()
+        let recoveredRuntime = try await AppleDeviceSyncEngineStateRecovery.make(
+            metadataStore: metadataStore,
+            metadata: metadata
+        ) { restoredState, generation in
+            await relay.updateEngineStateGeneration(generation)
+            return try CloudKitEpisodeSyncTransport(
+                containerIdentifier: containerIdentifier,
+                assetRootURL: assetRoot,
+                restoredEngineState: restoredState,
+                stateSerializationHandler: { state in
+                    await relay.persistEngineState(state)
+                },
+                signalHandler: { signal in
+                    await relay.handle(signal)
                 }
-            },
-            signalHandler: { signal in
-                await relay.handle(signal)
-            }
-        )
+            )
+        }
+        let cloudTransport = recoveredRuntime.value
         let journalRoot = safeRoot.appendingPathComponent(journalDirectoryName, isDirectory: true)
         let remoteBoundary = AppleDeviceSyncRemoteBoundary(
             transport: cloudTransport,
@@ -288,8 +314,9 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
 
     /// 新規sync libraryを利用者が明示開始した場合だけzoneを作成する。
     public func bootstrapZoneForNewSync() async throws {
-        try await accountGate.requireAvailable()
-        try await cloudTransport.bootstrapZoneForNewSync()
+        try await accountGate.performMutation { [cloudTransport] in
+            try await cloudTransport.bootstrapZoneForNewSync()
+        }
     }
 
     public func createWork(_ descriptor: SyncWorkDescriptor) async throws {
@@ -366,11 +393,13 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             descriptor,
             localSourceDocumentID: localSourceDocumentID
         )
-        _ = try await metadataStore.bind(
-            locator,
-            to: workID,
-            allowedEpisodeIDs: allowedEpisodeIDs
-        )
+        _ = try await accountGate.performMutation { [metadataStore] in
+            try await metadataStore.bind(
+                locator,
+                to: workID,
+                allowedEpisodeIDs: allowedEpisodeIDs
+            )
+        }
         guard let resolved = try await resolve(
             locator,
             localSourceDocumentID: localSourceDocumentID
@@ -394,11 +423,13 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             descriptor,
             localSourceDocumentID: localSourceDocumentID
         )
-        _ = try await metadataStore.rebind(
-            locator,
-            to: workID,
-            allowedEpisodeIDs: allowedEpisodeIDs
-        )
+        _ = try await accountGate.performMutation { [metadataStore] in
+            try await metadataStore.rebind(
+                locator,
+                to: workID,
+                allowedEpisodeIDs: allowedEpisodeIDs
+            )
+        }
         guard let resolved = try await resolve(
             locator,
             localSourceDocumentID: localSourceDocumentID
@@ -412,13 +443,15 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
     public func unbind(
         _ locator: AppleLocalDocumentLocator
     ) async throws -> Bool {
-        try await accountGate.requireAvailable()
-        return try await metadataStore.unbind(locator) != nil
+        try await accountGate.performMutation { [metadataStore] in
+            try await metadataStore.unbind(locator) != nil
+        }
     }
 
     public func refreshTrackedChanges() async throws {
-        try await accountGate.requireAvailable()
-        try await cloudTransport.refreshTrackedChanges()
+        try await accountGate.performOperation { [cloudTransport] in
+            try await cloudTransport.refreshTrackedChanges()
+        }
     }
 
     public func cancelTrackedChanges() async {

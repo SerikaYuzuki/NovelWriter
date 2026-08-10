@@ -59,6 +59,7 @@ actor AppleDeviceSyncAccountGate {
     private let expectedScope: AppleCloudAccountScope
     private let scopeResolver: ScopeResolver
     private var currentAvailability: AppleDeviceSyncAvailability = .ready
+    private var activeOperations: [UUID: @Sendable () -> Void] = [:]
 
     init(
         expectedScope: AppleCloudAccountScope,
@@ -81,19 +82,76 @@ actor AppleDeviceSyncAccountGate {
         }
     }
 
-    /// account changeを一度観測してblockedになったruntimeは再利用しない。
-    /// 元accountへ戻った場合もfactoryを作り直し、scopeとengine stateを再検証する。
-    func observeAccountChange() async -> AppleDeviceSyncAvailability {
-        guard case .ready = currentAvailability else { return currentAvailability }
-        do {
-            let currentScope = try await scopeResolver()
-            if currentScope != expectedScope {
-                currentAvailability = .blocked(.differentCloudAccount)
-            }
-        } catch {
-            currentAvailability = .blocked(.accountUnavailable)
+    /// CloudKit operationの直前に必ずlive identityを再取得する。
+    /// resolver待機中にaccount eventが入った場合も、再開後にcached readyを使わない。
+    /// preflight後とCloudKit API内のaccount switchを完全にatomicにはできないが、
+    /// accountChangeでin-flight taskをcancelし、post-operationでもfenceを再確認する。
+    func performOperation<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await requireCurrentAccountForOperation()
+
+        let operationID = UUID()
+        let task = Task<Value, any Error> {
+            try Task.checkCancellation()
+            return try await operation()
         }
+        activeOperations[operationID] = { task.cancel() }
+        defer { activeOperations.removeValue(forKey: operationID) }
+
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            try requireAvailable()
+            return value
+        } catch {
+            if case let .blocked(reason) = currentAvailability {
+                throw AppleDeviceSyncServicesError.blocked(reason)
+            }
+            throw error
+        }
+    }
+
+    func performMutation<Value: Sendable>(
+        _ mutation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await performOperation(mutation)
+    }
+
+    /// CKSyncEngineのaccountChangeはidentity再取得を待たず即時fenceする。
+    /// 元accountへ戻ってもこのruntimeは復活させず、factoryの再作成を要求する。
+    func blockForAccountChange() -> AppleDeviceSyncAvailability {
+        block(.accountUnavailable)
         return currentAvailability
+    }
+
+    private func requireCurrentAccountForOperation() async throws {
+        try requireAvailable()
+        let currentScope: AppleCloudAccountScope
+        do {
+            currentScope = try await scopeResolver()
+        } catch {
+            block(.accountUnavailable)
+            throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
+        }
+        try requireAvailable()
+        guard currentScope == expectedScope else {
+            block(.differentCloudAccount)
+            throw AppleDeviceSyncServicesError.blocked(.differentCloudAccount)
+        }
+    }
+
+    private func block(_ reason: AppleDeviceSyncBlockReason) {
+        guard case .ready = currentAvailability else { return }
+        currentAvailability = .blocked(reason)
+        let cancellations = Array(activeOperations.values)
+        activeOperations.removeAll()
+        for cancel in cancellations {
+            cancel()
+        }
     }
 }
 
@@ -110,44 +168,54 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
     }
 
     func fetchSnapshot(for key: EpisodeSyncKey) async throws -> EpisodeRemoteSnapshot {
-        try await accountGate.requireAvailable()
-        return try await transport.fetchSnapshot(for: key)
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchSnapshot(for: key)
+        }
     }
 
     func fetchRevision(
         _ id: SyncRevisionID,
         for key: EpisodeSyncKey
     ) async throws -> EpisodeRevision {
-        try await accountGate.requireAvailable()
-        return try await transport.fetchRevision(id, for: key)
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchRevision(id, for: key)
+        }
     }
 
     func claimLease(_ request: EpisodeLeaseClaimRequest) async throws -> EpisodeLeaseClaimResult {
-        try await accountGate.requireAvailable()
-        return try await transport.claimLease(request)
+        try await accountGate.performMutation { [transport] in
+            try await transport.claimLease(request)
+        }
     }
 
     func releaseLease(
         key: EpisodeSyncKey,
         expectedAuthority: EpisodeLeaseAuthority
     ) async throws -> EpisodeRemoteSnapshot {
-        try await accountGate.requireAvailable()
-        return try await transport.releaseLease(key: key, expectedAuthority: expectedAuthority)
+        try await accountGate.performMutation { [transport] in
+            try await transport.releaseLease(
+                key: key,
+                expectedAuthority: expectedAuthority
+            )
+        }
     }
 
     func publish(_ request: EpisodePublishRequest) async throws -> EpisodePublishResult {
-        try await accountGate.requireAvailable()
-        return try await transport.publish(request)
+        try await accountGate.performMutation { [transport] in
+            try await transport.publish(request)
+        }
     }
 
     func createWork(_ descriptor: SyncWorkDescriptor) async throws {
-        try await accountGate.requireAvailable()
-        try await transport.createWork(descriptor)
+        try await accountGate.performMutation { [transport] in
+            try await transport.createWork(descriptor)
+        }
     }
 
     func listWorks() async throws -> [SyncWorkDescriptor] {
-        try await accountGate.requireAvailable()
-        return try await transport.listWorks()
+        try await accountGate.performOperation { [transport] in
+            try await transport.listWorks()
+        }
     }
 }
 
