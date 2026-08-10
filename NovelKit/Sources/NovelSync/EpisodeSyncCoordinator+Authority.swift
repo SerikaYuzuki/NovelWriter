@@ -51,13 +51,10 @@ public extension EpisodeSyncCoordinator {
         guard record.conflict == expectedConflict else {
             throw EpisodeSyncCoordinatorError.conflictSuperseded
         }
-        let current = try await transport.fetchSnapshot(for: key)
-        guard current.head?.revisionID == expectedConflict.remote.revisionID,
-              current.head?.contentDigest == expectedConflict.remote.contentDigest else {
-            try await applyFence(current, expectedAuthority: nil)
-            throw EpisodeSyncCoordinatorError.conflictSuperseded
-        }
-        let grant = try await prepareForcedContinuationUnchecked(expiresAt: expiresAt)
+        let grant = try await prepareForcedContinuationUnchecked(
+            expiresAt: expiresAt,
+            expectedHead: expectedConflict.remote
+        )
         guard grant.snapshot.head?.revisionID == expectedConflict.remote.revisionID,
               grant.snapshot.head?.contentDigest == expectedConflict.remote.contentDigest else {
             _ = try await abandonAuthorityGrant(grant)
@@ -67,17 +64,29 @@ public extension EpisodeSyncCoordinator {
     }
 
     private func prepareForcedContinuationUnchecked(
-        expiresAt: Date
+        expiresAt: Date,
+        expectedHead: EpisodeRevision? = nil
     ) async throws -> EpisodeAuthorityGrant {
         let snapshot = try await transport.fetchSnapshot(for: key)
+        if let expectedHead,
+           snapshot.head?.revisionID != expectedHead.revisionID
+           || snapshot.head?.contentDigest != expectedHead.contentDigest {
+            try await applyFence(snapshot, expectedAuthority: nil)
+            throw EpisodeSyncCoordinatorError.conflictSuperseded
+        }
         let result = try await requestLease(
             kind: .forceTakeover,
             snapshot: snapshot,
+            expectedHead: expectedHead,
             expiresAt: expiresAt
         )
         guard let latest = record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard case let .granted(postClaimSnapshot) = result,
               let lease = postClaimSnapshot.lease else {
+            if expectedHead != nil {
+                try await applyRejectedConflictClaim(result)
+                throw EpisodeSyncCoordinatorError.conflictSuperseded
+            }
             applyRejectedForceResult(result, latest: latest)
             throw EpisodeSyncCoordinatorError.leaseClaimRejected
         }
@@ -293,23 +302,6 @@ private extension EpisodeSyncCoordinator {
         case .granted:
             break
         }
-    }
-
-    func requestLease(
-        kind: EpisodeLeaseClaimKind,
-        snapshot: EpisodeRemoteSnapshot,
-        expiresAt: Date
-    ) async throws -> EpisodeLeaseClaimResult {
-        guard record != nil else { throw EpisodeSyncCoordinatorError.notLinked }
-        let request = try EpisodeLeaseClaimRequest(
-            key: key,
-            requesterReplicaID: replicaID,
-            requesterSessionID: sessionID,
-            expectedEpoch: snapshot.leaseEpoch,
-            expiresAt: expiresAt,
-            kind: kind
-        )
-        return try await transport.claimLease(request)
     }
 
     func activate(lease: EpisodeLease, snapshot: EpisodeRemoteSnapshot) async throws {

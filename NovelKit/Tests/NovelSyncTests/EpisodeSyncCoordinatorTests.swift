@@ -255,6 +255,73 @@ struct EpisodeSyncCoordinatorTests {
         #expect(record.pendingRevisions.map(\.content) == ["mac fork"])
     }
 
+    @Test("conflict takeover cannot fence a writer that advances the confirmed head")
+    func conflictTakeoverUsesExactHeadCAS() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let mac = makeCoordinator(
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await mac.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        let phone = makeCoordinator(
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        _ = try await phone.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        let phoneGrant = try await phone.prepareForcedContinuation(expiresAt: SyncTestValues.expiry)
+        _ = try await phone.confirmAuthorityInstall(
+            phoneGrant,
+            installedRemoteDigest: phoneGrant.snapshot.head?.contentDigest
+        )
+        _ = try await phone.recordLocalContent("remote R1", createdAt: SyncTestValues.date)
+        _ = try await phone.synchronize()
+
+        _ = try await mac.recordLocalContent("local L", createdAt: SyncTestValues.date)
+        let conflicted = try await mac.synchronize()
+        let staleConflict = try #require(syncConflict(from: conflicted))
+        let phoneLease = try #require(await server.currentLease(for: SyncTestValues.key))
+
+        await server.pauseNextClaim()
+        let takeover = Task {
+            try await mac.prepareConflictResolutionAuthority(
+                expectedConflict: staleConflict,
+                expiresAt: SyncTestValues.expiry
+            )
+        }
+        await server.waitUntilClaimIsPaused()
+        _ = try await phone.recordLocalContent(
+            "remote R2",
+            createdAt: SyncTestValues.date.addingTimeInterval(1)
+        )
+        _ = try await phone.synchronize()
+        await server.resumePausedClaim()
+
+        do {
+            _ = try await takeover.value
+            Issue.record("stale conflict confirmation unexpectedly took authority")
+        } catch {
+            #expect(error as? EpisodeSyncCoordinatorError == .conflictSuperseded)
+        }
+        #expect(await server.currentLease(for: SyncTestValues.key) == phoneLease)
+        #expect(await server.currentHead(for: SyncTestValues.key)?.content == "remote R2")
+        let macState = await mac.state
+        let refreshed = try #require(syncConflict(from: macState))
+        #expect(refreshed.local.content == "local L")
+        #expect(refreshed.remote.content == "remote R2")
+    }
+
     @Test("merge revision and publish seal survive termination before the first publish")
     func mergeSealSurvivesPrePublishTermination() async throws {
         let server = InMemoryEpisodeSyncServer()

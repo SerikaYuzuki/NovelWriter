@@ -21,6 +21,9 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
     private var shouldCancelNextPublish = false
     private var pausedPublishContinuation: CheckedContinuation<Void, Never>?
     private var pauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var shouldPauseNextClaim = false
+    private var pausedClaimContinuation: CheckedContinuation<Void, Never>?
+    private var claimPauseObservers: [CheckedContinuation<Void, Never>] = []
 
     public init() {}
 
@@ -59,9 +62,16 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
         _ request: EpisodeLeaseClaimRequest
     ) async throws -> EpisodeLeaseClaimResult {
         try requireOnline()
+        await pauseClaimIfRequested()
         var slot = leaseSlots[request.key] ?? LeaseSlot()
         guard request.expectedEpoch == slot.epoch else {
             return try .changed(snapshot(for: request.key))
+        }
+        let currentSnapshot = try snapshot(for: request.key)
+        if let expectedHeadRevisionID = request.expectedHeadRevisionID,
+           currentSnapshot.head?.revisionID != expectedHeadRevisionID
+           || currentSnapshot.head?.contentDigest != request.expectedHeadContentDigest {
+            return .changed(currentSnapshot)
         }
 
         switch request.kind {
@@ -298,5 +308,39 @@ public extension InMemoryEpisodeSyncServer {
         let continuation = pausedPublishContinuation
         pausedPublishContinuation = nil
         continuation?.resume()
+    }
+
+    func pauseNextClaim() {
+        shouldPauseNextClaim = true
+    }
+
+    func waitUntilClaimIsPaused() async {
+        if pausedClaimContinuation != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            claimPauseObservers.append(continuation)
+        }
+    }
+
+    func resumePausedClaim() {
+        let continuation = pausedClaimContinuation
+        pausedClaimContinuation = nil
+        continuation?.resume()
+    }
+}
+
+private extension InMemoryEpisodeSyncServer {
+    func pauseClaimIfRequested() async {
+        guard shouldPauseNextClaim else { return }
+        shouldPauseNextClaim = false
+        let observers = claimPauseObservers
+        claimPauseObservers.removeAll()
+        await withCheckedContinuation { continuation in
+            pausedClaimContinuation = continuation
+            for observer in observers {
+                observer.resume()
+            }
+        }
     }
 }

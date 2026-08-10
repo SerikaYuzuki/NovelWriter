@@ -2,11 +2,13 @@ import NovelSync
 
 public extension CloudKitEpisodeSyncTransport {
     func claimLease(_ request: EpisodeLeaseClaimRequest) async throws -> EpisodeLeaseClaimResult {
-        try await ensureZone()
-        try await requireWorkExists(request.key.workID)
-        let control = try await fetchControl(for: request.key)
-        let currentSnapshot = try await materializeSnapshot(control)
+        let (control, currentSnapshot) = try await leaseClaimContext(for: request)
         guard request.expectedEpoch == control.leaseEpoch else {
+            return .changed(currentSnapshot)
+        }
+        if let expectedHeadRevisionID = request.expectedHeadRevisionID,
+           currentSnapshot.head?.revisionID != expectedHeadRevisionID
+           || currentSnapshot.head?.contentDigest != request.expectedHeadContentDigest {
             return .changed(currentSnapshot)
         }
 
@@ -84,5 +86,17 @@ public extension CloudKitEpisodeSyncTransport {
             }
             throw mappedOperationError(error)
         }
+    }
+}
+
+private extension CloudKitEpisodeSyncTransport {
+    func leaseClaimContext(
+        for request: EpisodeLeaseClaimRequest
+    ) async throws -> (CloudKitEpisodeControl, EpisodeRemoteSnapshot) {
+        try await ensureZone()
+        try await requireWorkExists(request.key.workID)
+        let control = try await fetchControl(for: request.key)
+        let snapshot = try await materializeSnapshot(control)
+        return (control, snapshot)
     }
 }

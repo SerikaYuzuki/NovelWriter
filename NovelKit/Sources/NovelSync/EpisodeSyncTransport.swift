@@ -12,6 +12,8 @@ public struct EpisodeLeaseClaimRequest: Hashable, Codable, Sendable {
         case requesterReplicaID
         case requesterSessionID
         case expectedEpoch
+        case expectedHeadRevisionID
+        case expectedHeadContentDigest
         case expiresAt
         case kind
     }
@@ -20,6 +22,9 @@ public struct EpisodeLeaseClaimRequest: Hashable, Codable, Sendable {
     public let requesterReplicaID: SyncReplicaID
     public let requesterSessionID: SyncEditSessionID
     public let expectedEpoch: UInt64?
+    /// conflict解決用forceだけが指定するexact head CAS。通常claim/forceはnil。
+    public let expectedHeadRevisionID: SyncRevisionID?
+    public let expectedHeadContentDigest: SyncContentDigest?
     public let expiresAt: Date
     public let kind: EpisodeLeaseClaimKind
 
@@ -28,16 +33,29 @@ public struct EpisodeLeaseClaimRequest: Hashable, Codable, Sendable {
         requesterReplicaID: SyncReplicaID,
         requesterSessionID: SyncEditSessionID,
         expectedEpoch: UInt64?,
+        expectedHeadRevisionID: SyncRevisionID? = nil,
+        expectedHeadContentDigest: SyncContentDigest? = nil,
         expiresAt: Date,
         kind: EpisodeLeaseClaimKind
     ) throws {
-        guard expectedEpoch.map({ $0 <= EpisodeLeaseAuthority.maximumEpoch }) ?? true else {
+        guard let expectedEpoch else {
+            throw EpisodeSyncTransportError.invalidLeaseClaim
+        }
+        guard expectedEpoch <= EpisodeLeaseAuthority.maximumEpoch else {
             throw EpisodeSyncTransportError.leaseEpochOverflow
+        }
+        guard (expectedHeadRevisionID == nil) == (expectedHeadContentDigest == nil) else {
+            throw EpisodeSyncTransportError.invalidLeaseClaim
+        }
+        guard expectedHeadRevisionID == nil || kind == .forceTakeover else {
+            throw EpisodeSyncTransportError.invalidLeaseClaim
         }
         self.key = key
         self.requesterReplicaID = requesterReplicaID
         self.requesterSessionID = requesterSessionID
         self.expectedEpoch = expectedEpoch
+        self.expectedHeadRevisionID = expectedHeadRevisionID
+        self.expectedHeadContentDigest = expectedHeadContentDigest
         self.expiresAt = normalizedSyncTimestamp(expiresAt)
         self.kind = kind
     }
@@ -49,13 +67,36 @@ public struct EpisodeLeaseClaimRequest: Hashable, Codable, Sendable {
         requesterReplicaID = try container.decode(SyncReplicaID.self, forKey: .requesterReplicaID)
         requesterSessionID = try container.decode(SyncEditSessionID.self, forKey: .requesterSessionID)
         expectedEpoch = try container.decodeIfPresent(UInt64.self, forKey: .expectedEpoch)
+        expectedHeadRevisionID = try container.decodeIfPresent(
+            SyncRevisionID.self,
+            forKey: .expectedHeadRevisionID
+        )
+        expectedHeadContentDigest = try container.decodeIfPresent(
+            SyncContentDigest.self,
+            forKey: .expectedHeadContentDigest
+        )
         expiresAt = try decodeCanonicalSyncTimestamp(forKey: .expiresAt, in: container)
         kind = try container.decode(EpisodeLeaseClaimKind.self, forKey: .kind)
-        guard expectedEpoch.map({ $0 <= EpisodeLeaseAuthority.maximumEpoch }) ?? true else {
+        guard let expectedEpoch,
+              expectedEpoch <= EpisodeLeaseAuthority.maximumEpoch else {
             throw DecodingError.dataCorruptedError(
                 forKey: .expectedEpoch,
                 in: container,
-                debugDescription: "expected lease epoch must fit signed 64-bit wire storage"
+                debugDescription: "expected lease epoch is required and must fit signed 64-bit wire storage"
+            )
+        }
+        guard (expectedHeadRevisionID == nil) == (expectedHeadContentDigest == nil) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .expectedHeadRevisionID,
+                in: container,
+                debugDescription: "exact head revision and digest must be supplied together"
+            )
+        }
+        guard expectedHeadRevisionID == nil || kind == .forceTakeover else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .expectedHeadRevisionID,
+                in: container,
+                debugDescription: "exact head CAS is only valid for a force takeover"
             )
         }
     }
@@ -67,6 +108,8 @@ public struct EpisodeLeaseClaimRequest: Hashable, Codable, Sendable {
         try container.encode(requesterReplicaID, forKey: .requesterReplicaID)
         try container.encode(requesterSessionID, forKey: .requesterSessionID)
         try container.encodeIfPresent(expectedEpoch, forKey: .expectedEpoch)
+        try container.encodeIfPresent(expectedHeadRevisionID, forKey: .expectedHeadRevisionID)
+        try container.encodeIfPresent(expectedHeadContentDigest, forKey: .expectedHeadContentDigest)
         try encodeCanonicalSyncTimestamp(expiresAt, forKey: .expiresAt, in: &container)
         try container.encode(kind, forKey: .kind)
     }
@@ -292,6 +335,7 @@ public enum EpisodePublishResult: Hashable, Codable, Sendable {
 
 public enum EpisodeSyncTransportError: Error, Equatable, Sendable {
     case unavailable
+    case invalidLeaseClaim
     case invalidPublishRequest
     case revisionCollision
     case mutationReuse
