@@ -46,7 +46,15 @@ public extension EpisodeSyncCoordinator {
         record.localHead = merge
         record.lastKnownRemoteHead = conflict.remote
         record.conflict = nil
-        record.sealedPublish = nil
+        // merge markerをAppが先にdurable化した後、ここでprocessが終了しても
+        // fresh sessionが同じmutationをreceipt replayできるよう、merge revisionと
+        // publish sealを一度のjournal saveへまとめる。
+        record.sealedPublish = EpisodeSealedPublish(
+            mutationID: SyncMutationID(),
+            revisionIDs: record.pendingRevisions.map(\.revisionID),
+            candidateHeadRevisionID: merge.revisionID,
+            expectedHeadRevisionID: conflict.remote.revisionID
+        )
         self.record = record
         try await persistAndUpdateState()
         return try await synchronize()

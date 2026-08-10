@@ -137,6 +137,81 @@ struct EpisodeSyncCoordinatorTests {
         #expect(record.pendingRevisions.map(\.content) == ["mac fork"])
     }
 
+    @Test("merge revision and publish seal survive termination before the first publish")
+    func mergeSealSurvivesPrePublishTermination() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let macJournal = InMemoryEpisodeSyncJournal()
+        let mac = makeCoordinator(
+            server: server,
+            journal: macJournal,
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await mac.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+
+        let phone = makeCoordinator(
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        _ = try await phone.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        let phoneGrant = try await phone.prepareForcedContinuation(expiresAt: SyncTestValues.expiry)
+        _ = try await phone.confirmAuthorityInstall(
+            phoneGrant,
+            installedRemoteDigest: phoneGrant.snapshot.head?.contentDigest
+        )
+        _ = try await phone.recordLocalContent("phone fork", createdAt: SyncTestValues.date.addingTimeInterval(1))
+        _ = try await phone.synchronize()
+
+        _ = try await mac.recordLocalContent("mac fork", createdAt: SyncTestValues.date.addingTimeInterval(2))
+        let conflicted = try await mac.synchronize()
+        let conflict = try #require(syncConflict(from: conflicted))
+        let grant = try await mac.prepareConflictResolutionAuthority(
+            expectedConflict: conflict,
+            expiresAt: SyncTestValues.expiry
+        )
+        _ = try await mac.confirmAuthorityInstall(
+            grant,
+            installedRemoteDigest: grant.snapshot.head?.contentDigest
+        )
+
+        await server.setOnline(false)
+        _ = try await mac.resolveConflict(
+            using: .keepLocal,
+            createdAt: SyncTestValues.date.addingTimeInterval(3)
+        )
+        let interrupted = try #require(await macJournal.storedRecord(for: SyncTestValues.key))
+        #expect(interrupted.conflict == nil)
+        #expect(interrupted.sealedPublish?.candidateHeadRevisionID == interrupted.localHead.revisionID)
+        #expect(Set(interrupted.localHead.parentRevisionIDs) == [
+            conflict.local.revisionID,
+            conflict.remote.revisionID
+        ])
+
+        let restarted = makeCoordinator(
+            server: server,
+            journal: macJournal,
+            replica: SyncTestValues.replicaA,
+            session: SyncEditSessionID()
+        )
+        _ = try await restarted.restore()
+        await server.setOnline(true)
+        let replayed = try await restarted.synchronize()
+        let replayedContext = try #require(syncContext(from: replayed))
+        #expect(replayedContext.localHead.content == "mac fork")
+        #expect(await server.currentHead(for: SyncTestValues.key) == replayedContext.localHead)
+        #expect(await macJournal.storedRecord(for: SyncTestValues.key)?.sealedPublish == nil)
+    }
+
     @Test("offline force cannot grant editing or mutate the local journal")
     func offlineForceIsReadOnly() async throws {
         let server = InMemoryEpisodeSyncServer()
