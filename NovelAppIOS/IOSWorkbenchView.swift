@@ -125,6 +125,8 @@ struct IOSWorkbenchView: View {
 
 struct IOSEditorPane: View {
     let store: IOSDocumentStore
+    @AppStorage(IOSEditorFontPreference.preferenceKey)
+    private var editorFontFamilyRawValue = IOSEditorFontPreference.initialRawValue
     @State private var isMemoPresented = false
     @State private var searchQuery = ""
     @State private var searchCursor = 0
@@ -132,6 +134,18 @@ struct IOSEditorPane: View {
     @State private var mountedSession: IOSDocumentSessionToken?
     @State private var mountedChapterID: ChapterID?
     @State private var mountedEpisodeID: EpisodeID?
+
+    init(
+        store: IOSDocumentStore,
+        userDefaults: UserDefaults = .standard
+    ) {
+        self.store = store
+        _editorFontFamilyRawValue = AppStorage(
+            wrappedValue: IOSEditorFontPreference.initialRawValue,
+            IOSEditorFontPreference.preferenceKey,
+            store: userDefaults
+        )
+    }
 
     var body: some View {
         if let chapter = store.selectedChapter, let episode = store.selectedEpisode {
@@ -141,6 +155,9 @@ struct IOSEditorPane: View {
                 selectionRequest: selectionRequest,
                 commandSession: store.editorCommandSession,
                 selectionContextMenuCommands: selectionCommands(for: episode.id),
+                configuration: IOSEditorFontPreference.configuration(
+                    storedRawValue: editorFontFamilyRawValue
+                ),
                 onTextChange: { text in
                     store.updateEpisodeContent(
                         text,

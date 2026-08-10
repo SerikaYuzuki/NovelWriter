@@ -116,6 +116,21 @@ struct IOSAppearanceMenu: View {
 struct IOSAppearanceSettingsView: View {
     @AppStorage(IOSAppearance.preferenceKey)
     private var appearanceRawValue = IOSAppearance.initialRawValue
+    @AppStorage(IOSEditorFontPreference.preferenceKey)
+    private var editorFontFamilyRawValue = IOSEditorFontPreference.initialRawValue
+
+    init(userDefaults: UserDefaults = .standard) {
+        _appearanceRawValue = AppStorage(
+            wrappedValue: IOSAppearance.initialRawValue,
+            IOSAppearance.preferenceKey,
+            store: userDefaults
+        )
+        _editorFontFamilyRawValue = AppStorage(
+            wrappedValue: IOSEditorFontPreference.initialRawValue,
+            IOSEditorFontPreference.preferenceKey,
+            store: userDefaults
+        )
+    }
 
     var body: some View {
         Form {
@@ -135,6 +150,21 @@ struct IOSAppearanceSettingsView: View {
             } footer: {
                 Text("本文キャンバスの色や作品ファイルには影響しません。")
             }
+
+            Section {
+                Picker("本文フォント", selection: editorFontFamilyBinding) {
+                    ForEach(IOSEditorFontFamily.allCases) { family in
+                        Text(family.title)
+                            .tag(family)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .accessibilityIdentifier("ios.editorFont.picker")
+            } header: {
+                Text("本文フォント")
+            } footer: {
+                Text("この端末の本文表示だけに適用され、作品ファイルには保存されません。")
+            }
         }
         .navigationTitle("表示設定")
         .navigationBarTitleDisplayMode(.inline)
@@ -148,6 +178,17 @@ struct IOSAppearanceSettingsView: View {
         Binding(
             get: { currentAppearance },
             set: { appearanceRawValue = $0.rawValue }
+        )
+    }
+
+    private var currentEditorFontFamily: IOSEditorFontFamily {
+        IOSEditorFontFamily(storedRawValue: editorFontFamilyRawValue)
+    }
+
+    private var editorFontFamilyBinding: Binding<IOSEditorFontFamily> {
+        Binding(
+            get: { currentEditorFontFamily },
+            set: { editorFontFamilyRawValue = $0.rawValue }
         )
     }
 }

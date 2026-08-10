@@ -202,6 +202,8 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 - D-057により新規インストール時のiOS chromeはDarkを既定とする
 - 作品棚または作品ホームの外観メニューから「システムに合わせる／ライト／ダーク」を選べる
+- 表示設定から本文フォントを「ヒラギノ明朝／ヒラギノ角ゴ／システム」から選べる。選択はiOS端末内の表示設定として保持し、`.novelpkg`には保存しない
+- フォント変更は同じ話の本文や`UITextView`を再生成せず表示属性だけへ反映し、IME変換中はcomposition終了後まで保留する
 - `preferredColorScheme`へ写像するのはapp-privateな外観設定だけとし、本文キャンバス設定や`.novelpkg`を変更しない
 - semantic color、system material、標準List／Formを使い、Lightへ切り替えても情報階層とコントラストを維持する
 
@@ -257,6 +259,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - Editor上部に保存状態があり、重複した本文見出し／話タイトル入力／文字カウンターがない
 - `……` / `――` / `ルビ` / `傍点`がselection snapshotから正しいUTF-16置換を行い、各操作をUndo / Redoできる
 - 執筆補助バーは本文キャンバスと連続し、software keyboard表示時にIME直上から操作できる
+- 本文フォント設定が端末内へ永続化され、同じ話の本文、選択、Undo履歴を流し直さず反映される。IME変換中の変更は確定後にだけ反映される
 
 ### Clipboard / Accessibility
 
