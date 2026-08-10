@@ -159,9 +159,9 @@ private actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         let locallyBound = knownBoundLocators.contains(locator) || {
             switch localBootstrap.localStatus(for: locator) {
             case .unbound:
-                return false
+                false
             case .bound, .boundAndBlocked:
-                return true
+                true
             }
         }()
         guard locallyBound else { return nil }
@@ -225,20 +225,10 @@ private actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        try await services.bootstrapZoneForNewSync()
-        guard try workingCopyRoot.isEligible(session) else {
-            throw EpisodeSyncTransportError.unavailable
-        }
-        try await services.createWork(descriptor)
-        guard try workingCopyRoot.isEligible(session) else {
-            throw EpisodeSyncTransportError.unavailable
-        }
-        _ = try await services.bind(
+        _ = try await services.createAndBindNewWork(
             locator,
-            to: descriptor.workID,
-            localSourceDocumentID: descriptor.sourceDocumentID,
-            allowedEpisodeIDs: allowedEpisodes,
-            matching: descriptor.structureDigest
+            proposedDescriptor: descriptor,
+            allowedEpisodeIDs: allowedEpisodes
         )
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable

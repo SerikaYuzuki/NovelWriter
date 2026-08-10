@@ -88,8 +88,7 @@ struct PlotBoardView: View {
         }
         .onDeleteCommand {
             guard let selectedPlotCardID = appState.selectedPlotCardID,
-                  let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else
-            {
+                  let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else {
                 return
             }
             cardPendingDeletion = SessionBoundValue(
@@ -172,8 +171,7 @@ struct PlotChapterOutlineView: View {
             .workbenchGlassOutlineStyle()
             .overlay {
                 if appState.document.chapters.isEmpty,
-                   appState.document.plotCards.allSatisfy({ $0.chapterID != nil })
-                {
+                   appState.document.plotCards.allSatisfy({ $0.chapterID != nil }) {
                     ContentUnavailableView(
                         "章がありません",
                         systemImage: "doc.text",

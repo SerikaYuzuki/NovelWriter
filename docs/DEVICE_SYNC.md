@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-059承認、S1実装中。portable protocol、CloudKit実装、署名済み実機検証はいずれも未完了
+> **状態**: D-059承認、S1実装中。`NovelSync` domain／fixture、`FileEpisodeSyncJournal`、`NovelSyncCloudKit` adapter（account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentを含む）はsource実装済み。Mac / iOSのproduction composition、明示binding UI、editor／保存／lifecycle、force／merge UIもsource接続済みで、実装済み範囲の全ローカル回帰は通過した。通常handoffの完結、外部CloudKit Gate、署名済み実機検証は未完了
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
@@ -25,7 +25,7 @@ Device Syncは、Macで編集中の話をiPhoneへ引き継ぎ、必要ならiPh
 
 ### 2.1 S1で扱うもの
 
-- 既に同じsync workへbinding済みで、両端末のpackageに同じEpisodeIDが存在する **1話の本文**
+- 初回binding時に構造が完全一致し、binding snapshotの対象EpisodeIDに含まれる **1話の本文**
 - 同じ話を一度に1端末だけが書くsoft lease
 - MacからiPhone、iPhoneからMacへの通常handoff
 - iPhone側の明示的な強制継続と、旧writerのfencing
@@ -35,14 +35,25 @@ Device Syncは、Macで編集中の話をiPhoneへ引き継ぎ、必要ならiPh
 
 ### 2.2 S1で扱わないもの
 
-- CloudKit上の作品一覧、別端末への初回download、import不要のbootstrap、複数作品のsync library
+- remote workを作品棚へ常時列挙するcloud library、別端末へのpackage初回download、import不要の作品bootstrap、複数作品のsync library
 - 章／話の追加・削除・タイトル・順序、作品情報、メモ、人物、プロット、伏線、世界観、資料、snapshotの同期
 - attachmentやpackage全体の転送
 - Files / iCloud Drive / File Provider上の原本を直接編集するopen-in-place
 - 同じ話を複数人または複数端末が同時に入力するlive collaboration、CRDT、逐次keystroke配信、共同cursor
 - Apple以外の実transport、CloudKit Web Services、自前server
 
-S1は、App層から有効な`SyncBinding`を渡された1作品・1話のengine境界を先に成立させる。作品の発見／初回binding UIが実装されるまでは開発fixtureだけで接続し、出荷UIへ「全作品を同期」「別端末から作品を取得」等を出さない。対象外の構造が両端末で一致しない場合は推測で作成・並べ替えせず、本文同期を停止して明示的な不一致として扱う。
+S1の初回bindingは、利用者が同期先を明示選択し、作品全体のordered ChapterID / EpisodeID digestが一致した場合だけ成立する。その時点のEpisodeID集合をpackage外のbinding snapshotへ保存する。Apple adapterがremote descriptorを読むのは、構造digestが一致する **明示binding候補** の抽出と、既存bindingの検証のためである。この候補は作品棚、cloud library、package downloadではなく、選択だけで自動bindingもしない。binding後に章や話を追加してもsnapshot内の既存話は同期を継続する一方、新しい話はremote graphへ暗黙作成せず「この端末のみ」とする。対象外の構造を推測で作成・削除・並べ替えず、出荷UIへ「全作品を同期」「別端末から作品を取得」等を出さない。
+
+### 2.3 実装状況（source / local test境界）
+
+- **source実装済み**: `NovelSync`のportable ID／wire／digest／structure descriptor、lease／publish／force／fence／fork／2-parent mergeの状態機械、保守的3-way merge、決定論的fakeとfixture
+- **source実装済み**: package外の`FileEpisodeSyncJournal`、atomic outbox／recovery、本文・親・pending・journal全体のresource limit、unsafe root／symlink拒否
+- **source実装済み**: `NovelSyncCloudKit`のprivate database／単一固定zone、record／`CKAsset` mapping、change-tag CAS、mutation receipt、`CKSyncEngine` change tracking、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intent、copy別journal、明示create／bind／rebind／unbindとepisode allowlist
+- **App source接続済み・全ローカル回帰通過**: Mac / iOSのproduction composition、明示binding UI、native editor／保存／scene・終了境界、read-only／force／fence／競合解決画面。2026-08-11の`Scripts/check.sh`でMac通常114件／Device Sync 20件、iOS通常71件／Device Sync 15件を含む全検査が`All checks passed`となった
+- **App未完了**: 通常handoffのrequest／flush／grant／fetch／install全経路の完結
+- **未完了**: Developer Program / CloudKit Consoleで行うcontainer・App ID・capability・profile・schema、署名済み同一account実機、Package Validator / External Change / Conflict Gate
+
+ここでいう`local metadata bootstrap`は、起動時にreplica、account scope、binding、engine stateをfail-closedに復元する処理であり、別端末の`.novelpkg`を取得する「作品bootstrap」ではない。source実装や署名なし／Simulator testの成功を、CloudKit development / production環境での利用可能性とは扱わない。
 
 ## 3. 層と依存方向
 
@@ -56,32 +67,32 @@ App / AppState
     │   ├── state machine / CAS command
     │   ├── journal contract
     │   └── three-way merge
-    └── AppleCloudKitSync      (Apple platform adapter)
+    └── NovelSyncCloudKit      (Apple platform adapter)
         ├── CloudKit / CKSyncEngine
         ├── CKRecord mapping
         ├── account / push / retry
-        └── app-private journal storage
+        └── binding metadata / copy別journal composition
 ```
 
 `NovelSync`の公開型、error、fixtureへ`CKRecord`、`CKRecord.ID`、`CKSyncEngine`、`CKContainer`等のCloudKit型を出さない。SwiftUI、AppKit、UIKit、SwiftData型も出さない。Apple adapterはportable commandをCloudKitへ写像するだけとし、CloudKit固有のchange tagやsubscriptionをdomainへ漏らさない。
 
 Windows版はC#、Android版はKotlin等で同じwire、state、CAS、merge fixtureを再実装する。Swift packageやCloudKit adapterを直接移植することは前提にしない。将来別backendを追加しても、時計によるlast-write-winsへ置き換えず、この契約を満たすtransactional adapterを要求する。
 
-Swift側のtarget graphは実装PRで固定する。少なくとも`NovelSync`から`NovelStorage`、EditorKit、CloudKitへ依存せず、App層がpackage保存、native editor、sync engineを調停する。
+Swift側のtarget graphは、`NovelSync -> NovelCore`、`NovelSyncCloudKit -> NovelSync / NovelCore / CloudKit`として固定済みである。`NovelSync`から`NovelStorage`、EditorKit、CloudKitへ依存せず、App層がpackage保存、native editor、sync engineを調停する。test専用fakeは`NovelSyncTesting`に分離し、製品targetへlinkしない。
 
 ## 4. Identityとportable wire
 
 ### 4.1 Identity
 
 - `syncWorkID`: remote revision graphの作品identity。app-private package名や`NovelDocument.id`から暗黙生成しない
-- `episodeID`: `.novelpkg`のEpisodeIDと同じ論理ID。S1では既存episodeだけをbindingする
+- `episodeID`: `.novelpkg`のEpisodeIDと同じ論理ID。S1では初回binding snapshotに含めたepisodeだけを同期する
 - `deviceID`: installationごとに生成するrandom opaque ID。端末名、利用者名、hardware serialを使わない
 - `sessionID`: その話のwriter sessionごとに生成するrandom opaque ID。app再起動や再openで再利用しない
 - `revisionID`: immutable revisionごとのrandom ID
 - `mutationID`: 利用者操作をremoteへpublishする試行系列のidempotency key。network retryで変えず、本文を作り直した新操作では新しくする
 - `leaseEpoch`: EpisodeControl上の0以上のsigned 64-bit整数。所有権の移動または強制継続ごとにexactly 1増やし、overflow時は同期を停止する
 
-`SyncBinding`と各IDはpackage外のapp-private metadataへ保存する。exportした`.novelpkg`だけではsync accountやremote workへ自動再接続しない。
+`SyncBinding`、初回binding時の対象EpisodeID集合、各IDはpackage外のapp-private metadataへ保存する。exportした`.novelpkg`だけではsync accountやremote workへ自動再接続しない。`sourceDocumentID`は候補の表示順hintと、明示binding後に同じlocal package系統であることをfail-closed確認するためだけに使い、`syncWorkID`の代用や自動bindingには使わない。
 
 ### 4.2 Wire規約
 
@@ -91,7 +102,7 @@ Swift側のtarget graphは実装PRで固定する。少なくとも`NovelSync`�
 - 本文へNFC / NFD変換、改行変換、末尾空白除去を行わない
 - 未知のminor fieldは保持または無視できるが、未知のmajor `protocolVersion`は拒否する
 - 日時は診断／表示用に限り、head選択、publish可否、merge winnerの判断へ使わない
-- decode上限、本文byte上限、親revision数、record batch数を実装前に定数化し、上限超過を部分適用しない
+- 1 revisionの本文はUTF-8で最大1 MiB、親は最大2件、1話journalのpending revisionは最大3件、atomic publishは最大64 revision、journal JSONは最大64 MiBとする。上限超過を切り詰めたり部分適用したりせずblockedにする。journalは同じrevisionがbase / local / remote / pendingへ重複してencodeされ、JSON control characterが最大6倍へescapeされるworst caseでも64 MiB内に収まるよう、本文1 MiBとpending 3件を同時に固定する
 
 publish commandの論理例を次に示す。fixtureではfield省略、`null`、canonical encode、上限、Unicodeを固定する。
 
@@ -126,7 +137,7 @@ publish commandの論理例を次に示す。fixtureではfield省略、`null`�
 
 | Record | 主なfield | 契約 |
 | --- | --- | --- |
-| `SyncWork` | `syncWorkID`, `protocolVersion` | sync graphのroot。S1では既存bindingの検査にだけ使う |
+| `SyncWork` | `syncWorkID`, `protocolVersion` | sync graphのroot。S1では利用者が明示したsync開始と、構造一致するbinding候補／既存bindingの検査にだけ使う。作品棚やpackage downloadにはしない |
 | `EpisodeControl` | `syncWorkID`, `episodeID`, `headRevisionID`, `holderDeviceID`, `holderSessionID`, `leaseEpoch`, advisory lease metadata | headとleaseを1つのCAS対象にして、forceとpublishの競合を直列化する |
 | `EpisodeRevision` | `syncWorkID`, `revisionID`, `episodeID`, `parentRevisionIDs`, `body`, `bodyDigest`, `mutationID` | immutable。通常版、fork、2-parent mergeを同じgraphへ残す |
 | `MutationReceipt` | `syncWorkID`, `mutationID`, command digest, `resultRevisionID`, resulting head / epoch | 応答消失後のretryをexactly-once相当にする。既存IDと内容が違えば拒否する |
@@ -145,6 +156,7 @@ soft leaseの期限やheartbeatはUX上の「応答がない」判定にだけ�
 - `EpisodeRevision.body`はportable wire上はstringのままだが、Apple adapterは上限と大本文を考慮し、canonical UTF-8 payloadを`CKAsset`へ写像できる。metadataのdigest / byte countを検証してからinstallする
 - `CKSyncEngine`はchange tracking、pending change、push後のfetch、retry token管理に使う。lease / expected head / mutationIDのdomain検査を`CKSyncEngine`任せにしない
 - pushは通知契機であって配送保証ではない。起動、foreground復帰、handoff / force直前にもserver changesをfetchする
+- `listWorks`の結果はordered structure digestで絞った明示binding候補にだけ使う。`sourceDocumentID`一致は候補順のhintに留め、候補取得、タイトルsnapshot表示、単一候補の存在だけで自動bindingしない
 
 mutation適用順は次のとおりとする。
 
@@ -207,6 +219,7 @@ Aがcommit、capture、local save、remote flush、grantの途中で失敗した
 
 1. iPhoneはonlineで最新control / headをfetchする。fetchできない場合はleaseを奪わずread-onlyのまま待つ。
 2. iPhoneは観測したcontrolのchange tagを条件に、holderを自分のdevice / fresh sessionへ変更し、epochをexactly 1増やすforce CASを行う。
+   - 競合解決画面からauthorityを取り直す場合は、画面が確認したremote revision IDとcontent digestも同じCASの必須条件にする。確認後に同じholderがheadを進めていた場合はepoch / holderを変更せず、最新のbase / local / remoteを再表示する
 3. CAS成功後、最新remote headを検証してpackage / Editorへinstallし、Undo / Redoを破棄してからwriterを有効にする。古いlocal本文をremote headへ暗黙合成しない。
 4. 旧writerの同時publishとforceが競合した場合、remote CASで一方だけが先に成立する。publishが先ならiPhoneは新headをfetchしてforceを再確認し、forceが先なら旧publishをstale epochとして拒否する。
 5. 旧writerがonlineならforce通知時、offlineなら次のfetch時にepoch不一致を検出して即座にfenceする。新しいremote本文をactive composition中のnative editorへ書き込まない。
@@ -260,23 +273,23 @@ overlap時はbaseを参照可能にし、少なくとも次を同じ画面で提
 ## 12. Security / Privacy
 
 - private CloudKit databaseはApple IDに紐づくFUMINIWAのprivate領域であり、公開databaseやCloudKit sharingをS1で使わない
-- FUMINIWA運営者の自前serverは不要だが、話本文、revision、opaque ID、必要な診断metadataはAppleのCloudKitへ送られる。clipboard機能とは別の明示的なcloud境界として説明する
+- FUMINIWA運営者の自前serverは不要だが、話本文、作品タイトルの初回discovery label、revision、opaque ID、必要な診断metadataはAppleのCloudKitへ送られる。タイトルは候補表示用snapshotであり、作品情報の双方向同期ではない。clipboard機能とは別の明示的なcloud境界として説明する
 - transport／保存時暗号化をApple platformへ依存することと、FUMINIWA独自のend-to-end encryptionは同義ではない。E2EEを実装・検証するまでその表示をしない
 - 作品名、話タイトル、端末名、利用者名、local path、bookmark、hardware identifierをrecord name、zone name、診断logへ入れない
 - 本文、fork、asset URL、CloudKit error payloadを通常log、analytics、crash breadcrumbへ記録しない。診断はopaque ID、状態分類、byte count等のcontent-free値に限定する
 - remote payloadのdigest、size、protocol version、parent、episode / work bindingを検証してからpackageまたはEditorへinstallする
 - account変更時は旧accountのbinding / journalをquarantineし、利用者の明示確認なしに新accountへuploadしない
-- package外journalも原稿を含むため、Apple platformのapp-private data protectionとatomic file replacementを使う。backup / retention方針は実装PRで明示する
+- package外journalも原稿を含む。現行sourceはapp-private root、root／symlink検査、atomic file replacementを実装済みだが、端末backupとmerge後retention / purgeの製品方針は未決定のままとする
 
 ## 13. Apple capabilityと外部Gate
 
 Apple版はprivate CloudKit + `CKSyncEngine`を採用し、SwiftDataはcanonical storeにしない。最低OSは現行のmacOS 14 / iOS 17と一致する。
 
-macOS / iOSはbundle IDが別でも、同じTeamのApp IDへ同じiCloud containerを割り当てれば同じprivate databaseを利用できる。adapterはdefault container推測に依存せず、承認済みidentifierを`CKContainer(identifier:)`へ明示する。両targetの署名済みentitlementには少なくともCloudKit serviceと同じcontainer identifier、Push Notifications環境が必要で、iOSのInfoには`UIBackgroundModes = remote-notification`が必要になる。環境別の実値はXcode capability / provisioning profileを正とし、source上のplaceholderをproduction containerとして作成しない。
+macOS / iOSはbundle IDが別でも、同じTeamのApp IDへ同じiCloud containerを割り当てれば同じprivate databaseを利用できる。S1のcontainer identifierは **`iCloud.dev.serikayuzuki.fuminiwa.sync`** に固定し、adapterはdefault container推測に依存せず`CKContainer(identifier:)`へ明示する。両targetの署名済みentitlementには少なくともCloudKit serviceと同じcontainer identifier、Push Notifications環境が必要で、iOSのInfoには`UIBackgroundModes = remote-notification`が必要になる。source上のentitlement追加はportal上のcontainer作成、App ID割当、profile発行、schema deployの完了を意味しない。
 
 実装・検証には、コードだけでは完了できない次の外部作業が必要である。
 
-1. Apple Developer Program上で、変更しないproduction用iCloud container identifierを決める
+1. Apple Developer Program上で、固定済みidentifier `iCloud.dev.serikayuzuki.fuminiwa.sync` のcontainerを作成する
 2. macOSとiOSの別App IDを同じTeamで管理し、同じCloudKit containerを両方へ割り当てる
 3. 両targetへiCloud / CloudKitとPush Notifications capabilityを付け、同じcontainer entitlementを署名profileへ含める
 4. iOSへBackground Modesのremote notificationsを付ける。macOSはpush entitlementを持つが、iOSのBackground Modes設定を機械的に流用しない
@@ -297,6 +310,7 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 - portable JSONのcanonical encode / decode、未知version、上限、invalid UTF-8、digest mismatch
 - mutationID retry、応答消失、同じIDの異なるcommand、expected head mismatch
 - stale holder / session / epoch拒否、通常grant、force CAS、epoch overflow
+- 競合確認後・force CAS直前に同じholderがheadを進めても、exact revision ID + digest不一致でauthorityを変更しない
 - publishとforceの両順序、duplicate / reordered change、push欠落
 - process終了を全journal遷移へ注入し、base / local / remoteとpending mutationが残ること
 - non-overlapだけの3-way merge、同一挿入点／隣接境界／反復文字列の保守的conflict
@@ -310,7 +324,7 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 - remote installでUndo / Redoが破棄され、別baselineへ旧operationを適用しない
 - 話／作品／document session切替中のlate callbackを別対象へ適用しない
 - package保存失敗、journal保存失敗、remote asset破損、digest mismatchでwriter権限を渡さない
-- S1対象外の章順、話タイトル、資料等が不一致なら本文だけを推測適用しない
+- 初回bindでは構造digest完全一致を要求し、その後の構造追加ではbinding snapshot内の既存EpisodeIDだけを継続する。追加話をremoteへ暗黙作成せず、削除済み話を復活させない
 
 ### 14.3 CloudKit / 実機
 
@@ -323,15 +337,15 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 
 実機で一度成功しただけでは完了にしない。各mutation、head、epoch、journal stateをcontent-free traceで照合し、旧本文とremote本文がrevision graphまたはjournalのどちらかに必ず残ることを確認する。
 
-## 15. 実装順
+## 15. 実装順と進捗
 
-1. **S1-0 Contract / Fixture**: D-059、本書、portable JSON schema、state / merge fixture、resource limitを固定する
-2. **S1-1 NovelSync Pure Domain**: CloudKit型なしのID、wire、state、CAS command、3-way merge、fake transactional storeを実装する
-3. **S1-2 Durable Local Journal**: package外journal、outbox、process-kill recovery、package saveとの順序を実装する
-4. **S1-3 Editor / Save Integration**: IME commit、native capture、local package save、remote install、Undo破棄、session fencingを接続する
-5. **S1-4 Apple CloudKit Adapter**: private custom zone、record mapping、atomic CAS、mutation receipt、CKAsset、CKSyncEngine change trackingを接続する
-6. **S1-5 Normal Handoff**: request、flush、grant、fetch、install、read-only UIをMac / iPhoneへ接続する
-7. **S1-6 Force / Merge**: iPhoneの明示force、旧writer fence、fork保全、auto / manual / keep local / keep remoteの2-parent mergeを接続する
-8. **S1-7 External / Release QA**: container、App ID、entitlement、profile、development / production schema、署名済み実機を検証する
+- [x] **S1-0 Contract / Fixture**: D-059、本書、portable JSON、state / merge fixture、resource limitを固定した
+- [x] **S1-1 NovelSync Pure Domain**: CloudKit型なしのID、wire、state、CAS command、3-way merge、fake transactional storeをsource実装した
+- [x] **S1-2 Durable Local Journal**: package外journal、outbox、process再開、atomic保存とresource／path安全境界をsource実装した
+- [ ] **S1-3 Editor / Save Integration（source接続済み・全ローカル回帰通過）**: 現行のIME commit、native capture、local package save、remote install、Undo破棄、session fencingは全ローカル回帰を通過した。通常handoffを含む全ライフサイクル受け入れ検証は継続する
+- [x] **S1-4 NovelSyncCloudKit Adapter（source実装）**: private custom zone、record mapping、atomic CAS、mutation receipt、`CKAsset`、`CKSyncEngine` change tracking、account／engine recovery、local bootstrap、durable pending create / bind intentを実装した。外部containerでの成立はS1-7に残す
+- [ ] **S1-5 Normal Handoff（一部source接続済み・既存ローカル回帰通過）**: read-onlyとrelease／acquire境界に加え、request、flush、grant、fetch、installの全経路をMac / iPhoneで完結・検証する
+- [ ] **S1-6 Force / Merge（source接続済み・全ローカル回帰通過）**: iPhoneの明示force、旧writer fence、fork保全、auto / manual / keep local / keep remoteの2-parent mergeは現行ローカル回帰を通過した。外部CloudKitと署名済み実機を含む受け入れ検証は継続する
+- [ ] **S1-7 External / Release QA（未着手）**: container、App ID、capability、profile、development / production schema、署名済み同一account実機を検証する
 
-各段階は未実装の操作をUIへ出さない。S1-1のpure test成功をCloudKit利用可能、S1-4のdevelopment成功をproduction同期完成、S1-5のhandoff成功を構造／資料／library／live collaboration対応とは表現しない。Windows / Android transportはportable fixture確定後の独立trackとする。
+各段階は未実装の操作をUIへ出さない。S1-1のpure test成功をCloudKit利用可能、S1-4のsource / codec test成功をdevelopment / production同期完成、S1-5のhandoff成功を構造／資料／library／live collaboration対応とは表現しない。Windows / Android transportはportable fixture確定後の独立trackとする。

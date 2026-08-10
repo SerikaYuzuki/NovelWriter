@@ -39,8 +39,10 @@ jq -e '
     ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelSyncCloudKit", "NovelUI"] and
   packageProducts($objects; "FUMINIWAExperimental") ==
     ["EditorKit", "NovelAI", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelUI"] and
-  packageProducts($objects; "NovelAppTests") == ["NovelSyncTesting"] and
-  packageProducts($objects; "FUMINIWAIOSTests") == ["NovelSyncTesting"] and
+  packageProducts($objects; "NovelAppTests") == [] and
+  packageProducts($objects; "NovelAppDeviceSyncTests") == ["NovelSyncTesting"] and
+  packageProducts($objects; "FUMINIWAIOSTests") == [] and
+  packageProducts($objects; "FUMINIWADeviceSyncIOSTests") == ["NovelSyncTesting"] and
   packageProducts($objects; "FUMINIWAExperimentalTests") == []
 ' "$audit_tmp" >/dev/null
 
@@ -78,7 +80,15 @@ jq -e '
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
   )) and
+  (configurationSettings($objects; "NovelAppDeviceSyncTests") | all(
+    .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
+    .BUNDLE_LOADER == "$(TEST_HOST)"
+  )) and
   (configurationSettings($objects; "FUMINIWAIOSTests") | all(
+    .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA" and
+    .BUNDLE_LOADER == "$(TEST_HOST)"
+  )) and
+  (configurationSettings($objects; "FUMINIWADeviceSyncIOSTests") | all(
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
   )) and
@@ -166,6 +176,7 @@ for scheme in "$standard_scheme" "$experimental_scheme" "$ios_scheme"; do
 done
 rg -F -q 'BlueprintName = "NovelApp"' "$standard_scheme"
 rg -F -q 'BlueprintName = "NovelAppTests"' "$standard_scheme"
+rg -F -q 'BlueprintName = "NovelAppDeviceSyncTests"' "$standard_scheme"
 if rg -F -q 'FUMINIWAExperimental' "$standard_scheme"; then
   echo "error: the standard scheme references an Experimental target" >&2
   exit 1
@@ -174,6 +185,7 @@ rg -F -q 'BlueprintName = "FUMINIWAExperimental"' "$experimental_scheme"
 rg -F -q 'BlueprintName = "FUMINIWAExperimentalTests"' "$experimental_scheme"
 rg -F -q 'BlueprintName = "FUMINIWAIOS"' "$ios_scheme"
 rg -F -q 'BlueprintName = "FUMINIWAIOSTests"' "$ios_scheme"
+rg -F -q 'BlueprintName = "FUMINIWADeviceSyncIOSTests"' "$ios_scheme"
 if rg -F -q 'FUMINIWAExperimental' "$ios_scheme"; then
   echo "error: the iOS scheme references an Experimental target" >&2
   exit 1

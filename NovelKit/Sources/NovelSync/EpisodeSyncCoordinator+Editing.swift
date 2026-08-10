@@ -54,6 +54,15 @@ public extension EpisodeSyncCoordinator {
         using choice: EpisodeIntegrationChoice,
         createdAt: Date
     ) async throws -> EpisodeSyncState {
+        await acquireRemoteControlOperation()
+        defer { releaseRemoteControlOperation() }
+        return try await resolveConflictSerially(using: choice, createdAt: createdAt)
+    }
+
+    internal func resolveConflictSerially(
+        using choice: EpisodeIntegrationChoice,
+        createdAt: Date
+    ) async throws -> EpisodeSyncState {
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard let conflict = record.conflict else {
             throw EpisodeSyncCoordinatorError.noConflict
@@ -85,6 +94,6 @@ public extension EpisodeSyncCoordinator {
         )
         self.record = record
         try await persistAndUpdateState()
-        return try await synchronize()
+        return try await synchronizeSerially()
     }
 }

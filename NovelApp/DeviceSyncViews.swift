@@ -24,10 +24,10 @@ struct DeviceSyncStatusBanner: View {
                     Button("このMacで続ける") {
                         forceConfirmationIdentity = identity
                     }
-                        .disabled(identity == nil)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("deviceSync.forceContinue")
+                    .disabled(identity == nil)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("deviceSync.forceContinue")
                 }
             }
             .font(.callout)
@@ -227,7 +227,7 @@ struct DeviceSyncSettingsView: View {
                             await appState.startDeviceSyncForCurrentDocument(expectedSession: session)
                         }
                     }
-                        .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent)
 
                     Button("既存の同期作品を探す") {
                         let session = appState.documentSessionToken
@@ -275,5 +275,4 @@ struct DeviceSyncSettingsView: View {
             }
         }
     }
-
 }

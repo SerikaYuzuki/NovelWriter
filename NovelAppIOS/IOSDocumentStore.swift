@@ -77,6 +77,7 @@ final class IOSDocumentStore {
     @ObservationIgnored let fileManager: FileManager
     @ObservationIgnored let userDefaults: UserDefaults
     @ObservationIgnored let libraryRoot: URL
+    @ObservationIgnored let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored private let clipboardWriter: any IOSPlainTextClipboardWriting
     @ObservationIgnored let deviceSyncRuntime: IOSDeviceSyncRuntime?
@@ -85,6 +86,9 @@ final class IOSDocumentStore {
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: IOSDeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncPreparationTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncPreparationLookup: IOSDeviceSyncLookupIdentity?
+    @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncConflictResolution: IOSPendingDeviceSyncConflictResolution?
     @ObservationIgnored var pendingDeviceSyncNewWork: IOSPendingDeviceSyncNewWork?
     @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
@@ -104,7 +108,14 @@ final class IOSDocumentStore {
         },
         saveOperation: { [weak self] document, url in
             guard let self else { throw CancellationError() }
+            guard let privateWorkingCopyLocation else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            _ = try privateWorkingCopyLocation.attestPackage(at: url)
             try await repository.save(document, to: url)
+            // NovelpkgRepositoryのatomic replaceではpackage inodeが正当に変わる。
+            // fixed rootを再証明し、置換後の新package identityを次の基準にする。
+            _ = try privateWorkingCopyLocation.attestPackage(at: url)
         },
         saveEventHandler: { [weak self] event in
             switch event {
@@ -129,6 +140,7 @@ final class IOSDocumentStore {
         clipboardWriter: any IOSPlainTextClipboardWriting = IOSSystemPlainTextClipboardWriter(),
         deviceSyncRuntime: IOSDeviceSyncRuntime? = nil,
         backgroundTaskController: any IOSBackgroundTaskControlling = IOSApplicationBackgroundTaskController(),
+        privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation? = nil,
         libraryRoot: URL? = nil
     ) {
         self.repository = repository
@@ -140,13 +152,29 @@ final class IOSDocumentStore {
         self.deviceSyncRuntime = deviceSyncRuntime
         self.backgroundTaskController = backgroundTaskController
 
-        let root = libraryRoot ?? Self.defaultLibraryRoot(fileManager: fileManager)
+        let preparedLocation: IOSPrivateWorkingCopyLocation? = if let privateWorkingCopyLocation {
+            privateWorkingCopyLocation
+        } else if let libraryRoot {
+            try? IOSPrivateWorkingCopyLocation.prepareInjectedLibraryRoot(
+                libraryRoot,
+                fileManager: fileManager
+            )
+        } else {
+            try? IOSPrivateWorkingCopyLocation.prepareDefault(fileManager: fileManager)
+        }
+        self.privateWorkingCopyLocation = preparedLocation
+        let root = preparedLocation?.rootURL
+            ?? libraryRoot?.standardizedFileURL
+            ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
         let placeholder = NovelDocument.newDocument()
         document = placeholder
         documentURL = root.appendingPathComponent("\(placeholder.id.uuidString).novelpkg", isDirectory: true)
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
+        if preparedLocation == nil {
+            failStartupForDeviceSyncSafety()
+        }
     }
 
     var selectedChapter: Chapter? {

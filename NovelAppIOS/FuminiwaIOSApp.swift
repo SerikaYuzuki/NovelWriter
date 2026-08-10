@@ -13,20 +13,36 @@ struct FuminiwaIOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
         #if canImport(NovelSyncCloudKit)
         // iOS SDKはSecTaskによるentitlement読出しを公開していない。
         // unsigned XCTest hostではCloudKit containerを生成せず、安全停止したStoreだけを使う。
         let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        let composition = isRunningTests ? nil : try? IOSDeviceSyncProductionComposition()
-        let store = IOSDocumentStore(deviceSyncRuntime: composition?.runtime)
-        if composition == nil {
+        let composition: IOSDeviceSyncProductionComposition? = if isRunningTests {
+            nil
+        } else if let privateWorkingCopyLocation {
+            try? IOSDeviceSyncProductionComposition(
+                privateWorkingCopyLocation: privateWorkingCopyLocation
+            )
+        } else {
+            nil
+        }
+        let store = IOSDocumentStore(
+            deviceSyncRuntime: composition?.runtime,
+            privateWorkingCopyLocation: privateWorkingCopyLocation
+        )
+        if privateWorkingCopyLocation == nil || composition == nil {
             store.failStartupForDeviceSyncSafety()
         }
         _deviceSyncComposition = State(initialValue: composition)
         _deviceSyncPreparationFailed = State(initialValue: composition == nil)
         _store = State(initialValue: store)
         #else
-        _store = State(initialValue: IOSDocumentStore())
+        let store = IOSDocumentStore(privateWorkingCopyLocation: privateWorkingCopyLocation)
+        if privateWorkingCopyLocation == nil {
+            store.failStartupForDeviceSyncSafety()
+        }
+        _store = State(initialValue: store)
         #endif
     }
 

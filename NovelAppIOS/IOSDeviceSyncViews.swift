@@ -25,10 +25,10 @@ struct IOSDeviceSyncStatusBanner: View {
                     Button("このiPhoneで強制的に続ける") {
                         forceConfirmationIdentity = identity
                     }
-                        .disabled(identity == nil)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("ios.deviceSync.forceContinue")
+                    .disabled(identity == nil)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("ios.deviceSync.forceContinue")
                 }
             }
             .foregroundStyle(presentation.isWarning ? .orange : .secondary)
@@ -264,5 +264,4 @@ struct IOSDeviceSyncSettingsView: View {
             }
         }
     }
-
 }

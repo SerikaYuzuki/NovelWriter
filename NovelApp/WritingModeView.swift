@@ -507,8 +507,7 @@ struct EditorPaneView: View {
         Group {
             if let episode = appState.selectedEpisode,
                let chapterID = appState.selectedChapterID,
-               let syncLookup = appState.currentDeviceSyncLookupIdentity
-            {
+               let syncLookup = appState.currentDeviceSyncLookupIdentity {
                 let session = appState.documentSessionToken
                 let isEditable = appState.deviceSyncAllowsEditing(for: syncLookup)
                 VStack(spacing: 0) {

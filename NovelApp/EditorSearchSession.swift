@@ -35,8 +35,7 @@ final class EditorSearchSession {
 
         let startLocation: Int = if lastSearchEpisodeID == episode.id,
                                     lastSearchQuery == query,
-                                    let lastSearchRange
-        {
+                                    let lastSearchRange {
             switch direction {
             case .forward:
                 lastSearchRange.location + lastSearchRange.length

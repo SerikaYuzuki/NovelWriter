@@ -51,8 +51,7 @@ struct ContentView: View {
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: 8) {
                 if appState.startupState.isReady,
-                   let notice = appState.aiClipboardPromptCopyNotice
-                {
+                   let notice = appState.aiClipboardPromptCopyNotice {
                     AIClipboardPromptCopyNoticeView(
                         notice: notice,
                         onDismiss: appState.dismissAIClipboardPromptCopyNotice

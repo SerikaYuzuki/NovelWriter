@@ -63,10 +63,134 @@ struct IOSDeviceSyncIntegrationTests {
         #expect(draft.title == "自動統合の下書き")
     }
 
+    @Test("同じ話の同期準備は一つのbinding lookupへ合流する")
+    func duplicatePreparationJoinsSingleBindingLookup() async throws {
+        let fixture = try makeFixture(content: "single flight")
+        let resolver = IOSDelayedDeviceSyncBindingResolver()
+        let app = try makeStore(
+            fixture: fixture,
+            server: InMemoryEpisodeSyncServer(),
+            journal: InMemoryEpisodeSyncJournal(),
+            replicaID: SyncReplicaID(),
+            packageName: "single-flight.novelpkg",
+            binding: { _, _, _ in
+                await resolver.resolve()
+            }
+        )
+        let lookup = try #require(app.store.currentDeviceSyncLookupIdentity)
+
+        let first = Task { @MainActor in
+            await app.store.prepareDeviceSync(for: lookup)
+        }
+        await resolver.waitUntilLookupIsPaused()
+        let second = Task { @MainActor in
+            await app.store.prepareDeviceSync(for: lookup)
+        }
+        await Task.yield()
+
+        #expect(await resolver.observedLookupCount() == 1)
+        await resolver.resume(with: nil)
+        await first.value
+        await second.value
+
+        #expect(await resolver.observedLookupCount() == 1)
+        #expect(app.store.deviceSyncState == .unconfigured)
+        #expect(app.store.resolvedDeviceSyncLookupIdentity == lookup)
+    }
+
+    @Test("同じ話の重複refreshは一つのremote検査へ合流する")
+    func duplicateRefreshJoinsSingleRemoteInspection() async throws {
+        let fixture = try makeFixture(content: "R0")
+        let server = InMemoryEpisodeSyncServer()
+        let app = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replicaID: SyncReplicaID(),
+            packageName: "duplicate-refresh.novelpkg"
+        )
+        await prepareSelectedEpisode(in: app.store)
+        #expect(app.store.deviceSyncState == .writer)
+
+        let initialFetchCount = await server.snapshotFetchInvocationCount()
+        await server.pauseNextSnapshotResponseAfterCapture()
+        let first = Task { @MainActor in
+            await app.store.refreshSelectedEpisodeDeviceSync()
+        }
+        await server.waitUntilSnapshotResponseIsPaused()
+        let second = Task { @MainActor in
+            await app.store.refreshSelectedEpisodeDeviceSync()
+        }
+        await Task.yield()
+
+        #expect(await server.snapshotFetchInvocationCount() == initialFetchCount + 1)
+        await server.resumePausedSnapshotResponse()
+        await first.value
+        await second.value
+
+        #expect(await server.snapshotFetchInvocationCount() == initialFetchCount + 1)
+        #expect(app.store.deviceSyncState == .writer)
+    }
+
+    @Test("旧claim応答は離脱後に再取得したauthorityを解放しない")
+    func staleClaimCannotReleaseAuthorityAfterReselection() async throws {
+        let fixture = try makeFixture(content: "shared")
+        let server = InMemoryEpisodeSyncServer()
+        let first = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replicaID: SyncReplicaID(),
+            packageName: "claim-race-first.novelpkg"
+        )
+        let secondReplicaID = SyncReplicaID()
+        let second = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replicaID: secondReplicaID,
+            packageName: "claim-race-second.novelpkg"
+        )
+        await prepareSelectedEpisode(in: first.store)
+        await prepareSelectedEpisode(in: second.store)
+        #expect(first.store.deviceSyncState == .writer)
+        #expect(second.store.deviceSyncState == .readOnly)
+
+        let firstIdentity = try #require(first.store.activeDeviceSyncIdentity)
+        let firstClient = try #require(first.store.deviceSyncClient(for: firstIdentity))
+        _ = try await firstClient.coordinator.releaseEditingAuthority()
+
+        await server.pauseNextClaim()
+        let staleRefresh = Task { @MainActor in
+            await second.store.refreshSelectedEpisodeDeviceSync()
+        }
+        await server.waitUntilClaimIsPaused()
+
+        #expect(await second.store.prepareForEditorSurfaceDeparture())
+        let reselectionLookup = try #require(second.store.currentDeviceSyncLookupIdentity)
+        let reselection = Task { @MainActor in
+            await second.store.prepareDeviceSync(for: reselectionLookup)
+        }
+        await Task.yield()
+        #expect(await server.currentLease(for: fixture.key) == nil)
+
+        await server.resumePausedClaim()
+        await staleRefresh.value
+        await reselection.value
+
+        let currentIdentity = try #require(second.store.activeDeviceSyncIdentity)
+        let currentClient = try #require(second.store.deviceSyncClient(for: currentIdentity))
+        let lease = try #require(await server.currentLease(for: fixture.key))
+        #expect(second.store.deviceSyncState == .writer)
+        #expect(lease.authority.epoch == 3)
+        #expect(lease.authority.holderReplicaID == secondReplicaID)
+        #expect(lease.authority.holderSessionID == currentClient.sessionID)
+    }
+
     @Test("sync準備失敗はURL open・import・新規作成で迂回できない")
     func deviceSyncStartupFailureIsSticky() async throws {
         let fixture = try makeFixture(content: "protected")
-        let app = makeStore(
+        let app = try makeStore(
             fixture: fixture,
             server: InMemoryEpisodeSyncServer(),
             journal: InMemoryEpisodeSyncJournal(),
@@ -78,10 +202,10 @@ struct IOSDeviceSyncIntegrationTests {
         let originalGeneration = app.store.documentSessionGeneration
 
         app.store.failStartupForDeviceSyncSafety()
-        #expect(!(await app.store.makeNewDocument()))
-        #expect(!(await app.store.importPackage(from: originalURL)))
-        #expect(!(await app.store.handleExternalPackageURL(originalURL)))
-        #expect(!(await app.store.openPrivateDocument(id: IOSPrivateDocumentID(packageName: "protected.novelpkg"))))
+        #expect(await !(app.store.makeNewDocument()))
+        #expect(await !(app.store.importPackage(from: originalURL)))
+        #expect(await !(app.store.handleExternalPackageURL(originalURL)))
+        #expect(await !(app.store.openPrivateDocument(id: IOSPrivateDocumentID(packageName: "protected.novelpkg"))))
         app.store.install(
             NovelDocument.newDocument(title: "must not install"),
             at: originalURL,
@@ -102,14 +226,14 @@ struct IOSDeviceSyncIntegrationTests {
     func realTextViewBecomesEditableOnlyAfterExplicitForce() async throws {
         let fixture = try makeFixture(content: "shared remote")
         let server = InMemoryEpisodeSyncServer()
-        let writer = makeStore(
+        let writer = try makeStore(
             fixture: fixture,
             server: server,
             journal: InMemoryEpisodeSyncJournal(),
             replicaID: SyncReplicaID(),
             packageName: "writer.novelpkg"
         )
-        let follower = makeStore(
+        let follower = try makeStore(
             fixture: fixture,
             server: server,
             journal: InMemoryEpisodeSyncJournal(),
@@ -150,14 +274,14 @@ struct IOSDeviceSyncIntegrationTests {
     func normalReleaseSupportsRefreshAndRevisit() async throws {
         let fixture = try makeFixture(content: "shared")
         let server = InMemoryEpisodeSyncServer()
-        let first = makeStore(
+        let first = try makeStore(
             fixture: fixture,
             server: server,
             journal: InMemoryEpisodeSyncJournal(),
             replicaID: SyncReplicaID(),
             packageName: "normal-handoff-first.novelpkg"
         )
-        let second = makeStore(
+        let second = try makeStore(
             fixture: fixture,
             server: server,
             journal: InMemoryEpisodeSyncJournal(),
@@ -190,7 +314,7 @@ struct IOSDeviceSyncIntegrationTests {
     func authorityConfirmRetryPreservesExistingLocalFork() async throws {
         let fixture = try makeFixture(content: "R remote")
         let server = InMemoryEpisodeSyncServer()
-        let now = Date(timeIntervalSince1970: 15_000)
+        let now = Date(timeIntervalSince1970: 15000)
         let writer = EpisodeSyncCoordinator(
             key: fixture.key,
             replicaID: SyncReplicaID(),
@@ -205,7 +329,7 @@ struct IOSDeviceSyncIntegrationTests {
         )
 
         let appJournal = InMemoryEpisodeSyncJournal()
-        let app = makeStore(
+        let app = try makeStore(
             fixture: fixture,
             server: server,
             journal: appJournal,
@@ -252,7 +376,7 @@ struct IOSDeviceSyncIntegrationTests {
         let fixture = try makeFixture(content: "B remote")
         let server = InMemoryEpisodeSyncServer()
         let appJournal = InMemoryEpisodeSyncJournal()
-        let app = makeStore(
+        let app = try makeStore(
             fixture: fixture,
             server: server,
             journal: appJournal,
@@ -276,7 +400,7 @@ struct IOSDeviceSyncIntegrationTests {
             transport: server,
             journal: InMemoryEpisodeSyncJournal()
         )
-        let now = Date(timeIntervalSince1970: 20_000)
+        let now = Date(timeIntervalSince1970: 20000)
         _ = try await other.link(
             localContent: fixture.content,
             createdAt: now,
@@ -327,7 +451,7 @@ struct IOSDeviceSyncIntegrationTests {
         let fixture = try makeFixture(content: "initial")
         let server = InMemoryEpisodeSyncServer()
         let journal = InMemoryEpisodeSyncJournal()
-        let app = makeStore(
+        let app = try makeStore(
             fixture: fixture,
             server: server,
             journal: journal,
@@ -356,7 +480,10 @@ struct IOSDeviceSyncIntegrationTests {
             episodeID: fixture.episodeID,
             expectedEditingToken: latestToken
         )
-        await app.store.deviceSyncDraftTask?.value
+        app.store.deviceSyncDraftTask?.cancel()
+        app.store.deviceSyncDraftTask = nil
+        #expect(await app.store.saveNow())
+        await app.store.refreshSelectedEpisodeDeviceSync()
 
         let remote = try #require(await server.currentHead(for: fixture.key))
         let settled = try #require(await journal.storedRecord(for: fixture.key))
@@ -364,6 +491,143 @@ struct IOSDeviceSyncIntegrationTests {
         #expect(settled.pendingRevisions.isEmpty)
         #expect(settled.sealedPublish == nil)
         #expect(app.store.deviceSyncTransferState == .upToDate)
+    }
+
+    @Test("通信停止中のbackground保存は実UITextViewのIME本文を先にpackageへ残す")
+    func backgroundFlushDoesNotWaitForPausedPublish() async throws {
+        let fixture = try makeFixture(content: "initial")
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let app = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            packageName: "background-ime.novelpkg"
+        )
+        await prepareSelectedEpisode(in: app.store)
+        #expect(app.store.deviceSyncState == .writer)
+        let harness = try await makeEditorHarness(store: app.store)
+        defer { harness.cleanup() }
+
+        await server.pauseNextPublish()
+        harness.textView.selectedRange = NSRange(
+            location: (harness.textView.text as NSString).length,
+            length: 0
+        )
+        harness.textView.insertText("送信中")
+        await server.waitUntilPublishIsPaused()
+
+        beginMarkedText("最新", in: harness.textView)
+        #expect(harness.textView.markedTextRange != nil)
+        let flush = Task { @MainActor in
+            await app.store.flushDeviceSyncForBackground()
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let savedBeforeNetworkResumed = try await app.repository.load(from: app.store.documentURL)
+        #expect(savedBeforeNetworkResumed.episode(fixture.episodeID)?.episode.content == "initial送信中最新")
+        #expect(harness.textView.markedTextRange == nil)
+        let durableTail = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(durableTail.localHead.content == "initial送信中最新")
+        #expect(durableTail.pendingRevisions.contains { $0.content == "initial送信中最新" })
+
+        await server.resumePausedPublish()
+        #expect(await flush.value)
+        try await Task.sleep(for: .milliseconds(100))
+        let retainedTail = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(retainedTail.localHead.content == "initial送信中最新")
+    }
+
+    @Test("packageだけ先行した本文はauthority再取得時にjournalとremoteへ反映する")
+    func verifiedAuthorityReplaysPackageAheadContent() async throws {
+        let fixture = try makeFixture(content: "R0")
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let app = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            packageName: "package-ahead.novelpkg"
+        )
+        await prepareSelectedEpisode(in: app.store)
+        let identity = try #require(app.store.activeDeviceSyncIdentity)
+        let client = try #require(app.store.deviceSyncClient(for: identity))
+        let editingToken = try #require(app.store.currentEpisodeEditingToken)
+
+        app.store.updateEpisodeContent(
+            "X package ahead",
+            chapterID: fixture.chapterID,
+            episodeID: fixture.episodeID,
+            expectedEditingToken: editingToken
+        )
+        app.store.deviceSyncDraftTask?.cancel()
+        app.store.deviceSyncDraftTask = nil
+        #expect(await app.store.saveNow())
+        let before = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(before.localHead.content == "R0")
+
+        _ = try await client.coordinator.releaseEditingAuthority()
+        await app.store.refreshSelectedEpisodeDeviceSync()
+
+        let remote = try #require(await server.currentHead(for: fixture.key))
+        let settled = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(remote.content == "X package ahead")
+        #expect(settled.localHead.content == "X package ahead")
+        #expect(settled.pendingRevisions.isEmpty)
+        #expect(app.store.deviceSyncState == .writer)
+        #expect(app.store.deviceSyncTransferState == .upToDate)
+    }
+
+    @Test("停止中の古いfence応答は新しいdraft publishを巻き戻さない")
+    func staleFenceResponseCannotRollBackDraftPublish() async throws {
+        let fixture = try makeFixture(content: "R0")
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let app = try makeStore(
+            fixture: fixture,
+            server: server,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            packageName: "stale-fence-draft.novelpkg"
+        )
+        await prepareSelectedEpisode(in: app.store)
+        let editingToken = try #require(app.store.currentEpisodeEditingToken)
+
+        await server.pauseNextSnapshotResponseAfterCapture()
+        let refresh = Task { @MainActor in
+            await app.store.refreshSelectedEpisodeDeviceSync()
+        }
+        await server.waitUntilSnapshotResponseIsPaused()
+
+        app.store.updateEpisodeContent(
+            "R1",
+            chapterID: fixture.chapterID,
+            episodeID: fixture.episodeID,
+            expectedEditingToken: editingToken
+        )
+        let draft = try #require(app.store.deviceSyncDraftTask)
+        for _ in 0 ..< 100 {
+            if await journal.storedRecord(for: fixture.key)?.localHead.content == "R1" {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let durableTail = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(durableTail.localHead.content == "R1")
+        #expect(await server.currentHead(for: fixture.key)?.content == "R0")
+
+        await server.resumePausedSnapshotResponse()
+        await refresh.value
+        await draft.value
+
+        let settled = try #require(await journal.storedRecord(for: fixture.key))
+        #expect(await server.currentHead(for: fixture.key)?.content == "R1")
+        #expect(settled.localHead.content == "R1")
+        #expect(settled.pendingRevisions.isEmpty)
+        #expect(app.store.document.episode(fixture.episodeID)?.episode.content == "R1")
+        #expect(app.store.deviceSyncState == .writer)
     }
 
     @Test("競合force raceは元localをremote editor本文で置換せず2-parent mergeする")
@@ -377,7 +641,7 @@ struct IOSDeviceSyncIntegrationTests {
             transport: server,
             journal: InMemoryEpisodeSyncJournal()
         )
-        let now = Date(timeIntervalSince1970: 30_000)
+        let now = Date(timeIntervalSince1970: 30000)
         _ = try await writer.link(
             localContent: fixture.content,
             createdAt: now,
@@ -407,7 +671,7 @@ struct IOSDeviceSyncIntegrationTests {
                 mode: .forcedFork
             )
         )
-        let app = makeStore(
+        let app = try makeStore(
             fixture: fixture,
             server: server,
             journal: appJournal,
@@ -478,11 +742,15 @@ struct IOSDeviceSyncIntegrationTests {
         replicaID: SyncReplicaID,
         packageName: String,
         mergeRecoveryStore: any IOSDeviceSyncMergeRecoveryStoring = IOSInMemoryDeviceSyncMergeRecoveryStore(),
-        now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 10_000) }
-    ) -> (store: IOSDocumentStore, repository: IOSDeviceSyncRepository) {
+        now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 10000) },
+        binding: (@Sendable (
+            IOSPrivateDocumentID,
+            UUID,
+            SyncWorkStructureDigest
+        ) async throws -> IOSDeviceSyncBindingResolution?)? = nil
+    ) throws -> (store: IOSDocumentStore, repository: IOSDeviceSyncRepository) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("FUMINIWA-iOS-DeviceSync-Tests-\(UUID().uuidString)", isDirectory: true)
-        let url = root.appendingPathComponent(packageName, isDirectory: true)
         let repository = IOSDeviceSyncRepository()
         let localWorkingCopyID = LocalWorkingCopyID()
         let resolution = IOSDeviceSyncBindingResolution(
@@ -502,9 +770,7 @@ struct IOSDeviceSyncIntegrationTests {
         let runtime = IOSDeviceSyncRuntime(
             replicaID: replicaID,
             transport: server,
-            binding: { _, _, _ in
-                resolution
-            },
+            binding: binding ?? { _, _, _ in resolution },
             mergeRecoveryStore: mergeRecoveryStore,
             now: now,
             leaseDuration: 600
@@ -518,6 +784,8 @@ struct IOSDeviceSyncIntegrationTests {
             deviceSyncRuntime: runtime,
             libraryRoot: root
         )
+        let url = store.libraryRoot.appendingPathComponent(packageName, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         store.install(fixture.document, at: url, attachments: [])
         store.startupState = .ready
         store.saveState = .saved
@@ -537,12 +805,12 @@ struct IOSDeviceSyncIntegrationTests {
                 )
             ]
         )
-        return IOSDeviceSyncFixture(
+        return try IOSDeviceSyncFixture(
             document: document,
             chapterID: chapterID,
             episodeID: episodeID,
             key: EpisodeSyncKey(workID: SyncWorkID(), episodeID: episodeID),
-            structureDigest: try SyncWorkStructureDigest(chapters: document.chapters),
+            structureDigest: SyncWorkStructureDigest(chapters: document.chapters),
             content: content
         )
     }
@@ -695,6 +963,33 @@ private actor IOSConfirmFailureSaveObserver {
 
     func didTriggerFailure() -> Bool {
         didTakeServerOffline
+    }
+}
+
+private actor IOSDelayedDeviceSyncBindingResolver {
+    private var lookupCount = 0
+    private var continuation: CheckedContinuation<IOSDeviceSyncBindingResolution?, Never>?
+
+    func resolve() async -> IOSDeviceSyncBindingResolution? {
+        lookupCount += 1
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilLookupIsPaused() async {
+        while continuation == nil {
+            await Task.yield()
+        }
+    }
+
+    func resume(with resolution: IOSDeviceSyncBindingResolution?) {
+        continuation?.resume(returning: resolution)
+        continuation = nil
+    }
+
+    func observedLookupCount() -> Int {
+        lookupCount
     }
 }
 

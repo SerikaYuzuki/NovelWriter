@@ -3,6 +3,12 @@ import Foundation
 public extension EpisodeSyncCoordinator {
     @discardableResult
     func synchronize() async throws -> EpisodeSyncState {
+        await acquireRemoteControlOperation()
+        defer { releaseRemoteControlOperation() }
+        return try await synchronizeSerially()
+    }
+
+    internal func synchronizeSerially() async throws -> EpisodeSyncState {
         guard let initialRecord = record else { throw EpisodeSyncCoordinatorError.notLinked }
         let initialAuthority = initialRecord.lease?.authority
         let isRestoredReplay = restoredAuthorityRequiresClaim

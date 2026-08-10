@@ -3,13 +3,10 @@ import NovelCore
 
 extension IOSDocumentStore {
     var currentPrivateDocumentID: IOSPrivateDocumentID? {
-        guard startupState == .ready else { return nil }
-        let root = libraryRoot.standardizedFileURL
-        let currentURL = documentURL.standardizedFileURL
-        let packageName = currentURL.lastPathComponent
-        guard Self.isValidPrivatePackageName(packageName),
-              currentURL.deletingLastPathComponent() == root else { return nil }
-        return IOSPrivateDocumentID(packageName: packageName)
+        guard startupState == .ready,
+              let privateWorkingCopyLocation,
+              let attestation = try? privateWorkingCopyLocation.attestPackage(at: documentURL) else { return nil }
+        return attestation.id
     }
 
     var currentDocumentSessionToken: IOSDocumentSessionToken? {

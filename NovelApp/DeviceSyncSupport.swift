@@ -231,7 +231,7 @@ actor InMemoryDeviceSyncMergeRecoveryStore: DeviceSyncMergeRecoveryStoring {
 actor FileDeviceSyncMergeRecoveryStore: DeviceSyncMergeRecoveryStoring {
     /// NovelSync journalと同じhard cap。記録は1 MiB以下のchosen contentを1つだけ
     /// 保持するが、JSON control escapeの最悪ケースもこの範囲で読み戻せる。
-    static let maximumRecordBytes = 64 * 1_024 * 1_024
+    static let maximumRecordBytes = 64 * 1024 * 1024
 
     private let rootURL: URL
     private let rootIdentity: RootIdentity
@@ -377,8 +377,7 @@ actor FileDeviceSyncMergeRecoveryStore: DeviceSyncMergeRecoveryStoring {
 
         var requestedInfo = stat()
         if lstat(requested.path, &requestedInfo) == 0,
-           requestedInfo.st_mode & S_IFMT == S_IFLNK
-        {
+           requestedInfo.st_mode & S_IFMT == S_IFLNK {
             throw DeviceSyncMergeRecoveryStoreError.unsafeRoot
         }
 

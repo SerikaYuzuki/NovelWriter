@@ -65,10 +65,11 @@ extension IOSDocumentStore {
 
     @discardableResult
     func flushDeviceSyncForBackground() async -> Bool {
+        // A cancelled CloudKit request may not finish before the background task expires.
+        // Commit IME text and the local package first; remote synchronization is best effort.
         let inFlightDraft = deviceSyncDraftTask
         deviceSyncDraftTask = nil
         inFlightDraft?.cancel()
-        await inFlightDraft?.value
         return await documentOperationGate.perform { [weak self] in
             guard let self, startupState == .ready else { return true }
             guard beginDeviceSyncBoundaryTransition() else { return false }
@@ -149,7 +150,6 @@ extension IOSDocumentStore {
         deviceSyncDraftTask = nil
 
         guard let chapterID = selectedChapterID, let episodeID = selectedEpisodeID else {
-            saveCoordinator.markDirty()
             return await saveCoordinator.saveNow()
         }
         let content: String
@@ -158,16 +158,22 @@ extension IOSDocumentStore {
             content = committed
             if document.episode(episodeID)?.episode.content != committed {
                 document.updateEpisodeContent(committed, for: episodeID, in: chapterID)
-                saveCoordinator.markDirty()
             }
+            // `prepareForDocumentTransition()` の同期callbackは、遷移flagを立てた後に
+            // modelを最新化する。この間は通常のdirty通知を拒否するため、本文が既に
+            // modelと一致していても、取得したUITextViewの全文をpackageへ必ずflushする。
+            saveCoordinator.markDirty()
         case .notActive:
             guard let modelContent = document.episode(episodeID)?.episode.content else { return false }
             content = modelContent
+            // Editorが既に非表示でも、遷移直前のlifecycle callbackがmodelだけを
+            // 最新化してdirty通知を抑止した可能性がある。旧作品を離れる前に
+            // modelの確定本文をpackageへ必ず反映する。
+            saveCoordinator.markDirty()
         case .compositionInProgress:
             return false
         }
 
-        saveCoordinator.markDirty()
         guard await saveCoordinator.saveNow() else { return false }
         guard let runtime = deviceSyncRuntime,
               let identity = activeDeviceSyncIdentity,
@@ -178,7 +184,22 @@ extension IOSDocumentStore {
 
         let initialState = await client.coordinator.state
         if case .synchronizing = initialState {
-            return false
+            // backgroundではnetwork完了を待たず、最新本文だけを既存sealed publishの
+            // tailとしてjournalへ先に退避する。selection departure等は旧sessionの
+            // publish完了前にauthorityを手放せないため、従来どおり停止する。
+            guard !releaseAuthority else { return false }
+            do {
+                let recorded = try await client.coordinator.recordLocalContent(
+                    content,
+                    createdAt: runtime.now()
+                )
+                applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
+                return true
+            } catch {
+                let current = await client.coordinator.state
+                applyDeviceSyncState(current, client: client, expectedIdentity: identity)
+                return false
+            }
         }
         guard ownsDeviceSyncAuthority(in: initialState, client: client, runtime: runtime) else {
             applyDeviceSyncState(initialState, client: client, expectedIdentity: identity)

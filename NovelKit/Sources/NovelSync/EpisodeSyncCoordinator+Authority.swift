@@ -1,9 +1,7 @@
 import Foundation
 
 public extension EpisodeSyncCoordinator {
-    /// 同じholderならepochを維持してrenewする。他holderならread-onlyを返す。
-    @discardableResult
-    func claimEditingAuthority(expiresAt: Date) async throws -> EpisodeSyncState {
+    internal func claimEditingAuthoritySerially(expiresAt: Date) async throws -> EpisodeSyncState {
         guard let current = record else { throw EpisodeSyncCoordinatorError.notLinked }
         let initialAuthority = current.lease?.authority
         let snapshot = try await transport.fetchSnapshot(for: key)
@@ -24,26 +22,21 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
-    /// 現holderの有無やUX上のexpiryにかかわらずepochを必ず増やして引き継ぐ。
-    @discardableResult
-    func forceEditingAuthority(expiresAt: Date) async throws -> EpisodeSyncState {
-        _ = try await prepareForcedContinuation(expiresAt: expiresAt)
-        return state
-    }
-
-    /// force CAS後のexact remote headを返すが、Appのinstall ackまではpublish権を有効化しない。
-    func prepareForcedContinuation(expiresAt: Date) async throws -> EpisodeAuthorityGrant {
+    internal func prepareForcedContinuationSerially(
+        expiresAt: Date,
+        expectedHead: EpisodeRevision? = nil
+    ) async throws -> EpisodeAuthorityGrant {
         guard let record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard record.conflict == nil else {
             throw EpisodeSyncCoordinatorError.unresolvedConflict
         }
-        return try await prepareForcedContinuationUnchecked(expiresAt: expiresAt)
+        return try await prepareForcedContinuationUncheckedSerially(
+            expiresAt: expiresAt,
+            expectedHead: expectedHead
+        )
     }
 
-    /// 競合UIが表示したexact local / remote parentを保ったまま、
-    /// 2-parent mergeをpublishするためだけにauthorityを取り直す。
-    /// 通常のforceと分け、既存forkを現在のeditor本文で上書きさせない。
-    func prepareConflictResolutionAuthority(
+    internal func prepareConflictResolutionAuthoritySerially(
         expectedConflict: EpisodeConflict,
         expiresAt: Date
     ) async throws -> EpisodeAuthorityGrant {
@@ -51,19 +44,19 @@ public extension EpisodeSyncCoordinator {
         guard record.conflict == expectedConflict else {
             throw EpisodeSyncCoordinatorError.conflictSuperseded
         }
-        let grant = try await prepareForcedContinuationUnchecked(
+        let grant = try await prepareForcedContinuationUncheckedSerially(
             expiresAt: expiresAt,
             expectedHead: expectedConflict.remote
         )
         guard grant.snapshot.head?.revisionID == expectedConflict.remote.revisionID,
               grant.snapshot.head?.contentDigest == expectedConflict.remote.contentDigest else {
-            _ = try await abandonAuthorityGrant(grant)
+            _ = try await abandonAuthorityGrantSerially(grant)
             throw EpisodeSyncCoordinatorError.conflictSuperseded
         }
         return grant
     }
 
-    private func prepareForcedContinuationUnchecked(
+    internal func prepareForcedContinuationUncheckedSerially(
         expiresAt: Date,
         expectedHead: EpisodeRevision? = nil
     ) async throws -> EpisodeAuthorityGrant {
@@ -139,9 +132,7 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
-    /// Appがobserved remote本文をpackage/native editorへinstallした後のack。
-    @discardableResult
-    func confirmObservedRemoteInstall(
+    internal func confirmObservedRemoteInstallSerially(
         _ observation: EpisodeFenceObservation,
         installedRemoteDigest: SyncContentDigest?
     ) async throws -> EpisodeSyncState {
@@ -169,9 +160,7 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
-    /// Appがexact remote本文をpackageとnative editorへinstallした後のack。
-    @discardableResult
-    func confirmAuthorityInstall(
+    internal func confirmAuthorityInstallSerially(
         _ grant: EpisodeAuthorityGrant,
         installedRemoteDigest: SyncContentDigest?
     ) async throws -> EpisodeSyncState {
@@ -196,9 +185,9 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
-    /// 画面/sessionが切り替わりinstallを完了しない時に、取得済みleaseだけを安全に解放する。
-    @discardableResult
-    func abandonAuthorityGrant(_ grant: EpisodeAuthorityGrant) async throws -> EpisodeSyncState {
+    internal func abandonAuthorityGrantSerially(
+        _ grant: EpisodeAuthorityGrant
+    ) async throws -> EpisodeSyncState {
         guard pendingAuthorityGrant == grant else {
             throw EpisodeSyncCoordinatorError.authorityGrantNotPending
         }
@@ -214,9 +203,7 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
-    /// live processのauthorityとremote control/headを照合し、exact snapshotを返す。
-    @discardableResult
-    func inspectFence() async throws -> EpisodeFenceObservation {
+    internal func inspectFenceSerially() async throws -> EpisodeFenceObservation {
         guard let initial = record else { throw EpisodeSyncCoordinatorError.notLinked }
         let expectedAuthority = initial.lease?.authority
         let snapshot = try await transport.fetchSnapshot(for: key)
@@ -242,10 +229,9 @@ public extension EpisodeSyncCoordinator {
         return .remoteAdvanced(snapshot)
     }
 
-    @discardableResult
-    func releaseEditingAuthority() async throws -> EpisodeSyncState {
+    internal func releaseEditingAuthoritySerially() async throws -> EpisodeSyncState {
         if let grant = pendingAuthorityGrant {
-            return try await abandonAuthorityGrant(grant)
+            return try await abandonAuthorityGrantSerially(grant)
         }
         guard let initialRecord = record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard let authority = initialRecord.lease?.authority else { return state }

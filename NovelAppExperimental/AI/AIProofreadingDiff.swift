@@ -109,16 +109,14 @@ struct AIProofreadingDiff: Equatable {
         var prefixCount = 0
         while prefixCount < source.count,
               prefixCount < replacement.count,
-              source[prefixCount] == replacement[prefixCount]
-        {
+              source[prefixCount] == replacement[prefixCount] {
             prefixCount += 1
         }
 
         var suffixCount = 0
         while suffixCount < source.count - prefixCount,
               suffixCount < replacement.count - prefixCount,
-              source[source.count - suffixCount - 1] == replacement[replacement.count - suffixCount - 1]
-        {
+              source[source.count - suffixCount - 1] == replacement[replacement.count - suffixCount - 1] {
             suffixCount += 1
         }
 

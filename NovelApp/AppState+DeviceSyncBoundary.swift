@@ -127,10 +127,11 @@ extension AppState {
     /// ネットワーク同期はbest effortで、失敗しても端末内の2つの保存を巻き戻さない。
     @discardableResult
     func flushDeviceSyncForBackground() async -> Bool {
+        // CloudKit transport can remain suspended after cancellation. Do not wait for it
+        // before committing marked text and the local package during sleep/backgrounding.
         let inFlightDraft = deviceSyncDraftTask
         deviceSyncDraftTask = nil
         inFlightDraft?.cancel()
-        await inFlightDraft?.value
         return await documentOperationGate.perform { [weak self] in
             guard let self, startupState.isReady else { return true }
             guard beginDocumentTransition() else { return false }
@@ -204,7 +205,6 @@ extension AppState {
         deviceSyncDraftTask = nil
 
         guard let chapterID = selectedChapterID, let episodeID = selectedEpisodeID else {
-            saveCoordinator.markDirty()
             return await saveCoordinator.saveNow()
         }
         let content: String
@@ -226,7 +226,6 @@ extension AppState {
             return false
         }
 
-        saveCoordinator.markDirty()
         guard await saveCoordinator.saveNow() else { return false }
         guard let runtime = deviceSyncRuntime,
               let identity = activeDeviceSyncIdentity,
@@ -237,9 +236,22 @@ extension AppState {
 
         let initialState = await client.coordinator.state
         if case .synchronizing = initialState {
-            // draft publishは同じdocument gateで先にjoinされる。mergeなど
-            // gate外の操作が残る場合は、完了前に旧sessionを手放さない。
-            return false
+            // backgroundではnetwork完了を待たず、最新本文だけを既存sealed publishの
+            // tailとしてjournalへ先に退避する。selection departure等は旧sessionの
+            // publish完了前にauthorityを手放せないため、従来どおり停止する。
+            guard !releaseAuthority else { return false }
+            do {
+                let recorded = try await client.coordinator.recordLocalContent(
+                    content,
+                    createdAt: runtime.now()
+                )
+                applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
+                return true
+            } catch {
+                let current = await client.coordinator.state
+                applyDeviceSyncState(current, client: client, expectedIdentity: identity)
+                return false
+            }
         }
         guard ownsDeviceSyncAuthority(in: initialState, client: client, runtime: runtime) else {
             applyDeviceSyncState(initialState, client: client, expectedIdentity: identity)
@@ -307,7 +319,9 @@ extension AppState {
         let sourceSession = documentSessionToken
         let sourceChapterID = selectedChapterID
         let sourceEpisodeID = selectedEpisodeID
-        if let expectedSession, expectedSession != sourceSession { return nil }
+        if let expectedSession, expectedSession != sourceSession {
+            return nil
+        }
 
         return await documentOperationGate.perform { [weak self] in
             guard let self,

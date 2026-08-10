@@ -44,11 +44,39 @@ extension AppState {
     }
 
     func prepareDeviceSync(for expectedLookup: DeviceSyncLookupIdentity) async {
+        while let inFlight = deviceSyncPreparationTask {
+            let observedGeneration = deviceSyncPreparationGeneration
+            let observedLookup = deviceSyncPreparationLookup
+            await inFlight.value
+            if deviceSyncPreparationGeneration == observedGeneration {
+                deviceSyncPreparationTask = nil
+                deviceSyncPreparationLookup = nil
+            }
+            guard currentDeviceSyncLookupIdentity == expectedLookup else { return }
+            if observedLookup == expectedLookup {
+                return
+            }
+        }
+        deviceSyncPreparationGeneration &+= 1
+        let generation = deviceSyncPreparationGeneration
+        let preparation = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await prepareDeviceSyncSerially(for: expectedLookup)
+        }
+        deviceSyncPreparationTask = preparation
+        deviceSyncPreparationLookup = expectedLookup
+        await preparation.value
+        if deviceSyncPreparationGeneration == generation {
+            deviceSyncPreparationTask = nil
+            deviceSyncPreparationLookup = nil
+        }
+    }
+
+    private func prepareDeviceSyncSerially(for expectedLookup: DeviceSyncLookupIdentity) async {
         guard currentDeviceSyncLookupIdentity == expectedLookup else { return }
         startDeviceSyncSignalObservationIfNeeded()
         if resolvedDeviceSyncLookupIdentity == expectedLookup,
-           activeDeviceSyncIdentity?.documentSession == expectedLookup.documentSession || deviceSyncRuntime == nil
-        {
+           activeDeviceSyncIdentity?.documentSession == expectedLookup.documentSession || deviceSyncRuntime == nil {
             return
         }
         guard let runtime = deviceSyncRuntime else {
@@ -189,8 +217,7 @@ extension AppState {
                     runtime: runtime
                 )
                 if !authorityVerifiedForActivation,
-                   case .authorityGrantedAwaitingInstall = state
-                {
+                   case .authorityGrantedAwaitingInstall = state {
                     // exact grantは下の共通install経路へ渡す。
                 } else if !authorityVerifiedForActivation {
                     let observation = try await client.coordinator.inspectFence()
@@ -245,19 +272,13 @@ extension AppState {
                 await relinquishStaleDeviceSyncAuthority(client: client, runtime: runtime)
                 return
             }
-            if ownsDeviceSyncAuthority(in: state, client: client, runtime: runtime),
-               case .localChanges = state
-            {
-                let packageContent = document.episode(identity.episodeID)?.episode.content ?? ""
-                if let context = deviceSyncContext(from: state),
-                   context.localHead.contentDigest != SyncContentDigest(content: packageContent)
-                {
-                    state = try await client.coordinator.recordLocalContent(
-                        packageContent,
-                        createdAt: runtime.now()
-                    )
-                }
-                state = try await client.coordinator.synchronize()
+            if ownsDeviceSyncAuthority(in: state, client: client, runtime: runtime) {
+                state = try await reconcileDeviceSyncPackageContentIfNeeded(
+                    state: state,
+                    client: client,
+                    identity: identity,
+                    runtime: runtime
+                )
                 guard deviceSyncContextIsCurrent(identity) else { return }
             }
             if case let .authorityGrantedAwaitingInstall(_, grant) = state {
@@ -313,8 +334,7 @@ extension AppState {
         deviceSyncState = .forcing
         do {
             if let pendingGrant = await client.coordinator.authorityGrantAwaitingInstall,
-               installedContentDigest(for: pendingGrant, identity: identity) == pendingGrant.snapshot.head?.contentDigest
-            {
+               installedContentDigest(for: pendingGrant, identity: identity) == pendingGrant.snapshot.head?.contentDigest {
                 let state = try await client.coordinator.confirmAuthorityInstall(
                     pendingGrant,
                     installedRemoteDigest: pendingGrant.snapshot.head?.contentDigest
@@ -393,7 +413,43 @@ extension AppState {
     }
 
     func refreshSelectedEpisodeDeviceSync() async {
-        guard deviceSyncState != .syncing, deviceSyncState != .forcing else { return }
+        guard deviceSyncState != .syncing,
+              deviceSyncState != .forcing,
+              let expectedLookup = currentDeviceSyncLookupIdentity else { return }
+        while let inFlight = deviceSyncPreparationTask {
+            let observedGeneration = deviceSyncPreparationGeneration
+            let observedLookup = deviceSyncPreparationLookup
+            await inFlight.value
+            if deviceSyncPreparationGeneration == observedGeneration {
+                deviceSyncPreparationTask = nil
+                deviceSyncPreparationLookup = nil
+            }
+            guard currentDeviceSyncLookupIdentity == expectedLookup else { return }
+            if observedLookup == expectedLookup {
+                return
+            }
+        }
+        deviceSyncPreparationGeneration &+= 1
+        let generation = deviceSyncPreparationGeneration
+        let refresh = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await refreshSelectedEpisodeDeviceSyncSerially(for: expectedLookup)
+        }
+        deviceSyncPreparationTask = refresh
+        deviceSyncPreparationLookup = expectedLookup
+        await refresh.value
+        if deviceSyncPreparationGeneration == generation {
+            deviceSyncPreparationTask = nil
+            deviceSyncPreparationLookup = nil
+        }
+    }
+
+    private func refreshSelectedEpisodeDeviceSyncSerially(
+        for expectedLookup: DeviceSyncLookupIdentity
+    ) async {
+        guard currentDeviceSyncLookupIdentity == expectedLookup,
+              deviceSyncState != .syncing,
+              deviceSyncState != .forcing else { return }
         guard let runtime = deviceSyncRuntime,
               var identity = activeDeviceSyncIdentity,
               deviceSyncContextIsCurrent(identity),
@@ -507,6 +563,13 @@ extension AppState {
                     return
                 }
                 if ownsDeviceSyncAuthority(in: state, client: client, runtime: runtime) {
+                    state = try await reconcileDeviceSyncPackageContentIfNeeded(
+                        state: state,
+                        client: client,
+                        identity: identity,
+                        runtime: runtime
+                    )
+                    guard deviceSyncContextIsCurrent(identity) else { return }
                     applyDeviceSyncState(state, client: client, expectedIdentity: identity)
                     return
                 }
@@ -528,6 +591,13 @@ extension AppState {
                     }
                     state = await client.coordinator.state
                 }
+                state = try await reconcileDeviceSyncPackageContentIfNeeded(
+                    state: state,
+                    client: client,
+                    identity: identity,
+                    runtime: runtime
+                )
+                guard deviceSyncContextIsCurrent(identity) else { return }
                 applyDeviceSyncState(state, client: client, expectedIdentity: identity)
             case .authorityLost, .remoteAdvanced:
                 await installFenceObservation(observation, client: client, expectedIdentity: identity)
@@ -617,8 +687,7 @@ extension AppState {
 
         if let pending = pendingDeviceSyncConflictResolution,
            pending.key == identity.syncKey,
-           successfulMergeContext(in: coordinatorState, resolution: pending) != nil
-        {
+           successfulMergeContext(in: coordinatorState, resolution: pending) != nil {
             deviceSyncState = .syncing
             let installed = await installResolvedConflictContent(
                 pending.content,
@@ -924,7 +993,7 @@ extension AppState {
         _ grant: EpisodeAuthorityGrant,
         expectedIdentity: DeviceSyncEpisodeIdentity
     ) async -> DeviceSyncInstallResult {
-        return await documentOperationGate.perform { [weak self] in
+        await documentOperationGate.perform { [weak self] in
             guard let self,
                   deviceSyncContextIsCurrent(expectedIdentity),
                   beginDocumentTransition() else { return .failed }
@@ -1262,8 +1331,7 @@ extension AppState {
             }
         }
         guard case let .installed(digest) = installResult,
-              let currentIdentity = currentDeviceSyncIdentityAfterSingleInstall(from: expectedIdentity) else
-        {
+              let currentIdentity = currentDeviceSyncIdentityAfterSingleInstall(from: expectedIdentity) else {
             if deviceSyncContextIsCurrent(expectedIdentity) {
                 deviceSyncState = .readOnly
             }
@@ -1279,7 +1347,9 @@ extension AppState {
             guard deviceSyncContextIsCurrent(currentIdentity) else { return }
             let current = await client.coordinator.state
             applyDeviceSyncState(current, client: client, expectedIdentity: currentIdentity)
-            if case .conflicted = current { return }
+            if case .conflicted = current {
+                return
+            }
             deviceSyncState = .readOnly
         }
     }
@@ -1288,7 +1358,7 @@ extension AppState {
         _ content: String,
         expectedIdentity: DeviceSyncEpisodeIdentity
     ) async -> Bool {
-        return await documentOperationGate.perform { [weak self] in
+        await documentOperationGate.perform { [weak self] in
             guard let self,
                   deviceSyncContextIsCurrent(expectedIdentity),
                   beginDocumentTransition() else { return false }
@@ -1587,8 +1657,7 @@ extension AppState {
                 verifiedState = try await client.coordinator.synchronize()
             }
             if case let .conflicted(_, conflict) = verifiedState,
-               mergeRecoveryRecord(record, matches: conflict)
-            {
+               mergeRecoveryRecord(record, matches: conflict) {
                 pendingDeviceSyncConflictResolution = PendingDeviceSyncConflictResolution(
                     key: record.key,
                     conflict: conflict,
@@ -1599,8 +1668,7 @@ extension AppState {
                 return nil
             }
             if case let .conflicted(_, conflict) = verifiedState,
-               mergeRecoveryRecord(record, matches: conflict.local)
-            {
+               mergeRecoveryRecord(record, matches: conflict.local) {
                 // 選択済みmergeはjournalにdurable化済みだが、その後remoteが
                 // 進んだ。古いmarkerを消し、merge/remoteの新しい競合をそのまま出す。
                 try await runtime.mergeRecoveryStore.remove(
@@ -1613,8 +1681,7 @@ extension AppState {
                 return nil
             }
             if case let .conflicted(_, conflict) = verifiedState,
-               conflict.local.revisionID == record.localParentRevisionID
-            {
+               conflict.local.revisionID == record.localParentRevisionID {
                 // marker保存後・domain merge作成前に終了し、remoteだけが
                 // 進んだ場合。以前の選択本文を新しいexact pairの
                 // 確認用draftへatomicに張り替え、自動publishはしない。
@@ -1738,7 +1805,6 @@ extension AppState {
             return false
         }
     }
-
 
     private func coordinatorHasMerge(
         for resolution: PendingDeviceSyncConflictResolution,

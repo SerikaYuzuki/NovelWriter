@@ -213,7 +213,7 @@ actor IOSInMemoryDeviceSyncMergeRecoveryStore: IOSDeviceSyncMergeRecoveryStoring
 }
 
 actor IOSFileDeviceSyncMergeRecoveryStore: IOSDeviceSyncMergeRecoveryStoring {
-    static let maximumRecordBytes = 64 * 1_024 * 1_024
+    static let maximumRecordBytes = 64 * 1024 * 1024
 
     private let rootURL: URL
     private let rootIdentity: RootIdentity
@@ -359,8 +359,7 @@ actor IOSFileDeviceSyncMergeRecoveryStore: IOSDeviceSyncMergeRecoveryStoring {
 
         var requestedInfo = stat()
         if lstat(requested.path, &requestedInfo) == 0,
-           requestedInfo.st_mode & S_IFMT == S_IFLNK
-        {
+           requestedInfo.st_mode & S_IFMT == S_IFLNK {
             throw IOSDeviceSyncMergeRecoveryStoreError.unsafeRoot
         }
 

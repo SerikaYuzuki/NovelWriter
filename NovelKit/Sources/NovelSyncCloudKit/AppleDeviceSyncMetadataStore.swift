@@ -26,6 +26,7 @@ public enum AppleDeviceSyncServicesError: Error, Equatable, Sendable {
     case sourceDocumentMismatch
     case tooManyAllowedEpisodes
     case duplicateAllowedEpisodeID
+    case pendingWorkCreationMismatch
     case generationOverflow
     case blocked(AppleDeviceSyncBlockReason)
 }
@@ -78,8 +79,15 @@ struct AppleDeviceSyncMetadataSnapshot: Sendable {
     let replicaID: SyncReplicaID
     let accountScope: AppleCloudAccountScope?
     let bindings: [AppleLocalDocumentLocator: AppleDeviceSyncBindingSnapshot]
+    let pendingWorkCreations: [AppleLocalDocumentLocator: ApplePendingWorkCreationSnapshot]
     let engineStateGeneration: UInt64
     let engineState: Data?
+}
+
+struct ApplePendingWorkCreationSnapshot: Equatable, Sendable {
+    let locator: AppleLocalDocumentLocator
+    let descriptor: SyncWorkDescriptor
+    let allowedEpisodeIDs: Set<EpisodeID>
 }
 
 struct AppleDeviceSyncBindingSnapshot: Equatable, Sendable {
@@ -92,31 +100,17 @@ actor AppleDeviceSyncMetadataStore {
     static let maximumMetadataBytes = 1 * 1024 * 1024
     static let maximumEngineStateBytes = 512 * 1024
     static let maximumBindingCount = 1024
+    static let maximumPendingWorkCreationCount = 64
     static let maximumAllowedEpisodeCount = 4096
     static let metadataFileName = "device-sync-metadata-v1.json"
 
     nonisolated let replicaID: SyncReplicaID
     nonisolated let initialBoundLocators: Set<AppleLocalDocumentLocator>
 
-    private struct BindingRecord: Codable, Sendable {
-        let locator: AppleLocalDocumentLocator
-        let binding: SyncWorkingCopyBinding
-        let allowedEpisodeIDs: [EpisodeID]
-    }
-
-    private struct Document: Codable, Sendable {
-        var schemaVersion: Int
-        var replicaID: SyncReplicaID
-        var accountScope: AppleCloudAccountScope?
-        var bindings: [BindingRecord]
-        var engineStateGeneration: UInt64
-        var engineState: Data?
-    }
-
-    private let rootURL: URL
-    private let metadataURL: URL
-    private let fileManager: FileManager
-    private var document: Document
+    let rootURL: URL
+    let metadataURL: URL
+    let fileManager: FileManager
+    var document: AppleDeviceSyncMetadataDocument
 
     init(rootURL: URL, fileManager: FileManager = .default) throws {
         let safeRoot = try AppleDeviceSyncMetadataRoot.prepare(
@@ -124,15 +118,16 @@ actor AppleDeviceSyncMetadataStore {
             fileManager: fileManager
         )
         let metadataURL = safeRoot.appendingPathComponent(Self.metadataFileName, isDirectory: false)
-        let loaded: Document
+        let loaded: AppleDeviceSyncMetadataDocument
         if fileManager.fileExists(atPath: metadataURL.path) {
             loaded = try Self.loadDocument(from: metadataURL, fileManager: fileManager)
         } else {
-            loaded = Document(
+            loaded = AppleDeviceSyncMetadataDocument(
                 schemaVersion: Self.schemaVersion,
                 replicaID: SyncReplicaID(),
                 accountScope: nil,
                 bindings: [],
+                pendingWorkCreations: [],
                 engineStateGeneration: 0,
                 engineState: nil
             )
@@ -145,7 +140,9 @@ actor AppleDeviceSyncMetadataStore {
         }
         try Self.validate(loaded)
         replicaID = loaded.replicaID
-        initialBoundLocators = Set(loaded.bindings.map(\.locator))
+        initialBoundLocators = Set(
+            loaded.bindings.map(\.locator) + loaded.pendingWorkCreations.map(\.locator)
+        )
         self.rootURL = safeRoot
         self.metadataURL = metadataURL
         self.fileManager = fileManager
@@ -159,6 +156,11 @@ actor AppleDeviceSyncMetadataStore {
             bindings: Dictionary(uniqueKeysWithValues: document.bindings.map {
                 ($0.locator, bindingSnapshot(from: $0))
             }),
+            pendingWorkCreations: Dictionary(
+                uniqueKeysWithValues: document.pendingWorkCreations.map {
+                    ($0.locator, pendingWorkCreationSnapshot(from: $0))
+                }
+            ),
             engineStateGeneration: document.engineStateGeneration,
             engineState: document.engineState
         )
@@ -175,7 +177,9 @@ actor AppleDeviceSyncMetadataStore {
             }
             return snapshot()
         }
-        guard document.bindings.isEmpty, document.engineState == nil else {
+        guard document.bindings.isEmpty,
+              document.pendingWorkCreations.isEmpty,
+              document.engineState == nil else {
             throw AppleDeviceSyncServicesError.invalidMetadata
         }
         var candidate = document
@@ -214,7 +218,17 @@ actor AppleDeviceSyncMetadataStore {
             guard existing.binding.workID == workID else {
                 throw AppleDeviceSyncServicesError.locatorAlreadyBound
             }
+            if document.pendingWorkCreations.contains(where: { $0.locator == locator }),
+               existing.allowedEpisodeIDs != validatedEpisodeIDs {
+                throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+            }
             return bindingSnapshot(from: existing)
+        }
+        if let pending = document.pendingWorkCreations.first(where: { $0.locator == locator }) {
+            guard pending.descriptor.workID == workID,
+                  pending.allowedEpisodeIDs == validatedEpisodeIDs else {
+                throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+            }
         }
         guard document.bindings.count < Self.maximumBindingCount else {
             throw AppleDeviceSyncServicesError.metadataTooLarge
@@ -225,7 +239,7 @@ actor AppleDeviceSyncMetadataStore {
         )
         var candidate = document
         candidate.bindings.append(
-            BindingRecord(
+            AppleDeviceSyncBindingRecord(
                 locator: locator,
                 binding: binding,
                 allowedEpisodeIDs: validatedEpisodeIDs
@@ -249,6 +263,9 @@ actor AppleDeviceSyncMetadataStore {
             throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
         }
         let validatedEpisodeIDs = try validatedAllowedEpisodeIDs(allowedEpisodeIDs)
+        guard !document.pendingWorkCreations.contains(where: { $0.locator == locator }) else {
+            throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+        }
         guard let index = document.bindings.firstIndex(where: { $0.locator == locator }) else {
             throw AppleDeviceSyncServicesError.bindingNotFound
         }
@@ -257,7 +274,7 @@ actor AppleDeviceSyncMetadataStore {
             workID: workID
         )
         var candidate = document
-        candidate.bindings[index] = BindingRecord(
+        candidate.bindings[index] = AppleDeviceSyncBindingRecord(
             locator: locator,
             binding: replacement,
             allowedEpisodeIDs: validatedEpisodeIDs
@@ -276,6 +293,7 @@ actor AppleDeviceSyncMetadataStore {
         }
         var candidate = document
         let removed = candidate.bindings.remove(at: index).binding
+        candidate.pendingWorkCreations.removeAll(where: { $0.locator == locator })
         try commit(candidate)
         return removed
     }
@@ -304,17 +322,6 @@ actor AppleDeviceSyncMetadataStore {
         return candidate.engineStateGeneration
     }
 
-    private func commit(_ candidate: Document) throws {
-        try Self.validate(candidate)
-        try Self.persist(
-            candidate,
-            to: metadataURL,
-            rootURL: rootURL,
-            fileManager: fileManager
-        )
-        document = candidate
-    }
-
     private func incrementedGeneration(_ generation: UInt64) throws -> UInt64 {
         guard generation < UInt64.max else {
             throw AppleDeviceSyncServicesError.generationOverflow
@@ -322,128 +329,7 @@ actor AppleDeviceSyncMetadataStore {
         return generation + 1
     }
 
-    private static func loadDocument(from url: URL, fileManager _: FileManager) throws -> Document {
-        do {
-            let values = try url.resourceValues(
-                forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]
-            )
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  let byteCount = values.fileSize,
-                  byteCount <= maximumMetadataBytes else {
-                throw AppleDeviceSyncServicesError.invalidMetadata
-            }
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            guard data.count <= maximumMetadataBytes else {
-                throw AppleDeviceSyncServicesError.invalidMetadata
-            }
-            return try makeDecoder().decode(Document.self, from: data)
-        } catch let error as AppleDeviceSyncServicesError {
-            throw error
-        } catch {
-            throw AppleDeviceSyncServicesError.invalidMetadata
-        }
-    }
-
-    private static func validate(_ document: Document) throws {
-        guard document.schemaVersion == schemaVersion,
-              document.bindings.count <= maximumBindingCount,
-              document.engineState.map({ $0.count <= maximumEngineStateBytes }) ?? true else {
-            throw AppleDeviceSyncServicesError.invalidMetadata
-        }
-        let locators = document.bindings.map(\.locator)
-        let workingCopyIDs = document.bindings.map(\.binding.localWorkingCopyID)
-        guard Set(locators).count == locators.count,
-              Set(workingCopyIDs).count == workingCopyIDs.count else {
-            throw AppleDeviceSyncServicesError.invalidMetadata
-        }
-        for binding in document.bindings {
-            guard binding.allowedEpisodeIDs.count <= maximumAllowedEpisodeCount,
-                  Set(binding.allowedEpisodeIDs).count == binding.allowedEpisodeIDs.count else {
-                throw AppleDeviceSyncServicesError.invalidMetadata
-            }
-        }
-        if document.accountScope == nil {
-            guard document.bindings.isEmpty, document.engineState == nil else {
-                throw AppleDeviceSyncServicesError.invalidMetadata
-            }
-        }
-    }
-
-    private static func persist(
-        _ document: Document,
-        to destination: URL,
-        rootURL: URL,
-        fileManager: FileManager
-    ) throws {
-        do {
-            try validate(document)
-            let sorted = Document(
-                schemaVersion: document.schemaVersion,
-                replicaID: document.replicaID,
-                accountScope: document.accountScope,
-                bindings: document.bindings
-                    .sorted { $0.locator.rawValue < $1.locator.rawValue }
-                    .map { binding in
-                        BindingRecord(
-                            locator: binding.locator,
-                            binding: binding.binding,
-                            allowedEpisodeIDs: binding.allowedEpisodeIDs.sorted {
-                                $0.rawValue.uuidString < $1.rawValue.uuidString
-                            }
-                        )
-                    },
-                engineStateGeneration: document.engineStateGeneration,
-                engineState: document.engineState
-            )
-            let data = try makeEncoder().encode(sorted)
-            guard data.count <= maximumMetadataBytes else {
-                throw AppleDeviceSyncServicesError.metadataTooLarge
-            }
-            if fileManager.fileExists(atPath: destination.path) {
-                let values = try destination.resourceValues(forKeys: [.isSymbolicLinkKey])
-                guard values.isSymbolicLink != true else {
-                    throw AppleDeviceSyncServicesError.unsafeRoot
-                }
-            }
-            let temporary = rootURL.appendingPathComponent(
-                ".device-sync-metadata-\(UUID().uuidString).tmp",
-                isDirectory: false
-            )
-            do {
-                try data.write(to: temporary, options: .withoutOverwriting)
-                if fileManager.fileExists(atPath: destination.path) {
-                    _ = try fileManager.replaceItemAt(
-                        destination,
-                        withItemAt: temporary,
-                        backupItemName: nil,
-                        options: [.usingNewMetadataOnly]
-                    )
-                } else {
-                    try fileManager.moveItem(at: temporary, to: destination)
-                }
-            } catch {
-                try? fileManager.removeItem(at: temporary)
-                throw error
-            }
-        } catch let error as AppleDeviceSyncServicesError {
-            throw error
-        } catch {
-            throw AppleDeviceSyncServicesError.metadataWriteFailed
-        }
-    }
-
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return encoder
-    }
-
-    private static func makeDecoder() -> JSONDecoder {
-        JSONDecoder()
-    }
-
-    private func validatedAllowedEpisodeIDs(
+    func validatedAllowedEpisodeIDs(
         _ episodeIDs: [EpisodeID]
     ) throws -> [EpisodeID] {
         guard episodeIDs.count <= Self.maximumAllowedEpisodeCount else {
@@ -456,7 +342,7 @@ actor AppleDeviceSyncMetadataStore {
     }
 
     private func bindingSnapshot(
-        from record: BindingRecord
+        from record: AppleDeviceSyncBindingRecord
     ) -> AppleDeviceSyncBindingSnapshot {
         AppleDeviceSyncBindingSnapshot(
             binding: record.binding,

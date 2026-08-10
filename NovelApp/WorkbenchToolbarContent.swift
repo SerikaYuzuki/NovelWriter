@@ -422,8 +422,7 @@ final class SnapshotMenuPresenter {
 
     func requestRestore(_ request: SnapshotRestoreRequest) {
         guard request.session == appState.documentSessionToken,
-              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else
-        {
+              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
             return
         }

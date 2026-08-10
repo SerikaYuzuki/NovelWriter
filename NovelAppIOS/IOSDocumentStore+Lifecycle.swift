@@ -26,7 +26,10 @@ extension IOSDocumentStore {
         guard !deviceSyncStartupFailedSafely else { return }
         startupState = .loading
         do {
-            try fileManager.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+            guard let privateWorkingCopyLocation else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            try privateWorkingCopyLocation.validateFixedRoot()
             try await reloadLibraryItems()
             guard !deviceSyncStartupFailedSafely else { return }
             let recentName = userDefaults.string(forKey: Self.lastDocumentNameKey)
@@ -60,12 +63,20 @@ extension IOSDocumentStore {
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
+                guard let privateWorkingCopyLocation else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
                 let newDocument = NovelDocument.newDocument()
-                let newURL = uniquePackageURL(for: newDocument.id)
+                let newURL = try uniquePackageURL(for: newDocument.id)
+                try privateWorkingCopyLocation.validateFixedRoot()
                 try await repository.save(newDocument, to: newURL)
+                let attestation = try privateWorkingCopyLocation.attestPackage(at: newURL)
                 let newAttachments = try await loadAttachmentsForInstall(at: newURL)
+                try privateWorkingCopyLocation.revalidate(attestation)
                 guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
-                install(newDocument, at: newURL, attachments: newAttachments)
+                guard install(newDocument, at: newURL, attachments: newAttachments) else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
                 startupState = .ready
                 saveState = .saved
             }
@@ -82,37 +93,50 @@ extension IOSDocumentStore {
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
-                let stagingURL = libraryRoot.appendingPathComponent(
-                    ".import-\(UUID().uuidString).novelpkg",
-                    isDirectory: true
-                )
-                let destinationURL = uniquePackageURL(for: UUID())
-                let accessed = sourceURL.startAccessingSecurityScopedResource()
-                defer {
-                    if accessed {
-                        sourceURL.stopAccessingSecurityScopedResource()
-                    }
-                }
-
-                do {
-                    try await Self.copyPackage(from: sourceURL, to: stagingURL)
-                    let loaded = try await repository.load(from: stagingURL)
-                    try fileManager.moveItem(at: stagingURL, to: destinationURL)
-                    let loadedAttachments = try await loadAttachmentsForInstall(at: destinationURL)
-                    guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
-                    install(loaded, at: destinationURL, attachments: loadedAttachments)
-                    startupState = .ready
-                    saveState = .saved
-                } catch {
-                    try? fileManager.removeItem(at: stagingURL)
-                    try? fileManager.removeItem(at: destinationURL)
-                    throw error
-                }
+                try await installImportedPackage(from: sourceURL)
             }
             if transitioned {
                 _ = await refreshLibrary()
             }
             return transitioned
+        }
+    }
+
+    private func installImportedPackage(from sourceURL: URL) async throws {
+        guard let privateWorkingCopyLocation else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        let stagingURL = try privateWorkingCopyLocation.stagingDestination()
+        let destinationURL = try uniquePackageURL(for: UUID())
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            try await Self.copyPackage(from: sourceURL, to: stagingURL)
+            let stagingAttestation = try privateWorkingCopyLocation.attestStagingPackage(at: stagingURL)
+            let loaded = try await repository.load(from: stagingURL)
+            try privateWorkingCopyLocation.revalidate(stagingAttestation)
+            try fileManager.moveItem(at: stagingURL, to: destinationURL)
+            let destinationAttestation = try privateWorkingCopyLocation.attestMovedPackage(
+                at: destinationURL,
+                matching: stagingAttestation
+            )
+            let loadedAttachments = try await loadAttachmentsForInstall(at: destinationURL)
+            try privateWorkingCopyLocation.revalidate(destinationAttestation)
+            guard !deviceSyncStartupFailedSafely else { throw CancellationError() }
+            guard install(loaded, at: destinationURL, attachments: loadedAttachments) else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            startupState = .ready
+            saveState = .saved
+        } catch {
+            privateWorkingCopyLocation.removeOwnedItemIfSafe(at: stagingURL, allowsStaging: true)
+            privateWorkingCopyLocation.removeOwnedItemIfSafe(at: destinationURL, allowsStaging: false)
+            throw error
         }
     }
 
@@ -213,14 +237,20 @@ extension IOSDocumentStore {
         cleanupPendingExport()
     }
 
-    private func uniquePackageURL(for id: UUID) -> URL {
-        var candidateID = id
-        var candidate = libraryRoot.appendingPathComponent("\(candidateID.uuidString).novelpkg", isDirectory: true)
-        while fileManager.fileExists(atPath: candidate.path) {
-            candidateID = UUID()
-            candidate = libraryRoot.appendingPathComponent("\(candidateID.uuidString).novelpkg", isDirectory: true)
+    private func uniquePackageURL(for id: UUID) throws -> URL {
+        guard let privateWorkingCopyLocation else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        return candidate
+        var candidateID = id
+        while true {
+            do {
+                return try privateWorkingCopyLocation.destination(
+                    for: IOSPrivateDocumentID(packageName: "\(candidateID.uuidString).novelpkg")
+                )
+            } catch IOSPrivateWorkingCopyLocationError.destinationExists {
+                candidateID = UUID()
+            }
+        }
     }
 
     private func cleanupPendingExport() {
@@ -229,15 +259,21 @@ extension IOSDocumentStore {
         self.pendingExportRootURL = nil
     }
 
+    @discardableResult
     func install(
         _ document: NovelDocument,
         at url: URL,
         attachments: [Attachment],
         rememberRecent: Bool = true
-    ) {
-        guard !deviceSyncStartupFailedSafely else { return }
+    ) -> Bool {
+        guard !deviceSyncStartupFailedSafely else { return false }
+        guard let privateWorkingCopyLocation,
+              (try? privateWorkingCopyLocation.attestPackage(at: url)) != nil else {
+            failStartupForDeviceSyncSafety()
+            return false
+        }
         self.document = document
-        documentURL = url
+        documentURL = url.standardizedFileURL
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         replaceAttachments(attachments)
@@ -247,6 +283,7 @@ extension IOSDocumentStore {
         if rememberRecent {
             userDefaults.set(url.lastPathComponent, forKey: Self.lastDocumentNameKey)
         }
+        return true
     }
 
     static func defaultLibraryRoot(fileManager: FileManager) -> URL {

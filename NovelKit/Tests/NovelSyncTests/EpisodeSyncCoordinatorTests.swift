@@ -698,6 +698,52 @@ struct EpisodeSyncCoordinatorTests {
         #expect(await server.currentHead(for: SyncTestValues.key)?.content == "second")
     }
 
+    @Test("a captured fence snapshot cannot roll back a newer queued publish")
+    func staleFenceSnapshotDoesNotRollBackNewerPublish() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let coordinator = makeCoordinator(
+            server: server,
+            journal: journal,
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await coordinator.link(
+            localContent: "R0",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+
+        await server.pauseNextSnapshotResponseAfterCapture()
+        let inspecting = Task { try await coordinator.inspectFence() }
+        await server.waitUntilSnapshotResponseIsPaused()
+
+        _ = try await coordinator.recordLocalContent(
+            "R1",
+            createdAt: SyncTestValues.date.addingTimeInterval(1)
+        )
+        let publishing = Task { try await coordinator.synchronize() }
+        await Task.yield()
+        #expect(await server.currentHead(for: SyncTestValues.key)?.content == "R0")
+
+        await server.resumePausedSnapshotResponse()
+        let observation = try await inspecting.value
+        guard case let .authorityValid(snapshot) = observation else {
+            Issue.record("the stale observation was applied after a newer local generation")
+            return
+        }
+        #expect(snapshot.head?.content == "R0")
+
+        let final = try await publishing.value
+        guard case let .upToDate(context) = final else {
+            Issue.record("the queued publish did not finish at the newest revision")
+            return
+        }
+        #expect(context.localHead.content == "R1")
+        #expect(await server.currentHead(for: SyncTestValues.key)?.content == "R1")
+        #expect(await journal.storedRecord(for: SyncTestValues.key)?.localHead.content == "R1")
+    }
+
     @Test("lost response retry acknowledges old commit but never revives its stale lease or head")
     func lostResponseRetryUsesCurrentSnapshot() async throws {
         let server = InMemoryEpisodeSyncServer()

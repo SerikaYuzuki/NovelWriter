@@ -163,8 +163,7 @@ struct IOSEditorPane: View {
            let editingToken = store.currentEpisodeEditingToken,
            let syncLookup = store.currentDeviceSyncLookupIdentity,
            editingToken.chapterID == chapter.id,
-           editingToken.episodeID == episode.id
-        {
+           editingToken.episodeID == episode.id {
             let isEditable = store.deviceSyncAllowsEditing(for: syncLookup)
             VStack(spacing: 0) {
                 IOSDeviceSyncStatusBanner(

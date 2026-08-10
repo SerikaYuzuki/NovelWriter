@@ -227,8 +227,7 @@ private struct FlagDetailView: View {
     private var selectedFlagHasOrderWarning: Bool {
         guard let flag = appState.selectedFlag,
               let plantedIndex = chapterIndex(for: flag.plantedChapterID),
-              let resolvedIndex = chapterIndex(for: flag.resolvedChapterID) else
-        {
+              let resolvedIndex = chapterIndex(for: flag.resolvedChapterID) else {
             return false
         }
 

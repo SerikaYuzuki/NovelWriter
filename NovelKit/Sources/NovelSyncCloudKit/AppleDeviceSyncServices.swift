@@ -38,7 +38,7 @@ public final class AppleDeviceSyncBlockedServices: @unchecked Sendable {
     public func localStatus(
         for locator: AppleLocalDocumentLocator
     ) async -> AppleDeviceSyncLocalBindingStatus {
-        if await metadataStore.binding(for: locator) == nil {
+        if await metadataStore.containsBindingOrPendingWorkCreation(for: locator) == false {
             return .unbound
         }
         return .boundAndBlocked(reason)
@@ -128,11 +128,11 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
     public let transport: any EpisodeSyncTransport
     public let signals: AsyncStream<AppleDeviceSyncSignal>
 
-    private let cloudTransport: CloudKitEpisodeSyncTransport
-    private let remoteBoundary: AppleDeviceSyncRemoteBoundary
-    private let metadataStore: AppleDeviceSyncMetadataStore
-    private let accountGate: AppleDeviceSyncAccountGate
-    private let journalFactory: AppleDeviceSyncJournalFactory
+    let cloudTransport: CloudKitEpisodeSyncTransport
+    let remoteBoundary: AppleDeviceSyncRemoteBoundary
+    let metadataStore: AppleDeviceSyncMetadataStore
+    let accountGate: AppleDeviceSyncAccountGate
+    let journalFactory: AppleDeviceSyncJournalFactory
     private let signalContinuation: AsyncStream<AppleDeviceSyncSignal>.Continuation
 
     private init(
@@ -267,25 +267,13 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             engineStateGeneration: metadata.engineStateGeneration,
             continuation: streamPair.continuation
         )
-        let assetRoot = safeRoot.appendingPathComponent(assetDirectoryName, isDirectory: true)
-        let recoveredRuntime = try await AppleDeviceSyncEngineStateRecovery.make(
+        let cloudTransport = try await makeCloudTransport(
+            containerIdentifier: containerIdentifier,
+            safeRoot: safeRoot,
             metadataStore: metadataStore,
-            metadata: metadata
-        ) { restoredState, generation in
-            await relay.updateEngineStateGeneration(generation)
-            return try CloudKitEpisodeSyncTransport(
-                containerIdentifier: containerIdentifier,
-                assetRootURL: assetRoot,
-                restoredEngineState: restoredState,
-                stateSerializationHandler: { state in
-                    await relay.persistEngineState(state)
-                },
-                signalHandler: { signal in
-                    await relay.handle(signal)
-                }
-            )
-        }
-        let cloudTransport = recoveredRuntime.value
+            metadata: metadata,
+            relay: relay
+        )
         let journalRoot = safeRoot.appendingPathComponent(journalDirectoryName, isDirectory: true)
         let remoteBoundary = AppleDeviceSyncRemoteBoundary(
             transport: cloudTransport,
@@ -308,222 +296,35 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
         )
     }
 
+    private static func makeCloudTransport(
+        containerIdentifier: String,
+        safeRoot: URL,
+        metadataStore: AppleDeviceSyncMetadataStore,
+        metadata: AppleDeviceSyncMetadataSnapshot,
+        relay: AppleDeviceSyncSignalRelay
+    ) async throws -> CloudKitEpisodeSyncTransport {
+        let assetRoot = safeRoot.appendingPathComponent(assetDirectoryName, isDirectory: true)
+        let recovered = try await AppleDeviceSyncEngineStateRecovery.make(
+            metadataStore: metadataStore,
+            metadata: metadata
+        ) { restoredState, generation in
+            await relay.updateEngineStateGeneration(generation)
+            return try CloudKitEpisodeSyncTransport(
+                containerIdentifier: containerIdentifier,
+                assetRootURL: assetRoot,
+                restoredEngineState: restoredState,
+                stateSerializationHandler: { state in
+                    await relay.persistEngineState(state)
+                },
+                signalHandler: { signal in
+                    await relay.handle(signal)
+                }
+            )
+        }
+        return recovered.value
+    }
+
     public func availability() async -> AppleDeviceSyncAvailability {
         await accountGate.availability()
-    }
-
-    /// 新規sync libraryを利用者が明示開始した場合だけzoneを作成する。
-    public func bootstrapZoneForNewSync() async throws {
-        try await accountGate.performMutation { [cloudTransport] in
-            try await cloudTransport.bootstrapZoneForNewSync()
-        }
-    }
-
-    public func createWork(_ descriptor: SyncWorkDescriptor) async throws {
-        try await remoteBoundary.createWork(descriptor)
-    }
-
-    public func listWorks() async throws -> [SyncWorkDescriptor] {
-        try await remoteBoundary.listWorks()
-    }
-
-    /// structure一致だけを候補条件とし、sourceDocumentID一致は表示順hintに限る。
-    /// この呼出しはbindingを一切変更しない。
-    public func workCandidates(
-        sourceDocumentIDHint: UUID,
-        matching structureDigest: SyncWorkStructureDigest
-    ) async throws -> [SyncWorkDescriptor] {
-        let works = try await listWorks()
-        return AppleDeviceSyncWorkMatcher.candidates(
-            from: works,
-            sourceDocumentIDHint: sourceDocumentIDHint,
-            structureDigest: structureDigest
-        )
-    }
-
-    public func localStatus(
-        for locator: AppleLocalDocumentLocator
-    ) async -> AppleDeviceSyncLocalBindingStatus {
-        guard await metadataStore.binding(for: locator) != nil else {
-            return .unbound
-        }
-        switch await accountGate.availability() {
-        case .ready:
-            return .bound
-        case let .blocked(reason):
-            return .boundAndBlocked(reason)
-        }
-    }
-
-    /// bindingだけをAppへ渡さず、account/work/source continuity確認と
-    /// binding時のepisode allowlist、copy専用journalを一つの境界で組み立てる。
-    public func resolve(
-        _ locator: AppleLocalDocumentLocator,
-        localSourceDocumentID: UUID
-    ) async throws -> AppleResolvedWorkingCopy? {
-        try await accountGate.requireAvailable()
-        guard let localBinding = await metadataStore.bindingSnapshot(for: locator) else {
-            return nil
-        }
-        let works = try await remoteBoundary.listWorks()
-        let descriptor = try AppleDeviceSyncWorkMatcher.requireBoundDescriptor(
-            workID: localBinding.binding.workID,
-            localSourceDocumentID: localSourceDocumentID,
-            in: works
-        )
-        let journal = try await journalFactory.journal(for: localBinding.binding)
-        return AppleResolvedWorkingCopy(
-            binding: localBinding.binding,
-            descriptor: descriptor,
-            allowedEpisodeIDs: localBinding.allowedEpisodeIDs,
-            journal: journal
-        )
-    }
-
-    @discardableResult
-    public func bind(
-        _ locator: AppleLocalDocumentLocator,
-        to workID: SyncWorkID,
-        localSourceDocumentID: UUID,
-        allowedEpisodeIDs: [EpisodeID],
-        matching structureDigest: SyncWorkStructureDigest
-    ) async throws -> AppleResolvedWorkingCopy {
-        let descriptor = try await requireRemoteWork(workID, matching: structureDigest)
-        try AppleDeviceSyncWorkMatcher.requireSourceContinuity(
-            descriptor,
-            localSourceDocumentID: localSourceDocumentID
-        )
-        _ = try await accountGate.performMutation { [metadataStore] in
-            try await metadataStore.bind(
-                locator,
-                to: workID,
-                allowedEpisodeIDs: allowedEpisodeIDs
-            )
-        }
-        guard let resolved = try await resolve(
-            locator,
-            localSourceDocumentID: localSourceDocumentID
-        ) else {
-            throw AppleDeviceSyncServicesError.bindingNotFound
-        }
-        return resolved
-    }
-
-    /// 通常bindは既存locatorの行先を変えない。明示的な付け替えだけをこのAPIへ通す。
-    @discardableResult
-    public func rebind(
-        _ locator: AppleLocalDocumentLocator,
-        to workID: SyncWorkID,
-        localSourceDocumentID: UUID,
-        allowedEpisodeIDs: [EpisodeID],
-        matching structureDigest: SyncWorkStructureDigest
-    ) async throws -> AppleResolvedWorkingCopy {
-        let descriptor = try await requireRemoteWork(workID, matching: structureDigest)
-        try AppleDeviceSyncWorkMatcher.requireSourceContinuity(
-            descriptor,
-            localSourceDocumentID: localSourceDocumentID
-        )
-        _ = try await accountGate.performMutation { [metadataStore] in
-            try await metadataStore.rebind(
-                locator,
-                to: workID,
-                allowedEpisodeIDs: allowedEpisodeIDs
-            )
-        }
-        guard let resolved = try await resolve(
-            locator,
-            localSourceDocumentID: localSourceDocumentID
-        ) else {
-            throw AppleDeviceSyncServicesError.bindingNotFound
-        }
-        return resolved
-    }
-
-    @discardableResult
-    public func unbind(
-        _ locator: AppleLocalDocumentLocator
-    ) async throws -> Bool {
-        try await accountGate.performMutation { [metadataStore] in
-            try await metadataStore.unbind(locator) != nil
-        }
-    }
-
-    public func refreshTrackedChanges() async throws {
-        try await accountGate.performOperation { [cloudTransport] in
-            try await cloudTransport.refreshTrackedChanges()
-        }
-    }
-
-    public func cancelTrackedChanges() async {
-        await cloudTransport.cancelTrackedChanges()
-    }
-
-    private func requireRemoteWork(
-        _ workID: SyncWorkID,
-        matching structureDigest: SyncWorkStructureDigest
-    ) async throws -> SyncWorkDescriptor {
-        let works = try await remoteBoundary.listWorks()
-        return try AppleDeviceSyncWorkMatcher.requireDescriptor(
-            workID: workID,
-            structureDigest: structureDigest,
-            in: works
-        )
-    }
-}
-
-enum AppleDeviceSyncWorkMatcher {
-    static func candidates(
-        from works: [SyncWorkDescriptor],
-        sourceDocumentIDHint: UUID,
-        structureDigest: SyncWorkStructureDigest
-    ) -> [SyncWorkDescriptor] {
-        works
-            .filter { $0.structureDigest == structureDigest }
-            .sorted { lhs, rhs in
-                let lhsMatchesHint = lhs.sourceDocumentID == sourceDocumentIDHint
-                let rhsMatchesHint = rhs.sourceDocumentID == sourceDocumentIDHint
-                if lhsMatchesHint != rhsMatchesHint {
-                    return lhsMatchesHint
-                }
-                return lhs.workID.rawValue.uuidString < rhs.workID.rawValue.uuidString
-            }
-    }
-
-    static func requireDescriptor(
-        workID: SyncWorkID,
-        structureDigest: SyncWorkStructureDigest,
-        in works: [SyncWorkDescriptor]
-    ) throws -> SyncWorkDescriptor {
-        guard let descriptor = works.first(where: { $0.workID == workID }) else {
-            throw AppleDeviceSyncServicesError.remoteWorkNotFound
-        }
-        guard descriptor.structureDigest == structureDigest else {
-            throw AppleDeviceSyncServicesError.structureMismatch
-        }
-        return descriptor
-    }
-
-    static func requireBoundDescriptor(
-        workID: SyncWorkID,
-        localSourceDocumentID: UUID,
-        in works: [SyncWorkDescriptor]
-    ) throws -> SyncWorkDescriptor {
-        guard let descriptor = works.first(where: { $0.workID == workID }) else {
-            throw AppleDeviceSyncServicesError.remoteWorkNotFound
-        }
-        try requireSourceContinuity(
-            descriptor,
-            localSourceDocumentID: localSourceDocumentID
-        )
-        return descriptor
-    }
-
-    static func requireSourceContinuity(
-        _ descriptor: SyncWorkDescriptor,
-        localSourceDocumentID: UUID
-    ) throws {
-        guard descriptor.sourceDocumentID == localSourceDocumentID else {
-            throw AppleDeviceSyncServicesError.sourceDocumentMismatch
-        }
     }
 }

@@ -71,8 +71,7 @@ extension IOSDocumentStore {
         let descriptor: SyncWorkDescriptor
         if let pending = pendingDeviceSyncNewWork,
            pending.session == expectedSession,
-           pending.structureDigest == digest
-        {
+           pending.structureDigest == digest {
             descriptor = pending.descriptor
         } else {
             descriptor = SyncWorkDescriptor(

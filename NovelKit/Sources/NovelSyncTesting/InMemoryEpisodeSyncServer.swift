@@ -24,6 +24,10 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
     private var shouldPauseNextClaim = false
     private var pausedClaimContinuation: CheckedContinuation<Void, Never>?
     private var claimPauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var shouldPauseNextSnapshotResponse = false
+    private var pausedSnapshotResponseContinuation: CheckedContinuation<Void, Never>?
+    private var snapshotResponsePauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var snapshotFetchCount = 0
 
     public init() {}
 
@@ -44,7 +48,10 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
 
     public func fetchSnapshot(for key: EpisodeSyncKey) async throws -> EpisodeRemoteSnapshot {
         try requireOnline()
-        return try snapshot(for: key)
+        snapshotFetchCount += 1
+        let captured = try snapshot(for: key)
+        await pauseSnapshotResponseIfRequested()
+        return captured
     }
 
     public func fetchRevision(
@@ -328,6 +335,30 @@ public extension InMemoryEpisodeSyncServer {
         pausedClaimContinuation = nil
         continuation?.resume()
     }
+
+    /// snapshotを取得済み・clientへ返す直前で停止し、stale response raceを再現する。
+    func pauseNextSnapshotResponseAfterCapture() {
+        shouldPauseNextSnapshotResponse = true
+    }
+
+    func waitUntilSnapshotResponseIsPaused() async {
+        if pausedSnapshotResponseContinuation != nil {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            snapshotResponsePauseObservers.append(continuation)
+        }
+    }
+
+    func resumePausedSnapshotResponse() {
+        let continuation = pausedSnapshotResponseContinuation
+        pausedSnapshotResponseContinuation = nil
+        continuation?.resume()
+    }
+
+    func snapshotFetchInvocationCount() -> Int {
+        snapshotFetchCount
+    }
 }
 
 private extension InMemoryEpisodeSyncServer {
@@ -338,6 +369,19 @@ private extension InMemoryEpisodeSyncServer {
         claimPauseObservers.removeAll()
         await withCheckedContinuation { continuation in
             pausedClaimContinuation = continuation
+            for observer in observers {
+                observer.resume()
+            }
+        }
+    }
+
+    func pauseSnapshotResponseIfRequested() async {
+        guard shouldPauseNextSnapshotResponse else { return }
+        shouldPauseNextSnapshotResponse = false
+        let observers = snapshotResponsePauseObservers
+        snapshotResponsePauseObservers.removeAll()
+        await withCheckedContinuation { continuation in
+            pausedSnapshotResponseContinuation = continuation
             for observer in observers {
                 observer.resume()
             }

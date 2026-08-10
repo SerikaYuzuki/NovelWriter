@@ -10,16 +10,20 @@ final class IOSDeviceSyncProductionComposition: @unchecked Sendable {
     let runtime: IOSDeviceSyncRuntime
     private let runtimeBox: IOSDeviceSyncProductionRuntimeBox
 
-    init(fileManager: FileManager = .default) throws {
+    init(
+        privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation,
+        fileManager: FileManager = .default
+    ) throws {
         let supportRoot = try Self.supportRoot(fileManager: fileManager)
         let localBootstrap = try AppleDeviceSyncLocalBootstrap.prepare(rootURL: supportRoot)
         let streamPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(16))
         let runtimeBox = IOSDeviceSyncProductionRuntimeBox(
             localBootstrap: localBootstrap,
+            privateWorkingCopyLocation: privateWorkingCopyLocation,
             signalContinuation: streamPair.continuation
         )
         self.runtimeBox = runtimeBox
-        runtime = IOSDeviceSyncRuntime(
+        runtime = try IOSDeviceSyncRuntime(
             replicaID: localBootstrap.replicaID,
             transport: runtimeBox,
             binding: { workingCopyID, sourceDocumentID, _ in
@@ -29,7 +33,7 @@ final class IOSDeviceSyncProductionComposition: @unchecked Sendable {
                 )
             },
             remoteChangeSignals: streamPair.stream,
-            mergeRecoveryStore: try IOSFileDeviceSyncMergeRecoveryStore(
+            mergeRecoveryStore: IOSFileDeviceSyncMergeRecoveryStore(
                 rootURL: supportRoot.appendingPathComponent("merge-recovery-v1", isDirectory: true)
             ),
             setup: IOSDeviceSyncSetupRuntime(
@@ -85,6 +89,7 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
     }
 
     private let localBootstrap: AppleDeviceSyncLocalBootstrap
+    private let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation
     private let signalContinuation: AsyncStream<Void>.Continuation
     private var state: State = .starting
     private var signalTask: Task<Void, Never>?
@@ -92,9 +97,11 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
 
     init(
         localBootstrap: AppleDeviceSyncLocalBootstrap,
+        privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation,
         signalContinuation: AsyncStream<Void>.Continuation
     ) {
         self.localBootstrap = localBootstrap
+        self.privateWorkingCopyLocation = privateWorkingCopyLocation
         self.signalContinuation = signalContinuation
     }
 
@@ -124,22 +131,20 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         localSourceDocumentID: UUID
     ) async throws -> IOSDeviceSyncBindingResolution? {
         let locator = try Self.locator(for: workingCopyID)
-        let locallyBound = knownBoundLocators.contains(locator) || {
-            switch localBootstrap.localStatus(for: locator) {
-            case .unbound:
-                return false
-            case .bound, .boundAndBlocked:
-                return true
-            }
-        }()
-        guard locallyBound else { return nil }
-        knownBoundLocators.insert(locator)
+        guard try hasSafePackageForResolution(workingCopyID, locator: locator),
+              isLocallyBound(locator) else { return nil }
         switch state {
         case let .ready(services):
-            guard let resolved = try await services.resolve(
-                locator,
-                localSourceDocumentID: localSourceDocumentID
-            ) else { return nil }
+            let resolved = try await privateWorkingCopyLocation.performWithAttestedPackage(
+                for: workingCopyID
+            ) {
+                try await services.resolve(
+                    locator,
+                    localSourceDocumentID: localSourceDocumentID
+                )
+            }
+            guard let resolved else { return nil }
+            knownBoundLocators.insert(locator)
             return IOSDeviceSyncBindingResolution(
                 binding: resolved.binding,
                 descriptor: resolved.descriptor,
@@ -147,14 +152,50 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
                 allowedEpisodeIDs: resolved.allowedEpisodeIDs
             )
         case .starting:
+            _ = try privateWorkingCopyLocation.attestPackage(for: workingCopyID)
+            knownBoundLocators.insert(locator)
             return try localOnlyResolution(for: localBootstrap.localStatus(for: locator))
         case let .blocked(blocked):
-            let status = if let blocked {
-                await blocked.localStatus(for: locator)
-            } else {
-                localBootstrap.localStatus(for: locator)
+            let status = try await privateWorkingCopyLocation.performWithAttestedPackage(
+                for: workingCopyID
+            ) {
+                if let blocked {
+                    await blocked.localStatus(for: locator)
+                } else {
+                    localBootstrap.localStatus(for: locator)
+                }
             }
+            knownBoundLocators.insert(locator)
             return try localOnlyResolution(for: status)
+        }
+    }
+
+    private func hasSafePackageForResolution(
+        _ workingCopyID: IOSPrivateDocumentID,
+        locator: AppleLocalDocumentLocator
+    ) throws -> Bool {
+        do {
+            _ = try privateWorkingCopyLocation.attestPackage(for: workingCopyID)
+            return true
+        } catch {
+            switch localBootstrap.localStatus(for: locator) {
+            case .unbound:
+                return false
+            case .bound, .boundAndBlocked:
+                throw EpisodeSyncTransportError.unavailable
+            }
+        }
+    }
+
+    private func isLocallyBound(_ locator: AppleLocalDocumentLocator) -> Bool {
+        if knownBoundLocators.contains(locator) {
+            return true
+        }
+        switch localBootstrap.localStatus(for: locator) {
+        case .unbound:
+            return false
+        case .bound, .boundAndBlocked:
+            return true
         }
     }
 
@@ -164,10 +205,15 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         digest: SyncWorkStructureDigest
     ) async throws -> [SyncWorkDescriptor] {
         _ = try Self.locator(for: workingCopyID)
-        return try await readyServices().workCandidates(
-            sourceDocumentIDHint: sourceDocumentID,
-            matching: digest
-        )
+        let services = try readyServices()
+        return try await privateWorkingCopyLocation.performWithAttestedPackage(
+            for: workingCopyID
+        ) {
+            try await services.workCandidates(
+                sourceDocumentIDHint: sourceDocumentID,
+                matching: digest
+            )
+        }
     }
 
     func startNew(
@@ -176,16 +222,17 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         allowedEpisodes: [EpisodeID]
     ) async throws {
         let services = try readyServices()
-        try await services.bootstrapZoneForNewSync()
-        try await services.createWork(descriptor)
-        _ = try await services.bind(
-            Self.locator(for: workingCopyID),
-            to: descriptor.workID,
-            localSourceDocumentID: descriptor.sourceDocumentID,
-            allowedEpisodeIDs: allowedEpisodes,
-            matching: descriptor.structureDigest
-        )
-        knownBoundLocators.insert(try Self.locator(for: workingCopyID))
+        let locator = try Self.locator(for: workingCopyID)
+        _ = try await privateWorkingCopyLocation.performWithAttestedPackage(
+            for: workingCopyID
+        ) {
+            try await services.createAndBindNewWork(
+                locator,
+                proposedDescriptor: descriptor,
+                allowedEpisodeIDs: allowedEpisodes
+            )
+        }
+        knownBoundLocators.insert(locator)
         signalContinuation.yield()
     }
 
@@ -197,13 +244,18 @@ private actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
         allowedEpisodes: [EpisodeID]
     ) async throws {
         let locator = try Self.locator(for: workingCopyID)
-        _ = try await readyServices().bind(
-            locator,
-            to: workID,
-            localSourceDocumentID: sourceDocumentID,
-            allowedEpisodeIDs: allowedEpisodes,
-            matching: digest
-        )
+        let services = try readyServices()
+        _ = try await privateWorkingCopyLocation.performWithAttestedPackage(
+            for: workingCopyID
+        ) {
+            try await services.bind(
+                locator,
+                to: workID,
+                localSourceDocumentID: sourceDocumentID,
+                allowedEpisodeIDs: allowedEpisodes,
+                matching: digest
+            )
+        }
         knownBoundLocators.insert(locator)
         signalContinuation.yield()
     }

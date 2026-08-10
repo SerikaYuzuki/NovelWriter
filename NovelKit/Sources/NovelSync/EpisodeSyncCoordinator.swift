@@ -84,6 +84,11 @@ public actor EpisodeSyncCoordinator {
     var pendingFenceObservation: EpisodeFenceObservation?
     var authorityVerifiedInProcess = false
     var restoredAuthorityRequiresClaim = false
+    /// Remote snapshot/controlを読む操作はactorの`await`再入をまたいでFIFOに直列化する。
+    /// `recordLocalContent`はこのlaneを取得せず、network待機中も新しい本文を
+    /// durable tailとして記録できる。
+    var isRemoteControlOperationRunning = false
+    var remoteControlOperationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var authorityGrantAwaitingInstall: EpisodeAuthorityGrant? {
         pendingAuthorityGrant
@@ -119,6 +124,20 @@ public actor EpisodeSyncCoordinator {
         createdAt: Date,
         leaseExpiresAt: Date
     ) async throws -> EpisodeSyncState {
+        await acquireRemoteControlOperation()
+        defer { releaseRemoteControlOperation() }
+        return try await linkSerially(
+            localContent: localContent,
+            createdAt: createdAt,
+            leaseExpiresAt: leaseExpiresAt
+        )
+    }
+
+    func linkSerially(
+        localContent: String,
+        createdAt: Date,
+        leaseExpiresAt: Date
+    ) async throws -> EpisodeSyncState {
         restoredAuthorityRequiresClaim = false
         let snapshot = try await transport.fetchSnapshot(for: key)
         let branchID = SyncBranchID()
@@ -150,7 +169,25 @@ public actor EpisodeSyncCoordinator {
             mode: .tracking
         )
         try await persistAndUpdateState()
-        _ = try await claimEditingAuthority(expiresAt: leaseExpiresAt)
-        return try await synchronize()
+        _ = try await claimEditingAuthoritySerially(expiresAt: leaseExpiresAt)
+        return try await synchronizeSerially()
+    }
+
+    func acquireRemoteControlOperation() async {
+        guard isRemoteControlOperationRunning else {
+            isRemoteControlOperationRunning = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            remoteControlOperationWaiters.append(continuation)
+        }
+    }
+
+    func releaseRemoteControlOperation() {
+        guard !remoteControlOperationWaiters.isEmpty else {
+            isRemoteControlOperationRunning = false
+            return
+        }
+        remoteControlOperationWaiters.removeFirst().resume()
     }
 }

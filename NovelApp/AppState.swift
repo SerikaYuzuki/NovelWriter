@@ -145,6 +145,9 @@ final class AppState {
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: DeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncPreparationTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncPreparationLookup: DeviceSyncLookupIdentity?
+    @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncConflictResolution: PendingDeviceSyncConflictResolution?
     @ObservationIgnored var pendingDeviceSyncNewWork: PendingDeviceSyncNewWork?
     @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
@@ -697,6 +700,11 @@ final class AppState {
         guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
             return .failedBeforeSwitch
         }
+        // Device Sync の旧話authorityはcopy開始前に安全に閉じる。一方、通常の
+        // local-only作品では大きなpackage copy中も執筆を止めないため、ここで
+        // Editorを一度再開し、保存先を採用する直前にもう一度確定する。
+        endDocumentTransition()
+        didBeginTransition = false
 
         do {
             let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
@@ -711,8 +719,13 @@ final class AppState {
                     try await repository.save(documentSnapshot, to: destinationURL)
                 }
                 try preAdoptionValidation?(destinationURL)
+
+                // copy中に増えたlocal-only編集を旧sessionへ確定したうえで、
+                // URL・recent・session世代を一つの保存排他区間内で切り替える。
+                guard beginDocumentTransition() else { return false }
+                didBeginTransition = true
                 // URL・recent・session世代の切替までを保存排他区間に含める。
-                // 事前にEditorと同期境界を閉じているため、旧URLへ再開する隙間を作らない。
+                // コピー中に待機した通常保存が、旧URLへ再開する隙間を作らない。
                 documentURL = destinationURL
                 rememberDocumentURL(destinationURL)
                 advanceDocumentSession(document: document, url: destinationURL)
@@ -814,8 +827,7 @@ final class AppState {
         let content: String
         if workspaceSelection.section == .structure,
            selectedChapterID == chapterID,
-           selectedEpisodeID == episodeID
-        {
+           selectedEpisodeID == episodeID {
             switch activeCommittedTextCapture() {
             case let .captured(committedText):
                 content = committedText
@@ -1039,8 +1051,7 @@ final class AppState {
 
     private func ensureWorldNoteSelection() {
         if let selectedWorldNoteID,
-           document.worldNotes.contains(where: { $0.id == selectedWorldNoteID })
-        {
+           document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
             return
         }
         selectedWorldNoteID = document.worldNotes.first?.id
@@ -1328,8 +1339,7 @@ final class AppState {
            expectedLookup.documentSession == expectedSession,
            expectedLookup.chapterID == chapterID,
            expectedLookup.episodeID == episodeID,
-           expectedLookup.editorContentGeneration == expectedEditorContentGeneration
-        {
+           expectedLookup.editorContentGeneration == expectedEditorContentGeneration {
             scheduleDeviceSyncForEditedEpisode(
                 content: content,
                 expectedLookup: expectedLookup
@@ -1423,8 +1433,7 @@ final class AppState {
             current.gender != nextGender || current.firstPerson != nextFirstPerson ||
             current.secondPerson != nextSecondPerson || current.speechStyle != nextSpeechStyle ||
             current.appearance != nextAppearance || current.personality != nextPersonality ||
-            current.background != nextBackground else
-        {
+            current.background != nextBackground else {
             return
         }
 

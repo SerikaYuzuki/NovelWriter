@@ -42,7 +42,7 @@ extension AppState {
             return
         }
         guard
-              let digest = try? SyncWorkStructureDigest(chapters: document.chapters) else {
+            let digest = try? SyncWorkStructureDigest(chapters: document.chapters) else {
             deviceSyncSetupState = .unavailable(message: "iCloud本文同期を利用できません")
             return
         }
@@ -82,8 +82,7 @@ extension AppState {
         let descriptor: SyncWorkDescriptor
         if let pending = pendingDeviceSyncNewWork,
            pending.session == expectedSession,
-           pending.structureDigest == digest
-        {
+           pending.structureDigest == digest {
             descriptor = pending.descriptor
         } else {
             descriptor = SyncWorkDescriptor(
