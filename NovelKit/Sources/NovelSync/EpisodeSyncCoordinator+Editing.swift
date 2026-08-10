@@ -20,6 +20,34 @@ public extension EpisodeSyncCoordinator {
         return state
     }
 
+    /// network await中にnative editorへ入った確定本文を、すでに成立した
+    /// conflictの新しいlocal側としてofflineでもjournalへ退避する。
+    /// remote本文を表示中なら既存local forkを置換せず、そのままsurfaceする。
+    @discardableResult
+    func preserveConflictLocalContent(
+        _ content: String,
+        expectedConflict: EpisodeConflict,
+        createdAt: Date
+    ) async throws -> EpisodeSyncState {
+        guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
+        guard record.conflict == expectedConflict else {
+            throw EpisodeSyncCoordinatorError.conflictSuperseded
+        }
+        let digest = SyncContentDigest(content: content)
+        if digest != expectedConflict.local.contentDigest,
+           digest != expectedConflict.remote.contentDigest {
+            try appendLocalRevision(content: content, createdAt: createdAt, to: &record)
+            record.mode = .forcedFork
+            self.record = record
+            try await journal.save(record)
+        }
+        guard let conflict = record.conflict else {
+            throw EpisodeSyncCoordinatorError.noConflict
+        }
+        state = .conflicted(context(for: record), conflict)
+        return state
+    }
+
     /// 両parentを持つ新revisionだけをremote head候補にし、既存の両本文を消さない。
     @discardableResult
     func resolveConflict(

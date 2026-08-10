@@ -83,6 +83,72 @@ struct EpisodeSyncCoordinatorTests {
         #expect(await server.currentHead(for: SyncTestValues.key) == finalContext.localHead)
     }
 
+    @Test("a native edit completed during conflict discovery replaces only the durable local fork")
+    func lateNativeEditIsPreservedInConflict() async throws {
+        let server = InMemoryEpisodeSyncServer()
+        let journal = InMemoryEpisodeSyncJournal()
+        let mac = makeCoordinator(
+            server: server,
+            journal: journal,
+            replica: SyncTestValues.replicaA,
+            session: SyncTestValues.sessionA
+        )
+        _ = try await mac.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        let phone = makeCoordinator(
+            server: server,
+            journal: InMemoryEpisodeSyncJournal(),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        _ = try await phone.link(
+            localContent: "base",
+            createdAt: SyncTestValues.date,
+            leaseExpiresAt: SyncTestValues.expiry
+        )
+        let grant = try await phone.prepareForcedContinuation(expiresAt: SyncTestValues.expiry)
+        _ = try await phone.confirmAuthorityInstall(
+            grant,
+            installedRemoteDigest: grant.snapshot.head?.contentDigest
+        )
+        _ = try await phone.recordLocalContent("remote", createdAt: SyncTestValues.date)
+        _ = try await phone.synchronize()
+
+        _ = try await mac.recordLocalContent("local L", createdAt: SyncTestValues.date)
+        let discovered = try await mac.synchronize()
+        let original = try #require(syncConflict(from: discovered))
+        await server.setOnline(false)
+        let preserved = try await mac.preserveConflictLocalContent(
+            "late native X",
+            expectedConflict: original,
+            createdAt: SyncTestValues.date.addingTimeInterval(1)
+        )
+        let updated = try #require(syncConflict(from: preserved))
+        #expect(updated.local.content == "late native X")
+        #expect(updated.remote == original.remote)
+        #expect(await journal.storedRecord(for: SyncTestValues.key)?.pendingRevisions.map(\.content) == [
+            "late native X"
+        ])
+
+        // remote本文をすでにmaterialize済みなら、既存Xをremoteで置換しない。
+        _ = try await mac.preserveConflictLocalContent(
+            updated.remote.content,
+            expectedConflict: updated,
+            createdAt: SyncTestValues.date.addingTimeInterval(2)
+        )
+        #expect(await journal.storedRecord(for: SyncTestValues.key)?.conflict?.local.content == "late native X")
+        await #expect(throws: EpisodeSyncCoordinatorError.conflictSuperseded) {
+            _ = try await mac.preserveConflictLocalContent(
+                "stale",
+                expectedConflict: original,
+                createdAt: SyncTestValues.date
+            )
+        }
+    }
+
     @Test("stale conflict confirmation refreshes remote parent without replacing local fork")
     func staleConflictConfirmationPreservesLocalFork() async throws {
         let server = InMemoryEpisodeSyncServer()
