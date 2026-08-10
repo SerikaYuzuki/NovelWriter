@@ -3,26 +3,36 @@ import UniformTypeIdentifiers
 
 struct IOSRootView: View {
     @Bindable var store: IOSDocumentStore
+    @State private var workspaceNavigation = IOSWorkspaceNavigationCoordinator()
 
     var body: some View {
         Group {
             switch store.startupState {
             case .loading:
                 ProgressView("作品を読み込んでいます…")
-            case .ready:
-                IOSWorkbenchView(store: store)
+            case .library, .ready:
+                IOSWorkbenchView(
+                    store: store,
+                    navigation: workspaceNavigation
+                )
             case let .recovery(message):
-                IOSRecoveryView(store: store, message: message)
+                IOSRecoveryView(
+                    store: store,
+                    message: message,
+                    makeNewDocument: makeNewDocumentFromRecovery
+                )
             }
         }
         .disabled(store.isDocumentTransitionInProgress)
         .overlay {
             if store.isDocumentTransitionInProgress {
                 ZStack {
-                    Color.black.opacity(0.08).ignoresSafeArea()
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .ignoresSafeArea()
                     ProgressView("作品を準備しています…")
                         .padding()
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
@@ -35,10 +45,19 @@ struct IOSRootView: View {
             case let .success(urls):
                 guard let url = urls.first else { return }
                 Task {
-                    await store.importPackage(from: url)
+                    guard synchronizeActiveEditorBeforeDocumentChange(),
+                          await store.importPackage(from: url) else { return }
+                    showCurrentProjectHome()
                 }
             case let .failure(error):
                 store.operationErrorMessage = "作品を選択できませんでした。\n\(error.localizedDescription)"
+            }
+        }
+        .onOpenURL { url in
+            Task {
+                guard synchronizeActiveEditorBeforeDocumentChange(),
+                      await store.handleExternalPackageURL(url) else { return }
+                showCurrentProjectHome()
             }
         }
         .alert(item: $store.promptCopyNotice) { notice in
@@ -58,6 +77,28 @@ struct IOSRootView: View {
                 IOSShareSheet(items: [url])
                     .ignoresSafeArea()
             }
+        }
+    }
+
+    private func synchronizeActiveEditorBeforeDocumentChange() -> Bool {
+        guard let departure = workspaceNavigation.activeEditorDeparture else { return true }
+        return IOSWorkspaceEditorSynchronizer.synchronize(
+            store: store,
+            departure: departure
+        )
+    }
+
+    private func showCurrentProjectHome() {
+        guard store.startupState == .ready else { return }
+        workspaceNavigation.showProjectHome(
+            for: IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
+        )
+    }
+
+    private func makeNewDocumentFromRecovery() {
+        Task {
+            guard await store.makeNewDocument() else { return }
+            showCurrentProjectHome()
         }
     }
 
@@ -87,6 +128,7 @@ struct IOSRootView: View {
 private struct IOSRecoveryView: View {
     let store: IOSDocumentStore
     let message: String
+    let makeNewDocument: () -> Void
 
     var body: some View {
         ContentUnavailableView {
@@ -100,9 +142,7 @@ private struct IOSRecoveryView: View {
             .buttonStyle(.borderedProminent)
 
             Button("新規作品を作る") {
-                Task {
-                    await store.makeNewDocument()
-                }
+                makeNewDocument()
             }
             .buttonStyle(.bordered)
         }

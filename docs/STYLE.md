@@ -1,23 +1,24 @@
 # ふみにわ デザイン言語(STYLE.md)
 
 ふみにわ（FUMINIWA）の見た目と手触りの唯一の正。**UI を触るすべての PR はこの文書に従うこと**(AGENTS.md 参照)。UI-REF-1〜6のWorkbench再調整は完了済みで、以後のUI変更も本書の規約を継続して適用する。
-形式は [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) の DESIGN.md 構成を借用し、中身はネイティブ macOS(SwiftUI + AppKit)前提で定義する。Web の流儀(固定 hex の多用、大きな drop shadow、独自コントロール)は持ち込まない。
+形式は [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) の DESIGN.md 構成を借用し、中身はネイティブmacOS（SwiftUI + AppKit）とiOS / iPadOS（SwiftUI + UIKit）前提で定義する。Web の流儀(固定 hex の多用、大きな drop shadow、独自コントロール)は持ち込まない。
 
 ## 1. ビジュアルテーマ
 
 **「静かな書斎」**。長時間の執筆に集中でき、文具のように控えめな道具。Dark外観では従来の「夜の書斎」、Light外観では紙と朝光を思わせる「朝の書斎」として、同じ情報階層を保つ。
 
 - 主役は常に本文テキスト。UI は一歩引く(彩度の高い色・強い装飾・過剰なアニメーションを使わない)
-- **ネイティブ macOS ファースト**: 標準コントロール・セマンティックカラー・システム素材を最優先。カスタム描画は「標準で表現できない場合」の最終手段
-- Sidebar、Outline、toolbar、form等のchromeは既定でmacOSのシステムLight／Dark外観へ追従する。設定で利用者が明示した場合だけ、アプリのchromeをLightまたはDarkへ固定できる。特定外観を無条件に強制しない
+- **ネイティブUIファースト**: 標準コントロール・セマンティックカラー・システム素材を最優先。カスタム描画は「標準で表現できない場合」の最終手段
+- Sidebar、Outline、toolbar、form等のchromeは、macOSではシステムLight／Dark外観への追従を既定とする。iOS / iPadOSはD-057により初回だけDarkを既定とし、いずれも設定からシステム追従／Light／Darkを選び直せる。特定外観だけで成立する固定色UIにしない
 - 本文エディタのキャンバスはchromeと独立した利用者設定とし、既定は従来どおり「夜の書斎」の暗色キャンバスにする。システム外観を変えても利用者の本文配色を勝手に上書きしない
 - 画面は Project Sidebar / Outline / Editor と下部status barのワークベンチとして扱い、本文の横幅を最優先する。未実装AI用の領域は予約表示しない(D-040)
+- iOS / iPadOSは作品棚から作品ホームへ入り、作品情報または執筆を選んでからOutline / Editorへ進む。作品棚はapp-private作業コピーだけを表示し、外部providerは標準pickerへの入口として表現する(D-057)
 
 ## 2. カラー
 
 ### 原則
 
-1. **まずセマンティックカラー**: `Color.primary` / `.secondary` / `Color(nsColor: .textBackgroundColor)` / `.separator` 等。macOS のアクセシビリティ設定に追従しやすくする
+1. **まずセマンティックカラー**: `Color.primary` / `.secondary` / `Color(nsColor: .textBackgroundColor)` / `Color(uiColor: .systemBackground)` / `.separator` 等。各OSのアクセシビリティ設定に追従しやすくする
 2. **hex 直書きは本文書で定義したトークンのみ**。それ以外の固定色をコードに書いたら規約違反
 3. 彩度の高い色は「意味のある小さな面積」(ドット、バッジ、アクセント)にだけ使う。大きな面をブランドカラーで塗らない
 4. 暗色はニュートラルを基本にし、藍はアクセントに限定する。画面全体を青紫の単色グラデーションにしない
@@ -30,7 +31,7 @@
 | `surface` | `#202126` | Dark時の面の参考値。通常のchromeはシステム素材を使う |
 | `surfaceRaised` | `#292A30` | ポップオーバー、選択中カード、入力欄の一段上の面 |
 | `border` | `#3A3B42` | hairline 境界。基本は `.separator` を優先 |
-| `accent`(藍) | `#8CA7DF` | 選択・リンク・主ボタン。Assets の AccentColor に登録 |
+| `accent`(藍) | `#8CA7DF` | 選択・リンク・主ボタン。AssetsのAccentColorまたは各platformのpalette tokenに登録 |
 | `warning` | `#E8A54A` | 未回収の伏線、注意バッジ |
 | `success` | `#7FBF8A` | 回収済み・完了表示(控えめに) |
 | `danger` | `#E07A7A` | 削除など破壊的操作の補助表示。ボタン自体は `role: .destructive` を優先 |
@@ -120,7 +121,7 @@
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
 - [ ] セマンティックカラー以外の色は、本文書のトークン(canvas / surface / surfaceRaised / border / accent / warning / success / danger / キャラ10色)だけか
-- [ ] システム追従／明示Light／明示Darkの各設定でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。利用者の選択なしにアプリ全体の外観を固定していないか
+- [ ] システム追従／明示Light／明示Darkの各設定でコントラスト、文字、separator、素材、Reduce Transparencyを確認したか。iOSのDark初回値以外で利用者の選択を上書きしていないか
 - [ ] 余白・サイズは 8pt グリッドに乗っているか
 - [ ] フォントはテキストスタイル経由か(size 直指定なし)。数値表示に `.monospacedDigit()` があるか
 - [ ] Project Sidebar / Outline / Editor / status bar の幅と優先順位が崩れていないか

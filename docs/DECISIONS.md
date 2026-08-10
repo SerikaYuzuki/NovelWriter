@@ -594,3 +594,17 @@
 - **置き換える範囲**: D-013の「需要がなければPhase 7を先送りしてよい」という未着手状態を、着手決定へ置き換える。D-010の単一保存所有者、D-040のProduct Truthと公開Gate、D-054のprovider延期、D-055の現行入力契約は維持する。Phase 7実装はPackage Validator / External Change / Conflictの公開Release Gateを完了扱いにせず、これらと安全に並行してよい。
 - **理由**: Phase 5までの共有domain、保存、exportが成立し、利用者がiOS / iPadOS実装を明示的に選んだため。外部provider上の原本を直接編集するより、原本を変更しないapp-private作業コピーを最初の境界にする方が、既存のrevision保存とRecoveryを再利用しながら破損・競合範囲を小さくできる。また字下げと鉤括弧はD-055で実IMEに合わせて修正済みであり、iOS側に古い単純判定を再実装すると同じ不具合を再導入するため、純粋ルールを共有しUIKit固有の通知順だけをadapterで吸収する。
 - **詳細**: iOS / iPadOSの製品範囲、アーキテクチャ、PR順、受け入れ条件は[IOS.md](IOS.md)を正とする。保存形式のOS間契約は[CROSS_PLATFORM.md](CROSS_PLATFORM.md)、clipboard境界は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を参照する。
+
+## D-057: iOSを作品棚起点の段階導線とし、初回外観をDarkにする
+
+- **日付**: 2026-08-10 / **状態**: 承認（ユーザー要望。iOSライブラリ導線として実装）
+- **内容**:
+  1. iOS / iPadOS版の起点を、直近作品の編集画面ではなく **作品棚** とする。作品棚は`Application Support/FUMINIWA/Works`直下にあるapp-private作業コピーを一覧にし、同時編集は行わず、選択した1作品だけを既存のdocument operation gateと`DocumentSaveCoordinator`で開く。
+  2. Files / iCloud Drive / 他社File Provider上の外部原本を独自に列挙しない。作品棚には「Files／iCloud Driveから取り込む…」を置き、標準pickerで選ばれた`.novelpkg`をD-056どおりapp-private作業コピーへ取り込む。外部の場所、同期状態、cloud badgeを保存・表示せず、原本の直接編集やiCloud同期済みと表現しない。
+  3. iPhoneの基本導線を **作品棚 → 作品ホーム → 作品情報または執筆 → 章／話アウトライン → Editor** とする。iPadは同じ情報階層を標準の適応的なsplitへ展開してよい。作品ホームには実装済みの作品情報、執筆、書き出しだけを出し、未接続の機能をplaceholderとして並べない。EditorKit、本文所有権、字下げ／鉤括弧、Undo / Redoは変更しない。
+  4. 作品棚のidentityは`NovelDocument.id`ではなくapp-private package名とする。同じ外部原本を複数回取り込んでdocument IDが重複しても別の作業コピーとして扱う。hidden staging、非package、symlink、root外pathを一覧・open対象にしない。読み込めない1作品は警告行として隔離し、他の作品までRecoveryへ巻き込まない。
+  5. iOS版のアプリchromeは新規インストール時にDarkを既定とする。設定には「システムに合わせる／ライト／ダーク」を残し、利用者の変更をapp-privateな設定へ永続化する。これはiOS初回値だけについてD-044を置き換え、macOSのシステム追従既定は維持する。特定色を直書きせず、semantic colorとsystem materialでLight／Darkの両方を成立させる。
+  6. 外観、現在の画面階層、最後に開いた作業コピー名は`.novelpkg`へ保存しない。作品切替前はIME確定と現作品の最終保存を行い、保存または読込に失敗した場合は現在作品、recent、画面遷移を変更しない。
+- **置き換える範囲**: D-056の段階遷移とapp-private import / edit / exportを具体化し、DESIGN 12章の「ライブラリ管理UI」をapp-private作品棚に限って対象へ移す。D-044のシステム追従既定はmacOSと、iOSで利用者が「システムに合わせる」を選んだ後について維持する。open-in-place、外部provider横断一覧、独自cloud同期、複数作品同時編集は引き続き対象外である。
+- **理由**: 既存実装はapp-private領域へ新規・取込作品を蓄積していたが、recent 1件しか再選択できず、起動直後に章一覧を出すため作品選択と機能選択の情報階層が欠けていた。作品棚と作品ホームを分ければ、原本を直接編集しない安全境界を保ったまま、利用者が「どの作品で何をするか」を先に選べる。Darkを初回既定にする要望も、変更可能な外観設定とsemantic colorを維持すれば、固定色のDark専用UIにせず実現できる。
+- **詳細**: 画面階層、文書境界、アクセシビリティと受け入れ条件は[IOS.md](IOS.md)、色・余白・外観規約は[STYLE.md](STYLE.md)を正とする。

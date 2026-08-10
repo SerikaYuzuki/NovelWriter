@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.72
+# ふみにわ 設計書 v0.73
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -419,6 +419,8 @@ ContentView
 
 補足: v1 では `DocumentGroup`(ドキュメントベースApp)は使わず、単一ウィンドウ + 明示的な Repository 構成とする。オートセーブやバージョン管理を自前で持つ代わりに、ウィンドウ管理・状態管理がシンプルになる。複数作品対応の際に再評価する。
 
+iOS / iPadOSはD-057により、app-private作品棚をrootとする。作品棚は同時に複数作品を編集するdocument UIではなく、`Application Support/FUMINIWA/Works`直下の作業コピーから現在作品を1つ選ぶ入口である。iPhoneは作品棚 → 作品ホーム → 作品情報または執筆Outline → Editorの`NavigationStack`、iPadは同じ情報階層を適応的なsplitへ展開する。Files / iCloud Drive等は標準pickerから作業コピーへ取り込む入口だけを出し、外部原本を独自一覧へ混ぜない。
+
 ## 6. 初期機能要件
 
 ### 6.1 作品管理
@@ -428,7 +430,7 @@ ContentView
 - 最近の作品がない場合だけ新規作品を先に保存し、保存成功後に現在作品として採用する
 - Recoveryからの再試行・別作品選択・明示的新規作成を提供する
 - 保存は `.novelpkg` 形式で行う
-- 将来的には複数作品を選択して開けるようにする
+- iOS / iPadOSはapp-private作品棚から1作品を選択して開ける。複数作品の同時編集は行わない
 
 ### 6.2 章／話管理
 
@@ -625,6 +627,7 @@ IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機Q
 - **IOS-4 Document MVP / Adaptive Shell（実装済み）**: 外部原本を変更しないapp-private import / edit / export、Safe Launch / Recovery、iPadの適応的複数列、iPhoneの段階遷移を接続する
 - **IOS-5 Clipboard Prompt（実装済み）**: 校正／アドバイス×本文選択／話／章を`UIPasteboard`へ明示コピーする。AI provider、送信、応答、Applyは持たない
 - **IOS-6 Parity / Release QA（未完了）**: 残るmacOS機能、round-trip、実機IME、scene遷移、VoiceOver / Dynamic Type、性能と配布を検証する
+- **Library-first shell（D-057）**: app-private作品棚、作品ホーム、作品情報／執筆OutlineからEditorへ進む段階導線と、初回Dark／System・Light・Dark選択を追加する。外部providerは標準pickerからの取込だけとする
 
 MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
@@ -777,7 +780,7 @@ Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を�
 - 縦書き対応(執筆・出力とも非対応で確定 → D-012)
 - iOS / iPadOSでの外部原本のopen-in-place(Package Validator / External Change / Conflict後に別Decision → D-056)
 - クラウド同期
-- 複数作品同時編集・ライブラリ管理UI
+- 複数作品同時編集、外部provider横断ライブラリ、外部原本とapp-privateコピーを混在させる一覧
 - AI本文自動書き換え
 - EPUB/PDFの高度な組版
 - リアルタイム共同編集
@@ -788,6 +791,16 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.73 (2026-08-10)
+
+iOS / iPadOSの作品選択と機能選択をD-057のlibrary-first導線へ整理した。
+
+- app-private作業コピーを一覧・再選択できる作品棚を追加し、Files / iCloud Driveは標準pickerからの取込入口として分離
+- 作品棚 → 作品ホーム → 作品情報または執筆Outline → 既存Editorの段階遷移へ変更
+- 同一document IDの複数取込をpackage名で区別し、破損・hidden staging・symlink・root外pathを局所的に隔離
+- iOSの初回chromeをDark既定にし、System／Light／Darkをapp-private設定として選び直せるようにした
+- EditorKit、字下げ／鉤括弧、Undo / Redo、`.novelpkg` schema、外部原本を直接編集しない境界は変更しない
 
 ### v0.72 (2026-08-10)
 

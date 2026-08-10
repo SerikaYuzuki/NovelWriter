@@ -1,0 +1,189 @@
+import NovelCore
+import SwiftUI
+
+struct IOSProjectHomeView: View {
+    let store: IOSDocumentStore
+    let openWriting: () -> Void
+    let openProjectInfo: () -> Void
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(displayTitle)
+                        .font(.title2.weight(.semibold))
+                    if store.document.synopsis.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("作品情報から、あらすじを追加できます。")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(store.document.synopsis)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+                    Text(summaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(displayTitle)
+                .accessibilityValue(projectAccessibilityValue)
+            }
+
+            Section("この作品") {
+                IOSProjectActionRow(
+                    title: "執筆",
+                    description: "章と話を選んで本文を編集します。",
+                    systemImage: "square.and.pencil",
+                    action: openWriting
+                )
+                .accessibilityIdentifier("ios.project.writing")
+
+                IOSProjectActionRow(
+                    title: "作品情報",
+                    description: "作品タイトルとあらすじを編集します。",
+                    systemImage: "doc.text.magnifyingglass",
+                    action: openProjectInfo
+                )
+                .accessibilityIdentifier("ios.project.info")
+            }
+
+            Section {
+                Button {
+                    Task {
+                        await store.requestExport()
+                    }
+                } label: {
+                    Label("作品を書き出す…", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityHint("現在の作業コピーから、共有用のnovelpkgファイルを作ります。")
+            } header: {
+                Text("共有")
+            } footer: {
+                Text("編集しているのは、ふみにわ内の作業コピーです。書き出しても編集先は変わりません。")
+            }
+        }
+        .navigationTitle(displayTitle)
+        .navigationBarTitleDisplayMode(.large)
+    }
+
+    private var displayTitle: String {
+        store.document.title.isEmpty ? "名称未設定の作品" : store.document.title
+    }
+
+    private var summaryText: String {
+        let chapterCount = store.document.chapters.count
+        let episodeCount = store.document.chapters.reduce(0) { $0 + $1.episodes.count }
+        let characterCount = store.document.chapters.reduce(0) { chapterTotal, chapter in
+            chapterTotal + chapter.episodes.reduce(0) { episodeTotal, episode in
+                episodeTotal + ManuscriptMetrics.countCharacters(in: episode.content)
+            }
+        }
+        return "\(chapterCount)章・\(episodeCount)話・\(characterCount)字"
+    }
+
+    private var projectAccessibilityValue: String {
+        let synopsis = store.document.synopsis.trimmingCharacters(in: .whitespacesAndNewlines)
+        let synopsisDescription = synopsis.isEmpty
+            ? "あらすじ未設定"
+            : "あらすじ、\(synopsis)"
+        return "\(synopsisDescription)、\(summaryText)"
+    }
+}
+
+struct IOSProjectInfoView: View {
+    let store: IOSDocumentStore
+
+    var body: some View {
+        Form {
+            Section("基本情報") {
+                TextField("作品タイトル", text: documentTitle)
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("ios.project.title")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("あらすじ")
+                        .font(.headline)
+                    TextEditor(text: documentSynopsis)
+                        .frame(minHeight: 160)
+                        .accessibilityLabel("あらすじ")
+                        .accessibilityIdentifier("ios.project.synopsis")
+                }
+                .padding(.vertical, 8)
+            }
+
+            Section("原稿") {
+                LabeledContent("章", value: "\(store.document.chapters.count)")
+                LabeledContent("話", value: "\(episodeCount)")
+                LabeledContent("文字数", value: "\(characterCount)字")
+            }
+            .monospacedDigit()
+        }
+        .navigationTitle("作品情報")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var documentTitle: Binding<String> {
+        Binding(
+            get: { store.document.title },
+            set: { store.updateDocumentTitle($0) }
+        )
+    }
+
+    private var documentSynopsis: Binding<String> {
+        Binding(
+            get: { store.document.synopsis },
+            set: { store.updateDocumentSynopsis($0) }
+        )
+    }
+
+    private var episodeCount: Int {
+        store.document.chapters.reduce(0) { $0 + $1.episodes.count }
+    }
+
+    private var characterCount: Int {
+        store.document.chapters.reduce(0) { chapterTotal, chapter in
+            chapterTotal + chapter.episodes.reduce(0) { episodeTotal, episode in
+                episodeTotal + ManuscriptMetrics.countCharacters(in: episode.content)
+            }
+        }
+    }
+}
+
+private struct IOSProjectActionRow: View {
+    let title: String
+    let description: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                Image(systemName: systemImage)
+                    .frame(width: 24)
+                    .foregroundStyle(IOSPalette.accent)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.forward")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint(description)
+    }
+}

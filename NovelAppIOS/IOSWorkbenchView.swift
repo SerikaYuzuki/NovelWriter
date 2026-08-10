@@ -1,170 +1,123 @@
 import EditorKit
 import NovelCore
 import SwiftUI
+import UIKit
 
 struct IOSWorkbenchView: View {
     @Bindable var store: IOSDocumentStore
+    @Bindable var navigation: IOSWorkspaceNavigationCoordinator
 
     var body: some View {
-        NavigationSplitView {
-            IOSChapterList(store: store)
-        } content: {
-            IOSEpisodeList(store: store)
-        } detail: {
-            IOSEditorPane(store: store)
-        }
-        .navigationSplitViewStyle(.balanced)
-    }
-}
-
-private struct IOSChapterList: View {
-    let store: IOSDocumentStore
-
-    var body: some View {
-        List(selection: chapterSelection) {
-            Section("作品") {
-                TextField("作品タイトル", text: documentTitle)
-                    .textInputAutocapitalization(.never)
-            }
-
-            Section("章") {
-                ForEach(store.document.chapters) { chapter in
-                    Text(chapter.title.isEmpty ? "名称未設定の章" : chapter.title)
-                        .tag(chapter.id)
-                        .contextMenu {
-                            Button("この章を選択") {
-                                store.selectChapter(chapter.id)
-                            }
-                        }
-                }
-                .onMove { offsets, destination in
-                    store.moveChapters(fromOffsets: offsets, toOffset: destination)
-                }
+        NavigationStack(path: workspacePath) {
+            IOSLibraryView(
+                store: store,
+                openDocument: openDocument,
+                makeNewDocument: makeNewDocument
+            )
+            .navigationDestination(for: IOSWorkspaceRoute.self) { route in
+                destination(for: route)
             }
         }
-        .navigationTitle("ふみにわ")
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarLeading) {
-                Menu {
-                    Button("新規作品") {
-                        Task {
-                            await store.makeNewDocument()
-                        }
-                    }
-                    Button("Filesから取り込む") {
-                        store.isImporterPresented = true
-                    }
-                    Button("作品を書き出す") {
-                        Task {
-                            await store.requestExport()
-                        }
-                    }
-                } label: {
-                    Label("作品", systemImage: "doc.badge.gearshape")
-                }
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    store.addChapter()
-                } label: {
-                    Label("章を追加", systemImage: "plus")
-                }
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                EditButton()
-            }
+        .onAppear {
+            synchronizeNavigationWithStore()
+        }
+        .onChange(of: currentDocumentID) { _, _ in
+            synchronizeNavigationWithStore()
         }
     }
 
-    private var chapterSelection: Binding<ChapterID?> {
-        Binding(
-            get: { store.selectedChapterID },
-            set: { store.selectChapter($0) }
-        )
-    }
-
-    private var documentTitle: Binding<String> {
-        Binding(
-            get: { store.document.title },
-            set: { store.updateDocumentTitle($0) }
-        )
-    }
-}
-
-private struct IOSEpisodeList: View {
-    let store: IOSDocumentStore
-
-    var body: some View {
-        if let chapter = store.selectedChapter {
-            List(selection: episodeSelection) {
-                Section {
-                    TextField("章タイトル", text: chapterTitle(chapter.id))
-                }
-
-                Section("話") {
-                    ForEach(chapter.episodes) { episode in
-                        Text(episode.title.isEmpty ? "名称未設定の話" : episode.title)
-                            .tag(episode.id)
+    @ViewBuilder
+    private func destination(for route: IOSWorkspaceRoute) -> some View {
+        if currentDocumentID == route.documentID {
+            switch route {
+            case let .projectHome(documentID):
+                IOSProjectHomeView(
+                    store: store,
+                    openWriting: {
+                        navigation.showWriting(for: documentID)
+                    },
+                    openProjectInfo: {
+                        navigation.showProjectInfo(for: documentID)
                     }
-                    .onDelete { offsets in
-                        store.deleteEpisodes(at: offsets, chapterID: chapter.id)
-                    }
-                    .onMove { offsets, destination in
-                        store.moveEpisodes(
-                            in: chapter.id,
-                            fromOffsets: offsets,
-                            toOffset: destination
-                        )
-                    }
+                )
+            case .projectInfo:
+                IOSProjectInfoView(store: store)
+            case let .writing(documentID):
+                IOSAdaptiveWritingView(store: store) { chapterID, episodeID in
+                    store.selectChapter(chapterID)
+                    store.selectEpisode(episodeID)
+                    navigation.showEditor(
+                        for: documentID,
+                        chapterID: chapterID,
+                        episodeID: episodeID
+                    )
                 }
-            }
-            .navigationTitle(chapter.title)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        store.addEpisode()
-                    } label: {
-                        Label("話を追加", systemImage: "plus")
+            case let .editor(_, chapterID, episodeID):
+                IOSEditorPane(store: store)
+                    .onAppear {
+                        store.selectChapter(chapterID)
+                        store.selectEpisode(episodeID)
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    EditButton()
-                }
             }
         } else {
-            ContentUnavailableView(
-                "章がありません",
-                systemImage: "list.bullet.rectangle",
-                description: Text("章を追加すると本文を書き始められます。")
+            ContentUnavailableView {
+                Label("作品を切り替えています", systemImage: "books.vertical")
+            } description: {
+                Text("選択した作品のホームを準備しています。")
+            }
+        }
+    }
+
+    private var workspacePath: Binding<[IOSWorkspaceRoute]> {
+        Binding(
+            get: { navigation.path },
+            set: { newPath in
+                navigation.updatePath(newPath) { departure in
+                    IOSWorkspaceEditorSynchronizer.synchronize(
+                        store: store,
+                        departure: departure
+                    )
+                }
+            }
+        )
+    }
+
+    private var currentDocumentID: IOSPrivateDocumentID? {
+        guard store.startupState == .ready else { return nil }
+        return IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
+    }
+
+    private func synchronizeNavigationWithStore() {
+        guard let currentDocumentID else { return }
+        navigation.documentDidChange(to: currentDocumentID)
+    }
+
+    private func openDocument(_ id: IOSPrivateDocumentID) {
+        Task {
+            guard await store.openPrivateDocument(id: id) else { return }
+            navigation.showProjectHome(for: id)
+        }
+    }
+
+    private func makeNewDocument() {
+        Task {
+            guard await store.makeNewDocument() else { return }
+            navigation.showProjectHome(
+                for: IOSPrivateDocumentID(packageName: store.documentURL.lastPathComponent)
             )
         }
     }
-
-    private var episodeSelection: Binding<EpisodeID?> {
-        Binding(
-            get: { store.selectedEpisodeID },
-            set: { store.selectEpisode($0) }
-        )
-    }
-
-    private func chapterTitle(_ chapterID: ChapterID) -> Binding<String> {
-        Binding(
-            get: {
-                store.document.chapters.first(where: { $0.id == chapterID })?.title ?? ""
-            },
-            set: { store.updateChapterTitle($0, chapterID: chapterID) }
-        )
-    }
 }
 
-private struct IOSEditorPane: View {
+struct IOSEditorPane: View {
     let store: IOSDocumentStore
     @State private var isMemoPresented = false
     @State private var searchQuery = ""
     @State private var searchCursor = 0
     @State private var selectionRequest: EditorSelectionRequest?
+    @State private var mountedDocumentID: IOSPrivateDocumentID?
+    @State private var mountedChapterID: ChapterID?
+    @State private var mountedEpisodeID: EpisodeID?
 
     var body: some View {
         if let chapter = store.selectedChapter, let episode = store.selectedEpisode {
@@ -178,7 +131,7 @@ private struct IOSEditorPane: View {
                         .monospacedDigit()
                 }
                 .padding(.horizontal)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
 
                 Divider()
 
@@ -212,6 +165,19 @@ private struct IOSEditorPane: View {
                 searchCursor = 0
                 selectionRequest = nil
                 isMemoPresented = false
+                captureMountedEditorIdentity(
+                    chapterID: chapter.id,
+                    episodeID: episode.id
+                )
+            }
+            .onAppear {
+                captureMountedEditorIdentity(
+                    chapterID: chapter.id,
+                    episodeID: episode.id
+                )
+            }
+            .onDisappear {
+                synchronizeMountedEditorBeforeDeparture()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -270,6 +236,33 @@ private struct IOSEditorPane: View {
                 }
             }
         }
+    }
+
+    private func captureMountedEditorIdentity(
+        chapterID: ChapterID,
+        episodeID: EpisodeID
+    ) {
+        let currentDocumentID = IOSPrivateDocumentID(
+            packageName: store.documentURL.lastPathComponent
+        )
+        if mountedDocumentID == nil {
+            mountedDocumentID = currentDocumentID
+        }
+        guard mountedDocumentID == currentDocumentID else { return }
+        mountedChapterID = chapterID
+        mountedEpisodeID = episodeID
+    }
+
+    private func synchronizeMountedEditorBeforeDeparture() {
+        guard let mountedDocumentID else { return }
+        IOSWorkspaceEditorSynchronizer.synchronize(
+            store: store,
+            departure: IOSWorkspaceEditorDeparture(
+                documentID: mountedDocumentID,
+                chapterID: mountedChapterID,
+                episodeID: mountedEpisodeID
+            )
+        )
     }
 
     private func episodeTitle(_ chapterID: ChapterID, _ episodeID: EpisodeID) -> Binding<String> {
@@ -362,7 +355,7 @@ private struct IOSSaveStateLabel: View {
 
     var body: some View {
         Label(title, systemImage: systemImage)
-            .foregroundStyle(state == .failed ? Color.red : Color.secondary)
+            .foregroundStyle(state == .failed ? Color(uiColor: .systemRed) : Color.secondary)
     }
 
     private var title: String {
