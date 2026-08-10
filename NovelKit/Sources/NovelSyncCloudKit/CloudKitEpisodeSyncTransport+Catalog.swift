@@ -6,14 +6,25 @@ public extension CloudKitEpisodeSyncTransport {
     func createWork(_ descriptor: SyncWorkDescriptor) async throws {
         try await ensureZone()
         let record = try codec.makeWorkRecord(descriptor)
-        if try await fetchRecordIfPresent(record.recordID) != nil {
-            throw SyncCatalogError.duplicateWorkID
+        if let existing = try await fetchRecordIfPresent(record.recordID) {
+            try CloudKitWorkCreationMatcher.requireIdempotentRetry(
+                existing: codec.decodeWorkRecord(existing),
+                requested: descriptor
+            )
+            return
         }
         do {
             _ = try await modifyAtomically([record])
         } catch {
             if CloudKitErrorMapper.containsServerRecordChanged(error) {
-                throw SyncCatalogError.duplicateWorkID
+                guard let existing = try await fetchRecordIfPresent(record.recordID) else {
+                    throw SyncCatalogError.duplicateWorkID
+                }
+                try CloudKitWorkCreationMatcher.requireIdempotentRetry(
+                    existing: codec.decodeWorkRecord(existing),
+                    requested: descriptor
+                )
+                return
             }
             throw mappedOperationError(error)
         }
@@ -60,6 +71,17 @@ public extension CloudKitEpisodeSyncTransport {
             }
         }
         return descriptors.sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
+    }
+}
+
+enum CloudKitWorkCreationMatcher {
+    static func requireIdempotentRetry(
+        existing: SyncWorkDescriptor,
+        requested: SyncWorkDescriptor
+    ) throws {
+        guard existing == requested else {
+            throw SyncCatalogError.duplicateWorkID
+        }
     }
 }
 
