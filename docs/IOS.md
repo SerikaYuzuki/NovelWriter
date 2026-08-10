@@ -1,6 +1,6 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線とD-058の作品機能／執筆補助parityを追加。D-059は`NovelSync`／file journal／durable pending create / bind intentを含む`NovelSyncCloudKit` adapterをsource実装し、iOS Appのproduction composition、明示binding、editor／scene、force／merge UIもsource接続済み・全ローカル回帰通過。通常handoffの完結、Accessibility、CloudKit外部Gate、署名済み実機、Release QAは未完了
+> **状態**: IOS-1〜5実装済み。D-057の作品棚-first導線とD-058の作品機能／執筆補助parityを追加。D-059の`NovelSync`／file journal／`NovelSyncCloudKit`／iOS App接続は基準commit `508947d2`で全ローカル回帰通過済み。D-060の全端末local-first編集、上部統合状態記号、非blocking reviewは計画中。通常handoff、Accessibility、CloudKit外部Gate、署名済み実機、Release QAは未完了
 >
 > **対象**: iOS / iPadOS 17 以降
 >
@@ -10,7 +10,7 @@
 
 macOS版で確立した`NovelCore`、`.novelpkg` v3、`NovelExport`、EditorPluginの純粋ロジックを再利用し、iPhone / iPadで安全に日本語小説を執筆できる通常版FUMINIWAを追加する。
 
-Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。D-059のDevice Syncも外部原本を直接編集せず、app-private packageへ話本文revisionをmaterializeする別protocolとして追加する。
+Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。D-059／D-060のDevice Syncも外部原本を直接編集せず、app-private packageとpackage外journalへ話本文をlocal-first保存し、別protocolでremote headを調停する。
 
 AI providerは接続しない。利用者が選んだ原稿から校正用／アドバイス用のplain text promptを作り、system clipboardへ明示コピーする機能だけを通常iOS版へ含める。
 
@@ -25,6 +25,7 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
 - generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、全ローカルCIを通過した
 - D-059のportable wire / state / force / merge、package外file journal、`NovelSyncCloudKit`のprivate CloudKit adapter、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentをsource実装した。iOS production composition、明示binding、editor／scene lifecycle、read-only／force／fence／merge UIもsource接続済みで、iOS通常71件／Device Sync 15件を含む全ローカル回帰を通過した。normal handoffの全経路、container / signing / schemaと署名済み実機検証は未完了である
+- 上記D-059状態は基準commit `508947d2`の履歴として維持する。D-060のwire protocol v1を維持したjournal schema v2、authority非依存journal、offline bootstrap、automatic merge、iOS App／UI移行は未実装であり、計画中とする
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
 
@@ -142,19 +143,22 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 
 ### 4.6 Device Sync S1
 
-Device Syncはapp-private package同士を対象とし、iCloud Drive上の原本やpackage内部を直接同期しない。iPhoneで同じ話を開くときは、remote `EpisodeControl`のholder / session / epochを確認し、writerでなければ本文をread-onlyにする。
+Device Syncはapp-private package同士を対象とし、iCloud Drive上の原本やpackage内部を直接同期しない。remote `EpisodeControl`のholder / session / epochはremote headを進められる1端末を表すだけで、iPhoneのEditorへ入力してよいかを表さない。同期設定、通信不能、別端末のholder、fetch／claim失敗だけを理由に本文をread-onlyにせず、MacとiPhoneで同じ話を開いたままlocal編集できる。
 
-通常handoffは次の順序を崩さない。
+確定本文が実際に変わる操作は、次の順に処理する。
 
-1. iPhoneが最新head / epochをfetchしてhandoffを要求する
-2. 旧writerがIMEをcommitし、native editorの全文をcaptureする
-3. 旧writerがapp-private packageとpackage外journalへlocal saveする
-4. pending本文をmutationID / expected head / lease epochでremote flushする
-5. flush確認後にだけiPhoneのfresh sessionへgrantし、epochを増やす
-6. iPhoneがgrant後のheadをfetch / verifyし、packageへ保存してから`UITextView`へinstallする
-7. remote install時にその話のUndo / Redoを破棄し、新しいbaselineからwriterを開始する
+1. `UITextView`が確定本文を所有し、作品／話／Editor世代を固定した通知でmodelへ反映する
+2. 既存の保存直列化経路でapp-private `.novelpkg`へ保存する
+3. package保存済み本文をpackage外journal schema v2のstable detached branchへatomic保存する
+4. packageとjournalが同じlocal mutation sequenceへ到達した後だけ「この端末に保存済み」とする
+5. remote fetch／handoff／claim／publishを別taskへenqueueし、upload中も次の入力とlocal保存を続ける
+6. background移行時はnetwork taskを待たず、IME確定、package保存、journal保存を優先する
 
-旧writerが応答しない場合、iPhoneは未同期本文が別端末に残る可能性を示してから「強制的に続ける」を実行できる。forceはonlineで最新controlをfetchし、remote CASでepochをexactly 1増やす。通信不能、fetch失敗、CAS競合時はread-onlyを維持し、成功後も最新remote headをinstallするまでwriterにしない。旧writerの本文は再接続時にfenceしてbase / local / remote forkとしてpackage外journalへ保全し、時計LWWで上書きしない。offline forkは通信断前にauthorityを持っていたwriter、またはforceをまだ観測していない旧writerの継続本文だけを指し、非holderのiPhoneがofflineで開始する編集modeにはしない。
+本文入力、paste、delete、Undo、Redo、`……`、`――`、ルビ、傍点等で本文が変化した場合だけ暗黙の編集意思とする。閲覧、選択、copy、scroll、検索移動だけではremote stateを変更しない。最初の変更をjournalへ保存してから、裏側で通常handoff／claimと必要なinternal takeoverを試す。成立しなくてもlocal本文を取り消さず、authorityのないrevisionはpublishせずdetached branchへ残す。古いepochからのpublishはremote CASで拒否する。
+
+通信不能でも、最後に確認できたremote revision／digestをbaseとして`SyncWorkID`、`EpisodeID`、`LocalWorkingCopyID`、stable branch／revision ID、exact本文、replica ID、wire protocol version、remote未確認状態をjournalへ保存し、終了・再起動後も編集を続ける。account確認不能でも既存bindingのpackageとjournalへlocal保存し、live account scopeの再確認が成功するまで旧account transportへ送らず、新accountへ旧revisionを送らない。
+
+再接続後はremote不変ならauthority取得後に自動publishし、同一結果はcollapse、証明済み非重複変更は2-parent revisionへ自動mergeする。同じ範囲の変更または祖先不明だけをreview対象にし、base／この端末／もう一方／確認用下書きを残す。review中もEditorとlocal保存を止めず、解決結果は2-parent revisionとする。通常UIへ「編集権」「lease」「epoch」「fencing」「fork」「強制的に続ける」「オフライン下書きを開始」を出さない。
 
 S1は、初回binding時にordered ChapterID / EpisodeIDの構造digestが一致し、binding snapshotへ含めたepisode bodyだけを扱う。Apple adapterが示せるのはexact structure一致で絞った **明示binding候補** であり、作品棚のcloud library、package download、automatic bindingではない。後から追加した話はlocal-onlyとし、既存対象話だけを継続する。章／話構造、タイトル、作品情報、メモ、人物、プロット、伏線、世界観、資料、snapshot、attachmentを同期済みと見せない。Product Truth、merge、offline、security / privacyの詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
@@ -168,8 +172,8 @@ S1は、初回binding時にordered ChapterID / EpisodeIDの構造digestが一致
 - モデル→Viewの本文反映はepisode keyが変わったときだけ行う
 - `markedTextRange != nil`の間はモデル通知、plugin介入、表示属性の再適用を行わない
 - 作品遷移前は旧作品のIMEを確定し、確定本文を旧sessionへ同期できなければ遷移を開始しない
-- handoff / force / remote changeでも`markedTextRange != nil`の間は外部本文を書き込まず、pending remoteとして保持する。確定後にnative全文をcaptureしてpackage / journalへ保存してからfenceまたはinstallする
-- remote headのinstallは明示的なexternal replacement境界だけで行い、その話のUndo / Redo historyを破棄する。別remote baselineへ旧transactionを適用しない
+- CloudKit callback、fetch完了、SwiftUI updateからactiveな`UITextView`へremote本文を流し込まない。remote changeはjournalのpending materializationとして保持し、現在のlocal本文をEditorへ残す
+- external replacementは明示的な境界でだけ行い、作品／話／surface／Editor世代、expected digest、未journaled本文、`markedTextRange`、Undo／Redo中、selectionを再検査する。安全でなければ延期し、別baselineへ古いcallbackやUndo transactionを適用しない
 
 ### 5.2 R1' / R3 / R4 / R5
 
@@ -194,7 +198,8 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 ### 5.4 Editor chromeと執筆補助
 
 - Editor上の重複した「本文」見出し、話タイトル入力、文字カウンターを外し、話タイトルはOutline／navigationの文脈を正とする
-- 保存チェック／保存状態は上部のnative toolbarへ移し、下部status barを本文へ重ねない
+- 保存／同期状態は上部のnative toolbarに小さな記号一つで示し、下部status barや常設bannerを本文へ重ねない。チェックはpackageとjournalへの端末内保存完了、控えめな進行は同期中、小さなoffline表示は端末内保存済み、警告は変更の確認が必要、エラーはiCloud account／設定または端末内保存の確認が必要、を表す
+- 状態の詳細は記号を選択したときだけ表示する。VoiceOverは「この端末に保存済み」「iCloudにも同期済み」「オフライン」「統合が必要」「同期設定を確認」を区別し、同期状態だけで本文操作を無効化しない
 - Editor直下、software keyboard表示時はIME直上に、本文キャンバスと同じ不透明背景の執筆補助バーを置く
 - `……` / `――`はselection replacement、`ルビ`はsheet確定後の`｜親文字《ルビ》`、`傍点`は非空selectionのgraphemeを`｜字《・》`へ変換する
 - commandは`EditorCommandSession`からexact selection snapshotを取り、App側のBindingを直接変更せず、1回のUndo / Redoで往復できる
@@ -210,7 +215,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
 - 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
-- Device Syncの状態／handoff／force／merge操作も実際の`NovelSyncCloudKit`、journal、editor fencingまで接続した段階だけ出す。「この端末に保存」「送信待ち」「同期済み」「別端末で編集中」を区別し、単なるnetwork reachabilityを同期済みと見せない
+- Device Syncは実際の`NovelSyncCloudKit`、journal、editor guardへ接続した状態だけを上部記号へ出す。通常handoff／internal takeover／detached branchを操作として見せず、単なるnetwork reachabilityを同期済みと見せない。同一範囲の変更または祖先不明で本文保全の確認が必要な場合だけ、小さな警告からreview画面へ進める
 
 ### iPad
 
@@ -259,7 +264,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 各PRは意味単位で小さく保ち、生成物をコミットしない。ローカル検証だけを使い、`Scripts/check.sh`へ段階的にiOS app build / test、target separation検査を追加する。
 
-Device SyncはIOS-6と公開Release Gateを完了扱いにしない独立S1 trackとして進める。portable contract / fixture、pure `NovelSync`、durable file journal、durable pending create / bind intentを含む`NovelSyncCloudKit` adapterはsource実装済みで、editor / save / scene integration、明示binding、iPhone force / merge UIもAppへsource接続済み・全ローカル回帰通過である。normal handoffの全経路、外部設定・署名済み実機QAは未完了であり、詳細なチェック進捗は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。D-059以前のbase targetが5 productであったこと、通常targetだけが`NovelSync` / `NovelSyncCloudKit`を追加し、Experimental targetへCloudKit adapterを入れないことをtarget graph検査で区別する。
+Device SyncはIOS-6と公開Release Gateを完了扱いにしない独立S1 trackとして進める。D-059のportable wire v1、pure `NovelSync`、durable file journal、durable pending create / bind intentを含む`NovelSyncCloudKit` adapter、editor／save／scene integration、明示binding、force／merge UIは基準commit `508947d2`でsource実装済み・全ローカル回帰通過の履歴として維持する。D-060のjournal schema v2、authority非依存local-first保存、automatic merge、native editor guard、上部状態記号、非blocking reviewは計画中である。完了報告は **source実装**、**Simulator／local fake server**、**署名済みMac＋iPhoneの実CloudKit** を分離し、詳細なチェック進捗は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。D-059以前のbase targetが5 productであったこと、通常targetだけが`NovelSync` / `NovelSyncCloudKit`を追加し、Experimental targetへCloudKit adapterを入れないことをtarget graph検査で区別する。
 
 ## 9. 受け入れ条件
 
@@ -282,12 +287,16 @@ Device SyncはIOS-6と公開Release Gateを完了扱いにしない独立S1 trac
 
 ### Device Sync S1
 
-- 同じ話はremote holder / session / epochと一致する1端末だけがwriterになり、他端末はread-onlyになる
-- 通常handoffがIME commit / capture / local save / remote flush / grant / fetch / installの順で完了し、途中失敗で新端末へ書込権を渡さない
-- iPhone forceと旧Mac publishのraceでremote CASが一方だけを成立させ、旧epoch本文をbase / local / remote forkとしてpackage外journalへ残す
-- non-overlapを証明できる場合だけauto mergeし、overlapのmanual / keep local / keep remoteがすべて2-parent merge revisionを作る
-- marked text中にremote installせず、確定後のcapture / durable saveを完了してからinstallし、その話のUndo / Redoを破棄する
-- offline、push欠落、app kill、account switch、mutation応答消失から再開してもlocal / remoteのどちらも黙って失わない
+- remote headを進めるwriterはholder / session / epochと一致する1端末だけだが、Mac／iPhoneの両方で同じ話を開いたまま交互にlocal編集できる
+- network fetch／upload、別holder、handoff／claim失敗中も入力が止まらず、最初の変更をpackageとdetached journalへ保存してからremote処理を開始する
+- 通信不能のまま編集、終了、再起動、再編集でき、日本語IME変換中の通信断／background／再接続でも確定本文を失わない
+- paste、Undo、Redo、`……`、`――`、ルビ、傍点が同期状態に影響されず、実`UITextView`のmarked text、Undo、古いcallback、Editor世代で検証される
+- remote headがbaseから不変なら利用者操作なしでpublishし、同一結果はcollapse、非重複変更は2-parent revisionへ自動mergeする
+- 同じ範囲の変更または祖先不明では両本文とbase／確認用下書きを保持し、上部に警告だけを出す。review中の追加編集と、review中に再度進んだremote headのどちらも失わない
+- 古いepochの遅延publishをremote CASで拒否し、upload中の追加入力を次batchで必ず追送する
+- background移行は遅いCloudKitを待たずpackage／journal保存を完了し、process killの各境界からlocal／remote双方を復元できる
+- account変更時は旧accountの本文を新accountへ送らず、account確認不能時もlocal編集／package／journalを継続する。旧account transportはlive scope再確認まで再開しない
+- 保存、同期中、offline、統合必要、同期設定確認を上部記号とVoiceOverで識別でき、同期状態だけで本文操作を無効化しない
 - 明示binding候補をcloud library / package bootstrapと表示せず、構造、補助data、資料、live collaborationを同期済みと表示しない
 - development / production container、entitlement、profile、schema deployと、署名済みMac / iPhone実機を検証する。Simulatorと署名なしbuildだけで完了にしない
 

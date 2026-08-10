@@ -1,17 +1,17 @@
 # クロスプラットフォーム設計契約
 
-**契約版: `.novelpkg` 1 / Device Sync protocol 1 / 対象: macOS・iOS / iPadOS・Windows・将来Android**
+**契約版: `.novelpkg` 1 / Device Sync wire protocol 1 / package外journal schema 2 / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: `.novelpkg`契約承認、W0未完了。Device Sync S1はD-059承認・実装中。** Device Sync protocol v1のSwift `NovelSync` domain／fixture、file journal、durable pending create / bind intentを含むApple `NovelSyncCloudKit` adapterはsource実装済みで、Mac / iOS Appにもsource接続済み・全ローカル回帰通過である。通常handoffの完結、CloudKit外部Gate、C# / Kotlin再実装は未完了である。macOS readerは2026-08-07時点で参照payloadの欠損・I/O失敗・invalid UTF-8をfail-closedにする補修まで完了したが、portable filename、duplicate ID／不正参照、symlink、resource limit、孤児payload等の完全なPackage Validatorは未実装である。Windows W1へ進む前にW0でschema・golden fixture・macOS側の残りの補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。Device Syncの進捗でW0またはPackage Validator / External Change / Conflictを完了扱いにしない。
+**状態: `.novelpkg`契約承認、W0未完了。Device Sync S1はD-059基準実装済み、D-060計画中。** Device Sync wire protocol v1のSwift `NovelSync` domain／fixture、file journal、durable pending create / bind intentを含むApple `NovelSyncCloudKit` adapterとMac / iOS App接続は、基準commit `508947d2`で全ローカル回帰通過済みである。D-060はwire v1を維持し、package外journal schema v2、全端末local-first編集、automatic merge、native editor guard、状態UIを追加する計画であり、実装・Simulator／local fake server・実CloudKitは未完了である。通常handoffの完結、CloudKit外部Gate、C# / Kotlin再実装も未完了である。macOS readerは2026-08-07時点で参照payloadの欠損・I/O失敗・invalid UTF-8をfail-closedにする補修まで完了したが、portable filename、duplicate ID／不正参照、symlink、resource limit、孤児payload等の完全なPackage Validatorは未実装である。Windows W1へ進む前にW0でschema・golden fixture・macOS側の残りの補修を完了する。Windows reader / writerとの双方向round-tripはW1の完了条件であり、W0には要求しない。Device Syncの進捗でW0またはPackage Validator / External Change / Conflictを完了扱いにしない。
 
-本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、live handoffは別の話単位Device Sync protocolとし、両者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
+本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、live syncは別の話単位Device Sync wire、端末内の未同期本文はpackage外journalとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059／D-060と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ## 1. 共有するもの／OS ごとに実装するもの
 
 | 対象 | 共有方法 | 備考 |
 | --- | --- | --- |
 | `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | 最優先の互換境界。macOS が保存した作品を Windows で開き、その逆も成立させる |
-| Device Sync protocol v1 | [DEVICE_SYNC.md](DEVICE_SYNC.md)、portable JSON、state / merge fixture | 話本文revision、mutation / head / lease epoch CAS、fork / mergeの意味を共有。CloudKit型は共有しない |
+| Device Sync wire v1／journal schema v2 | [DEVICE_SYNC.md](DEVICE_SYNC.md)、portable JSON、journal / state / merge fixture | 話本文revision、mutation / head / lease epoch CAS、detached branch、local durability、mergeの意味を共有。CloudKit型やnative editor状態は共有しない |
 | 作品→章→話、各 ID、配列順、空要素の意味 | 仕様と fixture | Swift の型を C# から直接参照せず、同じ意味のモデルを各言語で実装する |
 | 自動字下げ、ルビ・傍点、検索、文字数、モデル操作 | 入出力例と共通テストケース | 純粋ロジックとして移植する。UTF-16 範囲と grapheme の差を fixture で固定する |
 | Export の順序・見出し・改行規則 | [PHASE5.md](PHASE5.md) と出力 fixture | レンダラ実装は Swift / C# で別でも、同じ入力から同じ論理結果を得る |
@@ -165,25 +165,28 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 
 ### 7.1 `.novelpkg`との境界
 
-- `.novelpkg`はOS間で持ち運べる作品snapshotであり、各端末のapp-private領域でdurableに保存する
-- live syncはpackageとは別の`NovelSync` protocolを使い、EpisodeIDごとのimmutable revision、remote head、soft lease、mutation receiptを扱う
-- sync work ID、device / session ID、lease epoch、remote revision ID、outbox、fork journalをpackageへ保存しない。export / importだけでremote accountへ自動再接続しない
-- remote revisionのinstallは各OSのnative editorをIME確定し、現在本文をcapture / local saveしてから行う。install時は対象話のUndo / Redoを破棄する
+- `.novelpkg`はOS間で持ち運べる作品snapshotであり、各端末のapp-private領域でdurableに保存する。CloudKit固有metadataを加えない
+- 確定本文は各OSで **native editor → model → `.novelpkg` → package外journal → remote** の順に扱い、transportをEditor入力やlocal保存の待ち条件にしない
+- live syncはpackageとは別の`NovelSync` wireを使い、EpisodeIDごとのimmutable revision、remote head、soft lease、mutation receiptを扱う。remote writerは1端末だが、全端末のlocal Editorはholder／network／account確認に依存せず編集できる
+- sync work ID、local working copy／replica／device／session ID、lease epoch、remote revision ID、outbox、detached branch journalをpackageへ保存しない。export / importだけでremote accountへ自動再接続しない
+- remote revisionをactiveなnative editorへ突然installしない。各OS adapterはsurface／作品／話／Editor世代、expected digest、IME composition、Undo／Redo、selection、未journaled本文を検査するexternal replacement境界を持ち、安全でなければjournalへpending materializationとして延期する
 - S1で`.novelpkg` schemaと`formatVersion`を変更しない。将来sync metadataをportable packageへ加える場合はD-036どおりschema / fixture / macOS / iOS / Windows round-tripを同時に更新する別Decisionを必要とする
 
 ### 7.2 Portable protocol
 
-共有する正は[DEVICE_SYNC.md](DEVICE_SYNC.md)のprotocol version 1とcanonical JSON / state / merge fixtureである。現行Swiftのcanonical JSON / merge fixtureは`NovelKit/Tests/NovelSyncTests/Fixtures/`へchecked-in済みで、state-machine scenarioは`NovelKit/Tests/NovelSyncTests/EpisodeSyncCoordinatorTests.swift`に固定している。Swiftの`Codable`実装だけを仕様にはせず、Windows / Android実装開始時は同じfixture / scenarioを言語非依存の共通配置から各testへ入力できる形にし、期待結果を変更せず再利用する。
+共有する正は[DEVICE_SYNC.md](DEVICE_SYNC.md)の**wire protocol version 1**、**package外journal schema version 2**、canonical JSON / journal / state / merge fixtureである。D-060で`SyncWireProtocol.currentVersion`は1のまま維持し、local working copy identity、detached branch、remote未確認、review draft、pending materialization等はjournal schema v2へ置く。現行Swiftのwire v1 canonical JSON / merge fixtureは`NovelKit/Tests/NovelSyncTests/Fixtures/`へchecked-in済みで、state-machine scenarioは`NovelKit/Tests/NovelSyncTests/EpisodeSyncCoordinatorTests.swift`に固定している。D-060実装ではjournal v1→v2 migrationとlocal-first scenarioのgolden fixtureを追加する。Swiftの`Codable`実装だけを仕様にはせず、Windows / Android実装開始時は同じfixture / scenarioを言語非依存の共通配置から各testへ入力できる形にし、期待結果を変更せず再利用する。
 
 - UTF-8 JSON、lower camel case、canonical UUID、0以上のsigned 64-bit lease epochを使う
 - 本文を正規化せず、decoded bodyのexact UTF-8 bytesをSHA-256で検証する
 - `mutationID + expectedRemoteHeadRevisionID + holderDeviceID + holderSessionID + leaseEpoch`をpublish条件とし、時計LWWを禁止する
-- 競合解決のためのforce claimは、epochだけでなく利用者が確認したremote revision IDとcontent digestも同じcontrol CASで検査する。headが進んでいればholder / epochを変更せず再確認へ戻す
+- remote authorityのclaim／handoff／internal takeoverは、epochだけでなく観測したremote revision IDとcontent digestも同じcontrol CASで検査する。headが進んでいればholder / epochを変更せず再評価する。これらを通常UIの操作やlocal Editorの入力許可にしない
 - 通常revisionは0または1 parent、競合解決は`[remoteHead, localFork]`の2 parentを持つimmutable merge revisionとする
 - transportは同じmutationIDのretryをidempotentにし、head / epochのcompare-and-swapとrevision / receipt / controlのatomic commitを提供する
 - OSごとの日時精度、push順序、filesystem timestamp、locale、case-foldingをwinner選択へ使わない
 
-`NovelSync`のSwift型自体をWindows / Androidから参照しない。Swift、C#、Kotlinの各実装は同じfixtureから、decode結果、state遷移、CAS command、digest、merge結果／conflict分類を一致させる。diff / mergeはnormalizationしないUnicode scalar列を基準にし、UTF-16 indexやnative editor rangeをwireへ保存しない。
+本文入力、paste、delete、Undo、Redo、ルビ、傍点等で本文が実際に変わった場合だけedit intentを作り、選択、copy、scrollだけではremote stateを変えない。authorityのない変更もstable detached branchとして先にjournalへ保存する。再接続時はremote不変なら自動publish、同一結果ならcollapse、証明済み非重複なら2-parent auto merge、同一範囲変更または祖先不明だけreviewとする。review中の追加編集と、review中に進んだremote headも別revisionとして保持する。
+
+`NovelSync`のSwift型自体をWindows / Androidから参照しない。Swift、C#、Kotlinの各実装は同じwire v1／journal schema v2／state fixtureから、decode結果、migration、state遷移、CAS command、digest、merge結果／conflict分類を一致させる。diff / mergeはnormalizationしないUnicode scalar列を基準にし、UTF-16 indexやnative editor rangeをwire／journalへ保存しない。
 
 ### 7.3 Platform adapter
 
@@ -196,10 +199,12 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 
 Apple版はprivate database内の単一固定custom zoneを使い、全workをopaque `syncWorkID` field / record nameで分離する。作品ごとにzoneを増やさない。CloudKit record change tag、CKAsset、account、push、change tokenは`NovelSyncCloudKit`内だけで扱い、portable wire / fixtureへ出さない。remote descriptorはstructure一致の **明示binding候補** と既存binding検査にだけ使い、作品棚のcloud library、package bootstrap、automatic bindingにはしない。SwiftDataはcanonical storeにしない。
 
+account確認不能でも既存bindingのpackageとpackage外journalへのlocal保存を継続する。旧account scopeのlive再確認が成功するまで旧account transportへ送らず、accountが変わっていれば旧scopeのrevision／binding／journalを新account transportへ渡さない。Windows / Androidの将来adapterもaccount／tenant境界を同じtransport fenceとして実装する。
+
 Windows / Android対応時は、その時点のbackendを別Decisionで選ぶ。CloudKit Web Servicesや自前serverを今から前提にせず、Apple adapterのrecord layoutをそのまま公共APIともしない。ただし別backendもmutation receipt、expected head / epoch CAS、atomic commit、immutable revision、fencingを同じ意味で提供できなければならない。
 
 ### 7.4 S1範囲と実装順
 
 S1は、初回binding時に構造が一致し、package外のbinding snapshotへ含めたEpisodeIDのbody handoffだけを扱う。後から追加した話はlocal-onlyとし、既存対象話まで停止させず、remoteへ新しい構造を暗黙生成もしない。作品cloud library / package bootstrap、章・話構造、タイトル、メモ、作品補助data、資料、snapshot、attachment、live collaborationは後続である。構造が一致しない作品へ本文だけを推測installしない。
 
-Apple S1はportable contract / fixture、pure domain、package外durable file journal、durable pending create / bind intentを含む`NovelSyncCloudKit` adapterまでsource実装済みで、editor / save / lifecycle、明示binding、force / fork / merge UIもMac / iOS Appへsource接続済み・全ローカル回帰通過である。normal handoffの全経路、外部設定・署名済み実機QAは未完了であり、チェック付き進捗は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。WindowsのW0〜W4は引き続き`.novelpkg` trackの順序であり、Apple S1の完了をW0 / W1へ読み替えない。一方、Windows / Androidの将来sync実装はS1 portable fixtureを入力として独立開始できる。
+Apple S1のD-059基準ではwire v1／fixture、pure domain、package外durable file journal、durable pending create / bind intentを含む`NovelSyncCloudKit` adapter、editor／save／lifecycle、明示binding、force／fork／merge UIまでMac / iOS Appへsource接続済みで、commit `508947d2`の全ローカル回帰を通過した。この履歴を維持したまま、D-060のjournal schema v2、authority非依存local-first保存、automatic collapse／2-parent merge、native editor guard、通常UI移行を独立単位で実装する。完了報告は **source実装**、**Simulator／local fake server**、**署名済みMac＋iPhoneによる実CloudKit** を分離し、normal handoffの残作業と外部Gateも黙って完了扱いにしない。チェック付き進捗は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。WindowsのW0〜W4は引き続き`.novelpkg` trackの順序であり、Apple S1の完了をW0 / W1へ読み替えない。Windows / Androidの将来sync実装はwire v1／journal schema v2／state・merge fixtureを入力として独立開始できる。
