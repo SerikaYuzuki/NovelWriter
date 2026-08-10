@@ -221,18 +221,15 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
 
 actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
     private let journal: FileEpisodeSyncJournal
-    private let accountGate: AppleDeviceSyncAccountGate
     private let metadataStore: AppleDeviceSyncMetadataStore
     private let binding: SyncWorkingCopyBinding
 
     init(
         journal: FileEpisodeSyncJournal,
-        accountGate: AppleDeviceSyncAccountGate,
         metadataStore: AppleDeviceSyncMetadataStore,
         binding: SyncWorkingCopyBinding
     ) {
         self.journal = journal
-        self.accountGate = accountGate
         self.metadataStore = metadataStore
         self.binding = binding
     }
@@ -248,7 +245,9 @@ actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
     }
 
     private func requireUsableBinding() async throws {
-        try await accountGate.requireAvailable()
+        // This boundary is already scoped to a durable local working-copy ID.
+        // Remote account availability fences transport creation and writes,
+        // but must not disable the current holder's offline fork journal.
         guard await metadataStore.contains(binding) else {
             throw AppleDeviceSyncServicesError.bindingNotFound
         }
@@ -288,7 +287,6 @@ actor AppleDeviceSyncJournalFactory {
         let fileJournal = try FileEpisodeSyncJournal(rootURL: bindingRoot)
         let boundary = AppleDeviceSyncJournalBoundary(
             journal: fileJournal,
-            accountGate: accountGate,
             metadataStore: metadataStore,
             binding: binding
         )
