@@ -145,10 +145,29 @@ final class DeviceSyncProductionComposition: @unchecked Sendable {
                     structureDigest: SyncWorkStructureDigest(chapters: document.chapters),
                     title: document.title
                 )
-                try await runtimeBox.startNew(
+                _ = try await runtimeBox.startNew(
                     session: session,
                     descriptor: descriptor,
                     allowedEpisodes: document.chapters.flatMap(\.episodes).map(\.id)
+                )
+            },
+            resumeInitialWorkPublication: { workID, document, url in
+                let session = DocumentSessionToken(
+                    generation: 0,
+                    documentID: document.id,
+                    documentURL: url
+                )
+                let descriptor = try SyncWorkDescriptor(
+                    workID: workID,
+                    sourceDocumentID: document.id,
+                    structureDigest: SyncWorkStructureDigest(chapters: document.chapters),
+                    title: document.title
+                )
+                try await runtimeBox.resumeInitialWorkPublication(
+                    session: session,
+                    descriptor: descriptor,
+                    allowedEpisodes: document.chapters.flatMap(\.episodes).map(\.id),
+                    initialSnapshot: WorkSnapshot(document: document)
                 )
             }
         )
@@ -177,6 +196,13 @@ enum DeviceSyncProductionRuntimeState {
     case blocked(AppleDeviceSyncBlockedServices?)
 }
 
+enum DeviceSyncInitialWorkPublicationError: Error, Equatable {
+    /// The hidden chooser coordinator may only finish the first local publish.
+    /// Any state that has observed a remote head or needs package reconciliation
+    /// must be handed to the active document preflight instead.
+    case requiresActiveDocumentPreflight
+}
+
 actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     let localBootstrap: AppleDeviceSyncLocalBootstrap
     let workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
@@ -185,6 +211,7 @@ actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     var state: DeviceSyncProductionRuntimeState = .starting
     var signalTask: Task<Void, Never>?
     var knownBoundLocators: Set<AppleLocalDocumentLocator> = []
+    var pendingWorkPublicationTasks: [SyncWorkID: Task<Void, Error>] = [:]
     var bootstrapContainerIdentifier: String?
 
     init(

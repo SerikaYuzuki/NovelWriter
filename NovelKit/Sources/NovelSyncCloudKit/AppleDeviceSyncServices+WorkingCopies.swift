@@ -130,6 +130,27 @@ public extension AppleDeviceSyncServices {
         proposedDescriptor: SyncWorkDescriptor,
         allowedEpisodeIDs: [EpisodeID]
     ) async throws -> AppleResolvedWorkingCopy {
+        let metadata = await metadataStore.snapshot()
+        if let existing = try Self.completedCreationBindingToResume(
+            metadata: metadata,
+            locator: locator,
+            proposedDescriptor: proposedDescriptor
+        ) {
+            // The remote work and durable binding can both be committed before
+            // the first WorkSync publish succeeds. A restart must resume that
+            // journal instead of trying to create a second local intent, which
+            // would fail with `locatorAlreadyBound` forever.
+            guard existing.binding.workID == proposedDescriptor.workID,
+                  let resolved = try await resolve(
+                      locator,
+                      localSourceDocumentID: proposedDescriptor.sourceDocumentID
+                  ),
+                  resolved.binding == existing.binding,
+                  resolved.allowedEpisodeIDs == existing.allowedEpisodeIDs else {
+                throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+            }
+            return resolved
+        }
         let intent = try await accountGate.performMutation { [metadataStore] in
             try await metadataStore.preparePendingWorkCreation(
                 locator,
@@ -153,6 +174,19 @@ public extension AppleDeviceSyncServices {
             try await metadataStore.completePendingWorkCreation(intent)
         }
         return resolved
+    }
+
+    internal static func completedCreationBindingToResume(
+        metadata: AppleDeviceSyncMetadataSnapshot,
+        locator: AppleLocalDocumentLocator,
+        proposedDescriptor: SyncWorkDescriptor
+    ) throws -> AppleDeviceSyncBindingSnapshot? {
+        guard metadata.pendingWorkCreations[locator] == nil,
+              let existing = metadata.bindings[locator] else { return nil }
+        guard existing.binding.workID == proposedDescriptor.workID else {
+            throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+        }
+        return existing
     }
 
     /// 通常bindは既存locatorの行先を変えない。明示的な付け替えだけをこのAPIへ通す。

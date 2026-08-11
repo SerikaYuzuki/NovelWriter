@@ -559,11 +559,19 @@ final class AppState {
             guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
                 return
             }
-            if await retryAccountScopedPendingPublications(
-                local: local,
-                remote: remote,
-                library: library
-            ) {
+            let didPublish = await documentOperationGate.perform { [weak self] in
+                guard let self,
+                      startupLibraryRefreshIsCurrent(
+                          generation,
+                          expectedSession: expectedSession
+                      ) else { return false }
+                return await retryAccountScopedPendingPublications(
+                    local: local,
+                    remote: remote,
+                    library: library
+                )
+            }
+            if didPublish {
                 remote = try await library.loadRemoteLibrary()
                 guard startupLibraryRefreshIsCurrent(
                     generation,
@@ -963,9 +971,9 @@ final class AppState {
         return Self.addOfflineResumableRows(resumableWorkIDs, to: Array(rows.values))
     }
 
-    /// Domain catalogの`publishPending`とcanonical local bindingの両方が揃う
-    /// same-account workだけを自動再送する。accountRequired中に作られた
-    /// registry-only作品は別accountへ暗黙adoptしない。
+    /// Verified local registryの`publishPending`とcanonical local bindingの
+    /// 両方が揃うsame-account workだけを自動再送する。WorkControlはheadが
+    /// nilの間catalogへ出ないため、remote rowの存在を再送条件にしない。
     private func retryAccountScopedPendingPublications(
         local: StartupVerifiedLocalLibrarySnapshot,
         remote: DeviceSyncRemoteLibrarySnapshot,
@@ -976,18 +984,18 @@ final class AppState {
             return false
         }
         var didPublish = false
-        for item in remote.entries where item.availability == .publishPending {
-            guard let localItem = local.items[item.work.workID],
+        for localItem in local.items.values {
+            guard localItem.row.availability == .localPending,
                   localItem.record?.state == .publishPending,
                   let record = localItem.record,
                   let expected = localItem.attestation,
                   await library.hasLocalPublishAuthority(
-                      item.work.workID,
+                      record.workID,
                       record.expectedDocumentID
                   ) else { continue }
             do {
-                try await library.validateInstalledPackage(item.work.workID)
-                let url = try await library.packageURL(item.work.workID)
+                try await library.validateInstalledPackage(record.workID)
+                let url = try await library.packageURL(record.workID)
                 let document = try await portableRepository.validatePortablePackage(at: url)
                 let readback = try DeviceSyncLocalPackageAttestation(
                     document: document,
@@ -995,7 +1003,13 @@ final class AppState {
                 )
                 guard readback == expected,
                       document.id == record.expectedDocumentID else { continue }
-                try await library.publishNewWork(item.work.workID, document, url)
+                let isActiveDocument = startupState.isReady
+                    && documentURL.standardizedFileURL == url.standardizedFileURL
+                if isActiveDocument {
+                    try await library.publishNewWork(record.workID, document, url)
+                } else {
+                    try await library.resumeInitialWorkPublication(record.workID, document, url)
+                }
                 didPublish = true
             } catch {
                 continue
@@ -1024,11 +1038,14 @@ final class AppState {
                 let remote = try await library.loadRemoteLibrary()
                 mayAttemptInitialCloudPublish = remote.connection == .available
                     || remote.connection == .offline
-                _ = await retryAccountScopedPendingPublications(
-                    local: local,
-                    remote: remote,
-                    library: library
-                )
+                _ = await documentOperationGate.perform { [weak self] in
+                    guard let self else { return false }
+                    return await retryAccountScopedPendingPublications(
+                        local: local,
+                        remote: remote,
+                        library: library
+                    )
+                }
             } catch {
                 mayAttemptInitialCloudPublish = false
             }

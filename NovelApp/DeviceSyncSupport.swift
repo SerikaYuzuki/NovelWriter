@@ -177,6 +177,13 @@ struct DeviceSyncLibraryRuntime: Sendable {
     /// durableか。registry-onlyの未scoped作品を自動publishしないためのfence。
     let hasLocalPublishAuthority: @Sendable (SyncWorkID, UUID) async -> Bool
     let publishNewWork: @Sendable (SyncWorkID, NovelDocument, URL) async throws -> Void
+    /// 作品棚でだけ使うkill-recovery。root/bindingを冪等確認した後、active
+    /// editorとは共有しないhidden coordinatorで既存outboxを一度だけ再送する。
+    let resumeInitialWorkPublication: @Sendable (
+        SyncWorkID,
+        NovelDocument,
+        URL
+    ) async throws -> Void
 }
 
 struct DeviceSyncSetupRuntime: Sendable {

@@ -171,6 +171,86 @@ struct DeviceSyncCloudLibraryAppTests {
         #expect(state.documentURL == activeURL)
     }
 
+    @Test("active中のbackground再送は他作品だけhidden coordinatorで再開する")
+    func backgroundRetryResumesInactivePendingWorkHidden() async throws {
+        let harness = try CloudLibraryHarness(connection: .offline)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        await waitUntil { await harness.publishCallCount() == 1 }
+        let activeWorkID = try #require(await harness.onlyRegisteredWorkID())
+        let inactiveWorkID = SyncWorkID()
+        try await harness.seedPublishPending(
+            document: NovelDocument.newDocument(title: "裏で公開を再開する作品"),
+            workID: inactiveWorkID
+        )
+        await harness.setConnection(.available)
+
+        await state.retryAccountScopedPendingPublicationsInBackground()
+
+        #expect(await harness.activeDocumentPublishWorkIDs() == [activeWorkID, activeWorkID])
+        #expect(await harness.hiddenResumeWorkIDs() == [inactiveWorkID])
+    }
+
+    @Test("hidden再送中の作品切替は同じjournal処理が終わるまで待つ")
+    func backgroundRetrySerializesDocumentActivation() async throws {
+        let harness = try CloudLibraryHarness(connection: .offline)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        await waitUntil { await harness.publishCallCount() == 1 }
+        let inactiveWorkID = SyncWorkID()
+        try await harness.seedPublishPending(
+            document: NovelDocument.newDocument(title: "切替と直列化する作品"),
+            workID: inactiveWorkID
+        )
+        await harness.setConnection(.available)
+        await harness.pauseNextHiddenResume()
+
+        let retry = Task { await state.retryAccountScopedPendingPublicationsInBackground() }
+        await waitUntil { await harness.isHiddenResumePaused() }
+        #expect(await harness.hiddenResumeWorkIDs() == [inactiveWorkID])
+        let activeSession = state.documentSessionToken
+        let returnToLibrary = Task {
+            await state.returnToStartupLibrary(expectedSession: activeSession)
+        }
+        await allowTasksToRun()
+        #expect(state.startupState.isReady)
+
+        await harness.resumePausedHiddenResume()
+        await retry.value
+        #expect(await returnToLibrary.value)
+        #expect(!state.startupState.isReady)
+    }
+
+    @Test("bind完了後にcatalogが空でも再起動時に一度だけ再送して同期済みにする")
+    func restartedBoundPublicationMissingFromCatalogResumesExactlyOnce() async throws {
+        let harness = try CloudLibraryHarness(connection: .offline)
+        defer { Task { await harness.remove() } }
+        let initial = try await makeState(harness: harness)
+
+        await initial.bootstrap()
+        #expect(await initial.createNewDocument(expectedSession: initial.documentSessionToken))
+        await waitUntil { await harness.publishCallCount() == 1 }
+        let workID = try #require(await harness.onlyRegisteredWorkID())
+        await harness.hideRemoteCatalog()
+        await harness.setConnection(.available)
+
+        let restarted = try await makeState(harness: harness)
+        await restarted.bootstrap()
+
+        #expect(await harness.publishCallCount() == 2)
+        #expect(try await harness.localRecord(workID)?.state == .synced)
+        #expect(selectionContext(restarted)?.works.first?.availability == .cachedRemote)
+
+        await restarted.refreshStartupLibrary()
+        #expect(await harness.publishCallCount() == 2)
+    }
+
     @Test("pending creationの同じ失敗は再送signalを自己増殖させない")
     func repeatedPendingCreationFailureDoesNotRepublishRecursively() async throws {
         let fixture = try ProductionRuntimeSignalFixture()
@@ -197,9 +277,272 @@ struct DeviceSyncCloudLibraryAppTests {
             locator,
             status: .boundAndBlocked(.temporarilyUnavailable)
         ) == false)
+        #expect(await fixture.runtime.recordKnownLocalBinding(locator) == false)
         fixture.finishSignals()
 
         #expect(await collector.value == 1)
+    }
+
+    @Test("production runtimeは再起動後の2件outboxを一度だけ送信する")
+    func productionRuntimeResumesDurableWorkOutboxExactlyOnce() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let workID = SyncWorkID()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID
+        )
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let first = try WorkSnapshot(document: NovelDocument.newDocument(title: "最初の版"))
+        var updatedDocument = try first.materializedDocument()
+        updatedDocument.title = "再起動前の版"
+        let updated = try WorkSnapshot(document: updatedDocument)
+        let branchID = SyncBranchID()
+        let sessionID = SyncEditSessionID()
+        let rootRevision = try WorkRevision(
+            workID: workID,
+            parentRevisionIDs: [],
+            branchID: branchID,
+            authorReplicaID: fixture.replicaID,
+            authorSessionID: sessionID,
+            snapshot: first,
+            clientCreatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let updatedRevision = try WorkRevision(
+            workID: workID,
+            parentRevisionIDs: [rootRevision.revisionID],
+            branchID: branchID,
+            authorReplicaID: fixture.replicaID,
+            authorSessionID: sessionID,
+            snapshot: updated,
+            clientCreatedAt: Date(timeIntervalSince1970: 101)
+        )
+        try await journal.save(
+            WorkSyncJournalRecord(
+                workID: workID,
+                localWorkingCopyID: binding.localWorkingCopyID,
+                replicaID: fixture.replicaID,
+                branchID: branchID,
+                lastKnownRemoteHead: nil,
+                localHead: updatedRevision,
+                outbox: [rootRevision, updatedRevision]
+            )
+        )
+        let seededRecord = try #require(await journal.storedRecord(for: workID))
+        #expect(seededRecord.outbox.count == 2)
+
+        await transport.pauseNextPublish()
+        let firstRetry = Task {
+            try await fixture.runtime.resumeInitialWorkPublication(
+                binding: binding,
+                journal: journal,
+                transport: transport,
+                initialSnapshot: updated,
+                at: Date(timeIntervalSince1970: 102)
+            )
+        }
+        #expect(await transport.waitUntilPublishIsPaused())
+        let coalescedRetry = Task {
+            try await fixture.runtime.resumeInitialWorkPublication(
+                binding: binding,
+                journal: journal,
+                transport: transport,
+                initialSnapshot: updated,
+                at: Date(timeIntervalSince1970: 102)
+            )
+        }
+        await allowTasksToRun()
+        #expect(await transport.publishCallCount() == 1)
+        await transport.resumePausedPublish()
+        try await firstRetry.value
+        try await coalescedRetry.value
+
+        #expect(await transport.publishCallCount() == 1)
+        #expect(await transport.currentHead(for: workID)?.snapshot == updated)
+        let publishedRecord = try #require(await journal.storedRecord(for: workID))
+        #expect(publishedRecord.outbox.isEmpty)
+
+        try await fixture.runtime.resumeInitialWorkPublication(
+            binding: binding,
+            journal: journal,
+            transport: transport,
+            initialSnapshot: updated,
+            at: Date(timeIntervalSince1970: 103)
+        )
+        #expect(await transport.publishCallCount() == 1)
+    }
+
+    @Test("production runtimeはjournal作成前のkill窓をexact snapshotから一度だけ公開する")
+    func productionRuntimeBootstrapsMissingWorkJournalExactlyOnce() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let workID = SyncWorkID()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID
+        )
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let snapshot = try WorkSnapshot(
+            document: NovelDocument.newDocument(title: "journal前に確定済みの作品")
+        )
+
+        try await fixture.runtime.resumeInitialWorkPublication(
+            binding: binding,
+            journal: journal,
+            transport: transport,
+            initialSnapshot: snapshot,
+            at: Date(timeIntervalSince1970: 200)
+        )
+
+        #expect(await transport.publishCallCount() == 1)
+        #expect(await transport.currentHead(for: workID)?.snapshot == snapshot)
+        let record = try #require(await journal.storedRecord(for: workID))
+        #expect(record.outbox.isEmpty)
+        #expect(record.reconciliationStatus == .synchronized)
+
+        try await fixture.runtime.resumeInitialWorkPublication(
+            binding: binding,
+            journal: journal,
+            transport: transport,
+            initialSnapshot: snapshot,
+            at: Date(timeIntervalSince1970: 201)
+        )
+        #expect(await transport.publishCallCount() == 1)
+    }
+
+    @Test("production runtimeはofflineになった初回outboxを接続回復後に再送する")
+    func productionRuntimeRetriesOfflineInitialJournal() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let workID = SyncWorkID()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID
+        )
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let snapshot = try WorkSnapshot(
+            document: NovelDocument.newDocument(title: "接続後に再送する作品")
+        )
+        await transport.failNextPublishAsUnavailable()
+
+        try await fixture.runtime.resumeInitialWorkPublication(
+            binding: binding,
+            journal: journal,
+            transport: transport,
+            initialSnapshot: snapshot,
+            at: Date(timeIntervalSince1970: 250)
+        )
+        let offline = try #require(await journal.storedRecord(for: workID))
+        #expect(offline.reconciliationStatus == .offline)
+        #expect(offline.outbox.count == 1)
+
+        try await fixture.runtime.resumeInitialWorkPublication(
+            binding: binding,
+            journal: journal,
+            transport: transport,
+            initialSnapshot: snapshot,
+            at: Date(timeIntervalSince1970: 251)
+        )
+        let synchronized = try #require(await journal.storedRecord(for: workID))
+        #expect(synchronized.reconciliationStatus == .synchronized)
+        #expect(synchronized.outbox.isEmpty)
+        #expect(await transport.publishCallCount() == 2)
+    }
+
+    @Test("production runtimeはpackageと異なるjournalをhidden resumeしない")
+    func productionRuntimeRefusesMismatchedInitialJournal() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let workID = SyncWorkID()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID
+        )
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let seed = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: binding.localWorkingCopyID,
+            replicaID: fixture.replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        let storedSnapshot = try WorkSnapshot(
+            document: NovelDocument.newDocument(title: "journal側の作品")
+        )
+        _ = try await seed.bootstrapLocalSnapshot(
+            storedSnapshot,
+            at: Date(timeIntervalSince1970: 300)
+        )
+        var packageDocument = try storedSnapshot.materializedDocument()
+        packageDocument.title = "package側だけ進んだ作品"
+        let packageSnapshot = try WorkSnapshot(document: packageDocument)
+        let before = await journal.storedRecord(for: workID)
+
+        await #expect(throws: WorkSyncCoordinatorError.packageSnapshotMismatch) {
+            try await fixture.runtime.resumeInitialWorkPublication(
+                binding: binding,
+                journal: journal,
+                transport: transport,
+                initialSnapshot: packageSnapshot,
+                at: Date(timeIntervalSince1970: 301)
+            )
+        }
+
+        #expect(await transport.publishCallCount() == 0)
+        let after = await journal.storedRecord(for: workID)
+        #expect(after == before)
+    }
+
+    @Test("production runtimeはremote既知のjournalをactive preflightから奪わない")
+    func productionRuntimeRefusesRemoteKnownJournal() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let workID = SyncWorkID()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID
+        )
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let seed = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: binding.localWorkingCopyID,
+            replicaID: fixture.replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        let first = try WorkSnapshot(document: NovelDocument.newDocument(title: "同期済み"))
+        _ = try await seed.bootstrapLocalSnapshot(first, at: Date(timeIntervalSince1970: 400))
+        _ = try await seed.synchronize(at: Date(timeIntervalSince1970: 401))
+        var updatedDocument = try first.materializedDocument()
+        updatedDocument.title = "同期後のlocal変更"
+        let updated = try WorkSnapshot(document: updatedDocument)
+        let staged = try await seed.stageLocalSnapshot(updated, at: Date(timeIntervalSince1970: 402))
+        try await seed.confirmLocalSnapshotMaterialized(
+            staged.revisionID,
+            packageSnapshot: updated
+        )
+        let before = await journal.storedRecord(for: workID)
+
+        await #expect(throws: DeviceSyncInitialWorkPublicationError.requiresActiveDocumentPreflight) {
+            try await fixture.runtime.resumeInitialWorkPublication(
+                binding: binding,
+                journal: journal,
+                transport: transport,
+                initialSnapshot: updated,
+                at: Date(timeIntervalSince1970: 403)
+            )
+        }
+
+        #expect(await transport.publishCallCount() == 1)
+        let after = await journal.storedRecord(for: workID)
+        #expect(after == before)
     }
 
     @Test("remote catalog失敗でもlocal-only新規を端末へ保存できる")
@@ -355,6 +698,7 @@ struct DeviceSyncCloudLibraryAppTests {
 
 private struct ProductionRuntimeSignalFixture {
     let baseURL: URL
+    let replicaID: SyncReplicaID
     let signals: AsyncStream<Void>
     let runtime: DeviceSyncProductionRuntimeBox
     private let signalContinuation: AsyncStream<Void>.Continuation
@@ -385,10 +729,12 @@ private struct ProductionRuntimeSignalFixture {
         let streamPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(16))
         signals = streamPair.stream
         signalContinuation = streamPair.continuation
-        runtime = try DeviceSyncProductionRuntimeBox(
-            localBootstrap: AppleDeviceSyncLocalBootstrap.prepare(
-                rootURL: baseURL.appendingPathComponent("metadata", isDirectory: true)
-            ),
+        let localBootstrap = try AppleDeviceSyncLocalBootstrap.prepare(
+            rootURL: baseURL.appendingPathComponent("metadata", isDirectory: true)
+        )
+        replicaID = localBootstrap.replicaID
+        runtime = DeviceSyncProductionRuntimeBox(
+            localBootstrap: localBootstrap,
             workingCopyRoot: workingRoot,
             localLibraryStore: localStore,
             signalContinuation: streamPair.continuation
@@ -401,6 +747,56 @@ private struct ProductionRuntimeSignalFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: baseURL)
+    }
+}
+
+private actor CountingWorkSyncTransport: WorkSyncTransport {
+    private let server = InMemoryWorkSyncServer()
+    private var publishCalls = 0
+    private var shouldFailNextPublishAsUnavailable = false
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        try await server.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        try await server.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        publishCalls += 1
+        if shouldFailNextPublishAsUnavailable {
+            shouldFailNextPublishAsUnavailable = false
+            throw WorkSyncTransportError.unavailable
+        }
+        return try await server.publish(request)
+    }
+
+    func publishCallCount() -> Int {
+        publishCalls
+    }
+
+    func failNextPublishAsUnavailable() {
+        shouldFailNextPublishAsUnavailable = true
+    }
+
+    func pauseNextPublish() async {
+        await server.pauseNextPublish()
+    }
+
+    func waitUntilPublishIsPaused() async -> Bool {
+        await server.waitUntilPublishIsPaused()
+    }
+
+    func resumePausedPublish() async {
+        await server.resumePausedPublish()
+    }
+
+    func currentHead(for workID: SyncWorkID) async -> WorkRevision? {
+        await server.currentHead(for: workID)
     }
 }
 
@@ -421,6 +817,10 @@ private actor CloudLibraryHarness {
     private var authorities: Set<SyncWorkID> = []
     private var remoteLoadFails = false
     private var publishCalls: [SyncWorkID] = []
+    private var activeDocumentPublishCalls: [SyncWorkID] = []
+    private var hiddenResumeCalls: [SyncWorkID] = []
+    private var shouldPauseNextHiddenResume = false
+    private var hiddenResumePaused = false
     private var mostRecentlyReservedWorkID: SyncWorkID?
 
     init(connection: DeviceSyncLibraryConnection) throws {
@@ -512,7 +912,10 @@ private actor CloudLibraryHarness {
                 await self.authorities.contains(workID)
             },
             publishNewWork: { workID, document, _ in
-                try await self.publish(workID, document: document)
+                try await self.publishFromActiveDocument(workID, document: document)
+            },
+            resumeInitialWorkPublication: { workID, document, _ in
+                try await self.resumeInitialPublication(workID, document: document)
             }
         )
     }
@@ -535,6 +938,20 @@ private actor CloudLibraryHarness {
     func seedAppOnlyRemoteIntent(document: NovelDocument, workID: SyncWorkID) async throws {
         let revision = try makeRevision(document: document, workID: workID)
         try await store.beginRemoteOpen(SyncWorkLibraryEntry(head: revision))
+    }
+
+    func seedPublishPending(document: NovelDocument, workID: SyncWorkID) async throws {
+        let attestation = try DeviceSyncLocalPackageAttestation(
+            document: document,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        try await store.reserveForPublish(workID: workID, expectedPackage: attestation)
+        let staging = try await store.stagingPackageURL(for: workID)
+        try await NovelpkgRepository().save(document, to: staging)
+        try await store.attestPublishStaging(workID: workID, package: attestation)
+        _ = try await store.installStagingPackage(staging, for: workID)
+        try await store.confirmPublishPackage(workID: workID, package: attestation)
+        authorities.insert(workID)
     }
 
     func seedKilledBeforeStagingAttestation(
@@ -589,6 +1006,26 @@ private actor CloudLibraryHarness {
 
     func publishCallCount() -> Int {
         publishCalls.count
+    }
+
+    func activeDocumentPublishWorkIDs() -> [SyncWorkID] {
+        activeDocumentPublishCalls
+    }
+
+    func hiddenResumeWorkIDs() -> [SyncWorkID] {
+        hiddenResumeCalls
+    }
+
+    func pauseNextHiddenResume() {
+        shouldPauseNextHiddenResume = true
+    }
+
+    func isHiddenResumePaused() -> Bool {
+        hiddenResumePaused
+    }
+
+    func resumePausedHiddenResume() {
+        hiddenResumePaused = false
     }
 
     func hasAuthority(_ workID: SyncWorkID) -> Bool {
@@ -678,6 +1115,29 @@ private actor CloudLibraryHarness {
         remoteEntries = [
             DeviceSyncRemoteLibraryEntry(work: value.0, availability: .locallyBound)
         ]
+    }
+
+    private func publishFromActiveDocument(
+        _ workID: SyncWorkID,
+        document: NovelDocument
+    ) throws {
+        activeDocumentPublishCalls.append(workID)
+        try publish(workID, document: document)
+    }
+
+    private func resumeInitialPublication(
+        _ workID: SyncWorkID,
+        document: NovelDocument
+    ) async throws {
+        hiddenResumeCalls.append(workID)
+        if shouldPauseNextHiddenResume {
+            shouldPauseNextHiddenResume = false
+            hiddenResumePaused = true
+            while hiddenResumePaused {
+                await Task.yield()
+            }
+        }
+        try publish(workID, document: document)
     }
 
     private func publish(_ workID: SyncWorkID, document: NovelDocument) throws {

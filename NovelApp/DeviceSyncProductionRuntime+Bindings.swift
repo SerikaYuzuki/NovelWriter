@@ -128,7 +128,7 @@ extension DeviceSyncProductionRuntimeBox {
         session: DocumentSessionToken,
         descriptor: SyncWorkDescriptor,
         allowedEpisodes: [EpisodeID]
-    ) async throws {
+    ) async throws -> AppleResolvedWorkingCopy? {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
@@ -136,13 +136,20 @@ extension DeviceSyncProductionRuntimeBox {
         guard try locator == (AppleLocalDocumentLocator.cloudLibrary(workID: descriptor.workID)) else {
             throw EpisodeSyncTransportError.unavailable
         }
+        // A process restart begins with an empty live cache. Seed this locator
+        // from durable metadata without emitting a synthetic remote-change
+        // signal; the startup/foreground refresh that called us is the retry.
+        if isLocallyBound(locator) {
+            knownBoundLocators.insert(locator)
+        }
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
+        let remotelyResolved: AppleResolvedWorkingCopy?
         do {
             switch state {
             case let .ready(services):
-                _ = try await services.createAndBindNewWork(
+                remotelyResolved = try await services.createAndBindNewWork(
                     locator,
                     proposedDescriptor: descriptor,
                     allowedEpisodeIDs: allowedEpisodes
@@ -153,6 +160,7 @@ extension DeviceSyncProductionRuntimeBox {
                     proposedDescriptor: descriptor,
                     allowedEpisodeIDs: allowedEpisodes
                 )
+                remotelyResolved = nil
             case .starting, .blocked(nil):
                 throw EpisodeSyncTransportError.unavailable
             }
@@ -174,8 +182,100 @@ extension DeviceSyncProductionRuntimeBox {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        knownBoundLocators.insert(locator)
-        signalContinuation.yield()
+        recordKnownLocalBinding(locator)
+        return remotelyResolved
+    }
+
+    /// A work root and binding can outlive the process while its WorkSync
+    /// journal still has a sealed or unsealed outbox. If the process died before
+    /// the first journal commit, bootstrap only from the exact validated package
+    /// snapshot supplied by the library boundary.
+    func resumeInitialWorkPublication(
+        session: DocumentSessionToken,
+        descriptor: SyncWorkDescriptor,
+        allowedEpisodes: [EpisodeID],
+        initialSnapshot: WorkSnapshot
+    ) async throws {
+        guard let resolved = try await startNew(
+            session: session,
+            descriptor: descriptor,
+            allowedEpisodes: allowedEpisodes
+        ) else {
+            throw EpisodeSyncTransportError.unavailable
+        }
+        try await resumeInitialWorkPublication(
+            binding: resolved.binding,
+            journal: resolved.workJournal,
+            transport: self,
+            initialSnapshot: initialSnapshot,
+            at: Date()
+        )
+    }
+
+    func resumeInitialWorkPublication(
+        binding: SyncWorkingCopyBinding,
+        journal: any WorkSyncJournal,
+        transport: any WorkSyncTransport,
+        initialSnapshot: WorkSnapshot,
+        at date: Date
+    ) async throws {
+        if let existing = pendingWorkPublicationTasks[binding.workID] {
+            try await existing.value
+            return
+        }
+        let replicaID = localBootstrap.replicaID
+        let task = Task {
+            let coordinator = WorkSyncCoordinator(
+                workID: binding.workID,
+                localWorkingCopyID: binding.localWorkingCopyID,
+                replicaID: replicaID,
+                sessionID: SyncEditSessionID(),
+                transport: transport,
+                journal: journal
+            )
+            if let restored = try await coordinator.restore() {
+                guard restored.localHead.snapshot == initialSnapshot else {
+                    throw WorkSyncCoordinatorError.packageSnapshotMismatch
+                }
+                if restored.pendingRevisionCount == 0,
+                   restored.reconciliationStatus == .synchronized {
+                    return
+                }
+                guard restored.lastKnownRemoteHead == nil,
+                      restored.stagedLocalRevision == nil,
+                      restored.pendingRemoteMaterialization == nil,
+                      restored.retainedLocalRecoveryRevision == nil,
+                      restored.conflictReview == nil,
+                      restored.reconciliationStatus == .pending
+                      || restored.reconciliationStatus == .offline,
+                      restored.pendingRevisionCount > 0,
+                      let record = try await journal.load(for: binding.workID),
+                      Self.isInitialPublicationLineage(record) else {
+                    throw DeviceSyncInitialWorkPublicationError.requiresActiveDocumentPreflight
+                }
+            } else {
+                _ = try await coordinator.bootstrapLocalSnapshot(initialSnapshot, at: date)
+            }
+            _ = try await coordinator.synchronize(at: date)
+        }
+        pendingWorkPublicationTasks[binding.workID] = task
+        do {
+            try await task.value
+            pendingWorkPublicationTasks[binding.workID] = nil
+        } catch {
+            pendingWorkPublicationTasks[binding.workID] = nil
+            throw error
+        }
+    }
+
+    private static func isInitialPublicationLineage(_ record: WorkSyncJournalRecord) -> Bool {
+        guard record.lastKnownRemoteHead == nil,
+              !record.outbox.isEmpty,
+              record.outbox.last == record.localHead,
+              record.outbox.first?.parentRevisionIDs.isEmpty == true else { return false }
+        return zip(record.outbox.dropFirst(), record.outbox).allSatisfy { pair in
+            pair.0.parentRevisionIDs == [pair.1.revisionID]
+        }
     }
 
     /// A failed remote create can still leave the durable local intent and
@@ -186,8 +286,16 @@ extension DeviceSyncProductionRuntimeBox {
         _ locator: AppleLocalDocumentLocator,
         status: AppleDeviceSyncLocalBindingStatus
     ) -> Bool {
-        guard status != .unbound,
-              knownBoundLocators.insert(locator).inserted else { return false }
+        guard status != .unbound else { return false }
+        return recordKnownLocalBinding(locator)
+    }
+
+    /// Binding discovery is an edge-triggered wakeup. Both a successful resume
+    /// and a failed create may discover the same durable binding, but neither
+    /// may turn its own retry result into an unbounded signal loop.
+    @discardableResult
+    func recordKnownLocalBinding(_ locator: AppleLocalDocumentLocator) -> Bool {
+        guard knownBoundLocators.insert(locator).inserted else { return false }
         signalContinuation.yield()
         return true
     }

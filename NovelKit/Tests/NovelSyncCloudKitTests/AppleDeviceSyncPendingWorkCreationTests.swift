@@ -52,6 +52,54 @@ struct AppleDeviceSyncPendingWorkCreationTests {
         #expect(completed.pendingWorkCreations[locator] == nil)
     }
 
+    @Test("confirmed binding without pending intent resumes only the same work")
+    func completedCreationBindingIsIdempotentRetryEvidence() async throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let locator = try AppleLocalDocumentLocator(rawValue: "mac.completed-create")
+        let descriptor = try makeDescriptor(title: "公開を再開する作品")
+        let store = try await preparedStore(root: root)
+        let intent = try await store.preparePendingWorkCreation(
+            locator,
+            proposedDescriptor: descriptor,
+            allowedEpisodeIDs: [cloudTestEpisodeID]
+        )
+        let binding = try await store.bind(
+            locator,
+            to: descriptor.workID,
+            allowedEpisodeIDs: [cloudTestEpisodeID]
+        )
+
+        let beforeConfirmation = await store.snapshot()
+        #expect(try AppleDeviceSyncServices.completedCreationBindingToResume(
+            metadata: beforeConfirmation,
+            locator: locator,
+            proposedDescriptor: descriptor
+        ) == nil)
+
+        try await store.completePendingWorkCreation(intent)
+        let confirmed = await store.snapshot()
+        #expect(try AppleDeviceSyncServices.completedCreationBindingToResume(
+            metadata: confirmed,
+            locator: locator,
+            proposedDescriptor: descriptor
+        ) == binding)
+
+        let differentWork = SyncWorkDescriptor(
+            workID: SyncWorkID(),
+            sourceDocumentID: descriptor.sourceDocumentID,
+            structureDigest: descriptor.structureDigest,
+            title: descriptor.title
+        )
+        #expect(throws: AppleDeviceSyncServicesError.pendingWorkCreationMismatch) {
+            try AppleDeviceSyncServices.completedCreationBindingToResume(
+                metadata: confirmed,
+                locator: locator,
+                proposedDescriptor: differentWork
+            )
+        }
+    }
+
     @Test("mismatch and pre-bind clear fail closed without changing the intent")
     func mismatchIsFailClosed() async throws {
         let root = try makeCloudTestDirectory()
