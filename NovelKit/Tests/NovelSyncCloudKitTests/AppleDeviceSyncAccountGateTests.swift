@@ -64,6 +64,102 @@ struct AppleDeviceSyncAccountGateTests {
         #expect(!wroteAfterEvent)
     }
 
+    @Test("an initial same-account sign-in revalidates without permanently fencing the runtime")
+    func initialSameAccountSignInRemainsReady() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+
+        let availability = await gate.revalidateForSignIn()
+        #expect(availability == .ready)
+        try await gate.performOperation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
+    @Test("same-account sign-in cancels an in-flight mutation before keeping the runtime ready")
+    func sameAccountSignInCancelsInFlightMutation() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+        let operation = Task {
+            try await gate.performMutation {
+                await probe.markStarted()
+                try await Task.sleep(for: .seconds(60))
+                await probe.recordWrite()
+            }
+        }
+        await probe.waitUntilStarted()
+
+        #expect(await gate.revalidateForSignIn() == .ready)
+        var operationWasCancelled = false
+        do {
+            try await operation.value
+        } catch {
+            operationWasCancelled = true
+        }
+        #expect(operationWasCancelled)
+        let wroteBeforeValidation = await probe.didWrite
+        #expect(!wroteBeforeValidation)
+
+        try await gate.performMutation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
+    @Test("a sign-in event for another account fences before later operations")
+    func differentAccountSignInFencesRuntime() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: accountScope("account-b"))
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+
+        let availability = await gate.revalidateForSignIn()
+        #expect(availability == .blocked(.differentCloudAccount))
+        await #expect(
+            throws: AppleDeviceSyncServicesError.blocked(.differentCloudAccount)
+        ) {
+            try await gate.performOperation {
+                await probe.recordWrite()
+            }
+        }
+        let didWrite = await probe.didWrite
+        #expect(!didWrite)
+    }
+
+    @Test("a temporary sign-in identity failure stays retryable")
+    func temporarySignInValidationFailureStaysRetryable() async throws {
+        let original = accountScope("account-a")
+        let resolver = OneShotAccountScopeResolver(
+            firstError: CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable),
+            scope: original
+        )
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { try await resolver.resolve() }
+        )
+
+        #expect(await gate.revalidateForSignIn() == .ready)
+        try await gate.performOperation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
     @Test("a temporary live identity failure stays retryable and never writes")
     func temporaryAccountFailureStaysRetryable() async throws {
         let original = accountScope("account-a")
@@ -175,6 +271,24 @@ private actor AccountScopeBox {
 
     func setScope(_ scope: AppleCloudAccountScope) {
         self.scope = scope
+    }
+}
+
+private actor OneShotAccountScopeResolver {
+    private var firstError: CloudKitSyncAdapterError?
+    private let scope: AppleCloudAccountScope
+
+    init(firstError: CloudKitSyncAdapterError, scope: AppleCloudAccountScope) {
+        self.firstError = firstError
+        self.scope = scope
+    }
+
+    func resolve() throws -> AppleCloudAccountScope {
+        if let firstError {
+            self.firstError = nil
+            throw firstError
+        }
+        return scope
     }
 }
 

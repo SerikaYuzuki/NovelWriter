@@ -231,15 +231,47 @@ if plutil -convert json -o - NovelApp/NovelApp.entitlements | jq -e \
   exit 1
 fi
 if ! plutil -convert json -o - NovelApp/NovelApp.entitlements | jq -e \
-  '.["com.apple.developer.aps-environment"] == "development"' >/dev/null; then
-  echo "error: the macOS app must carry the push entitlement for Device Sync" >&2
+  '.["com.apple.developer.aps-environment"] == "$(FUMINIWA_APS_ENVIRONMENT)" and
+   .["com.apple.developer.icloud-container-environment"] == "$(FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT)"' \
+  >/dev/null; then
+  echo "error: the macOS app must carry configuration-aware push and iCloud environment entitlements" >&2
   exit 1
 fi
 if ! plutil -convert json -o - NovelAppIOS/FUMINIWAIOS.entitlements | jq -e \
-  '.["aps-environment"] == "development"' >/dev/null; then
-  echo "error: the iOS app must carry the push entitlement for Device Sync" >&2
+  '.["aps-environment"] == "$(FUMINIWA_APS_ENVIRONMENT)" and
+   .["com.apple.developer.icloud-container-environment"] == "$(FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT)"' \
+  >/dev/null; then
+  echo "error: the iOS app must carry configuration-aware push and iCloud environment entitlements" >&2
   exit 1
 fi
+jq -e '
+  def target($objects; $name):
+    $objects | to_entries[] |
+      select(.value.isa == "PBXNativeTarget" and .value.name == $name) |
+      .value;
+  def configurations($objects; $name):
+    target($objects; $name).buildConfigurationList as $list |
+      [$objects[$list].buildConfigurations[] as $configuration |
+        {
+          name: $objects[$configuration].name,
+          settings: $objects[$configuration].buildSettings
+        }];
+  def hasDeviceSyncEnvironments:
+    all(
+      if .name == "Debug" then
+        .settings.FUMINIWA_APS_ENVIRONMENT == "development" and
+        .settings.FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT == "Development"
+      elif .name == "Release" then
+        .settings.FUMINIWA_APS_ENVIRONMENT == "production" and
+        .settings.FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT == "Production"
+      else
+        false
+      end
+    );
+  .objects as $objects |
+  (configurations($objects; "NovelApp") | hasDeviceSyncEnvironments) and
+  (configurations($objects; "FUMINIWAIOS") | hasDeviceSyncEnvironments)
+' "$audit_tmp" >/dev/null
 if rg -n 'URLSession|Network\.framework|NWConnection|OpenRouter|codex_sdk' NovelAppIOS; then
   echo "error: the iOS app contains a provider or network callsite" >&2
   exit 1

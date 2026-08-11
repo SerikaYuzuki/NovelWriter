@@ -132,14 +132,16 @@ private actor AppleDeviceSyncSignalRelay {
         switch signal {
         case .remoteChangesAvailable:
             continuation.yield(.remoteChangesAvailable)
-        case .accountChanged:
-            let availability = await accountGate.blockForAccountChange()
-            do {
-                _ = try await metadataStore.invalidateEngineState(
-                    expectedGeneration: engineStateGeneration
-                )
-            } catch {
-                continuation.yield(.statePersistenceFailed)
+        case let .accountChanged(kind):
+            let availability = await accountGate.handleAccountChange(kind)
+            if case .blocked = availability {
+                do {
+                    _ = try await metadataStore.invalidateEngineState(
+                        expectedGeneration: engineStateGeneration
+                    )
+                } catch {
+                    continuation.yield(.statePersistenceFailed)
+                }
             }
             continuation.yield(.accountChanged(availability))
         case .zoneReset:
@@ -156,7 +158,6 @@ private actor AppleDeviceSyncSignalRelay {
     func persistEngineState(_ state: Data) async {
         do {
             // falseはaccount invalidation後に届いた旧generation callback。
-            // errorではなく意図どおり無視し、新accountへstateを持ち越さない。
             _ = try await metadataStore.saveEngineState(
                 state,
                 generation: engineStateGeneration

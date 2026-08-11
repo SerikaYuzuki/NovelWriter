@@ -18,6 +18,12 @@ packages:
   NovelKit:
     path: NovelKit
 
+# Signing.local.xcconfig is an optional, ignored per-developer override. This
+# keeps Team selection across XcodeGen regeneration without committing a Team ID.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
 schemes:
   FUMINIWA:
     build:
@@ -86,6 +92,13 @@ targets:
         # App Sandbox は採用しない(docs/DECISIONS.md D-011)。Device Sync用の
         # CloudKit / Push entitlementだけを持たせ、sandbox entitlementは付与しない。
         ENABLE_HARDENED_RUNTIME: YES
+      configs:
+        Debug:
+          FUMINIWA_APS_ENVIRONMENT: development
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Development
+        Release:
+          FUMINIWA_APS_ENVIRONMENT: production
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Production
   NovelAppTests:
     type: bundle.unit-test
     platform: macOS
@@ -242,6 +255,13 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug:
+          FUMINIWA_APS_ENVIRONMENT: development
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Development
+        Release:
+          FUMINIWA_APS_ENVIRONMENT: production
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Production
   FUMINIWAIOSTests:
     type: bundle.unit-test
     platform: iOS

@@ -1,9 +1,15 @@
 import CloudKit
 import Foundation
 
+public enum CloudKitAccountChangeKind: Equatable, Sendable {
+    case signIn
+    case signOut
+    case switchAccounts
+}
+
 public enum CloudKitSyncSignal: Equatable, Sendable {
     case remoteChangesAvailable
-    case accountChanged
+    case accountChanged(CloudKitAccountChangeKind)
     case zoneReset
     case stateSerializationFailed
 }
@@ -102,9 +108,10 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
             } catch {
                 await signalHandler?(.stateSerializationFailed)
             }
-        case .accountChange:
+        case let .accountChange(change):
+            let kind = Self.accountChangeKind(change)
             async let cancellation: Void = syncEngine.cancelOperations()
-            await signalHandler?(.accountChanged)
+            await signalHandler?(.accountChanged(kind))
             await cancellation
         case let .fetchedDatabaseChanges(changes):
             if changes.deletions.contains(where: { $0.zoneID == CloudKitSyncSchema.zoneID }) {
@@ -122,6 +129,23 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
             }
         default:
             break
+        }
+    }
+
+    private static func accountChangeKind(
+        _ change: CKSyncEngine.Event.AccountChange
+    ) -> CloudKitAccountChangeKind {
+        switch change.changeType {
+        case .signIn:
+            .signIn
+        case .signOut:
+            .signOut
+        case .switchAccounts:
+            .switchAccounts
+        @unknown default:
+            // An unknown account transition must never be treated as the
+            // harmless initial sign-in bootstrap case.
+            .switchAccounts
         }
     }
 

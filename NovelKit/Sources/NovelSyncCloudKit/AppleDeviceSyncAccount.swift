@@ -59,6 +59,7 @@ actor AppleDeviceSyncAccountGate {
     private let expectedScope: AppleCloudAccountScope
     private let scopeResolver: ScopeResolver
     private var currentAvailability: AppleDeviceSyncAvailability = .ready
+    private var signInValidationID: UUID?
     private var activeOperations: [UUID: @Sendable () -> Void] = [:]
 
     init(
@@ -70,10 +71,16 @@ actor AppleDeviceSyncAccountGate {
     }
 
     func availability() -> AppleDeviceSyncAvailability {
-        currentAvailability
+        if signInValidationID != nil {
+            return .blocked(.temporarilyUnavailable)
+        }
+        return currentAvailability
     }
 
     func requireAvailable() throws {
+        if signInValidationID != nil {
+            throw AppleDeviceSyncServicesError.blocked(.temporarilyUnavailable)
+        }
         guard case .ready = currentAvailability else {
             if case let .blocked(reason) = currentAvailability {
                 throw AppleDeviceSyncServicesError.blocked(reason)
@@ -108,7 +115,7 @@ actor AppleDeviceSyncAccountGate {
             try requireAvailable()
             return value
         } catch {
-            if case let .blocked(reason) = currentAvailability {
+            if case let .blocked(reason) = availability() {
                 throw AppleDeviceSyncServicesError.blocked(reason)
             }
             throw error
@@ -121,10 +128,62 @@ actor AppleDeviceSyncAccountGate {
         try await performOperation(mutation)
     }
 
-    /// CKSyncEngineのaccountChangeはidentity再取得を待たず即時fenceする。
-    /// 元accountへ戻ってもこのruntimeは復活させず、factoryの再作成を要求する。
-    func blockForAccountChange() -> AppleDeviceSyncAvailability {
-        block(.accountUnavailable)
+    /// A newly-created CKSyncEngine reports the already-signed-in account as a
+    /// `.signIn` event when it starts without restored engine state. Fence any
+    /// in-flight operation while revalidating that live identity, but keep this
+    /// runtime usable when it is still the exact bootstrap account.
+    func revalidateForSignIn() async -> AppleDeviceSyncAvailability {
+        guard case .ready = currentAvailability else { return currentAvailability }
+
+        let validationID = UUID()
+        signInValidationID = validationID
+        cancelActiveOperations()
+
+        let currentScope: AppleCloudAccountScope
+        do {
+            currentScope = try await scopeResolver()
+        } catch {
+            guard signInValidationID == validationID else { return currentAvailability }
+            signInValidationID = nil
+            if CloudKitErrorMapper.isTransient(error) {
+                // The next remote operation performs the same live identity
+                // check. Staying retryable here cannot authorize a write.
+                return currentAvailability
+            }
+            block(.accountUnavailable)
+            return currentAvailability
+        }
+
+        // The actor can re-enter while the resolver is suspended. A later
+        // sign-out/switch fence always wins over this completed validation.
+        guard signInValidationID == validationID else { return currentAvailability }
+        signInValidationID = nil
+        guard currentScope == expectedScope else {
+            block(.differentCloudAccount)
+            return currentAvailability
+        }
+        return currentAvailability
+    }
+
+    func handleAccountChange(
+        _ kind: CloudKitAccountChangeKind
+    ) async -> AppleDeviceSyncAvailability {
+        switch kind {
+        case .signIn:
+            await revalidateForSignIn()
+        case .signOut:
+            blockForAccountChange()
+        case .switchAccounts:
+            blockForAccountChange(.differentCloudAccount)
+        }
+    }
+
+    /// CKSyncEngine sign-out/switch events fence immediately. Returning to the
+    /// old account never revives this runtime; the factory must recreate it.
+    func blockForAccountChange(
+        _ reason: AppleDeviceSyncBlockReason = .accountUnavailable
+    ) -> AppleDeviceSyncAvailability {
+        block(reason)
         return currentAvailability
     }
 
@@ -151,8 +210,13 @@ actor AppleDeviceSyncAccountGate {
     }
 
     private func block(_ reason: AppleDeviceSyncBlockReason) {
+        signInValidationID = nil
         guard case .ready = currentAvailability else { return }
         currentAvailability = .blocked(reason)
+        cancelActiveOperations()
+    }
+
+    private func cancelActiveOperations() {
         let cancellations = Array(activeOperations.values)
         activeOperations.removeAll()
         for cancel in cancellations {

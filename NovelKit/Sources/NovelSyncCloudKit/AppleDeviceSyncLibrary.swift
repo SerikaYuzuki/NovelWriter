@@ -91,6 +91,64 @@ struct ApplePendingLibraryOpenSnapshot: Equatable, Sendable {
     let entry: SyncWorkLibraryEntry
 }
 
+extension AppleDeviceSyncMetadataSnapshot {
+    /// A missing zone is an initial empty-library state only when this account
+    /// has no evidence of a previously published/downloaded remote graph.
+    /// Unconfirmed local create intents may resume because their exact WorkID
+    /// and binding are already durable and `bootstrapZoneForNewSync` is the only
+    /// path that can create the zone. Confirmed bindings, cached remote heads,
+    /// and pending downloads keep the old fail-closed zone-reset behavior.
+    var permitsInitialZoneCreation: Bool {
+        guard accountScope != nil,
+              cachedLibraryEntries.isEmpty,
+              pendingLibraryOpens.isEmpty else { return false }
+
+        for (locator, binding) in bindings {
+            guard let pending = pendingWorkCreations[locator],
+                  pending.descriptor.workID == binding.binding.workID else {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Development can report `invalidArguments` when the custom zone exists
+    /// but the first WorkControl record type has not been materialized yet.
+    /// Only an exact durable create intent may cross that bootstrap window.
+    var permitsPendingCreateSchemaBootstrap: Bool {
+        guard accountScope != nil,
+              cachedLibraryEntries.isEmpty,
+              pendingLibraryOpens.isEmpty,
+              !pendingWorkCreations.isEmpty,
+              bindings.count == pendingWorkCreations.count else { return false }
+
+        for (locator, binding) in bindings {
+            guard let pending = pendingWorkCreations[locator],
+                  pending.descriptor.workID == binding.binding.workID else {
+                return false
+            }
+        }
+        return true
+    }
+}
+
+enum AppleDeviceSyncLibraryBootstrapPolicy {
+    static func permitsEmptyAvailableCatalog(
+        for error: any Error,
+        metadata: AppleDeviceSyncMetadataSnapshot
+    ) -> Bool {
+        guard let adapterError = error as? CloudKitSyncAdapterError else { return false }
+        return switch adapterError {
+        case .zoneUnavailable:
+            metadata.permitsInitialZoneCreation
+        case .invalidArguments:
+            metadata.permitsPendingCreateSchemaBootstrap
+        default:
+            false
+        }
+    }
+}
+
 protocol AppleDeviceSyncLibraryRemote: SyncWorkLibraryCatalog, WorkSyncTransport {}
 
 extension AppleDeviceSyncRemoteBoundary: AppleDeviceSyncLibraryRemote {}
@@ -306,8 +364,25 @@ public extension AppleDeviceSyncServices {
             remoteEntries = try await remoteBoundary.listLibraryWorks()
             try await accountGate.requireAvailable()
         } catch {
+            let metadata = await metadataStore.snapshot()
+            if AppleDeviceSyncLibraryBootstrapPolicy.permitsEmptyAvailableCatalog(
+                for: error,
+                metadata: metadata
+            ) {
+                // `listLibraryWorks` runs behind the live account gate. A clean
+                // container may have neither the custom zone nor, after a kill
+                // between zone and first-record creation, the WorkControl type.
+                // Only the exact initial states accepted above break that
+                // list-before-create cycle. Prior remote evidence stays closed.
+                try await accountGate.requireAvailable()
+                return makeLibrarySnapshot(
+                    metadata: metadata,
+                    remoteEntries: [],
+                    connection: .available,
+                    includeRemoteOnly: false
+                )
+            }
             if CloudKitErrorMapper.isTransient(error) {
-                let metadata = await metadataStore.snapshot()
                 return makeLibrarySnapshot(
                     metadata: metadata,
                     remoteEntries: Array(metadata.cachedLibraryEntries.values),

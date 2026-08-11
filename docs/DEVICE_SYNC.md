@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-063のMac iCloud作品catalog、remote WorkSnapshot bootstrap、app-private work registry、新規／取込／identity不変のpackage書出を含む作品全体local-first同期はsource complete／local automated GOである。最終source freezeは`NovelSync` 142 / 142件（14 suites）、`NovelSyncCloudKit` 71 / 71件（19 suites）、FUMINIWA macOS xcresult device cases 208 / 208件、iOS 137 / 137件、Experimental 205 / 205件、freshな`./Scripts/check.sh`の`All checks passed`、実Mac AppのComputer Use visual／Accessibility tree PASSを通過し、安全再監査はP0／P1なしである。D-059〜D-061の既存件数は各段階の別履歴として維持する。paired native Mac↔iPhone、実account／account switch、手動VoiceOver、実OS process-kill campaign、署名済み実CloudKit、Package Validator、External Change / Conflict、production migration／minimum-version fenceはRelease NO-GOのままである
+> **状態**: D-063のMac iCloud作品catalog、remote WorkSnapshot bootstrap、app-private work registry、新規／取込／identity不変のpackage書出を含む作品全体local-first同期はsource complete／local automated GOである。2026-08-12の最終source freezeは`NovelSync` 142 / 142件（14 suites）、`NovelSyncCloudKit` 80 / 80件（20 suites）、freshな`./Scripts/check.sh`の`All checks passed`、署名済みDebug macOS／iOS buildのentitlement read-backを通過した。署名済み実Mac Appでは同一accountのiCloud棚が`available`／0作品になるempty-catalog smokeも確認した。これは実account／container到達と初回bootstrapの証跡であり、remote CRUD、paired Mac↔iPhone、Production schema deployの完了ではない。実account switch、手動VoiceOver、実OS process-kill campaign、Package Validator、External Change / Conflict、production migration／minimum-version fenceを含めRelease NO-GOは維持する
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
@@ -207,31 +207,33 @@ D-063も一般配布前のdevelopment-only cutoverとする。実CloudKitへ未�
 
 reset前にexact schema readerで全stateと全hidden working copyを列挙・attestする。pending／reviewを解決し、各hidden packageはregistryをexactに再構築／保全するか、検証済み`.novelpkg`としてExportして回収する。attachment／snapshot／unknown rootはremote WorkSnapshotから戻らないため、remote head一致だけでpackageを削除せず、hidden working-copy root自体をmetadata resetの削除対象にしない。未知version、不整合、未到達package、Export失敗が1件でもあればresetを停止し、古いreader／buildを保持する。旧visible packageは明示Import→new WorkIDとし、外部原本を残す。
 
-D-063のsource freeze（2026-08-12）は次の層別証跡で固定する。
+D-063の最終source freeze（2026-08-12）は次の層別証跡で固定する。
 
 | 境界 | D-063結果 | 証明する範囲 |
 | --- | ---: | --- |
 | `NovelSync` | 142 / 142件（14 suites） | Work domain、library projection、local-first state／mergeのpure回帰。near-cap 270,439,704 bytesを含む |
-| `NovelSyncCloudKit` | 71 / 71件（19 suites） | codec／planner／metadata／libraryのlocal fake回帰。malformed catalog rowだけを隔離する1件を追加。実CloudKitではない |
+| `NovelSyncCloudKit` | 80 / 80件（20 suites） | codec／planner／metadata／library、schema checklist、clean zone／type未生成bootstrap、same-account sign-in再検証の回帰。実remote CRUDではない |
 | FUMINIWA macOS full xcresult | device cases 208 / 208件 | top-level 203件。hosted 124件＋unhosted 79件、dynamic casesを含む。UI test分離後のhosted `NovelAppTests`は`NovelSyncTesting`非依存 |
 | focused Cloud＋store | device cases 15件／top-level 14件 | reservation attestation、account quarantine、catalog／head消失時のfail-closedを含むfocused回帰 |
 | hosted Startup Cloud UI | 1 / 1件 | Product Truthを含む起動chooserのhosted UI回帰 |
 | iOS full | 137 / 137件 | App 79件＋Device Sync 58件。local／Simulator回帰でありpaired nativeではない |
 | Experimental | 205 / 205件 | target分離を含む既存研究回帰。D-063や通常版provider capabilityを証明しない |
-| local CI | fresh `./Scripts/check.sh`: `All checks passed` | repository全体のlocal automated gate |
+| local CI | fresh `./Scripts/check.sh`: `All checks passed` | 現行外部Gate差分を含むrepository全体のlocal automated gate |
 | 実Mac App | Computer Use visual／Accessibility tree PASS | 現行chooserのvisual／AX受け入れ。手動VoiceOver campaignではない |
+| 署名済みDebug build | macOS／iOS codesign・entitlement read-back PASS | Team、Development container、CloudKit、APNs環境を成果物から確認。Release／Production署名ではない |
+| 署名済み実Mac empty-catalog smoke | iCloud棚 `available`／0作品 | 同一実accountでruntimeが永久`accountRequired`にならず棚を表示。remote create／fetch／update／deleteは未検証 |
 
-macOS Cloud／store回帰は、expected package attestationをreservation前にdurable化しlegacy package／expected attestation nilを隔離すること、bind完了→registry mark前のkillをoffline／remote catalog 0件からexact package＋journalで復旧すること、新規／Importのstaging read-back不一致を破棄して再起動後も採用しないこと、remote catalog全体の失敗中もlocal-only新規を保存できること、`accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外すること、available catalogからacknowledged workが欠落した場合に`.cloudUnavailable`でcheckmark／open／uploadを止めること、malformed remote rowとdifferent-account remote-only row／titleをそれぞれ隔離すること、app-private WorkID／pathをdiagnostic logへ出さないことを固定した。Work domain回帰は、`lastKnownRemoteHead`があるactive WorkSyncでcurrent remote headがnilならtyped `remoteHeadMissing`でpublish前に停止し、local head／outbox／last-known／sealed publishを保持してremote復帰後に同じrevisionを再送することを固定した。安全再監査はP0／P1なしである。
+macOS Cloud／store回帰は、expected package attestationをreservation前にdurable化しlegacy package／expected attestation nilを隔離すること、bind完了→registry mark前のkillをoffline／remote catalog 0件からexact package＋journalで復旧すること、新規／Importのstaging read-back不一致を破棄して再起動後も採用しないこと、remote catalog全体の失敗中もlocal-only新規を保存できること、`accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外すること、available catalogからacknowledged workが欠落した場合に`.cloudUnavailable`でcheckmark／open／uploadを止めること、malformed remote rowとdifferent-account remote-only row／titleをそれぞれ隔離すること、app-private WorkID／pathをdiagnostic logへ出さないことを固定した。Work domain回帰は、`lastKnownRemoteHead`があるactive WorkSyncでcurrent remote headがnilならtyped `remoteHeadMissing`でpublish前に停止し、local head／outbox／last-known／sealed publishを保持してremote復帰後に同じrevisionを再送することを固定した。
 
-このmatrixによりD-063をsource complete／local automated GOとする。次は引き続きRelease NO-GOである。
+このmatrixにより現行D-063をsource complete／local automated GOとしてfreezeする。次は引き続きRelease NO-GOである。
 
 - Package Validator GateとExternal Change / Conflict Gate
-- Developer Program上のcontainer／App ID／profile、development／production schema deploy
-- 署名済みMac＋iPhoneの同一実accountによるpaired native catalog／bootstrap／whole-work往復
+- Development schemaの実record／index目視照合、Production schema deploy、Release／配布署名のread-back
+- 実CloudKitのremote create／fetch／update／deleteとreceipt／CAS、署名済みMac＋iPhoneの同一実accountによるpaired native whole-work往復
 - offline remote-only、cached local offline edit、実account switch quarantine、write checkpointごとの実OS kill、手動VoiceOver／Full Keyboard Accessの受け入れ
 - production data migrationまたはminimum client version fence
 
-source、署名なしbuild、Simulator、local fakeの成功をreal CloudKit、完全backup、production migration、公開準備完了へ読み替えない。
+署名済み実Macのempty-catalog smokeをremote CRUD、端末間収束、完全backup、Production deploy、公開準備完了へ読み替えない。
 
 ## D-059／D-060話本文track（実装・検証履歴）
 
@@ -550,19 +552,27 @@ Apple版はprivate CloudKit + `CKSyncEngine`を採用し、SwiftDataはcanonical
 
 macOS / iOSはbundle IDが別でも、同じTeamのApp IDへ同じiCloud containerを割り当てれば同じprivate databaseを利用できる。S1のcontainer identifierは **`iCloud.dev.serikayuzuki.fuminiwa.sync`** に固定し、adapterはdefault container推測に依存せず`CKContainer(identifier:)`へ明示する。両targetの署名済みentitlementには少なくともCloudKit serviceと同じcontainer identifier、Push Notifications環境が必要で、iOSのInfoには`UIBackgroundModes = remote-notification`が必要になる。source上のentitlement追加はportal上のcontainer作成、App ID割当、profile発行、schema deployの完了を意味しない。
 
+`project.yml`はDebugをAPNs `development`＋container `Development`、ReleaseをAPNs `production`＋container `Production`へ展開する。Team IDはrepositoryへ固定せず、Git管理外の`Config/Signing.local.xcconfig`をchecked-in wrapperから任意読込する。D-063の現行live経路が必要とする4 record type、sourceに保持する旧Episode経路3 type、全field／`recordName` QUERYABLE index、Production deploy、署名済み成果物のread-back手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md)を正とする。
+
+cleanなDevelopment containerで固定zoneがまだ存在しない場合、live account scopeが確認済みで、confirmed binding／cached remote head／pending downloadがない時だけzone-not-foundを空のavailable catalogとして扱う。これにより明示的新規作成が`bootstrapZoneForNewSync`へ到達してzoneを作れる。
+
+zone作成後、最初のWorkControl保存前にprocessが終了すると、zoneは存在してもD-063 record typeがまだDevelopment schemaへmaterializeされていない場合がある。この時のcatalog queryがtyped `.invalidArguments`へ写像された場合は、account scopeがあり、cached remote rowとpending openがなく、全pending createと全bindingがlocator／WorkIDで完全に1対1一致する時だけ空のavailable catalogとして再開する。unbound pending create、confirmed binding、件数／WorkID不一致、cached remote row、pending openでは許可しない。zone reset、malformed row、account未確認／変更、既存remote証跡を持つzone-not-foundも引き続きfail-closedとする。
+
+restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済みの同一accountも`.signIn` eventとして通知する。これを通常のsign-out／switchと同じ永久fenceへ落とさず、進行中operationを一度cancelしてlive account scopeを再検証し、expected scopeと完全一致すればruntimeを`.ready`のまま維持する。別accountは`.differentCloudAccount`、sign-outは`.accountRequired`へfail-closedにし、一時的なidentity取得失敗は次のremote operationで再検証できるretryable状態に留める。署名済み実Macのempty-catalog smokeでは、初回起動後もiCloud棚が`available`／0作品になることを確認した。
+
 実装・検証には、コードだけでは完了できない次の外部作業が必要である。
 
 1. Apple Developer Program上で、固定済みidentifier `iCloud.dev.serikayuzuki.fuminiwa.sync` のcontainerを作成する
 2. macOSとiOSの別App IDを同じTeamで管理し、同じCloudKit containerを両方へ割り当てる
 3. 両targetへiCloud / CloudKitとPush Notifications capabilityを付け、同じcontainer entitlementを署名profileへ含める
 4. iOSへBackground Modesのremote notificationsを付ける。macOSはpush entitlementを持つが、iOSのBackground Modes設定を機械的に流用しない
-5. development schemaを作成し、index / record typeを検査してからproductionへ明示deployする
+5. D-063 live 4 typeをDevelopmentで生成し、全7 typeをProduction checklistへ含める場合は旧Episode 3 typeを管理されたschema seedingまたはDashboard手動定義で用意する。全field型と`recordName` indexを目視検査してからproductionへ明示deployする
 6. 同じiCloud accountで署名済みMac実機とiPhone / iPad実機を使い、foreground、background、push欠落、offline、account変更を検証する
 7. Developer ID配布用macOS buildとiOS配布profileの両方でentitlement / container environmentをread-backする
 
 macOSはD-011どおり非Sandboxの直接配布を維持する。CloudKitのために`com.apple.security.app-sandbox`を追加せず、CloudKit / container / pushに必要なentitlementだけを署名済みtargetへ付ける。iOSの`remote-notification` Background ModeをmacOS設定へ機械的に追加せず、macOSはpush entitlementと起動／foreground fetchで取りこぼしを回収する。iOS targetがSandboxであることをmacOS配布判断へ逆流させない。
 
-container作成、App IDへの割当、capability有効化、profile再発行、production schema deploy、実機account状態はAccount Holder / Admin等の権限とApple Developer portal / CloudKit Consoleを要する外部Gateである。署名なしbuild、Simulator、mock transport、`CODE_SIGNING_ALLOWED=NO`のローカルCIだけではCloudKit同期完了を証明しない。
+container作成、App IDへの割当、capability有効化、profile再発行、production schema deploy、実機account状態はAccount Holder / Admin等の権限とApple Developer portal / CloudKit Consoleを要する外部Gateである。2026-08-12時点でDevelopment用macOS／iOS Debug署名とentitlement read-back、署名済み実Macの`available`／0作品までは確認済みである。Development schemaの実record／index、remote CRUD、paired device、Release／Productionは未確認であり、empty-catalog成功だけではCloudKit同期完了を証明しない。
 
 進捗報告は、(1) source実装とunit／integration test、(2) Simulator／local fake server、(3) 署名済みMac＋iPhoneの実CloudKit、の3区分を混ぜずに行う。前段の成功を後段の完了へ読み替えない。
 

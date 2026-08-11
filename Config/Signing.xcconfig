@@ -1,0 +1,5 @@
+// Shared, non-secret signing entry point used by the generated Xcode project.
+// A developer who needs an explicit Team copies Signing.local.xcconfig.example
+// to Signing.local.xcconfig. The optional include keeps unsigned CI/builds and
+// fresh clones usable without committing an account-specific Team ID.
+#include? "Signing.local.xcconfig"

@@ -9,14 +9,6 @@ enum CloudKitSyncSchema {
     static let zoneName = "FUMINIWA.DeviceSync.v1"
     static let subscriptionID = "FUMINIWA.DeviceSync.v1.private-zone"
 
-    /// Source追加だけではproduction CloudKit schemaは更新されない。署名済み外部Gate前に
-    /// この3 typeと下記fieldをDevelopmentからProductionへ明示deployする必要がある。
-    static let workSyncProductionRecordTypes = [
-        RecordType.workControl,
-        RecordType.workRevision,
-        RecordType.workMutationReceipt
-    ]
-
     enum RecordType {
         static let work = "FUMINIWASyncWorkV1"
         static let episodeControl = "FUMINIWAEpisodeControlV1"
@@ -67,6 +59,166 @@ enum CloudKitSyncSchema {
         static let revisionAsset = "revisionAsset"
         static let attachmentManifestDigest = "attachmentManifestDigest"
         static let attachmentCount = "attachmentCount"
+    }
+
+    enum ProductionFieldType: String, Equatable, Sendable {
+        case string = "String"
+        case int64 = "Int64"
+        case timestamp = "Date/Time"
+        case asset = "Asset"
+        case stringList = "List<String>"
+    }
+
+    struct ProductionRecordType: Equatable, Sendable {
+        let name: String
+        let fields: [String: ProductionFieldType]
+        let optionalFields: Set<String>
+        let queryableSystemFields: Set<String>
+
+        var requiredFields: Set<String> {
+            Set(fields.keys).subtracting(optionalFields)
+        }
+    }
+
+    /// Source追加だけではproduction CloudKit schemaは更新されない。これはruntimeが
+    /// read/writeする全7 record typeとfield、production query/exportに必要なindexの正。
+    /// Developmentで実recordを生成して型を照合した後、DashboardからProductionへ
+    /// 明示deployする。全typeのsystem `recordName`をQUERYABLEにする。
+    static let productionSchemaChecklist: [ProductionRecordType] = [
+        ProductionRecordType(
+            name: RecordType.work,
+            fields: productionFields([
+                Field.sourceDocumentID: .string,
+                Field.structureDigest: .string,
+                Field.title: .string
+            ]),
+            optionalFields: [],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.episodeControl,
+            fields: productionFields([
+                Field.episodeID: .string,
+                Field.headRevisionID: .string,
+                Field.holderReplicaID: .string,
+                Field.holderSessionID: .string,
+                Field.leaseEpoch: .int64,
+                Field.leaseExpiresAt: .timestamp
+            ]),
+            optionalFields: [
+                Field.headRevisionID,
+                Field.holderReplicaID,
+                Field.holderSessionID,
+                Field.leaseExpiresAt
+            ],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.episodeRevision,
+            fields: productionFields([
+                Field.episodeID: .string,
+                Field.revisionID: .string,
+                Field.parentRevisionIDs: .stringList,
+                Field.branchID: .string,
+                Field.authorReplicaID: .string,
+                Field.authorSessionID: .string,
+                Field.clientCreatedAt: .timestamp,
+                Field.bodyDigest: .string,
+                Field.bodyByteCount: .int64,
+                Field.bodyAsset: .asset,
+                Field.mutationID: .string
+            ]),
+            optionalFields: [],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.mutationReceipt,
+            fields: productionFields([
+                Field.episodeID: .string,
+                Field.mutationID: .string,
+                Field.commandDigest: .string,
+                Field.resultHeadRevisionID: .string,
+                Field.resultLeaseEpoch: .int64,
+                Field.resultHolderReplicaID: .string,
+                Field.resultHolderSessionID: .string,
+                Field.resultLeaseExpiresAt: .timestamp
+            ]),
+            optionalFields: [],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.workControl,
+            fields: productionFields([
+                Field.headRevisionID: .string,
+                Field.snapshotDigest: .string,
+                Field.sourceDocumentID: .string,
+                Field.structureDigest: .string,
+                Field.title: .string,
+                Field.titleDigest: .string,
+                Field.titleUTF8ByteCount: .int64,
+                Field.snapshotByteCount: .int64,
+                Field.clientCreatedAt: .timestamp
+            ]),
+            optionalFields: [
+                Field.headRevisionID,
+                Field.snapshotDigest,
+                Field.sourceDocumentID,
+                Field.structureDigest,
+                Field.title,
+                Field.titleDigest,
+                Field.titleUTF8ByteCount,
+                Field.snapshotByteCount,
+                Field.clientCreatedAt
+            ],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.workRevision,
+            fields: productionFields([
+                Field.revisionID: .string,
+                Field.parentRevisionIDs: .stringList,
+                Field.branchID: .string,
+                Field.authorReplicaID: .string,
+                Field.authorSessionID: .string,
+                Field.clientCreatedAt: .timestamp,
+                Field.snapshotDigest: .string,
+                Field.snapshotByteCount: .int64,
+                Field.revisionDigest: .string,
+                Field.revisionByteCount: .int64,
+                Field.revisionAsset: .asset,
+                Field.mutationID: .string,
+                Field.attachmentManifestDigest: .string,
+                Field.attachmentCount: .int64
+            ]),
+            optionalFields: [Field.attachmentManifestDigest],
+            queryableSystemFields: ["recordName"]
+        ),
+        ProductionRecordType(
+            name: RecordType.workMutationReceipt,
+            fields: productionFields([
+                Field.mutationID: .string,
+                Field.commandDigest: .string,
+                Field.resultHeadRevisionID: .string,
+                Field.snapshotDigest: .string
+            ]),
+            optionalFields: [],
+            queryableSystemFields: ["recordName"]
+        )
+    ]
+
+    static let workSyncProductionRecordTypes = [
+        RecordType.workControl,
+        RecordType.workRevision,
+        RecordType.workMutationReceipt
+    ]
+
+    private static func productionFields(
+        _ additional: [String: ProductionFieldType]
+    ) -> [String: ProductionFieldType] {
+        [
+            Field.protocolVersion: .int64,
+            Field.workID: .string
+        ].merging(additional) { _, new in new }
     }
 
     static let zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
