@@ -1,10 +1,129 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-059の同期安全化は基準commit `508947d2`でsource実装と全ローカル回帰を固定済み。D-060はwire protocol v1を維持したjournal schema v2、authority非依存local revision、offline復元、bounded multi-hunk merge、exact head／digest／epoch takeoverまで`NovelSync`へsource実装し、`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）と`NovelSyncCloudKit` 48 / 48件がローカルで通過した。Mac／iOS App／UI sourceも実装・freeze済みで、Mac Device Sync 45 / 45件とprivate-root 1 / 1件、iOS Simulator Device Sync 42 / 42件とnative focused 2 / 2件が通過した。host上の2端末in-memory local fakeも通過した一方、paired native Mac↔iPhone、手動VoiceOver／実OS process-kill campaign、署名済み実CloudKitは未完了である。現行v1に`HandoffRequest` recordはなく、cooperative handoffは将来のadditive Decision／protocolとして分離する
+> **状態**: D-061の作品全体local-first同期をDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 60 / 60件（3 suites）、iOS focused 56 / 56件、generic iOS build／build-for-testingが通過した。D-059の基準commit `508947d2`とD-060の`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は話本文同期の別履歴として維持する。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、署名済み実CloudKit、production migration／minimum-version fenceはD-061でも未完了である
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059／D-060、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-061、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+
+## 0. D-061の現行whole-work契約
+
+D-061以降、通常のMac／iOS Appが使うDevice Syncの単位はEpisode本文ではなく、`NovelDocument`全体のcanonical `WorkSnapshot`である。以下をcurrent contractとし、後続の1〜15章はD-059／D-060話本文trackの実装・検証履歴として残す。
+
+### 0.1 同期対象と非対象
+
+Work snapshot v1は、stable IDと表示順を分離して次を同期する。
+
+- 作品タイトル、あらすじ
+- 章のID／タイトル／順序
+- 話のID／所属章／タイトル／順序／本文／話メモ
+- 登場人物の順序と全プロフィールfield
+- プロットカードの順序／内容／章参照
+- 伏線の順序／内容／未回収・回収状態／章参照
+- 世界観ノートの順序／タイトル／本文
+
+次はWork snapshot v1へ含めない。
+
+- attachment／資料binaryとその転送
+- `.novelpkg`のsnapshot履歴
+- アプリ外観、本文フォント等の端末設定、選択状態、window／navigation状態
+- local path、bookmark、端末名、利用者名、CloudKit metadata
+- remote workを作品棚として列挙するcloud library、別端末へのpackage初回download、new-device bootstrap、automatic binding
+- 複数人のリアルタイム共同編集、共同cursor、逐次keystroke配信
+
+`.novelpkg`は引き続きportable／local materialized snapshotで、v3 schemaを変更しない。資料、snapshot履歴、端末設定を「同期済み」と表示しない。
+
+### 0.2 local durabilityと再接続
+
+利用者の確定変更は次の順に処理する。
+
+1. native editor／formの確定値を`NovelDocument`へ反映する。
+2. exact `WorkSnapshot`をpackage外Work journalへstaged revisionとしてatomic保存する。
+3. 既存の保存直列化経路でapp-private `.novelpkg`を保存する。
+4. 保存したpackageから同じ`WorkSnapshot`を確認し、staged revisionをpublish可能なlocal headへexact confirmする。
+5. remote fetch／publishを別taskへenqueueする。networkはEditor入力、package保存、journal confirmを待たせない。
+
+stageはpackage commit前のwrite-ahead intentであり、confirm前にremoteへpublishしない。stageだけが残った再起動、packageだけが先行した再起動、pending remote materializationが残った再起動を区別する。stageに失敗してもpackage保存は止めず、次回preflightでpackageのexact snapshotを新しいlocal revisionとして回収する。package保存失敗時はstageをremoteへ昇格しない。
+
+端末内mutationはFIFO laneで直列化し、fetch／upload等のnetwork I/Oはlane外で行う。response適用時にsealed mutation／revisionと現在のjournal observationを再検査し、一致しない古い結果を捨てて最新local tailを残す。通信不能、一時的CloudKit failure、別端末の更新中でもlocal編集を続け、再接続後に自動reconcileする。
+
+### 0.3 Work wire v1とCloudKit CAS
+
+`WorkSyncWireProtocol.currentVersion = 1`は、D-059／D-060のEpisode用`SyncWireProtocol` v1とは別namespace・別互換系列である。version番号が同じでも相互decode、混在運用、automatic migrationはしない。
+
+Apple adapterは既存private database／単一固定custom zone内で、Episode recordとは別に次を使う。
+
+| Record type | 役割 |
+| --- | --- |
+| `FUMINIWAWorkControlV1` | 現在head revision IDとsnapshot digestを1つのCAS対象として保持 |
+| `FUMINIWAWorkRevisionV1` | canonical whole `WorkRevision`を`CKAsset`として保持するimmutable revision |
+| `FUMINIWAWorkMutationReceiptV1` | mutation ID、command digest、result headを保持しresponse loss後のretryを冪等化 |
+
+publishは`mutationID + expected head revision ID + expected head snapshot digest`を検査し、必要なimmutable revision、receipt、更新後controlをatomicに保存する。head IDまたはdigestが変わっていればwinnerを選ばずdivergenceとして再fetchする。時計、更新日時、push到着順によるlast-write-winsは禁止する。revision assetはread-back時にrecord metadata、byte count、digest、parent、work identityを検査してからdomainへ渡す。
+
+### 0.4 whole-work 3-way mergeと3面review
+
+共通祖先、local head、remote headのstable ID／field／順序を比較する。片側だけの変更、または互いに独立していると証明できる変更は自動統合する。同じ本文の離れた範囲、別entity、別fieldの変更も安全性を証明できる場合は一つのproposed snapshotへまとめる。
+
+次は自動winnerを選ばずreviewへ送る。
+
+- 同じfieldまたは本文範囲を両側が変更した場合
+- 一方のdeleteに対して他方がedit、所属移動、または基準ID間の相対順を変更した場合
+- 両側が同じ一覧順を異なる形へ変更した場合
+- 同じstable IDを異なる内容で追加した場合
+- 共通祖先を証明できない場合、またはresource budgetを超えた場合
+
+review画面は **この端末／iCloud／統合案** の3面を同時に示し、「この端末を採用」「iCloudを採用」「統合案を採用」を提供する。完全なbase／local／remote／proposed snapshotはjournalへ保持し、field descriptorの短い表示だけを原文の代用にしない。「あとで」で閉じても消さない。
+
+通常のcloud conflict中はEditorとlocal保存を止めない。追加編集は新しいlocal headとなり、remoteまたはlocalが進めば最新3面を再計算する。一方、再起動時にpackage、stage、pending remoteのどれが実際にmaterialize済みか一意に判断できないlocal recoveryは、推測で本文を選ばず、同じ比較UIで明示選択されるまで作品編集をgateする。
+
+### 0.5 native editorへの反映境界
+
+CloudKit fetch／push callback、SwiftUI update、古いasync completionからactiveな`NSTextView.string`／`UITextView.text`や現在の`NovelDocument`を直接置き換えない。remote fast-forward、自動merge、競合解決結果はまずjournalのpending materializationへ保存する。
+
+作品／document session／Editor surface／世代、expected snapshot／本文digest、IME composition、selection、Undo／Redo、未保存・未journaled変更を確認し、local saveを完了した安全な遷移境界だけでpackageへmaterializeする。保存後にpackageを読み直してexact `WorkSnapshot`一致を確認した場合だけremote materializationをacknowledgeし、in-memory document／Editor generationを進める。条件を満たさない間はremote版をpendingに保ち、現在の入力を巻き戻さない。
+
+### 0.6 resource上限
+
+| 対象 | v1上限 | 超過時 |
+| --- | ---: | --- |
+| canonical `WorkSnapshot` | 48 MiB | snapshotを拒否。部分同期しない |
+| snapshot内の各String | 1 MiB | 文字列を切り詰めず拒否 |
+| canonical `WorkRevision` | 50 MiB | revisionを拒否 |
+| `FileWorkSyncJournal` record | 320 MiB | 既存journalを保持してfail-closed |
+| outbox revision | 3件 | whole snapshotを安全な共通base直下へcoalesceし、必要な親を落とさない |
+| journal revision store | 5件 | 上限超過状態を保存しない |
+| conflict descriptor | 512件 | 最終descriptorをbudget超過表示とし、完全な三者revisionは保持 |
+| descriptor内の各比較値 | UTF-8 1 KiB | prefix＋SHA-256表示へbounded化。原文snapshotは保持 |
+
+5 revision、完全なproposed snapshot、bounded conflictsを持つ到達可能な最大構成270,439,704 bytesを保存・再読込するnear-cap回帰が通過している。320 MiBはこの構成を欠落なく保持するfile record上限であり、remote payload上限や利用者作品の推奨sizeではない。
+
+### 0.7 cutoverと検証境界
+
+D-061は一般配布前のdevelopment cutoverである。D-059／D-060は署名済み実CloudKitへdeploy／一般出荷していない前提で、開発CloudKit同期dataをresetし、全test端末を同じD-061 buildへ更新して検証する。Episode record／journalをWork record／journalへ自動migrationせず、旧Episode-only clientとD-061 clientを同じ作品へ同時接続した場合の収束、安全な競合検出、相互運用を主張しない。production upgradeを行う場合はminimum client version fenceまたは明示migrationを別Decisionで実装・検証する。それまでは出荷不可である。
+
+D-061のDomain、CloudKit codec／publish planner、Mac／iOS App、3面review UIはsource実装済みで、次のlocal／Simulator／署名なしbuildが通過した。D-059／D-060の件数は流用しない。
+
+| 境界 | D-061結果 | 証明する範囲 |
+| --- | ---: | --- |
+| Work Domain focused | 44 / 44件（5 suites） | snapshot／revision／journal／FIFO coordinator／merge／resource cap |
+| CloudKit schema focused | 3 / 3件 | full 59 / 59件の内数。Episodeとは別のWork record namespaceとschema定数 |
+| `NovelSyncCloudKit` full | 59 / 59件（15 suites） | codec／asset／publish planner／receipt／local fake transport。実CloudKitではない |
+| Mac `NovelAppDeviceSyncTests` | 60 / 60件（3 suites） | integration 53＋edit-intent 4＋root 3 |
+| iOS focused | 56 / 56件 | integration 49＋3面review UI 7 |
+| iOS build | generic build／build-for-testing PASS | compile、link、test bundle生成。署名済み実機ではない |
+
+Work conflict UIは既存Mac focused coverageを含め最終source監査した。上記を次の未完了項目へ読み替えない。
+
+- Developer Program上のcontainer／App ID／profileとdevelopment／production schema deploy
+- 同じiCloud accountの署名済みMac＋iPhoneによるpaired native whole-work往復
+- network pause／offline restart／再接続と、実OS process killの書込み境界campaign
+- 手動VoiceOver／Dynamic Type／実機IMEを含むconflict／local recovery画面の受け入れ
+- mixed old／new client移行、cloud library、new-device bootstrap
+
+## D-059／D-060話本文track（実装・検証履歴）
+
+以下の1〜15章は、D-059／D-060で実装したEpisode本文revision／lease／journal v2の履歴である。D-061はそのtest件数や安全上の知見を削除しないが、現行通常Appの同期payload、CAS record、merge UIは上記whole-work契約へ置き換える。
 
 ## 1. 目的と安全境界
 

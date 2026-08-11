@@ -36,6 +36,13 @@ final class DeviceSyncProductionComposition: @unchecked Sendable {
         runtime = DeviceSyncRuntime(
             replicaID: localBootstrap.replicaID,
             transport: runtimeBox,
+            workTransport: runtimeBox,
+            localWorkBinding: { session, _ in
+                try await runtimeBox.resolveLocalWork(
+                    session: session,
+                    localSourceDocumentID: session.documentID
+                )
+            },
             binding: { session, _ in
                 try await runtimeBox.resolve(session: session, localSourceDocumentID: session.documentID)
             },
@@ -102,7 +109,7 @@ enum DeviceSyncProductionRuntimeState {
     case blocked(AppleDeviceSyncBlockedServices?)
 }
 
-actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
+actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     let localBootstrap: AppleDeviceSyncLocalBootstrap
     let workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
     let signalContinuation: AsyncStream<Void>.Continuation

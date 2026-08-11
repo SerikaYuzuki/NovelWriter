@@ -133,6 +133,10 @@ final class AppState {
     @ObservationIgnored var deviceSyncLocalRecoveryChoicePending = false
     var deviceSyncConflict: EpisodeConflict?
     var deviceSyncSetupState: DeviceSyncSetupState = .idle
+    /// D-061作品同期の競合。本文Editorへremoteを注入せず、明示sheetでだけ選ばせる。
+    var workSyncConflictReview: WorkConflictReview?
+    var workSyncLocalRecoveryReview: WorkLocalRecoveryReview?
+    var isApplyingWorkSyncConflict = false
 
     private let repository: DocumentRepository
     private let attachmentManager: AttachmentManaging?
@@ -169,6 +173,11 @@ final class AppState {
     @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncConflictResolution: PendingDeviceSyncConflictResolution?
     @ObservationIgnored var pendingDeviceSyncNewWork: PendingDeviceSyncNewWork?
+    @ObservationIgnored var activeWorkSyncIdentity: WorkSyncDocumentIdentity?
+    @ObservationIgnored var workSyncClient: WorkSyncClient?
+    @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
+    @ObservationIgnored var workSyncNetworkRescheduleRequested = false
+    @ObservationIgnored var workSyncRemoteBindingTask: Task<Void, Never>?
     @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
     @ObservationIgnored var permitsDeviceSyncProjectSectionMutationAfterFlush = false
     /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
@@ -211,6 +220,22 @@ final class AppState {
         to url: URL
     ) async throws {
         do {
+            let workPreparation = await stageWorkSyncPackageSave(document)
+            switch workPreparation {
+            case .notApplicable:
+                break
+            case .failed:
+                // journalが失敗しても、利用者の原稿はpackageへ退避する。
+                try await repository.save(document, to: url)
+                noteDeviceSyncPackageSaved(document)
+                deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
+                return
+            case let .prepared(preparation):
+                try await repository.save(document, to: url)
+                noteDeviceSyncPackageSaved(document)
+                await confirmWorkSyncPackageSave(preparation)
+                return
+            }
             let intentReady = await flushPendingDeviceSyncEditIntents()
             let checkpoints = await prepareDeviceSyncPackageCheckpoints(for: document, at: url)
             try await repository.save(document, to: url)
@@ -282,6 +307,8 @@ final class AppState {
         editorContentGeneration = 0
         deviceSyncState = .unconfigured
         deviceSyncConflict = nil
+        workSyncConflictReview = nil
+        workSyncLocalRecoveryReview = nil
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         selectedCharacterID = nil
@@ -2201,6 +2228,98 @@ final class AppState {
         return try await attachmentManager.listAttachments(in: url)
     }
 
+    /// D-061のremote/merge snapshotを、prepared Editor境界の中でpackageへ先に
+    /// atomic保存してからmemoryへinstallする。同じdocument session以外へは適用しない。
+    func persistAndInstallWorkSyncSnapshot(
+        _ snapshot: WorkSnapshot,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        guard editorCommandSession.isDocumentTransitionPrepared,
+              documentSessionToken == expectedSession else { return false }
+        let synchronizedDocument: NovelDocument
+        do {
+            synchronizedDocument = try snapshot.materializedDocument()
+        } catch {
+            return false
+        }
+        guard synchronizedDocument.id == expectedSession.documentID else { return false }
+        do {
+            return try await saveCoordinator.performExclusive {
+                guard documentSessionToken == expectedSession,
+                      documentURL.standardizedFileURL == expectedSession.documentURL else { return false }
+                try deviceSyncRuntime?.setup?.validatePrivateWorkingCopy(documentURL)
+                try await repository.save(synchronizedDocument, to: documentURL)
+                try deviceSyncRuntime?.setup?.validatePrivateWorkingCopy(documentURL)
+                let loadedDocument = try await repository.load(from: documentURL)
+                try deviceSyncRuntime?.setup?.validatePrivateWorkingCopy(documentURL)
+                guard documentSessionToken == expectedSession,
+                      documentURL.standardizedFileURL == expectedSession.documentURL,
+                      loadedDocument.id == expectedSession.documentID,
+                      try WorkSnapshot(document: loadedDocument) == snapshot else { return false }
+
+                let previousChapterID = selectedChapterID
+                let previousEpisodeID = selectedEpisodeID
+                let previousCharacterID = selectedCharacterID
+                let previousPlotCardID = selectedPlotCardID
+                let previousFlagID = selectedFlagID
+                let previousWorldNoteID = selectedWorldNoteID
+                // repositoryから読み戻してexact一致したinstanceだけをEditorへ入れる。
+                document = loadedDocument
+                noteDeviceSyncPackageSaved(loadedDocument)
+                editorContentGeneration &+= 1
+
+                if let previousChapterID,
+                   let previousEpisodeID,
+                   loadedDocument.chapters.contains(where: { chapter in
+                       chapter.id == previousChapterID
+                           && chapter.episodes.contains(where: { $0.id == previousEpisodeID })
+                   }) {
+                    selectedChapterID = previousChapterID
+                    selectedEpisodeID = previousEpisodeID
+                } else {
+                    setInitialSelection(for: loadedDocument)
+                }
+                selectedCharacterID = previousCharacterID.flatMap { id in
+                    loadedDocument.characters.contains(where: { $0.id == id }) ? id : nil
+                } ?? loadedDocument.characters.first?.id
+                selectedPlotCardID = previousPlotCardID.flatMap { id in
+                    loadedDocument.plotCards.contains(where: { $0.id == id }) ? id : nil
+                } ?? loadedDocument.plotCards.first?.id
+                selectedFlagID = previousFlagID.flatMap { id in
+                    loadedDocument.flags.contains(where: { $0.id == id }) ? id : nil
+                } ?? loadedDocument.flags.first?.id
+                selectedWorldNoteID = previousWorldNoteID.flatMap { id in
+                    loadedDocument.worldNotes.contains(where: { $0.id == id }) ? id : nil
+                } ?? loadedDocument.worldNotes.first?.id
+                saveState = .saved
+                return true
+            }
+        } catch {
+            return false
+        }
+    }
+
+    /// D-061のlocal recovery／conflict choice前に、現在のpackageを保存層から
+    /// 読み戻してexact snapshotを得る。memory上の編集中値だけを根拠にremote版を
+    /// materializeせず、atomic save済みの版だけをcoordinatorへ渡す。
+    func readCurrentWorkSyncPackageSnapshotAtPreparedBoundary(
+        expectedSession: DocumentSessionToken
+    ) async -> WorkSnapshot? {
+        guard editorCommandSession.isDocumentTransitionPrepared,
+              documentSessionToken == expectedSession else { return nil }
+        do {
+            return try await saveCoordinator.performExclusive {
+                guard documentSessionToken == expectedSession,
+                      documentURL.standardizedFileURL == expectedSession.documentURL else { return nil }
+                let loadedDocument = try await repository.load(from: documentURL)
+                guard loadedDocument.id == expectedSession.documentID else { return nil }
+                return try WorkSnapshot(document: loadedDocument)
+            }
+        } catch {
+            return nil
+        }
+    }
+
     private func installDocument(
         _ newDocument: NovelDocument,
         at url: URL,
@@ -2258,7 +2377,10 @@ final class AppState {
     }
 
     private var permitsSynchronousDeviceSyncSelectionMutation: Bool {
-        deviceSyncRuntime == nil ||
+        if usesWholeWorkSyncRuntime, deviceSyncLocalRecoveryPending {
+            return false
+        }
+        return deviceSyncRuntime == nil ||
             activeDeviceSyncIdentity == nil ||
             permitsDeviceSyncSelectionMutationAfterFlush ||
             editorCommandSession.isDocumentTransitionPrepared

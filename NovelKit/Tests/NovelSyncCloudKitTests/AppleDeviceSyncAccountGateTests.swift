@@ -126,6 +126,34 @@ struct AppleDeviceSyncAccountGateTests {
         #expect(mapped as? CloudKitSyncAdapterError == permanent)
     }
 
+    @Test("whole-work transport uses the same account fence without exposing CloudKit errors")
+    func workTransportUsesAccountFence() {
+        for reason in [
+            AppleDeviceSyncBlockReason.accountUnavailable,
+            .differentCloudAccount,
+            .temporarilyUnavailable,
+            .runtimeInitializationFailed
+        ] {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(
+                AppleDeviceSyncServicesError.blocked(reason)
+            )
+            #expect(mapped as? WorkSyncTransportError == .unavailable)
+        }
+
+        let transient = CloudKitSyncAdapterError.temporarilyUnavailable(
+            retryAfterSeconds: 1
+        )
+        #expect(
+            AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(transient)
+                as? WorkSyncTransportError == .unavailable
+        )
+        let permanent = CloudKitSyncAdapterError.permissionFailure
+        #expect(
+            AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(permanent)
+                as? CloudKitSyncAdapterError == permanent
+        )
+    }
+
     private func accountScope(_ userRecordName: String) -> AppleCloudAccountScope {
         AppleCloudAccountScope(
             containerIdentifier: "iCloud.dev.serikayuzuki.fuminiwa.sync",

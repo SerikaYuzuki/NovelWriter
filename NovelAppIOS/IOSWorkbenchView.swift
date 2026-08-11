@@ -236,10 +236,16 @@ struct IOSEditorPane: View {
                         state: store.deviceSyncState,
                         transferState: store.deviceSyncTransferState,
                         localDurabilityState: store.deviceSyncLocalDurabilityState,
-                        hasLocalRecoveryReview: store.deviceSyncLocalRecoveryReview != nil,
-                        isLocalRecoveryReviewReady: !store.deviceSyncLocalRecoveryPending
+                        hasLocalRecoveryReview: store.deviceSyncLocalRecoveryReview != nil
+                            || store.workSyncLocalRecoveryReview != nil
+                            || store.workSyncConflictReview != nil,
+                        isLocalRecoveryReviewReady: store.workSyncLocalRecoveryReview != nil
+                            || !store.deviceSyncLocalRecoveryPending,
+                        usesWholeWorkSync: store.usesWholeWorkDeviceSync
                     ) {
-                        guard store.deviceSyncConflict != nil
+                        guard store.workSyncLocalRecoveryReview != nil
+                            || store.workSyncConflictReview != nil
+                            || store.deviceSyncConflict != nil
                             || store.deviceSyncLocalRecoveryReview != nil else { return }
                         isDeviceSyncConflictPresented = true
                     }
@@ -288,7 +294,39 @@ struct IOSEditorPane: View {
                 .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $isDeviceSyncConflictPresented) {
-                if let conflict = store.deviceSyncConflict {
+                if let recovery = store.workSyncLocalRecoveryReview {
+                    let adapter = IOSWorkLocalRecoveryPresentation(review: recovery)
+                    IOSWorkConflictResolutionView(
+                        presentation: adapter.presentation,
+                        isApplying: store.workSyncIsApplyingConflict,
+                        mode: .localRecovery
+                    ) { choice in
+                        Task {
+                            await store.resolveWorkSyncLocalRecovery(
+                                using: choice,
+                                expectedReview: recovery
+                            )
+                        }
+                    } reviewLater: {
+                        isDeviceSyncConflictPresented = false
+                    }
+                    .id("local-\(adapter.presentation.local.id)")
+                } else if let review = store.workSyncConflictReview {
+                    IOSWorkConflictResolutionView(
+                        presentation: IOSWorkConflictReviewPresentation(review: review),
+                        isApplying: store.workSyncIsApplyingConflict
+                    ) { choice in
+                        Task {
+                            await store.resolveWorkSyncConflict(
+                                using: choice,
+                                expectedReview: review
+                            )
+                        }
+                    } reviewLater: {
+                        isDeviceSyncConflictPresented = false
+                    }
+                    .id(review.id)
+                } else if let conflict = store.deviceSyncConflict {
                     IOSDeviceSyncConflictResolutionView(
                         conflict: conflict,
                         state: store.deviceSyncState,
@@ -320,13 +358,35 @@ struct IOSEditorPane: View {
                     .id(review)
                 }
             }
+            .onChange(of: store.workSyncLocalRecoveryReview) { _, recovery in
+                if recovery == nil,
+                   store.workSyncConflictReview == nil,
+                   store.deviceSyncConflict == nil,
+                   store.deviceSyncLocalRecoveryReview == nil {
+                    isDeviceSyncConflictPresented = false
+                }
+            }
+            .onChange(of: store.workSyncConflictReview?.id) { _, reviewID in
+                if reviewID == nil,
+                   store.workSyncLocalRecoveryReview == nil,
+                   store.deviceSyncConflict == nil,
+                   store.deviceSyncLocalRecoveryReview == nil {
+                    isDeviceSyncConflictPresented = false
+                }
+            }
             .onChange(of: store.deviceSyncConflict) { _, conflict in
-                if conflict == nil, store.deviceSyncLocalRecoveryReview == nil {
+                if conflict == nil,
+                   store.workSyncLocalRecoveryReview == nil,
+                   store.deviceSyncLocalRecoveryReview == nil,
+                   store.workSyncConflictReview == nil {
                     isDeviceSyncConflictPresented = false
                 }
             }
             .onChange(of: store.deviceSyncLocalRecoveryReview) { _, review in
-                if review == nil, store.deviceSyncConflict == nil {
+                if review == nil,
+                   store.workSyncLocalRecoveryReview == nil,
+                   store.deviceSyncConflict == nil,
+                   store.workSyncConflictReview == nil {
                     isDeviceSyncConflictPresented = false
                 }
             }

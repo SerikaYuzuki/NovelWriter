@@ -8,6 +8,7 @@ struct IOSDeviceSyncStatusControl: View {
     let localDurabilityState: IOSDeviceSyncLocalDurabilityState
     let hasLocalRecoveryReview: Bool
     let isLocalRecoveryReviewReady: Bool
+    var usesWholeWorkSync = false
     let reviewChanges: () -> Void
 
     @State private var showsDetails = false
@@ -35,7 +36,7 @@ struct IOSDeviceSyncStatusControl: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(resolvedStatus.accessibilityLabel, systemImage: resolvedStatus.systemImage)
                     .font(.headline)
-                Text(resolvedStatus.detail)
+                Text(usesWholeWorkSync ? wholeWorkDetail : resolvedStatus.detail)
                     .foregroundStyle(.secondary)
             }
             .padding()
@@ -58,10 +59,38 @@ struct IOSDeviceSyncStatusControl: View {
         if hasLocalRecoveryReview, !isLocalRecoveryReviewReady {
             return base == .localSaveError ? .localSaveError : .savingLocally
         }
-        if hasLocalRecoveryReview, base != .localSaveError, base != .savingLocally {
+        if hasLocalRecoveryReview, saveState != .failed, base != .savingLocally {
             return .needsReview
         }
+        if usesWholeWorkSync,
+           saveState == .saved,
+           localDurabilityState == .failed {
+            return .syncPreparationError
+        }
         return base
+    }
+
+    private var wholeWorkDetail: String {
+        switch resolvedStatus {
+        case .savingLocally:
+            "作品をこの端末へ保存しています。入力はそのまま続けられます。"
+        case .savedLocally:
+            "作品はこの端末に保存されています。"
+        case .syncing:
+            "作品はこの端末に保存されています。iCloudへの反映を続けています。"
+        case .synced:
+            "作品はこの端末とiCloudの両方に保存されています。"
+        case .offline:
+            "作品はこの端末に保存されています。接続が戻ると自動で同期します。"
+        case .needsReview:
+            "両方の作品版を保ったまま保存しています。内容を確認して統合できます。"
+        case .configurationError:
+            "作品はこの端末に保存されています。iCloudアカウントまたは同期設定を確認してください。"
+        case .syncPreparationError:
+            "作品はこの端末に保存されています。同期準備を次の保存または再起動時に再試行します。"
+        case .localSaveError:
+            "この端末への保存を完了できませんでした。保存を再試行してください。"
+        }
     }
 }
 
@@ -239,17 +268,27 @@ struct IOSDeviceSyncSettingsView: View {
 
     var body: some View {
         if store.deviceSyncRuntime?.setup != nil {
-            Section("iCloud 本文同期") {
-                Text("同期するのは各話の本文だけです。章構成、話メモ、登場人物、プロット、資料、世界観はこの段階では同期されません。")
-                    .foregroundStyle(.secondary)
+            Section(store.usesWholeWorkDeviceSync ? "iCloud 作品同期" : "iCloud 本文同期") {
+                if store.usesWholeWorkDeviceSync {
+                    Text("作品タイトル、あらすじ、章・話、本文、話メモ、登場人物、プロット、伏線、世界観を同期します。資料、スナップショット、アプリの表示設定はこの端末だけに保存されます。")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("同期するのは各話の本文だけです。章構成、話メモ、登場人物、プロット、資料、世界観はこの段階では同期されません。")
+                        .foregroundStyle(.secondary)
+                }
                 Text("開始時点の作品タイトルは、同期作品の表示名としてiCloudに保存されます。")
                     .foregroundStyle(.secondary)
 
                 switch store.deviceSyncSetupState {
                 case .configured:
-                    Label("この作品は本文同期に接続されています", systemImage: "checkmark.icloud")
+                    Label(
+                        store.usesWholeWorkDeviceSync
+                            ? "この作品は作品同期に接続されています"
+                            : "この作品は本文同期に接続されています",
+                        systemImage: "checkmark.icloud"
+                    )
                 case .idle, .candidates:
-                    Button("この作品の本文同期を始める") {
+                    Button(store.usesWholeWorkDeviceSync ? "この作品の同期を始める" : "この作品の本文同期を始める") {
                         guard let session = store.currentDocumentSessionToken else { return }
                         Task { await store.startDeviceSyncForCurrentDocument(expectedSession: session) }
                     }
@@ -259,7 +298,7 @@ struct IOSDeviceSyncSettingsView: View {
                     }
                     candidateList
                 case .loading:
-                    ProgressView("本文同期を設定しています")
+                    ProgressView(store.usesWholeWorkDeviceSync ? "作品同期を設定しています" : "本文同期を設定しています")
                 case let .unavailable(message):
                     Label(message, systemImage: "exclamationmark.icloud")
                         .foregroundStyle(.orange)

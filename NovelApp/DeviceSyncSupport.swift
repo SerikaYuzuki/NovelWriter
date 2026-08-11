@@ -15,6 +15,16 @@ enum DeviceSyncLocalPersistenceError: Error {
 struct DeviceSyncRuntime {
     let replicaID: SyncReplicaID
     let transport: any EpisodeSyncTransport
+    /// D-061の作品全体同期。`nil`のruntimeはD-060の話本文同期だけを使う。
+    /// 既存test fakeとExperimental buildを壊さず、production compositionが
+    /// additiveなWork transportを注入した時だけ切り替える。
+    let workTransport: (any WorkSyncTransport)?
+    /// CloudKit/account bootstrapを待たず、端末内bindingとwork journalだけを
+    /// 復元する入口。productionのEditor preflightは必ずこちらを先に使う。
+    let localWorkBinding: (@Sendable (
+        DocumentSessionToken,
+        SyncWorkStructureDigest
+    ) async throws -> DeviceSyncBindingResolution?)?
     let binding: @Sendable (
         DocumentSessionToken,
         SyncWorkStructureDigest
@@ -29,6 +39,11 @@ struct DeviceSyncRuntime {
     init(
         replicaID: SyncReplicaID,
         transport: any EpisodeSyncTransport,
+        workTransport: (any WorkSyncTransport)? = nil,
+        localWorkBinding: (@Sendable (
+            DocumentSessionToken,
+            SyncWorkStructureDigest
+        ) async throws -> DeviceSyncBindingResolution?)? = nil,
         binding: @escaping @Sendable (
             DocumentSessionToken,
             SyncWorkStructureDigest
@@ -42,6 +57,8 @@ struct DeviceSyncRuntime {
     ) {
         self.replicaID = replicaID
         self.transport = transport
+        self.workTransport = workTransport
+        self.localWorkBinding = localWorkBinding
         self.binding = binding
         self.remoteChangeSignals = remoteChangeSignals
         self.mergeRecoveryStore = mergeRecoveryStore
@@ -115,6 +132,8 @@ struct DeviceSyncBindingResolution: Sendable {
     /// 復元した状態。local journalへ保存できるが、Appがremote送信可と解釈してはならない。
     let descriptor: SyncWorkDescriptor?
     let journal: any EpisodeSyncJournal
+    /// D-061の作品snapshot journal。legacy bindingでは`nil`のままD-060へ戻る。
+    let workJournal: (any WorkSyncJournal)?
     let allowedEpisodeIDs: Set<EpisodeID>
     let remoteAvailability: DeviceSyncRemoteAvailability
 
@@ -122,12 +141,14 @@ struct DeviceSyncBindingResolution: Sendable {
         binding: SyncWorkingCopyBinding,
         descriptor: SyncWorkDescriptor?,
         journal: any EpisodeSyncJournal,
+        workJournal: (any WorkSyncJournal)? = nil,
         allowedEpisodeIDs: Set<EpisodeID>,
         remoteAvailability: DeviceSyncRemoteAvailability? = nil
     ) {
         self.binding = binding
         self.descriptor = descriptor
         self.journal = journal
+        self.workJournal = workJournal
         self.allowedEpisodeIDs = allowedEpisodeIDs
         self.remoteAvailability = remoteAvailability ?? (descriptor == nil ? .temporarilyOffline : .available)
     }
@@ -160,6 +181,9 @@ enum DeviceSyncLocalDurabilityState: Hashable {
     case notApplicable
     case pending
     case saved
+    /// `.novelpkg`はatomic保存済みだが、作品同期journalのstage/confirmだけを
+    /// 完了できなかった。端末保存失敗と表示してはならない。
+    case savedSyncPreparationFailed
     case failed
 }
 
@@ -171,6 +195,7 @@ enum DeviceSyncEditorStatusKind: Hashable {
     case offline
     case needsReview
     case configurationError
+    case syncPreparationError
     case localSaveError
 
     var systemImage: String {
@@ -183,7 +208,7 @@ enum DeviceSyncEditorStatusKind: Hashable {
             "icloud.slash"
         case .needsReview:
             "exclamationmark.triangle"
-        case .configurationError:
+        case .configurationError, .syncPreparationError:
             "exclamationmark.icloud"
         case .localSaveError:
             "exclamationmark.triangle.fill"
@@ -206,6 +231,8 @@ enum DeviceSyncEditorStatusKind: Hashable {
             "この端末に保存済み、統合が必要"
         case .configurationError:
             "この端末に保存済み、同期設定を確認"
+        case .syncPreparationError:
+            "この端末に保存済み、同期準備を再試行"
         case .localSaveError:
             "この端末への保存に失敗"
         }
@@ -214,19 +241,21 @@ enum DeviceSyncEditorStatusKind: Hashable {
     var detail: String {
         switch self {
         case .savingLocally:
-            "本文をこの端末へ保存しています。入力はそのまま続けられます。"
+            "変更内容をこの端末へ保存しています。入力はそのまま続けられます。"
         case .savedLocally:
-            "本文はこの端末に保存されています。"
+            "変更内容はこの端末に保存されています。"
         case .syncing:
-            "本文はこの端末に保存されています。iCloudへの反映を続けています。"
+            "変更内容はこの端末に保存されています。iCloudへの反映を続けています。"
         case .synced:
-            "本文はこの端末とiCloudの両方に保存されています。"
+            "変更内容はこの端末とiCloudの両方に保存されています。"
         case .offline:
-            "本文はこの端末に保存されています。接続が戻ると自動で同期します。"
+            "変更内容はこの端末に保存されています。接続が戻ると自動で同期します。"
         case .needsReview:
-            "両方の本文を保ったまま保存しています。内容を確認して統合できます。"
+            "両方の版を保ったまま保存しています。内容を確認して統合できます。"
         case .configurationError:
-            "本文はこの端末に保存されています。iCloudアカウントまたは同期設定を確認してください。"
+            "変更内容はこの端末に保存されています。iCloudアカウントまたは同期設定を確認してください。"
+        case .syncPreparationError:
+            "変更内容はこの端末に保存されています。同期準備を次の保存時に再試行します。"
         case .localSaveError:
             "この端末への保存を完了できませんでした。保存を再試行してください。"
         }
@@ -238,7 +267,7 @@ enum DeviceSyncEditorStatusKind: Hashable {
 
     var isWarning: Bool {
         switch self {
-        case .needsReview, .configurationError, .localSaveError:
+        case .needsReview, .configurationError, .syncPreparationError, .localSaveError:
             true
         case .savingLocally, .savedLocally, .syncing, .synced, .offline:
             false
@@ -259,6 +288,9 @@ enum DeviceSyncEditorStatusKind: Hashable {
         }
         if saveState != .saved || localDurability == .pending {
             return .savingLocally
+        }
+        if localDurability == .savedSyncPreparationFailed {
+            return .syncPreparationError
         }
         if case .conflict = syncState {
             return .needsReview
@@ -305,6 +337,22 @@ struct DeviceSyncLookupIdentity: Hashable {
 
 struct DeviceSyncClient {
     let coordinator: EpisodeSyncCoordinator
+    let sessionID: SyncEditSessionID
+    let remoteAvailability: DeviceSyncRemoteAvailability
+
+    var remoteSynchronizationAllowed: Bool {
+        remoteAvailability == .available
+    }
+}
+
+struct WorkSyncDocumentIdentity: Hashable {
+    let documentSession: DocumentSessionToken
+    let workID: SyncWorkID
+    let localWorkingCopyID: LocalWorkingCopyID
+}
+
+struct WorkSyncClient {
+    let coordinator: WorkSyncCoordinator
     let sessionID: SyncEditSessionID
     let remoteAvailability: DeviceSyncRemoteAvailability
 

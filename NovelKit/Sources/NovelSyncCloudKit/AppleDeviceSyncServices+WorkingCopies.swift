@@ -79,11 +79,13 @@ public extension AppleDeviceSyncServices {
             )
         }
         let journal = try await journalFactory.journal(for: localBinding.binding)
+        let workJournal = try await journalFactory.workJournal(for: localBinding.binding)
         return AppleResolvedWorkingCopy(
             binding: localBinding.binding,
             descriptor: descriptor,
             allowedEpisodeIDs: localBinding.allowedEpisodeIDs,
-            journal: journal
+            journal: journal,
+            workJournal: workJournal
         )
     }
 

@@ -2174,6 +2174,913 @@ struct IOSDeviceSyncIntegrationTests {
         #expect(relaunched.store.deviceSyncConflict == nil)
     }
 
+    @Test("作品保存後の再接続はactive editorを変えずに自動追送する")
+    func wholeWorkReconnectPublishesWithoutInjectingActiveEditor() async throws {
+        let fixture = try makeFixture(content: "編集中の本文")
+        let workServer = InMemoryWorkSyncServer()
+        let appTransport = IOSAvailabilityControlledWorkSyncTransport(base: workServer)
+        let journal = InMemoryWorkSyncJournal()
+        let replicaID = SyncReplicaID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: appTransport,
+            journal: journal,
+            replicaID: replicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-active-editor.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let harness = try await makeEditorHarness(store: app.store)
+        defer { harness.cleanup() }
+        let mountedText = harness.textView.text
+
+        let callsBeforeEdit = await appTransport.callCount()
+        await appTransport.pauseNextRequestThenFail()
+        app.store.updateDocumentTitle("地下鉄で変更した題名")
+        #expect(await app.store.saveNow())
+        await appTransport.waitUntilRequestIsPaused()
+        let demandBeforeRefresh = app.store.workSyncNetworkDemandGeneration
+        let refresh = Task { @MainActor in
+            await app.store.refreshOrPrepareWorkDeviceSync()
+        }
+        for _ in 0 ..< 2000 {
+            if app.store.workSyncNetworkDemandGeneration > demandBeforeRefresh {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(app.store.workSyncNetworkDemandGeneration > demandBeforeRefresh)
+        await appTransport.resumePausedRequest()
+        await refresh.value
+
+        var uploaded: WorkRevision?
+        for _ in 0 ..< 2000 {
+            uploaded = await workServer.currentHead(for: fixture.key.workID)
+            if uploaded?.snapshot.title == "地下鉄で変更した題名" {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(uploaded?.snapshot.title == "地下鉄で変更した題名")
+        #expect(await appTransport.callCount() >= callsBeforeEdit + 2)
+        #expect(harness.textView.text == mountedText)
+        #expect(app.store.document.episode(fixture.episodeID)?.episode.content == mountedText)
+    }
+
+    @Test("作品の自動統合はactive editorへ注入せずsafe boundaryで反映する")
+    func wholeWorkAutomaticMergeMaterializesOnlyAtSafeBoundary() async throws {
+        let fixture = try makeFixture(content: "編集中の本文")
+        let workServer = InMemoryWorkSyncServer()
+        let appTransport = IOSAvailabilityControlledWorkSyncTransport(base: workServer)
+        let remoteCoordinator = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: workServer,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await remoteCoordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 8000)
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 8001))
+        let sharedBase = try #require(await workServer.currentHead(for: fixture.key.workID))
+
+        let localJournal = InMemoryWorkSyncJournal()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let localReplicaID = SyncReplicaID()
+        let localBootstrap = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: workServer,
+            journal: localJournal
+        )
+        _ = try await localBootstrap.bootstrapRemoteRevision(sharedBase)
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: appTransport,
+            journal: localJournal,
+            replicaID: localReplicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-auto-merge.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let harness = try await makeEditorHarness(store: app.store)
+        defer { harness.cleanup() }
+        let mountedText = harness.textView.text
+
+        await appTransport.setOnline(false)
+        app.store.updateDocumentTitle("このiPhoneの題名")
+        #expect(await app.store.saveNow())
+        for _ in 0 ..< 2000 {
+            if app.store.workSyncNetworkTask == nil {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(app.store.workSyncNetworkTask == nil)
+        var remoteDocument = fixture.document
+        remoteDocument.synopsis = "iCloudで変更したあらすじ"
+        let remoteStage = try await remoteCoordinator.stageLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 8010)
+        )
+        try await remoteCoordinator.confirmLocalSnapshotMaterialized(
+            remoteStage.revisionID,
+            packageSnapshot: remoteStage.snapshot
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 8011))
+        #expect(await workServer.currentHead(for: fixture.key.workID)?.snapshot.synopsis == "iCloudで変更したあらすじ")
+        await appTransport.setOnline(true)
+
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let client = try #require(app.store.workSyncClient)
+        let state = try await client.coordinator.currentState()
+        let pending = try #require(state.pendingRemoteMaterialization)
+        #expect(pending.kind == .automaticMerge)
+        #expect(app.store.document.title == "このiPhoneの題名")
+        #expect(app.store.document.synopsis == fixture.document.synopsis)
+        #expect(harness.textView.text == mountedText)
+
+        #expect(await app.store.flushDeviceSyncForBackground())
+        #expect(app.store.document.title == "このiPhoneの題名")
+        #expect(app.store.document.synopsis == "iCloudで変更したあらすじ")
+        #expect(harness.textView.text == mountedText)
+    }
+
+    @Test("Editor外の未debounce作品情報を端末保存してからremoteを統合する")
+    func wholeWorkFlushesUnsavedMetadataBeforeRemoteMaterialization() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let workServer = InMemoryWorkSyncServer()
+        let remoteCoordinator = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: workServer,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await remoteCoordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 8050)
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 8051))
+        let sharedBase = try #require(await workServer.currentHead(for: fixture.key.workID))
+        let localJournal = InMemoryWorkSyncJournal()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let localReplicaID = SyncReplicaID()
+        let localBootstrap = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: workServer,
+            journal: localJournal
+        )
+        _ = try await localBootstrap.bootstrapRemoteRevision(sharedBase)
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workServer: workServer,
+            journal: localJournal,
+            replicaID: localReplicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-unsaved-metadata.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+
+        var remoteDocument = fixture.document
+        remoteDocument.synopsis = "iCloudで変更したあらすじ"
+        let remoteStage = try await remoteCoordinator.stageLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 8052)
+        )
+        try await remoteCoordinator.confirmLocalSnapshotMaterialized(
+            remoteStage.revisionID,
+            packageSnapshot: remoteStage.snapshot
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 8053))
+
+        // 2秒debounceを待たずにforeground/push相当の同期を開始する。
+        app.store.updateDocumentTitle("地下鉄で未保存の題名")
+        await app.store.refreshOrPrepareWorkDeviceSync()
+
+        let package = try await app.repository.load(from: app.store.documentURL)
+        #expect(app.store.document.title == "地下鉄で未保存の題名")
+        #expect(app.store.document.synopsis == "iCloudで変更したあらすじ")
+        #expect(package.title == "地下鉄で未保存の題名")
+        #expect(package.synopsis == "iCloudで変更したあらすじ")
+        let client = try #require(app.store.workSyncClient)
+        let state = try await client.coordinator.currentState()
+        #expect(state.stagedLocalRevision == nil)
+        #expect(state.localHead.snapshot.title == "地下鉄で未保存の題名")
+        #expect(state.localHead.snapshot.synopsis == "iCloudで変更したあらすじ")
+    }
+
+    @Test("作品同期中の連続編集はCAS retry枯渇後も入力停止後に自動追送する")
+    func wholeWorkContinuousEditsRescheduleAfterLocalPending() async throws {
+        let fixture = try makeFixture(content: "編集中の本文")
+        let baseServer = InMemoryWorkSyncServer()
+        let transport = IOSDivergingWorkSyncTransport(base: baseServer)
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: transport,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-continuous-edits.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let harness = try await makeEditorHarness(store: app.store)
+        defer { harness.cleanup() }
+        let mountedText = harness.textView.text
+
+        await transport.divergeNextPublishes(4)
+        await transport.pauseNextPublish()
+        app.store.updateDocumentTitle("送信中の題名")
+        #expect(await app.store.saveNow())
+        await transport.waitUntilPublishIsPaused()
+
+        app.store.updateDocumentTitle("入力停止時の最新題名")
+        #expect(await app.store.saveNow())
+        await transport.resumePausedPublish()
+
+        var uploaded: WorkRevision?
+        for _ in 0 ..< 2000 {
+            uploaded = await baseServer.currentHead(for: fixture.key.workID)
+            if uploaded?.snapshot.title == "入力停止時の最新題名" {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(uploaded?.snapshot.title == "入力停止時の最新題名")
+        #expect(harness.textView.text == mountedText)
+    }
+
+    @Test("作品journal失敗でもpackageは保存しremote送信しない")
+    func wholeWorkJournalFailureKeepsPackageAndSkipsRemote() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let workServer = InMemoryWorkSyncServer()
+        await workServer.setOnline(false)
+        let journal = IOSFailingOnceWorkSyncJournal()
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workServer: workServer,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-journal-failure.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        await journal.failNextSave()
+        app.store.updateDocumentTitle("端末には保存する")
+
+        #expect(await app.store.saveNow())
+        let package = try await app.repository.load(from: app.store.documentURL)
+        #expect(package.title == "端末には保存する")
+        #expect(app.store.saveState == .saved)
+        #expect(app.store.deviceSyncLocalDurabilityState == .failed)
+        #expect(await workServer.currentHead(for: fixture.key.workID) == nil)
+        let status = IOSDeviceSyncStatusControl(
+            saveState: app.store.saveState,
+            state: app.store.deviceSyncState,
+            transferState: app.store.deviceSyncTransferState,
+            localDurabilityState: app.store.deviceSyncLocalDurabilityState,
+            hasLocalRecoveryReview: false,
+            isLocalRecoveryReviewReady: true,
+            usesWholeWorkSync: true,
+            reviewChanges: {}
+        )
+        #expect(status.resolvedStatus == .syncPreparationError)
+    }
+
+    @Test("作品同期の準備前でも同期上限を超える本文はpackageへexact保存する")
+    func wholeWorkOversizedContentSavesBeforeActiveIdentity() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let transport = IOSCountingWorkSyncTransport(base: InMemoryWorkSyncServer())
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: transport,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-oversized-before-identity.novelpkg"
+        )
+        let oversizedContent = String(
+            repeating: "a",
+            count: WorkSnapshot.maximumStringUTF8Bytes + 1
+        )
+
+        #expect(app.store.activeWorkSyncIdentity == nil)
+        app.store.updateEpisodeContent(
+            oversizedContent,
+            chapterID: fixture.chapterID,
+            episodeID: fixture.episodeID
+        )
+        #expect(await app.store.saveNow())
+
+        let package = try await app.repository.load(from: app.store.documentURL)
+        #expect(package == app.store.document)
+        #expect(package.episode(fixture.episodeID)?.episode.content == oversizedContent)
+        #expect(app.store.deviceSyncLocalDurabilityState == .failed)
+        #expect(await transport.callCount() == 0)
+    }
+
+    @Test("作品同期の準備後も同期上限を超える本文はpackageへexact保存する")
+    func wholeWorkOversizedContentSavesWithActiveIdentity() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let transport = IOSCountingWorkSyncTransport(base: InMemoryWorkSyncServer())
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: transport,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-oversized-with-identity.novelpkg",
+            remoteBinding: { _, _, _ in nil }
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let oversizedContent = String(
+            repeating: "a",
+            count: WorkSnapshot.maximumStringUTF8Bytes + 1
+        )
+
+        #expect(app.store.activeWorkSyncIdentity != nil)
+        #expect(await transport.callCount() == 0)
+        app.store.updateEpisodeContent(
+            oversizedContent,
+            chapterID: fixture.chapterID,
+            episodeID: fixture.episodeID
+        )
+        #expect(await app.store.saveNow())
+
+        let package = try await app.repository.load(from: app.store.documentURL)
+        #expect(package == app.store.document)
+        #expect(package.episode(fixture.episodeID)?.episode.content == oversizedContent)
+        #expect(app.store.deviceSyncLocalDurabilityState == .failed)
+        #expect(await transport.callCount() == 0)
+    }
+
+    @Test("作品同期はpackage保存完了前にnetworkを開始しない")
+    func wholeWorkNeverStartsNetworkBeforePackageSave() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let baseServer = InMemoryWorkSyncServer()
+        let orderProbe = IOSWorkSyncPackageOrderProbe()
+        let transport = IOSPackageOrderedWorkSyncTransport(
+            base: baseServer,
+            probe: orderProbe
+        )
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: transport,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-package-before-network.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        await app.repository.setSaveObserver { _ in
+            await orderProbe.recordPackageSave()
+        }
+        await orderProbe.beginObservation()
+
+        app.store.updateDocumentTitle("package確定後に送る")
+        #expect(await app.store.saveNow())
+        for _ in 0 ..< 2000 {
+            if await baseServer.currentHead(for: fixture.key.workID)?.snapshot.title == "package確定後に送る" {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(await orderProbe.networkCallCount() > 0)
+        #expect(await orderProbe.observedNetworkBeforePackage() == false)
+    }
+
+    @Test("pending remote中のstage失敗はpackage-only編集を上書きしない")
+    func wholeWorkStageFailureFencesPendingRemoteMaterialization() async throws {
+        try await verifyWorkJournalFailureFencesPendingRemote(failAfterSuccessfulSaves: 0)
+    }
+
+    @Test("pending remote中のconfirm失敗はpackage-only編集を上書きしない")
+    func wholeWorkConfirmFailureFencesPendingRemoteMaterialization() async throws {
+        try await verifyWorkJournalFailureFencesPendingRemote(failAfterSuccessfulSaves: 1)
+    }
+
+    @Test("競合選択前のstage失敗はpackage-only tailと旧reviewを保持する")
+    func wholeWorkStageFailureFencesStaleConflictChoice() async throws {
+        try await verifyWorkJournalFailureFencesConflictChoice(failAfterSuccessfulSaves: 0)
+    }
+
+    @Test("競合選択前のconfirm失敗はpackage-only tailと旧reviewを保持する")
+    func wholeWorkConfirmFailureFencesStaleConflictChoice() async throws {
+        try await verifyWorkJournalFailureFencesConflictChoice(failAfterSuccessfulSaves: 1)
+    }
+
+    @Test("再起動時に曖昧な端末内作品版を比較して選択後だけ編集を再開する")
+    func wholeWorkLocalRecoveryRequiresExplicitChoiceAfterRelaunch() async throws {
+        let fixture = try makeFixture(content: "共通本文")
+        let workServer = InMemoryWorkSyncServer()
+        await workServer.setOnline(false)
+        let journal = InMemoryWorkSyncJournal()
+        let replicaID = SyncReplicaID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let first = try makeWholeWorkStore(
+            fixture: fixture,
+            workServer: workServer,
+            journal: journal,
+            replicaID: replicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-recovery.novelpkg"
+        )
+        await first.store.refreshOrPrepareWorkDeviceSync()
+        let identity = try #require(first.store.activeWorkSyncIdentity)
+        let client = try #require(first.store.workSyncClient)
+        var stagedDocument = fixture.document
+        stagedDocument.title = "保存直前の版"
+        _ = try await client.coordinator.stageLocalSnapshot(
+            WorkSnapshot(document: stagedDocument),
+            at: Date(timeIntervalSince1970: 20000)
+        )
+        #expect(first.store.workSyncContextIsCurrent(identity))
+
+        var packageDocument = fixture.document
+        packageDocument.title = "パッケージに残った別の版"
+        let relaunchedFixture = IOSDeviceSyncFixture(
+            document: packageDocument,
+            chapterID: fixture.chapterID,
+            episodeID: fixture.episodeID,
+            key: fixture.key,
+            structureDigest: fixture.structureDigest,
+            content: fixture.content
+        )
+        let relaunched = try makeWholeWorkStore(
+            fixture: relaunchedFixture,
+            workServer: workServer,
+            journal: journal,
+            replicaID: replicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-recovery.novelpkg"
+        )
+        await relaunched.store.refreshOrPrepareWorkDeviceSync()
+
+        let recovery = try #require(relaunched.store.workSyncLocalRecoveryReview)
+        let comparison = IOSWorkLocalRecoveryPresentation(review: recovery)
+        #expect(relaunched.store.deviceSyncLocalRecoveryPending)
+        #expect(comparison.presentation.local.summary(for: .title)?.detail == "「パッケージに残った別の版」")
+        #expect(comparison.presentation.remote.summary(for: .title)?.detail == "「保存直前の版」")
+        relaunched.store.workDeviceSyncSelectionDidChange()
+        #expect(relaunched.store.deviceSyncLocalRecoveryPending)
+        #expect(relaunched.store.workSyncLocalRecoveryReview == recovery)
+
+        await relaunched.store.resolveWorkSyncLocalRecovery(
+            using: .keepRemote,
+            expectedReview: recovery
+        )
+        #expect(relaunched.store.document.title == "保存直前の版")
+        #expect(relaunched.store.workSyncLocalRecoveryReview == nil)
+        #expect(relaunched.store.deviceSyncLocalRecoveryPending == false)
+    }
+
+    @Test("local preflight復旧中は作品機能の編集を通さず旧snapshotで上書きしない")
+    func wholeWorkPreflightSerializesProjectMutationWithRecovery() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let server = InMemoryWorkSyncServer()
+        let remote = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await remote.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 8060)
+        )
+        _ = try await remote.synchronize(at: Date(timeIntervalSince1970: 8061))
+        let sharedBase = try #require(await server.currentHead(for: fixture.key.workID))
+        let seedJournal = InMemoryWorkSyncJournal()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let localReplicaID = SyncReplicaID()
+        let seed = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: seedJournal
+        )
+        _ = try await seed.bootstrapRemoteRevision(sharedBase)
+        var remoteDocument = fixture.document
+        remoteDocument.synopsis = "復旧対象のiCloud版"
+        let remoteStage = try await remote.stageLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 8062)
+        )
+        try await remote.confirmLocalSnapshotMaterialized(
+            remoteStage.revisionID,
+            packageSnapshot: remoteStage.snapshot
+        )
+        _ = try await remote.synchronize(at: Date(timeIntervalSince1970: 8063))
+        _ = try await seed.synchronize(at: Date(timeIntervalSince1970: 8064))
+        let record = try #require(await seedJournal.storedRecord(for: fixture.key.workID))
+        let journal = IOSPausableLoadWorkSyncJournal(record: record)
+        await journal.pauseNextLoad()
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: server,
+            journal: journal,
+            replicaID: localReplicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-preflight-serialized.novelpkg"
+        )
+
+        let preparation = Task { @MainActor in
+            await app.store.refreshOrPrepareWorkDeviceSync()
+        }
+        for _ in 0 ..< 2000 {
+            if await journal.isLoadPaused() {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(await journal.isLoadPaused())
+        #expect(app.store.isDocumentTransitionInProgress)
+        let session = try #require(app.store.currentDocumentSessionToken)
+        #expect(app.store.addCharacter(name: "復旧中には追加しない", expectedSession: session) == nil)
+
+        await journal.resumeLoad()
+        await preparation.value
+        #expect(app.store.isDocumentTransitionInProgress == false)
+        #expect(app.store.document.synopsis == "復旧対象のiCloud版")
+        #expect(app.store.document.characters.isEmpty)
+        #expect(app.store.addCharacter(name: "復旧後の人物", expectedSession: session) != nil)
+        #expect(await app.store.saveNow())
+        #expect(try await app.repository.load(from: app.store.documentURL).characters.map(\.name) == ["復旧後の人物"])
+    }
+
+    @Test("作品競合の選択はpackageとjournalの一時失敗後も比較画面から再試行できる")
+    func wholeWorkConflictChoiceRetriesExactPendingRevision() async throws {
+        let fixture = try makeFixture(content: "共通本文")
+        let workServer = InMemoryWorkSyncServer()
+        let remoteJournal = InMemoryWorkSyncJournal()
+        var remoteDocument = fixture.document
+        remoteDocument.title = "iCloudにある題名"
+        let remoteCoordinator = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: workServer,
+            journal: remoteJournal
+        )
+        _ = try await remoteCoordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 9000)
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 9001))
+
+        let journal = IOSFailingOnceWorkSyncJournal()
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workServer: workServer,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-conflict-retry.novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let review = try #require(app.store.workSyncConflictReview)
+
+        await app.repository.failNextSave(matchingTitle: remoteDocument.title)
+        await app.store.resolveWorkSyncConflict(using: .keepRemote, expectedReview: review)
+        #expect(app.store.workSyncConflictReview?.id == review.id)
+        #expect(app.store.deviceSyncState == .needsReview)
+        #expect(app.store.document.title == fixture.document.title)
+        #expect(app.store.operationErrorMessage?.contains("再試行") == true)
+
+        await app.store.resolveWorkSyncConflict(using: .keepLocal, expectedReview: review)
+        #expect(app.store.workSyncConflictReview?.id == review.id)
+        #expect(app.store.document.title == fixture.document.title)
+        #expect(app.store.operationErrorMessage?.contains("前回選んだ「iCloudの版」") == true)
+
+        await journal.failNextSave()
+        await app.store.resolveWorkSyncConflict(using: .keepRemote, expectedReview: review)
+        #expect(app.store.workSyncConflictReview?.id == review.id)
+        #expect(app.store.deviceSyncState == .needsReview)
+        #expect(app.store.document.title == remoteDocument.title)
+
+        await app.store.resolveWorkSyncConflict(using: .keepLocal, expectedReview: review)
+        #expect(app.store.workSyncConflictReview?.id == review.id)
+        #expect(app.store.document.title == remoteDocument.title)
+        #expect(app.store.operationErrorMessage?.contains("前回選んだ「iCloudの版」") == true)
+
+        await app.store.resolveWorkSyncConflict(using: .keepRemote, expectedReview: review)
+        #expect(app.store.workSyncConflictReview == nil)
+        #expect(app.store.document.title == remoteDocument.title)
+        #expect(try await app.repository.load(from: app.store.documentURL).title == remoteDocument.title)
+    }
+
+    @Test("作品同期の設定不一致やjournal欠落は端末編集を止めずnetworkを呼ばない")
+    func wholeWorkPreflightFailureContinuesPackageOnlyEditing() async throws {
+        let fixture = try makeFixture(content: "本文")
+        let episodeJournal = InMemoryEpisodeSyncJournal()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: fixture.key.workID
+        )
+        let bindingCounter = IOSAsyncInvocationCounter()
+        let transportCounter = IOSCountingWorkSyncTransport(base: InMemoryWorkSyncServer())
+        let missingJournal = IOSDeviceSyncBindingResolution(
+            binding: binding,
+            descriptor: nil,
+            journal: episodeJournal,
+            workJournal: nil,
+            allowedEpisodeIDs: [fixture.episodeID],
+            remoteAvailability: .temporarilyOffline
+        )
+        let packageOnly = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: transportCounter,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: binding.localWorkingCopyID,
+            packageName: "whole-work-missing-journal.novelpkg",
+            localBinding: { _, _, _ in missingJournal },
+            remoteBinding: { _, _, _ in
+                await bindingCounter.increment()
+                return nil
+            }
+        )
+        await packageOnly.store.refreshOrPrepareWorkDeviceSync()
+        let lookup = try #require(packageOnly.store.currentDeviceSyncLookupIdentity)
+        #expect(packageOnly.store.deviceSyncLocalRecoveryPending == false)
+        #expect(packageOnly.store.deviceSyncAllowsEditing(for: lookup))
+        packageOnly.store.updateDocumentTitle("同期警告中も編集")
+        #expect(await packageOnly.store.saveNow())
+        #expect(try await packageOnly.repository.load(from: packageOnly.store.documentURL).title == "同期警告中も編集")
+        #expect(await bindingCounter.value() == 0)
+        #expect(await transportCounter.callCount() == 0)
+
+        let mismatchCounter = IOSAsyncInvocationCounter()
+        let mismatchTransport = IOSCountingWorkSyncTransport(base: InMemoryWorkSyncServer())
+        let mismatchedDescriptor = SyncWorkDescriptor(
+            workID: SyncWorkID(),
+            sourceDocumentID: fixture.document.id,
+            structureDigest: fixture.structureDigest,
+            title: fixture.document.title
+        )
+        let mismatchedLocal = IOSDeviceSyncBindingResolution(
+            binding: binding,
+            descriptor: mismatchedDescriptor,
+            journal: episodeJournal,
+            workJournal: InMemoryWorkSyncJournal(),
+            allowedEpisodeIDs: [fixture.episodeID],
+            remoteAvailability: .available
+        )
+        let locallyDurable = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: mismatchTransport,
+            journal: InMemoryWorkSyncJournal(),
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: binding.localWorkingCopyID,
+            packageName: "whole-work-mismatched-descriptor.novelpkg",
+            localBinding: { _, _, _ in mismatchedLocal },
+            remoteBinding: { _, _, _ in
+                await mismatchCounter.increment()
+                return nil
+            }
+        )
+        await locallyDurable.store.refreshOrPrepareWorkDeviceSync()
+        let durableLookup = try #require(locallyDurable.store.currentDeviceSyncLookupIdentity)
+        #expect(locallyDurable.store.deviceSyncLocalRecoveryPending == false)
+        #expect(locallyDurable.store.deviceSyncAllowsEditing(for: durableLookup))
+        #expect(locallyDurable.store.deviceSyncState == .blocked)
+        locallyDurable.store.updateDocumentTitle("端末journalにも保存")
+        #expect(await locallyDurable.store.saveNow())
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await mismatchCounter.value() == 0)
+        #expect(await mismatchTransport.callCount() == 0)
+    }
+
+    private func makeWholeWorkStore(
+        fixture: IOSDeviceSyncFixture,
+        workServer: InMemoryWorkSyncServer,
+        journal: any WorkSyncJournal,
+        replicaID: SyncReplicaID,
+        localWorkingCopyID: LocalWorkingCopyID,
+        packageName: String
+    ) throws -> (store: IOSDocumentStore, repository: IOSDeviceSyncRepository) {
+        try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: workServer,
+            journal: journal,
+            replicaID: replicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: packageName
+        )
+    }
+
+    private func makeWholeWorkStore(
+        fixture: IOSDeviceSyncFixture,
+        workTransport: any WorkSyncTransport,
+        journal: any WorkSyncJournal,
+        replicaID: SyncReplicaID,
+        localWorkingCopyID: LocalWorkingCopyID,
+        packageName: String,
+        localBinding: (@Sendable (
+            IOSPrivateDocumentID,
+            UUID,
+            SyncWorkStructureDigest
+        ) async throws -> IOSDeviceSyncBindingResolution?)? = nil,
+        remoteBinding: (@Sendable (
+            IOSPrivateDocumentID,
+            UUID,
+            SyncWorkStructureDigest
+        ) async throws -> IOSDeviceSyncBindingResolution?)? = nil
+    ) throws -> (store: IOSDocumentStore, repository: IOSDeviceSyncRepository) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-iOS-WorkSync-Tests-\(UUID().uuidString)", isDirectory: true)
+        let url = root.appendingPathComponent(packageName, isDirectory: true)
+        let repository = IOSDeviceSyncRepository(initialDocument: fixture.document, at: url)
+        let episodeServer = InMemoryEpisodeSyncServer()
+        let episodeJournal = InMemoryEpisodeSyncJournal()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: localWorkingCopyID,
+            workID: fixture.key.workID
+        )
+        let local = IOSDeviceSyncBindingResolution(
+            binding: binding,
+            descriptor: nil,
+            journal: episodeJournal,
+            workJournal: journal,
+            allowedEpisodeIDs: Set(fixture.document.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let remote = IOSDeviceSyncBindingResolution(
+            binding: binding,
+            descriptor: SyncWorkDescriptor(
+                workID: fixture.key.workID,
+                sourceDocumentID: fixture.document.id,
+                structureDigest: fixture.structureDigest,
+                title: fixture.document.title
+            ),
+            journal: episodeJournal,
+            workJournal: journal,
+            allowedEpisodeIDs: local.allowedEpisodeIDs,
+            remoteAvailability: .available
+        )
+        let runtime = IOSDeviceSyncRuntime(
+            replicaID: replicaID,
+            transport: episodeServer,
+            workTransport: workTransport,
+            localWorkBinding: localBinding ?? { _, _, _ in local },
+            binding: remoteBinding ?? { _, _, _ in remote },
+            now: { Date(timeIntervalSince1970: 10000) }
+        )
+        let store = IOSDocumentStore(
+            repository: repository,
+            userDefaults: UserDefaults(suiteName: UUID().uuidString)!,
+            deviceSyncRuntime: runtime,
+            libraryRoot: root
+        )
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        store.install(fixture.document, at: url, attachments: [])
+        store.startupState = .ready
+        store.saveState = .saved
+        return (store, repository)
+    }
+
+    private func verifyWorkJournalFailureFencesPendingRemote(
+        failAfterSuccessfulSaves: Int
+    ) async throws {
+        let fixture = try makeFixture(content: "本文")
+        let server = InMemoryWorkSyncServer()
+        let remote = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await remote.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 8070)
+        )
+        _ = try await remote.synchronize(at: Date(timeIntervalSince1970: 8071))
+        let sharedBase = try #require(await server.currentHead(for: fixture.key.workID))
+        let journal = IOSIndexedFailureWorkSyncJournal()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let localReplicaID = SyncReplicaID()
+        let localBootstrap = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: journal
+        )
+        _ = try await localBootstrap.bootstrapRemoteRevision(sharedBase)
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: server,
+            journal: journal,
+            replicaID: localReplicaID,
+            localWorkingCopyID: localWorkingCopyID,
+            packageName: "whole-work-journal-fence-\(failAfterSuccessfulSaves).novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+
+        var remoteDocument = fixture.document
+        remoteDocument.synopsis = "iCloud側のあらすじ"
+        let remoteStage = try await remote.stageLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 8072)
+        )
+        try await remote.confirmLocalSnapshotMaterialized(
+            remoteStage.revisionID,
+            packageSnapshot: remoteStage.snapshot
+        )
+        _ = try await remote.synchronize(at: Date(timeIntervalSince1970: 8073))
+        let client = try #require(app.store.workSyncClient)
+        _ = try await client.coordinator.synchronize(at: Date(timeIntervalSince1970: 8074))
+        #expect(try await client.coordinator.currentState().pendingRemoteMaterialization != nil)
+
+        await journal.fail(afterSuccessfulSaves: failAfterSuccessfulSaves)
+        app.store.updateDocumentTitle("端末packageだけの題名")
+        #expect(await app.store.flushDeviceSyncForBackground() == false)
+        let preserved = try await app.repository.load(from: app.store.documentURL)
+        #expect(preserved.title == "端末packageだけの題名")
+        #expect(preserved.synopsis == fixture.document.synopsis)
+        #expect(app.store.document.title == "端末packageだけの題名")
+        #expect(app.store.deviceSyncLocalDurabilityState == .failed)
+        #expect(try await client.coordinator.currentState().pendingRemoteMaterialization != nil)
+
+        #expect(await app.store.flushDeviceSyncForBackground())
+        let merged = try await app.repository.load(from: app.store.documentURL)
+        #expect(merged.title == "端末packageだけの題名")
+        #expect(merged.synopsis == "iCloud側のあらすじ")
+        #expect(try await client.coordinator.currentState().stagedLocalRevision == nil)
+    }
+
+    private func verifyWorkJournalFailureFencesConflictChoice(
+        failAfterSuccessfulSaves: Int
+    ) async throws {
+        let fixture = try makeFixture(content: "本文")
+        let server = InMemoryWorkSyncServer()
+        var remoteDocument = fixture.document
+        remoteDocument.title = "iCloudの競合題名"
+        let remote = WorkSyncCoordinator(
+            workID: fixture.key.workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await remote.bootstrapLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 8080)
+        )
+        _ = try await remote.synchronize(at: Date(timeIntervalSince1970: 8081))
+        let journal = IOSIndexedFailureWorkSyncJournal()
+        let app = try makeWholeWorkStore(
+            fixture: fixture,
+            workTransport: server,
+            journal: journal,
+            replicaID: SyncReplicaID(),
+            localWorkingCopyID: LocalWorkingCopyID(),
+            packageName: "whole-work-conflict-journal-fence-\(failAfterSuccessfulSaves).novelpkg"
+        )
+        await app.store.refreshOrPrepareWorkDeviceSync()
+        let originalReview = try #require(app.store.workSyncConflictReview)
+
+        await journal.fail(afterSuccessfulSaves: failAfterSuccessfulSaves)
+        app.store.updateDocumentSynopsis("競合画面を開いた後の端末追記")
+        await app.store.resolveWorkSyncConflict(using: .keepRemote, expectedReview: originalReview)
+
+        var package = try await app.repository.load(from: app.store.documentURL)
+        #expect(package.title == fixture.document.title)
+        #expect(package.synopsis == "競合画面を開いた後の端末追記")
+        #expect(app.store.document == package)
+        #expect(app.store.deviceSyncLocalDurabilityState == .failed)
+        #expect(app.store.workSyncConflictReview?.id == originalReview.id)
+
+        // failureは1回だけ。再試行ではpackage-only tailをjournalへ回収して
+        // reviewを更新し、古い選択をそのまま適用しない。
+        await app.store.resolveWorkSyncConflict(using: .keepRemote, expectedReview: originalReview)
+        package = try await app.repository.load(from: app.store.documentURL)
+        let updatedReview = try #require(app.store.workSyncConflictReview)
+        #expect(updatedReview.id != originalReview.id)
+        #expect(updatedReview.local.snapshot.synopsis == "競合画面を開いた後の端末追記")
+        #expect(package.title == fixture.document.title)
+        #expect(package.synopsis == "競合画面を開いた後の端末追記")
+    }
+
     private func prepareSelectedEpisode(in store: IOSDocumentStore) async {
         guard let lookup = store.currentDeviceSyncLookupIdentity else {
             Issue.record("選択中の話にDevice Sync identityがありません。")
@@ -2418,6 +3325,7 @@ private actor IOSDeviceSyncRepository: DocumentCopyingRepository {
     private var saveObserver: (@Sendable (NovelDocument) async -> Void)?
     private var shouldPauseNextSave = false
     private var pausedSaveContinuation: CheckedContinuation<Void, Never>?
+    private var failingSaveTitle: String?
 
     init(initialDocument: NovelDocument, at url: URL) {
         documents = [url.standardizedFileURL.path: initialDocument]
@@ -2431,6 +3339,10 @@ private actor IOSDeviceSyncRepository: DocumentCopyingRepository {
     }
 
     func save(_ document: NovelDocument, to url: URL) async throws {
+        if document.title == failingSaveTitle {
+            failingSaveTitle = nil
+            throw IOSDeviceSyncTestError.injectedPackageSaveFailure
+        }
         documents[url.standardizedFileURL.path] = document
         if shouldPauseNextSave {
             shouldPauseNextSave = false
@@ -2462,12 +3374,336 @@ private actor IOSDeviceSyncRepository: DocumentCopyingRepository {
         pausedSaveContinuation = nil
     }
 
+    func failNextSave(matchingTitle title: String) {
+        failingSaveTitle = title
+    }
+
     func saveCopy(_ document: NovelDocument, from _: URL, to destinationURL: URL) async throws {
         documents[destinationURL.standardizedFileURL.path] = document
     }
 
     func setSaveObserver(_ observer: (@Sendable (NovelDocument) async -> Void)?) {
         saveObserver = observer
+    }
+}
+
+private actor IOSFailingOnceWorkSyncJournal: WorkSyncJournal {
+    private var records: [SyncWorkID: WorkSyncJournalRecord] = [:]
+    private var shouldFailNextSave = false
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        records[workID]
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        if shouldFailNextSave {
+            shouldFailNextSave = false
+            throw IOSDeviceSyncTestError.workJournalFailure
+        }
+        records[record.workID] = record
+    }
+
+    func failNextSave() {
+        shouldFailNextSave = true
+    }
+}
+
+private actor IOSIndexedFailureWorkSyncJournal: WorkSyncJournal {
+    private var records: [SyncWorkID: WorkSyncJournalRecord] = [:]
+    private var successfulSavesBeforeFailure: Int?
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        records[workID]
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        if let remaining = successfulSavesBeforeFailure {
+            if remaining == 0 {
+                successfulSavesBeforeFailure = nil
+                throw IOSDeviceSyncTestError.workJournalFailure
+            }
+            successfulSavesBeforeFailure = remaining - 1
+        }
+        records[record.workID] = record
+    }
+
+    func fail(afterSuccessfulSaves count: Int) {
+        successfulSavesBeforeFailure = max(0, count)
+    }
+}
+
+private actor IOSPausableLoadWorkSyncJournal: WorkSyncJournal {
+    private var record: WorkSyncJournalRecord
+    private var shouldPauseNextLoad = false
+    private var pausedLoad: CheckedContinuation<Void, Never>?
+
+    init(record: WorkSyncJournalRecord) {
+        self.record = record
+    }
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        guard record.workID == workID else { return nil }
+        if shouldPauseNextLoad {
+            shouldPauseNextLoad = false
+            await withCheckedContinuation { continuation in
+                pausedLoad = continuation
+            }
+        }
+        return record
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        self.record = record
+    }
+
+    func pauseNextLoad() {
+        shouldPauseNextLoad = true
+    }
+
+    func isLoadPaused() -> Bool {
+        pausedLoad != nil
+    }
+
+    func resumeLoad() {
+        let continuation = pausedLoad
+        pausedLoad = nil
+        continuation?.resume()
+    }
+}
+
+private actor IOSAsyncInvocationCounter {
+    private var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    func value() -> Int {
+        count
+    }
+}
+
+private actor IOSCountingWorkSyncTransport: WorkSyncTransport {
+    private let base: any WorkSyncTransport
+    private var calls = 0
+
+    init(base: any WorkSyncTransport) {
+        self.base = base
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        calls += 1
+        return try await base.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        calls += 1
+        return try await base.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        calls += 1
+        return try await base.publish(request)
+    }
+
+    func callCount() -> Int {
+        calls
+    }
+}
+
+private actor IOSAvailabilityControlledWorkSyncTransport: WorkSyncTransport {
+    private let base: any WorkSyncTransport
+    private var isOnline = true
+    private var shouldPauseNextRequestThenFail = false
+    private var pausedRequest: CheckedContinuation<Void, Never>?
+    private var pauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var requestCount = 0
+
+    init(base: any WorkSyncTransport) {
+        self.base = base
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        try await beginRequest()
+        return try await base.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        try await beginRequest()
+        return try await base.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        try await beginRequest()
+        return try await base.publish(request)
+    }
+
+    func setOnline(_ online: Bool) {
+        isOnline = online
+    }
+
+    func pauseNextRequestThenFail() {
+        shouldPauseNextRequestThenFail = true
+    }
+
+    func waitUntilRequestIsPaused() async {
+        if pausedRequest != nil {
+            return
+        }
+        await withCheckedContinuation { pauseObservers.append($0) }
+    }
+
+    func resumePausedRequest() {
+        pausedRequest?.resume()
+        pausedRequest = nil
+    }
+
+    func callCount() -> Int {
+        requestCount
+    }
+
+    private func beginRequest() async throws {
+        requestCount += 1
+        if shouldPauseNextRequestThenFail {
+            shouldPauseNextRequestThenFail = false
+            let observers = pauseObservers
+            pauseObservers.removeAll()
+            await withCheckedContinuation { continuation in
+                pausedRequest = continuation
+                observers.forEach { $0.resume() }
+            }
+            throw WorkSyncTransportError.unavailable
+        }
+        guard isOnline else { throw WorkSyncTransportError.unavailable }
+    }
+}
+
+private actor IOSDivergingWorkSyncTransport: WorkSyncTransport {
+    private let base: InMemoryWorkSyncServer
+    private var remainingDivergences = 0
+    private var shouldPauseNextPublish = false
+    private var pausedPublish: CheckedContinuation<Void, Never>?
+    private var pauseObservers: [CheckedContinuation<Void, Never>] = []
+
+    init(base: InMemoryWorkSyncServer) {
+        self.base = base
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        try await base.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        try await base.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        if shouldPauseNextPublish {
+            shouldPauseNextPublish = false
+            let observers = pauseObservers
+            pauseObservers.removeAll()
+            await withCheckedContinuation { continuation in
+                pausedPublish = continuation
+                observers.forEach { $0.resume() }
+            }
+        }
+        if remainingDivergences > 0 {
+            remainingDivergences -= 1
+            return try await .diverged(base.fetchSnapshot(for: request.workID))
+        }
+        return try await base.publish(request)
+    }
+
+    func divergeNextPublishes(_ count: Int) {
+        remainingDivergences = count
+    }
+
+    func pauseNextPublish() {
+        shouldPauseNextPublish = true
+    }
+
+    func waitUntilPublishIsPaused() async {
+        if pausedPublish != nil {
+            return
+        }
+        await withCheckedContinuation { pauseObservers.append($0) }
+    }
+
+    func resumePausedPublish() {
+        pausedPublish?.resume()
+        pausedPublish = nil
+    }
+}
+
+private actor IOSWorkSyncPackageOrderProbe {
+    private var isObserving = false
+    private var packageWasSaved = false
+    private var networkBeforePackage = false
+    private var networkCalls = 0
+
+    func beginObservation() {
+        isObserving = true
+        packageWasSaved = false
+        networkBeforePackage = false
+        networkCalls = 0
+    }
+
+    func recordPackageSave() {
+        guard isObserving else { return }
+        packageWasSaved = true
+    }
+
+    func recordNetworkCall() {
+        guard isObserving else { return }
+        networkCalls += 1
+        if !packageWasSaved {
+            networkBeforePackage = true
+        }
+    }
+
+    func networkCallCount() -> Int {
+        networkCalls
+    }
+
+    func observedNetworkBeforePackage() -> Bool {
+        networkBeforePackage
+    }
+}
+
+private actor IOSPackageOrderedWorkSyncTransport: WorkSyncTransport {
+    private let base: any WorkSyncTransport
+    private let probe: IOSWorkSyncPackageOrderProbe
+
+    init(base: any WorkSyncTransport, probe: IOSWorkSyncPackageOrderProbe) {
+        self.base = base
+        self.probe = probe
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        await probe.recordNetworkCall()
+        return try await base.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        await probe.recordNetworkCall()
+        return try await base.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        await probe.recordNetworkCall()
+        return try await base.publish(request)
     }
 }
 
@@ -3000,6 +4236,8 @@ private actor IOSFailingDeviceSyncEditIntentStore: IOSDeviceSyncEditIntentStorin
 
 private enum IOSDeviceSyncTestError: Error {
     case injectedEditIntentFailure
+    case injectedPackageSaveFailure
     case missingDocument
     case textViewNotFound
+    case workJournalFailure
 }

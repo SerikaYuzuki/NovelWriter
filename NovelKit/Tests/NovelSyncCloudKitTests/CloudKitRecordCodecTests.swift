@@ -224,4 +224,31 @@ struct CloudKitRecordCodecTests {
             try CloudKitAssetStore(rootURL: URL(fileURLWithPath: "/", isDirectory: true))
         }
     }
+
+    @Test("restart removes only stale staged assets and never follows unknown links")
+    func restartSweepsStaleAssetSession() throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let first = try CloudKitAssetStore(rootURL: root, sessionID: UUID())
+        let staged = try first.stage(content: "終了直前の本文")
+        let firstSessionRoot = first.rootURL
+        let unknown = root.appendingPathComponent("利用者の未知ファイル.txt")
+        try Data("keep".utf8).write(to: unknown)
+        let external = root.deletingLastPathComponent().appendingPathComponent("asset-sweep-external-(UUID()).txt")
+        defer { try? FileManager.default.removeItem(at: external) }
+        try Data("outside".utf8).write(to: external)
+        let link = root.appendingPathComponent("session-(UUID().uuidString.lowercased())")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: external)
+
+        let restarted = try CloudKitAssetStore(rootURL: root, sessionID: UUID())
+
+        #expect(!FileManager.default.fileExists(atPath: staged.url.path))
+        #expect(!FileManager.default.fileExists(atPath: firstSessionRoot.path))
+        #expect(FileManager.default.fileExists(atPath: unknown.path))
+        #expect(FileManager.default.fileExists(atPath: link.path))
+        #expect(FileManager.default.fileExists(atPath: external.path))
+        let fresh = try restarted.stage(content: "再起動後の本文")
+        #expect(FileManager.default.fileExists(atPath: fresh.url.path))
+        restarted.remove([fresh])
+    }
 }

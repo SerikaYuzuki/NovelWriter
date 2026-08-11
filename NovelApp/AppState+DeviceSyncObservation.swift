@@ -3,6 +3,10 @@ import NovelSync
 
 extension AppState {
     func refreshSelectedEpisodeDeviceSync() async {
+        if hasCurrentWorkSyncClient {
+            await refreshWholeWorkSync()
+            return
+        }
         guard deviceSyncState != .syncing,
               deviceSyncState != .forcing,
               let expectedLookup = currentDeviceSyncLookupIdentity else { return }
@@ -235,7 +239,9 @@ extension AppState {
             }
         }
         guard currentDeviceSyncLookupIdentity == expectedLookup else { return }
-        if activeDeviceSyncIdentity != nil {
+        if hasCurrentWorkSyncClient {
+            await refreshWholeWorkSync()
+        } else if activeDeviceSyncIdentity != nil {
             await refreshSelectedEpisodeDeviceSync()
         } else if let lookup = expectedLookup {
             await prepareDeviceSync(for: lookup)

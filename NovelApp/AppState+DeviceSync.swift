@@ -30,6 +30,24 @@ extension AppState {
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil
         deviceSyncEditIntentLineage = nil
+        if usesWholeWorkSyncRuntime {
+            activeDeviceSyncIdentity = nil
+            pendingDeviceSyncConflictResolution = nil
+            deviceSyncConflict = nil
+            if activeWorkSyncIdentity?.documentSession == documentSessionToken,
+               workSyncClient != nil {
+                deviceSyncLocalRecoveryPending = false
+                resolvedDeviceSyncLookupIdentity = currentDeviceSyncLookupIdentity
+            } else {
+                clearWorkSyncClient()
+                deviceSyncLocalRecoveryPending = true
+                resolvedDeviceSyncLookupIdentity = nil
+                deviceSyncState = .syncing
+                deviceSyncTransferState = .notApplicable
+                deviceSyncLocalDurabilityState = .notApplicable
+            }
+            return
+        }
         deviceSyncLocalRecoveryPending = deviceSyncRuntime != nil
         deviceSyncLocalRecoveryReview = nil
         deviceSyncLocalRecoveryChoicePending = false
@@ -111,6 +129,11 @@ extension AppState {
     ) {
         guard deviceSyncRuntime != nil,
               currentDeviceSyncLookupIdentity == expectedLookup else { return }
+        if hasCurrentWorkSyncClient {
+            deviceSyncTransferState = .localPending
+            deviceSyncLocalDurabilityState = .pending
+            return
+        }
         if resolvedDeviceSyncLookupIdentity == expectedLookup,
            deviceSyncState == .unconfigured || deviceSyncState == .episodeNotIncluded {
             deviceSyncTransferState = .notApplicable

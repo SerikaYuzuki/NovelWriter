@@ -1,17 +1,18 @@
 # クロスプラットフォーム設計契約
 
-**契約版: `.novelpkg` 1 / Device Sync wire protocol 1 / package外journal schema 2 / 対象: macOS・iOS / iPadOS・Windows・将来Android**
+**契約版: `.novelpkg` 1 / Work Sync wire 1・journal schema 1 / Episode Sync wire 1・journal schema 2（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: `.novelpkg`契約承認、W0未完了。Device Sync S1はD-059基準とD-060 Domain／Apple adapter／Mac・iOS Appを実装済み。** D-060はwire v1／journal v2、authority非依存local revision、observed baseline、offline復元、bounded multi-hunk merge、exact authority takeoverを実装し、`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件とprivate-root 1 / 1件、iOS Simulator 42 / 42件とnative focused 2 / 2件が通過した。host local fake／Simulatorをpaired native Mac↔iPhone、署名済み実CloudKit、C# / Kotlin再実装の完了へ読み替えない。現行v1に`HandoffRequest` recordはなく、cooperative request／grantは将来のadditive Decision／protocolである。macOS readerの完全なPackage Validator、W0、Windows reader / writerとの双方向round-trip、Package Validator / External Change / Conflictは未完了である。
+**状態: `.novelpkg`契約承認、W0未完了。D-061の作品全体Work SyncをDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件、`NovelSyncCloudKit` full 59 / 59件、Mac 60 / 60件、iOS focused 56 / 56件とgeneric iOS build／build-for-testingが通過した。** D-059／D-060のEpisode Sync実装と`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は別履歴として維持する。Work wire v1とEpisode wire v1は別namespaceで相互観測せず、mixed clientは非対応である。D-061開発検証はCloudKit同期data reset＋全test端末の同一buildを必須とし、production migration／minimum client version fenceまでは出荷不可とする。paired native、署名済み実CloudKit、C# / Kotlin再実装、Package Validator、External Change / Conflictは未完了である。
 
-本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、live syncは別の話単位Device Sync wire、端末内の未同期本文はpackage外journalとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059／D-060と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
+本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、現行live syncは別namespaceの作品全体Work wire、端末内の未同期作品はpackage外Work journalとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059〜D-061と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ## 1. 共有するもの／OS ごとに実装するもの
 
 | 対象 | 共有方法 | 備考 |
 | --- | --- | --- |
 | `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | 最優先の互換境界。macOS が保存した作品を Windows で開き、その逆も成立させる |
-| Device Sync wire v1／journal schema v2 | [DEVICE_SYNC.md](DEVICE_SYNC.md)、portable JSON、journal / state / merge fixture | 話本文revision、mutation / head / lease epoch CAS、detached branch、local durability、mergeの意味を共有。CloudKit型やnative editor状態は共有しない |
+| Work Sync wire v1／journal schema v1 | [DEVICE_SYNC.md](DEVICE_SYNC.md) 0章、portable JSON、whole snapshot / revision / journal / merge fixture | 作品全体revision、expected head ID＋snapshot digest CAS、mutation receipt、stage／confirm、作品全体mergeの意味を共有。CloudKit型やnative editor状態は共有しない |
+| Episode Sync wire v1／journal schema v2（履歴） | [DEVICE_SYNC.md](DEVICE_SYNC.md) 1〜15章、既存fixture | D-059／D-060の話本文revision／lease／detached branchの実装・検証履歴。Work wireと相互decode／mixed運用しない |
 | 作品→章→話、各 ID、配列順、空要素の意味 | 仕様と fixture | Swift の型を C# から直接参照せず、同じ意味のモデルを各言語で実装する |
 | 自動字下げ、ルビ・傍点、検索、文字数、モデル操作 | 入出力例と共通テストケース | 純粋ロジックとして移植する。UTF-16 範囲と grapheme の差を fixture で固定する |
 | Export の順序・見出し・改行規則 | [PHASE5.md](PHASE5.md) と出力 fixture | レンダラ実装は Swift / C# で別でも、同じ入力から同じ論理結果を得る |
@@ -67,7 +68,7 @@
 - file lock、ウイルス対策ソフト、同期クライアント等により入れ替えできない場合は保存失敗として通知し、メモリ上の dirty 状態と既存パッケージを維持する
 - Windows writerはW1で`destination` / `temp` / `backup`の状態遷移を定義し、各rename地点へ障害注入する。commit完了後だけdirtyを解除し、rollbackにも失敗した場合はbackupを消さず回復手順を通知する。起動時の回復優先順位とsharing violationのretry上限もADRへ記録する
 - package 内部のファイルを複数端末から同時編集することは当面サポートしない。クラウド同期フォルダ利用時も競合解決機能があるとは表現しない
-- D-059のDevice Syncはこの制限の例外としてpackageを同時編集する仕組みではない。app-private packageを各端末のdurable / materialized snapshotとし、別record protocolのremote episode headを既存保存経路へinstallする。package外部変更の検出と競合解決は引き続きExternal Change / Conflict Gateで扱う
+- D-061のDevice Syncもこの制限の例外としてpackageを同時編集する仕組みではない。app-private packageを各端末のdurable / materialized snapshotとし、別record protocolのremote Work headをsafe boundaryで既存保存経路へmaterializeする。package外部変更の検出と競合解決は引き続きExternal Change / Conflict Gateで扱う。D-059／D-060のremote Episode head installは履歴として維持する
 
 ## 3. Windows / WinUI 版の層構成
 
@@ -161,9 +162,62 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - Windows 用 `AGENTS.md` はW0、ローカル検証スクリプトはW1の最初に追加し、本書、D-036、`.novelpkg` fixture を読む手順を必須化する
 - macOS 側の Codex は schema / fixture / Mac reader-writer、Windows 側の Codex は C# / WinUI と Windows 固有テストを担当し、互換 PR では双方の結果を照合する
 
-## 7. Device Syncのクロスプラットフォーム契約
+## 7. D-061 Work Syncのクロスプラットフォーム契約
 
-### 7.1 `.novelpkg`との境界
+### 7.1 Portable snapshotとscope
+
+現行通常Appのlive syncは、`NovelDocument`全体をcanonical化した`WorkSnapshot` v1を共有単位にする。
+
+- 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート
+- 含めない: attachment／資料binary、snapshot履歴、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark、cloud library、package初回download／new-device bootstrap
+- `.novelpkg` v3はportable／materialized snapshotのまま変更せず、Work binding、revision、mutation、journal、CloudKit metadataをpackageへ保存しない
+- ID順にcanonical化するentity本体と、利用者の表示順を表すorder列を分離する。OSのfile列挙順、locale、timestampを順序へ使わない
+
+canonical `WorkSnapshot`は48 MiB、各StringはUTF-8 1 MiB、canonical `WorkRevision`は50 MiBを上限とする。file journalは320 MiB、outboxは3 revision、journal revision storeは5件、conflict descriptorは512件、各descriptor比較値は1 KiBである。descriptorはprefix＋SHA-256へbounded化できるが、完全なbase／local／remote／proposed snapshotをrevision／reviewへ保持する。5 revision、完全なproposed snapshot、bounded conflictsを持つ到達可能な270,439,704 bytesのjournal保存／再読込回帰を通過させる。上限超過時は切り詰め、部分同期、暗黙winner選択をしない。
+
+### 7.2 Local durabilityとstate
+
+各platformは **native editor／form → model → package外Work journalへstage → app-private `.novelpkg`保存 → exact journal confirm → remote** の意味を同じにする。
+
+- staged revisionはpackage保存前のwrite-ahead intentで、confirm前はpublish不可
+- stage失敗時もpackageを保存し、次回preflightでpackage snapshotをlocal revisionとして回収
+- package保存失敗時はstageをremote headへ昇格しない
+- local mutationはFIFOで直列化し、network I/Oはlane外で行う
+- responseはsealed mutation／revisionとcurrent journal observationの一致を再検査してから適用し、network中のlocal tailを古い応答で上書きしない
+- package／stage／pending remoteのmaterializationが再起動時に曖昧なら、推測せず利用者選択まで作品編集をgateする
+
+remote snapshotはnative editorへcallbackから直接注入しない。各platform adapterは作品／session／surface／世代、expected digest、IME composition、selection、Undo／Redo、未保存変更を確認し、local saveを終えたsafe boundaryだけでpackageへmaterializeする。packageを再読込したsnapshotがexact一致した場合だけjournalをacknowledgeする。
+
+### 7.3 Portable Work wire v1とmerge
+
+`WorkSyncWireProtocol.currentVersion = 1`はEpisode用`SyncWireProtocol.currentVersion = 1`とは別namespaceである。Swift、将来のC#／Kotlin実装はWork専用fixtureから次を一致させる。
+
+- canonical UTF-8 JSON、canonical UUID、snapshot／revision digest、親順
+- immutable whole revisionと最大2 parent
+- `mutationID + expected head revision ID + expected head snapshot digest`のCAS
+- mutation receiptによる同じcommandのidempotent retryと、同じID／別commandの拒否
+- local FIFOとnetwork response observation CAS
+- stable ID／field／orderを使う作品全体3-way merge
+
+片側変更と証明済み非重複変更だけを自動mergeする。同じfield／本文範囲、delete対edit／move／reorder、両側の異なるorder変更、同一IDの異なる追加、祖先不明、resource budget超過は、この端末／iCloud／統合案の3面reviewへ送る。review中もlocal編集を継続し、追加local headと新remote headを捨てず再評価する。
+
+Apple adapterは同じprivate custom zone内でEpisodeとは別の`FUMINIWAWorkControlV1`、`FUMINIWAWorkRevisionV1`、`FUMINIWAWorkMutationReceiptV1`を使う。whole canonical revisionを`CKAsset`へ保存し、revision／receipt／controlをatomicに更新する。将来の非Apple backendも同じCAS、receipt、immutable revision、read-backの意味を提供しなければならないが、CloudKit record layoutをportable APIにはしない。
+
+### 7.4 Cutoverと完了条件
+
+D-061は一般配布前のdevelopment cutoverである。Work headとEpisode headは独立して相互の更新を観測しないため、旧Episode-only clientとの同時利用は非対応である。D-059／D-060はreal CloudKitへdeploy／出荷していない前提で、開発CloudKit同期dataをresetし、全test端末を同じD-061 buildへ更新して検証する。production upgradeを行う場合は別Decisionでdata migrationまたはminimum client version fenceを実装・検証する。それまでは出荷不可で、mixed-client compatibilityをfixtureや成功条件に含めない。
+
+D-061のSwift側local証跡は、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 60 / 60件（integration 53＋edit-intent 4＋root 3）、iOS focused 56 / 56件（integration 49＋UI 7）である。generic iOS build／build-for-testingも通過した。Work conflict UIは既存Mac focused coverageを含め最終source監査した。これらが存在しても、次を完了扱いにしない。
+
+- C#／KotlinによるWork wire／journal／merge fixtureの独立再実装
+- paired native Mac↔iPhone、実OS process kill、手動VoiceOver／実機IME
+- Developer Program上のcontainer／profile／schema deployと署名済み実CloudKit
+- cloud library／new-device bootstrap、attachment／snapshot履歴／端末設定同期
+- Package Validator、External Change / Conflict、W0／Windows round-trip
+
+## 8. D-059／D-060 Episode Sync契約（実装・検証履歴）
+
+### 8.1 `.novelpkg`との境界
 
 - `.novelpkg`はOS間で持ち運べる作品snapshotであり、各端末のapp-private領域でdurableに保存する。CloudKit固有metadataを加えない
 - 確定本文は各OSで **native editor → model → `.novelpkg` → package外journal → remote** の順に扱い、transportをEditor入力やlocal保存の待ち条件にしない
@@ -175,7 +229,7 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - Apple版のWAL／merge recovery rootは信頼済みapp-private ancestorへanchorし、中間／最終symlinkと通常のroot identity差し替えをfail-closedにする。ただし、同時renameを行う悪意あるsame-UID processへの完全なTOCTOU耐性はportable契約に含めず、External Change / Conflict Gateを未完了として維持する
 - S1で`.novelpkg` schemaと`formatVersion`を変更しない。将来sync metadataをportable packageへ加える場合はD-036どおりschema / fixture / macOS / iOS / Windows round-tripを同時に更新する別Decisionを必要とする
 
-### 7.2 Portable protocol
+### 8.2 Portable protocol
 
 共有する正は[DEVICE_SYNC.md](DEVICE_SYNC.md)の**wire protocol version 1**、**package外journal schema version 2**、canonical JSON / journal / state / merge fixtureである。D-060で`SyncWireProtocol.currentVersion`は1のまま維持し、local working copy identity、detached branch、remote未確認、review draft、pending materialization等はjournal schema v2へ置いた。現行Swiftにはwire v1 canonical JSON、journal v1／v2 migration、local-first state、multi-hunk merge fixtureを`NovelKit/Tests/NovelSyncTests/Fixtures/`とscenario testへchecked-in済みである。Swiftの`Codable`実装だけを仕様にはせず、Windows / Android実装開始時は同じfixture / scenarioを言語非依存の共通配置から各testへ入力できる形にし、期待結果を変更せず再利用する。
 
@@ -193,7 +247,7 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 
 journalのportable resource fixtureは、pending revision最大5件、競合保持3件、materialization graph 4件、fresh-session relay込みpending 5件、JSON 80 MiBを固定する。1 MiBのJSON control character本文を全revisionへ置いた最大状態は75,506,494 bytesで、encode／save／loadの期待結果をSwift、C#、Kotlinで一致させる。上限超過時は切り詰めや部分適用をせずfail-closedにする。
 
-### 7.3 Platform adapter
+### 8.3 Platform adapter
 
 | Platform | Domain | Transport adapter | Native editor |
 | --- | --- | --- | --- |
@@ -208,7 +262,7 @@ account／CloudKit bootstrap／entitlement確認不能でも、既存bindingをa
 
 Windows / Android対応時は、その時点のbackendを別Decisionで選ぶ。CloudKit Web Servicesや自前serverを今から前提にせず、Apple adapterのrecord layoutをそのまま公共APIともしない。ただし別backendもmutation receipt、expected head / epoch CAS、atomic commit、immutable revision、fencingを同じ意味で提供できなければならない。
 
-### 7.4 S1範囲と実装順
+### 8.4 S1範囲と実装順
 
 S1は、初回binding時に構造が一致し、package外のbinding snapshotへ含めたEpisodeIDのbody handoffだけを扱う。後から追加した話はlocal-onlyとし、既存対象話まで停止させず、remoteへ新しい構造を暗黙生成もしない。作品cloud library / package bootstrap、章・話構造、タイトル、メモ、作品補助data、資料、snapshot、attachment、live collaborationは後続である。構造が一致しない作品へ本文だけを推測installしない。
 

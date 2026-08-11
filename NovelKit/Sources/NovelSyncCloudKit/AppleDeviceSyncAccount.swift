@@ -161,7 +161,7 @@ actor AppleDeviceSyncAccountGate {
     }
 }
 
-actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
+actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog, WorkSyncTransport {
     private let transport: CloudKitEpisodeSyncTransport
     private let accountGate: AppleDeviceSyncAccountGate
 
@@ -232,6 +232,39 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
         }
     }
 
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchSnapshot(for: workID)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchRevision(id, for: workID)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.publish(request)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
     func createWork(_ descriptor: SyncWorkDescriptor) async throws {
         try await accountGate.performMutation { [transport] in
             try await transport.createWork(descriptor)
@@ -255,6 +288,15 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog {
         // App enforces that authority distinction; NovelSync only needs the
         // provider-neutral transport availability signal here.
         return EpisodeSyncTransportError.unavailable
+    }
+
+    static func mappedWorkTransportError(_ error: any Error) -> any Error {
+        if CloudKitErrorMapper.isTransient(error) {
+            return WorkSyncTransportError.unavailable
+        }
+        guard let servicesError = error as? AppleDeviceSyncServicesError,
+              case .blocked = servicesError else { return error }
+        return WorkSyncTransportError.unavailable
     }
 }
 
@@ -293,10 +335,58 @@ actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
     }
 }
 
+/// D-061 journalにもEpisode journalと同じdurable binding fenceを適用する。
+/// account availabilityはremoteだけを止め、既存copyのoffline保存は止めない。
+actor AppleDeviceSyncWorkJournalBoundary: WorkSyncJournal {
+    private let journal: FileWorkSyncJournal
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private let binding: SyncWorkingCopyBinding
+
+    init(
+        journal: FileWorkSyncJournal,
+        metadataStore: AppleDeviceSyncMetadataStore,
+        binding: SyncWorkingCopyBinding
+    ) {
+        self.journal = journal
+        self.metadataStore = metadataStore
+        self.binding = binding
+    }
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        try await requireUsableBinding()
+        guard workID == binding.workID else {
+            throw WorkSyncJournalError.workMismatch
+        }
+        guard let record = try await journal.load(for: workID) else {
+            return nil
+        }
+        guard record.localWorkingCopyID == binding.localWorkingCopyID else {
+            throw WorkSyncJournalError.workingCopyMismatch
+        }
+        return record
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        try await requireUsableBinding()
+        guard record.workID == binding.workID,
+              record.localWorkingCopyID == binding.localWorkingCopyID else {
+            throw WorkSyncJournalError.workingCopyMismatch
+        }
+        try await journal.save(record)
+    }
+
+    private func requireUsableBinding() async throws {
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+    }
+}
+
 actor AppleDeviceSyncJournalFactory {
     private let rootURL: URL
     private let metadataStore: AppleDeviceSyncMetadataStore
     private var journals: [LocalWorkingCopyID: AppleDeviceSyncJournalBoundary] = [:]
+    private var workJournals: [LocalWorkingCopyID: AppleDeviceSyncWorkJournalBoundary] = [:]
 
     init(
         rootURL: URL,
@@ -330,6 +420,30 @@ actor AppleDeviceSyncJournalFactory {
             binding: binding
         )
         journals[binding.localWorkingCopyID] = boundary
+        return boundary
+    }
+
+    func workJournal(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any WorkSyncJournal {
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+        if let existing = workJournals[binding.localWorkingCopyID] {
+            return existing
+        }
+        let bindingRoot = rootURL.appendingPathComponent(
+            binding.localWorkingCopyID.rawValue.uuidString,
+            isDirectory: true
+        )
+        let workRoot = bindingRoot.appendingPathComponent("work-v1", isDirectory: true)
+        let fileJournal = try FileWorkSyncJournal(rootURL: workRoot)
+        let boundary = AppleDeviceSyncWorkJournalBoundary(
+            journal: fileJournal,
+            metadataStore: metadataStore,
+            binding: binding
+        )
+        workJournals[binding.localWorkingCopyID] = boundary
         return boundary
     }
 }

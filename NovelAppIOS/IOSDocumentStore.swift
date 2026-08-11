@@ -60,6 +60,9 @@ final class IOSDocumentStore {
     var deviceSyncLocalRecoveryReview: IOSDeviceSyncLocalRecoveryReview?
     @ObservationIgnored var deviceSyncLocalRecoveryChoicePending = false
     var deviceSyncConflict: EpisodeConflict?
+    var workSyncConflictReview: WorkConflictReview?
+    var workSyncLocalRecoveryReview: WorkLocalRecoveryReview?
+    var workSyncIsApplyingConflict = false
     var deviceSyncSetupState: IOSDeviceSyncSetupState = .idle
     var libraryItems: [IOSDocumentLibraryItem] = []
     private(set) var attachments: [Attachment] = []
@@ -109,6 +112,13 @@ final class IOSDocumentStore {
     @ObservationIgnored var deviceSyncPreparationLookup: IOSDeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncConflictResolution: IOSPendingDeviceSyncConflictResolution?
+    @ObservationIgnored var workSyncClient: IOSWorkSyncClient?
+    @ObservationIgnored var activeWorkSyncIdentity: IOSWorkSyncIdentity?
+    @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
+    @ObservationIgnored var workSyncNetworkGeneration: UInt64 = 0
+    @ObservationIgnored var workSyncNetworkDemandGeneration: UInt64 = 0
+    @ObservationIgnored var workSyncPreparationTask: Task<Void, Never>?
+    @ObservationIgnored var workSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncNewWork: IOSPendingDeviceSyncNewWork?
     @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
@@ -270,7 +280,9 @@ final class IOSDocumentStore {
             fallbackContent: previousContent
         )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        registerDeviceSyncContentMutation(content, episodeID: episodeID)
+        if !usesWholeWorkDeviceSync {
+            registerDeviceSyncContentMutation(content, episodeID: episodeID)
+        }
         markDocumentChanged()
         if let expectedEditingToken {
             scheduleDeviceSyncForEditedEpisode(
@@ -444,6 +456,10 @@ extension IOSDocumentStore {
 extension IOSDocumentStore {
     func markDocumentChanged() {
         guard startupState == .ready, !isDocumentTransitionInProgress else { return }
+        if usesWholeWorkDeviceSync, activeWorkSyncIdentity != nil {
+            deviceSyncTransferState = .localPending
+            deviceSyncLocalDurabilityState = .pending
+        }
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }

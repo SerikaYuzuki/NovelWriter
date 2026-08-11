@@ -31,6 +31,18 @@ extension IOSDeviceSyncProductionRuntimeBox {
         try await readyServices().transport.publish(request)
     }
 
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        try await readyServices().workTransport.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(_ id: SyncRevisionID, for workID: SyncWorkID) async throws -> WorkRevision {
+        try await readyServices().workTransport.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        try await readyServices().workTransport.publish(request)
+    }
+
     func readyServices() throws -> AppleDeviceSyncServices {
         guard case let .ready(services) = state else { throw EpisodeSyncTransportError.unavailable }
         return services
@@ -45,6 +57,7 @@ extension IOSDeviceSyncProductionRuntimeBox {
             binding: resolved.binding,
             descriptor: nil,
             journal: resolved.journal,
+            workJournal: resolved.workJournal,
             allowedEpisodeIDs: resolved.allowedEpisodeIDs,
             remoteAvailability: remoteAvailability
         )

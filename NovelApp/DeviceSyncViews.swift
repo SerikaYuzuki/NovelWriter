@@ -242,9 +242,9 @@ struct DeviceSyncSettingsView: View {
     var body: some View {
         if appState.deviceSyncRuntime?.setup != nil {
             VStack(alignment: .leading, spacing: 12) {
-                Label("iCloud 本文同期", systemImage: "icloud")
+                Label(syncHeading, systemImage: "icloud")
                     .font(.headline)
-                Text("同期するのは各話の本文だけです。章構成、話メモ、登場人物、プロット、資料、世界観はこの段階では同期されません。")
+                Text(syncScopeDescription)
                     .foregroundStyle(.secondary)
                 Text("開始時点の作品タイトルは、同期作品の表示名としてiCloudに保存されます。")
                     .foregroundStyle(.secondary)
@@ -253,9 +253,9 @@ struct DeviceSyncSettingsView: View {
 
                 switch appState.deviceSyncSetupState {
                 case .configured:
-                    Label("この作品は本文同期に接続されています", systemImage: "checkmark.icloud")
+                    Label(configuredDescription, systemImage: "checkmark.icloud")
                 case .idle, .candidates:
-                    Button("この作品の本文同期を始める") {
+                    Button(startButtonTitle) {
                         let session = appState.documentSessionToken
                         Task {
                             await appState.startDeviceSyncForCurrentDocument(expectedSession: session)
@@ -270,7 +270,7 @@ struct DeviceSyncSettingsView: View {
 
                     candidateList
                 case .loading:
-                    ProgressView("本文同期を設定しています")
+                    ProgressView(setupProgressTitle)
                 case let .unavailable(message):
                     Label(message, systemImage: "exclamationmark.icloud")
                         .foregroundStyle(.orange)
@@ -282,6 +282,33 @@ struct DeviceSyncSettingsView: View {
                 )
             }
         }
+    }
+
+    private var usesWholeWorkSync: Bool {
+        appState.deviceSyncRuntime?.workTransport != nil
+    }
+
+    private var syncHeading: String {
+        usesWholeWorkSync ? "iCloud 作品同期" : "iCloud 本文同期"
+    }
+
+    private var syncScopeDescription: String {
+        if usesWholeWorkSync {
+            return "作品タイトル、あらすじ、章・話構成、本文、話メモ、登場人物、プロット、伏線、世界観を同期します。資料、スナップショット、アプリの表示設定はこの端末だけに保存されます。"
+        }
+        return "同期するのは各話の本文だけです。章構成、話メモ、登場人物、プロット、資料、世界観はこの段階では同期されません。"
+    }
+
+    private var configuredDescription: String {
+        usesWholeWorkSync ? "この作品は作品同期に接続されています" : "この作品は本文同期に接続されています"
+    }
+
+    private var startButtonTitle: String {
+        usesWholeWorkSync ? "この作品の同期を始める" : "この作品の本文同期を始める"
+    }
+
+    private var setupProgressTitle: String {
+        usesWholeWorkSync ? "作品同期を設定しています" : "本文同期を設定しています"
     }
 
     @ViewBuilder

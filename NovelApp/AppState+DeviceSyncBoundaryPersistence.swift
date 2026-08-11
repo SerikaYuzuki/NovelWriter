@@ -29,6 +29,10 @@ extension AppState {
         guard startupState.isReady, editorCommandSession.isDocumentTransitionPrepared else { return false }
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil
+        if hasCurrentWorkSyncClient {
+            guard await captureAndSavePreparedWorkSyncBoundary() else { return false }
+            return await materializePendingWorkSyncAtPreparedBoundary()
+        }
         guard selectedChapterID != nil, selectedEpisodeID != nil else {
             return await saveCoordinator.saveNow()
         }
@@ -48,6 +52,28 @@ extension AppState {
             releaseAuthority: releaseAuthority,
             resolved: resolved
         )
+    }
+
+    private func captureAndSavePreparedWorkSyncBoundary() async -> Bool {
+        guard editorCommandSession.isDocumentTransitionPrepared else { return false }
+        if let chapterID = selectedChapterID, let episodeID = selectedEpisodeID {
+            switch captureCommittedTextForDeviceSync() {
+            case let .captured(content):
+                if document.episode(episodeID)?.episode.content != content {
+                    installDeviceSyncEpisodeContent(
+                        content,
+                        chapterID: chapterID,
+                        episodeID: episodeID,
+                        advancesEditorGeneration: false
+                    )
+                }
+            case .notActive:
+                break
+            case .compositionInProgress:
+                return false
+            }
+        }
+        return await saveCoordinator.saveNow()
     }
 
     private func captureDeviceSyncBoundarySnapshot() -> DeviceSyncBoundarySnapshot? {

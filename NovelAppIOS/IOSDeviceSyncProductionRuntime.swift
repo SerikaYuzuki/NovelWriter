@@ -26,6 +26,13 @@ final class IOSDeviceSyncProductionComposition: @unchecked Sendable {
         runtime = try IOSDeviceSyncRuntime(
             replicaID: localBootstrap.replicaID,
             transport: runtimeBox,
+            workTransport: runtimeBox,
+            localWorkBinding: { workingCopyID, sourceDocumentID, _ in
+                try await runtimeBox.resolveLocalWork(
+                    workingCopyID: workingCopyID,
+                    localSourceDocumentID: sourceDocumentID
+                )
+            },
             binding: { workingCopyID, sourceDocumentID, _ in
                 try await runtimeBox.resolve(
                     workingCopyID: workingCopyID,
@@ -98,7 +105,7 @@ enum IOSDeviceSyncProductionRuntimeState {
     case blocked(AppleDeviceSyncBlockedServices?)
 }
 
-actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
+actor IOSDeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     let localBootstrap: AppleDeviceSyncLocalBootstrap
     let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation
     let signalContinuation: AsyncStream<Void>.Continuation

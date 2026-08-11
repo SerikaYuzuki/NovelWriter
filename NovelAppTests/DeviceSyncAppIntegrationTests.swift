@@ -36,6 +36,931 @@ struct DeviceSyncAppIntegrationTests {
         #expect(draft.title == "自動統合の下書き")
     }
 
+    @Test("作品同期はオフライン編集をpackageとjournalへ残し再起動後に送れる")
+    func wholeWorkSyncRecoversOfflineEditAfterRestart() async throws {
+        let fixture = makeFixture(content: "地下鉄で編集する本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let workJournal = InMemoryWorkSyncJournal()
+        let workServer = InMemoryWorkSyncServer()
+        let resolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: workServer,
+            binding: { _, _ in resolution }
+        )
+
+        let first = makeState(repository: repository, runtime: runtime)
+        #expect(await first.openDocument(at: fixture.url))
+        let firstLookup = try #require(first.currentDeviceSyncLookupIdentity)
+        await first.prepareDeviceSync(for: firstLookup)
+        await waitForWorkSyncNetwork(first)
+        #expect(await workServer.currentHead(for: workID) != nil)
+
+        await workServer.setOnline(false)
+        first.updateDocumentTitle("通信なしで変更した作品名")
+        #expect(await first.saveNow())
+        await waitForWorkSyncNetwork(first)
+
+        let durablePackage = try await repository.load(from: fixture.url)
+        let durableJournal = try #require(await workJournal.storedRecord(for: workID))
+        #expect(durablePackage.title == "通信なしで変更した作品名")
+        #expect(durableJournal.localHead.snapshot.title == "通信なしで変更した作品名")
+        #expect(first.deviceSyncState == .offlineLocal)
+
+        let relaunched = makeState(repository: repository, runtime: runtime)
+        #expect(await relaunched.openDocument(at: fixture.url))
+        let relaunchedLookup = try #require(relaunched.currentDeviceSyncLookupIdentity)
+        await relaunched.prepareDeviceSync(for: relaunchedLookup)
+        #expect(relaunched.document.title == "通信なしで変更した作品名")
+        #expect(relaunched.deviceSyncLocalRecoveryPending == false)
+
+        await workServer.setOnline(true)
+        await relaunched.refreshWholeWorkSync()
+        await waitForWorkSyncNetwork(relaunched)
+        #expect(await workServer.currentHead(for: workID)?.snapshot.title == "通信なしで変更した作品名")
+        #expect(relaunched.deviceSyncTransferState == .upToDate)
+    }
+
+    @Test("作品保存はjournal stage→package→journal confirmの後にnetworkへ渡す")
+    func wholeWorkSaveOrdersJournalPackageConfirmationBeforeNetwork() async throws {
+        let fixture = makeFixture(content: "保存順を確認する本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let trace = WorkSyncEventTrace()
+        let workID = SyncWorkID()
+        let workJournal = TracingWorkSyncJournal(trace: trace)
+        let workTransport = TracingWorkSyncTransport(trace: trace)
+        let resolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: SyncReplicaID(),
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: workTransport,
+                binding: { _, _ in resolution }
+            )
+        )
+
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await waitForWorkSyncNetwork(state)
+        await trace.reset()
+        await repository.setSaveObserver { _ in
+            await trace.record(.packageSave)
+        }
+
+        state.updateDocumentTitle("順序を守って保存した作品名")
+        #expect(await state.saveNow())
+        await waitForWorkSyncNetwork(state)
+
+        let events = await trace.snapshot()
+        let stageIndex = try #require(events.firstIndex(of: .journalStage))
+        let packageIndex = try #require(events.firstIndex(of: .packageSave))
+        let confirmationIndex = try #require(events.firstIndex(of: .journalConfirmation))
+        let networkIndex = try #require(events.firstIndex(of: .network))
+        #expect(stageIndex < packageIndex)
+        #expect(packageIndex < confirmationIndex)
+        #expect(confirmationIndex < networkIndex)
+        #expect(await workTransport.currentHead(for: workID)?.snapshot.title
+            == "順序を守って保存した作品名")
+    }
+
+    @Test("作品同期journal失敗でもpackage保存成功を端末保存失敗と表示しない")
+    func wholeWorkJournalStageFailureKeepsPackageAndReportsSyncRetry() async throws {
+        let fixture = makeFixture(content: "端末に残す本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let workJournal = FailingWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal,
+            allowedEpisodeIDs: Set(fixture.document.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: transport,
+            binding: { _, _ in resolution }
+        )
+        let state = makeState(repository: repository, runtime: runtime)
+
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await state.workSyncRemoteBindingTask?.value
+        await workJournal.failNextSave()
+
+        state.updateDocumentTitle("journalが失敗しても残る作品名")
+        #expect(await state.saveNow())
+
+        let saved = try await repository.load(from: fixture.url)
+        #expect(saved.title == "journalが失敗しても残る作品名")
+        #expect(state.saveState == .saved)
+        #expect(state.deviceSyncLocalDurabilityState == .savedSyncPreparationFailed)
+        let status = DeviceSyncEditorStatusKind.resolve(
+            saveState: state.saveState,
+            syncState: state.deviceSyncState,
+            transferState: state.deviceSyncTransferState,
+            localDurability: state.deviceSyncLocalDurabilityState
+        )
+        #expect(status == .syncPreparationError)
+        #expect(status.accessibilityLabel == "この端末に保存済み、同期準備を再試行")
+        #expect(status.detail.contains("変更内容はこの端末に保存されています"))
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("作品版の保存後読み戻しが不一致なら復旧choiceを確定しない")
+    func corruptPackageReadbackCannotAcknowledgeWorkRecoveryChoice() async throws {
+        let fixture = makeFixture(content: "本文")
+        var baseDocument = fixture.document
+        baseDocument.title = "前回確定版"
+        var stagedDocument = fixture.document
+        stagedDocument.title = "端末内の保存版"
+        var observedDocument = fixture.document
+        observedDocument.title = "現在の原稿"
+        var corruptDocument = fixture.document
+        corruptDocument.title = "壊れた読み戻し"
+
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(observedDocument, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let coordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        _ = try await coordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: baseDocument),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        let staged = try await coordinator.stageLocalSnapshot(
+            WorkSnapshot(document: stagedDocument),
+            at: Date(timeIntervalSince1970: 2)
+        )
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: Set(observedDocument.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: transport,
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await state.workSyncRemoteBindingTask?.value
+        let review = try #require(state.workSyncLocalRecoveryReview)
+        #expect(review.stagedLocalRevision?.revisionID == staged.revisionID)
+
+        await repository.corruptNextSave(with: corruptDocument)
+        await state.resolveWorkSyncLocalRecovery(
+            using: .keepRemote,
+            expectedReview: review,
+            expectedSession: state.documentSessionToken
+        )
+
+        let retained = try #require(await journal.storedRecord(for: workID))
+        #expect(retained.stagedLocalRevision?.revisionID == staged.revisionID)
+        #expect(state.workSyncLocalRecoveryReview == review)
+        #expect(state.deviceSyncLocalRecoveryPending)
+        #expect(state.document.title == "現在の原稿")
+        #expect(state.deviceSyncLocalDurabilityState == .failed)
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("再起動時に残ったpackageとstaged版を比較してstaged版を復旧できる")
+    func wholeWorkRestartRecoveryChoiceMaterializesStagedRevision() async throws {
+        let fixture = makeFixture(content: "本文")
+        var baseDocument = fixture.document
+        baseDocument.title = "前回確定版"
+        var stagedDocument = fixture.document
+        stagedDocument.title = "保存途中の端末版"
+        var observedDocument = fixture.document
+        observedDocument.title = "現在のpackage版"
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(observedDocument, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let coordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        _ = try await coordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: baseDocument),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        let staged = try await coordinator.stageLocalSnapshot(
+            WorkSnapshot(document: stagedDocument),
+            at: Date(timeIntervalSince1970: 2)
+        )
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: Set(observedDocument.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: transport,
+                binding: { _, _ in resolution }
+            )
+        )
+
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await state.workSyncRemoteBindingTask?.value
+        let review = try #require(state.workSyncLocalRecoveryReview)
+        let presentation = WorkConflictPresentationAdapter.make(localRecovery: review)
+        #expect(presentation.canChooseRemote)
+        #expect(presentation.canChooseProposed == false)
+        #expect(state.deviceSyncLocalRecoveryPending)
+
+        await state.resolveWorkSyncLocalRecovery(
+            using: .keepRemote,
+            expectedReview: review,
+            expectedSession: state.documentSessionToken
+        )
+
+        let saved = try await repository.load(from: fixture.url)
+        let recovered = try #require(await journal.storedRecord(for: workID))
+        #expect(saved.title == "保存途中の端末版")
+        #expect(recovered.localHead.revisionID == staged.revisionID)
+        #expect(recovered.stagedLocalRevision == nil)
+        #expect(state.workSyncLocalRecoveryReview == nil)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("作品同期のCAS再試行を使い切ったlocal tailも自動で再送する")
+    func wholeWorkLocalPendingOutcomeReschedulesTail() async throws {
+        let fixture = makeFixture(content: "連続編集する本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let transport = DivergingWorkSyncTransport()
+        let resolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: InMemoryWorkSyncJournal()
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: SyncReplicaID(),
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: transport,
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await waitForWorkSyncNetwork(state)
+        #expect(await transport.currentHead(for: workID)?.snapshot.title == fixture.document.title)
+
+        await transport.divergeNextPublishes(4)
+        state.updateDocumentTitle("CAS競合後に残った最新版")
+        #expect(await state.saveNow())
+        await waitForWorkSyncNetwork(state)
+
+        #expect(await transport.currentHead(for: workID)?.snapshot.title == "CAS競合後に残った最新版")
+        #expect(await transport.publishCount() >= 5)
+        #expect(state.deviceSyncTransferState == .upToDate)
+    }
+
+    @Test("CloudKit bootstrapが停止中でも端末journal復旧後すぐ編集保存できる")
+    func wholeWorkLocalPreflightDoesNotWaitForRemoteBinding() async throws {
+        let fixture = makeFixture(content: "地下鉄で続ける本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let workJournal = InMemoryWorkSyncJournal()
+        let localResolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal,
+            allowedEpisodeIDs: Set(fixture.document.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let remoteResolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal
+        )
+        let remoteResolver = PausableCountingDeviceSyncBindingResolver(resolution: remoteResolution)
+        await remoteResolver.pauseNextLookup()
+        let workServer = InMemoryWorkSyncServer()
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: SyncReplicaID(),
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: workServer,
+                localWorkBinding: { _, _ in localResolution },
+                binding: { _, _ in await remoteResolver.resolve() }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+
+        await state.prepareDeviceSync(for: lookup)
+        #expect(await remoteResolver.waitUntilLookupIsPaused())
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.deviceSyncAllowsEditing(for: lookup))
+
+        state.updateDocumentTitle("通信待ち中に保存した作品名")
+        #expect(await state.saveNow())
+        #expect(try await repository.load(from: fixture.url).title == "通信待ち中に保存した作品名")
+        #expect(await workJournal.storedRecord(for: workID)?.localHead.snapshot.title
+            == "通信待ち中に保存した作品名")
+        #expect(await workServer.currentHead(for: workID) == nil)
+
+        await remoteResolver.resumePausedLookup()
+        await state.workSyncRemoteBindingTask?.value
+        await waitForWorkSyncNetwork(state)
+        #expect(await workServer.currentHead(for: workID)?.snapshot.title == "通信待ち中に保存した作品名")
+    }
+
+    @Test("remote作品情報が不一致でもlocal journalを使って編集しnetworkを止める")
+    func wholeWorkDescriptorMismatchDoesNotLockLocalEditor() async throws {
+        let fixture = makeFixture(content: "local first")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let workJournal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let mismatch = try DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: SyncWorkDescriptor(
+                workID: workID,
+                sourceDocumentID: UUID(),
+                structureDigest: SyncWorkStructureDigest(chapters: fixture.document.chapters),
+                title: fixture.document.title
+            ),
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal,
+            allowedEpisodeIDs: Set(fixture.document.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .available
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: SyncReplicaID(),
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: transport,
+                localWorkBinding: { _, _ in mismatch },
+                binding: { _, _ in mismatch }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await state.workSyncRemoteBindingTask?.value
+
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.deviceSyncAllowsEditing(for: lookup))
+        #expect(state.deviceSyncState == .blocked)
+        state.updateDocumentTitle("不一致中も端末へ保存")
+        #expect(await state.saveNow())
+        #expect(try await repository.load(from: fixture.url).title == "不一致中も端末へ保存")
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("別項目のオフライン編集はEditorへ途中注入せず安全な離脱時に自動統合する")
+    func wholeWorkDisjointOfflineEditsMergeAtSafeDeparture() async throws {
+        let fixture = makeFixture(content: "共通本文")
+        let workID = SyncWorkID()
+        let server = InMemoryWorkSyncServer()
+        let seedJournal = InMemoryWorkSyncJournal()
+        let seedCoordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: seedJournal
+        )
+        _ = try await seedCoordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        _ = try await seedCoordinator.synchronize(at: Date(timeIntervalSince1970: 2))
+        let sharedBase = try #require(await server.currentHead(for: workID))
+
+        let firstReplicaID = SyncReplicaID()
+        let secondReplicaID = SyncReplicaID()
+        let firstWorkingCopyID = LocalWorkingCopyID()
+        let secondWorkingCopyID = LocalWorkingCopyID()
+        let firstJournal = InMemoryWorkSyncJournal()
+        let secondJournal = InMemoryWorkSyncJournal()
+        try await firstJournal.save(sharedWorkJournalRecord(
+            base: sharedBase,
+            localWorkingCopyID: firstWorkingCopyID,
+            replicaID: firstReplicaID
+        ))
+        try await secondJournal.save(sharedWorkJournalRecord(
+            base: sharedBase,
+            localWorkingCopyID: secondWorkingCopyID,
+            replicaID: secondReplicaID
+        ))
+        let firstRepository = DeviceSyncAppRepository()
+        let secondRepository = DeviceSyncAppRepository()
+        let firstURL = packageURL("work-auto-merge-first")
+        let secondURL = packageURL("work-auto-merge-second")
+        await firstRepository.seed(fixture.document, at: firstURL)
+        await secondRepository.seed(fixture.document, at: secondURL)
+        let firstResolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: firstWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: firstJournal
+        )
+        let secondResolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: secondWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: secondJournal
+        )
+        let first = makeState(
+            repository: firstRepository,
+            runtime: DeviceSyncRuntime(
+                replicaID: firstReplicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: server,
+                binding: { _, _ in firstResolution }
+            )
+        )
+        let second = makeState(
+            repository: secondRepository,
+            runtime: DeviceSyncRuntime(
+                replicaID: secondReplicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: server,
+                binding: { _, _ in secondResolution }
+            )
+        )
+        #expect(await first.openDocument(at: firstURL))
+        #expect(await second.openDocument(at: secondURL))
+        let firstLookup = try #require(first.currentDeviceSyncLookupIdentity)
+        let secondLookup = try #require(second.currentDeviceSyncLookupIdentity)
+        await first.prepareDeviceSync(for: firstLookup)
+        await second.prepareDeviceSync(for: secondLookup)
+        await waitForWorkSyncNetwork(first)
+        await waitForWorkSyncNetwork(second)
+
+        await server.setOnline(false)
+        first.updateDocumentTitle("もう一方で変えた作品名")
+        second.updateDocumentSynopsis("この端末で変えたあらすじ")
+        #expect(await first.saveNow())
+        #expect(await second.saveNow())
+        await waitForWorkSyncNetwork(first)
+        await waitForWorkSyncNetwork(second)
+
+        await server.setOnline(true)
+        await first.refreshWholeWorkSync()
+        await waitForWorkSyncNetwork(first)
+        await second.refreshWholeWorkSync()
+        await waitForWorkSyncNetwork(second)
+        let pending = try #require(await secondJournal.storedRecord(for: workID)?.pendingRemoteMaterialization)
+        #expect(pending.kind == .automaticMerge)
+        #expect(second.document.title == fixture.document.title)
+        #expect(second.document.synopsis == "この端末で変えたあらすじ")
+
+        #expect(await second.flushDeviceSyncForBackground())
+        await waitForWorkSyncNetwork(second)
+        let mergedPackage = try await secondRepository.load(from: secondURL)
+        #expect(mergedPackage.title == "もう一方で変えた作品名")
+        #expect(mergedPackage.synopsis == "この端末で変えたあらすじ")
+        #expect(await server.currentHead(for: workID)?.snapshot.title == "もう一方で変えた作品名")
+        #expect(await server.currentHead(for: workID)?.snapshot.synopsis == "この端末で変えたあらすじ")
+    }
+
+    @Test("同じ項目の競合は両版を保持し明示choice後だけpackageへ反映する")
+    func wholeWorkConflictIsRetainedUntilExplicitChoice() async throws {
+        let fixture = makeFixture(content: "共通本文")
+        let workID = SyncWorkID()
+        let server = InMemoryWorkSyncServer()
+        let seedCoordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: LocalWorkingCopyID(),
+            replicaID: SyncReplicaID(),
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: InMemoryWorkSyncJournal()
+        )
+        _ = try await seedCoordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: fixture.document),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        _ = try await seedCoordinator.synchronize(at: Date(timeIntervalSince1970: 2))
+        let sharedBase = try #require(await server.currentHead(for: workID))
+
+        var remoteDocument = fixture.document
+        remoteDocument.title = "iCloudで変更した作品名"
+        let remoteReplicaID = SyncReplicaID()
+        let remoteWorkingCopyID = LocalWorkingCopyID()
+        let remoteJournal = InMemoryWorkSyncJournal()
+        try await remoteJournal.save(sharedWorkJournalRecord(
+            base: sharedBase,
+            localWorkingCopyID: remoteWorkingCopyID,
+            replicaID: remoteReplicaID
+        ))
+        let remoteCoordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: remoteWorkingCopyID,
+            replicaID: remoteReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: remoteJournal
+        )
+        _ = try await remoteCoordinator.restore()
+        let remoteRevision = try await remoteCoordinator.stageLocalSnapshot(
+            WorkSnapshot(document: remoteDocument),
+            at: Date(timeIntervalSince1970: 3)
+        )
+        try await remoteCoordinator.confirmLocalSnapshotMaterialized(
+            remoteRevision.revisionID,
+            packageSnapshot: remoteRevision.snapshot
+        )
+        _ = try await remoteCoordinator.synchronize(at: Date(timeIntervalSince1970: 4))
+
+        var localDocument = fixture.document
+        localDocument.title = "このMacで変更した作品名"
+        let localReplicaID = SyncReplicaID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let localJournal = InMemoryWorkSyncJournal()
+        try await localJournal.save(sharedWorkJournalRecord(
+            base: sharedBase,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID
+        ))
+        let localCoordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: localReplicaID,
+            sessionID: SyncEditSessionID(),
+            transport: server,
+            journal: localJournal
+        )
+        _ = try await localCoordinator.restore()
+        let localRevision = try await localCoordinator.stageLocalSnapshot(
+            WorkSnapshot(document: localDocument),
+            at: Date(timeIntervalSince1970: 5)
+        )
+        try await localCoordinator.confirmLocalSnapshotMaterialized(
+            localRevision.revisionID,
+            packageSnapshot: localRevision.snapshot
+        )
+
+        let url = packageURL("work-conflict-choice")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(localDocument, at: url)
+        let resolution = try makeResolution(
+            document: localDocument,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: localJournal
+        )
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: localReplicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: server,
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await waitForWorkSyncNetwork(state)
+        let review = try #require(state.workSyncConflictReview)
+        #expect(state.document.title == "このMacで変更した作品名")
+        #expect(await localJournal.storedRecord(for: workID)?.conflictReview == review)
+
+        await state.resolveWorkSyncConflict(
+            using: .keepRemote,
+            expectedReview: review,
+            expectedSession: state.documentSessionToken
+        )
+        await waitForWorkSyncNetwork(state)
+
+        #expect(try await repository.load(from: url).title == "iCloudで変更した作品名")
+        #expect(state.workSyncConflictReview == nil)
+        #expect(await localJournal.storedRecord(for: workID)?.conflictReview == nil)
+        #expect(await server.currentHead(for: workID)?.snapshot.title == "iCloudで変更した作品名")
+    }
+
+    @Test("作品preflightはbinding待ち中の最新本文とフォーム値を先に二相保存する")
+    func wholeWorkPreflightPreservesEditsMadeWhileBindingWaits() async throws {
+        let fixture = makeFixture(content: "前回の本文")
+        var remoteDocument = fixture.document
+        remoteDocument.title = "remote作品名"
+        remoteDocument.synopsis = "remoteあらすじ"
+        let episodeID = try #require(remoteDocument.chapters.first?.episodes.first?.id)
+        try remoteDocument.updateEpisodeContent(
+            "remote本文",
+            for: episodeID,
+            in: #require(remoteDocument.chapters.first?.id)
+        )
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        try await journal.save(pendingRemoteWorkRecord(
+            baseDocument: fixture.document,
+            remoteDocument: remoteDocument,
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID
+        ))
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: [episodeID],
+            remoteAvailability: .configurationBlocked
+        )
+        let resolver = PausableCountingDeviceSyncBindingResolver(resolution: resolution)
+        await resolver.pauseNextLookup()
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let committedText = WorkSyncCommittedTextCapture()
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: CountingWorkSyncTransport(),
+                localWorkBinding: { _, _ in await resolver.resolve() },
+                binding: { _, _ in resolution }
+            ),
+            activeCommittedTextCapture: { committedText.capture() }
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        let preparation = Task { await state.prepareDeviceSync(for: lookup) }
+        #expect(await resolver.waitUntilLookupIsPaused())
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.deviceSyncAllowsEditing(for: lookup))
+
+        state.updateDocumentTitle("binding待ち中の作品名")
+        state.updateDocumentSynopsis("binding待ち中のあらすじ")
+        committedText.content = "binding待ち中の未debounce本文"
+        await resolver.resumePausedLookup()
+        await preparation.value
+
+        let package = try await repository.load(from: fixture.url)
+        let durable = try #require(await journal.storedRecord(for: workID))
+        #expect(package.title == "binding待ち中の作品名")
+        #expect(package.synopsis == "binding待ち中のあらすじ")
+        #expect(package.episode(episodeID)?.episode.content == "binding待ち中の未debounce本文")
+        #expect(durable.localHead.snapshot.title == "binding待ち中の作品名")
+        #expect(durable.localHead.snapshot.synopsis == "binding待ち中のあらすじ")
+        #expect(durable.localHead.snapshot.episodes.first?.content == "binding待ち中の未debounce本文")
+        #expect(durable.stagedLocalRevision == nil)
+        #expect(state.document.title == "binding待ち中の作品名")
+        #expect(state.workSyncConflictReview?.local.snapshot.title == "binding待ち中の作品名")
+    }
+
+    @Test("作品journal restore中の話切替はpreflight完了までshortcutしない")
+    func wholeWorkRestoreKeepsSelectionGatedUntilRecoveryIsDurable() async throws {
+        var document = makeFixture(content: "前回の本文").document
+        let chapterID = try #require(document.chapters.first?.id)
+        let firstEpisodeID = try #require(document.chapters.first?.episodes.first?.id)
+        let secondEpisode = Episode(title: "第二話", content: "第二話本文")
+        document.chapters[0].episodes.append(secondEpisode)
+        var remoteDocument = document
+        remoteDocument.title = "復旧するremote作品名"
+        let url = packageURL("work-restore-selection-gate")
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = FailingWorkSyncJournal()
+        try await journal.save(pendingRemoteWorkRecord(
+            baseDocument: document,
+            remoteDocument: remoteDocument,
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID
+        ))
+        await journal.pauseNextLoad()
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: [firstEpisodeID, secondEpisode.id],
+            remoteAvailability: .configurationBlocked
+        )
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(document, at: url)
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: CountingWorkSyncTransport(),
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        let preparation = Task { await state.prepareDeviceSync(for: lookup) }
+        #expect(await journal.waitUntilLoadIsPaused())
+        #expect(state.deviceSyncLocalRecoveryPending)
+        #expect(state.deviceSyncAllowsEditing(for: lookup) == false)
+
+        state.selectEpisode(secondEpisode.id, in: chapterID)
+        #expect(state.selectedEpisodeID == firstEpisodeID)
+        await journal.resumePausedLoad()
+        await preparation.value
+
+        let package = try await repository.load(from: url)
+        let durable = try #require(await journal.storedRecord(for: workID))
+        #expect(package.title == "復旧するremote作品名")
+        #expect(durable.pendingRemoteMaterialization == nil)
+        #expect(durable.localHead.snapshot.title == "復旧するremote作品名")
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.selectedEpisodeID == firstEpisodeID)
+    }
+
+    @Test("競合choiceはjournal stage失敗後のpackage tailを旧reviewで消さない")
+    func workConflictChoiceRejectsStaleReviewAfterStageFailure() async throws {
+        try await assertWorkConflictChoicePreservesPackageTail(
+            successfulSavesBeforeFailure: 0
+        )
+    }
+
+    @Test("競合choiceはjournal confirm失敗後のpackage tailを旧reviewで消さない")
+    func workConflictChoiceRejectsStaleReviewAfterConfirmationFailure() async throws {
+        try await assertWorkConflictChoicePreservesPackageTail(
+            successfulSavesBeforeFailure: 1
+        )
+    }
+
+    @Test("競合choice保存失敗後は旧3択を閉じ最初の選択だけを再試行する")
+    func workConflictMaterializationFailureDoesNotAcceptOppositeStaleChoice() async throws {
+        let fixture = makeFixture(content: "競合中の本文")
+        var baseDocument = fixture.document
+        baseDocument.title = "共通作品名"
+        var localDocument = fixture.document
+        localDocument.title = "このMacの競合版"
+        var remoteDocument = fixture.document
+        remoteDocument.title = "iCloudの競合版"
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        try await journal.save(conflictedWorkRecord(
+            baseDocument: baseDocument,
+            localDocument: localDocument,
+            remoteDocument: remoteDocument,
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID
+        ))
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: Set(localDocument.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .configurationBlocked
+        )
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(localDocument, at: fixture.url)
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: CountingWorkSyncTransport(),
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        try await state.prepareDeviceSync(for: #require(state.currentDeviceSyncLookupIdentity))
+        let oldReview = try #require(state.workSyncConflictReview)
+        await repository.failNextSave()
+
+        await state.resolveWorkSyncConflict(
+            using: .keepRemote,
+            expectedReview: oldReview,
+            expectedSession: state.documentSessionToken
+        )
+
+        let firstPending = try #require(await journal.storedRecord(for: workID)?.pendingRemoteMaterialization)
+        #expect(firstPending.revision.snapshot.title == "iCloudの競合版")
+        #expect(try await repository.load(from: fixture.url).title == "このMacの競合版")
+        #expect(state.workSyncConflictReview == nil)
+        #expect(state.deviceSyncState == .syncing)
+        #expect(state.deviceSyncLocalDurabilityState == .failed)
+
+        // 旧sheetから届いた逆choiceは、最初のdurable choiceを差し替えない。
+        await state.resolveWorkSyncConflict(
+            using: .keepLocal,
+            expectedReview: oldReview,
+            expectedSession: state.documentSessionToken
+        )
+        let retainedPending = try #require(await journal.storedRecord(for: workID)?.pendingRemoteMaterialization)
+        #expect(retainedPending.revision.revisionID == firstPending.revision.revisionID)
+        #expect(retainedPending.revision.snapshot.title == "iCloudの競合版")
+        #expect(try await repository.load(from: fixture.url).title == "このMacの競合版")
+
+        // 次の安全な保存境界は、利用者が最初に選んだ版だけを再試行する。
+        #expect(await state.flushDeviceSyncForBackground())
+        #expect(try await repository.load(from: fixture.url).title == "iCloudの競合版")
+        #expect(await journal.storedRecord(for: workID)?.pendingRemoteMaterialization == nil)
+    }
+
     @Test("runtime未設定なら従来どおりlocal本文を編集できる")
     func localOnlyDocumentRemainsEditable() async throws {
         let fixture = makeFixture(content: "local")
@@ -115,6 +1040,12 @@ struct DeviceSyncAppIntegrationTests {
             transferState: .notApplicable,
             localDurability: .saved
         ).accessibilityLabel == "この端末に保存済み、同期設定を確認")
+        #expect(DeviceSyncEditorStatusKind.resolve(
+            saveState: .saved,
+            syncState: .offlineLocal,
+            transferState: .localPending,
+            localDurability: .savedSyncPreparationFailed
+        ).accessibilityLabel == "この端末に保存済み、同期準備を再試行")
 
         let pendingReview = DeviceSyncStatusControl(
             saveState: .saved,
@@ -2499,6 +3430,221 @@ struct DeviceSyncAppIntegrationTests {
         #expect(relaunched.deviceSyncConflict == nil)
     }
 
+    private func assertWorkConflictChoicePreservesPackageTail(
+        successfulSavesBeforeFailure: Int
+    ) async throws {
+        let fixture = makeFixture(content: "競合中の本文")
+        var baseDocument = fixture.document
+        baseDocument.title = "共通作品名"
+        var localDocument = fixture.document
+        localDocument.title = "このMacの競合版"
+        var remoteDocument = fixture.document
+        remoteDocument.title = "iCloudの競合版"
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = FailingWorkSyncJournal()
+        try await journal.save(conflictedWorkRecord(
+            baseDocument: baseDocument,
+            localDocument: localDocument,
+            remoteDocument: remoteDocument,
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID
+        ))
+        let episodeIDs = Set(localDocument.chapters.flatMap(\.episodes).map(\.id))
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: episodeIDs,
+            remoteAvailability: .configurationBlocked
+        )
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(localDocument, at: fixture.url)
+        let state = makeState(
+            repository: repository,
+            runtime: DeviceSyncRuntime(
+                replicaID: replicaID,
+                transport: InMemoryEpisodeSyncServer(),
+                workTransport: CountingWorkSyncTransport(),
+                binding: { _, _ in resolution }
+            )
+        )
+        #expect(await state.openDocument(at: fixture.url))
+        try await state.prepareDeviceSync(for: #require(state.currentDeviceSyncLookupIdentity))
+        let oldReview = try #require(state.workSyncConflictReview)
+        await journal.failSaves(
+            afterSuccessfulSaves: successfulSavesBeforeFailure,
+            count: 2
+        )
+
+        state.updateDocumentTitle("競合表示後に追記したtail")
+        await state.resolveWorkSyncConflict(
+            using: .keepRemote,
+            expectedReview: oldReview,
+            expectedSession: state.documentSessionToken
+        )
+
+        #expect(try await repository.load(from: fixture.url).title == "競合表示後に追記したtail")
+        #expect(state.workSyncConflictReview == oldReview)
+        #expect(state.deviceSyncLocalDurabilityState == .savedSyncPreparationFailed)
+        #expect(await journal.storedRecord(for: workID)?.conflictReview == oldReview)
+
+        // journalが復旧した同じ旧choiceはtailを取り込んだreviewへ更新するだけで、
+        // その場では適用しない。
+        await state.resolveWorkSyncConflict(
+            using: .keepRemote,
+            expectedReview: oldReview,
+            expectedSession: state.documentSessionToken
+        )
+        let refreshedReview = try #require(state.workSyncConflictReview)
+        #expect(refreshedReview != oldReview)
+        #expect(refreshedReview.local.snapshot.title == "競合表示後に追記したtail")
+        #expect(try await repository.load(from: fixture.url).title == "競合表示後に追記したtail")
+        #expect(await journal.storedRecord(for: workID)?.stagedLocalRevision == nil)
+        #expect(state.deviceSyncLocalDurabilityState == .saved)
+
+        // 更新後の比較を見て選び直したchoiceだけをmaterializeする。
+        await state.resolveWorkSyncConflict(
+            using: .keepLocal,
+            expectedReview: refreshedReview,
+            expectedSession: state.documentSessionToken
+        )
+        #expect(try await repository.load(from: fixture.url).title == "競合表示後に追記したtail")
+        #expect(state.workSyncConflictReview == nil)
+        #expect(await journal.storedRecord(for: workID)?.conflictReview == nil)
+    }
+
+    private func pendingRemoteWorkRecord(
+        baseDocument: NovelDocument,
+        remoteDocument: NovelDocument,
+        workID: SyncWorkID,
+        localWorkingCopyID: LocalWorkingCopyID,
+        replicaID: SyncReplicaID
+    ) throws -> WorkSyncJournalRecord {
+        let branchID = SyncBranchID()
+        let base = try workRevision(
+            document: baseDocument,
+            workID: workID,
+            branchID: branchID,
+            replicaID: replicaID,
+            parents: [],
+            timestamp: 1
+        )
+        let remote = try workRevision(
+            document: remoteDocument,
+            workID: workID,
+            branchID: branchID,
+            replicaID: SyncReplicaID(),
+            parents: [base.revisionID],
+            timestamp: 2
+        )
+        return try WorkSyncJournalRecord(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            branchID: branchID,
+            lastKnownRemoteHead: remote,
+            localHead: base,
+            outbox: [],
+            pendingRemoteMaterialization: WorkPendingMaterialization(
+                kind: .remoteFastForward,
+                sourceLocalRevisionID: base.revisionID,
+                revision: remote
+            ),
+            reconciliationStatus: .materializationRequired
+        )
+    }
+
+    private func conflictedWorkRecord(
+        baseDocument: NovelDocument,
+        localDocument: NovelDocument,
+        remoteDocument: NovelDocument,
+        workID: SyncWorkID,
+        localWorkingCopyID: LocalWorkingCopyID,
+        replicaID: SyncReplicaID
+    ) throws -> WorkSyncJournalRecord {
+        let branchID = SyncBranchID()
+        let base = try workRevision(
+            document: baseDocument,
+            workID: workID,
+            branchID: branchID,
+            replicaID: replicaID,
+            parents: [],
+            timestamp: 1
+        )
+        let local = try workRevision(
+            document: localDocument,
+            workID: workID,
+            branchID: branchID,
+            replicaID: replicaID,
+            parents: [base.revisionID],
+            timestamp: 2
+        )
+        let remote = try workRevision(
+            document: remoteDocument,
+            workID: workID,
+            branchID: branchID,
+            replicaID: SyncReplicaID(),
+            parents: [base.revisionID],
+            timestamp: 3
+        )
+        let review = try WorkConflictReview(
+            base: base,
+            local: local,
+            remote: remote,
+            proposedSnapshot: local.snapshot,
+            conflicts: [
+                WorkFieldConflict(
+                    path: "document.title",
+                    entityKind: .document,
+                    entityID: nil,
+                    field: "title",
+                    reason: .sameFieldChanged,
+                    baseValue: baseDocument.title,
+                    localValue: localDocument.title,
+                    remoteValue: remoteDocument.title,
+                    proposedValue: localDocument.title
+                )
+            ]
+        )
+        return try WorkSyncJournalRecord(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            branchID: branchID,
+            lastKnownRemoteHead: remote,
+            localHead: local,
+            outbox: [local],
+            conflictReview: review,
+            reconciliationStatus: .reviewRequired
+        )
+    }
+
+    private func workRevision(
+        document: NovelDocument,
+        workID: SyncWorkID,
+        branchID: SyncBranchID,
+        replicaID: SyncReplicaID,
+        parents: [SyncRevisionID],
+        timestamp: TimeInterval
+    ) throws -> WorkRevision {
+        try WorkRevision(
+            workID: workID,
+            parentRevisionIDs: parents,
+            branchID: branchID,
+            authorReplicaID: replicaID,
+            authorSessionID: SyncEditSessionID(),
+            snapshot: WorkSnapshot(document: document),
+            clientCreatedAt: Date(timeIntervalSince1970: timestamp)
+        )
+    }
+
     private func makeState(
         repository: DeviceSyncAppRepository,
         runtime: DeviceSyncRuntime? = nil,
@@ -2591,7 +3737,8 @@ struct DeviceSyncAppIntegrationTests {
         document: NovelDocument,
         localWorkingCopyID: LocalWorkingCopyID,
         workID: SyncWorkID,
-        journal: any EpisodeSyncJournal
+        journal: any EpisodeSyncJournal,
+        workJournal: (any WorkSyncJournal)? = nil
     ) throws -> DeviceSyncBindingResolution {
         try DeviceSyncBindingResolution(
             binding: SyncWorkingCopyBinding(
@@ -2605,8 +3752,32 @@ struct DeviceSyncAppIntegrationTests {
                 title: document.title
             ),
             journal: journal,
+            workJournal: workJournal,
             allowedEpisodeIDs: Set(document.chapters.flatMap(\.episodes).map(\.id))
         )
+    }
+
+    private func sharedWorkJournalRecord(
+        base: WorkRevision,
+        localWorkingCopyID: LocalWorkingCopyID,
+        replicaID: SyncReplicaID
+    ) throws -> WorkSyncJournalRecord {
+        try WorkSyncJournalRecord(
+            workID: base.workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            branchID: base.branchID,
+            lastKnownRemoteHead: base,
+            localHead: base,
+            outbox: [],
+            reconciliationStatus: .synchronized
+        )
+    }
+
+    private func waitForWorkSyncNetwork(_ state: AppState) async {
+        while let task = state.workSyncNetworkTask {
+            await task.value
+        }
     }
 
     private func revision(
@@ -2660,7 +3831,9 @@ private actor DeviceSyncAppRepository: DocumentRepository {
     private var documents: [String: NovelDocument] = [:]
     private var saveObserver: (@Sendable (NovelDocument) async -> Void)?
     private var shouldPauseNextSave = false
+    private var shouldFailNextSave = false
     private var pausedSaveContinuation: CheckedContinuation<Void, Never>?
+    private var nextSavedDocumentOverride: NovelDocument?
 
     func seed(_ document: NovelDocument, at url: URL) {
         documents[url.standardizedFileURL.path] = document
@@ -2674,7 +3847,16 @@ private actor DeviceSyncAppRepository: DocumentRepository {
     }
 
     func save(_ document: NovelDocument, to url: URL) async throws {
-        documents[url.standardizedFileURL.path] = document
+        if shouldFailNextSave {
+            shouldFailNextSave = false
+            throw DeviceSyncAppRepositoryError.injectedPackageSaveFailure
+        }
+        if let nextSavedDocumentOverride {
+            documents[url.standardizedFileURL.path] = nextSavedDocumentOverride
+            self.nextSavedDocumentOverride = nil
+        } else {
+            documents[url.standardizedFileURL.path] = document
+        }
         if shouldPauseNextSave {
             shouldPauseNextSave = false
             await withCheckedContinuation { continuation in
@@ -2688,6 +3870,10 @@ private actor DeviceSyncAppRepository: DocumentRepository {
 
     func pauseNextSave() {
         shouldPauseNextSave = true
+    }
+
+    func failNextSave() {
+        shouldFailNextSave = true
     }
 
     func waitUntilSaveIsPaused() async -> Bool {
@@ -2707,6 +3893,215 @@ private actor DeviceSyncAppRepository: DocumentRepository {
 
     func setSaveObserver(_ observer: (@Sendable (NovelDocument) async -> Void)?) {
         saveObserver = observer
+    }
+
+    func corruptNextSave(with document: NovelDocument) {
+        nextSavedDocumentOverride = document
+    }
+}
+
+private enum WorkSyncTestFailure: Error {
+    case injectedJournalFailure
+}
+
+@MainActor
+private final class WorkSyncCommittedTextCapture {
+    var content: String?
+
+    func capture() -> EditorCommittedTextCaptureResult {
+        content.map(EditorCommittedTextCaptureResult.captured) ?? .notActive
+    }
+}
+
+private enum WorkSyncEvent: Equatable, Sendable {
+    case journalStage
+    case packageSave
+    case journalConfirmation
+    case network
+}
+
+private actor WorkSyncEventTrace {
+    private var events: [WorkSyncEvent] = []
+
+    func record(_ event: WorkSyncEvent) {
+        events.append(event)
+    }
+
+    func reset() {
+        events = []
+    }
+
+    func snapshot() -> [WorkSyncEvent] {
+        events
+    }
+}
+
+private actor TracingWorkSyncJournal: WorkSyncJournal {
+    private let storage = InMemoryWorkSyncJournal()
+    private let trace: WorkSyncEventTrace
+
+    init(trace: WorkSyncEventTrace) {
+        self.trace = trace
+    }
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        try await storage.load(for: workID)
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        await trace.record(
+            record.stagedLocalRevision == nil ? .journalConfirmation : .journalStage
+        )
+        try await storage.save(record)
+    }
+}
+
+private actor TracingWorkSyncTransport: WorkSyncTransport {
+    private let server = InMemoryWorkSyncServer()
+    private let trace: WorkSyncEventTrace
+
+    init(trace: WorkSyncEventTrace) {
+        self.trace = trace
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        await trace.record(.network)
+        return try await server.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(_ id: SyncRevisionID, for workID: SyncWorkID) async throws -> WorkRevision {
+        await trace.record(.network)
+        return try await server.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        await trace.record(.network)
+        return try await server.publish(request)
+    }
+
+    func currentHead(for workID: SyncWorkID) async -> WorkRevision? {
+        await server.currentHead(for: workID)
+    }
+}
+
+private actor FailingWorkSyncJournal: WorkSyncJournal {
+    private let storage = InMemoryWorkSyncJournal()
+    private var successfulSavesBeforeFailure = 0
+    private var remainingSaveFailures = 0
+    private var shouldPauseNextLoad = false
+    private var pausedLoadContinuation: CheckedContinuation<Void, Never>?
+
+    func failNextSave() {
+        failSaves(afterSuccessfulSaves: 0, count: 1)
+    }
+
+    func failSaves(afterSuccessfulSaves: Int, count: Int) {
+        successfulSavesBeforeFailure = afterSuccessfulSaves
+        remainingSaveFailures = count
+    }
+
+    func pauseNextLoad() {
+        shouldPauseNextLoad = true
+    }
+
+    func waitUntilLoadIsPaused() async -> Bool {
+        for _ in 0 ..< 2000 {
+            if pausedLoadContinuation != nil {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
+    }
+
+    func resumePausedLoad() {
+        pausedLoadContinuation?.resume()
+        pausedLoadContinuation = nil
+    }
+
+    func storedRecord(for workID: SyncWorkID) async -> WorkSyncJournalRecord? {
+        try? await storage.load(for: workID)
+    }
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        if shouldPauseNextLoad {
+            shouldPauseNextLoad = false
+            await withCheckedContinuation { continuation in
+                pausedLoadContinuation = continuation
+            }
+        }
+        return try await storage.load(for: workID)
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        if successfulSavesBeforeFailure > 0 {
+            successfulSavesBeforeFailure -= 1
+        } else if remainingSaveFailures > 0 {
+            remainingSaveFailures -= 1
+            throw WorkSyncTestFailure.injectedJournalFailure
+        }
+        try await storage.save(record)
+    }
+}
+
+private actor CountingWorkSyncTransport: WorkSyncTransport {
+    private let server = InMemoryWorkSyncServer()
+    private var operations = 0
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        operations += 1
+        return try await server.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(_ id: SyncRevisionID, for workID: SyncWorkID) async throws -> WorkRevision {
+        operations += 1
+        return try await server.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        operations += 1
+        return try await server.publish(request)
+    }
+
+    func operationCount() -> Int {
+        operations
+    }
+}
+
+private actor DivergingWorkSyncTransport: WorkSyncTransport {
+    private let server = InMemoryWorkSyncServer()
+    private var remainingDivergences = 0
+    private var observedPublishCount = 0
+
+    func divergeNextPublishes(_ count: Int) {
+        remainingDivergences = count
+        observedPublishCount = 0
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        try await server.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(_ id: SyncRevisionID, for workID: SyncWorkID) async throws -> WorkRevision {
+        try await server.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        observedPublishCount += 1
+        if remainingDivergences > 0 {
+            remainingDivergences -= 1
+            let snapshot = try await server.fetchSnapshot(for: request.workID)
+            return .diverged(snapshot)
+        }
+        return try await server.publish(request)
+    }
+
+    func currentHead(for workID: SyncWorkID) async -> WorkRevision? {
+        await server.currentHead(for: workID)
+    }
+
+    func publishCount() -> Int {
+        observedPublishCount
     }
 }
 
@@ -3104,6 +4499,7 @@ private actor PausablePreservedRemovalDeviceSyncEditIntentStore: DeviceSyncEditI
 
 private enum DeviceSyncAppRepositoryError: Error {
     case injectedEditIntentFailure
+    case injectedPackageSaveFailure
     case missingDocument
     case rejectedPrivateCopy
 }

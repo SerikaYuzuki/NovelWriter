@@ -24,6 +24,10 @@ extension IOSDocumentStore {
         _ document: NovelDocument,
         to url: URL
     ) async throws {
+        if usesWholeWorkDeviceSync {
+            try await performCoordinatedWorkDocumentSave(document, to: url)
+            return
+        }
         let intentReady = await flushPendingDeviceSyncEditIntents()
         let checkpoints = await prepareDeviceSyncPackageCheckpoints(for: document, at: url)
         guard let privateWorkingCopyLocation else {

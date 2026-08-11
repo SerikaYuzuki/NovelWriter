@@ -5,6 +5,18 @@ import NovelSync
 import NovelSyncCloudKit
 
 extension IOSDeviceSyncProductionRuntimeBox {
+    func resolveLocalWork(
+        workingCopyID: IOSPrivateDocumentID,
+        localSourceDocumentID _: UUID
+    ) async throws -> IOSDeviceSyncBindingResolution? {
+        let locator = try Self.locator(for: workingCopyID)
+        guard try hasSafePackageForResolution(workingCopyID, locator: locator),
+              isLocallyBound(locator) else { return nil }
+        guard let local = try await localBootstrap.resolveLocal(locator) else { return nil }
+        knownBoundLocators.insert(locator)
+        return Self.localOnlyResolution(from: local, remoteAvailability: .temporarilyOffline)
+    }
+
     func resolve(
         workingCopyID: IOSPrivateDocumentID,
         localSourceDocumentID: UUID
@@ -26,6 +38,7 @@ extension IOSDeviceSyncProductionRuntimeBox {
                             binding: resolved.binding,
                             descriptor: resolved.descriptor,
                             journal: resolved.journal,
+                            workJournal: resolved.workJournal,
                             allowedEpisodeIDs: resolved.allowedEpisodeIDs
                         )
                     } catch where Self.permitsLocalResolutionFallback(for: error) {

@@ -9,7 +9,7 @@ extension IOSDocumentStore {
     ) {
         let previousContent = document.episode(episodeID)?.episode.content
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        if previousContent != content {
+        if previousContent != content, !usesWholeWorkDeviceSync {
             registerDeviceSyncContentMutation(
                 content,
                 episodeID: episodeID,

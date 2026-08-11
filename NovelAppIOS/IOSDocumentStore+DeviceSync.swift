@@ -22,6 +22,10 @@ extension IOSDocumentStore {
     }
 
     func deviceSyncSelectionDidChange() {
+        if usesWholeWorkDeviceSync {
+            workDeviceSyncSelectionDidChange()
+            return
+        }
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil
         deviceSyncEditIntentLineage = nil
@@ -44,6 +48,10 @@ extension IOSDocumentStore {
     }
 
     func prepareDeviceSync(for expectedLookup: IOSDeviceSyncLookupIdentity) async {
+        if usesWholeWorkDeviceSync {
+            await refreshOrPrepareWorkDeviceSync()
+            return
+        }
         while let inFlight = deviceSyncPreparationTask {
             let observedGeneration = deviceSyncPreparationGeneration
             let observedLookup = deviceSyncPreparationLookup
@@ -103,6 +111,11 @@ extension IOSDocumentStore {
         guard deviceSyncRuntime != nil,
               let expectedLookup = currentDeviceSyncLookupIdentity,
               expectedLookup.editingToken == expectedEditingToken else { return }
+        if usesWholeWorkDeviceSync {
+            deviceSyncTransferState = .localPending
+            deviceSyncLocalDurabilityState = .pending
+            return
+        }
         if resolvedDeviceSyncLookupIdentity == expectedLookup,
            deviceSyncState == .unconfigured || deviceSyncState == .episodeNotIncluded {
             deviceSyncTransferState = .notApplicable

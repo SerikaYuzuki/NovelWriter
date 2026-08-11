@@ -68,6 +68,9 @@ public struct AppleResolvedWorkingCopy: Sendable {
     public let descriptor: SyncWorkDescriptor
     public let allowedEpisodeIDs: Set<EpisodeID>
     public let journal: any EpisodeSyncJournal
+    /// D-061 whole-work snapshotのcopy専用local journal。
+    /// Cloud account確認不能時も同じbindingから復元できる。
+    public let workJournal: any WorkSyncJournal
 
     public func allowsEpisode(_ episodeID: EpisodeID) -> Bool {
         allowedEpisodeIDs.contains(episodeID)
@@ -81,6 +84,7 @@ public struct AppleLocalResolvedWorkingCopy: Sendable {
     public let binding: SyncWorkingCopyBinding
     public let allowedEpisodeIDs: Set<EpisodeID>
     public let journal: any EpisodeSyncJournal
+    public let workJournal: any WorkSyncJournal
 
     public func allowsEpisode(_ episodeID: EpisodeID) -> Bool {
         allowedEpisodeIDs.contains(episodeID)
@@ -97,7 +101,8 @@ public struct AppleLocalResolvedWorkingCopy: Sendable {
         return try await AppleLocalResolvedWorkingCopy(
             binding: snapshot.binding,
             allowedEpisodeIDs: snapshot.allowedEpisodeIDs,
-            journal: journalFactory.journal(for: snapshot.binding)
+            journal: journalFactory.journal(for: snapshot.binding),
+            workJournal: journalFactory.workJournal(for: snapshot.binding)
         )
     }
 }
@@ -167,6 +172,7 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
 
     public let replicaID: SyncReplicaID
     public let transport: any EpisodeSyncTransport
+    public let workTransport: any WorkSyncTransport
     public let signals: AsyncStream<AppleDeviceSyncSignal>
 
     let cloudTransport: CloudKitEpisodeSyncTransport
@@ -190,6 +196,7 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
         self.cloudTransport = cloudTransport
         self.remoteBoundary = remoteBoundary
         transport = remoteBoundary
+        workTransport = remoteBoundary
         self.metadataStore = metadataStore
         self.accountGate = accountGate
         self.journalFactory = journalFactory

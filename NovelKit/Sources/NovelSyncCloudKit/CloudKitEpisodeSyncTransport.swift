@@ -4,7 +4,7 @@ import NovelSync
 
 /// Apple private CloudKit databaseへNovelSyncのportable transport contractを写像する。
 /// CKRecord/change tag/asset/zoneはこのtargetから外へ出さない。
-public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog {
+public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog, WorkSyncTransport {
     enum ZoneLifecycle {
         case unknown
         case ready
@@ -15,6 +15,7 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
     let database: CKDatabase
     let codec: CloudKitRecordCodec
     let planner: CloudKitPublishPlanner
+    let workPlanner: CloudKitWorkPublishPlanner
     let changeDriver: CloudKitChangeTrackingDriver
     var zoneLifecycle = ZoneLifecycle.unknown
 
@@ -37,6 +38,7 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
         self.database = database
         self.codec = codec
         planner = CloudKitPublishPlanner(codec: codec)
+        workPlanner = CloudKitWorkPublishPlanner(codec: codec)
         changeDriver = try CloudKitChangeTrackingDriver(
             database: database,
             restoredState: restoredEngineState,

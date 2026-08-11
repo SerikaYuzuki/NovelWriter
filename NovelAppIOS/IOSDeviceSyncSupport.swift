@@ -11,6 +11,14 @@ enum IOSDeviceSyncLocalPersistenceError: Error {
 struct IOSDeviceSyncRuntime {
     let replicaID: SyncReplicaID
     let transport: any EpisodeSyncTransport
+    /// D-061の作品全体同期。既存D-060 runtime/testは`nil`のまま動作する。
+    let workTransport: (any WorkSyncTransport)?
+    /// CloudKit/account確認を行わず、端末内bindingとwork journalだけを復元する入口。
+    let localWorkBinding: (@Sendable (
+        IOSPrivateDocumentID,
+        UUID,
+        SyncWorkStructureDigest
+    ) async throws -> IOSDeviceSyncBindingResolution?)?
     let binding: @Sendable (
         IOSPrivateDocumentID,
         UUID,
@@ -26,6 +34,12 @@ struct IOSDeviceSyncRuntime {
     init(
         replicaID: SyncReplicaID,
         transport: any EpisodeSyncTransport,
+        workTransport: (any WorkSyncTransport)? = nil,
+        localWorkBinding: (@Sendable (
+            IOSPrivateDocumentID,
+            UUID,
+            SyncWorkStructureDigest
+        ) async throws -> IOSDeviceSyncBindingResolution?)? = nil,
         binding: @escaping @Sendable (
             IOSPrivateDocumentID,
             UUID,
@@ -40,6 +54,8 @@ struct IOSDeviceSyncRuntime {
     ) {
         self.replicaID = replicaID
         self.transport = transport
+        self.workTransport = workTransport
+        self.localWorkBinding = localWorkBinding
         self.binding = binding
         self.remoteChangeSignals = remoteChangeSignals
         self.mergeRecoveryStore = mergeRecoveryStore
@@ -106,6 +122,8 @@ struct IOSDeviceSyncBindingResolution: Sendable {
     /// `nil`はremote確認なしで端末内のexact bindingだけを復元した状態。
     let descriptor: SyncWorkDescriptor?
     let journal: any EpisodeSyncJournal
+    /// D-061作品全体同期の端末内journal。D-060だけのbindingでは`nil`。
+    let workJournal: (any WorkSyncJournal)?
     let allowedEpisodeIDs: Set<EpisodeID>
     let remoteAvailability: IOSDeviceSyncRemoteAvailability
 
@@ -113,12 +131,14 @@ struct IOSDeviceSyncBindingResolution: Sendable {
         binding: SyncWorkingCopyBinding,
         descriptor: SyncWorkDescriptor?,
         journal: any EpisodeSyncJournal,
+        workJournal: (any WorkSyncJournal)? = nil,
         allowedEpisodeIDs: Set<EpisodeID>,
         remoteAvailability: IOSDeviceSyncRemoteAvailability? = nil
     ) {
         self.binding = binding
         self.descriptor = descriptor
         self.journal = journal
+        self.workJournal = workJournal
         self.allowedEpisodeIDs = allowedEpisodeIDs
         self.remoteAvailability = remoteAvailability ?? (descriptor == nil ? .temporarilyOffline : .available)
     }
@@ -161,6 +181,7 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
     case offline
     case needsReview
     case configurationError
+    case syncPreparationError
     case localSaveError
 
     var systemImage: String {
@@ -173,7 +194,7 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
             "icloud.slash"
         case .needsReview:
             "exclamationmark.triangle"
-        case .configurationError:
+        case .configurationError, .syncPreparationError:
             "exclamationmark.icloud"
         case .localSaveError:
             "exclamationmark.triangle.fill"
@@ -196,6 +217,8 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
             "この端末に保存済み、統合が必要"
         case .configurationError:
             "この端末に保存済み、同期設定を確認"
+        case .syncPreparationError:
+            "この端末に保存済み、同期準備を再試行"
         case .localSaveError:
             "この端末への保存に失敗"
         }
@@ -217,6 +240,8 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
             "両方の本文を保ったまま保存しています。内容を確認して統合できます。"
         case .configurationError:
             "本文はこの端末に保存されています。iCloudアカウントまたは同期設定を確認してください。"
+        case .syncPreparationError:
+            "本文はこの端末に保存されています。同期準備を次の保存または再起動時に再試行します。"
         case .localSaveError:
             "この端末への保存を完了できませんでした。保存を再試行してください。"
         }
@@ -228,7 +253,7 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
 
     var isWarning: Bool {
         switch self {
-        case .needsReview, .configurationError, .localSaveError:
+        case .needsReview, .configurationError, .syncPreparationError, .localSaveError:
             true
         case .savingLocally, .savedLocally, .syncing, .synced, .offline:
             false
@@ -298,6 +323,26 @@ struct IOSDeviceSyncClient {
 struct IOSDeviceSyncClientKey: Hashable {
     let localWorkingCopyID: LocalWorkingCopyID
     let syncKey: EpisodeSyncKey
+}
+
+struct IOSWorkSyncLookupIdentity: Hashable {
+    let documentSession: IOSDocumentSessionToken
+    let sourceDocumentID: UUID
+}
+
+struct IOSWorkSyncIdentity: Hashable {
+    let documentSession: IOSDocumentSessionToken
+    let localWorkingCopyID: LocalWorkingCopyID
+    let workID: SyncWorkID
+}
+
+struct IOSWorkSyncClient {
+    let coordinator: WorkSyncCoordinator
+    let remoteAvailability: IOSDeviceSyncRemoteAvailability
+
+    var remoteSynchronizationAllowed: Bool {
+        remoteAvailability == .available
+    }
 }
 
 struct IOSPendingDeviceSyncConflictResolution {

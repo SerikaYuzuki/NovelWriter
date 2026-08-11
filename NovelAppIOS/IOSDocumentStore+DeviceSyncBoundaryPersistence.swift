@@ -26,6 +26,9 @@ private struct IOSDeviceSyncBoundaryClient {
 extension IOSDocumentStore {
     @discardableResult
     func flushPreparedDeviceSyncBoundarySerially(releaseAuthority: Bool) async -> Bool {
+        if usesWholeWorkDeviceSync {
+            return await flushPreparedWorkSyncBoundarySerially()
+        }
         guard startupState == .ready, editorCommandSession.isDocumentTransitionPrepared else { return false }
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil

@@ -521,10 +521,15 @@ struct EditorPaneView: View {
                             state: appState.deviceSyncState,
                             transferState: appState.deviceSyncTransferState,
                             localDurabilityState: appState.deviceSyncLocalDurabilityState,
-                            hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil,
-                            isLocalRecoveryReviewReady: !appState.deviceSyncLocalRecoveryPending
+                            hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil
+                                || appState.workSyncConflictReview != nil
+                                || appState.workSyncLocalRecoveryReview != nil,
+                            isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
+                                || !appState.deviceSyncLocalRecoveryPending
                         ) {
-                            guard appState.deviceSyncConflict != nil
+                            guard appState.workSyncConflictReview != nil
+                                || appState.workSyncLocalRecoveryReview != nil
+                                || appState.deviceSyncConflict != nil
                                 || appState.deviceSyncLocalRecoveryReview != nil else { return }
                             isDeviceSyncConflictPresented = true
                         }
@@ -588,7 +593,41 @@ struct EditorPaneView: View {
             editorSearchSession.handleEpisodeChange(newSelection)
         }
         .sheet(isPresented: $isDeviceSyncConflictPresented) {
-            if let conflict = appState.deviceSyncConflict {
+            if let review = appState.workSyncConflictReview {
+                let session = appState.documentSessionToken
+                WorkConflictResolutionView(
+                    presentation: WorkConflictPresentationAdapter.make(review: review),
+                    isApplying: appState.isApplyingWorkSyncConflict,
+                    choose: { choice in
+                        Task {
+                            await appState.resolveWorkSyncConflict(
+                                using: choice,
+                                expectedReview: review,
+                                expectedSession: session
+                            )
+                        }
+                    },
+                    reviewLater: { isDeviceSyncConflictPresented = false }
+                )
+                .id(review.id)
+            } else if let review = appState.workSyncLocalRecoveryReview {
+                let session = appState.documentSessionToken
+                WorkConflictResolutionView(
+                    presentation: WorkConflictPresentationAdapter.make(localRecovery: review),
+                    isApplying: appState.isApplyingWorkSyncConflict,
+                    choose: { choice in
+                        Task {
+                            await appState.resolveWorkSyncLocalRecovery(
+                                using: choice,
+                                expectedReview: review,
+                                expectedSession: session
+                            )
+                        }
+                    },
+                    reviewLater: { isDeviceSyncConflictPresented = false }
+                )
+                .id("local-recovery:\(review.materializedRevision.revisionID)")
+            } else if let conflict = appState.deviceSyncConflict {
                 DeviceSyncConflictResolutionView(
                     conflict: conflict,
                     state: appState.deviceSyncState,
@@ -621,12 +660,34 @@ struct EditorPaneView: View {
             }
         }
         .onChange(of: appState.deviceSyncConflict) { _, conflict in
-            if conflict == nil, appState.deviceSyncLocalRecoveryReview == nil {
+            if conflict == nil,
+               appState.deviceSyncLocalRecoveryReview == nil,
+               appState.workSyncConflictReview == nil,
+               appState.workSyncLocalRecoveryReview == nil {
                 isDeviceSyncConflictPresented = false
             }
         }
         .onChange(of: appState.deviceSyncLocalRecoveryReview) { _, review in
-            if review == nil, appState.deviceSyncConflict == nil {
+            if review == nil,
+               appState.deviceSyncConflict == nil,
+               appState.workSyncConflictReview == nil,
+               appState.workSyncLocalRecoveryReview == nil {
+                isDeviceSyncConflictPresented = false
+            }
+        }
+        .onChange(of: appState.workSyncConflictReview) { _, review in
+            if review == nil,
+               appState.workSyncLocalRecoveryReview == nil,
+               appState.deviceSyncConflict == nil,
+               appState.deviceSyncLocalRecoveryReview == nil {
+                isDeviceSyncConflictPresented = false
+            }
+        }
+        .onChange(of: appState.workSyncLocalRecoveryReview) { _, review in
+            if review == nil,
+               appState.workSyncConflictReview == nil,
+               appState.deviceSyncConflict == nil,
+               appState.deviceSyncLocalRecoveryReview == nil {
                 isDeviceSyncConflictPresented = false
             }
         }

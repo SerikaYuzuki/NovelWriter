@@ -224,6 +224,10 @@ extension IOSDocumentStore {
     }
 
     func refreshOrPrepareSelectedEpisodeDeviceSync() async {
+        if usesWholeWorkDeviceSync {
+            await refreshOrPrepareWorkDeviceSync()
+            return
+        }
         let expectedLookup = currentDeviceSyncLookupIdentity
         if let inFlight = deviceSyncPreparationTask {
             let generation = deviceSyncPreparationGeneration

@@ -48,6 +48,9 @@ final class DeviceSyncPreparation {
 
 extension AppState {
     func prepareDeviceSyncSerially(for expectedLookup: DeviceSyncLookupIdentity) async {
+        if await prepareWorkSyncIfAvailable(for: expectedLookup) {
+            return
+        }
         guard shouldBeginDeviceSyncPreparation(expectedLookup) else { return }
         guard let preparation = await makeDeviceSyncPreparation(expectedLookup) else { return }
         do {

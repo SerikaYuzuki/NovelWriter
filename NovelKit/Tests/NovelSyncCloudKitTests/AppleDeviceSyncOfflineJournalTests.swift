@@ -1,4 +1,5 @@
 import Foundation
+import NovelCore
 import NovelSync
 @testable import NovelSyncCloudKit
 import Testing
@@ -44,6 +45,32 @@ struct AppleDeviceSyncOfflineJournalTests {
         )
         let restored = try await resolved.journal.load(for: cloudTestKey)
         #expect(restored?.localHead == revision)
+
+        let workSnapshot = try WorkSnapshot(
+            document: .newDocument(title: "地下鉄で編集する作品")
+        )
+        let workRevision = try WorkRevision(
+            workID: cloudTestWorkID,
+            parentRevisionIDs: [],
+            branchID: cloudTestBranchID,
+            authorReplicaID: bootstrap.replicaID,
+            authorSessionID: SyncEditSessionID(),
+            snapshot: workSnapshot,
+            clientCreatedAt: Date(timeIntervalSince1970: 1_723_000_000)
+        )
+        let workRecord = try WorkSyncJournalRecord(
+            workID: cloudTestWorkID,
+            localWorkingCopyID: snapshot.binding.localWorkingCopyID,
+            replicaID: bootstrap.replicaID,
+            branchID: cloudTestBranchID,
+            lastKnownRemoteHead: nil,
+            localHead: workRevision,
+            outbox: [workRevision]
+        )
+        try await resolved.workJournal.save(workRecord)
+        let restoredWork = try await resolved.workJournal.load(for: cloudTestWorkID)
+        #expect(restoredWork?.localHead == workRevision)
+        #expect(restoredWork?.localWorkingCopyID == snapshot.binding.localWorkingCopyID)
     }
 
     @Test("blocked services expose only the existing copy's local journal")
