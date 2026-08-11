@@ -133,6 +133,7 @@ struct FuminiwaApp: App {
                     // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
                     await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
                     await deviceSyncBootstrap.value
+                    await appState.refreshStartupLibrary()
                     await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
                     #endif
                 }
@@ -142,13 +143,13 @@ struct FuminiwaApp: App {
             // 既定の「新規ウインドウ」(単一ウィンドウ方針 D-010 と衝突する)を
             // 置き換える。
             CommandGroup(replacing: .newItem) {
-                Button("新規") {
+                Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(!appState.permitsDocumentChoice)
 
-                Button("開く…") {
+                Button("作品を取り込む…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
@@ -163,24 +164,26 @@ struct FuminiwaApp: App {
                 .disabled(!appState.permitsDocumentInteraction)
             }
 
-            // Cmd+Shift+S は macOS の「別名で保存…」の慣習を優先する
-            // (docs/DECISIONS.md D-025)。スナップショット保存は Cmd+Option+S へ移す。
+            // app-private作業コピーを外へ見せず、portable `.novelpkg`は書き出しから
+            // 明示的に作る。スナップショット保存は Cmd+Option+S を維持する。
             CommandGroup(after: .saveItem) {
-                Button("別名で保存…") {
-                    documentPanelPresenter.presentSaveAsPanel()
+                if appState.deviceSyncRuntime?.library != nil {
+                    Button("作品を選ぶ") {
+                        let session = appState.documentSessionToken
+                        Task {
+                            _ = await appState.returnToStartupLibrary(expectedSession: session)
+                        }
+                    }
+                    .disabled(!appState.permitsReturnToCloudLibrary)
+
+                    Divider()
                 }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("書き出す…") {
                     exportPresenter.present()
                 }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!appState.permitsDocumentInteraction || exportPresenter.state.isExporting)
-
-                Button("Finder で表示") {
-                    documentPanelPresenter.revealInFinder()
-                }
-                .disabled(!appState.permitsDocumentInteraction)
 
                 Divider()
 
@@ -336,14 +339,8 @@ private struct SnapshotRestoreCommands: View {
                 Text("スナップショットはありません")
             } else {
                 ForEach(presenter.snapshots) { item in
-                    Menu(item.snapshot.displayName) {
-                        Button("この状態に戻す…") {
-                            presenter.requestRestore(item)
-                        }
-                        Button("Finder で表示") {
-                            guard item.session == appState.documentSessionToken else { return }
-                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
-                        }
+                    Button(item.snapshot.displayName) {
+                        presenter.requestRestore(item)
                     }
                 }
             }

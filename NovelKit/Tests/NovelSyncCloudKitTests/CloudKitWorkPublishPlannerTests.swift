@@ -47,6 +47,7 @@ struct CloudKitWorkPublishPlannerTests {
         )
         #expect(decoded.headRevisionID == revision.revisionID)
         #expect(decoded.headSnapshotDigest == revision.snapshotDigest)
+        #expect(try decoded.libraryEntry == SyncWorkLibraryEntry(head: revision))
     }
 
     @Test("fake server accepts one nil-head CAS and rejects a stale competing plan atomically")
@@ -92,6 +93,60 @@ struct CloudKitWorkPublishPlannerTests {
         #expect(
             server.records[.workRevision(competing.revisionID, workID: cloudTestWorkID)] == nil
         )
+    }
+
+    @Test("rename advances the lightweight library projection in the same atomic plan")
+    func renameUpdatesLibraryProjectionAtomically() throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let codec = try CloudKitRecordCodec(assetStore: CloudKitAssetStore(rootURL: root))
+        let planner = CloudKitWorkPublishPlanner(codec: codec)
+        let parent = try makeWorkRevision(
+            id: #require(UUID(uuidString: "41111111-1111-4111-8111-111111111111"))
+        )
+        let renamed = try makeWorkRevision(
+            id: #require(UUID(uuidString: "42222222-2222-4222-8222-222222222222")),
+            parents: [parent.revisionID],
+            title: "改題後の作品"
+        )
+        let parentEntry = try SyncWorkLibraryEntry(head: parent)
+        let parentRecord = try codec.updateWorkControlRecord(
+            nil,
+            workID: cloudTestWorkID,
+            headRevisionID: parent.revisionID,
+            headSnapshotDigest: parent.snapshotDigest,
+            libraryEntry: parentEntry
+        )
+        let control = CloudKitWorkControl(
+            record: parentRecord,
+            workID: cloudTestWorkID,
+            headRevisionID: parent.revisionID,
+            headSnapshotDigest: parent.snapshotDigest,
+            libraryEntry: parentEntry
+        )
+        let request = try WorkPublishRequest(
+            workID: cloudTestWorkID,
+            revisions: [renamed],
+            candidateHeadRevisionID: renamed.revisionID,
+            expectedHeadRevisionID: parent.revisionID,
+            expectedHeadSnapshotDigest: parent.snapshotDigest
+        )
+        let plan = try planner.makePlan(
+            request: request,
+            control: control,
+            existingExternalParentIDs: [parent.revisionID]
+        )
+        defer { codec.removeStagedAssets(plan.stagedAssets) }
+        let updated = try #require(plan.recordsToSave.first {
+            $0.recordType == CloudKitSyncSchema.RecordType.workControl
+        })
+        let decoded = try codec.decodeWorkControlRecord(
+            updated,
+            expectedWorkID: cloudTestWorkID
+        )
+
+        #expect(try decoded.libraryEntry == SyncWorkLibraryEntry(head: renamed))
+        #expect(decoded.libraryEntry?.title == "改題後の作品")
     }
 
     @Test("planner rejects absent external parents and immutable revision collisions")

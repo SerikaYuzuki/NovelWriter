@@ -1,6 +1,7 @@
 import EditorKit
 import Foundation
 import NovelCore
+import NovelStorage
 import NovelSync
 import NovelSyncTesting
 import Testing
@@ -89,6 +90,95 @@ struct DeviceSyncAppIntegrationTests {
         await waitForWorkSyncNetwork(relaunched)
         #expect(await workServer.currentHead(for: workID)?.snapshot.title == "通信なしで変更した作品名")
         #expect(relaunched.deviceSyncTransferState == .upToDate)
+    }
+
+    @Test("作品package書き出しはactive identityとjournalを変えず付随dataを保持する")
+    func packageExportPreservesActiveIdentityJournalAndResources() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-Package-Export-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = NovelpkgRepository()
+        let sourceURL = directory.appendingPathComponent("Active.novelpkg", isDirectory: true)
+        let destinationURL = directory.appendingPathComponent("Export.novelpkg", isDirectory: true)
+        let attachmentSource = directory.appendingPathComponent("資料.txt")
+        let futureResourceURL = sourceURL.appendingPathComponent("future-resource.bin")
+        let document = NovelDocument(
+            title: "identityを保つ作品",
+            chapters: [Chapter(title: "第一章", episodes: [Episode(content: "本文")])]
+        )
+        try await repository.save(document, to: sourceURL)
+        try Data("資料本文".utf8).write(to: attachmentSource)
+        _ = try await repository.addAttachment(from: attachmentSource, to: sourceURL)
+        _ = try await repository.saveSnapshot(document, to: sourceURL)
+        try Data([0x00, 0x7F, 0xFF]).write(to: futureResourceURL)
+
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let workJournal = InMemoryWorkSyncJournal()
+        let resolution = try makeResolution(
+            document: document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: workJournal
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: InMemoryWorkSyncServer(),
+            binding: { _, _ in resolution }
+        )
+        let defaultsName = "FUMINIWA.PackageExportIdentityTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        defaults.removePersistentDomain(forName: defaultsName)
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: runtime
+            ),
+            initialStartupState: .ready
+        )
+
+        #expect(await state.openDocument(at: sourceURL))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await waitForWorkSyncNetwork(state)
+
+        let originalSession = state.documentSessionToken
+        let originalURL = state.documentURL
+        let originalRecent = defaults.string(forKey: AppPreferenceKey.recentDocumentPath)
+        let originalIdentity = try #require(state.activeWorkSyncIdentity)
+        let originalJournal = try #require(await workJournal.storedRecord(for: workID))
+        let originalChapterID = state.selectedChapterID
+        let originalEpisodeID = state.selectedEpisodeID
+        let originalWorkspaceSelection = state.workspaceSelection
+
+        try await state.exportDocumentPackage(
+            to: destinationURL,
+            expectedSession: originalSession
+        )
+
+        #expect(state.documentSessionToken == originalSession)
+        #expect(state.documentURL == originalURL)
+        #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == originalRecent)
+        #expect(state.activeWorkSyncIdentity == originalIdentity)
+        #expect(state.activeWorkSyncIdentity?.workID == workID)
+        #expect(await workJournal.storedRecord(for: workID) == originalJournal)
+        #expect(state.selectedChapterID == originalChapterID)
+        #expect(state.selectedEpisodeID == originalEpisodeID)
+        #expect(state.workspaceSelection == originalWorkspaceSelection)
+        #expect(try await repository.validatePortablePackage(at: destinationURL) == document)
+        #expect(try await repository.listAttachments(in: destinationURL).map(\.fileName) == ["資料.txt"])
+        #expect(try await repository.listSnapshots(in: destinationURL).count == 1)
+        #expect(FileManager.default.fileExists(
+            atPath: destinationURL.appendingPathComponent("future-resource.bin").path
+        ))
     }
 
     @Test("作品保存はjournal stage→package→journal confirmの後にnetworkへ渡す")
@@ -1301,7 +1391,7 @@ struct DeviceSyncAppIntegrationTests {
             syncState: .writer,
             transferState: .upToDate,
             localDurability: .saved
-        ).accessibilityLabel == "この端末に保存済み、iCloudにも同期済み")
+        ).accessibilityLabel == "作品データをこの端末とiCloudに同期済み")
         #expect(DeviceSyncEditorStatusKind.resolve(
             saveState: .saved,
             syncState: .offlineLocal,

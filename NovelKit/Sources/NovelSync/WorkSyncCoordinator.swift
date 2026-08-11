@@ -16,6 +16,7 @@ public enum WorkSyncCoordinatorError: Error, Equatable, Sendable {
     case revisionMismatch
     case packageSnapshotMismatch
     case remoteSnapshotMalformed
+    case remoteHeadMissing
 }
 
 public struct WorkSyncState: Sendable, Equatable {
@@ -699,6 +700,15 @@ public actor WorkSyncCoordinator {
         }
         var record = try requireRecord()
         guard let remoteHead = remote.head else {
+            if record.lastKnownRemoteHead != nil {
+                // A missing head is valid only for an initial publish. Once an exact
+                // remote head has been acknowledged, treating nil as an empty server
+                // could silently recreate a deleted or inaccessible work. Keep every
+                // local revision and the last remote evidence for explicit recovery.
+                record.reconciliationStatus = .pending
+                try await save(record)
+                throw WorkSyncCoordinatorError.remoteHeadMissing
+            }
             guard !record.outbox.isEmpty else {
                 record.reconciliationStatus = .pending
                 try await save(record)

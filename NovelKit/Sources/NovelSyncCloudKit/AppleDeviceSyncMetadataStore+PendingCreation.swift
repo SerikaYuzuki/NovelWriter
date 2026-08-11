@@ -7,6 +7,7 @@ extension AppleDeviceSyncMetadataStore {
     ) -> Bool {
         document.bindings.contains(where: { $0.locator == locator })
             || document.pendingWorkCreations.contains(where: { $0.locator == locator })
+            || document.pendingLibraryOpens.contains(where: { $0.locator == locator })
     }
 
     /// remote createより先に永続化する。再試行時は同じlocatorとsource documentの

@@ -14,6 +14,12 @@ struct ApplePendingWorkCreationRecord: Codable, Sendable {
     let allowedEpisodeIDs: [EpisodeID]
 }
 
+struct ApplePendingLibraryOpenRecord: Codable, Sendable {
+    let token: AppleDeviceSyncPendingOpenToken
+    let locator: AppleLocalDocumentLocator
+    let entry: SyncWorkLibraryEntry
+}
+
 struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -21,6 +27,8 @@ struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
         case accountScope
         case bindings
         case pendingWorkCreations
+        case pendingLibraryOpens
+        case cachedLibraryEntries
         case engineStateGeneration
         case engineState
     }
@@ -30,6 +38,8 @@ struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
     var accountScope: AppleCloudAccountScope?
     var bindings: [AppleDeviceSyncBindingRecord]
     var pendingWorkCreations: [ApplePendingWorkCreationRecord]
+    var pendingLibraryOpens: [ApplePendingLibraryOpenRecord]
+    var cachedLibraryEntries: [SyncWorkLibraryEntry]
     var engineStateGeneration: UInt64
     var engineState: Data?
 
@@ -39,6 +49,8 @@ struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
         accountScope: AppleCloudAccountScope?,
         bindings: [AppleDeviceSyncBindingRecord],
         pendingWorkCreations: [ApplePendingWorkCreationRecord],
+        pendingLibraryOpens: [ApplePendingLibraryOpenRecord] = [],
+        cachedLibraryEntries: [SyncWorkLibraryEntry] = [],
         engineStateGeneration: UInt64,
         engineState: Data?
     ) {
@@ -47,6 +59,8 @@ struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
         self.accountScope = accountScope
         self.bindings = bindings
         self.pendingWorkCreations = pendingWorkCreations
+        self.pendingLibraryOpens = pendingLibraryOpens
+        self.cachedLibraryEntries = cachedLibraryEntries
         self.engineStateGeneration = engineStateGeneration
         self.engineState = engineState
     }
@@ -64,6 +78,14 @@ struct AppleDeviceSyncMetadataDocument: Codable, Sendable {
         pendingWorkCreations = try container.decodeIfPresent(
             [ApplePendingWorkCreationRecord].self,
             forKey: .pendingWorkCreations
+        ) ?? []
+        pendingLibraryOpens = try container.decodeIfPresent(
+            [ApplePendingLibraryOpenRecord].self,
+            forKey: .pendingLibraryOpens
+        ) ?? []
+        cachedLibraryEntries = try container.decodeIfPresent(
+            [SyncWorkLibraryEntry].self,
+            forKey: .cachedLibraryEntries
         ) ?? []
         engineStateGeneration = try container.decode(
             UInt64.self,

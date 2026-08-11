@@ -265,6 +265,9 @@ extension AppState {
                 deviceSyncLocalRecoveryPending = false
                 resolvedDeviceSyncLookupIdentity = currentDeviceSyncLookupIdentity ?? expectedLookup
                 let state = try await client.coordinator.currentState()
+                if state.conflictReview != nil || state.reconciliationStatus == .reviewRequired {
+                    await markLibraryNeedsReview(identity)
+                }
                 applyWorkSyncState(state, client: client)
                 if !descriptorMatches {
                     deviceSyncState = .blocked
@@ -384,6 +387,7 @@ extension AppState {
             )
         case let .reviewRequired(review):
             workSyncLocalRecoveryReview = review
+            await markLibraryNeedsReview(identity)
             deviceSyncState = .needsReview
             deviceSyncTransferState = .localPending
             // preflightの複数版を選ぶまでEditorを開かない。
@@ -796,7 +800,7 @@ extension AppState {
             do {
                 let outcome = try await client.coordinator.synchronize(at: runtime.now())
                 guard workSyncContextIsCurrent(identity) else { return }
-                applyWorkSyncOutcome(outcome, identity: identity, client: client)
+                await applyWorkSyncOutcome(outcome, identity: identity, client: client)
                 switch outcome {
                 case .upToDate, .uploaded, .localPending:
                     mayRetryFreshTail = true
@@ -843,10 +847,16 @@ extension AppState {
         _ outcome: WorkSyncOutcome,
         identity: WorkSyncDocumentIdentity,
         client _: WorkSyncClient
-    ) {
+    ) async {
         guard workSyncContextIsCurrent(identity) else { return }
         switch outcome {
-        case .upToDate, .uploaded:
+        case let .upToDate(revision), let .uploaded(revision):
+            guard await acknowledgeLibraryRemoteHead(revision, identity: identity) else {
+                deviceSyncState = .syncing
+                deviceSyncTransferState = .localPending
+                deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
+                return
+            }
             workSyncConflictReview = nil
             deviceSyncState = .writer
             deviceSyncTransferState = .upToDate
@@ -860,9 +870,31 @@ extension AppState {
             deviceSyncTransferState = .localPending
         case let .reviewRequired(review):
             workSyncConflictReview = review
+            await markLibraryNeedsReview(identity)
             deviceSyncState = .needsReview
             deviceSyncTransferState = .localPending
         }
+    }
+
+    private func acknowledgeLibraryRemoteHead(
+        _ revision: WorkRevision,
+        identity: WorkSyncDocumentIdentity
+    ) async -> Bool {
+        guard revision.workID == identity.workID else { return false }
+        guard let library = deviceSyncRuntime?.library else { return true }
+        do {
+            let entry = try SyncWorkLibraryEntry(head: revision)
+            try await library.markSynced(identity.workID, entry)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func markLibraryNeedsReview(_ identity: WorkSyncDocumentIdentity) async {
+        guard workSyncContextIsCurrent(identity),
+              let library = deviceSyncRuntime?.library else { return }
+        try? await library.markNeedsReview(identity.workID)
     }
 
     func applyWorkSyncState(_ state: WorkSyncState, client: WorkSyncClient) {

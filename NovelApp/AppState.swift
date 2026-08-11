@@ -63,6 +63,27 @@ private final class NotificationObserverToken {
     }
 }
 
+private struct StartupVerifiedLocalLibraryItem {
+    let record: DeviceSyncLocalLibraryRecord?
+    let attestation: DeviceSyncLocalPackageAttestation?
+    let row: StartupLibraryWork
+}
+
+private struct StartupVerifiedLocalLibrarySnapshot {
+    let items: [SyncWorkID: StartupVerifiedLocalLibraryItem]
+
+    var rows: [StartupLibraryWork] {
+        items.values.map(\.row)
+    }
+}
+
+private struct PendingPrivateLibraryPublication {
+    let workID: SyncWorkID
+    let document: NovelDocument
+    let packageURL: URL
+    let mayAttemptInitialPublish: Bool
+}
+
 /// アプリ全体の状態を管理する(docs/DESIGN.md 5.2)。
 ///
 /// 責務:
@@ -96,6 +117,8 @@ final class AppState {
     private(set) var saveState: DocumentSaveState
     /// 起動中の編集可能placeholderをUIへ露出しないための三状態(D-039)。
     private(set) var startupState: AppStartupState
+    /// account identityを確認できた時だけnew/importをcloud workとして開始する。
+    private(set) var permitsCloudLibraryMutation = false
     /// production syncのlocal metadataを確立できなかったprocessは、
     /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
     private(set) var deviceSyncStartupFailedSafely = false
@@ -181,6 +204,9 @@ final class AppState {
     @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
     @ObservationIgnored var workSyncNetworkRescheduleRequested = false
     @ObservationIgnored var workSyncRemoteBindingTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingLibraryPublishTasks: [SyncWorkID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pendingLibraryRetryTask: Task<Void, Never>?
+    @ObservationIgnored private var mayAttemptInitialCloudPublish = false
     @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false
     @ObservationIgnored var permitsDeviceSyncProjectSectionMutationAfterFlush = false
     /// 作品の切替・復元・資料操作など、高レベルの状態遷移を`await`越しに直列化する。
@@ -193,6 +219,8 @@ final class AppState {
     @ObservationIgnored private var aiClipboardPromptNoticeDismissTask: Task<Void, Never>?
     /// 最終入力確定後から保存・install完了まで、旧UIからのdocument変更を拒否する。
     private(set) var isDocumentTransitionInProgress = false
+    /// chooserからのopen/new/importを一件だけにし、準備中をUIへ明示する。
+    private(set) var isStartupLibraryOperationInProgress = false
     /// 章をまたいで戻ったときに復元する、章ごとの最後の話選択。
     @ObservationIgnored
     private var lastSelectedEpisodeByChapter: [ChapterID: EpisodeID] = [:]
@@ -231,11 +259,16 @@ final class AppState {
                 // journalが失敗しても、利用者の原稿はpackageへ退避する。
                 try await repository.save(document, to: url)
                 noteDeviceSyncPackageSaved(document)
+                _ = await recordLocalLibraryPackageSave(document, at: url)
                 deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
                 return
             case let .prepared(preparation):
                 try await repository.save(document, to: url)
                 noteDeviceSyncPackageSaved(document)
+                guard await recordLocalLibraryPackageSave(document, at: url) else {
+                    deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
+                    return
+                }
                 await confirmWorkSyncPackageSave(preparation)
                 return
             }
@@ -243,14 +276,49 @@ final class AppState {
             let checkpoints = await prepareDeviceSyncPackageCheckpoints(for: document, at: url)
             try await repository.save(document, to: url)
             noteDeviceSyncPackageSaved(document)
+            guard await recordLocalLibraryPackageSave(document, at: url) else {
+                deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
+                return
+            }
             let checkpointsCommitted = await commitDeviceSyncPackageCheckpoints(checkpoints)
             if !intentReady || !checkpoints.allPrepared || !checkpointsCommitted {
                 deviceSyncLocalDurabilityState = .failed
             }
         } catch {
             // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
-            print("[FUMINIWA] 保存に失敗しました(\(url.path)): \(error)")
+            print("[FUMINIWA] 保存に失敗しました(\(Self.errorCategory(error)))")
             throw error
+        }
+    }
+
+    /// App-private packageのreadback exactを確認してからlocal library recordを更新する。
+    /// Work journalのmaterialization confirmより先に耐久化し、registry失敗時はremote
+    /// confirmを止めることでfalse checkmarkと未追跡uploadを防ぐ。
+    private func recordLocalLibraryPackageSave(
+        _ expectedDocument: NovelDocument,
+        at url: URL
+    ) async -> Bool {
+        guard let runtime = deviceSyncRuntime,
+              let library = runtime.library else { return true }
+        do {
+            guard let workID = try await library.workIDForPackageURL(url) else { return true }
+            try await library.validateInstalledPackage(workID)
+            guard let portableRepository = repository as? PortableDocumentPackageRepository else {
+                return false
+            }
+            let readBack = try await portableRepository.validatePortablePackage(at: url)
+            guard readBack == expectedDocument,
+                  try WorkSnapshot(document: readBack) == WorkSnapshot(document: expectedDocument) else {
+                return false
+            }
+            let attestation = try DeviceSyncLocalPackageAttestation(
+                document: readBack,
+                updatedAt: runtime.now()
+            )
+            try await library.recordPackageMutation(workID, attestation)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -271,6 +339,10 @@ final class AppState {
     @ObservationIgnored private var hasCompletedBootstrap = false
     /// 初回I/O中に別のtaskが受け取ったFinder URL。初回処理の後に同じTask内で開く。
     @ObservationIgnored private var pendingBootstrapOpenURL: URL?
+    /// remote-only rowを開くときに、表示したexact head以外を採用しないためのfence。
+    @ObservationIgnored private var startupRemoteLibraryEntries: [SyncWorkID: SyncWorkLibraryEntry] = [:]
+    /// foreground/signal/manual refreshの旧結果が、別accountや新しい棚を上書きしない。
+    @ObservationIgnored private var startupLibraryRefreshGeneration: UInt64 = 0
 
     private static let recentDocumentPathKey = AppPreferenceKey.recentDocumentPath
     private static let projectSectionKey = AppPreferenceKey.projectSection
@@ -321,6 +393,7 @@ final class AppState {
         plotOutlineSelection = placeholder.chapters.first.map { .chapter($0.id) } ?? .unassigned
         saveState = .unsaved
         startupState = initialStartupState
+        permitsCloudLibraryMutation = deviceSyncRuntime == nil
         externalDocumentOpenErrorMessage = nil
         aiClipboardPromptCopyNotice = nil
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
@@ -378,6 +451,7 @@ final class AppState {
         observeResignActive()
         observeSystemSleep()
         observeDeviceSyncReactivation()
+        startDeviceSyncSignalObservationIfNeeded()
 
         await establishInitialStartupState(opening: requestedURL)
 
@@ -391,6 +465,22 @@ final class AppState {
     }
 
     private func establishInitialStartupState(opening requestedURL: URL?) async {
+        if deviceSyncRuntime?.library != nil {
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    works: [],
+                    connection: .available,
+                    isLoading: true
+                )
+            )
+            if let requestedURL {
+                await refreshStartupLibrary()
+                _ = await importExternalDocument(at: requestedURL, expectedSession: documentSessionToken)
+            } else {
+                await refreshStartupLibrary()
+            }
+            return
+        }
         if let requestedURL {
             await loadStartupDocument(at: requestedURL, source: .finder)
             return
@@ -403,6 +493,602 @@ final class AppState {
         startupState = .documentSelection(
             StartupDocumentSelectionContext(recentDocumentURL: recentDocumentURL)
         )
+    }
+
+    /// cached rowsを先に残し、remote refreshは同じ棚へmergeする。標準runtimeで
+    /// recent path fallbackを一瞬でも表示しない。
+    func refreshStartupLibrary() async {
+        guard let runtime = deviceSyncRuntime,
+              let library = runtime.library,
+              case let .documentSelection(current) = startupState,
+              current.presentation == .cloudLibrary else { return }
+
+        startupLibraryRefreshGeneration &+= 1
+        let generation = startupLibraryRefreshGeneration
+        let expectedSession = documentSessionToken
+        let priorRows = current.works
+        // root/registryを今回も検証し終えるまでlocal mutation capabilityをclaimしない。
+        permitsCloudLibraryMutation = false
+        mayAttemptInitialCloudPublish = false
+        startupState = .documentSelection(
+            StartupDocumentSelectionContext(
+                works: priorRows,
+                connection: current.connection,
+                isLoading: true
+            )
+        )
+
+        let local: StartupVerifiedLocalLibrarySnapshot
+        do {
+            local = try await loadVerifiedLocalLibrary(using: library, now: runtime.now())
+        } catch {
+            guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+                return
+            }
+            permitsCloudLibraryMutation = false
+            startupRemoteLibraryEntries = [:]
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    // root/registry validation failureは旧accountのremote titleも含め
+                    // fail-closedで破棄し、端末内packageを確認できたとはclaimしない。
+                    works: [],
+                    connection: .unavailable(message: "このMacの作品情報を安全に確認できませんでした。")
+                )
+            )
+            return
+        }
+
+        guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+            return
+        }
+        startupState = .documentSelection(
+            StartupDocumentSelectionContext(
+                works: local.rows.sorted(by: Self.startupLibrarySort),
+                connection: current.connection,
+                isLoading: true
+            )
+        )
+
+        let resumableWorkIDs = await library.offlineResumableRemoteOpenWorkIDs()
+        guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+            return
+        }
+
+        do {
+            var remote = try await library.loadRemoteLibrary()
+            guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+                return
+            }
+            if await retryAccountScopedPendingPublications(
+                local: local,
+                remote: remote,
+                library: library
+            ) {
+                remote = try await library.loadRemoteLibrary()
+                guard startupLibraryRefreshIsCurrent(
+                    generation,
+                    expectedSession: expectedSession
+                ) else { return }
+            }
+            // local inventoryとaccount状態を同じrefresh generationで確認した後だけ
+            // new/importを許可する。accountRequiredでもlocal-only作成は可能だが、
+            // initial publishは別accountへ漏らさない。
+            permitsCloudLibraryMutation = true
+            mayAttemptInitialCloudPublish = remote.connection == .available
+                || remote.connection == .offline
+            let merged = await mergeStartupLibrary(
+                local: local,
+                remote: remote,
+                resumableWorkIDs: resumableWorkIDs,
+                library: library
+            )
+            guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+                return
+            }
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    works: merged.sorted(by: Self.startupLibrarySort),
+                    connection: Self.startupConnection(remote.connection)
+                )
+            )
+        } catch {
+            guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
+                return
+            }
+            startupRemoteLibraryEntries = [:]
+            // local inventory/rootはこのgenerationで検証済み。remote catalogの
+            // 読込失敗はuploadを止めるが、端末内の新規・Importまで止めない。
+            permitsCloudLibraryMutation = true
+            mayAttemptInitialCloudPublish = false
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    works: Self.addOfflineResumableRows(
+                        resumableWorkIDs,
+                        to: local.rows
+                    ).sorted(by: Self.startupLibrarySort),
+                    connection: .unavailable(message: "iCloudの作品を更新できませんでした。")
+                )
+            )
+        }
+    }
+
+    private func startupLibraryRefreshIsCurrent(
+        _ generation: UInt64,
+        expectedSession: DocumentSessionToken
+    ) -> Bool {
+        guard startupLibraryRefreshGeneration == generation,
+              documentSessionToken == expectedSession,
+              case let .documentSelection(context) = startupState,
+              context.presentation == .cloudLibrary else { return false }
+        return true
+    }
+
+    private func loadVerifiedLocalLibrary(
+        using library: DeviceSyncLibraryRuntime,
+        now: Date
+    ) async throws -> StartupVerifiedLocalLibrarySnapshot {
+        let inventory = try await library.loadLocalInventory()
+        var items: [SyncWorkID: StartupVerifiedLocalLibraryItem] = [:]
+
+        for storedRecord in inventory.records {
+            let record = await repairReservedLibraryWorkIfPossible(
+                storedRecord,
+                library: library
+            )
+            items[record.workID] = await verifyLocalLibraryRecord(
+                record,
+                library: library,
+                now: now
+            )
+        }
+        let isolated = inventory.unreadableWorkIDs
+            .union(inventory.unregisteredPackageWorkIDs)
+            .subtracting(items.keys)
+        for workID in isolated {
+            let title = await localLibraryPackageTitle(
+                workID: workID,
+                library: library,
+                now: now
+            )
+            items[workID] = StartupVerifiedLocalLibraryItem(
+                record: nil,
+                attestation: title.attestation,
+                row: StartupLibraryWork(
+                    reference: .cloudWork(workID.rawValue),
+                    title: title.attestation?.titleProjection ?? "確認が必要な作品",
+                    updatedAt: title.attestation?.updatedAt,
+                    availability: .unavailable,
+                    isTitleTruncated: title.attestation.map {
+                        $0.fullTitleUTF8ByteCount > $0.titleProjection.utf8.count
+                    } ?? false
+                )
+            )
+        }
+        return StartupVerifiedLocalLibrarySnapshot(items: items)
+    }
+
+    /// staging attestation→RENAME_EXCL→confirmの各kill窓を、同じexact packageだけで
+    /// 再開する。証明できないpackage/stagingは触らずdisabled行に残す。
+    private func repairReservedLibraryWorkIfPossible(
+        _ record: DeviceSyncLocalLibraryRecord,
+        library: DeviceSyncLibraryRuntime
+    ) async -> DeviceSyncLocalLibraryRecord {
+        guard record.state == .reservedForPublish,
+              let portableRepository = repository as? PortableDocumentPackageRepository else {
+            return record
+        }
+        do {
+            // D-063 より前の作成途中レコードは期待した作品内容を証明できない。
+            // 同じ document ID だけで staging を採用せず、保全対象として隔離する。
+            guard let attestation = record.package else { return record }
+
+            let finalURL = try await library.packageURL(record.workID)
+            if await (try? library.validateInstalledPackage(record.workID)) == nil {
+                let staging = try await library.stagingPackageURL(record.workID)
+                try await library.validateStagingPackage(staging, record.workID)
+                let staged = try await portableRepository.validatePortablePackage(at: staging)
+                let stagedAttestation = try DeviceSyncLocalPackageAttestation(
+                    document: staged,
+                    updatedAt: attestation.updatedAt
+                )
+                guard stagedAttestation == attestation else { return record }
+                let installed = try await library.installStagingPackage(staging, record.workID)
+                guard installed == finalURL else { return record }
+            }
+
+            try await library.validateInstalledPackage(record.workID)
+            let final = try await portableRepository.validatePortablePackage(at: finalURL)
+            let finalAttestation = try DeviceSyncLocalPackageAttestation(
+                document: final,
+                updatedAt: attestation.updatedAt
+            )
+            guard finalAttestation == attestation else { return record }
+            try await library.confirmPublishPackage(record.workID, attestation)
+            return DeviceSyncLocalLibraryRecord(
+                workID: record.workID,
+                expectedDocumentID: record.expectedDocumentID,
+                state: .publishPending,
+                package: attestation,
+                acknowledgedRemote: nil,
+                pendingRemote: nil
+            )
+        } catch {
+            return record
+        }
+    }
+
+    private func verifyLocalLibraryRecord(
+        _ record: DeviceSyncLocalLibraryRecord,
+        library: DeviceSyncLibraryRuntime,
+        now: Date
+    ) async -> StartupVerifiedLocalLibraryItem {
+        let canResumeRemoteOpen = if record.state == .remoteOpenPending {
+            await library.canResumeRemoteOpenOffline(record.workID)
+        } else {
+            false
+        }
+        let hasPublishAuthority = if record.state == .publishPending {
+            await library.hasLocalPublishAuthority(record.workID, record.expectedDocumentID)
+        } else {
+            false
+        }
+        guard record.package != nil else {
+            return StartupVerifiedLocalLibraryItem(
+                record: record,
+                attestation: nil,
+                row: StartupLibraryWork(
+                    reference: .cloudWork(record.workID.rawValue),
+                    // App registryはaccount-independent。remote projectionをここから
+                    // 表示するとaccount切替後に旧作品名を漏らすためgenericにする。
+                    title: "ダウンロードを再開する作品",
+                    updatedAt: record.pendingRemote?.headClientCreatedAt,
+                    availability: record.state == .remoteOpenPending && canResumeRemoteOpen
+                        ? .remotePending
+                        : record.state == .remoteOpenPending ? .remoteOnly : .unavailable,
+                    isTitleTruncated: record.pendingRemote?.isTitleTruncated ?? false
+                )
+            )
+        }
+        let verified = await localLibraryPackageTitle(
+            workID: record.workID,
+            library: library,
+            now: record.package?.updatedAt ?? now
+        )
+        guard let attestation = verified.attestation,
+              attestation.documentID == record.expectedDocumentID else {
+            return StartupVerifiedLocalLibraryItem(
+                record: record,
+                attestation: nil,
+                row: StartupLibraryWork(
+                    reference: .cloudWork(record.workID.rawValue),
+                    title: record.package?.titleProjection ?? "確認が必要な作品",
+                    updatedAt: record.package?.updatedAt,
+                    availability: .unavailable,
+                    isTitleTruncated: record.package.map {
+                        $0.fullTitleUTF8ByteCount > $0.titleProjection.utf8.count
+                    } ?? false
+                )
+            )
+        }
+
+        let journalNeedsReview: Bool
+        do {
+            journalNeedsReview = try await library.localWorkNeedsReview(
+                record.workID,
+                record.expectedDocumentID
+            )
+        } catch {
+            return StartupVerifiedLocalLibraryItem(
+                record: record,
+                attestation: attestation,
+                row: StartupLibraryWork(
+                    reference: .cloudWork(record.workID.rawValue),
+                    title: attestation.titleProjection,
+                    updatedAt: attestation.updatedAt,
+                    availability: .unavailable,
+                    isTitleTruncated: attestation.fullTitleUTF8ByteCount
+                        > attestation.titleProjection.utf8.count
+                )
+            )
+        }
+
+        let availability: StartupLibraryWorkAvailability
+        if journalNeedsReview {
+            availability = .needsReview
+        } else if record.state == .remoteOpenPending,
+                  let pendingRemote = record.pendingRemote,
+                  attestation.matches(pendingRemote),
+                  await library.hasCompletedRemoteOpenLocally(pendingRemote) {
+            // Domain bind後→App registry acknowledgement前のkill窓。remote catalogが
+            // offlineで空でも、exact package・pending projection・outbox-free journal
+            // の3点が一致するときだけ耐久な同期済み状態へ昇格する。
+            do {
+                try await library.markSynced(record.workID, pendingRemote)
+                availability = .cachedRemote
+            } catch {
+                availability = .unavailable
+            }
+        } else {
+            availability = switch record.state {
+            case .synced where record.acknowledgedRemote.map(attestation.matches) == true:
+                .cachedRemote
+            case .needsReview:
+                .needsReview
+            case .publishPending:
+                hasPublishAuthority ? .localPending : .localOnly
+            case .synced:
+                .localPending
+            case .remoteOpenPending:
+                canResumeRemoteOpen ? .remotePending : .unavailable
+            case .reservedForPublish:
+                .unavailable
+            }
+        }
+        return StartupVerifiedLocalLibraryItem(
+            record: record,
+            attestation: attestation,
+            row: StartupLibraryWork(
+                reference: .cloudWork(record.workID.rawValue),
+                title: attestation.titleProjection,
+                updatedAt: attestation.updatedAt,
+                availability: availability,
+                isTitleTruncated: attestation.fullTitleUTF8ByteCount > attestation.titleProjection.utf8.count
+            )
+        )
+    }
+
+    private func localLibraryPackageTitle(
+        workID: SyncWorkID,
+        library: DeviceSyncLibraryRuntime,
+        now: Date
+    ) async -> (attestation: DeviceSyncLocalPackageAttestation?, document: NovelDocument?) {
+        do {
+            try await library.validateInstalledPackage(workID)
+            let url = try await library.packageURL(workID)
+            guard let portableRepository = repository as? PortableDocumentPackageRepository else {
+                return (nil, nil)
+            }
+            let loaded = try await portableRepository.validatePortablePackage(at: url)
+            let attestation = try DeviceSyncLocalPackageAttestation(document: loaded, updatedAt: now)
+            return (attestation, loaded)
+        } catch {
+            return (nil, nil)
+        }
+    }
+
+    private func mergeStartupLibrary(
+        local: StartupVerifiedLocalLibrarySnapshot,
+        remote: DeviceSyncRemoteLibrarySnapshot,
+        resumableWorkIDs: [SyncWorkID],
+        library: DeviceSyncLibraryRuntime
+    ) async -> [StartupLibraryWork] {
+        var rows = Dictionary(uniqueKeysWithValues: local.items.map { ($0.key, $0.value.row) })
+        var exactEntries: [SyncWorkID: SyncWorkLibraryEntry] = [:]
+
+        if remote.connection == .accountRequired || remote.connection == .differentAccount {
+            for (workID, localItem) in local.items
+                where localItem.record?.state == .remoteOpenPending
+                && localItem.attestation == nil {
+                // Account-independent App registryだけに残った未download intentは、
+                // account identityを再確認できるまで存在自体を棚へ出さない。
+                rows.removeValue(forKey: workID)
+            }
+        }
+
+        for remoteItem in remote.entries {
+            let entry = remoteItem.work
+            if entry.headRevisionID != nil {
+                exactEntries[entry.workID] = entry
+            }
+            if let localItem = local.items[entry.workID],
+               let attestation = localItem.attestation {
+                let availability: StartupLibraryWorkAvailability
+                if localItem.row.availability == .needsReview {
+                    availability = .needsReview
+                } else if attestation.matches(entry),
+                          remoteItem.availability == .locallyBound,
+                          await library.hasCompletedRemoteOpenLocally(entry) {
+                    // Covers both remote bootstrap→registry mark kill and new-work
+                    // publish→registry mark kill. The checkmark appears only after
+                    // Domain exact journal truth and App registry durability agree.
+                    do {
+                        try await library.markSynced(entry.workID, entry)
+                        availability = .cachedRemote
+                    } catch {
+                        availability = .unavailable
+                    }
+                } else if localItem.record?.state == .remoteOpenPending {
+                    // Domainのimmutable pending revisionを先に完了し、moving headへは
+                    // 通常WorkSyncで追随する。ここでcurrent catalogへ偽装しない。
+                    availability = localItem.row.availability
+                } else if entry.headRevisionID == nil {
+                    availability = localItem.record?.state == .needsReview ? .needsReview : .localPending
+                } else if attestation.matches(entry) {
+                    let exactAck = localItem.record?.acknowledgedRemote == entry
+                    availability = remoteItem.availability == .locallyBound && exactAck
+                        ? .cachedRemote
+                        : localItem.record?.state == .needsReview ? .needsReview : .localPending
+                } else {
+                    availability = localItem.record?.state == .publishPending
+                        ? .localPending
+                        : .needsReview
+                }
+                rows[entry.workID] = StartupLibraryWork(
+                    reference: .cloudWork(entry.workID.rawValue),
+                    title: attestation.titleProjection,
+                    updatedAt: attestation.updatedAt,
+                    availability: availability,
+                    isTitleTruncated: attestation.fullTitleUTF8ByteCount > attestation.titleProjection.utf8.count
+                )
+            } else if rows[entry.workID]?.availability != .unavailable,
+                      entry.headRevisionID != nil {
+                // Account identityを証明できないsnapshotに含まれたremote-only行は
+                // titleを一般化するだけでなく棚から隔離する。端末内packageまたは
+                // same-accountのdurable resume identityがある行は別経路で残る。
+                guard remote.connection != .accountRequired,
+                      remote.connection != .differentAccount else { continue }
+                let canResume: Bool = if remoteItem.availability == .remoteDownloadPending {
+                    await library.canResumeRemoteOpenOffline(entry.workID)
+                } else {
+                    false
+                }
+                rows[entry.workID] = StartupLibraryWork(
+                    reference: .cloudWork(entry.workID.rawValue),
+                    title: entry.title,
+                    updatedAt: entry.headClientCreatedAt,
+                    availability: canResume ? .remotePending : .remoteOnly,
+                    isTitleTruncated: entry.isTitleTruncated
+                )
+            }
+        }
+
+        if remote.connection == .available {
+            let listedWorkIDs = Set(remote.entries.map(\.work.workID))
+            for (workID, localItem) in local.items
+                where localItem.row.availability == .cachedRemote
+                && !listedWorkIDs.contains(workID) {
+                // 接続中のcurrent catalogに作品が無いのに、過去のreceiptだけで
+                // 「同期済み」とは表示しない。hard delete／malformed control／
+                // account-side omissionを区別できるまではlocal copyを保持してreviewへ。
+                rows[workID] = StartupLibraryWork(
+                    reference: localItem.row.reference,
+                    title: localItem.row.title,
+                    updatedAt: localItem.row.updatedAt,
+                    availability: .cloudUnavailable,
+                    isTitleTruncated: localItem.row.isTitleTruncated
+                )
+            }
+        }
+        startupRemoteLibraryEntries = exactEntries
+        return Self.addOfflineResumableRows(resumableWorkIDs, to: Array(rows.values))
+    }
+
+    /// Domain catalogの`publishPending`とcanonical local bindingの両方が揃う
+    /// same-account workだけを自動再送する。accountRequired中に作られた
+    /// registry-only作品は別accountへ暗黙adoptしない。
+    private func retryAccountScopedPendingPublications(
+        local: StartupVerifiedLocalLibrarySnapshot,
+        remote: DeviceSyncRemoteLibrarySnapshot,
+        library: DeviceSyncLibraryRuntime
+    ) async -> Bool {
+        guard remote.connection == .available,
+              let portableRepository = repository as? PortableDocumentPackageRepository else {
+            return false
+        }
+        var didPublish = false
+        for item in remote.entries where item.availability == .publishPending {
+            guard let localItem = local.items[item.work.workID],
+                  localItem.record?.state == .publishPending,
+                  let record = localItem.record,
+                  let expected = localItem.attestation,
+                  await library.hasLocalPublishAuthority(
+                      item.work.workID,
+                      record.expectedDocumentID
+                  ) else { continue }
+            do {
+                try await library.validateInstalledPackage(item.work.workID)
+                let url = try await library.packageURL(item.work.workID)
+                let document = try await portableRepository.validatePortablePackage(at: url)
+                let readback = try DeviceSyncLocalPackageAttestation(
+                    document: document,
+                    updatedAt: expected.updatedAt
+                )
+                guard readback == expected,
+                      document.id == record.expectedDocumentID else { continue }
+                try await library.publishNewWork(item.work.workID, document, url)
+                didPublish = true
+            } catch {
+                continue
+            }
+        }
+        return didPublish
+    }
+
+    /// Chooserを開いていない間も、remote signal／foreground／wakeを契機に
+    /// account-scoped pending creationだけを再送する。active document/sessionへ
+    /// remote内容を注入せず、package readbackとWorkIDだけで処理する。
+    func retryAccountScopedPendingPublicationsInBackground() async {
+        guard let runtime = deviceSyncRuntime,
+              let library = runtime.library else { return }
+        if let pendingLibraryRetryTask {
+            await pendingLibraryRetryTask.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let local = try await loadVerifiedLocalLibrary(
+                    using: library,
+                    now: runtime.now()
+                )
+                let remote = try await library.loadRemoteLibrary()
+                mayAttemptInitialCloudPublish = remote.connection == .available
+                    || remote.connection == .offline
+                _ = await retryAccountScopedPendingPublications(
+                    local: local,
+                    remote: remote,
+                    library: library
+                )
+            } catch {
+                mayAttemptInitialCloudPublish = false
+            }
+        }
+        pendingLibraryRetryTask = task
+        await task.value
+        pendingLibraryRetryTask = nil
+    }
+
+    private static func addOfflineResumableRows(
+        _ workIDs: [SyncWorkID],
+        to existingRows: [StartupLibraryWork]
+    ) -> [StartupLibraryWork] {
+        var rows = Dictionary(uniqueKeysWithValues: existingRows.map { row in
+            (row.reference, row)
+        })
+        for workID in workIDs {
+            let reference = StartupLibraryWorkReference.cloudWork(workID.rawValue)
+            guard rows[reference] == nil else { continue }
+            rows[reference] = StartupLibraryWork(
+                reference: reference,
+                // Domain intentionally exposes identity only. A title is not carried
+                // across an unverified account boundary.
+                title: "このMacへの保存を再開する作品",
+                updatedAt: nil,
+                availability: .remotePending
+            )
+        }
+        return Array(rows.values)
+    }
+
+    private static func startupConnection(
+        _ connection: DeviceSyncLibraryConnection
+    ) -> StartupLibraryConnection {
+        switch connection {
+        case .available:
+            .available
+        case .offline:
+            .offline
+        case .accountRequired:
+            .accountRequired
+        case .differentAccount:
+            .differentAccount
+        }
+    }
+
+    private static func startupLibrarySort(
+        _ lhs: StartupLibraryWork,
+        _ rhs: StartupLibraryWork
+    ) -> Bool {
+        switch (lhs.updatedAt, rhs.updatedAt) {
+        case let (left?, right?) where left != right:
+            left > right
+        case (nil, _?):
+            false
+        case (_?, nil):
+            true
+        default:
+            lhs.displayTitle.localizedStandardCompare(rhs.displayTitle) == .orderedAscending
+        }
     }
 
     /// Recovery画面の「再試行」。同じ原本URLまたは同じ新規保存先を再利用する。
@@ -453,11 +1139,59 @@ final class AppState {
     @discardableResult
     func openExternalDocument(at url: URL) async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
-        let success = await openDocument(at: url, expectedSession: nil, startupSource: .finder)
-        if !success, startupState.isReady {
-            externalDocumentOpenErrorMessage = "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
+        let success = if deviceSyncRuntime?.library != nil {
+            await importExternalDocument(at: url, expectedSession: documentSessionToken)
+        } else {
+            await openDocument(at: url, expectedSession: nil, startupSource: .finder)
+        }
+        if !success {
+            externalDocumentOpenErrorMessage = if deviceSyncRuntime?.library != nil {
+                "作品を取り込めませんでした。原本と表示中の作品は変更していません。形式、空き容量、アクセス権限を確認してください。"
+            } else {
+                "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
+            }
         }
         return success
+    }
+
+    /// D-063の外部packageはopen-in-placeしない。validated package transportが
+    /// private stagingへinstallする実装境界（後段でrepository能力を必須化）。
+    @discardableResult
+    func importExternalDocument(
+        at sourceURL: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Bool {
+        guard let portableRepository = repository as? PortableDocumentPackageRepository,
+              deviceSyncRuntime?.library != nil,
+              permitsCloudLibraryMutation,
+              !isStartupLibraryOperationInProgress else { return false }
+        isStartupLibraryOperationInProgress = true
+        defer { isStartupLibraryOperationInProgress = false }
+        let source = sourceURL.standardizedFileURL
+        let importedDocument: NovelDocument
+        do {
+            importedDocument = try await portableRepository.validatePortablePackage(at: source)
+        } catch {
+            return false
+        }
+        let publication = await performForCurrentDocument(
+            expectedSession: expectedSession,
+            ifStale: PendingPrivateLibraryPublication?.none
+        ) {
+            await createPrivateLibraryWorkSerially(
+                importedDocument,
+                portableSourceURL: source,
+                portableRepository: portableRepository
+            )
+        }
+        if let publication {
+            // Legacy visible package remains untouched. Its preference is retired only
+            // after private registry+package durability has succeeded.
+            userDefaults.removeObject(forKey: Self.recentDocumentPathKey)
+            schedulePrivateLibraryPublish(publication)
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        }
+        return publication != nil
     }
 
     /// 起動画面に表示した前回作品を、その画面を表示したsessionにだけ適用する。
@@ -473,6 +1207,271 @@ final class AppState {
         )
     }
 
+    /// 起動画面で選んだ作品を、表示時のexact referenceに従って開く。
+    /// local pathはViewへ表示せず、cloud workはworkIDだけを選択identityにする。
+    @discardableResult
+    func openStartupLibraryWork(
+        _ reference: StartupLibraryWorkReference,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        guard case let .documentSelection(context) = startupState,
+              context.works.contains(where: { $0.reference == reference }),
+              !isStartupLibraryOperationInProgress else { return false }
+        isStartupLibraryOperationInProgress = true
+        defer { isStartupLibraryOperationInProgress = false }
+        switch reference {
+        case let .recentDocument(url):
+            return await openDocument(
+                at: url,
+                expectedSession: expectedSession,
+                startupSource: .recentDocument
+            )
+        case let .cloudWork(rawWorkID):
+            guard let selected = context.works.first(where: { $0.reference == reference }) else {
+                return false
+            }
+            let workID = SyncWorkID(rawValue: rawWorkID)
+            switch selected.availability {
+            case .cachedRemote, .localPending, .localOnly, .needsReview:
+                return await openVerifiedLocalLibraryWork(
+                    workID,
+                    expectedRow: selected,
+                    expectedSession: expectedSession
+                )
+            case .remoteOnly where context.connection == .available:
+                guard let entry = startupRemoteLibraryEntries[workID] else { return false }
+                return await downloadAndOpenLibraryWork(
+                    entry,
+                    expectedRow: selected,
+                    expectedSession: expectedSession
+                )
+            case .remotePending:
+                return await resumeAndOpenPendingLibraryWork(
+                    workID,
+                    expectedRow: selected,
+                    expectedSession: expectedSession
+                )
+            case .remoteOnly, .cloudUnavailable, .unavailable:
+                return false
+            }
+        }
+    }
+
+    private func openVerifiedLocalLibraryWork(
+        _ workID: SyncWorkID,
+        expectedRow: StartupLibraryWork,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        guard let library = deviceSyncRuntime?.library else { return false }
+        let opened = await documentOperationGate.perform { [weak self] in
+            guard let self,
+                  documentSessionToken == expectedSession,
+                  case let .documentSelection(context) = startupState,
+                  context.works.contains(expectedRow) else { return false }
+            do {
+                let inventory = try await library.loadLocalInventory()
+                guard let record = inventory.records.first(where: { $0.workID == workID }),
+                      let recordedPackage = record.package else { return false }
+                try await library.validateInstalledPackage(workID)
+                let url = try await library.packageURL(workID)
+                guard let portableRepository = repository as? PortableDocumentPackageRepository else {
+                    return false
+                }
+                let loaded = try await portableRepository.validatePortablePackage(at: url)
+                try await library.validateInstalledPackage(workID)
+                let attestation = try DeviceSyncLocalPackageAttestation(
+                    document: loaded,
+                    updatedAt: recordedPackage.updatedAt
+                )
+                guard attestation.documentID == record.expectedDocumentID else { return false }
+                switch expectedRow.availability {
+                case .cachedRemote:
+                    guard record.state == .synced,
+                          record.acknowledgedRemote.map(attestation.matches) == true else {
+                        return false
+                    }
+                case .localPending:
+                    guard record.state == .publishPending || record.state == .synced else {
+                        return false
+                    }
+                case .localOnly:
+                    guard record.state == .publishPending,
+                          await library.hasLocalPublishAuthority(
+                              workID,
+                              record.expectedDocumentID
+                          ) == false else { return false }
+                case .needsReview:
+                    guard record.state == .needsReview || record.state == .synced else {
+                        return false
+                    }
+                case .remoteOnly, .remotePending, .cloudUnavailable, .unavailable:
+                    return false
+                }
+                let loadedAttachments = try await loadAttachmentsThrowing(for: url)
+                installDocument(loaded, at: url, attachments: loadedAttachments)
+                return startupState.isReady
+            } catch {
+                return false
+            }
+        }
+        if opened {
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        } else {
+            await refreshStartupLibrary()
+        }
+        return opened
+    }
+
+    private func downloadAndOpenLibraryWork(
+        _ expectedEntry: SyncWorkLibraryEntry,
+        expectedRow: StartupLibraryWork,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        await materializeAndOpenLibraryWork(
+            workID: expectedEntry.workID,
+            expectedCatalogEntry: expectedEntry,
+            expectedRow: expectedRow,
+            expectedSession: expectedSession
+        )
+    }
+
+    private func resumeAndOpenPendingLibraryWork(
+        _ workID: SyncWorkID,
+        expectedRow: StartupLibraryWork,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        await materializeAndOpenLibraryWork(
+            workID: workID,
+            expectedCatalogEntry: nil,
+            expectedRow: expectedRow,
+            expectedSession: expectedSession
+        )
+    }
+
+    private func materializeAndOpenLibraryWork(
+        workID: SyncWorkID,
+        expectedCatalogEntry: SyncWorkLibraryEntry?,
+        expectedRow: StartupLibraryWork,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        guard expectedCatalogEntry?.headRevisionID != nil || expectedCatalogEntry == nil,
+              let runtime = deviceSyncRuntime,
+              let library = runtime.library else { return false }
+        let opened = await documentOperationGate.perform { [weak self] in
+            guard let self,
+                  documentSessionToken == expectedSession,
+                  case let .documentSelection(context) = startupState,
+                  context.works.contains(expectedRow) else {
+                return false
+            }
+            if let expectedCatalogEntry {
+                guard context.connection == .available,
+                      startupRemoteLibraryEntries[workID] == expectedCatalogEntry else {
+                    return false
+                }
+            }
+
+            var stagingURL: URL?
+            do {
+                guard let portableRepository = repository as? PortableDocumentPackageRepository else {
+                    return false
+                }
+                let inventory = try await library.loadLocalInventory()
+                let pendingRecord = inventory.records.first {
+                    $0.workID == workID && $0.state == .remoteOpenPending
+                }
+                let prepared: DeviceSyncPreparedLibraryWork
+                if let pendingRecord, let pendingEntry = pendingRecord.pendingRemote {
+                    // Once Domain has staged A, never replace it with moving head B.
+                    // A is installed/bound first; ordinary WorkSync then follows B.
+                    prepared = try await library.resumeRemoteOpen(workID)
+                    guard prepared.entry == pendingEntry else { return false }
+                } else if let expectedCatalogEntry {
+                    // Domain first persists the account-scoped exact intent and stages the
+                    // immutable revision. App registry is written only after that succeeds,
+                    // avoiding an account-independent A intent that cannot follow catalog B.
+                    prepared = try await library.prepareRemoteOpen(expectedCatalogEntry)
+                    guard prepared.entry == expectedCatalogEntry else { return false }
+                    try await library.beginRemoteOpen(prepared.entry)
+                } else {
+                    // Domain pending may outlive a process killed before App registry write.
+                    prepared = try await library.resumeRemoteOpen(workID)
+                    try await library.beginRemoteOpen(prepared.entry)
+                }
+                guard prepared.entry.workID == workID,
+                      try prepared.packageSnapshot == WorkSnapshot(document: prepared.document) else {
+                    return false
+                }
+
+                let finalURL = try await library.packageURL(workID)
+                let finalDocument: NovelDocument
+                if await (try? library.validateInstalledPackage(workID)) != nil {
+                    // Crash-resume never replaces an existing final package. It must be the
+                    // immutable prepared revision or the work is quarantined.
+                    let existing = try await portableRepository.validatePortablePackage(at: finalURL)
+                    guard try WorkSnapshot(document: existing) == prepared.packageSnapshot else {
+                        let existingAttestation = try DeviceSyncLocalPackageAttestation(
+                            document: existing,
+                            updatedAt: runtime.now()
+                        )
+                        try await library.quarantineInstalledPackage(
+                            workID,
+                            existingAttestation
+                        )
+                        return false
+                    }
+                    finalDocument = existing
+                } else {
+                    let staging = try await library.stagingPackageURL(workID)
+                    stagingURL = staging
+                    try await repository.save(prepared.document, to: staging)
+                    try await library.validateStagingPackage(staging, workID)
+                    let stagedReadback = try await portableRepository.validatePortablePackage(at: staging)
+                    guard try WorkSnapshot(document: stagedReadback) == prepared.packageSnapshot else {
+                        return false
+                    }
+                    let installed = try await library.installStagingPackage(
+                        staging,
+                        workID
+                    )
+                    stagingURL = nil
+                    guard installed == finalURL else { return false }
+                    try await library.validateInstalledPackage(workID)
+                    finalDocument = try await portableRepository.validatePortablePackage(at: finalURL)
+                    guard try WorkSnapshot(document: finalDocument) == prepared.packageSnapshot else {
+                        return false
+                    }
+                }
+
+                let attestation = try DeviceSyncLocalPackageAttestation(
+                    document: finalDocument,
+                    updatedAt: runtime.now()
+                )
+                try await library.attestRemotePackage(
+                    workID,
+                    attestation,
+                    prepared.entry
+                )
+                try await prepared.bind(prepared.packageSnapshot)
+                try await library.markSynced(workID, prepared.entry)
+                let loadedAttachments = try await loadAttachmentsThrowing(for: finalURL)
+                installDocument(finalDocument, at: finalURL, attachments: loadedAttachments)
+                return startupState.isReady
+            } catch {
+                if let stagingURL {
+                    try? await library.discardStagingPackage(stagingURL, workID)
+                }
+                return false
+            }
+        }
+        if opened {
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        } else {
+            await refreshStartupLibrary()
+        }
+        return opened
+    }
+
     private func loadStartupDocument(at url: URL, source: StartupDocumentSource) async {
         guard !deviceSyncStartupFailedSafely else { return }
         let targetURL = url.standardizedFileURL
@@ -481,7 +1480,7 @@ final class AppState {
             let loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
             installDocument(loadedDocument, at: targetURL, attachments: loadedAttachments)
         } catch {
-            print("[FUMINIWA] 起動作品を開けませんでした(\(targetURL.lastPathComponent)): \(error)")
+            print("[FUMINIWA] 起動作品を開けませんでした(\(Self.errorCategory(error)))")
             startupState = .recovery(
                 StartupRecoveryContext(
                     reason: .cannotOpenDocument,
@@ -507,7 +1506,7 @@ final class AppState {
             let newAttachments = try await loadAttachmentsThrowing(for: newURL)
             installDocument(newDocument, at: newURL, attachments: newAttachments)
         } catch {
-            print("[FUMINIWA] 起動時の新規作品を保存できませんでした(\(newURL.lastPathComponent)): \(error)")
+            print("[FUMINIWA] 起動時の新規作品を保存できませんでした(\(Self.errorCategory(error)))")
             startupState = .recovery(
                 StartupRecoveryContext(
                     reason: .cannotCreateDocument,
@@ -562,8 +1561,50 @@ final class AppState {
     var permitsDocumentChoice: Bool {
         !deviceSyncStartupFailedSafely &&
             startupState.permitsDocumentChoice &&
+            !isStartupLibraryOperationInProgress &&
             !isDocumentTransitionInProgress &&
             !isTerminationPending
+    }
+
+    var permitsReturnToCloudLibrary: Bool {
+        deviceSyncRuntime?.library != nil && permitsDocumentInteraction
+    }
+
+    /// Workbenchの作品を端末へ確定してから、同じwindowでcloud shelfへ戻る。
+    /// active package URLはUIへ渡さず、session generationを進めて旧View actionを無効化する。
+    @discardableResult
+    func returnToStartupLibrary(
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Bool {
+        guard deviceSyncRuntime?.library != nil else { return false }
+        let returned = await performForCurrentDocument(
+            expectedSession: expectedSession,
+            ifStale: false
+        ) {
+            guard startupState.isReady, beginDocumentTransition() else { return false }
+            defer { endDocumentTransition() }
+            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
+                return false
+            }
+
+            advanceDocumentSession(document: document, url: documentURL)
+            deviceSyncSelectionDidChange()
+            startupLibraryRefreshGeneration &+= 1
+            startupRemoteLibraryEntries = [:]
+            permitsCloudLibraryMutation = false
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    works: [],
+                    connection: .offline,
+                    isLoading: true
+                )
+            )
+            return true
+        }
+        if returned {
+            await refreshStartupLibrary()
+        }
+        return returned
     }
 
     /// provider待機でdocument operation gateを保持せず、開始／再検査時だけ現在作品を読むための条件。
@@ -664,7 +1705,7 @@ final class AppState {
             loadedDocument = try await repository.load(from: targetURL)
             loadedAttachments = try await loadAttachmentsThrowing(for: targetURL)
         } catch {
-            print("[FUMINIWA] 作品の読み込みに失敗しました(\(targetURL.lastPathComponent)): \(error)")
+            print("[FUMINIWA] 作品の読み込みに失敗しました(\(Self.errorCategory(error)))")
             if !hadReadyDocument {
                 startupState = .recovery(
                     StartupRecoveryContext(
@@ -693,6 +1734,27 @@ final class AppState {
     @discardableResult
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
+        if deviceSyncRuntime?.library != nil {
+            guard permitsCloudLibraryMutation,
+                  !isStartupLibraryOperationInProgress else { return false }
+            isStartupLibraryOperationInProgress = true
+            defer { isStartupLibraryOperationInProgress = false }
+            let publication = await performForCurrentDocument(
+                expectedSession: expectedSession,
+                ifStale: PendingPrivateLibraryPublication?.none
+            ) {
+                await createPrivateLibraryWorkSerially(
+                    NovelDocument.newDocument(),
+                    portableSourceURL: nil,
+                    portableRepository: nil
+                )
+            }
+            if let publication {
+                schedulePrivateLibraryPublish(publication)
+                await refreshOrPrepareSelectedEpisodeDeviceSync()
+            }
+            return publication != nil
+        }
         let preparesSelectedStartupDocument = switch startupState {
         case .documentSelection, .recovery:
             true
@@ -706,6 +1768,153 @@ final class AppState {
             await refreshOrPrepareSelectedEpisodeDeviceSync()
         }
         return created
+    }
+
+    private func createPrivateLibraryWorkSerially(
+        _ requestedDocument: NovelDocument,
+        portableSourceURL: URL?,
+        portableRepository: (any PortableDocumentPackageRepository)?
+    ) async -> PendingPrivateLibraryPublication? {
+        guard let runtime = deviceSyncRuntime,
+              let library = runtime.library,
+              let validatedRepository = repository as? PortableDocumentPackageRepository,
+              permitsCloudLibraryMutation else { return nil }
+        let hadReadyDocument = startupState.isReady
+        let workID = SyncWorkID()
+        var stagingURL: URL?
+        var didReserve = false
+        var didAttestStaging = false
+        var didBeginTransition = false
+        defer {
+            if didBeginTransition {
+                endDocumentTransition()
+            }
+        }
+
+        do {
+            let expectedAttestation = try DeviceSyncLocalPackageAttestation(
+                document: requestedDocument,
+                updatedAt: runtime.now()
+            )
+            try await library.reserveForPublish(workID, expectedAttestation)
+            didReserve = true
+            let staging = try await library.stagingPackageURL(workID)
+            stagingURL = staging
+            if let portableSourceURL, let portableRepository {
+                let finalURL = try await library.packageURL(workID)
+                guard !Self.urlsOverlap(portableSourceURL, staging),
+                      !Self.urlsOverlap(portableSourceURL, finalURL) else {
+                    throw DeviceSyncLocalLibraryError.packageMismatch
+                }
+                let validated = try await portableRepository.validatePortablePackage(
+                    at: portableSourceURL
+                )
+                guard validated == requestedDocument else {
+                    throw DeviceSyncLocalLibraryError.packageMismatch
+                }
+                try await portableRepository.saveValidatedCopy(
+                    requestedDocument,
+                    from: portableSourceURL,
+                    to: staging
+                )
+            } else {
+                try await repository.save(requestedDocument, to: staging)
+            }
+
+            try await library.validateStagingPackage(staging, workID)
+            let stagedReadback = try await validatedRepository.validatePortablePackage(at: staging)
+            guard stagedReadback == requestedDocument,
+                  try WorkSnapshot(document: stagedReadback) == WorkSnapshot(document: requestedDocument) else {
+                throw DeviceSyncLocalLibraryError.packageMismatch
+            }
+            let attestation = try DeviceSyncLocalPackageAttestation(
+                document: stagedReadback,
+                updatedAt: expectedAttestation.updatedAt
+            )
+            guard attestation == expectedAttestation else {
+                throw DeviceSyncLocalLibraryError.packageMismatch
+            }
+            try await library.attestPublishStaging(workID, attestation)
+            didAttestStaging = true
+
+            let finalURL = try await library.installStagingPackage(staging, workID)
+            stagingURL = nil
+            try await library.validateInstalledPackage(workID)
+            let finalReadback = try await validatedRepository.validatePortablePackage(at: finalURL)
+            let finalAttestation = try DeviceSyncLocalPackageAttestation(
+                document: finalReadback,
+                updatedAt: attestation.updatedAt
+            )
+            guard finalReadback == requestedDocument,
+                  finalAttestation == attestation else {
+                throw DeviceSyncLocalLibraryError.packageMismatch
+            }
+            try await library.confirmPublishPackage(workID, attestation)
+
+            if hadReadyDocument {
+                guard beginDocumentTransition() else { return nil }
+                didBeginTransition = true
+                guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
+                    return nil
+                }
+            }
+            let loadedAttachments = try await loadAttachmentsThrowing(for: finalURL)
+            installDocument(finalReadback, at: finalURL, attachments: loadedAttachments)
+            guard startupState.isReady else { return nil }
+            return PendingPrivateLibraryPublication(
+                workID: workID,
+                document: finalReadback,
+                packageURL: finalURL,
+                mayAttemptInitialPublish: mayAttemptInitialCloudPublish
+            )
+        } catch {
+            if let stagingURL, !didAttestStaging {
+                try? await library.discardStagingPackage(stagingURL, workID)
+            }
+            if didReserve, !didAttestStaging {
+                try? await library.abortPublishReservation(workID)
+            }
+            return nil
+        }
+    }
+
+    /// Package/registryと旧作品の最終保存、新作品activationが完了した後だけ
+    /// account-scoped createを試す。通信失敗時はlocalPendingを残し、作品切替を
+    /// 巻き戻さない。
+    private func schedulePrivateLibraryPublish(
+        _ publication: PendingPrivateLibraryPublication
+    ) {
+        guard publication.mayAttemptInitialPublish else { return }
+        guard pendingLibraryPublishTasks[publication.workID] == nil else { return }
+        let task = Task { [weak self] in
+            guard let self, let library = deviceSyncRuntime?.library else { return }
+            try? await library.publishNewWork(
+                publication.workID,
+                publication.document,
+                publication.packageURL
+            )
+            pendingLibraryPublishTasks[publication.workID] = nil
+            if startupState.isReady,
+               documentURL.standardizedFileURL == publication.packageURL.standardizedFileURL {
+                await refreshOrPrepareSelectedEpisodeDeviceSync()
+            } else if case let .documentSelection(context) = startupState,
+                      context.presentation == .cloudLibrary {
+                await refreshStartupLibrary()
+            }
+        }
+        pendingLibraryPublishTasks[publication.workID] = task
+    }
+
+    private static func urlsOverlap(_ lhs: URL, _ rhs: URL) -> Bool {
+        let left = lhs.standardizedFileURL.path
+        let right = rhs.standardizedFileURL.path
+        return left == right || left.hasPrefix(right + "/") || right.hasPrefix(left + "/")
+    }
+
+    /// Error descriptions may embed full private paths. Console gets only a stable
+    /// operation-local category; UI presents a separate path-free message.
+    private static func errorCategory(_ error: any Error) -> String {
+        String(reflecting: type(of: error))
     }
 
     private func createNewDocumentSerially() async -> Bool {
@@ -738,7 +1947,7 @@ final class AppState {
             try await repository.save(newDocument, to: newURL)
             newAttachments = try await loadAttachmentsThrowing(for: newURL)
         } catch {
-            print("[FUMINIWA] 新規作品の保存に失敗しました(\(newURL.lastPathComponent)): \(error)")
+            print("[FUMINIWA] 新規作品の保存に失敗しました(\(Self.errorCategory(error)))")
             if !hadReadyDocument {
                 startupState = .recovery(
                     StartupRecoveryContext(
@@ -854,8 +2063,60 @@ final class AppState {
                 return savedAfterOperation ? .saved : .switchedButLatestEditsFailed
             }
         } catch {
-            print("[FUMINIWA] 別名保存に失敗しました(\(destinationURL.path)): \(error)")
+            print("[FUMINIWA] 別名保存に失敗しました(\(Self.errorCategory(error)))")
             return .failedBeforeSwitch
+        }
+    }
+
+    /// 現在のapp-private作業コピーを、利用者が選んだportable `.novelpkg`へ
+    /// 複製する。書き出し先を現在作品として採用せず、recent URL、document
+    /// session、Device Sync bindingも変更しない。
+    func exportDocumentPackage(
+        to url: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async throws {
+        let exported = await performForCurrentDocument(
+            expectedSession: expectedSession,
+            ifStale: false
+        ) {
+            await exportDocumentPackageSerially(to: url)
+        }
+        guard exported else { throw PackageExportError.staleSession }
+    }
+
+    private func exportDocumentPackageSerially(to url: URL) async -> Bool {
+        guard startupState.isReady else { return false }
+        let destinationURL = url.standardizedFileURL
+        let sourceURL = documentURL.standardizedFileURL
+        guard !Self.urlsOverlap(destinationURL, sourceURL) else { return false }
+
+        guard beginDocumentTransition() else { return false }
+        defer { endDocumentTransition() }
+
+        // native editor / forms → app-private package → Work journalを確定してから
+        // その値を複製する。remote処理やactive URLの切替は行わない。
+        guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: false) else {
+            return false
+        }
+
+        do {
+            let documentSnapshot = document
+            guard let portableRepository = repository as? PortableDocumentPackageRepository else {
+                throw PackageExportError.unavailable
+            }
+            try await portableRepository.saveValidatedCopy(
+                documentSnapshot,
+                from: sourceURL,
+                to: destinationURL
+            )
+            let readBack = try await portableRepository.validatePortablePackage(at: destinationURL)
+            guard readBack == documentSnapshot else {
+                throw PackageExportError.saveFailed
+            }
+            return true
+        } catch {
+            print("[FUMINIWA] 作品パッケージの書き出しに失敗しました(\(Self.errorCategory(error)))")
+            return false
         }
     }
 
@@ -2038,7 +3299,7 @@ final class AppState {
                 attachments = await loadAttachments(for: packageURL)
                 return attachment
             } catch {
-                print("[FUMINIWA] 資料の取り込みに失敗しました(\(sourceURL.path)): \(error)")
+                print("[FUMINIWA] 資料の取り込みに失敗しました(\(Self.errorCategory(error)))")
                 return nil
             }
         }
@@ -2066,7 +3327,7 @@ final class AppState {
                 attachments = await loadAttachments(for: packageURL)
                 return true
             } catch {
-                print("[FUMINIWA] 資料の削除に失敗しました(\(attachment.fileName)): \(error)")
+                print("[FUMINIWA] 資料の削除に失敗しました(\(attachment.fileName), \(Self.errorCategory(error)))")
                 return false
             }
         }
@@ -2098,7 +3359,7 @@ final class AppState {
                 try await repository.saveSnapshot(documentSnapshot, to: packageURL)
             }
         } catch {
-            print("[FUMINIWA] スナップショット保存に失敗しました(\(packageURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット保存に失敗しました(\(Self.errorCategory(error)))")
             return nil
         }
     }
@@ -2119,7 +3380,7 @@ final class AppState {
                 try await repository.listSnapshots(in: packageURL)
             }
         } catch {
-            print("[FUMINIWA] スナップショット一覧の取得に失敗しました(\(packageURL.path)): \(error)")
+            print("[FUMINIWA] スナップショット一覧の取得に失敗しました(\(Self.errorCategory(error)))")
             return []
         }
     }
@@ -2147,7 +3408,7 @@ final class AppState {
             restoredDocument = try await repository.load(from: snapshotURL)
             restoredAttachments = try await loadAttachmentsThrowing(for: snapshotURL)
         } catch {
-            print("[FUMINIWA] スナップショットの読み込みに失敗しました(\(snapshotURL.path)): \(error)")
+            print("[FUMINIWA] スナップショットの読み込みに失敗しました(\(Self.errorCategory(error)))")
             return false
         }
 
@@ -2173,7 +3434,7 @@ final class AppState {
             }
         } catch {
             startupState = .ready
-            print("[FUMINIWA] スナップショットの退避または復元に失敗しました(\(snapshotURL.path)): \(error)")
+            print("[FUMINIWA] スナップショットの退避または復元に失敗しました(\(Self.errorCategory(error)))")
             return false
         }
 
@@ -2269,7 +3530,7 @@ final class AppState {
         do {
             return try await loadAttachmentsThrowing(for: url)
         } catch {
-            print("[FUMINIWA] 資料一覧の読み込みに失敗しました(\(url.path)): \(error)")
+            print("[FUMINIWA] 資料一覧の読み込みに失敗しました(\(Self.errorCategory(error)))")
             return []
         }
     }
@@ -2307,6 +3568,9 @@ final class AppState {
                       documentURL.standardizedFileURL == expectedSession.documentURL,
                       loadedDocument.id == expectedSession.documentID,
                       try WorkSnapshot(document: loadedDocument) == snapshot else { return false }
+                guard await recordLocalLibraryPackageSave(loadedDocument, at: documentURL) else {
+                    return false
+                }
 
                 let previousChapterID = selectedChapterID
                 let previousEpisodeID = selectedEpisodeID
@@ -2479,7 +3743,14 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
+                guard let self else { return }
+                if case let .documentSelection(context) = self.startupState,
+                   context.presentation == .cloudLibrary {
+                    await self.refreshStartupLibrary()
+                } else {
+                    await self.retryAccountScopedPendingPublicationsInBackground()
+                    await self.refreshOrPrepareSelectedEpisodeDeviceSync()
+                }
             }
         }
         systemWakeObserver.value = NSWorkspace.shared.notificationCenter.addObserver(
@@ -2488,12 +3759,20 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
+                guard let self else { return }
+                if case let .documentSelection(context) = self.startupState,
+                   context.presentation == .cloudLibrary {
+                    await self.refreshStartupLibrary()
+                } else {
+                    await self.retryAccountScopedPendingPublicationsInBackground()
+                    await self.refreshOrPrepareSelectedEpisodeDeviceSync()
+                }
             }
         }
     }
 
     private func rememberDocumentURL(_ url: URL) {
+        guard deviceSyncRuntime?.library == nil else { return }
         userDefaults.set(url.path, forKey: Self.recentDocumentPathKey)
     }
 

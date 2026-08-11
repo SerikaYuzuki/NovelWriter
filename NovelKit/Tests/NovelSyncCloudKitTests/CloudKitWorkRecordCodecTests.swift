@@ -29,7 +29,8 @@ struct CloudKitWorkRecordCodecTests {
             emptyControl,
             workID: cloudTestWorkID,
             headRevisionID: revision.revisionID,
-            headSnapshotDigest: revision.snapshotDigest
+            headSnapshotDigest: revision.snapshotDigest,
+            libraryEntry: SyncWorkLibraryEntry(head: revision)
         )
         let decodedControl = try codec.decodeWorkControlRecord(
             control,
@@ -37,6 +38,7 @@ struct CloudKitWorkRecordCodecTests {
         )
         #expect(decodedControl.headRevisionID == revision.revisionID)
         #expect(decodedControl.headSnapshotDigest == revision.snapshotDigest)
+        #expect(try decodedControl.libraryEntry == SyncWorkLibraryEntry(head: revision))
 
         let encoded = try codec.makeWorkRevisionRecord(revision, mutationID: mutationID)
         defer { codec.removeStagedAssets([encoded.stagedAsset]) }
@@ -115,10 +117,10 @@ struct CloudKitWorkRecordCodecTests {
     }
 }
 
-func makeCloudTestWorkSnapshot() throws -> WorkSnapshot {
+func makeCloudTestWorkSnapshot(title: String = "地下鉄で書いた作品") throws -> WorkSnapshot {
     let document = NovelDocument(
         id: UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")!,
-        title: "地下鉄で書いた作品",
+        title: title,
         synopsis: "通信が戻ったら統合します。",
         chapters: [
             Chapter(
@@ -142,16 +144,18 @@ func makeCloudTestWorkSnapshot() throws -> WorkSnapshot {
 
 func makeWorkRevision(
     id: UUID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
-    parents: [SyncRevisionID] = []
+    parents: [SyncRevisionID] = [],
+    title: String = "地下鉄で書いた作品",
+    workID: SyncWorkID = cloudTestWorkID
 ) throws -> WorkRevision {
     try WorkRevision(
-        workID: cloudTestWorkID,
+        workID: workID,
         revisionID: SyncRevisionID(rawValue: id),
         parentRevisionIDs: parents,
         branchID: cloudTestBranchID,
         authorReplicaID: cloudTestReplicaID,
         authorSessionID: cloudTestSessionID,
-        snapshot: makeCloudTestWorkSnapshot(),
+        snapshot: makeCloudTestWorkSnapshot(title: title),
         clientCreatedAt: cloudTestDate
     )
 }

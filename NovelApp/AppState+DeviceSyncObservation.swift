@@ -257,7 +257,14 @@ extension AppState {
         deviceSyncSignalTask = Task { @MainActor [weak self] in
             for await _ in signals {
                 guard !Task.isCancelled else { return }
-                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
+                guard let self else { return }
+                if case let .documentSelection(context) = startupState,
+                   context.presentation == .cloudLibrary {
+                    await refreshStartupLibrary()
+                } else {
+                    await retryAccountScopedPendingPublicationsInBackground()
+                    await refreshOrPrepareSelectedEpisodeDeviceSync()
+                }
             }
         }
     }

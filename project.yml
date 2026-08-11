@@ -96,6 +96,8 @@ targets:
           - DeviceSyncAppIntegrationTests.swift
           - DeviceSyncPersistenceRootTests.swift
           - DeviceSyncEditIntentStoreTests.swift
+          - DeviceSyncLocalLibraryStoreTests.swift
+          - DeviceSyncCloudLibraryAppTests.swift
     dependencies:
       - target: NovelApp
     settings:
@@ -121,6 +123,8 @@ targets:
       - path: NovelAppTests/DeviceSyncAppIntegrationTests.swift
       - path: NovelAppTests/DeviceSyncPersistenceRootTests.swift
       - path: NovelAppTests/DeviceSyncEditIntentStoreTests.swift
+      - path: NovelAppTests/DeviceSyncLocalLibraryStoreTests.swift
+      - path: NovelAppTests/DeviceSyncCloudLibraryAppTests.swift
     dependencies:
       - package: NovelKit
         product: NovelCore
@@ -142,6 +146,7 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_UNHOSTED_DEVICE_SYNC_TESTS"
   FUMINIWAExperimental:
     type: application
     platform: macOS

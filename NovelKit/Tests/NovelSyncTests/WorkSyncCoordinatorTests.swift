@@ -409,4 +409,107 @@ struct WorkSyncCoordinatorTests {
         #expect(durable.sealedPublish == nil)
         #expect(await server.currentHead(for: WorkTestValues.workID)?.revisionID == revision.revisionID)
     }
+
+    @Test("a missing acknowledged remote head never republishes a retained local edit as a new work")
+    // The single scenario deliberately asserts the returned error, transport side effects,
+    // in-memory state, durable evidence, and recovery as one deterministic transaction.
+    // swiftlint:disable:next function_body_length
+    func missingAcknowledgedRemoteHeadFailsClosed() async throws {
+        let server = InMemoryWorkSyncServer()
+        let transport = MissingRemoteHeadWorkTransport(server: server)
+        let journal = InMemoryWorkSyncJournal()
+        let coordinator = WorkSyncCoordinator(
+            workID: WorkTestValues.workID,
+            localWorkingCopyID: WorkTestValues.copyA,
+            replicaID: WorkTestValues.replicaA,
+            sessionID: WorkTestValues.sessionA,
+            transport: transport,
+            journal: journal
+        )
+        let baseSnapshot = try WorkTestValues.snapshot { $0.title = "remote acknowledged base" }
+        let base = try await coordinator.bootstrapLocalSnapshot(baseSnapshot, at: WorkTestValues.date)
+        _ = try await coordinator.synchronize(at: WorkTestValues.date.addingTimeInterval(1))
+
+        let localSnapshot = try WorkTestValues.snapshot { document in
+            document.title = "local edit retained"
+            document.chapters[0].episodes[0].content = "edited while remote control later disappears"
+        }
+        let local = try await stageAndConfirm(
+            coordinator,
+            snapshot: localSnapshot,
+            at: WorkTestValues.date.addingTimeInterval(2)
+        )
+        let before = try #require(await journal.storedRecord(for: WorkTestValues.workID))
+        let publishCountBeforeMissingHead = await transport.publishCallCount()
+        await transport.setRemoteHeadMissing(true)
+
+        do {
+            _ = try await coordinator.synchronize(at: WorkTestValues.date.addingTimeInterval(3))
+            Issue.record("missing acknowledged remote head was treated as an initial publish")
+        } catch {
+            #expect(error as? WorkSyncCoordinatorError == .remoteHeadMissing)
+        }
+
+        #expect(await transport.publishCallCount() == publishCountBeforeMissingHead)
+        let failedClosed = try await coordinator.currentState()
+        #expect(failedClosed.localHead == local)
+        #expect(failedClosed.localHead.snapshot == localSnapshot)
+        #expect(failedClosed.lastKnownRemoteHead == base)
+        #expect(failedClosed.pendingRevisionCount == 1)
+        #expect(failedClosed.reconciliationStatus == .pending)
+        let durable = try #require(await journal.storedRecord(for: WorkTestValues.workID))
+        #expect(durable.localHead == before.localHead)
+        #expect(durable.lastKnownRemoteHead == before.lastKnownRemoteHead)
+        #expect(durable.outbox == before.outbox)
+        #expect(durable.sealedPublish == before.sealedPublish)
+
+        await transport.setRemoteHeadMissing(false)
+        guard case let .uploaded(uploaded) = try await coordinator.synchronize(
+            at: WorkTestValues.date.addingTimeInterval(4)
+        ) else {
+            Issue.record("restored remote head did not resume the retained local publish")
+            return
+        }
+        #expect(uploaded == local)
+        #expect(await server.currentHead(for: WorkTestValues.workID) == local)
+        #expect(try await coordinator.currentState().pendingRevisionCount == 0)
+        #expect(try await coordinator.currentState().reconciliationStatus == .synchronized)
+    }
+}
+
+private actor MissingRemoteHeadWorkTransport: WorkSyncTransport {
+    private let server: InMemoryWorkSyncServer
+    private var remoteHeadMissing = false
+    private var publishCalls = 0
+
+    init(server: InMemoryWorkSyncServer) {
+        self.server = server
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        if remoteHeadMissing {
+            return WorkRemoteSnapshot(head: nil)
+        }
+        return try await server.fetchSnapshot(for: workID)
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        try await server.fetchRevision(id, for: workID)
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        publishCalls += 1
+        return try await server.publish(request)
+    }
+
+    func setRemoteHeadMissing(_ value: Bool) {
+        remoteHeadMissing = value
+    }
+
+    func publishCallCount() -> Int {
+        publishCalls
+    }
 }

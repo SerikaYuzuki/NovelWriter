@@ -63,6 +63,9 @@ public extension AppleDeviceSyncServices {
         localSourceDocumentID: UUID
     ) async throws -> AppleResolvedWorkingCopy? {
         try await accountGate.requireAvailable()
+        guard await metadataStore.hasPendingLibraryOpen(for: locator) == false else {
+            return nil
+        }
         guard let localBinding = await metadataStore.bindingSnapshot(for: locator) else {
             return nil
         }
@@ -118,8 +121,8 @@ public extension AppleDeviceSyncServices {
         return resolved
     }
 
-    /// 新規work作成をlocator単位のdurable intentとして先に保存し、remote create、
-    /// bind、remote descriptorとallowlistの確認後にだけintentを消す。
+    /// 新規work作成をlocator単位のdurable intentとして先に保存し、local bind、
+    /// remote create、remote descriptorとallowlistの確認後にだけintentを消す。
     /// kill/restart後に新しいworkIDが提案されても、保存済みdescriptorを再利用する。
     @discardableResult
     func createAndBindNewWork(
@@ -134,6 +137,14 @@ public extension AppleDeviceSyncServices {
                 allowedEpisodeIDs: allowedEpisodeIDs
             )
         }
+        // Establish the durable local identity/journal authority before any
+        // zone or remote create call. If the network drops, the exact saved
+        // workID remains an offline local outbox and the next retry reuses it.
+        _ = try await metadataStore.bind(
+            intent.locator,
+            to: intent.descriptor.workID,
+            allowedEpisodeIDs: Array(intent.allowedEpisodeIDs)
+        )
         try await bootstrapZoneForNewSync()
         // CloudKit側は同一workID + exact descriptorだけを冪等再試行として許す。
         try await createWork(intent.descriptor)

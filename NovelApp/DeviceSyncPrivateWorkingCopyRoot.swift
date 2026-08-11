@@ -1,6 +1,7 @@
 #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
 import Darwin
 import Foundation
+import NovelSync
 import NovelSyncCloudKit
 
 struct DeviceSyncPrivateWorkingCopyRoot: @unchecked Sendable {
@@ -35,8 +36,72 @@ struct DeviceSyncPrivateWorkingCopyRoot: @unchecked Sendable {
     func destination(for session: DocumentSessionToken) throws -> URL? {
         try validateFixedRoot()
         guard try isEligible(session) == false else { return nil }
+        return try destinationForNewWork()
+    }
+
+    func destinationForNewWork() throws -> URL {
         try validateFixedRoot()
         return url.appendingPathComponent("\(UUID().uuidString).novelpkg", isDirectory: true)
+    }
+
+    /// D-063のcloud libraryでは作品identityから保存先を一意に導出する。
+    /// package URLをmetadataへ保存せず、同じworkは再起動後も同じ隠しcopyへ戻る。
+    func destination(for workID: SyncWorkID) throws -> URL {
+        try validateFixedRoot()
+        return url.appendingPathComponent(
+            "\(workID.rawValue.uuidString).novelpkg",
+            isDirectory: true
+        )
+    }
+
+    func stagingDestination(for workID: SyncWorkID) throws -> URL {
+        try validateFixedRoot()
+        return url.appendingPathComponent(
+            ".\(workID.rawValue.uuidString).staging.novelpkg",
+            isDirectory: true
+        )
+    }
+
+    func validateStagingPackage(at stagingURL: URL, for workID: SyncWorkID) throws {
+        let requested = stagingURL.standardizedFileURL
+        let expectedName = ".\(workID.rawValue.uuidString).staging.novelpkg"
+        guard requested.deletingLastPathComponent() == url,
+              requested.lastPathComponent == expectedName else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try validateCopiedPackage(at: requested)
+    }
+
+    func installStagingPackage(_ stagingURL: URL, for workID: SyncWorkID) throws -> URL {
+        try validateStagingPackage(at: stagingURL, for: workID)
+        let finalURL = try destination(for: workID)
+        guard try Self.pathStatus(finalURL) == nil else {
+            throw AppleDeviceSyncServicesError.locatorAlreadyBound
+        }
+        guard renamex_np(stagingURL.path, finalURL.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw errno == EEXIST
+                ? AppleDeviceSyncServicesError.locatorAlreadyBound
+                : AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try validateCopiedPackage(at: finalURL, for: workID)
+        return finalURL
+    }
+
+    func validateCopiedPackage(at packageURL: URL, for workID: SyncWorkID) throws {
+        guard try packageURL.standardizedFileURL == destination(for: workID).standardizedFileURL else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try validateCopiedPackage(at: packageURL)
+    }
+
+    func workID(for packageURL: URL) throws -> SyncWorkID? {
+        try validateFixedRoot()
+        let requested = packageURL.standardizedFileURL
+        guard requested.deletingLastPathComponent() == url,
+              requested.pathExtension == "novelpkg",
+              let uuid = UUID(uuidString: requested.deletingPathExtension().lastPathComponent),
+              requested.lastPathComponent == "\(uuid.uuidString).novelpkg" else { return nil }
+        return SyncWorkID(rawValue: uuid)
     }
 
     func isEligible(_ session: DocumentSessionToken) throws -> Bool {

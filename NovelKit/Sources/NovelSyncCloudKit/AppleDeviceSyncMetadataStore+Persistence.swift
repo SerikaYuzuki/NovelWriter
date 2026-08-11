@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelSync
 
 extension AppleDeviceSyncMetadataStore {
     func commit(_ candidate: AppleDeviceSyncMetadataDocument) throws {
@@ -43,6 +44,8 @@ extension AppleDeviceSyncMetadataStore {
         guard document.schemaVersion == schemaVersion,
               document.bindings.count <= maximumBindingCount,
               document.pendingWorkCreations.count <= maximumPendingWorkCreationCount,
+              document.pendingLibraryOpens.count <= maximumPendingLibraryOpenCount,
+              document.cachedLibraryEntries.count <= maximumCachedLibraryEntryCount,
               document.engineState.map({ $0.count <= maximumEngineStateBytes }) ?? true else {
             throw AppleDeviceSyncServicesError.invalidMetadata
         }
@@ -50,17 +53,29 @@ extension AppleDeviceSyncMetadataStore {
         let workingCopyIDs = document.bindings.map(\.binding.localWorkingCopyID)
         let pendingLocators = document.pendingWorkCreations.map(\.locator)
         let pendingWorkIDs = document.pendingWorkCreations.map(\.descriptor.workID)
+        let pendingOpenLocators = document.pendingLibraryOpens.map(\.locator)
+        let pendingOpenTokens = document.pendingLibraryOpens.map(\.token)
+        let pendingOpenWorkIDs = document.pendingLibraryOpens.map(\.entry.workID)
+        let cachedWorkIDs = document.cachedLibraryEntries.map(\.workID)
         guard Set(locators).count == locators.count,
               Set(workingCopyIDs).count == workingCopyIDs.count,
               Set(pendingLocators).count == pendingLocators.count,
-              Set(pendingWorkIDs).count == pendingWorkIDs.count else {
+              Set(pendingWorkIDs).count == pendingWorkIDs.count,
+              Set(pendingOpenLocators).count == pendingOpenLocators.count,
+              Set(pendingOpenTokens).count == pendingOpenTokens.count,
+              Set(pendingOpenWorkIDs).count == pendingOpenWorkIDs.count,
+              Set(cachedWorkIDs).count == cachedWorkIDs.count else {
             throw AppleDeviceSyncServicesError.invalidMetadata
         }
         try validateBindings(document.bindings)
         try validatePendingWorkCreations(document)
+        try validatePendingLibraryOpens(document)
+        try validateCachedLibraryEntries(document.cachedLibraryEntries)
         if document.accountScope == nil {
             guard document.bindings.isEmpty,
                   document.pendingWorkCreations.isEmpty,
+                  document.pendingLibraryOpens.isEmpty,
+                  document.cachedLibraryEntries.isEmpty,
                   document.engineState == nil else {
                 throw AppleDeviceSyncServicesError.invalidMetadata
             }
@@ -123,6 +138,43 @@ extension AppleDeviceSyncMetadataStore {
         }
     }
 
+    private static func validatePendingLibraryOpens(
+        _ document: AppleDeviceSyncMetadataDocument
+    ) throws {
+        for pending in document.pendingLibraryOpens {
+            do {
+                try pending.entry.validate()
+            } catch {
+                throw AppleDeviceSyncServicesError.invalidMetadata
+            }
+            guard pending.entry.headRevisionID != nil,
+                  pending.entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
+                throw AppleDeviceSyncServicesError.invalidMetadata
+            }
+            if let binding = document.bindings.first(where: { $0.locator == pending.locator }) {
+                guard binding.binding.workID == pending.entry.workID else {
+                    throw AppleDeviceSyncServicesError.invalidMetadata
+                }
+            }
+        }
+    }
+
+    private static func validateCachedLibraryEntries(
+        _ entries: [SyncWorkLibraryEntry]
+    ) throws {
+        for entry in entries {
+            do {
+                try entry.validate()
+            } catch {
+                throw AppleDeviceSyncServicesError.invalidMetadata
+            }
+            guard entry.headRevisionID != nil,
+                  entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
+                throw AppleDeviceSyncServicesError.invalidMetadata
+            }
+        }
+    }
+
     private static func encodedSortedDocument(
         _ document: AppleDeviceSyncMetadataDocument
     ) throws -> Data {
@@ -132,6 +184,8 @@ extension AppleDeviceSyncMetadataStore {
             accountScope: document.accountScope,
             bindings: sortedBindings(document.bindings),
             pendingWorkCreations: sortedPendingWorkCreations(document.pendingWorkCreations),
+            pendingLibraryOpens: sortedPendingLibraryOpens(document.pendingLibraryOpens),
+            cachedLibraryEntries: sortedCachedLibraryEntries(document.cachedLibraryEntries),
             engineStateGeneration: document.engineStateGeneration,
             engineState: document.engineState
         )
@@ -162,6 +216,20 @@ extension AppleDeviceSyncMetadataStore {
                 allowedEpisodeIDs: sortedEpisodeIDs(intent.allowedEpisodeIDs)
             )
         }
+    }
+
+    private static func sortedPendingLibraryOpens(
+        _ pending: [ApplePendingLibraryOpenRecord]
+    ) -> [ApplePendingLibraryOpenRecord] {
+        pending.sorted {
+            $0.entry.workID.rawValue.uuidString < $1.entry.workID.rawValue.uuidString
+        }
+    }
+
+    private static func sortedCachedLibraryEntries(
+        _ entries: [SyncWorkLibraryEntry]
+    ) -> [SyncWorkLibraryEntry] {
+        entries.sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
     }
 
     private static func sortedEpisodeIDs(_ episodeIDs: [EpisodeID]) -> [EpisodeID] {

@@ -9,7 +9,7 @@ extension DeviceSyncProductionRuntimeBox {
         session: DocumentSessionToken,
         localSourceDocumentID _: UUID
     ) async throws -> DeviceSyncBindingResolution? {
-        let locator = try Self.locator(for: session)
+        let locator = try locator(for: session)
         guard try validateEligibility(session: session, locator: locator),
               isLocallyBound(locator),
               let local = try await localBootstrap.resolveLocal(locator) else { return nil }
@@ -21,7 +21,7 @@ extension DeviceSyncProductionRuntimeBox {
         session: DocumentSessionToken,
         localSourceDocumentID: UUID
     ) async throws -> DeviceSyncBindingResolution? {
-        let locator = try Self.locator(for: session)
+        let locator = try locator(for: session)
         guard try validateEligibility(session: session, locator: locator) else { return nil }
         guard isLocallyBound(locator) else { return nil }
         knownBoundLocators.insert(locator)
@@ -113,7 +113,7 @@ extension DeviceSyncProductionRuntimeBox {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        _ = try Self.locator(for: session)
+        _ = try locator(for: session)
         let candidates = try await readyServices().workCandidates(
             sourceDocumentIDHint: sourceDocumentID,
             matching: digest
@@ -132,16 +132,48 @@ extension DeviceSyncProductionRuntimeBox {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        let locator = try Self.locator(for: session)
-        let services = try readyServices()
+        let locator = try locator(for: session)
+        guard try locator == (AppleLocalDocumentLocator.cloudLibrary(workID: descriptor.workID)) else {
+            throw EpisodeSyncTransportError.unavailable
+        }
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        _ = try await services.createAndBindNewWork(
-            locator,
-            proposedDescriptor: descriptor,
-            allowedEpisodeIDs: allowedEpisodes
-        )
+        do {
+            switch state {
+            case let .ready(services):
+                _ = try await services.createAndBindNewWork(
+                    locator,
+                    proposedDescriptor: descriptor,
+                    allowedEpisodeIDs: allowedEpisodes
+                )
+            case let .blocked(blocked?):
+                _ = try await blocked.prepareAndBindPendingWorkCreation(
+                    locator,
+                    proposedDescriptor: descriptor,
+                    allowedEpisodeIDs: allowedEpisodes
+                )
+            case .starting, .blocked(nil):
+                throw EpisodeSyncTransportError.unavailable
+            }
+        } catch {
+            // Domainはnetwork publishより先にpending creationとlocal bindingを
+            // durable化する。remote失敗後も同一processでlocal preflightへ進めるよう、
+            // live metadataを再照会してknown cacheを補正する。
+            let liveStatus: AppleDeviceSyncLocalBindingStatus = switch state {
+            case let .ready(services):
+                await services.localStatus(for: locator)
+            case let .blocked(blocked?):
+                await blocked.localStatus(for: locator)
+            case .starting, .blocked(nil):
+                .unbound
+            }
+            if liveStatus != .unbound {
+                knownBoundLocators.insert(locator)
+                signalContinuation.yield()
+            }
+            throw error
+        }
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
@@ -160,7 +192,10 @@ extension DeviceSyncProductionRuntimeBox {
             throw EpisodeSyncTransportError.unavailable
         }
         let services = try readyServices()
-        let locator = try Self.locator(for: session)
+        let locator = try locator(for: session)
+        guard try locator == (AppleLocalDocumentLocator.cloudLibrary(workID: workID)) else {
+            throw EpisodeSyncTransportError.unavailable
+        }
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }

@@ -161,7 +161,8 @@ actor AppleDeviceSyncAccountGate {
     }
 }
 
-actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog, WorkSyncTransport {
+actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog,
+    SyncWorkLibraryCatalog, WorkSyncTransport {
     private let transport: CloudKitEpisodeSyncTransport
     private let accountGate: AppleDeviceSyncAccountGate
 
@@ -274,6 +275,12 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog, Work
     func listWorks() async throws -> [SyncWorkDescriptor] {
         try await accountGate.performOperation { [transport] in
             try await transport.listWorks()
+        }
+    }
+
+    func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.listLibraryWorks()
         }
     }
 

@@ -130,11 +130,13 @@ struct CloudKitWorkPublishPlanner: Sendable {
                 resultHeadRevisionID: candidate.revisionID,
                 resultHeadSnapshotDigest: candidate.snapshotDigest
             )
+            let libraryEntry = try SyncWorkLibraryEntry(head: candidate)
             let controlRecord = try codec.updateWorkControlRecord(
                 control.record,
                 workID: request.workID,
                 headRevisionID: candidate.revisionID,
-                headSnapshotDigest: candidate.snapshotDigest
+                headSnapshotDigest: candidate.snapshotDigest,
+                libraryEntry: libraryEntry
             )
             return CloudKitWorkPublishPlan(
                 recordsToSave: revisionRecords

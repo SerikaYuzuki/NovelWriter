@@ -20,6 +20,23 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let showsWritingActions: Bool
 
     var body: some CustomizableToolbarContent {
+        if appState.deviceSyncRuntime?.library != nil {
+            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
+                Button {
+                    let session = appState.documentSessionToken
+                    Task {
+                        _ = await appState.returnToStartupLibrary(expectedSession: session)
+                    }
+                } label: {
+                    Label("作品を選ぶ", systemImage: "books.vertical")
+                }
+                .help("iCloudの作品一覧へ戻る")
+                .disabled(!appState.permitsReturnToCloudLibrary)
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+        }
+
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
@@ -202,6 +219,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 }
 
 enum WorkbenchToolbarItemID {
+    static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
@@ -287,26 +305,12 @@ struct SnapshotPopover: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(presenter.snapshots) { item in
-                    HStack(spacing: 8) {
-                        Button(item.snapshot.displayName) {
-                            presenter.requestRestore(item)
-                            overlayState.presented = nil
-                        }
-                        .buttonStyle(.plain)
-                        .lineLimit(1)
-
-                        Spacer()
-
-                        Button {
-                            guard item.session == appState.documentSessionToken else { return }
-                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
-                        } label: {
-                            Label("Finderで表示", systemImage: "folder")
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Finderで表示")
+                    Button(item.snapshot.displayName) {
+                        presenter.requestRestore(item)
+                        overlayState.presented = nil
                     }
+                    .buttonStyle(.plain)
+                    .lineLimit(1)
                 }
                 .listStyle(.plain)
             }

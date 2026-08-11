@@ -14,14 +14,23 @@ final class DeviceSyncProductionComposition: @unchecked Sendable {
         let supportRoot = try Self.supportRoot(fileManager: fileManager)
         let workingCopyRoot = try DeviceSyncPrivateWorkingCopyRoot.prepare(
             supportRoot.deletingLastPathComponent()
-                .appendingPathComponent("SyncWorkingCopies-v1", isDirectory: true),
+                .appendingPathComponent("SyncWorkingCopies-v2", isDirectory: true),
             fileManager: fileManager
+        )
+        let localLibraryStore = try DeviceSyncLocalLibraryStore(
+            registryRootURL: supportRoot.appendingPathComponent(
+                "local-library-registry-v1",
+                isDirectory: true
+            ),
+            trustedAncestorURL: supportRoot.deletingLastPathComponent(),
+            workingCopyRoot: workingCopyRoot
         )
         let localBootstrap = try AppleDeviceSyncLocalBootstrap.prepare(rootURL: supportRoot)
         let streamPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(16))
         let runtimeBox = DeviceSyncProductionRuntimeBox(
             localBootstrap: localBootstrap,
             workingCopyRoot: workingCopyRoot,
+            localLibraryStore: localLibraryStore,
             signalContinuation: streamPair.continuation
         )
         self.runtimeBox = runtimeBox
@@ -49,45 +58,104 @@ final class DeviceSyncProductionComposition: @unchecked Sendable {
             remoteChangeSignals: streamPair.stream,
             mergeRecoveryStore: recoveryStore,
             editIntentStore: editIntentStore,
-            setup: Self.makeSetupRuntime(runtimeBox: runtimeBox, workingCopyRoot: workingCopyRoot)
+            // D-063の通常targetはcloud libraryだけを作品ライフサイクル入口にする。
+            // legacy setupのrandom URLをv2 rootへ作らない。
+            setup: nil,
+            library: Self.makeLibraryRuntime(
+                runtimeBox: runtimeBox,
+                localStore: localLibraryStore
+            )
+        )
+    }
+
+    private static func makeLibraryRuntime(
+        runtimeBox: DeviceSyncProductionRuntimeBox,
+        localStore: DeviceSyncLocalLibraryStore
+    ) -> DeviceSyncLibraryRuntime {
+        DeviceSyncLibraryRuntime(
+            loadLocalInventory: { try await localStore.inventory() },
+            loadRemoteLibrary: { try await runtimeBox.loadLibrary() },
+            packageURL: { try await localStore.packageURL(for: $0) },
+            workIDForPackageURL: { try await localStore.workID(for: $0) },
+            stagingPackageURL: { try await localStore.stagingPackageURL(for: $0) },
+            validateStagingPackage: {
+                try await localStore.validateStagingPackage(at: $0, for: $1)
+            },
+            installStagingPackage: {
+                try await localStore.installStagingPackage($0, for: $1)
+            },
+            discardStagingPackage: {
+                try await localStore.discardStagingPackage($0, for: $1)
+            },
+            validateInstalledPackage: { try await localStore.validateInstalledPackage(for: $0) },
+            reserveForPublish: {
+                try await localStore.reserveForPublish(workID: $0, expectedPackage: $1)
+            },
+            abortPublishReservation: {
+                try await localStore.abortPublishReservation(workID: $0)
+            },
+            confirmPublishPackage: {
+                try await localStore.confirmPublishPackage(workID: $0, package: $1)
+            },
+            attestPublishStaging: {
+                try await localStore.attestPublishStaging(workID: $0, package: $1)
+            },
+            beginRemoteOpen: { try await localStore.beginRemoteOpen($0) },
+            attestRemotePackage: {
+                try await localStore.attestRemotePackage(
+                    workID: $0,
+                    package: $1,
+                    expectedRemote: $2
+                )
+            },
+            prepareRemoteOpen: { try await runtimeBox.prepareLibraryOpen($0) },
+            resumeRemoteOpen: { try await runtimeBox.resumeLibraryOpen($0) },
+            canResumeRemoteOpenOffline: {
+                await runtimeBox.canResumeLibraryOpenOffline($0)
+            },
+            offlineResumableRemoteOpenWorkIDs: {
+                await runtimeBox.offlineResumableLibraryOpenWorkIDs()
+            },
+            hasCompletedRemoteOpenLocally: {
+                await runtimeBox.hasCompletedLibraryOpenLocally($0)
+            },
+            localWorkNeedsReview: {
+                try await runtimeBox.libraryWorkNeedsReview(workID: $0, documentID: $1)
+            },
+            markSynced: { try await localStore.markSynced(workID: $0, acknowledgedRemote: $1) },
+            markNeedsReview: { try await localStore.markNeedsReview(workID: $0) },
+            quarantineInstalledPackage: {
+                try await localStore.quarantineInstalledPackage(workID: $0, package: $1)
+            },
+            recordPackageMutation: {
+                try await localStore.recordPackageMutation(workID: $0, package: $1)
+            },
+            hasLocalPublishAuthority: {
+                await runtimeBox.hasLocalPublishAuthority(workID: $0, documentID: $1)
+            },
+            publishNewWork: { workID, document, url in
+                let session = DocumentSessionToken(
+                    generation: 0,
+                    documentID: document.id,
+                    documentURL: url
+                )
+                let descriptor = try SyncWorkDescriptor(
+                    workID: workID,
+                    sourceDocumentID: document.id,
+                    structureDigest: SyncWorkStructureDigest(chapters: document.chapters),
+                    title: document.title
+                )
+                try await runtimeBox.startNew(
+                    session: session,
+                    descriptor: descriptor,
+                    allowedEpisodes: document.chapters.flatMap(\.episodes).map(\.id)
+                )
+            }
         )
     }
 
     func bootstrap() async {
         await runtimeBox.bootstrap(containerIdentifier: Self.containerIdentifier)
-    }
-
-    private static func makeSetupRuntime(
-        runtimeBox: DeviceSyncProductionRuntimeBox,
-        workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
-    ) -> DeviceSyncSetupRuntime {
-        DeviceSyncSetupRuntime(
-            privateWorkingCopyDestination: { try workingCopyRoot.destination(for: $0) },
-            validatePrivateWorkingCopy: { try workingCopyRoot.validateCopiedPackage(at: $0) },
-            candidates: { session, sourceDocumentID, digest in
-                try await runtimeBox.candidates(
-                    session: session,
-                    sourceDocumentID: sourceDocumentID,
-                    digest: digest
-                )
-            },
-            startNew: { session, descriptor, allowedEpisodes in
-                try await runtimeBox.startNew(
-                    session: session,
-                    descriptor: descriptor,
-                    allowedEpisodes: allowedEpisodes
-                )
-            },
-            bindExisting: { session, sourceDocumentID, digest, workID, allowedEpisodes in
-                try await runtimeBox.bind(
-                    session: session,
-                    sourceDocumentID: sourceDocumentID,
-                    digest: digest,
-                    workID: workID,
-                    allowedEpisodes: allowedEpisodes
-                )
-            }
-        )
     }
 
     private static func supportRoot(fileManager: FileManager) throws -> URL {
@@ -112,6 +180,7 @@ enum DeviceSyncProductionRuntimeState {
 actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     let localBootstrap: AppleDeviceSyncLocalBootstrap
     let workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
+    let localLibraryStore: DeviceSyncLocalLibraryStore
     let signalContinuation: AsyncStream<Void>.Continuation
     var state: DeviceSyncProductionRuntimeState = .starting
     var signalTask: Task<Void, Never>?
@@ -121,10 +190,12 @@ actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     init(
         localBootstrap: AppleDeviceSyncLocalBootstrap,
         workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot,
+        localLibraryStore: DeviceSyncLocalLibraryStore,
         signalContinuation: AsyncStream<Void>.Continuation
     ) {
         self.localBootstrap = localBootstrap
         self.workingCopyRoot = workingCopyRoot
+        self.localLibraryStore = localLibraryStore
         self.signalContinuation = signalContinuation
     }
 

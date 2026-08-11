@@ -21,9 +21,9 @@ public final class AppleDeviceSyncBlockedServices: @unchecked Sendable {
     public let replicaID: SyncReplicaID
     public let availability: AppleDeviceSyncAvailability
 
-    private let metadataStore: AppleDeviceSyncMetadataStore
-    private let journalFactory: AppleDeviceSyncJournalFactory
-    private let reason: AppleDeviceSyncBlockReason
+    let metadataStore: AppleDeviceSyncMetadataStore
+    let journalFactory: AppleDeviceSyncJournalFactory
+    let reason: AppleDeviceSyncBlockReason
 
     init(
         replicaID: SyncReplicaID,
@@ -95,6 +95,9 @@ public struct AppleLocalResolvedWorkingCopy: Sendable {
         metadataStore: AppleDeviceSyncMetadataStore,
         journalFactory: AppleDeviceSyncJournalFactory
     ) async throws -> AppleLocalResolvedWorkingCopy? {
+        guard await metadataStore.hasPendingLibraryOpen(for: locator) == false else {
+            return nil
+        }
         guard let snapshot = await metadataStore.bindingSnapshot(for: locator) else {
             return nil
         }

@@ -36,6 +36,8 @@ enum CloudKitSyncSchema {
         static let sourceDocumentID = "sourceDocumentID"
         static let structureDigest = "structureDigest"
         static let title = "title"
+        static let titleDigest = "titleDigest"
+        static let titleUTF8ByteCount = "titleUTF8ByteCount"
         static let episodeID = "episodeID"
         static let headRevisionID = "headRevisionID"
         static let holderReplicaID = "holderReplicaID"

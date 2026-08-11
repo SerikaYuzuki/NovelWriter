@@ -28,6 +28,10 @@ public enum AppleDeviceSyncServicesError: Error, Equatable, Sendable {
     case tooManyAllowedEpisodes
     case duplicateAllowedEpisodeID
     case pendingWorkCreationMismatch
+    case pendingLibraryOpenMismatch
+    case remoteWorkHasNoHead
+    case libraryEntryChanged
+    case packageSnapshotMismatch
     case generationOverflow
     case blocked(AppleDeviceSyncBlockReason)
 }
@@ -45,6 +49,15 @@ public struct AppleLocalDocumentLocator: Hashable, Codable, Sendable {
             throw AppleDeviceSyncServicesError.invalidLocator
         }
         self.rawValue = rawValue
+    }
+
+    /// App-private cloud-library package locator. The App derives its private
+    /// `<workID>.novelpkg` destination from the same work ID; no path is synced.
+    public static func cloudLibrary(workID: SyncWorkID) throws -> AppleLocalDocumentLocator {
+        // Fixed ASCII prefix + canonical UUID is always valid and far below the cap.
+        try AppleLocalDocumentLocator(
+            rawValue: "cloud-library-v1.\(workID.rawValue.uuidString)"
+        )
     }
 
     public init(from decoder: Decoder) throws {
@@ -81,6 +94,8 @@ struct AppleDeviceSyncMetadataSnapshot: Sendable {
     let accountScope: AppleCloudAccountScope?
     let bindings: [AppleLocalDocumentLocator: AppleDeviceSyncBindingSnapshot]
     let pendingWorkCreations: [AppleLocalDocumentLocator: ApplePendingWorkCreationSnapshot]
+    let pendingLibraryOpens: [SyncWorkID: ApplePendingLibraryOpenSnapshot]
+    let cachedLibraryEntries: [SyncWorkID: SyncWorkLibraryEntry]
     let engineStateGeneration: UInt64
     let engineState: Data?
 }
@@ -98,10 +113,15 @@ struct AppleDeviceSyncBindingSnapshot: Equatable, Sendable {
 
 actor AppleDeviceSyncMetadataStore {
     static let schemaVersion = 1
-    static let maximumMetadataBytes = 1 * 1024 * 1024
+    /// 1024 bindings + 1088 bounded (1 KiB-title) library projections +
+    /// base64 engine state fit below this cap with JSON overhead.
+    static let maximumMetadataBytes = 4 * 1024 * 1024
     static let maximumEngineStateBytes = 512 * 1024
     static let maximumBindingCount = 1024
     static let maximumPendingWorkCreationCount = 64
+    static let maximumPendingLibraryOpenCount = 64
+    /// Covers every binding plus every unbound pending remote-open intent.
+    static let maximumCachedLibraryEntryCount = 1088
     static let maximumAllowedEpisodeCount = 4096
     static let metadataFileName = "device-sync-metadata-v1.json"
 
@@ -129,6 +149,8 @@ actor AppleDeviceSyncMetadataStore {
                 accountScope: nil,
                 bindings: [],
                 pendingWorkCreations: [],
+                pendingLibraryOpens: [],
+                cachedLibraryEntries: [],
                 engineStateGeneration: 0,
                 engineState: nil
             )
@@ -142,7 +164,9 @@ actor AppleDeviceSyncMetadataStore {
         try Self.validate(loaded)
         replicaID = loaded.replicaID
         initialBoundLocators = Set(
-            loaded.bindings.map(\.locator) + loaded.pendingWorkCreations.map(\.locator)
+            loaded.bindings.map(\.locator)
+                + loaded.pendingWorkCreations.map(\.locator)
+                + loaded.pendingLibraryOpens.map(\.locator)
         )
         self.rootURL = safeRoot
         self.metadataURL = metadataURL
@@ -162,6 +186,14 @@ actor AppleDeviceSyncMetadataStore {
                     ($0.locator, pendingWorkCreationSnapshot(from: $0))
                 }
             ),
+            pendingLibraryOpens: Dictionary(
+                uniqueKeysWithValues: document.pendingLibraryOpens.map {
+                    ($0.entry.workID, pendingLibraryOpenSnapshot(from: $0))
+                }
+            ),
+            cachedLibraryEntries: Dictionary(
+                uniqueKeysWithValues: document.cachedLibraryEntries.map { ($0.workID, $0) }
+            ),
             engineStateGeneration: document.engineStateGeneration,
             engineState: document.engineState
         )
@@ -180,6 +212,8 @@ actor AppleDeviceSyncMetadataStore {
         }
         guard document.bindings.isEmpty,
               document.pendingWorkCreations.isEmpty,
+              document.pendingLibraryOpens.isEmpty,
+              document.cachedLibraryEntries.isEmpty,
               document.engineState == nil else {
             throw AppleDeviceSyncServicesError.invalidMetadata
         }
@@ -295,6 +329,7 @@ actor AppleDeviceSyncMetadataStore {
         var candidate = document
         let removed = candidate.bindings.remove(at: index).binding
         candidate.pendingWorkCreations.removeAll(where: { $0.locator == locator })
+        candidate.pendingLibraryOpens.removeAll(where: { $0.locator == locator })
         try commit(candidate)
         return removed
     }

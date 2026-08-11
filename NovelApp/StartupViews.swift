@@ -32,195 +32,363 @@ struct StartupDocumentSelectionView: View {
 
     let context: StartupDocumentSelectionContext
 
-    @State private var selectedDocumentID: StartupRecentDocument.ID?
+    @State private var selectedWorkID: StartupLibraryWork.ID?
+    @FocusState private var isLibraryFocused: Bool
 
     init(context: StartupDocumentSelectionContext) {
         self.context = context
-        _selectedDocumentID = State(initialValue: context.recentDocument?.id)
+        _selectedWorkID = State(initialValue: context.works.first?.id)
     }
 
     var body: some View {
-        NavigationSplitView {
-            recentDocumentsList
-                .navigationSplitViewColumnWidth(min: 224, ideal: 264, max: 320)
-        } detail: {
-            detail
-        }
-        .frame(minWidth: 720, minHeight: 480)
-        .background(.background)
-        .accessibilityIdentifier("startup.documentSelection")
-    }
-
-    private var recentDocumentsList: some View {
-        List(selection: $selectedDocumentID) {
-            Section("最近使った作品") {
-                if let recentDocument = context.recentDocument {
-                    StartupRecentDocumentRow(document: recentDocument)
-                        .tag(recentDocument.id)
-                        .accessibilityIdentifier("startup.documentSelection.recent")
-                } else {
-                    Text("最近使った作品はありません")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .navigationTitle("作品を選ぶ")
-        .accessibilityIdentifier("startup.documentSelection.recentList")
-    }
-
-    private var detail: some View {
         VStack(spacing: 0) {
-            Group {
-                if let selectedDocument {
-                    StartupSelectedDocumentView(
-                        document: selectedDocument,
-                        open: openRecentDocument,
-                        revealInFinder: {
-                            NSWorkspace.shared.activateFileViewerSelecting([selectedDocument.url])
-                        }
-                    )
-                } else {
-                    ContentUnavailableView(
-                        "作品を選んでください",
-                        systemImage: "books.vertical",
-                        description: Text("新しい作品を作るか、保存済みの作品を開けます。")
-                    )
+            welcomeActions
+            library
+        }
+        .frame(minWidth: 720, minHeight: 520)
+        .background(.background)
+        .disabled(appState.isStartupLibraryOperationInProgress)
+        .overlay(alignment: .topTrailing) {
+            if appState.isStartupLibraryOperationInProgress {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("作品を準備しています…")
+                        .font(.caption)
                 }
+                .padding(16)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("startup.documentSelection.operationProgress")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .accessibilityIdentifier("startup.documentSelection")
+        .onKeyPress(.return) {
+            // 上部action buttonがkeyboard focus中なら、そのButton自身へReturnを渡す。
+            guard isLibraryFocused, selectedWork != nil else { return .ignored }
+            openSelectedWork()
+            return .handled
+        }
+    }
 
-            Divider()
+    private var welcomeActions: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 8) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 56, height: 56)
+                    .accessibilityHidden(true)
 
-            HStack(spacing: 10) {
-                if context.recentDocument == nil {
-                    newDocumentButton
-                        .buttonStyle(.borderedProminent)
-                } else {
-                    newDocumentButton
-                        .buttonStyle(.bordered)
-                }
+                Text("ふみにわ")
+                    .font(.title2.weight(.semibold))
+            }
 
+            HStack(spacing: 12) {
                 Button {
                     documentPanelPresenter.presentOpenPanel(
                         expectedSession: appState.documentSessionToken
                     )
                 } label: {
-                    Label("別の作品を開く…", systemImage: "folder")
+                    Label("作品を取り込む…", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.bordered)
-                .accessibilityIdentifier("startup.documentSelection.openOther")
+                .disabled(!appState.permitsCloudLibraryMutation)
+                .accessibilityIdentifier("startup.documentSelection.import")
+
+                Button {
+                    documentPanelPresenter.presentNewDocument(
+                        expectedSession: appState.documentSessionToken
+                    )
+                } label: {
+                    Label("新しい作品", systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!appState.permitsCloudLibraryMutation)
+                .accessibilityIdentifier("startup.documentSelection.new")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 32)
+        .padding(.bottom, 24)
+    }
+
+    private var library: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(context.presentation == .cloudLibrary ? "iCloudの作品" : "最近使った作品")
+                    .font(.headline)
 
                 Spacer()
+
+                if context.isLoading, !context.works.isEmpty {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("iCloudの作品を更新中")
+                }
+
+                connectionStatus
             }
-            .padding(20)
+
+            Group {
+                if context.isLoading, context.works.isEmpty {
+                    ProgressView("iCloudの作品を確認しています")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if context.works.isEmpty {
+                    ContentUnavailableView(
+                        emptyTitle,
+                        systemImage: emptySystemImage,
+                        description: Text(emptyDescription)
+                    )
+                } else {
+                    List(selection: $selectedWorkID) {
+                        ForEach(context.works) { work in
+                            StartupLibraryWorkRow(
+                                work: work,
+                                connection: context.connection
+                            )
+                            .tag(work.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                selectedWorkID = work.id
+                                openSelectedWork()
+                            }
+                            .accessibilityIdentifier("startup.documentSelection.work")
+                        }
+                    }
+                    .listStyle(.inset)
+                    .scrollContentBackground(.hidden)
+                    .focused($isLibraryFocused)
+                    .accessibilityIdentifier("startup.documentSelection.library")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.separator, lineWidth: 1)
+            }
+
+            if context.presentation == .cloudLibrary {
+                Text("資料とスナップショット履歴はこのMacに保存されます")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .background(.background)
+        .padding(.horizontal, 40)
+        .padding(.bottom, 32)
+        .frame(maxWidth: 880, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
     }
 
-    private var newDocumentButton: some View {
-        Button {
-            documentPanelPresenter.presentNewDocument(
-                expectedSession: appState.documentSessionToken
-            )
-        } label: {
-            Label("新規作品", systemImage: "doc.badge.plus")
+    @ViewBuilder
+    private var connectionStatus: some View {
+        switch context.connection {
+        case .available:
+            EmptyView()
+        case .offline:
+            Label("オフライン", systemImage: "icloud.slash")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .accountRequired:
+            Label("iCloudの設定を確認", systemImage: "exclamationmark.icloud")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .differentAccount:
+            Label("iCloudアカウントが異なります", systemImage: "person.crop.circle.badge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .unavailable:
+            Label("読み込めませんでした", systemImage: "exclamationmark.icloud")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .accessibilityIdentifier("startup.documentSelection.new")
     }
 
-    private var selectedDocument: StartupRecentDocument? {
-        guard let recentDocument = context.recentDocument,
-              selectedDocumentID == recentDocument.id else { return nil }
-        return recentDocument
+    private var selectedWork: StartupLibraryWork? {
+        context.works.first { $0.id == selectedWorkID }
     }
 
-    private func openRecentDocument() {
+    private func openSelectedWork() {
+        guard let selectedWork else { return }
+        if !selectedWork.availability.isOpenable(connection: context.connection) {
+            return
+        }
         let session = appState.documentSessionToken
         Task {
-            _ = await appState.openRecentDocument(expectedSession: session)
+            _ = await appState.openStartupLibraryWork(
+                selectedWork.reference,
+                expectedSession: session
+            )
+        }
+    }
+
+    private var emptyTitle: String {
+        switch context.connection {
+        case .accountRequired:
+            "iCloudを利用できません"
+        case .differentAccount:
+            "別のiCloudアカウントです"
+        case .unavailable:
+            "作品を読み込めませんでした"
+        case .available, .offline:
+            "作品がありません"
+        }
+    }
+
+    private var emptySystemImage: String {
+        switch context.connection {
+        case .accountRequired, .differentAccount, .unavailable:
+            "exclamationmark.icloud"
+        case .available, .offline:
+            "books.vertical"
+        }
+    }
+
+    private var emptyDescription: String {
+        switch context.connection {
+        case .available:
+            "新しい作品を作るか、作品パッケージを取り込めます。"
+        case .offline:
+            "接続後にiCloudの作品を確認できます。"
+        case .accountRequired:
+            "システム設定でiCloud Driveを確認してください。"
+        case .differentAccount:
+            "このMacにある作品は開けますが、このアカウントへ自動では送信しません。"
+        case let .unavailable(message):
+            message
         }
     }
 }
 
-private struct StartupRecentDocumentRow: View {
-    let document: StartupRecentDocument
+private struct StartupLibraryWorkRow: View {
+    let work: StartupLibraryWork
+    let connection: StartupLibraryConnection
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: "book.closed")
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(document.displayName)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(work.displayTitle)
                     .lineLimit(1)
 
-                Text(document.locationDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(document.displayName)
-        .accessibilityValue("前回開いた作品、保存場所 \(document.locationDescription)")
-        .accessibilityHint("選択して、作品を開くボタンで開きます。")
-    }
-}
-
-private struct StartupSelectedDocumentView: View {
-    let document: StartupRecentDocument
-    let open: () -> Void
-    let revealInFinder: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack(alignment: .top, spacing: 16) {
-                Image(systemName: "book.closed.fill")
-                    .font(.largeTitle.weight(.light))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(document.displayName)
-                        .font(.title.weight(.semibold))
-                        .lineLimit(2)
-
-                    Text("前回開いていた作品")
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if let updatedAt = work.updatedAt {
+                        Text(updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    Label(availabilityLabel, systemImage: availabilitySystemImage)
                 }
-            }
-
-            Divider()
-
-            LabeledContent("保存場所") {
-                Text(document.locationDescription)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .help(document.url.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
 
             Spacer()
-
-            HStack(spacing: 10) {
-                Button("作品を開く", action: open)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("startup.documentSelection.openRecent")
-
-                Button("Finderで表示", action: revealInFinder)
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("startup.documentSelection.revealRecent")
-            }
         }
-        .padding(32)
-        .frame(maxWidth: 640, maxHeight: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
+        .padding(.vertical, 4)
+        .opacity(isUnavailable ? 0.6 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(work.displayTitle)
+        .accessibilityValue(availabilityLabel)
+        .accessibilityHint(accessibilityHint)
+        .accessibilityRespondsToUserInteraction(!isUnavailable)
+    }
+
+    private var availabilityLabel: String {
+        switch work.availability {
+        case .cachedRemote where connection == .available:
+            "作品データをiCloudと同期済み"
+        case .cachedRemote where connection == .offline:
+            "このMacに保存済み、オフラインでも開けます"
+        case .cachedRemote where connection == .differentAccount:
+            "このMacに保存済み、iCloudアカウントが異なります"
+        case .cachedRemote:
+            "このMacに保存済み、iCloud設定を確認"
+        case .localPending where connection == .available:
+            "このMacに保存済み、iCloudへ保存中"
+        case .localPending where connection == .accountRequired:
+            "このMacに保存済み、iCloud設定を確認"
+        case .localPending where connection == .differentAccount:
+            "このMacに保存済み、iCloudアカウントが異なります"
+        case .localPending:
+            "このMacに保存済み、接続後に同期"
+        case .localOnly:
+            "このMacにのみ保存済み"
+        case .needsReview:
+            "このMacに保存済み、統合が必要"
+        case .cloudUnavailable:
+            "このMacに保存済み、iCloud上の状態を確認できません"
+        case .remotePending:
+            "このMacへの保存を再開"
+        case .remoteOnly where connection == .available:
+            "iCloudからダウンロード"
+        case .remoteOnly:
+            "ダウンロードには接続が必要"
+        case .unavailable:
+            "このMacのコピーを確認できません"
+        }
+    }
+
+    private var availabilitySystemImage: String {
+        switch work.availability {
+        case .cachedRemote where connection == .available:
+            "checkmark.icloud"
+        case .cachedRemote:
+            "icloud.slash"
+        case .localPending where connection == .available:
+            "arrow.triangle.2.circlepath.icloud"
+        case .localPending:
+            "icloud.slash"
+        case .localOnly:
+            "externaldrive"
+        case .needsReview:
+            "exclamationmark.triangle"
+        case .cloudUnavailable:
+            "exclamationmark.icloud"
+        case .remotePending:
+            "arrow.clockwise.icloud"
+        case .remoteOnly where connection == .available:
+            "icloud.and.arrow.down"
+        case .remoteOnly:
+            "icloud.slash"
+        case .unavailable:
+            "exclamationmark.triangle"
+        }
+    }
+
+    private var accessibilityHint: String {
+        switch work.availability {
+        case .remoteOnly where connection != .available:
+            return "接続後にReturnキーまたはダブルクリックで開けます。"
+        case .cloudUnavailable:
+            return "iCloud上の状態を確認できるまで、この作品は開きません。端末内のコピーは変更していません。"
+        case .unavailable:
+            return "この作品は安全に開けません。iCloud設定または作品パッケージを確認してください。"
+        case .localOnly:
+            return "iCloudとは関連付けられていません。Returnキーまたはダブルクリックで開きます。"
+        case .cachedRemote, .localPending, .remoteOnly, .remotePending, .needsReview:
+            let action = "Returnキーまたはダブルクリックで開きます。"
+            return work.isTitleTruncated ? "作品名は省略表示されています。" + action : action
+        }
+    }
+
+    private var isUnavailable: Bool {
+        !work.availability.isOpenable(connection: connection)
+    }
+}
+
+private extension StartupLibraryWorkAvailability {
+    func isOpenable(connection: StartupLibraryConnection) -> Bool {
+        switch self {
+        case .cachedRemote, .localPending, .localOnly, .remotePending, .needsReview:
+            true
+        case .remoteOnly:
+            connection == .available
+        case .cloudUnavailable, .unavailable:
+            false
+        }
     }
 }
 
@@ -301,6 +469,9 @@ struct StartupRecoveryView: View {
     }
 
     private var finderURL: URL? {
+        // Finder/Open Withで利用者が明示した外部原本だけをFinderへ戻せる。
+        // app-private working copyやcloud bootstrap URLはUIへ露出しない。
+        guard context.source == .finder else { return nil }
         guard let documentURL = context.documentURL else { return nil }
         if context.reason == .cannotCreateDocument {
             return documentURL.deletingLastPathComponent()
@@ -315,10 +486,10 @@ struct StartupRecoveryView: View {
     private var message: String {
         switch context.reason {
         case .cannotOpenDocument:
-            if let name = context.documentDisplayName {
+            if context.source == .finder, let name = context.documentDisplayName {
                 "「\(name)」は変更していません。再試行するか、Finder で原本を確認してください。"
             } else {
-                "原稿は変更していません。再試行するか、別の作品を選んでください。"
+                "端末内の作品は変更していません。再試行するか、作品一覧へ戻ってください。"
             }
         case .cannotCreateDocument:
             "保存先の空き容量やアクセス権限を確認してください。保存に成功するまで最近使った作品は変更しません。"

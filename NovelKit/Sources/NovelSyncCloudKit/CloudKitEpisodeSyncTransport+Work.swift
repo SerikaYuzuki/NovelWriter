@@ -115,6 +115,16 @@ extension CloudKitEpisodeSyncTransport {
             || head == nil && control.headSnapshotDigest == nil else {
             throw CloudKitSyncAdapterError.invalidRemoteRecord
         }
+        if let head {
+            guard let libraryEntry = control.libraryEntry else {
+                throw CloudKitSyncAdapterError.invalidRemoteRecord
+            }
+            do {
+                try libraryEntry.requireExactHead(head)
+            } catch {
+                throw CloudKitSyncAdapterError.invalidRemoteRecord
+            }
+        }
         return WorkRemoteSnapshot(head: head)
     }
 
@@ -138,6 +148,15 @@ extension CloudKitEpisodeSyncTransport {
             receipt.resultHeadRevisionID,
             for: receipt.workID
         )
+        let committedControl = try await fetchWorkControl(for: receipt.workID)
+        guard let libraryEntry = committedControl.libraryEntry else {
+            throw CloudKitSyncAdapterError.invalidRemoteRecord
+        }
+        do {
+            try libraryEntry.requireExactHead(committedHead)
+        } catch {
+            throw CloudKitSyncAdapterError.invalidRemoteRecord
+        }
         let current = try await fetchSnapshot(for: receipt.workID)
         return try CloudKitWorkReceiptResolver.resolve(
             receipt: receipt,

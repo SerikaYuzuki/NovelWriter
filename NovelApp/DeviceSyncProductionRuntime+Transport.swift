@@ -130,7 +130,18 @@ extension DeviceSyncProductionRuntimeBox {
         signalContinuation.yield()
     }
 
-    static func locator(for session: DocumentSessionToken) throws -> AppleLocalDocumentLocator {
+    func locator(for session: DocumentSessionToken) throws -> AppleLocalDocumentLocator {
+        if let workID = try workingCopyRoot.workID(for: session.documentURL) {
+            return try AppleLocalDocumentLocator.cloudLibrary(workID: workID)
+        }
+        return try Self.legacyLocator(for: session)
+    }
+
+    /// Development cutover前のpath identity。v2 cloud libraryでは使用せず、
+    /// app-private canonical workIDを持たないlegacy fallbackだけに隔離する。
+    private static func legacyLocator(
+        for session: DocumentSessionToken
+    ) throws -> AppleLocalDocumentLocator {
         let path = session.documentURL.standardizedFileURL.path
         let input = "FUMINIWA-APPLE-LOCAL-DOCUMENT-LOCATOR-V1\nmacos-file-url\n"
             + "\(path.utf8.count):\(path)"

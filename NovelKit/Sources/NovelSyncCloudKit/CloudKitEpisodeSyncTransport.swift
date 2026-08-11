@@ -4,7 +4,8 @@ import NovelSync
 
 /// Apple private CloudKit databaseへNovelSyncのportable transport contractを写像する。
 /// CKRecord/change tag/asset/zoneはこのtargetから外へ出さない。
-public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog, WorkSyncTransport {
+public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog,
+    SyncWorkLibraryCatalog, WorkSyncTransport {
     enum ZoneLifecycle {
         case unknown
         case ready

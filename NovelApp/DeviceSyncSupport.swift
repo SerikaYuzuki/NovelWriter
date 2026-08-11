@@ -33,6 +33,8 @@ struct DeviceSyncRuntime {
     let mergeRecoveryStore: any DeviceSyncMergeRecoveryStoring
     let editIntentStore: any DeviceSyncEditIntentStoring
     let setup: DeviceSyncSetupRuntime?
+    /// D-063のcloud-first作品棚。`nil`はExperimental/legacy transportだけ。
+    let library: DeviceSyncLibraryRuntime?
     let now: @Sendable () -> Date
     let leaseDuration: TimeInterval
 
@@ -52,6 +54,7 @@ struct DeviceSyncRuntime {
         mergeRecoveryStore: any DeviceSyncMergeRecoveryStoring = InMemoryDeviceSyncMergeRecoveryStore(),
         editIntentStore: any DeviceSyncEditIntentStoring = InMemoryDeviceSyncEditIntentStore(),
         setup: DeviceSyncSetupRuntime? = nil,
+        library: DeviceSyncLibraryRuntime? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         leaseDuration: TimeInterval = 120
     ) {
@@ -64,6 +67,7 @@ struct DeviceSyncRuntime {
         self.mergeRecoveryStore = mergeRecoveryStore
         self.editIntentStore = editIntentStore
         self.setup = setup
+        self.library = library
         self.now = now
         self.leaseDuration = leaseDuration
     }
@@ -73,7 +77,112 @@ struct DeviceSyncRuntime {
     }
 }
 
+enum DeviceSyncLibraryConnection: Equatable, Sendable {
+    case available
+    case offline
+    case accountRequired
+    case differentAccount
+}
+
+enum DeviceSyncRemoteLibraryAvailability: Equatable, Sendable {
+    /// Domain bindingだけ。Appのpackage readbackを通るまではcachedではない。
+    case locallyBound
+    case remoteOnly
+    case remoteDownloadPending
+    case publishPending
+}
+
+struct DeviceSyncRemoteLibraryEntry: Equatable, Sendable, Identifiable {
+    var id: SyncWorkID {
+        work.workID
+    }
+
+    let work: SyncWorkLibraryEntry
+    let availability: DeviceSyncRemoteLibraryAvailability
+}
+
+struct DeviceSyncRemoteLibrarySnapshot: Equatable, Sendable {
+    let entries: [DeviceSyncRemoteLibraryEntry]
+    let connection: DeviceSyncLibraryConnection
+}
+
+struct DeviceSyncPreparedLibraryWork: Sendable {
+    let entry: SyncWorkLibraryEntry
+    let document: NovelDocument
+    let packageSnapshot: WorkSnapshot
+    let bind: @Sendable (WorkSnapshot) async throws -> Void
+}
+
+/// AppStateからCloudKit具象型を隠しつつ、local intent→package→remote bindの
+/// 順序をtest fakeでもexactに再現するclosure集合。
+struct DeviceSyncLibraryRuntime: Sendable {
+    let loadLocalInventory: @Sendable () async throws -> DeviceSyncLocalLibraryInventory
+    let loadRemoteLibrary: @Sendable () async throws -> DeviceSyncRemoteLibrarySnapshot
+    let packageURL: @Sendable (SyncWorkID) async throws -> URL
+    let workIDForPackageURL: @Sendable (URL) async throws -> SyncWorkID?
+    let stagingPackageURL: @Sendable (SyncWorkID) async throws -> URL
+    let validateStagingPackage: @Sendable (URL, SyncWorkID) async throws -> Void
+    let installStagingPackage: @Sendable (URL, SyncWorkID) async throws -> URL
+    let discardStagingPackage: @Sendable (URL, SyncWorkID) async throws -> Void
+    let validateInstalledPackage: @Sendable (SyncWorkID) async throws -> Void
+    let reserveForPublish: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let abortPublishReservation: @Sendable (SyncWorkID) async throws -> Void
+    let confirmPublishPackage: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let attestPublishStaging: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let beginRemoteOpen: @Sendable (SyncWorkLibraryEntry) async throws -> Void
+    let attestRemotePackage: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation,
+        SyncWorkLibraryEntry
+    ) async throws -> Void
+    let prepareRemoteOpen: @Sendable (
+        SyncWorkLibraryEntry
+    ) async throws -> DeviceSyncPreparedLibraryWork
+    /// App registryに残ったexact pending intentを再開する。download済みrevisionは
+    /// account/networkが使えなくてもDomainのhidden journalから復元できる。
+    let resumeRemoteOpen: @Sendable (
+        SyncWorkID
+    ) async throws -> DeviceSyncPreparedLibraryWork
+    /// hidden journalにfull exact revisionがあり、通信なしでpackage化できるか。
+    let canResumeRemoteOpenOffline: @Sendable (SyncWorkID) async -> Bool
+    /// Domain側だけにdurable化されたremote-open intentを、作品名を漏らさず
+    /// Appの作品棚へ復旧候補として合流するためのidentity一覧。
+    let offlineResumableRemoteOpenWorkIDs: @Sendable () async -> [SyncWorkID]
+    /// App registry更新直前のkill窓で、canonical bindingとimmutable remote
+    /// baselineが既に完成しているかをDomain journalだけから確認する。
+    let hasCompletedRemoteOpenLocally: @Sendable (SyncWorkLibraryEntry) async -> Bool
+    /// canonical local binding/work journalに未解決reviewが残るか。I/O失敗は
+    /// registryの旧syncedを信頼しないためthrowsでAppへ返す。
+    let localWorkNeedsReview: @Sendable (SyncWorkID, UUID) async throws -> Bool
+    let markSynced: @Sendable (SyncWorkID, SyncWorkLibraryEntry) async throws -> Void
+    let markNeedsReview: @Sendable (SyncWorkID) async throws -> Void
+    let quarantineInstalledPackage: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let recordPackageMutation: @Sendable (
+        SyncWorkID,
+        DeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    /// current account scope内に同じcanonical WorkID/document bindingが既に
+    /// durableか。registry-onlyの未scoped作品を自動publishしないためのfence。
+    let hasLocalPublishAuthority: @Sendable (SyncWorkID, UUID) async -> Bool
+    let publishNewWork: @Sendable (SyncWorkID, NovelDocument, URL) async throws -> Void
+}
+
 struct DeviceSyncSetupRuntime: Sendable {
+    /// cloud-first libraryで新規／import／remote bootstrap用の隠し作業コピーを
+    /// 毎回新しいURLとして払い出す。`nil`はlegacy setup runtime。
+    let newPrivateWorkingCopyDestination: (@Sendable () throws -> URL)?
     /// `nil`なら現在URLはapp-private。URLを返した場合は、同期操作前に
     /// package全体をそこへcopy-inし、新しいdocument sessionへ切り替える。
     let privateWorkingCopyDestination: @Sendable (DocumentSessionToken) throws -> URL?
@@ -97,6 +206,36 @@ struct DeviceSyncSetupRuntime: Sendable {
         SyncWorkID,
         [EpisodeID]
     ) async throws -> Void
+
+    init(
+        newPrivateWorkingCopyDestination: (@Sendable () throws -> URL)? = nil,
+        privateWorkingCopyDestination: @escaping @Sendable (DocumentSessionToken) throws -> URL?,
+        validatePrivateWorkingCopy: @escaping @Sendable (URL) throws -> Void,
+        candidates: @escaping @Sendable (
+            DocumentSessionToken,
+            UUID,
+            SyncWorkStructureDigest
+        ) async throws -> [SyncWorkDescriptor],
+        startNew: @escaping @Sendable (
+            DocumentSessionToken,
+            SyncWorkDescriptor,
+            [EpisodeID]
+        ) async throws -> Void,
+        bindExisting: @escaping @Sendable (
+            DocumentSessionToken,
+            UUID,
+            SyncWorkStructureDigest,
+            SyncWorkID,
+            [EpisodeID]
+        ) async throws -> Void
+    ) {
+        self.newPrivateWorkingCopyDestination = newPrivateWorkingCopyDestination
+        self.privateWorkingCopyDestination = privateWorkingCopyDestination
+        self.validatePrivateWorkingCopy = validatePrivateWorkingCopy
+        self.candidates = candidates
+        self.startNew = startNew
+        self.bindExisting = bindExisting
+    }
 }
 
 enum DeviceSyncSetupState: Equatable {
@@ -224,7 +363,7 @@ enum DeviceSyncEditorStatusKind: Hashable {
         case .syncing:
             "この端末に保存済み、iCloudへ同期中"
         case .synced:
-            "この端末に保存済み、iCloudにも同期済み"
+            "作品データをこの端末とiCloudに同期済み"
         case .offline:
             "この端末に保存済み、オフライン"
         case .needsReview:
@@ -247,7 +386,7 @@ enum DeviceSyncEditorStatusKind: Hashable {
         case .syncing:
             "変更内容はこの端末に保存されています。iCloudへの反映を続けています。"
         case .synced:
-            "変更内容はこの端末とiCloudの両方に保存されています。"
+            "作品データはこの端末とiCloudに保存されています。資料、スナップショット履歴、端末設定はこの端末だけに保存されます。"
         case .offline:
             "変更内容はこの端末に保存されています。接続が戻ると自動で同期します。"
         case .needsReview:
