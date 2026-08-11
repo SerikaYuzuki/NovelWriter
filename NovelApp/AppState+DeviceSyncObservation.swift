@@ -245,6 +245,9 @@ extension AppState {
             await refreshSelectedEpisodeDeviceSync()
         } else if let lookup = expectedLookup {
             await prepareDeviceSync(for: lookup)
+        } else if usesWholeWorkSyncRuntime,
+                  let workIdentity = currentWorkSyncPreparationIdentity {
+            await prepareWholeWorkSync(for: workIdentity)
         }
     }
 

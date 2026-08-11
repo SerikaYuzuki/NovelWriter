@@ -6,7 +6,7 @@ import SwiftUI
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
 ///
 /// v1 では `DocumentGroup` は使わず、単一ウィンドウ + 明示的な Repository 構成とする
-/// (D-010)。起動時の読み込み・新規作成は `AppState.bootstrap()` に委譲し、
+/// (D-010)。起動時の作品選択・Finder指定作品の読み込みは `AppState.bootstrap()` に委譲し、
 /// ウィンドウ表示をブロックしないよう `.task` で非同期に行う。
 ///
 /// - 重要: `ApplicationDelegate.appState` の配線は、あえて `init` ではなく

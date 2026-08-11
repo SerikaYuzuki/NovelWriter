@@ -175,6 +175,9 @@ final class AppState {
     @ObservationIgnored var pendingDeviceSyncNewWork: PendingDeviceSyncNewWork?
     @ObservationIgnored var activeWorkSyncIdentity: WorkSyncDocumentIdentity?
     @ObservationIgnored var workSyncClient: WorkSyncClient?
+    @ObservationIgnored var workSyncPreparationTask: Task<Void, Never>?
+    @ObservationIgnored var workSyncPreparationIdentity: WorkSyncPreparationIdentity?
+    @ObservationIgnored var workSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
     @ObservationIgnored var workSyncNetworkRescheduleRequested = false
     @ObservationIgnored var workSyncRemoteBindingTask: Task<Void, Never>?
@@ -335,12 +338,12 @@ final class AppState {
         attachments = []
     }
 
-    /// 起動時の読み込み/新規作成を行う。SwiftUIのtask再評価による同時呼び出しは
+    /// 起動時の作品選択またはFinder指定作品の読み込みを行う。SwiftUIのtask再評価による同時呼び出しは
     /// 一つの実行と完了へ合流する。
     ///
-    /// UserDefaults に前回開いていたファイルパスがあればそれを読み込む。
-    /// Finderから指定されたURLはrecentより優先する。読込失敗時は新規作品へ
-    /// fallbackせずRecoveryで停止し、原稿とrecent URLを変更しない(D-039)。
+    /// 通常起動では前回作品を自動で開かず、利用者が明示的に選ぶ画面で停止する。
+    /// Finderから指定されたURLはその選択自体を尊重して直接開く。読込失敗時は
+    /// 新規作品へfallbackせずRecoveryで停止し、原稿とrecent URLを変更しない(D-039 / D-062)。
     func bootstrap(opening requestedURL: URL? = nil) async {
         guard !deviceSyncStartupFailedSafely else { return }
         if hasCompletedBootstrap {
@@ -393,36 +396,26 @@ final class AppState {
             return
         }
 
-        if let path = userDefaults.string(forKey: Self.recentDocumentPathKey), !path.isEmpty {
-            let url = URL(fileURLWithPath: path)
-            #if DEBUG
-            if Self.shouldSkipRecentDocumentInDebug(url, fileManager: fileManager) {
-                startupState = .recovery(
-                    StartupRecoveryContext(
-                        reason: .protectedLocationInDebugBuild,
-                        source: .recentDocument,
-                        documentURL: url
-                    )
-                )
-                return
-            } else {
-                await loadStartupDocument(at: url, source: .recentDocument)
-                return
+        let recentDocumentURL = userDefaults.string(forKey: Self.recentDocumentPathKey)
+            .flatMap { path in
+                path.isEmpty ? nil : URL(fileURLWithPath: path)
             }
-            #else
-            await loadStartupDocument(at: url, source: .recentDocument)
-            return
-            #endif
-        }
-
-        await createInitialDocumentForStartup()
+        startupState = .documentSelection(
+            StartupDocumentSelectionContext(recentDocumentURL: recentDocumentURL)
+        )
     }
 
     /// Recovery画面の「再試行」。同じ原本URLまたは同じ新規保存先を再利用する。
     func retryStartup() async {
         guard !deviceSyncStartupFailedSafely, !isTerminationPending else { return }
+        let recoverySession = documentSessionToken
         await documentOperationGate.perform {
             await retryStartupSerially()
+        }
+        if startupState.isReady, documentSessionToken != recoverySession {
+            // chooserから失敗した作品を再試行した場合も、EditorPaneの生成に依存せず
+            // local journalを確認し終えるまで全作品変更をgateする(D-061 / D-062)。
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
         }
     }
 
@@ -460,11 +453,24 @@ final class AppState {
     @discardableResult
     func openExternalDocument(at url: URL) async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
-        let success = await openDocument(at: url)
+        let success = await openDocument(at: url, expectedSession: nil, startupSource: .finder)
         if !success, startupState.isReady {
             externalDocumentOpenErrorMessage = "作品を開けませんでした。原稿は切り替えていません。ファイルとアクセス権限を確認してください。"
         }
         return success
+    }
+
+    /// 起動画面に表示した前回作品を、その画面を表示したsessionにだけ適用する。
+    /// recent URLは表示しただけでは読み込まず、ここで初めてRepositoryへ渡す(D-062)。
+    @discardableResult
+    func openRecentDocument(expectedSession: DocumentSessionToken) async -> Bool {
+        guard case let .documentSelection(context) = startupState,
+              let recentDocument = context.recentDocument else { return false }
+        return await openDocument(
+            at: recentDocument.url,
+            expectedSession: expectedSession,
+            startupSource: .recentDocument
+        )
     }
 
     private func loadStartupDocument(at url: URL, source: StartupDocumentSource) async {
@@ -549,6 +555,7 @@ final class AppState {
     var permitsDocumentInteraction: Bool {
         !deviceSyncStartupFailedSafely &&
             startupState.isReady &&
+            (!usesWholeWorkSyncRuntime || !deviceSyncLocalRecoveryPending) &&
             (!isDocumentTransitionInProgress || permitsDeviceSyncSelectionMutationAfterFlush)
     }
 
@@ -591,14 +598,48 @@ final class AppState {
     /// 保留中保存を完了させる。保存または読み込みに失敗した場合は、現在の状態を
     /// 一切置き換えない。
     @discardableResult
-    func openDocument(at url: URL) async -> Bool {
-        guard !deviceSyncStartupFailedSafely, !isTerminationPending else { return false }
-        return await documentOperationGate.perform {
-            await openDocumentSerially(at: url)
-        }
+    func openDocument(
+        at url: URL,
+        expectedSession: DocumentSessionToken? = nil
+    ) async -> Bool {
+        await openDocument(
+            at: url,
+            expectedSession: expectedSession,
+            startupSource: .chosenDocument
+        )
     }
 
-    private func openDocumentSerially(at url: URL) async -> Bool {
+    private func openDocument(
+        at url: URL,
+        expectedSession: DocumentSessionToken?,
+        startupSource: StartupDocumentSource
+    ) async -> Bool {
+        guard !deviceSyncStartupFailedSafely, !isTerminationPending else { return false }
+        let preparesSelectedStartupDocument = switch startupState {
+        case .documentSelection, .recovery:
+            true
+        case .loading, .ready:
+            false
+        }
+        let opened = await documentOperationGate.perform {
+            if let expectedSession, documentSessionToken != expectedSession {
+                return false
+            }
+            return await openDocumentSerially(at: url, startupSource: startupSource)
+        }
+        if opened, preparesSelectedStartupDocument {
+            // 通常起動のchooserはscene起動時のpreflight後に作品をinstallする。
+            // Workbenchや保存セクションの表示有無へ依存せず、選択した作品自身を
+            // activation直後にlocal journal復旧へ接続する(D-061 / D-062)。
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        }
+        return opened
+    }
+
+    private func openDocumentSerially(
+        at url: URL,
+        startupSource: StartupDocumentSource
+    ) async -> Bool {
         let targetURL = url.standardizedFileURL
         let hadReadyDocument = startupState.isReady
         var didBeginTransition = false
@@ -628,7 +669,7 @@ final class AppState {
                 startupState = .recovery(
                     StartupRecoveryContext(
                         reason: .cannotOpenDocument,
-                        source: .chosenDocument,
+                        source: startupSource,
                         documentURL: targetURL
                     )
                 )
@@ -652,9 +693,19 @@ final class AppState {
     @discardableResult
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
-        return await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
+        let preparesSelectedStartupDocument = switch startupState {
+        case .documentSelection, .recovery:
+            true
+        case .loading, .ready:
+            false
+        }
+        let created = await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
             await createNewDocumentSerially()
         }
+        if created, preparesSelectedStartupDocument {
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        }
+        return created
     }
 
     private func createNewDocumentSerially() async -> Bool {
@@ -2487,19 +2538,4 @@ final class AppState {
         }
         return candidate
     }
-
-    #if DEBUG
-    private static func shouldSkipRecentDocumentInDebug(_ url: URL, fileManager: FileManager) -> Bool {
-        let path = url.standardizedFileURL.path
-        if path.contains("/Library/Mobile Documents/") {
-            return true
-        }
-
-        let documentsPath = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents", isDirectory: true)
-            .standardizedFileURL
-            .path
-        return path == documentsPath || path.hasPrefix(documentsPath + "/")
-    }
-    #endif
 }

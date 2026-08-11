@@ -2,7 +2,7 @@
 
 **契約版: `.novelpkg` 1 / Work Sync wire 1・journal schema 1 / Episode Sync wire 1・journal schema 2（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: `.novelpkg`契約承認、W0未完了。D-061の作品全体Work SyncをDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件、`NovelSyncCloudKit` full 59 / 59件、Mac 60 / 60件、iOS focused 56 / 56件とgeneric iOS build／build-for-testingが通過した。** D-059／D-060のEpisode Sync実装と`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は別履歴として維持する。Work wire v1とEpisode wire v1は別namespaceで相互観測せず、mixed clientは非対応である。D-061開発検証はCloudKit同期data reset＋全test端末の同一buildを必須とし、production migration／minimum client version fenceまでは出荷不可とする。paired native、署名済み実CloudKit、C# / Kotlin再実装、Package Validator、External Change / Conflictは未完了である。
+**状態: `.novelpkg`契約承認、W0未完了。D-061の作品全体Work SyncをDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件、`NovelSyncCloudKit` full 59 / 59件、Mac 64 / 64件、iOS focused 56 / 56件とgeneric iOS build／build-for-testingが通過した。** D-059／D-060のEpisode Sync実装と`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は別履歴として維持する。Work wire v1とEpisode wire v1は別namespaceで相互観測せず、mixed clientは非対応である。D-061開発検証はCloudKit同期data reset＋全test端末の同一buildを必須とし、production migration／minimum client version fenceまでは出荷不可とする。paired native、署名済み実CloudKit、C# / Kotlin再実装、Package Validator、External Change / Conflictは未完了である。
 
 本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、現行live syncは別namespaceの作品全体Work wire、端末内の未同期作品はpackage外Work journalとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059〜D-061と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
@@ -207,7 +207,7 @@ Apple adapterは同じprivate custom zone内でEpisodeとは別の`FUMINIWAWorkC
 
 D-061は一般配布前のdevelopment cutoverである。Work headとEpisode headは独立して相互の更新を観測しないため、旧Episode-only clientとの同時利用は非対応である。D-059／D-060はreal CloudKitへdeploy／出荷していない前提で、開発CloudKit同期dataをresetし、全test端末を同じD-061 buildへ更新して検証する。production upgradeを行う場合は別Decisionでdata migrationまたはminimum client version fenceを実装・検証する。それまでは出荷不可で、mixed-client compatibilityをfixtureや成功条件に含めない。
 
-D-061のSwift側local証跡は、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 60 / 60件（integration 53＋edit-intent 4＋root 3）、iOS focused 56 / 56件（integration 49＋UI 7）である。generic iOS build／build-for-testingも通過した。Work conflict UIは既存Mac focused coverageを含め最終source監査した。これらが存在しても、次を完了扱いにしない。
+D-061のSwift側local証跡は、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 64 / 64件（integration 57＋edit-intent 4＋root 3）、iOS focused 56 / 56件（integration 49＋UI 7）である。generic iOS build／build-for-testingも通過した。Work conflict UIは既存Mac focused coverageを含め最終source監査した。これらが存在しても、次を完了扱いにしない。
 
 - C#／KotlinによるWork wire／journal／merge fixtureの独立再実装
 - paired native Mac↔iPhone、実OS process kill、手動VoiceOver／実機IME

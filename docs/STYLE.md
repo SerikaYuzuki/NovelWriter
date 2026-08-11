@@ -71,6 +71,7 @@
 - ウィンドウ・ペインの外周余白: 20pt / グループ間: 16pt / グループ内: 8pt
 - 角丸: カード・ポップオーバー内パネル = 8pt、小さなチップ = 4pt。それ以外の角丸を発明しない
 - 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / 下部status bar 28pt / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
+- macOS起動chooserは最小720×480ptの同一window内`NavigationSplitView`とし、左のrecent sidebarを最小224pt／初期264pt／最大320pt、右を主detailとする。別welcome window、中央の巨大なbrand card、複数の浮いたpanelを作らない
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - iOS Editorは本文面積を優先し、保存状態を上部のnative toolbarへ置く。重複する「本文」見出し、話タイトル入力、文字カウンター、独立した下部status barを常設しない
@@ -89,10 +90,11 @@
 - **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
 - **Workbench status bar**: macOSでは保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない。iOS EditorはD-058によりstatus barを常設せず、保存状態を上部へ移し、文字数を重複表示しない
 - **iOS Editor accessory**: `……` / `――` / `ルビ` / `傍点`の短いlabelを横並びにし、本文キャンバスと同じ背景を使う。選択が必要な操作は無効状態を見た目とVoiceOver valueの両方で伝え、toolbarだけを唯一の入口にしない
-- **Startup / Recovery**: `loading`では作品を読み込んでいることだけを静かに示し、編集操作を出さない。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
+- **Startup / Document Selection / Recovery**: `loading`では作品を準備していることだけを静かに示し、編集操作を出さない。macOSの`documentSelection`は左に「作品を選ぶ」／「最近使った作品」の標準sidebar List、右に直近1件の名称／保存場所と「作品を開く」「Finderで表示」を置き、下部に「新規作品」「別の作品を開く…」を置く。recentが無い右detailは`ContentUnavailableView`で「作品を選んでください」／「新しい作品を作るか、保存済みの作品を開けます。」を示す。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
+- **WorkSync local recovery gate**: 通常chooser／Recoveryのactivationまたはcold Finder startupに続くlocal preflight中は、不透明なsemantic backgroundで背後のWorkbenchを知覚・操作不能にし、確認中はlabel付き`ProgressView`、choiceが必要なら`ContentUnavailableView`で「変更の確認が必要です」／「端末に残っている作品の版を確認してから、執筆を再開できます。」と「変更を確認」を示す。Workbenchの通常mutationをdisabledにしても、このroot-level buttonと3面reviewのchoiceはdisabledにしない。通常のcloud conflict reviewをこの全画面gateへ流用しない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
-- **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成
+- **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成。macOS起動chooserの右detailはinventoryの空表示ではなく選択待ちなので、D-062の「作品を選んでください」を使う
 - **バッジ・カウント**: 数字は `.caption` + secondary。未回収数など注意を引くものだけ `warning` トークン
 
 ## 6. 深さ・階層
@@ -108,10 +110,11 @@
 - ドラッグ中: 元位置は `opacity 0.4`、持ち上げたカードは軽い影。ドロップ先レーンは `accent` の淡いハイライト
 - アニメーション: `.snappy`(0.2s 目安)に統一。バウンスや 0.5s 超の演出は禁止
 - キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする。本文選択の対象にしないDisclosure headerは、同じ操作へ到達できるメニュー項目を必ず持つ
+- macOS起動chooserのrecent Listは編集一覧ではないため、矢印キーで選択、Returnで選択中の「作品を開く」を実行する。`Cmd+N`は新規作品、`Cmd+O`は別作品のopen panelへ到達させ、single clickだけでは作品を開かない
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
-- 保存: `Cmd+S`はFileメニューの「保存」と一致させ、`ready`な作品だけを同じ保存直列化経路で保存する
+- 保存: `Cmd+S`はFileメニューの「保存」と一致させ、`ready`かつWorkSync local recovery gate中でない作品だけを同じ保存直列化経路で保存する
 
 ## 8. 文言(日本語 UI ライティング)
 
@@ -120,6 +123,7 @@
 - エディタ下部のアクセサリバーは省スペースのため、続きの入力があっても「…」を付けない
 - 確認ダイアログのボタンは動詞(削除 / キャンセル)。「はい/いいえ」禁止
 - 説明文・空状態は「です・ます」体。感嘆符は使わない
+- macOS起動chooserは、local recentだけを示す「最近使った作品」を使う。「作品棚」「このデバイスの作品」「Files／iCloud Driveから取り込む」「iCloudの作品」「同期済み」は、実装していないlibrary／bootstrap／同期状態を示唆するため使わない
 
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
@@ -134,7 +138,9 @@
 - [ ] status barが保存状態・話／全体文字数・検索不一致だけを正確に示し、未実装機能の入口を含んでいないか
 - [ ] iOS Editorでは保存状態が上部にあり、重複する本文見出し／話タイトル入力／文字カウンターがなく、執筆補助バーの背景とsafe areaが本文キャンバスへ連続しているか
 - [ ] `……` / `――` / `ルビ` / `傍点`が44pt以上、VoiceOverで識別可能、IME／stale selection時に本文を変更せず、Undo 1回で戻せるか
-- [ ] Loading / Recovery中に編集・保存可能なWorkbenchが露出せず、Recoveryの4導線がキーボードとVoiceOverで使えるか
+- [ ] Loading / Document Selection / Recovery中に編集・保存可能なWorkbenchが露出せず、chooserとRecoveryの導線がキーボードとVoiceOverで使えるか
+- [ ] macOS chooserがrecent 1件だけを標準List selectionで示し、作品名をlabel、前回作品＋保存場所をvalue、開き方をhintとして読み上げるか。System／Light／Darkで固定色や二重materialがないか
+- [ ] WorkSync local recovery中は背後の全mutationがgateされる一方、root-levelの「変更を確認」とexact review／sessionを再検査する3面choiceが操作可能か。状態が色やspinnerだけでなく文字とVoiceOver labelでも伝わるか
 - [ ] 空状態は `ContentUnavailableView` + 規約どおりの文言か
 - [ ] 常設の影・独自ハイライト・0.5s 超のアニメーションを追加していないか
 - [ ] 破壊的ボタンに `role: .destructive` と確認ダイアログがあるか

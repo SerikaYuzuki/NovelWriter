@@ -30,18 +30,20 @@ final class DocumentPanelPresenter {
         Task {
             let success = await appState.createNewDocument(expectedSession: session)
             if !success {
-                alertMessage = if appState.documentSessionToken != session {
-                    "作品が切り替わったため、新規作品は作成しませんでした。"
-                } else {
-                    "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
+                if appState.documentSessionToken != session {
+                    alertMessage = "作品が切り替わったため、新規作品は作成しませんでした。"
+                } else if appState.startupState.isReady {
+                    alertMessage = "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
                 }
             }
         }
     }
 
     /// 「開く…」。`.novelpkg` パッケージを選ばせ、`AppState.openDocument(at:)` へ渡す。
-    func presentOpenPanel() {
+    func presentOpenPanel(expectedSession: DocumentSessionToken? = nil) {
         guard appState.permitsDocumentChoice else { return }
+        let session = expectedSession ?? appState.documentSessionToken
+        guard session == appState.documentSessionToken else { return }
         let panel = NSOpenPanel()
         panel.title = "作品を開く"
         panel.prompt = "開く"
@@ -62,9 +64,13 @@ final class DocumentPanelPresenter {
         }
 
         Task {
-            let success = await appState.openDocument(at: url)
+            let success = await appState.openDocument(at: url, expectedSession: session)
             if !success {
-                alertMessage = "作品を開けませんでした。ファイルが壊れているか、アクセス権限がない可能性があります。"
+                if appState.documentSessionToken != session {
+                    alertMessage = "作品が切り替わったため、選択した作品は開きませんでした。"
+                } else if appState.startupState.isReady {
+                    alertMessage = "作品を開けませんでした。ファイルが壊れているか、アクセス権限がない可能性があります。"
+                }
             }
         }
     }

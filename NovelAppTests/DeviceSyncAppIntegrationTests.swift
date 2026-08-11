@@ -352,6 +352,286 @@ struct DeviceSyncAppIntegrationTests {
         #expect(await transport.operationCount() == 0)
     }
 
+    @Test("選んだ起動作品はEditor表示に依存せず作品journalへ接続する")
+    func startupSelectionPreflightsWholeWorkWithoutWritingSection() async throws {
+        let fixture = makeFixture(content: "起動作品の本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let resolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            remoteAvailability: .temporarilyOffline
+        )
+        let suiteName = "FUMINIWA.StartupSelectionPreflightTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(fixture.url.path, forKey: AppPreferenceKey.recentDocumentPath)
+        defaults.set(ProjectSection.projectInfo.rawValue, forKey: AppPreferenceKey.projectSection)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: DeviceSyncRuntime(
+                    replicaID: replicaID,
+                    transport: InMemoryEpisodeSyncServer(),
+                    workTransport: transport,
+                    binding: { _, _ in resolution }
+                )
+            )
+        )
+
+        await state.bootstrap()
+        #expect(state.workspaceSelection.section == .projectInfo)
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken))
+
+        let durable = try #require(await journal.storedRecord(for: workID))
+        #expect(state.startupState == .ready)
+        #expect(state.workSyncLocalRecoveryReview == nil)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.permitsDocumentInteraction)
+        let expectedSnapshot = try WorkSnapshot(document: fixture.document)
+        #expect(durable.localHead.snapshot == expectedSnapshot)
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("起動作品の選択直後はEditor表示に依存せず端末内復旧を完了する")
+    func startupSelectionPreflightsWholeWorkRecoveryOutsideWritingSection() async throws {
+        let fixture = makeFixture(content: "本文")
+        var baseDocument = fixture.document
+        baseDocument.title = "前回確定版"
+        var stagedDocument = fixture.document
+        stagedDocument.title = "保存途中の端末版"
+        var observedDocument = fixture.document
+        observedDocument.title = "現在のpackage版"
+        let repository = DeviceSyncAppRepository()
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let coordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        _ = try await coordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: baseDocument),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        _ = try await coordinator.stageLocalSnapshot(
+            WorkSnapshot(document: stagedDocument),
+            at: Date(timeIntervalSince1970: 2)
+        )
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: Set(observedDocument.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: .temporarilyOffline
+        )
+        let suiteName = "FUMINIWA.StartupSelectionWorkSyncTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(fixture.url.path, forKey: AppPreferenceKey.recentDocumentPath)
+        defaults.set(ProjectSection.projectInfo.rawValue, forKey: AppPreferenceKey.projectSection)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: DeviceSyncRuntime(
+                    replicaID: replicaID,
+                    transport: InMemoryEpisodeSyncServer(),
+                    workTransport: transport,
+                    binding: { _, _ in resolution }
+                )
+            )
+        )
+
+        await state.bootstrap()
+        guard case .documentSelection = state.startupState else {
+            Issue.record("作品選択画面へ移行しませんでした")
+            return
+        }
+        #expect(state.workspaceSelection.section == .projectInfo)
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken) == false)
+        guard case .recovery = state.startupState else {
+            Issue.record("読込失敗後にRecoveryへ移行しませんでした")
+            return
+        }
+        await repository.seed(observedDocument, at: fixture.url)
+
+        await state.retryStartup()
+
+        let review = try #require(state.workSyncLocalRecoveryReview)
+        #expect(state.startupState == .ready)
+        #expect(state.deviceSyncLocalRecoveryPending)
+        #expect(state.permitsDocumentInteraction == false)
+        #expect(await transport.operationCount() == 0)
+
+        await state.resolveWorkSyncLocalRecovery(
+            using: .keepRemote,
+            expectedReview: review,
+            expectedSession: state.documentSessionToken
+        )
+
+        #expect(state.workSyncLocalRecoveryReview == nil)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.permitsDocumentInteraction)
+        #expect(state.document.title == "保存途中の端末版")
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("話がない起動作品も同期lookup待ちでWorkbenchを永久停止しない")
+    func startupSelectionWithoutEpisodesKeepsLocalPackageEditable() async throws {
+        let document = NovelDocument(
+            title: "構成前の作品",
+            chapters: [Chapter(title: "第一章", episodes: [])]
+        )
+        let url = packageURL("startup-selection-without-episodes")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(document, at: url)
+        let transport = CountingWorkSyncTransport()
+        let suiteName = "FUMINIWA.EmptyStartupSelectionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(url.path, forKey: AppPreferenceKey.recentDocumentPath)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: DeviceSyncRuntime(
+                    replicaID: SyncReplicaID(),
+                    transport: InMemoryEpisodeSyncServer(),
+                    workTransport: transport,
+                    binding: { _, _ in nil }
+                )
+            )
+        )
+
+        await state.bootstrap()
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken))
+
+        #expect(state.startupState == .ready)
+        #expect(state.currentDeviceSyncLookupIdentity == nil)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.permitsDocumentInteraction)
+        #expect(state.document == document)
+        #expect(await transport.operationCount() == 0)
+    }
+
+    @Test("話がない起動作品も編集解放前に作品journalを復旧する")
+    func startupSelectionWithoutEpisodesRestoresBoundWorkJournalBeforeEditing() async throws {
+        var baseDocument = NovelDocument(
+            title: "前回確定版",
+            chapters: [Chapter(title: "第一章", episodes: [])]
+        )
+        baseDocument.characters = [Character(name: "基準人物")]
+        var stagedDocument = baseDocument
+        stagedDocument.title = "保存途中の端末版"
+        stagedDocument.characters = [Character(name: "保存途中の人物")]
+        var observedDocument = baseDocument
+        observedDocument.title = "現在のpackage版"
+        observedDocument.characters = [Character(name: "現在の人物")]
+
+        let url = packageURL("startup-selection-without-episodes-recovery")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(observedDocument, at: url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let replicaID = SyncReplicaID()
+        let journal = InMemoryWorkSyncJournal()
+        let transport = CountingWorkSyncTransport()
+        let coordinator = WorkSyncCoordinator(
+            workID: workID,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
+            sessionID: SyncEditSessionID(),
+            transport: transport,
+            journal: journal
+        )
+        _ = try await coordinator.bootstrapLocalSnapshot(
+            WorkSnapshot(document: baseDocument),
+            at: Date(timeIntervalSince1970: 1)
+        )
+        _ = try await coordinator.stageLocalSnapshot(
+            WorkSnapshot(document: stagedDocument),
+            at: Date(timeIntervalSince1970: 2)
+        )
+        let resolution = DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: nil,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: journal,
+            allowedEpisodeIDs: [],
+            remoteAvailability: .temporarilyOffline
+        )
+        let suiteName = "FUMINIWA.EmptyBoundStartupSelectionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(url.path, forKey: AppPreferenceKey.recentDocumentPath)
+        defaults.set(ProjectSection.projectInfo.rawValue, forKey: AppPreferenceKey.projectSection)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: DeviceSyncRuntime(
+                    replicaID: replicaID,
+                    transport: InMemoryEpisodeSyncServer(),
+                    workTransport: transport,
+                    binding: { _, _ in resolution }
+                )
+            )
+        )
+
+        await state.bootstrap()
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken))
+
+        let review = try #require(state.workSyncLocalRecoveryReview)
+        #expect(state.currentDeviceSyncLookupIdentity == nil)
+        #expect(state.deviceSyncLocalRecoveryPending)
+        #expect(state.permitsDocumentInteraction == false)
+        #expect(await transport.operationCount() == 0)
+
+        await state.resolveWorkSyncLocalRecovery(
+            using: .keepRemote,
+            expectedReview: review,
+            expectedSession: state.documentSessionToken
+        )
+
+        #expect(state.document.title == "保存途中の端末版")
+        #expect(state.document.characters.map(\.name) == ["保存途中の人物"])
+        #expect(state.workSyncLocalRecoveryReview == nil)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.permitsDocumentInteraction)
+        #expect(await transport.operationCount() == 0)
+    }
+
     @Test("作品同期のCAS再試行を使い切ったlocal tailも自動で再送する")
     func wholeWorkLocalPendingOutcomeReschedulesTail() async throws {
         let fixture = makeFixture(content: "連続編集する本文")
@@ -3738,7 +4018,8 @@ struct DeviceSyncAppIntegrationTests {
         localWorkingCopyID: LocalWorkingCopyID,
         workID: SyncWorkID,
         journal: any EpisodeSyncJournal,
-        workJournal: (any WorkSyncJournal)? = nil
+        workJournal: (any WorkSyncJournal)? = nil,
+        remoteAvailability: DeviceSyncRemoteAvailability? = nil
     ) throws -> DeviceSyncBindingResolution {
         try DeviceSyncBindingResolution(
             binding: SyncWorkingCopyBinding(
@@ -3753,7 +4034,8 @@ struct DeviceSyncAppIntegrationTests {
             ),
             journal: journal,
             workJournal: workJournal,
-            allowedEpisodeIDs: Set(document.chapters.flatMap(\.episodes).map(\.id))
+            allowedEpisodeIDs: Set(document.chapters.flatMap(\.episodes).map(\.id)),
+            remoteAvailability: remoteAvailability
         )
     }
 

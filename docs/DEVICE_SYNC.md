@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-061の作品全体local-first同期をDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 60 / 60件（3 suites）、iOS focused 56 / 56件、generic iOS build／build-for-testingが通過した。D-059の基準commit `508947d2`とD-060の`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は話本文同期の別履歴として維持する。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、署名済み実CloudKit、production migration／minimum-version fenceはD-061でも未完了である
+> **状態**: D-061の作品全体local-first同期をDomain／Apple adapter／Mac・iOS Appへsource実装し、Work Domain focused 44 / 44件（5 suites）、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件（15 suites）、Mac `NovelAppDeviceSyncTests` 64 / 64件（3 suites）、iOS focused 56 / 56件、generic iOS build／build-for-testingが通過した。D-059の基準commit `508947d2`とD-060の`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件＋private-root 1 / 1件、iOS Simulator 42 / 42件＋native focused 2 / 2件は話本文同期の別履歴として維持する。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、署名済み実CloudKit、production migration／minimum-version fenceはD-061でも未完了である
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
@@ -109,7 +109,7 @@ D-061のDomain、CloudKit codec／publish planner、Mac／iOS App、3面review U
 | Work Domain focused | 44 / 44件（5 suites） | snapshot／revision／journal／FIFO coordinator／merge／resource cap |
 | CloudKit schema focused | 3 / 3件 | full 59 / 59件の内数。Episodeとは別のWork record namespaceとschema定数 |
 | `NovelSyncCloudKit` full | 59 / 59件（15 suites） | codec／asset／publish planner／receipt／local fake transport。実CloudKitではない |
-| Mac `NovelAppDeviceSyncTests` | 60 / 60件（3 suites） | integration 53＋edit-intent 4＋root 3 |
+| Mac `NovelAppDeviceSyncTests` | 64 / 64件（3 suites） | integration 57＋edit-intent 4＋root 3 |
 | iOS focused | 56 / 56件 | integration 49＋3面review UI 7 |
 | iOS build | generic build／build-for-testing PASS | compile、link、test bundle生成。署名済み実機ではない |
 

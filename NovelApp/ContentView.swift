@@ -5,15 +5,18 @@ struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
+    @State private var isStartupWorkRecoveryPresented = false
 
     var body: some View {
         Group {
             switch appState.startupState {
             case .loading:
                 StartupLoadingView()
+            case let .documentSelection(context):
+                StartupDocumentSelectionView(context: context)
             case .ready:
                 NovelWorkbenchView()
-                    .disabled(appState.isDocumentTransitionInProgress)
+                    .disabled(!appState.permitsDocumentInteraction)
             case let .recovery(context):
                 StartupRecoveryView(context: context)
             }
@@ -48,6 +51,39 @@ struct ContentView: View {
         } message: {
             Text(appState.externalDocumentOpenErrorMessage ?? "")
         }
+        .overlay {
+            if appState.startupState.isReady,
+               appState.usesWholeWorkSyncRuntime,
+               appState.deviceSyncLocalRecoveryPending {
+                StartupWorkSyncGateView(
+                    requiresReview: appState.workSyncLocalRecoveryReview != nil,
+                    review: { isStartupWorkRecoveryPresented = true }
+                )
+            }
+        }
+        .sheet(isPresented: $isStartupWorkRecoveryPresented) {
+            if let review = appState.workSyncLocalRecoveryReview {
+                let session = appState.documentSessionToken
+                WorkConflictResolutionView(
+                    presentation: WorkConflictPresentationAdapter.make(localRecovery: review),
+                    isApplying: appState.isApplyingWorkSyncConflict,
+                    choose: { choice in
+                        Task {
+                            await appState.resolveWorkSyncLocalRecovery(
+                                using: choice,
+                                expectedReview: review,
+                                expectedSession: session
+                            )
+                        }
+                    },
+                    reviewLater: { isStartupWorkRecoveryPresented = false }
+                )
+                .id("startup-local-recovery:\(review.materializedRevision.revisionID)")
+            }
+        }
+        .onChange(of: appState.workSyncLocalRecoveryReview, initial: true) { _, review in
+            isStartupWorkRecoveryPresented = review != nil
+        }
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: 8) {
                 if appState.startupState.isReady,
@@ -64,6 +100,40 @@ struct ContentView: View {
             }
             .padding(16)
         }
+    }
+}
+
+private struct StartupWorkSyncGateView: View {
+    let requiresReview: Bool
+    let review: () -> Void
+
+    var body: some View {
+        Group {
+            if requiresReview {
+                ContentUnavailableView {
+                    Label("変更の確認が必要です", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("端末に残っている作品の版を確認してから、執筆を再開できます。")
+                } actions: {
+                    Button("変更を確認", action: review)
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("startup.workSyncRecovery.review")
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("作品の保存状態を確認中")
+                    Text("作品の保存状態を確認しています…")
+                        .font(.headline)
+                    Text("端末に保存された内容を確認してから、執筆画面を開きます。")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
+        .accessibilityIdentifier("startup.workSyncRecovery")
     }
 }
 

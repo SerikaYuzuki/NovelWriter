@@ -26,6 +26,204 @@ struct StartupLoadingView: View {
     }
 }
 
+struct StartupDocumentSelectionView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
+
+    let context: StartupDocumentSelectionContext
+
+    @State private var selectedDocumentID: StartupRecentDocument.ID?
+
+    init(context: StartupDocumentSelectionContext) {
+        self.context = context
+        _selectedDocumentID = State(initialValue: context.recentDocument?.id)
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            recentDocumentsList
+                .navigationSplitViewColumnWidth(min: 224, ideal: 264, max: 320)
+        } detail: {
+            detail
+        }
+        .frame(minWidth: 720, minHeight: 480)
+        .background(.background)
+        .accessibilityIdentifier("startup.documentSelection")
+    }
+
+    private var recentDocumentsList: some View {
+        List(selection: $selectedDocumentID) {
+            Section("最近使った作品") {
+                if let recentDocument = context.recentDocument {
+                    StartupRecentDocumentRow(document: recentDocument)
+                        .tag(recentDocument.id)
+                        .accessibilityIdentifier("startup.documentSelection.recent")
+                } else {
+                    Text("最近使った作品はありません")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationTitle("作品を選ぶ")
+        .accessibilityIdentifier("startup.documentSelection.recentList")
+    }
+
+    private var detail: some View {
+        VStack(spacing: 0) {
+            Group {
+                if let selectedDocument {
+                    StartupSelectedDocumentView(
+                        document: selectedDocument,
+                        open: openRecentDocument,
+                        revealInFinder: {
+                            NSWorkspace.shared.activateFileViewerSelecting([selectedDocument.url])
+                        }
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "作品を選んでください",
+                        systemImage: "books.vertical",
+                        description: Text("新しい作品を作るか、保存済みの作品を開けます。")
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                if context.recentDocument == nil {
+                    newDocumentButton
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    newDocumentButton
+                        .buttonStyle(.bordered)
+                }
+
+                Button {
+                    documentPanelPresenter.presentOpenPanel(
+                        expectedSession: appState.documentSessionToken
+                    )
+                } label: {
+                    Label("別の作品を開く…", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("startup.documentSelection.openOther")
+
+                Spacer()
+            }
+            .padding(20)
+        }
+        .background(.background)
+    }
+
+    private var newDocumentButton: some View {
+        Button {
+            documentPanelPresenter.presentNewDocument(
+                expectedSession: appState.documentSessionToken
+            )
+        } label: {
+            Label("新規作品", systemImage: "doc.badge.plus")
+        }
+        .accessibilityIdentifier("startup.documentSelection.new")
+    }
+
+    private var selectedDocument: StartupRecentDocument? {
+        guard let recentDocument = context.recentDocument,
+              selectedDocumentID == recentDocument.id else { return nil }
+        return recentDocument
+    }
+
+    private func openRecentDocument() {
+        let session = appState.documentSessionToken
+        Task {
+            _ = await appState.openRecentDocument(expectedSession: session)
+        }
+    }
+}
+
+private struct StartupRecentDocumentRow: View {
+    let document: StartupRecentDocument
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "book.closed")
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(document.displayName)
+                    .lineLimit(1)
+
+                Text(document.locationDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(document.displayName)
+        .accessibilityValue("前回開いた作品、保存場所 \(document.locationDescription)")
+        .accessibilityHint("選択して、作品を開くボタンで開きます。")
+    }
+}
+
+private struct StartupSelectedDocumentView: View {
+    let document: StartupRecentDocument
+    let open: () -> Void
+    let revealInFinder: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(alignment: .top, spacing: 16) {
+                Image(systemName: "book.closed.fill")
+                    .font(.largeTitle.weight(.light))
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(document.displayName)
+                        .font(.title.weight(.semibold))
+                        .lineLimit(2)
+
+                    Text("前回開いていた作品")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
+            LabeledContent("保存場所") {
+                Text(document.locationDescription)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .help(document.url.path)
+            }
+
+            Spacer()
+
+            HStack(spacing: 10) {
+                Button("作品を開く", action: open)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("startup.documentSelection.openRecent")
+
+                Button("Finderで表示", action: revealInFinder)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("startup.documentSelection.revealRecent")
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: 640, maxHeight: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 struct StartupRecoveryView: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter

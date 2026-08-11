@@ -20,6 +20,15 @@ extension AppState {
         deviceSyncRuntime?.workTransport != nil
     }
 
+    var currentWorkSyncPreparationIdentity: WorkSyncPreparationIdentity? {
+        guard startupState.isReady,
+              let structureDigest = try? SyncWorkStructureDigest(chapters: document.chapters) else { return nil }
+        return WorkSyncPreparationIdentity(
+            documentSession: documentSessionToken,
+            structureDigest: structureDigest
+        )
+    }
+
     var hasCurrentWorkSyncClient: Bool {
         activeWorkSyncIdentity?.documentSession == documentSessionToken && workSyncClient != nil
     }
@@ -29,19 +38,86 @@ extension AppState {
     func prepareWorkSyncIfAvailable(
         for expectedLookup: DeviceSyncLookupIdentity
     ) async -> Bool {
+        await prepareWorkSyncIfAvailable(
+            for: WorkSyncPreparationIdentity(
+                documentSession: expectedLookup.documentSession,
+                structureDigest: expectedLookup.structureDigest
+            ),
+            resolvedLookup: expectedLookup
+        )
+    }
+
+    /// Episode選択に依存しない作品単位のsingle-flight preflight。
+    /// 章だけで話が0件の作品でも、編集を解放する前にbindingとwork journalを読む。
+    func prepareWholeWorkSync(for expectedIdentity: WorkSyncPreparationIdentity) async {
+        while let inFlight = workSyncPreparationTask {
+            let observedGeneration = workSyncPreparationGeneration
+            let observedIdentity = workSyncPreparationIdentity
+            if observedIdentity != expectedIdentity {
+                inFlight.cancel()
+                workSyncPreparationGeneration &+= 1
+                workSyncPreparationTask = nil
+                workSyncPreparationIdentity = nil
+                break
+            }
+            await inFlight.value
+            if workSyncPreparationGeneration == observedGeneration {
+                workSyncPreparationTask = nil
+                workSyncPreparationIdentity = nil
+            }
+            guard currentWorkSyncPreparationIdentity == expectedIdentity else { return }
+            return
+        }
+
+        workSyncPreparationGeneration &+= 1
+        let generation = workSyncPreparationGeneration
+        let preparation = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            let handled = await prepareWorkSyncIfAvailable(
+                for: expectedIdentity,
+                resolvedLookup: nil
+            )
+            guard currentWorkSyncPreparationIdentity == expectedIdentity else { return }
+            if !handled {
+                // legacy Episode bindingだけの作品にはwhole-work evidenceがない。
+                // 偽のEpisode IDでD-060を開始せず、端末packageだけを継続する。
+                deviceSyncLocalRecoveryPending = false
+                resolvedDeviceSyncLookupIdentity = nil
+                deviceSyncState = .unconfigured
+                deviceSyncSetupState = .idle
+                deviceSyncTransferState = .notApplicable
+                deviceSyncLocalDurabilityState = .notApplicable
+            }
+        }
+        workSyncPreparationTask = preparation
+        workSyncPreparationIdentity = expectedIdentity
+        await preparation.value
+        if workSyncPreparationGeneration == generation {
+            workSyncPreparationTask = nil
+            workSyncPreparationIdentity = nil
+        }
+    }
+
+    private func prepareWorkSyncIfAvailable(
+        for expectedIdentity: WorkSyncPreparationIdentity,
+        resolvedLookup expectedLookup: DeviceSyncLookupIdentity?
+    ) async -> Bool {
         guard let runtime = deviceSyncRuntime,
               let transport = runtime.workTransport else { return false }
         startDeviceSyncSignalObservationIfNeeded()
-        guard documentSessionToken == expectedLookup.documentSession else { return true }
+        guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
 
         if let identity = activeWorkSyncIdentity,
-           identity.documentSession == expectedLookup.documentSession,
+           identity.documentSession == expectedIdentity.documentSession,
            workSyncClient != nil {
             if deviceSyncLocalRecoveryPending || workSyncLocalRecoveryReview != nil {
                 // 同じpreflightを途中からshortcutしてEditor gateを解除しない。
                 return true
             }
-            guard resolvedDeviceSyncLookupIdentity == expectedLookup else { return true }
+            if let expectedLookup,
+               resolvedDeviceSyncLookupIdentity != expectedLookup {
+                return true
+            }
             return true
         }
 
@@ -53,11 +129,11 @@ extension AppState {
         do {
             let resolver = runtime.localWorkBinding ?? runtime.binding
             resolution = try await resolver(
-                expectedLookup.documentSession,
-                expectedLookup.structureDigest
+                expectedIdentity.documentSession,
+                expectedIdentity.structureDigest
             )
         } catch {
-            guard documentSessionToken == expectedLookup.documentSession else { return true }
+            guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
             deviceSyncState = .blocked
             deviceSyncSetupState = .unavailable(message: "iCloud作品同期の接続を確認できません")
             // bindingの失敗にはremote account確認失敗も含まれる。package保存だけで
@@ -65,7 +141,7 @@ extension AppState {
             deviceSyncLocalRecoveryPending = false
             return true
         }
-        guard documentSessionToken == expectedLookup.documentSession else { return true }
+        guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
         guard let resolution else {
             clearWorkSyncClient()
             resolvedDeviceSyncLookupIdentity = expectedLookup
@@ -87,7 +163,7 @@ extension AppState {
             : .configurationBlocked
 
         let identity = WorkSyncDocumentIdentity(
-            documentSession: expectedLookup.documentSession,
+            documentSession: expectedIdentity.documentSession,
             workID: resolution.binding.workID,
             localWorkingCopyID: resolution.binding.localWorkingCopyID
         )
@@ -119,7 +195,8 @@ extension AppState {
         await prepareResolvedWorkSync(
             identity: identity,
             client: client,
-            expectedLookup: expectedLookup,
+            expectedIdentity: expectedIdentity,
+            resolvedLookup: expectedLookup,
             descriptorMatches: descriptorMatches,
             runtime: runtime
         )
@@ -129,13 +206,14 @@ extension AppState {
     private func prepareResolvedWorkSync(
         identity: WorkSyncDocumentIdentity,
         client: WorkSyncClient,
-        expectedLookup: DeviceSyncLookupIdentity,
+        expectedIdentity: WorkSyncPreparationIdentity,
+        resolvedLookup expectedLookup: DeviceSyncLookupIdentity?,
         descriptorMatches: Bool,
         runtime: DeviceSyncRuntime
     ) async {
         await documentOperationGate.perform { [weak self] in
             guard let self,
-                  documentSessionToken == expectedLookup.documentSession else { return }
+                  currentWorkSyncPreparationIdentity == expectedIdentity else { return }
             deviceSyncLocalRecoveryPending = true
             guard beginDocumentTransition() else {
                 deviceSyncLocalRecoveryPending = false

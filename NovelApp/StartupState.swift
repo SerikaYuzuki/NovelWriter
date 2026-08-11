@@ -24,8 +24,39 @@ struct StartupRecoveryContext: Equatable {
     }
 }
 
+struct StartupRecentDocument: Identifiable, Equatable, Hashable {
+    let url: URL
+
+    init(url: URL) {
+        self.url = url.standardizedFileURL
+    }
+
+    var id: String {
+        url.path
+    }
+
+    var displayName: String {
+        let name = url.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "名称未設定の作品" : name
+    }
+
+    var locationDescription: String {
+        (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+    }
+}
+
+struct StartupDocumentSelectionContext: Equatable {
+    let recentDocument: StartupRecentDocument?
+
+    init(recentDocumentURL: URL?) {
+        recentDocument = recentDocumentURL.map(StartupRecentDocument.init(url:))
+    }
+}
+
 enum AppStartupState: Equatable {
     case loading
+    case documentSelection(StartupDocumentSelectionContext)
     case ready
     case recovery(StartupRecoveryContext)
 
@@ -34,6 +65,11 @@ enum AppStartupState: Equatable {
     }
 
     var permitsDocumentChoice: Bool {
-        self != .loading
+        switch self {
+        case .loading:
+            false
+        case .documentSelection, .ready, .recovery:
+            true
+        }
     }
 }

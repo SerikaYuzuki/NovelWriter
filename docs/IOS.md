@@ -165,7 +165,7 @@ remote fetch／push callbackからactiveな`UITextView`や現在のdocumentへsn
 
 上限はsnapshot 48 MiB、各String 1 MiB、revision 50 MiB、file journal 320 MiB、outbox 3 revision、journal revision store 5件、conflict descriptor 512件、各比較excerpt 1 KiBである。excerptは画面表示用で、完全なbase／local／remote／proposed snapshotをrevision／reviewへ保持する。5 revision、完全なproposed snapshot、bounded conflictsを持つ到達可能な270,439,704 bytesのjournal保存／再読込回帰が通過している。上限超過時は切り詰めや部分同期をしない。
 
-iOS App側はfocused 56 / 56件（integration 49＋3面review UI 7）とgeneric iOS build／build-for-testingを通過した。Work Domain 44 / 44件、`NovelSyncCloudKit` 59 / 59件、Mac 60 / 60件を含む層別証跡は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.7を正とし、いずれもsigned real CloudKit／paired nativeの証跡にはしない。
+iOS App側はfocused 56 / 56件（integration 49＋3面review UI 7）とgeneric iOS build／build-for-testingを通過した。Work Domain 44 / 44件、`NovelSyncCloudKit` 59 / 59件、Mac 64 / 64件を含む層別証跡は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.7を正とし、いずれもsigned real CloudKit／paired nativeの証跡にはしない。
 
 Work wire v1はEpisode wire v1とは別namespaceで、Apple adapterは`FUMINIWAWorkControlV1`／`FUMINIWAWorkRevisionV1`／`FUMINIWAWorkMutationReceiptV1`を使う。旧Episode clientと相互観測しないためmixed利用は非対応で、開発data resetと全test端末の同一D-061 build更新を必須とする。production migration／minimum-version fenceを別Decisionで実装するまで出荷不可である。
 

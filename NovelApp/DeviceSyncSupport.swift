@@ -335,6 +335,15 @@ struct DeviceSyncLookupIdentity: Hashable {
     let structureDigest: SyncWorkStructureDigest
 }
 
+/// D-061の作品同期preflightを、選択中の話ではなく作品sessionへ固定する。
+///
+/// 話が0件でも作品タイトル・人物・世界観などは同期対象なので、Episode由来の
+/// lookupが作れないことを理由にwork journalの復旧を省略してはならない。
+struct WorkSyncPreparationIdentity: Hashable {
+    let documentSession: DocumentSessionToken
+    let structureDigest: SyncWorkStructureDigest
+}
+
 struct DeviceSyncClient {
     let coordinator: EpisodeSyncCoordinator
     let sessionID: SyncEditSessionID
