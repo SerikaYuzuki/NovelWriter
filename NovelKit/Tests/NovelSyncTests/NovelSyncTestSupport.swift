@@ -6,6 +6,9 @@ enum SyncTestValues {
     static let workID = SyncWorkID(rawValue: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!)
     static let episodeID = EpisodeID(rawValue: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!)
     static let key = EpisodeSyncKey(workID: workID, episodeID: episodeID)
+    static let localWorkingCopyID = LocalWorkingCopyID(
+        rawValue: UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
+    )
     static let branchID = SyncBranchID(rawValue: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!)
     static let replicaA = SyncReplicaID(rawValue: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!)
     static let sessionA = SyncEditSessionID(rawValue: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!)

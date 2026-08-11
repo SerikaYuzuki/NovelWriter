@@ -2,23 +2,61 @@ import Foundation
 
 public struct EpisodeSyncContext: Hashable, Sendable {
     public let key: EpisodeSyncKey
+    public let localWorkingCopyID: LocalWorkingCopyID
+    public let branchID: SyncBranchID
     public let localHead: EpisodeRevision
     public let lastKnownRemoteHead: EpisodeRevision?
     public let lease: EpisodeLease?
     public let pendingRevisionCount: Int
+    public let remoteConfirmation: EpisodeRemoteConfirmation
+    public let pendingMaterialization: EpisodePendingMaterialization?
+    public let hasExplicitLocalChanges: Bool
+    public let reconciliationStatus: EpisodeRemoteReconciliationStatus
 
     public init(
         key: EpisodeSyncKey,
+        localWorkingCopyID: LocalWorkingCopyID,
+        branchID: SyncBranchID,
         localHead: EpisodeRevision,
         lastKnownRemoteHead: EpisodeRevision?,
         lease: EpisodeLease?,
-        pendingRevisionCount: Int
+        pendingRevisionCount: Int,
+        remoteConfirmation: EpisodeRemoteConfirmation,
+        pendingMaterialization: EpisodePendingMaterialization?,
+        hasExplicitLocalChanges: Bool,
+        reconciliationStatus: EpisodeRemoteReconciliationStatus
     ) {
         self.key = key
+        self.localWorkingCopyID = localWorkingCopyID
+        self.branchID = branchID
         self.localHead = localHead
         self.lastKnownRemoteHead = lastKnownRemoteHead
         self.lease = lease
         self.pendingRevisionCount = pendingRevisionCount
+        self.remoteConfirmation = remoteConfirmation
+        self.pendingMaterialization = pendingMaterialization
+        self.hasExplicitLocalChanges = hasExplicitLocalChanges
+        self.reconciliationStatus = reconciliationStatus
+    }
+}
+
+/// `recordLocalEdit`が返った時点で、このrevisionはpackage外journalへ保存済み。
+public struct EpisodeLocalEditReceipt: Hashable, Sendable {
+    public let localWorkingCopyID: LocalWorkingCopyID
+    public let revisionID: SyncRevisionID
+    public let contentDigest: SyncContentDigest
+    public let state: EpisodeSyncState
+
+    public init(
+        localWorkingCopyID: LocalWorkingCopyID,
+        revisionID: SyncRevisionID,
+        contentDigest: SyncContentDigest,
+        state: EpisodeSyncState
+    ) {
+        self.localWorkingCopyID = localWorkingCopyID
+        self.revisionID = revisionID
+        self.contentDigest = contentDigest
+        self.state = state
     }
 }
 
@@ -66,12 +104,14 @@ public enum EpisodeSyncCoordinatorError: Error, Equatable, Sendable {
     case remoteObservationSuperseded
     case unresolvedConflict
     case conflictSuperseded
+    case materializationNotPending
 }
 
 /// 話本文の同期状態機械。native editorのIME確定と`.novelpkg`保存はApp側が先に行い、
 /// このactorへ渡すのは確定済み全文だけとする。
 public actor EpisodeSyncCoordinator {
     public let key: EpisodeSyncKey
+    public let localWorkingCopyID: LocalWorkingCopyID
     public let replicaID: SyncReplicaID
     public let sessionID: SyncEditSessionID
 
@@ -89,19 +129,46 @@ public actor EpisodeSyncCoordinator {
     /// durable tailとして記録できる。
     var isRemoteControlOperationRunning = false
     var remoteControlOperationWaiters: [CheckedContinuation<Void, Never>] = []
+    /// native callback由来のjournal書込みをFIFOにし、actor再入で古い本文が後勝ちしない。
+    var isLocalJournalOperationRunning = false
+    var localJournalOperationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var authorityGrantAwaitingInstall: EpisodeAuthorityGrant? {
         pendingAuthorityGrant
     }
 
+    public var integrationAwaitingMaterialization: EpisodePendingMaterialization? {
+        record?.pendingMaterialization
+    }
+
+    public var integrationReviewDraft: EpisodeIntegrationReviewDraft? {
+        record?.integrationReviewDraft
+    }
+
+    public var conflictResolutionRecovery: EpisodeConflictResolutionRecovery? {
+        record?.conflictResolutionRecovery
+    }
+
+    public var stagedConflictResolution: EpisodeRevision? {
+        record?.stagedConflictResolution
+    }
+
+    public var conflictChoiceAwaitingMaterialization: EpisodeConflictResolutionMaterialization? {
+        guard let conflict = record?.conflict,
+              let chosen = record?.stagedConflictResolution else { return nil }
+        return conflictResolutionMaterialization(conflict: conflict, chosen: chosen)
+    }
+
     public init(
         key: EpisodeSyncKey,
+        localWorkingCopyID: LocalWorkingCopyID,
         replicaID: SyncReplicaID,
         sessionID: SyncEditSessionID,
         transport: any EpisodeSyncTransport,
         journal: any EpisodeSyncJournal
     ) {
         self.key = key
+        self.localWorkingCopyID = localWorkingCopyID
         self.replicaID = replicaID
         self.sessionID = sessionID
         self.transport = transport
@@ -110,7 +177,17 @@ public actor EpisodeSyncCoordinator {
 
     @discardableResult
     public func restore() async throws -> EpisodeSyncState {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         record = try await journal.load(for: key)
+        if var restored = record, restored.localWorkingCopyID == nil {
+            restored.localWorkingCopyID = localWorkingCopyID
+            record = restored
+            try await journal.save(restored)
+        }
+        guard record?.localWorkingCopyID == localWorkingCopyID || record == nil else {
+            throw EpisodeSyncJournalError.workingCopyMismatch
+        }
         authorityVerifiedInProcess = false
         restoredAuthorityRequiresClaim = record != nil
         state = record.map { .restoredUnverified(context(for: $0)) } ?? .unlinked
@@ -162,6 +239,8 @@ public actor EpisodeSyncCoordinator {
         )
         record = try EpisodeSyncJournalRecord(
             key: key,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
             branchID: branchID,
             lastKnownRemoteHead: nil,
             localHead: genesis,
@@ -189,5 +268,23 @@ public actor EpisodeSyncCoordinator {
             return
         }
         remoteControlOperationWaiters.removeFirst().resume()
+    }
+
+    func acquireLocalJournalOperation() async {
+        guard !isLocalJournalOperationRunning else {
+            await withCheckedContinuation { continuation in
+                localJournalOperationWaiters.append(continuation)
+            }
+            return
+        }
+        isLocalJournalOperationRunning = true
+    }
+
+    func releaseLocalJournalOperation() {
+        guard !localJournalOperationWaiters.isEmpty else {
+            isLocalJournalOperationRunning = false
+            return
+        }
+        localJournalOperationWaiters.removeFirst().resume()
     }
 }

@@ -273,6 +273,49 @@ public struct EpisodeConflict: Hashable, Codable, Sendable {
     }
 }
 
+/// 自動統合できなかった時にも、両本文を保持したまま提示できる確認用下書き。
+public struct EpisodeIntegrationReviewDraft: Hashable, Codable, Sendable {
+    public enum Reason: String, Codable, Sendable {
+        case commonAncestorUnknown
+        case inputLimitExceeded
+        case sameInsertionPoint
+        case overlappingChanges
+        case ambiguousChanges
+    }
+
+    public let baseRevisionID: SyncRevisionID?
+    public let localRevisionID: SyncRevisionID
+    public let remoteRevisionID: SyncRevisionID
+    public let proposedContent: String
+    public let reason: Reason
+
+    public init(
+        baseRevisionID: SyncRevisionID?,
+        localRevisionID: SyncRevisionID,
+        remoteRevisionID: SyncRevisionID,
+        proposedContent: String,
+        reason: Reason
+    ) {
+        self.baseRevisionID = baseRevisionID
+        self.localRevisionID = localRevisionID
+        self.remoteRevisionID = remoteRevisionID
+        self.proposedContent = proposedContent
+        self.reason = reason
+    }
+}
+
+/// native editorの本文と、自動統合後のgraph headが一時的に異なることをdurableに示す。
+/// Appが安全な世代・IME境界で`integratedRevision`をmaterializeするまで削除しない。
+public struct EpisodePendingMaterialization: Hashable, Codable, Sendable {
+    public let workingRevisionID: SyncRevisionID
+    public let integratedRevision: EpisodeRevision
+
+    public init(workingRevisionID: SyncRevisionID, integratedRevision: EpisodeRevision) {
+        self.workingRevisionID = workingRevisionID
+        self.integratedRevision = integratedRevision
+    }
+}
+
 public enum EpisodeIntegrationChoice: Hashable, Sendable {
     case keepLocal
     case keepRemote
@@ -287,5 +330,21 @@ public enum EpisodeIntegrationChoice: Hashable, Sendable {
         case let .manual(content):
             content
         }
+    }
+}
+
+public struct EpisodeConflictResolutionMaterialization: Hashable, Sendable {
+    public let localWorkingCopyID: LocalWorkingCopyID
+    public let sourceConflict: EpisodeConflict
+    public let chosenRevision: EpisodeRevision
+
+    public init(
+        localWorkingCopyID: LocalWorkingCopyID,
+        sourceConflict: EpisodeConflict,
+        chosenRevision: EpisodeRevision
+    ) {
+        self.localWorkingCopyID = localWorkingCopyID
+        self.sourceConflict = sourceConflict
+        self.chosenRevision = chosenRevision
     }
 }

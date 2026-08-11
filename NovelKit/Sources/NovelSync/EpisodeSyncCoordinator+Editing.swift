@@ -7,6 +7,8 @@ public extension EpisodeSyncCoordinator {
         _ content: String,
         createdAt: Date
     ) async throws -> EpisodeSyncState {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard authorityVerifiedInProcess,
               pendingAuthorityGrant == nil,
@@ -29,6 +31,8 @@ public extension EpisodeSyncCoordinator {
         expectedConflict: EpisodeConflict,
         createdAt: Date
     ) async throws -> EpisodeSyncState {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard record.conflict == expectedConflict else {
             throw EpisodeSyncCoordinatorError.conflictSuperseded
@@ -63,6 +67,16 @@ public extension EpisodeSyncCoordinator {
         using choice: EpisodeIntegrationChoice,
         createdAt: Date
     ) async throws -> EpisodeSyncState {
+        try await stageLegacyConflictResolution(using: choice, createdAt: createdAt)
+        return try await synchronizeSerially()
+    }
+
+    private func stageLegacyConflictResolution(
+        using choice: EpisodeIntegrationChoice,
+        createdAt: Date
+    ) async throws {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         guard let conflict = record.conflict else {
             throw EpisodeSyncCoordinatorError.noConflict
@@ -83,6 +97,10 @@ public extension EpisodeSyncCoordinator {
         record.localHead = merge
         record.lastKnownRemoteHead = conflict.remote
         record.conflict = nil
+        record.integrationReviewDraft = nil
+        record.pendingMaterialization = nil
+        record.remoteConfirmation = .unconfirmed
+        record.reconciliationStatus = .pending
         // merge markerをAppが先にdurable化した後、ここでprocessが終了しても
         // fresh sessionが同じmutationをreceipt replayできるよう、merge revisionと
         // publish sealを一度のjournal saveへまとめる。
@@ -94,6 +112,5 @@ public extension EpisodeSyncCoordinator {
         )
         self.record = record
         try await persistAndUpdateState()
-        return try await synchronizeSerially()
     }
 }

@@ -229,32 +229,6 @@ struct SyncCodableAndDigestTests {
         }
     }
 
-    @Test("journal pending cap is enforced while decoding app-private data")
-    func journalPendingDecodeCap() throws {
-        let revision = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666693",
-            parents: [],
-            content: "wire"
-        )
-        let record = try EpisodeSyncJournalRecord(
-            key: SyncTestValues.key,
-            branchID: SyncTestValues.branchID,
-            lastKnownRemoteHead: revision,
-            localHead: revision
-        )
-        var object = try #require(
-            jsonObject(from: FileEpisodeSyncJournal.makeEncoder().encode(record)) as? [String: Any]
-        )
-        let template = try #require(object["localHead"])
-        object["pendingRevisions"] = (
-            0 ... EpisodeSyncJournalRecord.maximumPendingRevisionCount
-        ).map { _ in template }
-        let data = try JSONSerialization.data(withJSONObject: object)
-        #expect(throws: EpisodeSyncJournalError.self) {
-            _ = try JSONDecoder().decode(EpisodeSyncJournalRecord.self, from: data)
-        }
-    }
-
     @Test("every top-level sync wire DTO rejects an unknown protocol major")
     func unknownProtocolVersionFailsClosed() throws {
         let revision = try SyncTestValues.revision(
@@ -298,7 +272,7 @@ struct SyncCodableAndDigestTests {
         try expectUnknownVersionRejected(descriptor)
     }
 
-    private func jsonObject(from data: Data) throws -> AnyHashable {
+    func jsonObject(from data: Data) throws -> AnyHashable {
         try #require(JSONSerialization.jsonObject(with: data) as? AnyHashable)
     }
 

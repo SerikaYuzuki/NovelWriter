@@ -5,6 +5,44 @@ import Testing
 
 @Suite("File episode sync journal")
 struct FileEpisodeSyncJournalTests {
+    @Test("schema v1 fixture upgrades atomically with the binding working-copy ID")
+    func schemaV1MigrationUsesBindingIdentity() async throws {
+        let root = temporaryRoot(named: "v1-migration")
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let fileURL = recordURL(root: root)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let fixtureURL = try #require(
+            Bundle.module.url(forResource: "episode-sync-journal-v1", withExtension: "json")
+        )
+        try Data(contentsOf: fixtureURL).write(to: fileURL, options: .atomic)
+
+        let journal = try FileEpisodeSyncJournal(rootURL: root)
+        let decodedV1 = try #require(try await journal.load(for: SyncTestValues.key))
+        #expect(decodedV1.localWorkingCopyID == nil)
+
+        let coordinator = EpisodeSyncCoordinator(
+            key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
+            replicaID: SyncTestValues.replicaA,
+            sessionID: SyncTestValues.sessionA,
+            transport: InMemoryEpisodeSyncServer(),
+            journal: journal
+        )
+        _ = try await coordinator.restore()
+
+        let migrated = try #require(try await journal.load(for: SyncTestValues.key))
+        #expect(migrated.schemaVersion == 2)
+        #expect(migrated.localWorkingCopyID == SyncTestValues.localWorkingCopyID)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        )
+        #expect(object["schemaVersion"] as? Int == 2)
+        #expect(object["localWorkingCopyID"] as? String == SyncTestValues.localWorkingCopyID.description)
+    }
+
     @Test("atomic JSON round-trip tolerates additive fields and leaves no fixed temporary file")
     func atomicRoundTrip() async throws {
         let root = temporaryRoot(named: "roundtrip")
@@ -22,6 +60,7 @@ struct FileEpisodeSyncJournalTests {
         )
         let record = try EpisodeSyncJournalRecord(
             key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             branchID: SyncTestValues.branchID,
             lastKnownRemoteHead: first,
             localHead: second,
@@ -94,6 +133,7 @@ struct FileEpisodeSyncJournalTests {
         )
         let record = try EpisodeSyncJournalRecord(
             key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             branchID: SyncTestValues.branchID,
             lastKnownRemoteHead: revision,
             localHead: revision
@@ -128,54 +168,6 @@ struct FileEpisodeSyncJournalTests {
         }
     }
 
-    @Test("worst-case escaped conflict record remains below 64 MiB and round-trips")
-    func worstCaseBoundaryRecord() async throws {
-        let root = temporaryRoot(named: "boundary")
-        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
-        let byteCount = EpisodeRevision.maximumContentUTF8Bytes
-        let base = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666671",
-            parents: [],
-            content: String(repeating: "\0", count: byteCount)
-        )
-        let first = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666672",
-            parents: [base.revisionID],
-            content: String(repeating: "\u{1}", count: byteCount)
-        )
-        let second = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666673",
-            parents: [first.revisionID],
-            content: String(repeating: "\u{2}", count: byteCount)
-        )
-        let local = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666674",
-            parents: [second.revisionID],
-            content: String(repeating: "\u{3}", count: byteCount)
-        )
-        let remote = try SyncTestValues.revision(
-            id: "66666666-6666-6666-6666-666666666675",
-            parents: [base.revisionID],
-            content: String(repeating: "\u{4}", count: byteCount)
-        )
-        let conflict = EpisodeConflict(base: base, local: local, remote: remote)
-        let record = try EpisodeSyncJournalRecord(
-            key: SyncTestValues.key,
-            branchID: SyncTestValues.branchID,
-            lastKnownRemoteHead: base,
-            localHead: local,
-            pendingRevisions: [first, second, local],
-            conflict: conflict,
-            mode: .forcedFork
-        )
-        let encoded = try FileEpisodeSyncJournal.makeEncoder().encode(record)
-        #expect(encoded.count < FileEpisodeSyncJournal.maximumRecordBytes)
-
-        let journal = try FileEpisodeSyncJournal(rootURL: root)
-        try await journal.save(record)
-        #expect(try await journal.load(for: SyncTestValues.key) == record)
-    }
-
     @Test("fractional revision dates survive restart and retry the same mutation ID")
     func fractionalDateIdempotentRetry() async throws {
         let root = temporaryRoot(named: "idempotency")
@@ -184,6 +176,7 @@ struct FileEpisodeSyncJournalTests {
         let journal = try FileEpisodeSyncJournal(rootURL: root)
         let original = EpisodeSyncCoordinator(
             key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             replicaID: SyncTestValues.replicaA,
             sessionID: SyncTestValues.sessionA,
             transport: server,
@@ -206,6 +199,7 @@ struct FileEpisodeSyncJournalTests {
 
         let restarted = EpisodeSyncCoordinator(
             key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             replicaID: SyncTestValues.replicaA,
             sessionID: SyncEditSessionID(),
             transport: server,
@@ -228,13 +222,13 @@ struct FileEpisodeSyncJournalTests {
         }
     }
 
-    private func temporaryRoot(named name: String) -> URL {
+    func temporaryRoot(named name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("NovelSyncTests-\(name)-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("journal", isDirectory: true)
     }
 
-    private func recordURL(root: URL) -> URL {
+    func recordURL(root: URL) -> URL {
         root
             .appendingPathComponent(SyncTestValues.workID.rawValue.uuidString, isDirectory: true)
             .appendingPathComponent("\(SyncTestValues.episodeID.rawValue.uuidString).json")

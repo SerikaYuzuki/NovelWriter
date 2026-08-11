@@ -98,6 +98,8 @@ public extension EpisodeSyncCoordinator {
         createdAt: Date,
         for grant: EpisodeAuthorityGrant
     ) async throws -> EpisodeSyncState {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard pendingAuthorityGrant == grant else {
             throw EpisodeSyncCoordinatorError.authorityGrantNotPending
         }
@@ -117,6 +119,8 @@ public extension EpisodeSyncCoordinator {
         createdAt: Date,
         for observation: EpisodeFenceObservation
     ) async throws -> EpisodeSyncState {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard pendingFenceObservation == observation else {
             throw EpisodeSyncCoordinatorError.fenceObservationNotPending
         }
@@ -147,6 +151,8 @@ public extension EpisodeSyncCoordinator {
             throw EpisodeSyncCoordinatorError.remoteObservationSuperseded
         }
 
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         pendingFenceObservation = nil
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         installCleanRemote(current.head, into: &record)
@@ -291,6 +297,8 @@ private extension EpisodeSyncCoordinator {
     }
 
     func activate(lease: EpisodeLease, snapshot: EpisodeRemoteSnapshot) async throws {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         record.lease = lease
         authorityVerifiedInProcess = true
@@ -358,6 +366,7 @@ private extension EpisodeSyncCoordinator {
         record.sealedPublish = nil
         record.conflict = nil
         record.mode = .tracking
+        record.reconciliationStatus = .idle
     }
 
     func verifiedAuthority(

@@ -52,10 +52,73 @@
       }
     },
     {
+      "name": "multiple-disjoint-hunks",
+      "base": "甲\n乙\n丙\n丁\n戊\n",
+      "local": "甲L\n乙\n丙\n丁\n戊L\n",
+      "remote": "甲\n乙\n丙R\n丁\n戊\n",
+      "expected": {
+        "kind": "merged",
+        "content": "甲L\n乙\n丙R\n丁\n戊L\n"
+      }
+    },
+    {
+      "name": "partial-overlap-draft",
+      "base": "甲\n乙\n丙\n丁\n戊\n",
+      "local": "甲L\n乙\n狼LOCAL\n丁\n戊L\n",
+      "remote": "甲\n乙R\n猫REMOTE\n丁R\n戊\n",
+      "expected": {
+        "kind": "conflict",
+        "reason": "overlappingChanges",
+        "proposedContent": "甲L\n乙R\n狼LOCAL\n丁R\n戊L\n"
+      }
+    },
+    {
+      "name": "unicode-multi-hunk",
+      "base": "序😀\nかなé\n　終\n",
+      "local": "序🐈\nかなé\n　終！\n",
+      "remote": "序😀\n仮名é\n　終\n",
+      "expected": {
+        "kind": "merged",
+        "content": "序🐈\n仮名é\n　終！\n"
+      }
+    },
+    {
+      "name": "insertion-at-replacement-lower-boundary",
+      "base": "ab",
+      "local": "Xab",
+      "remote": "Ab",
+      "expected": {
+        "kind": "merged",
+        "content": "XAb"
+      }
+    },
+    {
+      "name": "insertion-at-replacement-upper-boundary",
+      "base": "ab",
+      "local": "abX",
+      "remote": "aB",
+      "expected": {
+        "kind": "merged",
+        "content": "aBX"
+      }
+    },
+    {
+      "name": "insertion-inside-deletion",
+      "base": "abc",
+      "local": "aXbc",
+      "remote": "c",
+      "expected": {
+        "kind": "conflict",
+        "reason": "overlappingChanges"
+      }
+    },
+    {
       "name": "resource-limit-metadata",
       "limit": {
         "maximumInputUTF8Bytes": 4194304,
-        "maximumInputScalarCount": 1000000
+        "maximumInputScalarCount": 1000000,
+        "maximumEditDistance": 1024,
+        "maximumDiffWork": 16000000
       },
       "expected": {
         "kind": "conflict",

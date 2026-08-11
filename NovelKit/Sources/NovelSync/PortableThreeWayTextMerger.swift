@@ -12,16 +12,46 @@ public enum PortableTextMergeResult: Equatable, Sendable {
     case conflict(PortableTextMergeConflictReason)
 }
 
-/// Unicode scalarを共通座標にする、保守的で決定論的な3-way merger。
-/// 各sideを単一連続editとして表現でき、base上で明確に非重複な場合だけauto mergeする。
-/// 正規化、grapheme分割、clock、locale、OS固有diff APIには依存しない。
+public struct PortableTextMergeConflict: Equatable, Sendable {
+    public let reason: PortableTextMergeConflictReason
+    public let proposedContent: String
+
+    public init(reason: PortableTextMergeConflictReason, proposedContent: String) {
+        self.reason = reason
+        self.proposedContent = proposedContent
+    }
+}
+
+public enum PortableTextMergeAnalysis: Equatable, Sendable {
+    case merged(String)
+    case conflict(PortableTextMergeConflict)
+}
+
+/// Unicode scalar座標と固定budgetだけを使う、provider/OS非依存の3-way merger。
+/// Myers shortest-edit-scriptで各sideを複数hunkへ分け、非重複hunkは全て統合する。
+/// budgetを超える場合は推測せず、local本文を確認用下書きとして返す。
 public enum PortableThreeWayTextMerger {
     public static let maximumInputUTF8Bytes = 4 * 1024 * 1024
     public static let maximumInputScalarCount = 1_000_000
+    public static let maximumEditDistance = PortableScalarDiff.maximumEditDistance
+    public static let maximumDiffWork = PortableScalarDiff.maximumWork
 
     public static func merge(base: String, local: String, remote: String) -> PortableTextMergeResult {
+        switch analyze(base: base, local: local, remote: remote) {
+        case let .merged(content):
+            .merged(content)
+        case let .conflict(conflict):
+            .conflict(conflict.reason)
+        }
+    }
+
+    public static func analyze(
+        base: String,
+        local: String,
+        remote: String
+    ) -> PortableTextMergeAnalysis {
         guard inputsAreWithinLimits(base, local, remote) else {
-            return .conflict(.inputLimitExceeded)
+            return conflict(.inputLimitExceeded, proposedContent: local)
         }
         if local == remote {
             return .merged(local)
@@ -34,34 +64,94 @@ public enum PortableThreeWayTextMerger {
         }
 
         let baseScalars = Array(base.unicodeScalars)
-        let localScalars = Array(local.unicodeScalars)
-        let remoteScalars = Array(remote.unicodeScalars)
-        let localEdit = contiguousEdit(base: baseScalars, variant: localScalars)
-        let remoteEdit = contiguousEdit(base: baseScalars, variant: remoteScalars)
-
-        guard let localEdit, let remoteEdit else {
-            return .conflict(.ambiguousChanges)
+        guard let localEdits = PortableScalarDiff.edits(
+            base: baseScalars,
+            variant: Array(local.unicodeScalars)
+        ), let remoteEdits = PortableScalarDiff.edits(
+            base: baseScalars,
+            variant: Array(remote.unicodeScalars)
+        ) else {
+            return conflict(.ambiguousChanges, proposedContent: local)
         }
-        if localEdit.range.isEmpty, remoteEdit.range.isEmpty,
-           localEdit.range.lowerBound == remoteEdit.range.lowerBound {
-            return .conflict(.sameInsertionPoint)
-        }
-        guard editsAreDisjoint(localEdit, remoteEdit) else {
-            return .conflict(.overlappingChanges)
-        }
-
-        var merged = baseScalars
-        for edit in [localEdit, remoteEdit].sorted(by: { lhs, rhs in
-            lhs.range.lowerBound > rhs.range.lowerBound
-        }) {
-            merged.replaceSubrange(edit.range, with: edit.replacement)
-        }
-        return .merged(String(String.UnicodeScalarView(merged)))
+        return mergeEdits(base: baseScalars, local: localEdits, remote: remoteEdits)
     }
 
-    private struct ScalarEdit {
-        let range: Range<Int>
-        let replacement: [Unicode.Scalar]
+    private static func mergeEdits(
+        base: [Unicode.Scalar],
+        local: [PortableScalarDiff.Edit],
+        remote: [PortableScalarDiff.Edit]
+    ) -> PortableTextMergeAnalysis {
+        var conflictingRemote: Set<Int> = []
+        var reason: PortableTextMergeConflictReason?
+        for (remoteIndex, remoteEdit) in remote.enumerated() {
+            for localEdit in local {
+                if localEdit == remoteEdit {
+                    continue
+                }
+                if localEdit.range.isEmpty, remoteEdit.range.isEmpty,
+                   localEdit.range.lowerBound == remoteEdit.range.lowerBound {
+                    conflictingRemote.insert(remoteIndex)
+                    if reason == nil {
+                        reason = .sameInsertionPoint
+                    }
+                    continue
+                }
+                guard !editsAreDisjoint(localEdit, remoteEdit) else { continue }
+                conflictingRemote.insert(remoteIndex)
+                reason = .overlappingChanges
+            }
+        }
+
+        let nonDuplicateRemote = remote.enumerated().filter { _, edit in
+            !local.contains(edit)
+        }
+        if let reason {
+            let safeRemote = nonDuplicateRemote.compactMap { index, edit in
+                conflictingRemote.contains(index) ? nil : edit
+            }
+            return conflict(
+                reason,
+                proposedContent: applying(local + safeRemote, to: base)
+            )
+        }
+        return .merged(applying(local + nonDuplicateRemote.map(\.element), to: base))
+    }
+
+    private static func applying(
+        _ edits: [PortableScalarDiff.Edit],
+        to base: [Unicode.Scalar]
+    ) -> String {
+        var result = base
+        for edit in edits.sorted(by: editApplicationOrder) {
+            result.replaceSubrange(edit.range, with: edit.replacement)
+        }
+        return String(String.UnicodeScalarView(result))
+    }
+
+    private static func editApplicationOrder(
+        _ lhs: PortableScalarDiff.Edit,
+        _ rhs: PortableScalarDiff.Edit
+    ) -> Bool {
+        if lhs.range.lowerBound != rhs.range.lowerBound {
+            return lhs.range.lowerBound > rhs.range.lowerBound
+        }
+        return lhs.range.upperBound > rhs.range.upperBound
+    }
+
+    private static func editsAreDisjoint(
+        _ first: PortableScalarDiff.Edit,
+        _ second: PortableScalarDiff.Edit
+    ) -> Bool {
+        if first.range.isEmpty {
+            let point = first.range.lowerBound
+            return point <= second.range.lowerBound || point >= second.range.upperBound
+        }
+        if second.range.isEmpty {
+            let point = second.range.lowerBound
+            return point <= first.range.lowerBound || point >= first.range.upperBound
+        }
+        return first.range.upperBound <= second.range.lowerBound
+            || second.range.upperBound <= first.range.lowerBound
     }
 
     private static func inputsAreWithinLimits(_ values: String...) -> Bool {
@@ -71,42 +161,10 @@ public enum PortableThreeWayTextMerger {
         }
     }
 
-    private static func contiguousEdit(
-        base: [Unicode.Scalar],
-        variant: [Unicode.Scalar]
-    ) -> ScalarEdit? {
-        var prefix = 0
-        let commonLimit = min(base.count, variant.count)
-        while prefix < commonLimit, base[prefix] == variant[prefix] {
-            prefix += 1
-        }
-
-        var suffix = 0
-        while suffix < base.count - prefix,
-              suffix < variant.count - prefix,
-              base[base.count - suffix - 1] == variant[variant.count - suffix - 1] {
-            suffix += 1
-        }
-
-        let baseUpper = base.count - suffix
-        let variantUpper = variant.count - suffix
-        guard prefix <= baseUpper, prefix <= variantUpper else { return nil }
-        return ScalarEdit(
-            range: prefix ..< baseUpper,
-            replacement: Array(variant[prefix ..< variantUpper])
-        )
-    }
-
-    private static func editsAreDisjoint(_ first: ScalarEdit, _ second: ScalarEdit) -> Bool {
-        if first.range.isEmpty {
-            let point = first.range.lowerBound
-            return point < second.range.lowerBound || point > second.range.upperBound
-        }
-        if second.range.isEmpty {
-            let point = second.range.lowerBound
-            return point < first.range.lowerBound || point > first.range.upperBound
-        }
-        return first.range.upperBound <= second.range.lowerBound
-            || second.range.upperBound <= first.range.lowerBound
+    private static func conflict(
+        _ reason: PortableTextMergeConflictReason,
+        proposedContent: String
+    ) -> PortableTextMergeAnalysis {
+        .conflict(PortableTextMergeConflict(reason: reason, proposedContent: proposedContent))
     }
 }

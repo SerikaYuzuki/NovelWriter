@@ -507,6 +507,7 @@ struct EpisodeSyncCoordinatorTests {
         )
         let conflictedRecord = try EpisodeSyncJournalRecord(
             key: pending.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             branchID: pending.branchID,
             lastKnownRemoteHead: pending.lastKnownRemoteHead,
             localHead: pending.localHead,
@@ -824,6 +825,7 @@ struct EpisodeSyncCoordinatorTests {
         )
         let sealedRecord = try EpisodeSyncJournalRecord(
             key: unsealed.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             branchID: unsealed.branchID,
             lastKnownRemoteHead: unsealed.lastKnownRemoteHead,
             localHead: unsealed.localHead,
@@ -980,6 +982,7 @@ struct EpisodeSyncCoordinatorTests {
     ) -> EpisodeSyncCoordinator {
         EpisodeSyncCoordinator(
             key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
             replicaID: replica,
             sessionID: session,
             transport: server,

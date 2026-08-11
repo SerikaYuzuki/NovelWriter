@@ -70,6 +70,7 @@ public actor InMemoryEpisodeSyncServer: EpisodeSyncTransport, SyncWorkCatalog {
     ) async throws -> EpisodeLeaseClaimResult {
         try requireOnline()
         await pauseClaimIfRequested()
+        try requireOnline()
         var slot = leaseSlots[request.key] ?? LeaseSlot()
         guard request.expectedEpoch == slot.epoch else {
             return try .changed(snapshot(for: request.key))

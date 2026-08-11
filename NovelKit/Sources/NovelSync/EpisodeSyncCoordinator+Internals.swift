@@ -20,6 +20,8 @@ extension EpisodeSyncCoordinator {
             : remoteHead
         return try EpisodeSyncJournalRecord(
             key: key,
+            localWorkingCopyID: localWorkingCopyID,
+            replicaID: replicaID,
             branchID: branchID,
             lastKnownRemoteHead: remoteHead,
             localHead: localHead,
@@ -48,12 +50,21 @@ extension EpisodeSyncCoordinator {
         record.localHead = revision
         record.pendingRevisions.append(revision)
         if let conflict = record.conflict {
-            record.conflict = EpisodeConflict(
+            let updatedConflict = EpisodeConflict(
                 base: conflict.base,
                 local: revision,
                 remote: conflict.remote
             )
+            record.conflict = updatedConflict
+            record.integrationReviewDraft = makeReviewDraft(
+                for: updatedConflict,
+                reason: record.integrationReviewDraft?.reason ?? .ambiguousChanges,
+                proposedContent: content
+            )
         }
+        record.remoteConfirmation = .unconfirmed
+        record.localEditIntent = .explicit
+        record.reconciliationStatus = record.conflict == nil ? .pending : .reviewRequired
     }
 
     /// conflict発見前から存在した最初のlocal forkはimmutableに残し、
@@ -74,12 +85,21 @@ extension EpisodeSyncCoordinator {
         record.localHead = revision
         record.pendingRevisions.append(revision)
         if let conflict = record.conflict {
-            record.conflict = EpisodeConflict(
+            let updatedConflict = EpisodeConflict(
                 base: conflict.base,
                 local: revision,
                 remote: conflict.remote
             )
+            record.conflict = updatedConflict
+            record.integrationReviewDraft = makeReviewDraft(
+                for: updatedConflict,
+                reason: record.integrationReviewDraft?.reason ?? .ambiguousChanges,
+                proposedContent: content
+            )
         }
+        record.remoteConfirmation = .unconfirmed
+        record.localEditIntent = .explicit
+        record.reconciliationStatus = record.conflict == nil ? .pending : .reviewRequired
     }
 
     func conflictTailParents(
@@ -95,6 +115,21 @@ extension EpisodeSyncCoordinator {
                 return parents
             }
             return [sealed.candidateHeadRevisionID]
+        }
+        if let conflict = record.conflict,
+           let localIndex = record.pendingRevisions.firstIndex(where: {
+               $0.revisionID == conflict.local.revisionID
+           }) {
+            let remoteIsPending = record.pendingRevisions.contains {
+                $0.revisionID == conflict.remote.revisionID
+            }
+            if localIndex == 0, !remoteIsPending {
+                // 最初のdetached forkは確認画面の復元元として残す。
+                return [conflict.local.revisionID]
+            }
+            let parents = record.pendingRevisions[localIndex].parentRevisionIDs
+            record.pendingRevisions.removeSubrange(localIndex...)
+            return parents
         }
         if record.pendingRevisions.count > 1 {
             let parents = record.pendingRevisions[1].parentRevisionIDs
@@ -149,6 +184,18 @@ extension EpisodeSyncCoordinator {
         _ snapshot: EpisodeRemoteSnapshot,
         expectedAuthority: EpisodeLeaseAuthority?
     ) async throws {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
+        try await applyFenceInLocalJournalLane(
+            snapshot,
+            expectedAuthority: expectedAuthority
+        )
+    }
+
+    func applyFenceInLocalJournalLane(
+        _ snapshot: EpisodeRemoteSnapshot,
+        expectedAuthority: EpisodeLeaseAuthority?
+    ) async throws {
         guard var latest = record else { throw EpisodeSyncCoordinatorError.notLinked }
         if let expectedAuthority, latest.lease?.authority != expectedAuthority {
             return
@@ -169,6 +216,8 @@ extension EpisodeSyncCoordinator {
         _ snapshot: EpisodeRemoteSnapshot,
         authority: EpisodeLeaseAuthority
     ) async throws {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard var latest = record,
               latest.lease?.authority == authority else { return }
         guard let remote = snapshot.head else {
@@ -199,6 +248,16 @@ extension EpisodeSyncCoordinator {
             local: record.localHead,
             remote: remote
         )
+        record.integrationReviewDraft = record.conflict.map {
+            makeReviewDraft(
+                for: $0,
+                reason: $0.base == nil ? .commonAncestorUnknown : .ambiguousChanges,
+                proposedContent: $0.local.content
+            )
+        }
+        record.pendingMaterialization = nil
+        record.remoteConfirmation = .unconfirmed
+        record.reconciliationStatus = .reviewRequired
         record.mode = .forcedFork
     }
 
@@ -228,11 +287,54 @@ extension EpisodeSyncCoordinator {
     func context(for record: EpisodeSyncJournalRecord) -> EpisodeSyncContext {
         EpisodeSyncContext(
             key: record.key,
+            localWorkingCopyID: record.localWorkingCopyID ?? localWorkingCopyID,
+            branchID: record.branchID,
             localHead: record.localHead,
             lastKnownRemoteHead: record.lastKnownRemoteHead,
             lease: record.lease,
-            pendingRevisionCount: record.pendingRevisions.count
+            pendingRevisionCount: record.pendingRevisions.count,
+            remoteConfirmation: record.remoteConfirmation,
+            pendingMaterialization: record.pendingMaterialization,
+            hasExplicitLocalChanges: record.localEditIntent == .explicit,
+            reconciliationStatus: record.reconciliationStatus
         )
+    }
+
+    func makeReviewDraft(
+        for conflict: EpisodeConflict,
+        reason: EpisodeIntegrationReviewDraft.Reason,
+        proposedContent: String
+    ) -> EpisodeIntegrationReviewDraft {
+        EpisodeIntegrationReviewDraft(
+            baseRevisionID: conflict.base?.revisionID,
+            localRevisionID: conflict.local.revisionID,
+            remoteRevisionID: conflict.remote.revisionID,
+            proposedContent: proposedContent,
+            reason: reason
+        )
+    }
+
+    func refreshRemoteConfirmation(in record: inout EpisodeSyncJournalRecord) {
+        let isExactRemote = record.localHead.revisionID == record.lastKnownRemoteHead?.revisionID
+            && record.localHead.contentDigest == record.lastKnownRemoteHead?.contentDigest
+        record.remoteConfirmation = isExactRemote
+            && record.pendingRevisions.isEmpty
+            && record.conflict == nil
+            && record.pendingMaterialization == nil
+            ? .confirmed
+            : .unconfirmed
+        if record.remoteConfirmation == .confirmed {
+            record.localEditIntent = .observed
+            record.reconciliationStatus = .idle
+        } else if record.conflict != nil {
+            record.reconciliationStatus = .reviewRequired
+        } else if record.reconciliationStatus != .offline {
+            record.reconciliationStatus = .pending
+        }
+    }
+
+    func publishHead(in record: EpisodeSyncJournalRecord) -> EpisodeRevision {
+        record.pendingMaterialization?.integratedRevision ?? record.localHead
     }
 
     func stateForRecord(_ record: EpisodeSyncJournalRecord) -> EpisodeSyncState {
@@ -240,14 +342,16 @@ extension EpisodeSyncCoordinator {
         if let conflict = record.conflict {
             return .conflicted(context, conflict)
         }
-        if !record.pendingRevisions.isEmpty {
+        if !record.pendingRevisions.isEmpty || record.pendingMaterialization != nil {
             return record.mode == .forcedFork ? .offlineFork(context) : .localChanges(context)
         }
         return .upToDate(context)
     }
 
     func persistAndUpdateState(forcedOffline: Bool = false) async throws {
-        guard let record else { throw EpisodeSyncCoordinatorError.notLinked }
+        guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
+        refreshRemoteConfirmation(in: &record)
+        self.record = record
         try await journal.save(record)
         state = forcedOffline ? .offlineFork(context(for: record)) : stateForRecord(record)
     }

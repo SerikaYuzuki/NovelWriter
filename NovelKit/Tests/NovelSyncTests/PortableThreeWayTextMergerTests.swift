@@ -20,6 +20,8 @@ struct PortableThreeWayTextMergerTests {
             if let limit = fixtureCase.limit {
                 #expect(limit.maximumInputUTF8Bytes == PortableThreeWayTextMerger.maximumInputUTF8Bytes)
                 #expect(limit.maximumInputScalarCount == PortableThreeWayTextMerger.maximumInputScalarCount)
+                #expect(limit.maximumEditDistance == PortableThreeWayTextMerger.maximumEditDistance)
+                #expect(limit.maximumDiffWork == PortableThreeWayTextMerger.maximumDiffWork)
                 #expect(fixtureCase.expected.reason == .inputLimitExceeded)
                 continue
             }
@@ -29,6 +31,21 @@ struct PortableThreeWayTextMergerTests {
                 remote: #require(fixtureCase.remote)
             )
             #expect(result == fixtureCase.expected.result)
+            if let proposedContent = fixtureCase.expected.proposedContent,
+               let reason = fixtureCase.expected.reason {
+                #expect(
+                    try PortableThreeWayTextMerger.analyze(
+                        base: #require(fixtureCase.base),
+                        local: #require(fixtureCase.local),
+                        remote: #require(fixtureCase.remote)
+                    ) == .conflict(
+                        PortableTextMergeConflict(
+                            reason: reason,
+                            proposedContent: proposedContent
+                        )
+                    )
+                )
+            }
         }
 
         let fixtureText = try #require(String(data: fixtureData, encoding: .utf8))
@@ -74,6 +91,45 @@ struct PortableThreeWayTextMergerTests {
         )
     }
 
+    @Test("multiple disjoint local hunks and a separate remote hunk merge automatically")
+    func multipleDisjointHunks() {
+        #expect(
+            PortableThreeWayTextMerger.merge(
+                base: "甲\n乙\n丙\n丁\n戊\n",
+                local: "甲L\n乙\n丙\n丁\n戊L\n",
+                remote: "甲\n乙\n丙R\n丁\n戊\n"
+            ) == .merged("甲L\n乙\n丙R\n丁\n戊L\n")
+        )
+    }
+
+    @Test("conflict draft applies every non-overlapping hunk and keeps local at the overlap")
+    func partialConflictDraft() {
+        let analysis = PortableThreeWayTextMerger.analyze(
+            base: "甲\n乙\n丙\n丁\n戊\n",
+            local: "甲L\n乙\n狼LOCAL\n丁\n戊L\n",
+            remote: "甲\n乙R\n猫REMOTE\n丁R\n戊\n"
+        )
+        #expect(
+            analysis == .conflict(
+                PortableTextMergeConflict(
+                    reason: .overlappingChanges,
+                    proposedContent: "甲L\n乙R\n狼LOCAL\n丁R\n戊L\n"
+                )
+            )
+        )
+    }
+
+    @Test("multi-hunk scalar coordinates preserve emoji, combining marks, and full-width space")
+    func unicodeMultiHunk() {
+        #expect(
+            PortableThreeWayTextMerger.merge(
+                base: "序😀\nかなe\u{301}\n　終\n",
+                local: "序🐈\nかなe\u{301}\n　終！\n",
+                remote: "序😀\n仮名e\u{301}\n　終\n"
+            ) == .merged("序🐈\n仮名e\u{301}\n　終！\n")
+        )
+    }
+
     @Test("same insertion point and overlapping changes stay conflicted")
     func ambiguousEditsConflict() {
         #expect(
@@ -86,6 +142,48 @@ struct PortableThreeWayTextMergerTests {
         )
     }
 
+    @Test("insertions at replacement or deletion boundaries are disjoint and side-order independent")
+    func insertionBoundariesAreDisjoint() {
+        let cases = [
+            MergeBoundaryCase(local: "Xab", remote: "Ab", expected: "XAb"),
+            MergeBoundaryCase(local: "Ab", remote: "Xab", expected: "XAb"),
+            MergeBoundaryCase(local: "abX", remote: "aB", expected: "aBX"),
+            MergeBoundaryCase(local: "aB", remote: "abX", expected: "aBX"),
+            MergeBoundaryCase(local: "Xab", remote: "b", expected: "Xb"),
+            MergeBoundaryCase(local: "b", remote: "Xab", expected: "Xb"),
+            MergeBoundaryCase(local: "abX", remote: "a", expected: "aX"),
+            MergeBoundaryCase(local: "a", remote: "abX", expected: "aX")
+        ]
+        for mergeCase in cases {
+            #expect(
+                PortableThreeWayTextMerger.merge(
+                    base: "ab",
+                    local: mergeCase.local,
+                    remote: mergeCase.remote
+                ) == .merged(mergeCase.expected)
+            )
+        }
+    }
+
+    @Test("inside insertions still conflict and equal same-point insertions collapse once")
+    func insertionInteriorAndSamePoint() {
+        #expect(
+            PortableThreeWayTextMerger.merge(
+                base: "abc",
+                local: "aXbc",
+                remote: "c"
+            ) == .conflict(.overlappingChanges)
+        )
+        #expect(
+            PortableThreeWayTextMerger.merge(base: "ab", local: "aXb", remote: "aXb")
+                == .merged("aXb")
+        )
+        #expect(
+            PortableThreeWayTextMerger.merge(base: "ab", local: "aXb", remote: "aYb")
+                == .conflict(.sameInsertionPoint)
+        )
+    }
+
     @Test("input above the bounded merge budget stays conflicted")
     func inputLimit() {
         let oversized = String(repeating: "a", count: PortableThreeWayTextMerger.maximumInputUTF8Bytes + 1)
@@ -94,6 +192,12 @@ struct PortableThreeWayTextMergerTests {
                 == .conflict(.inputLimitExceeded)
         )
     }
+}
+
+private struct MergeBoundaryCase {
+    let local: String
+    let remote: String
+    let expected: String
 }
 
 private struct PortableMergeFixture: Decodable {
@@ -127,6 +231,8 @@ private struct PortableMergeFixtureCase: Decodable {
 private struct PortableMergeLimit: Decodable {
     let maximumInputUTF8Bytes: Int
     let maximumInputScalarCount: Int
+    let maximumEditDistance: Int
+    let maximumDiffWork: Int
 }
 
 private struct PortableMergeExpectation: Decodable {
@@ -138,6 +244,7 @@ private struct PortableMergeExpectation: Decodable {
     let kind: Kind
     let content: String?
     let reason: PortableTextMergeConflictReason?
+    let proposedContent: String?
 
     var result: PortableTextMergeResult {
         switch kind {

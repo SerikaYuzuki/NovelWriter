@@ -22,12 +22,12 @@ public extension EpisodeSyncCoordinator {
                 isRestoredReplay: isRestoredReplay,
                 snapshot: snapshot
             ) else { return state }
-            guard var current = record else { throw EpisodeSyncCoordinatorError.notLinked }
+            guard let current = record else { throw EpisodeSyncCoordinatorError.notLinked }
             guard !current.pendingRevisions.isEmpty else {
                 return try await reconcileCleanRecord(current, snapshot: snapshot)
             }
 
-            let command = try await makePublishCommand(record: &current, authority: authority)
+            let command = try await makePublishCommand(authority: authority)
             guard let result = try await publishForSynchronization(command.request) else { return state }
             return try await applyPublishResult(
                 result,
@@ -134,7 +134,14 @@ private extension EpisodeSyncCoordinator {
         _ current: EpisodeSyncJournalRecord,
         snapshot: EpisodeRemoteSnapshot
     ) async throws -> EpisodeSyncState {
-        var updated = current
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
+        guard let latest = record, latest == current else {
+            let latestState = record.map(stateForRecord) ?? .unlinked
+            state = latestState
+            return latestState
+        }
+        var updated = latest
         if snapshot.head?.revisionID == current.localHead.revisionID {
             updated.lastKnownRemoteHead = snapshot.head
             updated.lease = snapshot.lease
@@ -151,14 +158,14 @@ private extension EpisodeSyncCoordinator {
         return state
     }
 
-    func makePublishCommand(
-        record: inout EpisodeSyncJournalRecord,
-        authority: EpisodeLeaseAuthority
-    ) async throws -> PublishCommand {
+    func makePublishCommand(authority: EpisodeLeaseAuthority) async throws -> PublishCommand {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
+        guard var record else { throw EpisodeSyncCoordinatorError.notLinked }
         let sealed = record.sealedPublish ?? EpisodeSealedPublish(
             mutationID: SyncMutationID(),
             revisionIDs: record.pendingRevisions.map(\.revisionID),
-            candidateHeadRevisionID: record.localHead.revisionID,
+            candidateHeadRevisionID: publishHead(in: record).revisionID,
             expectedHeadRevisionID: record.lastKnownRemoteHead?.revisionID
         )
         if record.sealedPublish == nil {
@@ -224,6 +231,8 @@ private extension EpisodeSyncCoordinator {
         sealed: EpisodeSealedPublish,
         authority: EpisodeLeaseAuthority
     ) async throws {
+        await acquireLocalJournalOperation()
+        defer { releaseLocalJournalOperation() }
         guard committedHead.revisionID == sealed.candidateHeadRevisionID else {
             throw EpisodeSyncCoordinatorError.malformedRemoteSnapshot
         }
@@ -237,8 +246,16 @@ private extension EpisodeSyncCoordinator {
         ) else { return }
         record = latest
 
-        if restoredAuthorityRequiresClaim {
-            try await applyFence(current, expectedAuthority: authority)
+        if restoredAuthorityRequiresClaim, !latest.pendingRevisions.isEmpty {
+            latest.lease = nil
+            latest.remoteConfirmation = .unconfirmed
+            latest.reconciliationStatus = .pending
+            authorityVerifiedInProcess = false
+            record = latest
+            try await journal.save(latest)
+            state = stateForRecord(latest)
+        } else if restoredAuthorityRequiresClaim {
+            try await applyFenceInLocalJournalLane(current, expectedAuthority: authority)
         } else if receiptIsCurrentCommit(
             committedHead,
             current: current,
@@ -268,6 +285,10 @@ private extension EpisodeSyncCoordinator {
             sealedIDs.contains($0.revisionID)
         }
         guard sealIsCurrent || containsCommit else { return false }
+        let completedConflictResolution = latest.conflict == nil
+            && latest.stagedConflictResolution.map {
+                sealedIDs.contains($0.revisionID)
+            } == true
         latest.pendingRevisions.removeAll { sealedIDs.contains($0.revisionID) }
         if sealIsCurrent {
             latest.sealedPublish = nil
@@ -275,6 +296,10 @@ private extension EpisodeSyncCoordinator {
         updateAcknowledgedBase(&latest, committedHead: committedHead, sealed: sealed)
         updateAcknowledgedAuthority(&latest, current: current, authority: authority)
         updateAcknowledgedConflict(&latest, committedHead: committedHead, current: current)
+        if completedConflictResolution {
+            latest.stagedConflictResolution = nil
+            latest.conflictResolutionRecovery = nil
+        }
         return true
     }
 
@@ -287,7 +312,7 @@ private extension EpisodeSyncCoordinator {
             || latest.lastKnownRemoteHead == nil {
             latest.lastKnownRemoteHead = committedHead
         }
-        if latest.pendingRevisions.isEmpty {
+        if latest.pendingRevisions.isEmpty, latest.pendingMaterialization == nil {
             latest.localHead = committedHead
         }
     }
@@ -319,6 +344,15 @@ private extension EpisodeSyncCoordinator {
                 local: latest.localHead,
                 remote: remote
             )
+            latest.integrationReviewDraft = latest.conflict.map {
+                makeReviewDraft(
+                    for: $0,
+                    reason: .ambiguousChanges,
+                    proposedContent: $0.local.content
+                )
+            }
+            latest.pendingMaterialization = nil
+            latest.reconciliationStatus = .reviewRequired
             latest.mode = .forcedFork
         } else if latest.pendingRevisions.isEmpty, latest.conflict == nil {
             latest.mode = .tracking
@@ -346,43 +380,5 @@ private extension EpisodeSyncCoordinator {
             return .remoteUpdateAvailable(context(for: latest), remote: remote)
         }
         return .authorityLost(context(for: latest), current: current)
-    }
-
-    func applyDivergence(
-        _ current: EpisodeRemoteSnapshot,
-        authority: EpisodeLeaseAuthority
-    ) async throws {
-        guard let remote = current.head,
-              var latest = record else {
-            throw EpisodeSyncCoordinatorError.malformedRemoteSnapshot
-        }
-        let conflict = EpisodeConflict(
-            base: latest.lastKnownRemoteHead,
-            local: latest.localHead,
-            remote: remote
-        )
-        latest.sealedPublish = nil
-        latest.lease = current.lease
-        latest.conflict = conflict
-        record = latest
-        if restoredAuthorityRequiresClaim {
-            try await applyFence(current, expectedAuthority: authority)
-        } else {
-            try await journal.save(latest)
-            state = .conflicted(context(for: latest), conflict)
-        }
-    }
-
-    func applyStaleLease(
-        _ current: EpisodeRemoteSnapshot,
-        sealed: EpisodeSealedPublish,
-        authority: EpisodeLeaseAuthority
-    ) async throws {
-        guard var latest = record else { throw EpisodeSyncCoordinatorError.notLinked }
-        if latest.sealedPublish == sealed {
-            latest.sealedPublish = nil
-        }
-        record = latest
-        try await applyFence(current, expectedAuthority: authority)
     }
 }
