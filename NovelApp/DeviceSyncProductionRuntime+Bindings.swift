@@ -168,10 +168,7 @@ extension DeviceSyncProductionRuntimeBox {
             case .starting, .blocked(nil):
                 .unbound
             }
-            if liveStatus != .unbound {
-                knownBoundLocators.insert(locator)
-                signalContinuation.yield()
-            }
+            recordCreationFailureLocalBinding(locator, status: liveStatus)
             throw error
         }
         guard try workingCopyRoot.isEligible(session) else {
@@ -179,6 +176,20 @@ extension DeviceSyncProductionRuntimeBox {
         }
         knownBoundLocators.insert(locator)
         signalContinuation.yield()
+    }
+
+    /// A failed remote create can still leave the durable local intent and
+    /// binding behind. Wake the app once when that fact is first discovered,
+    /// but never let the retry failure emit another signal for the same work.
+    @discardableResult
+    func recordCreationFailureLocalBinding(
+        _ locator: AppleLocalDocumentLocator,
+        status: AppleDeviceSyncLocalBindingStatus
+    ) -> Bool {
+        guard status != .unbound,
+              knownBoundLocators.insert(locator).inserted else { return false }
+        signalContinuation.yield()
+        return true
     }
 
     func bind(

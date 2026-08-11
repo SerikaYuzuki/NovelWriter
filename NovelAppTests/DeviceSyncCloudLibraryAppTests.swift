@@ -3,6 +3,7 @@ import Foundation
 import NovelCore
 import NovelStorage
 import NovelSync
+import NovelSyncCloudKit
 import NovelSyncTesting
 import Testing
 
@@ -170,6 +171,37 @@ struct DeviceSyncCloudLibraryAppTests {
         #expect(state.documentURL == activeURL)
     }
 
+    @Test("pending creationの同じ失敗は再送signalを自己増殖させない")
+    func repeatedPendingCreationFailureDoesNotRepublishRecursively() async throws {
+        let fixture = try ProductionRuntimeSignalFixture()
+        defer { fixture.remove() }
+        let locator = try AppleLocalDocumentLocator.cloudLibrary(workID: SyncWorkID())
+        let collector = Task {
+            var count = 0
+            for await _ in fixture.signals {
+                count += 1
+            }
+            return count
+        }
+
+        #expect(await fixture.runtime.recordCreationFailureLocalBinding(
+            locator,
+            status: .unbound
+        ) == false)
+        #expect(await fixture.runtime.recordCreationFailureLocalBinding(locator, status: .bound))
+        #expect(await fixture.runtime.recordCreationFailureLocalBinding(
+            locator,
+            status: .bound
+        ) == false)
+        #expect(await fixture.runtime.recordCreationFailureLocalBinding(
+            locator,
+            status: .boundAndBlocked(.temporarilyUnavailable)
+        ) == false)
+        fixture.finishSignals()
+
+        #expect(await collector.value == 1)
+    }
+
     @Test("remote catalog失敗でもlocal-only新規を端末へ保存できる")
     func remoteCatalogFailureDoesNotBlockLocalCreation() async throws {
         let harness = try CloudLibraryHarness(connection: .available)
@@ -318,6 +350,57 @@ struct DeviceSyncCloudLibraryAppTests {
             }
             try? await Task.sleep(for: .milliseconds(2))
         }
+    }
+}
+
+private struct ProductionRuntimeSignalFixture {
+    let baseURL: URL
+    let signals: AsyncStream<Void>
+    let runtime: DeviceSyncProductionRuntimeBox
+    private let signalContinuation: AsyncStream<Void>.Continuation
+
+    init() throws {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CloudLibraryHarnessError.fixtureSetup(
+                stage: "application-support",
+                underlying: "missing user application support directory"
+            )
+        }
+        baseURL = applicationSupport
+            .appendingPathComponent("FUMINIWATests", isDirectory: true)
+            .appendingPathComponent("fuminiwa-runtime-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        let workingRoot = try DeviceSyncPrivateWorkingCopyRoot.prepare(
+            baseURL.appendingPathComponent("SyncWorkingCopies-v2", isDirectory: true),
+            fileManager: .default
+        )
+        let localStore = try DeviceSyncLocalLibraryStore(
+            registryRootURL: baseURL.appendingPathComponent("registry", isDirectory: true),
+            trustedAncestorURL: baseURL,
+            workingCopyRoot: workingRoot
+        )
+        let streamPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(16))
+        signals = streamPair.stream
+        signalContinuation = streamPair.continuation
+        runtime = try DeviceSyncProductionRuntimeBox(
+            localBootstrap: AppleDeviceSyncLocalBootstrap.prepare(
+                rootURL: baseURL.appendingPathComponent("metadata", isDirectory: true)
+            ),
+            workingCopyRoot: workingRoot,
+            localLibraryStore: localStore,
+            signalContinuation: streamPair.continuation
+        )
+    }
+
+    func finishSignals() {
+        signalContinuation.finish()
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: baseURL)
     }
 }
 
