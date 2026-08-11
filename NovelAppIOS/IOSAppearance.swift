@@ -113,7 +113,7 @@ struct IOSAppearanceMenu: View {
     }
 }
 
-struct IOSAppearanceSettingsView: View {
+struct IOSAppearanceSettingsSections: View {
     @AppStorage(IOSAppearance.preferenceKey)
     private var appearanceRawValue = IOSAppearance.initialRawValue
     @AppStorage(IOSEditorFontPreference.preferenceKey)
@@ -133,41 +133,37 @@ struct IOSAppearanceSettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                Picker("外観", selection: appearanceBinding) {
-                    ForEach(IOSAppearance.allCases) { appearance in
-                        Label(appearance.title, systemImage: appearance.systemImage)
-                            .tag(appearance)
-                    }
+        Section {
+            Picker("外観", selection: appearanceBinding) {
+                ForEach(IOSAppearance.allCases) { appearance in
+                    Label(appearance.title, systemImage: appearance.systemImage)
+                        .tag(appearance)
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                .accessibilityLabel("アプリの外観")
-                .accessibilityIdentifier("ios.appearance.picker")
-            } header: {
-                Text("アプリの外観")
-            } footer: {
-                Text("本文キャンバスの色や作品ファイルには影響しません。")
             }
-
-            Section {
-                Picker("本文フォント", selection: editorFontFamilyBinding) {
-                    ForEach(IOSEditorFontFamily.allCases) { family in
-                        Text(family.title)
-                            .tag(family)
-                    }
-                }
-                .pickerStyle(.navigationLink)
-                .accessibilityIdentifier("ios.editorFont.picker")
-            } header: {
-                Text("本文フォント")
-            } footer: {
-                Text("この端末の本文表示だけに適用され、作品ファイルには保存されません。")
-            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            .accessibilityLabel("アプリの外観")
+            .accessibilityIdentifier("ios.appearance.picker")
+        } header: {
+            Text("アプリの外観")
+        } footer: {
+            Text("本文キャンバスの色や作品ファイルには影響しません。")
         }
-        .navigationTitle("表示設定")
-        .navigationBarTitleDisplayMode(.inline)
+
+        Section {
+            Picker("本文フォント", selection: editorFontFamilyBinding) {
+                ForEach(IOSEditorFontFamily.allCases) { family in
+                    Text(family.title)
+                        .tag(family)
+                }
+            }
+            .pickerStyle(.navigationLink)
+            .accessibilityIdentifier("ios.editorFont.picker")
+        } header: {
+            Text("本文フォント")
+        } footer: {
+            Text("この端末の本文表示だけに適用され、作品ファイルには保存されません。")
+        }
     }
 
     private var currentAppearance: IOSAppearance {
@@ -190,5 +186,21 @@ struct IOSAppearanceSettingsView: View {
             get: { currentEditorFontFamily },
             set: { editorFontFamilyRawValue = $0.rawValue }
         )
+    }
+}
+
+struct IOSAppearanceSettingsView: View {
+    private let sections: IOSAppearanceSettingsSections
+
+    init(userDefaults: UserDefaults = .standard) {
+        sections = IOSAppearanceSettingsSections(userDefaults: userDefaults)
+    }
+
+    var body: some View {
+        Form {
+            sections
+        }
+        .navigationTitle("表示設定")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

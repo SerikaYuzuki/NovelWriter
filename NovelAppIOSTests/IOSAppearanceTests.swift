@@ -1,6 +1,7 @@
 @testable import FUMINIWAIOS
 import SwiftUI
 import Testing
+import UIKit
 
 @Suite("iOS app appearance")
 struct IOSAppearanceTests {
@@ -61,5 +62,53 @@ struct IOSAppearanceTests {
         #expect(
             IOSAppearance(storedRawValue: defaults.string(forKey: IOSAppearance.preferenceKey)) == .system
         )
+    }
+
+    @MainActor
+    @Test("表示設定はFormを入れ子にせず1つの一覧として表示する")
+    func settingsUsesSingleFormContainer() async throws {
+        let id = UUID().uuidString
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-iOS-Appearance-Tests-\(id)", isDirectory: true)
+        let suiteName = "dev.serikayuzuki.fuminiwa.ios.appearance-layout-tests.\(id)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
+        let host = UIHostingController(
+            rootView: NavigationStack {
+                IOSSettingsView(store: store, userDefaults: defaults)
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
+        window.rootViewController = host
+        host.view.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        for _ in 0 ..< 8 {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            await Task.yield()
+        }
+
+        let listContainers = descendantViews(of: host.view).filter {
+            $0 is UICollectionView || $0 is UITableView
+        }
+        #expect(listContainers.count == 1)
+    }
+
+    @MainActor
+    private func descendantViews(of root: UIView) -> [UIView] {
+        root.subviews.flatMap { child in
+            [child] + descendantViews(of: child)
+        }
     }
 }
