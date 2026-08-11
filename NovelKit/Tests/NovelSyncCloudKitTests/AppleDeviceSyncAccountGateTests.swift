@@ -64,8 +64,8 @@ struct AppleDeviceSyncAccountGateTests {
         #expect(!wroteAfterEvent)
     }
 
-    @Test("an unavailable live identity blocks before a write")
-    func unavailableAccountBlocksBeforeWrite() async throws {
+    @Test("a temporary live identity failure stays retryable and never writes")
+    func temporaryAccountFailureStaysRetryable() async throws {
         let original = accountScope("account-a")
         let probe = DelayedOperationProbe()
         let gate = AppleDeviceSyncAccountGate(
@@ -76,7 +76,7 @@ struct AppleDeviceSyncAccountGateTests {
         )
 
         await #expect(
-            throws: AppleDeviceSyncServicesError.blocked(.accountUnavailable)
+            throws: CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
         ) {
             try await gate.performMutation {
                 await probe.recordWrite()
@@ -84,6 +84,7 @@ struct AppleDeviceSyncAccountGateTests {
         }
         let didWrite = await probe.didWrite
         #expect(!didWrite)
+        #expect(await gate.availability() == .ready)
     }
 
     @Test("episode transport maps an account fence to provider-neutral unavailability")
@@ -91,6 +92,7 @@ struct AppleDeviceSyncAccountGateTests {
         for reason in [
             AppleDeviceSyncBlockReason.accountUnavailable,
             .differentCloudAccount,
+            .temporarilyUnavailable,
             .runtimeInitializationFailed
         ] {
             let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(

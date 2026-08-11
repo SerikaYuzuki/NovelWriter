@@ -498,6 +498,7 @@ struct EditorPaneView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(EditorCommandSession.self) private var editorCommandSession
+    @State private var isDeviceSyncConflictPresented = false
     #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
     @Environment(\.experimentalAISelectionSession) private var experimentalAISelectionSession
     @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
@@ -510,17 +511,30 @@ struct EditorPaneView: View {
                let syncLookup = appState.currentDeviceSyncLookupIdentity {
                 let session = appState.documentSessionToken
                 let isEditable = appState.deviceSyncAllowsEditing(for: syncLookup)
+                let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
+                    ?? Color(nsColor: .textBackgroundColor)
                 VStack(spacing: 0) {
-                    DeviceSyncStatusBanner(
-                        state: appState.deviceSyncState,
-                        transferState: appState.deviceSyncTransferState,
-                        identity: appState.activeDeviceSyncIdentity
-                    ) { expectedIdentity in
-                        Task { await appState.forceContinueOnThisMac(expectedIdentity: expectedIdentity) }
+                    HStack {
+                        Spacer()
+                        DeviceSyncStatusControl(
+                            saveState: appState.saveState,
+                            state: appState.deviceSyncState,
+                            transferState: appState.deviceSyncTransferState,
+                            localDurabilityState: appState.deviceSyncLocalDurabilityState,
+                            hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil,
+                            isLocalRecoveryReviewReady: !appState.deviceSyncLocalRecoveryPending
+                        ) {
+                            guard appState.deviceSyncConflict != nil
+                                || appState.deviceSyncLocalRecoveryReview != nil else { return }
+                            isDeviceSyncConflictPresented = true
+                        }
                     }
+                    .padding(.horizontal, 8)
+                    .frame(height: 30)
+                    .background(editorCanvas)
 
                     ZStack {
-                        Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor)
+                        editorCanvas
                         EditorView(
                             chapterKey: SessionBoundEditorKey(
                                 value: episode.id,
@@ -553,7 +567,10 @@ struct EditorPaneView: View {
                         .frame(maxWidth: editorMaximumWidth)
                     }
 
-                    EditorAccessoryBar(isEnabled: isEditable)
+                    EditorAccessoryBar(
+                        isEnabled: isEditable,
+                        backgroundColor: editorCanvas
+                    )
                 }
                 .task(id: syncLookup) {
                     await appState.prepareDeviceSync(for: syncLookup)
@@ -570,7 +587,7 @@ struct EditorPaneView: View {
         .onChange(of: appState.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }
-        .sheet(isPresented: deviceSyncConflictIsPresented) {
+        .sheet(isPresented: $isDeviceSyncConflictPresented) {
             if let conflict = appState.deviceSyncConflict {
                 DeviceSyncConflictResolutionView(
                     conflict: conflict,
@@ -587,6 +604,30 @@ struct EditorPaneView: View {
                     }
                 }
                 .id(conflict)
+            } else if let review = appState.deviceSyncLocalRecoveryReview,
+                      let currentContent = appState.selectedEpisode?.content {
+                DeviceSyncLocalRecoveryReviewView(
+                    review: review,
+                    currentContent: currentContent
+                ) { choice in
+                    Task {
+                        await appState.resolveDeviceSyncLocalRecovery(
+                            using: choice,
+                            expectedReview: review
+                        )
+                    }
+                }
+                .id(review)
+            }
+        }
+        .onChange(of: appState.deviceSyncConflict) { _, conflict in
+            if conflict == nil, appState.deviceSyncLocalRecoveryReview == nil {
+                isDeviceSyncConflictPresented = false
+            }
+        }
+        .onChange(of: appState.deviceSyncLocalRecoveryReview) { _, review in
+            if review == nil, appState.deviceSyncConflict == nil {
+                isDeviceSyncConflictPresented = false
             }
         }
         #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
@@ -598,13 +639,6 @@ struct EditorPaneView: View {
 
     private var editorMaximumWidth: CGFloat? {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
-    }
-
-    private var deviceSyncConflictIsPresented: Binding<Bool> {
-        Binding(
-            get: { appState.deviceSyncConflict != nil },
-            set: { _ in }
-        )
     }
 
     private func selectionPromptCommands(
@@ -652,6 +686,7 @@ struct EditorPaneView: View {
 private struct EditorAccessoryBar: View {
     @Environment(EditorCommandSession.self) private var commandSession
     let isEnabled: Bool
+    let backgroundColor: Color
 
     @State private var pendingOperation: PendingEditorOperation?
     @State private var notationSheet: NotationSheetState?
@@ -694,7 +729,8 @@ private struct EditorAccessoryBar: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .padding(8)
-        .workbenchGlassChromeStyle()
+        .background(backgroundColor)
+        .overlay(alignment: .top) { Divider() }
         .disabled(
             !isEnabled ||
                 !commandSession.hasActiveEditorSurface ||

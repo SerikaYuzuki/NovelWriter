@@ -23,7 +23,7 @@ public struct EpisodeRevision: Hashable, Codable, Sendable, Identifiable {
         case clientCreatedAt
     }
 
-    /// app-private journalの64 MiB cap内でbase/local/remote/mergeを保全できる上限。
+    /// app-private journalの80 MiB cap内でbase/local/remote/mergeを保全できる上限。
     public static let maximumContentUTF8Bytes = 1 * 1024 * 1024
 
     public var id: SyncRevisionID {

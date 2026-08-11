@@ -130,6 +130,8 @@ struct FuminiwaApp: App {
                     await appState.bootstrap(opening: startupOpenURL)
                     applicationDelegate.finishBootstrap()
                     #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
+                    await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
                     await deviceSyncBootstrap.value
                     await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
                     #endif

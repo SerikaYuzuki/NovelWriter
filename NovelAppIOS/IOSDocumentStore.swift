@@ -53,6 +53,12 @@ final class IOSDocumentStore {
     private(set) var editorContentGeneration: UInt64 = 0
     var deviceSyncState: IOSDeviceSyncUIState = .unconfigured
     var deviceSyncTransferState: IOSDeviceSyncTransferState = .notApplicable
+    var deviceSyncLocalDurabilityState: IOSDeviceSyncLocalDurabilityState = .notApplicable
+    /// 前回processの本文WALを確認するまでだけEditor入力を止める。
+    /// remote account/lease/network待ちには使わない。
+    var deviceSyncLocalRecoveryPending = false
+    var deviceSyncLocalRecoveryReview: IOSDeviceSyncLocalRecoveryReview?
+    @ObservationIgnored var deviceSyncLocalRecoveryChoicePending = false
     var deviceSyncConflict: EpisodeConflict?
     var deviceSyncSetupState: IOSDeviceSyncSetupState = .idle
     var libraryItems: [IOSDocumentLibraryItem] = []
@@ -85,6 +91,19 @@ final class IOSDocumentStore {
     @ObservationIgnored var activeDeviceSyncIdentity: IOSDeviceSyncEpisodeIdentity?
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: IOSDeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncEditIntentTask: Task<Void, Never>?
+    @ObservationIgnored var pendingDeviceSyncEditIntentMarker: IOSDeviceSyncEditIntentMarker?
+    @ObservationIgnored var deviceSyncEditIntentGeneration: UInt64 = 0
+    @ObservationIgnored var deviceSyncMutationSequences: [
+        IOSDeviceSyncLocalMutationScope: [SyncContentDigest: IOSDeviceSyncLocalMutation]
+    ] = [:]
+    @ObservationIgnored var deviceSyncDurablePackageDigests: [EpisodeID: SyncContentDigest] = [:]
+    @ObservationIgnored var deviceSyncEditIntentLineage: (
+        workingCopyIdentity: String,
+        episodeID: EpisodeID,
+        contentDigest: SyncContentDigest,
+        acceptedPriorPackageDigests: [SyncContentDigest]
+    )?
     @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncPreparationTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncPreparationLookup: IOSDeviceSyncLookupIdentity?
@@ -108,14 +127,7 @@ final class IOSDocumentStore {
         },
         saveOperation: { [weak self] document, url in
             guard let self else { throw CancellationError() }
-            guard let privateWorkingCopyLocation else {
-                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
-            }
-            _ = try privateWorkingCopyLocation.attestPackage(at: url)
-            try await repository.save(document, to: url)
-            // NovelpkgRepositoryのatomic replaceではpackage inodeが正当に変わる。
-            // fixed rootを再証明し、置換後の新package identityを次の基準にする。
-            _ = try privateWorkingCopyLocation.attestPackage(at: url)
+            try await performCoordinatedDocumentSave(document, to: url)
         },
         saveEventHandler: { [weak self] event in
             switch event {
@@ -251,13 +263,21 @@ final class IOSDocumentStore {
             guard currentEpisodeEditingToken == expectedEditingToken else { return }
         }
         guard selectedChapterID == chapterID, selectedEpisodeID == episodeID else { return }
-        guard document.episode(episodeID)?.episode.content != content else { return }
+        guard let previousContent = document.episode(episodeID)?.episode.content,
+              previousContent != content else { return }
+        let baseContentDigest = deviceSyncDurablePackageDigest(
+            for: episodeID,
+            fallbackContent: previousContent
+        )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        registerDeviceSyncContentMutation(content, episodeID: episodeID)
         markDocumentChanged()
         if let expectedEditingToken {
             scheduleDeviceSyncForEditedEpisode(
                 content: content,
-                expectedEditingToken: expectedEditingToken
+                expectedEditingToken: expectedEditingToken,
+                baseContentDigest: baseContentDigest,
+                previousContentDigest: SyncContentDigest(content: previousContent)
             )
         }
     }

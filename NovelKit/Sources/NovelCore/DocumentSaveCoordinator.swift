@@ -52,7 +52,7 @@ public final class DocumentSaveCoordinator {
     public typealias CurrentStateProvider = () -> (document: NovelDocument, url: URL)?
 
     /// 実際の保存処理。`DocumentRepository.save(_:to:)` と同じ形。
-    public typealias SaveOperation = (NovelDocument, URL) async throws -> Void
+    public typealias SaveOperation = @MainActor @Sendable (NovelDocument, URL) async throws -> Void
     /// 保存状態の通知先。`DocumentSaveCoordinator` 自体は UI 状態を持たない。
     public typealias SaveEventHandler = @MainActor @Sendable (SaveEvent) -> Void
 

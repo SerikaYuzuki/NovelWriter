@@ -196,101 +196,135 @@ extension AppState {
         }
     }
 
-    /// document operation gateとEditor transitionを取得済みの呼び出し専用。
-    /// lock順を gate -> editor -> save に固定する。
-    @discardableResult
-    func flushPreparedDeviceSyncBoundarySerially(releaseAuthority: Bool) async -> Bool {
-        guard startupState.isReady, editorCommandSession.isDocumentTransitionPrepared else { return false }
-        deviceSyncDraftTask?.cancel()
-        deviceSyncDraftTask = nil
-
-        guard let chapterID = selectedChapterID, let episodeID = selectedEpisodeID else {
-            return await saveCoordinator.saveNow()
-        }
-        let content: String
-        switch captureCommittedTextForDeviceSync() {
-        case let .captured(committed):
-            content = committed
-            if document.episode(episodeID)?.episode.content != committed {
-                installDeviceSyncEpisodeContent(
-                    committed,
-                    chapterID: chapterID,
-                    episodeID: episodeID,
-                    advancesEditorGeneration: false
-                )
-            }
-        case .notActive:
-            guard let modelContent = document.episode(episodeID)?.episode.content else { return false }
-            content = modelContent
-        case .compositionInProgress:
-            return false
-        }
-
-        guard await saveCoordinator.saveNow() else { return false }
-        guard let runtime = deviceSyncRuntime,
-              let identity = activeDeviceSyncIdentity,
-              identity.documentSession == documentSessionToken,
-              identity.chapterID == chapterID,
-              identity.episodeID == episodeID,
-              let client = deviceSyncClient(for: identity) else { return true }
-
-        let initialState = await client.coordinator.state
-        if case .synchronizing = initialState {
-            // backgroundではnetwork完了を待たず、最新本文だけを既存sealed publishの
-            // tailとしてjournalへ先に退避する。selection departure等は旧sessionの
-            // publish完了前にauthorityを手放せないため、従来どおり停止する。
-            guard !releaseAuthority else { return false }
+    func reconcileDeviceSyncAfterDeparture(
+        client: DeviceSyncClient,
+        identity: DeviceSyncEpisodeIdentity,
+        runtime: DeviceSyncRuntime
+    ) {
+        guard deviceSyncLocalRecoveryReview == nil || deviceSyncLocalRecoveryChoicePending else { return }
+        Task { @MainActor [weak self] in
             do {
-                let recorded = try await client.coordinator.recordLocalContent(
-                    content,
+                let state = try await client.coordinator.synchronizeLocalFirst(
+                    expiresAt: runtime.leaseExpiration(),
                     createdAt: runtime.now()
                 )
-                applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
-                return true
-            } catch {
-                let current = await client.coordinator.state
-                applyDeviceSyncState(current, client: client, expectedIdentity: identity)
-                return false
-            }
-        }
-        guard ownsDeviceSyncAuthority(in: initialState, client: client, runtime: runtime) else {
-            applyDeviceSyncState(initialState, client: client, expectedIdentity: identity)
-            return true
-        }
-
-        if case .conflict = deviceSyncState {
-            return await releaseDeviceSyncAuthorityForBoundary(
-                client: client,
-                identity: identity,
-                releaseAuthority: releaseAuthority
-            )
-        }
-        guard deviceSyncState == .writer || deviceSyncState == .offlineLocal else { return false }
-
-        do {
-            let recorded = try await client.coordinator.recordLocalContent(content, createdAt: runtime.now())
-            applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
-            let synchronized = try await client.coordinator.synchronize()
-            applyDeviceSyncState(synchronized, client: client, expectedIdentity: identity)
-
-            if case .offlineFork = synchronized {
+                guard let self else { return }
+                if deviceSyncContextIsCurrent(identity) {
+                    applyDeviceSyncState(state, client: client, expectedIdentity: identity)
+                } else {
+                    await materializeInactiveDeviceSyncContentIfSafe(client: client, identity: identity)
+                }
+            } catch EpisodeSyncTransportError.unavailable {
+                guard let self, deviceSyncContextIsCurrent(identity) else { return }
                 deviceSyncState = .offlineLocal
-                return true
+            } catch {
+                guard let self, deviceSyncContextIsCurrent(identity) else { return }
+                deviceSyncState = .blocked
             }
-            guard case .upToDate = synchronized else { return false }
-            return await releaseDeviceSyncAuthorityForBoundary(
-                client: client,
-                identity: identity,
-                releaseAuthority: releaseAuthority
+        }
+    }
+
+    private func materializeInactiveDeviceSyncContentIfSafe(
+        client: DeviceSyncClient,
+        identity: DeviceSyncEpisodeIdentity
+    ) async {
+        await documentOperationGate.perform { [weak self] in
+            guard let self,
+                  documentSessionToken == identity.documentSession,
+                  selectedEpisodeID != identity.episodeID,
+                  let pending = await client.coordinator.integrationAwaitingMaterialization else { return }
+            let state = await client.coordinator.state
+            guard let context = deviceSyncContext(in: state),
+                  context.pendingMaterialization == pending,
+                  context.localHead.revisionID == pending.workingRevisionID,
+                  let episodeLocation = document.episode(identity.episodeID) else { return }
+            let current = episodeLocation.episode.content
+            guard context.localHead.contentDigest == SyncContentDigest(content: current) else { return }
+            let currentChapterID = episodeLocation.chapterID
+            installDeviceSyncEpisodeContent(
+                pending.integratedRevision.content,
+                chapterID: currentChapterID,
+                episodeID: identity.episodeID,
+                advancesEditorGeneration: false
             )
-        } catch EpisodeSyncTransportError.unavailable {
-            deviceSyncState = .offlineLocal
+            guard document.episode(identity.episodeID)?.episode.content == pending.integratedRevision.content,
+                  await saveCoordinator.saveNow(),
+                  document.episode(identity.episodeID)?.episode.content == pending.integratedRevision.content else {
+                installDeviceSyncEpisodeContent(
+                    current,
+                    chapterID: currentChapterID,
+                    episodeID: identity.episodeID,
+                    advancesEditorGeneration: false
+                )
+                saveCoordinator.markDirty()
+                return
+            }
+            _ = try? await client.coordinator.confirmIntegratedContentMaterialized(
+                pending,
+                installedContentDigest: pending.integratedRevision.contentDigest
+            )
+        }
+    }
+
+    /// The native editor is frozen by the prepared departure transition here.
+    /// Remote integration is never installed from a CloudKit callback while the
+    /// surface is active; a stale working revision simply remains journaled.
+    func materializeIntegratedDeviceSyncContentIfSafe(
+        client: DeviceSyncClient,
+        identity: DeviceSyncEpisodeIdentity,
+        currentContent: String
+    ) async -> Bool {
+        guard let pending = await client.coordinator.integrationAwaitingMaterialization else { return true }
+        let state = await client.coordinator.state
+        guard let context = deviceSyncContext(in: state),
+              context.pendingMaterialization == pending,
+              context.localHead.revisionID == pending.workingRevisionID,
+              context.localHead.contentDigest == SyncContentDigest(content: currentContent),
+              document.episode(identity.episodeID)?.episode.content == currentContent,
+              deviceSyncContextIsCurrent(identity) else {
             return true
-        } catch {
-            let current = await client.coordinator.state
-            applyDeviceSyncState(current, client: client, expectedIdentity: identity)
+        }
+
+        guard let currentChapterID = document.episode(identity.episodeID)?.chapterID else { return true }
+        let integrated = pending.integratedRevision
+        installDeviceSyncEpisodeContent(
+            integrated.content,
+            chapterID: currentChapterID,
+            episodeID: identity.episodeID,
+            advancesEditorGeneration: false
+        )
+        guard document.episode(identity.episodeID)?.episode.content == integrated.content,
+              await saveCoordinator.saveNow(),
+              document.episode(identity.episodeID)?.episode.content == integrated.content else {
+            installDeviceSyncEpisodeContent(
+                currentContent,
+                chapterID: currentChapterID,
+                episodeID: identity.episodeID,
+                advancesEditorGeneration: false
+            )
+            saveCoordinator.markDirty()
             return false
         }
+
+        do {
+            let confirmed = try await client.coordinator.confirmIntegratedContentMaterialized(
+                pending,
+                installedContentDigest: integrated.contentDigest
+            )
+            if let runtime = deviceSyncRuntime,
+               await completeDeviceSyncLocalRecoveryReviewIfConfirmed(
+                   state: confirmed,
+                   client: client,
+                   identity: identity,
+                   runtime: runtime
+               ) == false {
+                applyDeviceSyncState(confirmed, client: client, expectedIdentity: identity)
+            }
+        } catch {
+            // The integrated package is already durable. Keep the exact journal
+            // marker so a restart can confirm without deleting either parent.
+        }
+        return true
     }
 
     private func releaseDeviceSyncAuthorityForBoundary(

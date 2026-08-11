@@ -6,6 +6,20 @@ import Testing
 
 @Suite("Apple Device Sync local bootstrap")
 struct AppleDeviceSyncBootstrapTests {
+    @Test("temporary bootstrap failures remain distinguishable from account fences")
+    func temporaryBootstrapFailureIsOffline() {
+        #expect(
+            AppleDeviceSyncServices.bootstrapBlockReason(
+                for: .accountUnavailable(.temporarilyUnavailable)
+            ) == .temporarilyUnavailable
+        )
+        #expect(
+            AppleDeviceSyncServices.bootstrapBlockReason(
+                for: .accountUnavailable(.noAccount)
+            ) == .accountUnavailable
+        )
+    }
+
     @Test("sync preparation exposes persistent replica and fail-closed local status")
     func localBootstrapPrecedesCloudAccountLookup() async throws {
         let root = try makeCloudTestDirectory()

@@ -126,6 +126,67 @@ struct MacEditorReadOnlyIntegrationTests {
         #expect(!harness.textView.isEditable)
         #expect(harness.changes.received.last == harness.textView.string)
     }
+
+    @Test("local-first入力権限を保つと実NSTextViewの入力・paste・Undo・記法置換を続けられる")
+    func localFirstEditabilityKeepsAllMutationPathsAvailable() {
+        let harness = makeHarness(initialText: "猫")
+        let session = EditorCommandSession()
+        harness.coordinator.registerCommandSurface(with: session)
+        harness.coordinator.updateDesiredEditability(true, textView: harness.textView)
+
+        harness.textView.setSelectedRange(NSRange(location: 1, length: 0))
+        harness.textView.insertText("追", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(harness.textView.string == "猫追")
+        harness.coordinator.undoManager.undo()
+        #expect(harness.textView.string == "猫")
+        harness.coordinator.undoManager.redo()
+        #expect(harness.textView.string == "猫追")
+
+        harness.textView.deleteBackward(nil)
+        #expect(harness.textView.string == "猫")
+        harness.coordinator.undoManager.undo()
+        #expect(harness.textView.string == "猫追")
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(UUID().uuidString))
+        pasteboard.clearContents()
+        pasteboard.setString("貼付", forType: .string)
+        harness.textView.setSelectedRange(NSRange(location: 2, length: 0))
+        #expect(harness.textView.readSelection(from: pasteboard, type: .string))
+        #expect(harness.textView.string == "猫追貼付")
+
+        harness.textView.setSelectedRange(NSRange(location: 0, length: 1))
+        let rubyID = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: harness.textView
+        )
+        session.replaceSelection(id: rubyID, text: "｜猫《ねこ》")
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: harness.textView
+        )
+        #expect(harness.textView.string == "｜猫《ねこ》追貼付")
+
+        let chaseRange = (harness.textView.string as NSString).range(of: "追")
+        harness.textView.setSelectedRange(chaseRange)
+        let boutenID = session.requestSelectionSnapshot()
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: harness.textView
+        )
+        session.replaceSelection(id: boutenID, text: "｜追《・》")
+        harness.coordinator.applyEditorCommandIfNeeded(
+            session.pendingCommand,
+            session: session,
+            textView: harness.textView
+        )
+
+        #expect(harness.textView.string == "｜猫《ねこ》｜追《・》貼付")
+        #expect(harness.textView.isEditable)
+    }
 }
 #endif
 

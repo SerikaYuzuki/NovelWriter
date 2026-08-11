@@ -125,6 +125,12 @@ final class AppState {
     /// 選択中話のDevice Sync表示と本文編集権限。
     var deviceSyncState: DeviceSyncUIState
     var deviceSyncTransferState: DeviceSyncTransferState
+    var deviceSyncLocalDurabilityState: DeviceSyncLocalDurabilityState
+    /// 前回processの本文WALを確認するまでだけEditor入力を止める。
+    /// remote account/lease/network待ちには使わない。
+    var deviceSyncLocalRecoveryPending = false
+    var deviceSyncLocalRecoveryReview: DeviceSyncLocalRecoveryReview?
+    @ObservationIgnored var deviceSyncLocalRecoveryChoicePending = false
     var deviceSyncConflict: EpisodeConflict?
     var deviceSyncSetupState: DeviceSyncSetupState = .idle
 
@@ -144,6 +150,19 @@ final class AppState {
     @ObservationIgnored var activeDeviceSyncIdentity: DeviceSyncEpisodeIdentity?
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: DeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncDraftTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncEditIntentTask: Task<Void, Never>?
+    @ObservationIgnored var pendingDeviceSyncEditIntentMarker: DeviceSyncEditIntentMarker?
+    @ObservationIgnored var deviceSyncEditIntentGeneration: UInt64 = 0
+    @ObservationIgnored var deviceSyncMutationSequences: [
+        DeviceSyncLocalMutationScope: [SyncContentDigest: DeviceSyncLocalMutation]
+    ] = [:]
+    @ObservationIgnored var deviceSyncDurablePackageDigests: [EpisodeID: SyncContentDigest] = [:]
+    @ObservationIgnored var deviceSyncEditIntentLineage: (
+        workingCopyIdentity: String,
+        episodeID: EpisodeID,
+        contentDigest: SyncContentDigest,
+        acceptedPriorPackageDigests: [SyncContentDigest]
+    )?
     @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncPreparationTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncPreparationLookup: DeviceSyncLookupIdentity?
@@ -180,18 +199,33 @@ final class AppState {
         },
         saveOperation: { [weak self] doc, url in
             guard let self else { throw CancellationError() }
-            do {
-                try await repository.save(doc, to: url)
-            } catch {
-                // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
-                print("[FUMINIWA] 保存に失敗しました(\(url.path)): \(error)")
-                throw error
-            }
+            try await performCoordinatedDocumentSave(doc, to: url)
         },
         saveEventHandler: { [weak self] event in
             self?.handleSaveEvent(event)
         }
     )
+
+    private func performCoordinatedDocumentSave(
+        _ document: NovelDocument,
+        to url: URL
+    ) async throws {
+        do {
+            let intentReady = await flushPendingDeviceSyncEditIntents()
+            let checkpoints = await prepareDeviceSyncPackageCheckpoints(for: document, at: url)
+            try await repository.save(document, to: url)
+            noteDeviceSyncPackageSaved(document)
+            let checkpointsCommitted = await commitDeviceSyncPackageCheckpoints(checkpoints)
+            if !intentReady || !checkpoints.allPrepared || !checkpointsCommitted {
+                deviceSyncLocalDurabilityState = .failed
+            }
+        } catch {
+            // 保存失敗でアプリを落とさない。まずはログのみ残し、執筆継続を優先する。
+            print("[FUMINIWA] 保存に失敗しました(\(url.path)): \(error)")
+            throw error
+        }
+    }
+
     /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。
     @ObservationIgnored private let resignActiveObserver = NotificationObserverToken()
     /// スリープ直前にIME・package・journalを確定するworkspace通知のtoken。
@@ -228,6 +262,7 @@ final class AppState {
         activeCommittedTextCapture = dependencies.activeCommittedTextCapture
         deviceSyncRuntime = dependencies.deviceSyncRuntime
         deviceSyncTransferState = .notApplicable
+        deviceSyncLocalDurabilityState = .notApplicable
 
         // 実際の状態は `bootstrap()` で確立する。ここでは(ウィンドウ表示を
         // ブロックしないよう)空の新規作品をプレースホルダとして持たせておく。
@@ -1330,7 +1365,12 @@ final class AppState {
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
+        let baseContentDigest = deviceSyncDurablePackageDigest(
+            for: episodeID,
+            fallbackContent: episode.content
+        )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        registerDeviceSyncContentMutation(content, episodeID: episodeID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
         if let expectedSession,
@@ -1342,7 +1382,9 @@ final class AppState {
            expectedLookup.editorContentGeneration == expectedEditorContentGeneration {
             scheduleDeviceSyncForEditedEpisode(
                 content: content,
-                expectedLookup: expectedLookup
+                expectedLookup: expectedLookup,
+                baseContentDigest: baseContentDigest,
+                previousContentDigest: SyncContentDigest(content: episode.content)
             )
         }
     }
@@ -1357,7 +1399,15 @@ final class AppState {
         episodeID: EpisodeID,
         advancesEditorGeneration: Bool
     ) {
+        let previousContent = document.episode(episodeID)?.episode.content
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        if previousContent != content {
+            registerDeviceSyncContentMutation(
+                content,
+                episodeID: episodeID,
+                containsLocalEditIntent: false
+            )
+        }
         saveCoordinator.markDirty()
         if advancesEditorGeneration {
             editorContentGeneration &+= 1
@@ -2159,6 +2209,7 @@ final class AppState {
         guard !deviceSyncStartupFailedSafely else { return }
         document = newDocument
         documentURL = url
+        noteDeviceSyncPackageSaved(newDocument)
         advanceDocumentSession(document: newDocument, url: url)
         editorContentGeneration &+= 1
         setInitialSelection(for: newDocument)

@@ -53,7 +53,7 @@ public extension EpisodeSyncCoordinator {
         guard installedContentDigest == expected.chosenRevision.contentDigest else {
             throw EpisodeSyncCoordinatorError.installedDigestMismatch
         }
-        materializeStagedConflictResolution(expected, record: &current)
+        try materializeStagedConflictResolution(expected, record: &current)
         record = current
         try await journal.save(current)
         state = stateForRecord(current)
@@ -111,7 +111,7 @@ extension EpisodeSyncCoordinator {
     func materializeStagedConflictResolution(
         _ expected: EpisodeConflictResolutionMaterialization,
         record: inout EpisodeSyncJournalRecord
-    ) {
+    ) throws {
         let conflict = expected.sourceConflict
         let chosen = expected.chosenRevision
         let priorRecovery = record.conflictResolutionRecovery
@@ -120,23 +120,28 @@ extension EpisodeSyncCoordinator {
             record: record
         )
         if let priorRecovery {
-            record.pendingRevisions = rebuiltResolutionAncestry(
+            record.pendingRevisions = try rebuiltResolutionAncestry(
                 conflict: conflict,
-                recovery: priorRecovery
+                recovery: priorRecovery,
+                pendingRevisions: record.pendingRevisions
             )
         }
         let remoteIsAlreadyPublished = conflict.remote.revisionID
             == expectedRemoteHead.revisionID
         if !remoteIsAlreadyPublished,
            !record.pendingRevisions.contains(conflict.remote) {
-            record.pendingRevisions.append(conflict.remote)
+            try appendResolutionRevision(conflict.remote, to: &record.pendingRevisions)
         }
         if conflict.local.revisionID != record.lastKnownRemoteHead?.revisionID,
            !record.pendingRevisions.contains(conflict.local) {
-            record.pendingRevisions.append(conflict.local)
+            try appendResolutionRevision(conflict.local, to: &record.pendingRevisions)
         }
         if !record.pendingRevisions.contains(chosen) {
-            record.pendingRevisions.append(chosen)
+            try appendResolutionRevision(chosen, to: &record.pendingRevisions)
+        }
+        // A restart may need one fresh-session relay before publishing this graph.
+        guard record.pendingRevisions.count < EpisodeSyncJournalRecord.maximumPendingRevisionCount else {
+            throw EpisodeSyncJournalError.tooManyPendingRevisions
         }
         record.localHead = chosen
         record.conflictResolutionRecovery = EpisodeConflictResolutionRecovery(
@@ -153,21 +158,6 @@ extension EpisodeSyncCoordinator {
         record.localEditIntent = .explicit
         record.reconciliationStatus = .pending
         record.mode = .forcedFork
-    }
-
-    func rebuiltResolutionAncestry(
-        conflict: EpisodeConflict,
-        recovery: EpisodeConflictResolutionRecovery
-    ) -> [EpisodeRevision] {
-        var ancestry = [recovery.sourceLocalRevision]
-        if conflict.local != recovery.sourceLocalRevision {
-            if conflict.local != recovery.chosenRevision,
-               conflict.local.parentRevisionIDs.contains(recovery.chosenRevision.revisionID) {
-                ancestry.append(recovery.chosenRevision)
-            }
-            ancestry.append(conflict.local)
-        }
-        return ancestry
     }
 
     func expectedRemoteHeadForResolution(
@@ -296,6 +286,9 @@ extension EpisodeSyncCoordinator {
             branchID: record.branchID,
             createdAt: head.clientCreatedAt
         )
+        guard record.pendingRevisions.count < EpisodeSyncJournalRecord.maximumPendingRevisionCount else {
+            throw EpisodeSyncJournalError.tooManyPendingRevisions
+        }
         record.pendingRevisions.append(relay)
         record.localHead = relay
     }
@@ -332,7 +325,7 @@ extension EpisodeSyncCoordinator {
             state = currentState
             return currentState
         }
-        transitionConflictResolutionToReview(
+        try transitionConflictResolutionToReview(
             remote: remote,
             lease: snapshot.lease,
             record: &current
@@ -346,52 +339,5 @@ extension EpisodeSyncCoordinator {
     func releaseUnusedLocalFirstGrant(_ granted: EpisodeRemoteSnapshot) async throws {
         guard let authority = granted.lease?.authority else { return }
         _ = try await transport.releaseLease(key: key, expectedAuthority: authority)
-    }
-}
-
-extension EpisodeSyncCoordinator {
-    func preserveStagedConflictResolutionBeforeEdit(
-        record: inout EpisodeSyncJournalRecord
-    ) {
-        guard let conflict = record.conflict,
-              let chosen = record.stagedConflictResolution else {
-            return
-        }
-        record.conflictResolutionRecovery = EpisodeConflictResolutionRecovery(
-            sourceLocalRevision: conflict.local,
-            sourceRemoteRevision: conflict.remote,
-            chosenRevision: chosen
-        )
-        record.stagedConflictResolution = nil
-    }
-
-    func transitionConflictResolutionToReview(
-        remote: EpisodeRevision,
-        lease: EpisodeLease?,
-        record: inout EpisodeSyncJournalRecord
-    ) {
-        guard let recovery = record.conflictResolutionRecovery else { return }
-        let conflict = EpisodeConflict(
-            base: nil,
-            local: record.localHead,
-            remote: remote
-        )
-        record.pendingRevisions.removeAll()
-        record.sealedPublish = nil
-        record.pendingMaterialization = nil
-        record.stagedConflictResolution = nil
-        record.lastKnownRemoteHead = nil
-        record.lease = lease
-        record.conflict = conflict
-        record.integrationReviewDraft = makeReviewDraft(
-            for: conflict,
-            reason: .ambiguousChanges,
-            proposedContent: recovery.chosenRevision.content
-        )
-        record.remoteConfirmation = .unconfirmed
-        record.localEditIntent = .explicit
-        record.reconciliationStatus = .reviewRequired
-        record.mode = .forcedFork
-        authorityVerifiedInProcess = false
     }
 }

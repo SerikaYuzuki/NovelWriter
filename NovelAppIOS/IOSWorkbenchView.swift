@@ -144,6 +144,7 @@ struct IOSEditorPane: View {
     @State private var mountedSession: IOSDocumentSessionToken?
     @State private var mountedChapterID: ChapterID?
     @State private var mountedEpisodeID: EpisodeID?
+    @State private var isDeviceSyncConflictPresented = false
 
     init(
         store: IOSDocumentStore,
@@ -166,14 +167,6 @@ struct IOSEditorPane: View {
            editingToken.episodeID == episode.id {
             let isEditable = store.deviceSyncAllowsEditing(for: syncLookup)
             VStack(spacing: 0) {
-                IOSDeviceSyncStatusBanner(
-                    state: store.deviceSyncState,
-                    transferState: store.deviceSyncTransferState,
-                    identity: store.activeDeviceSyncIdentity
-                ) { expectedIdentity in
-                    Task { await store.forceContinueOnThisIPhone(expectedIdentity: expectedIdentity) }
-                }
-
                 EditorView(
                     chapterKey: IOSEditorContentKey(
                         documentSession: editingToken.documentSession,
@@ -238,9 +231,20 @@ struct IOSEditorPane: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    IOSSaveStateLabel(state: store.saveState)
-                        .labelStyle(.iconOnly)
-                        .accessibilityIdentifier("ios.editor.saveState")
+                    IOSDeviceSyncStatusControl(
+                        saveState: store.saveState,
+                        state: store.deviceSyncState,
+                        transferState: store.deviceSyncTransferState,
+                        localDurabilityState: store.deviceSyncLocalDurabilityState,
+                        hasLocalRecoveryReview: store.deviceSyncLocalRecoveryReview != nil,
+                        isLocalRecoveryReviewReady: !store.deviceSyncLocalRecoveryPending
+                    ) {
+                        guard store.deviceSyncConflict != nil
+                            || store.deviceSyncLocalRecoveryReview != nil else { return }
+                        isDeviceSyncConflictPresented = true
+                    }
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("ios.editor.saveState")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -283,7 +287,7 @@ struct IOSEditorPane: View {
                 }
                 .presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: deviceSyncConflictIsPresented) {
+            .sheet(isPresented: $isDeviceSyncConflictPresented) {
                 if let conflict = store.deviceSyncConflict {
                     IOSDeviceSyncConflictResolutionView(
                         conflict: conflict,
@@ -300,6 +304,30 @@ struct IOSEditorPane: View {
                         }
                     }
                     .id(conflict)
+                } else if let review = store.deviceSyncLocalRecoveryReview,
+                          let currentContent = store.selectedEpisode?.content {
+                    IOSDeviceSyncLocalRecoveryReviewView(
+                        review: review,
+                        currentContent: currentContent
+                    ) { choice in
+                        Task {
+                            await store.resolveDeviceSyncLocalRecovery(
+                                using: choice,
+                                expectedReview: review
+                            )
+                        }
+                    }
+                    .id(review)
+                }
+            }
+            .onChange(of: store.deviceSyncConflict) { _, conflict in
+                if conflict == nil, store.deviceSyncLocalRecoveryReview == nil {
+                    isDeviceSyncConflictPresented = false
+                }
+            }
+            .onChange(of: store.deviceSyncLocalRecoveryReview) { _, review in
+                if review == nil, store.deviceSyncConflict == nil {
+                    isDeviceSyncConflictPresented = false
                 }
             }
         } else {
@@ -348,13 +376,6 @@ struct IOSEditorPane: View {
         Binding(
             get: { store.document.episode(episodeID)?.episode.memo ?? "" },
             set: { store.updateEpisodeMemo($0, chapterID: chapterID, episodeID: episodeID) }
-        )
-    }
-
-    private var deviceSyncConflictIsPresented: Binding<Bool> {
-        Binding(
-            get: { store.deviceSyncConflict != nil },
-            set: { _ in }
         )
     }
 
@@ -425,41 +446,6 @@ struct IOSEditorPane: View {
             }
         } label: {
             Label("プロンプトをコピー", systemImage: "doc.on.clipboard")
-        }
-    }
-}
-
-private struct IOSSaveStateLabel: View {
-    let state: IOSSaveState
-
-    var body: some View {
-        Label(title, systemImage: systemImage)
-            .foregroundStyle(state == .failed ? Color(uiColor: .systemRed) : Color.secondary)
-    }
-
-    private var title: String {
-        switch state {
-        case .saved:
-            "保存済み"
-        case .dirty:
-            "未保存の変更"
-        case .saving:
-            "保存中"
-        case .failed:
-            "保存失敗"
-        }
-    }
-
-    private var systemImage: String {
-        switch state {
-        case .saved:
-            "checkmark.circle"
-        case .dirty:
-            "circle"
-        case .saving:
-            "arrow.triangle.2.circlepath"
-        case .failed:
-            "exclamationmark.triangle"
         }
     }
 }

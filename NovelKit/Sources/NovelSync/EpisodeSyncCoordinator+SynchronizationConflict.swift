@@ -65,7 +65,7 @@ extension EpisodeSyncCoordinator {
         snapshot: EpisodeRemoteSnapshot,
         record latest: inout EpisodeSyncJournalRecord
     ) async throws {
-        transitionConflictResolutionToReview(
+        try transitionConflictResolutionToReview(
             remote: remote,
             lease: snapshot.lease,
             record: &latest

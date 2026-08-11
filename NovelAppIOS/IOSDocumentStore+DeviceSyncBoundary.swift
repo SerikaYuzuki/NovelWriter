@@ -23,7 +23,8 @@ extension IOSDocumentStore {
             }
             addEpisode()
             guard let targetChapterID, let previousCount else { return false }
-            return document.chapters.first(where: { $0.id == targetChapterID })?.episodes.count == previousCount + 1
+            return document.chapters.first(where: { $0.id == targetChapterID })?.episodes.count
+                == previousCount + 1
         } ?? false
     }
 
@@ -65,8 +66,6 @@ extension IOSDocumentStore {
 
     @discardableResult
     func flushDeviceSyncForBackground() async -> Bool {
-        // A cancelled CloudKit request may not finish before the background task expires.
-        // Commit IME text and the local package first; remote synchronization is best effort.
         let inFlightDraft = deviceSyncDraftTask
         deviceSyncDraftTask = nil
         inFlightDraft?.cancel()
@@ -78,8 +77,6 @@ extension IOSDocumentStore {
         }
     }
 
-    /// iPadのsection/size-class切替でEditorをunmountする前に、本文を永続化して
-    /// authorityを解放し、旧UITextView callbackが新surfaceへ届かない世代へ進める。
     @discardableResult
     func prepareForEditorSurfaceDeparture() async -> Bool {
         await documentOperationGate.perform { [weak self] in
@@ -125,7 +122,6 @@ extension IOSDocumentStore {
                   selectedChapterID == expectedChapterID,
                   selectedEpisodeID == expectedEpisodeID,
                   beginDeviceSyncBoundaryTransition() else { return false }
-
             let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
             guard didFlush,
                   currentDocumentSessionToken == expectedSession,
@@ -143,102 +139,131 @@ extension IOSDocumentStore {
         }
     }
 
-    @discardableResult
-    func flushPreparedDeviceSyncBoundarySerially(releaseAuthority: Bool) async -> Bool {
-        guard startupState == .ready, editorCommandSession.isDocumentTransitionPrepared else { return false }
-        deviceSyncDraftTask?.cancel()
-        deviceSyncDraftTask = nil
-
-        guard let chapterID = selectedChapterID, let episodeID = selectedEpisodeID else {
-            return await saveCoordinator.saveNow()
-        }
-        let content: String
-        switch editorCommandSession.captureActiveCommittedText() {
-        case let .captured(committed):
-            content = committed
-            if document.episode(episodeID)?.episode.content != committed {
-                document.updateEpisodeContent(committed, for: episodeID, in: chapterID)
-            }
-            // `prepareForDocumentTransition()` の同期callbackは、遷移flagを立てた後に
-            // modelを最新化する。この間は通常のdirty通知を拒否するため、本文が既に
-            // modelと一致していても、取得したUITextViewの全文をpackageへ必ずflushする。
-            saveCoordinator.markDirty()
-        case .notActive:
-            guard let modelContent = document.episode(episodeID)?.episode.content else { return false }
-            content = modelContent
-            // Editorが既に非表示でも、遷移直前のlifecycle callbackがmodelだけを
-            // 最新化してdirty通知を抑止した可能性がある。旧作品を離れる前に
-            // modelの確定本文をpackageへ必ず反映する。
-            saveCoordinator.markDirty()
-        case .compositionInProgress:
-            return false
-        }
-
-        guard await saveCoordinator.saveNow() else { return false }
-        guard let runtime = deviceSyncRuntime,
-              let identity = activeDeviceSyncIdentity,
-              identity.editingToken.documentSession == currentDocumentSessionToken,
-              identity.editingToken.chapterID == chapterID,
-              identity.editingToken.episodeID == episodeID,
-              let client = deviceSyncClient(for: identity) else { return true }
-
-        let initialState = await client.coordinator.state
-        if case .synchronizing = initialState {
-            // backgroundではnetwork完了を待たず、最新本文だけを既存sealed publishの
-            // tailとしてjournalへ先に退避する。selection departure等は旧sessionの
-            // publish完了前にauthorityを手放せないため、従来どおり停止する。
-            guard !releaseAuthority else { return false }
+    func reconcileDeviceSyncAfterDeparture(
+        client: IOSDeviceSyncClient,
+        identity: IOSDeviceSyncEpisodeIdentity,
+        runtime: IOSDeviceSyncRuntime
+    ) {
+        guard deviceSyncLocalRecoveryReview == nil || deviceSyncLocalRecoveryChoicePending else { return }
+        Task { @MainActor [weak self] in
             do {
-                let recorded = try await client.coordinator.recordLocalContent(
-                    content,
+                let state = try await client.coordinator.synchronizeLocalFirst(
+                    expiresAt: runtime.leaseExpiration(),
                     createdAt: runtime.now()
                 )
-                applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
-                return true
-            } catch {
-                let current = await client.coordinator.state
-                applyDeviceSyncState(current, client: client, expectedIdentity: identity)
-                return false
-            }
-        }
-        guard ownsDeviceSyncAuthority(in: initialState, client: client, runtime: runtime) else {
-            applyDeviceSyncState(initialState, client: client, expectedIdentity: identity)
-            return true
-        }
-
-        if case .conflict = deviceSyncState {
-            return await releaseDeviceSyncAuthorityForBoundary(
-                client: client,
-                identity: identity,
-                releaseAuthority: releaseAuthority
-            )
-        }
-        guard deviceSyncState == .writer || deviceSyncState == .offlineLocal else { return false }
-
-        do {
-            let recorded = try await client.coordinator.recordLocalContent(content, createdAt: runtime.now())
-            applyDeviceSyncState(recorded, client: client, expectedIdentity: identity)
-            let synchronized = try await client.coordinator.synchronize()
-            applyDeviceSyncState(synchronized, client: client, expectedIdentity: identity)
-
-            if case .offlineFork = synchronized {
+                guard let self else { return }
+                if deviceSyncContextIsCurrent(identity) {
+                    applyDeviceSyncState(state, client: client, expectedIdentity: identity)
+                } else {
+                    await materializeInactiveDeviceSyncContentIfSafe(client: client, identity: identity)
+                }
+            } catch EpisodeSyncTransportError.unavailable {
+                guard let self, deviceSyncContextIsCurrent(identity) else { return }
                 deviceSyncState = .offlineLocal
-                return true
+            } catch {
+                guard let self, deviceSyncContextIsCurrent(identity) else { return }
+                deviceSyncState = .blocked
             }
-            guard case .upToDate = synchronized else { return false }
-            return await releaseDeviceSyncAuthorityForBoundary(
-                client: client,
-                identity: identity,
-                releaseAuthority: releaseAuthority
+        }
+    }
+
+    private func materializeInactiveDeviceSyncContentIfSafe(
+        client: IOSDeviceSyncClient,
+        identity: IOSDeviceSyncEpisodeIdentity
+    ) async {
+        await documentOperationGate.perform { [weak self] in
+            guard let self,
+                  currentDocumentSessionToken == identity.editingToken.documentSession,
+                  selectedEpisodeID != identity.editingToken.episodeID,
+                  let pending = await client.coordinator.integrationAwaitingMaterialization else { return }
+            let state = await client.coordinator.state
+            guard let context = deviceSyncContext(in: state),
+                  context.pendingMaterialization == pending,
+                  context.localHead.revisionID == pending.workingRevisionID,
+                  let episodeLocation = document.episode(identity.editingToken.episodeID) else { return }
+            let current = episodeLocation.episode.content
+            guard context.localHead.contentDigest == SyncContentDigest(content: current) else { return }
+            let currentChapterID = episodeLocation.chapterID
+            installDeviceSyncEpisodeContent(
+                pending.integratedRevision.content,
+                chapterID: currentChapterID,
+                episodeID: identity.editingToken.episodeID,
+                advancesEditorGeneration: false
             )
-        } catch EpisodeSyncTransportError.unavailable {
-            deviceSyncState = .offlineLocal
+            guard document.episode(identity.editingToken.episodeID)?.episode.content
+                == pending.integratedRevision.content,
+                await saveCoordinator.saveNow(),
+                document.episode(identity.editingToken.episodeID)?.episode.content
+                == pending.integratedRevision.content else {
+                installDeviceSyncEpisodeContent(
+                    current,
+                    chapterID: currentChapterID,
+                    episodeID: identity.editingToken.episodeID,
+                    advancesEditorGeneration: false
+                )
+                return
+            }
+            _ = try? await client.coordinator.confirmIntegratedContentMaterialized(
+                pending,
+                installedContentDigest: pending.integratedRevision.contentDigest
+            )
+        }
+    }
+
+    func materializeIntegratedDeviceSyncContentIfSafe(
+        client: IOSDeviceSyncClient,
+        identity: IOSDeviceSyncEpisodeIdentity,
+        currentContent: String
+    ) async -> Bool {
+        guard let pending = await client.coordinator.integrationAwaitingMaterialization else { return true }
+        let state = await client.coordinator.state
+        guard let context = deviceSyncContext(in: state),
+              context.pendingMaterialization == pending,
+              context.localHead.revisionID == pending.workingRevisionID,
+              context.localHead.contentDigest == SyncContentDigest(content: currentContent),
+              document.episode(identity.editingToken.episodeID)?.episode.content == currentContent,
+              deviceSyncContextIsCurrent(identity) else {
             return true
-        } catch {
-            let current = await client.coordinator.state
-            applyDeviceSyncState(current, client: client, expectedIdentity: identity)
+        }
+
+        guard let currentChapterID = document.episode(identity.editingToken.episodeID)?.chapterID else { return true }
+        let integrated = pending.integratedRevision
+        installDeviceSyncEpisodeContent(
+            integrated.content,
+            chapterID: currentChapterID,
+            episodeID: identity.editingToken.episodeID,
+            advancesEditorGeneration: false
+        )
+        guard document.episode(identity.editingToken.episodeID)?.episode.content == integrated.content,
+              await saveCoordinator.saveNow(),
+              document.episode(identity.editingToken.episodeID)?.episode.content == integrated.content else {
+            installDeviceSyncEpisodeContent(
+                currentContent,
+                chapterID: currentChapterID,
+                episodeID: identity.editingToken.episodeID,
+                advancesEditorGeneration: false
+            )
             return false
         }
+
+        do {
+            let confirmed = try await client.coordinator.confirmIntegratedContentMaterialized(
+                pending,
+                installedContentDigest: integrated.contentDigest
+            )
+            if let runtime = deviceSyncRuntime,
+               await completeDeviceSyncLocalRecoveryReviewIfConfirmed(
+                   state: confirmed,
+                   client: client,
+                   identity: identity,
+                   runtime: runtime
+               ) == false {
+                applyDeviceSyncState(confirmed, client: client, expectedIdentity: identity)
+            }
+        } catch {
+            // Keep the exact pending marker for restart recovery.
+        }
+        return true
     }
 
     func beginDeviceSyncBoundaryTransition() -> Bool {

@@ -115,10 +115,6 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                if showsSaveState {
-                    SaveStateMetadataIcon(scopeLabel: "現在編集中の章")
-                }
-
                 AIClipboardPromptMenu(
                     target: .chapter(
                         chapterID: chapter.id,
@@ -166,9 +162,6 @@ struct OutlineEpisodeRow: View {
                     Text("\(characterCount)字")
                         .monospacedDigit()
                     Spacer(minLength: 8)
-                    if showsSaveState {
-                        SaveStateMetadataIcon(scopeLabel: "現在編集中の話")
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -328,20 +321,6 @@ struct ChapterOutlineContextMenu: View {
 
     private var isCurrentSession: Bool {
         chapterItem.session == appState.documentSessionToken
-    }
-}
-
-private struct SaveStateMetadataIcon: View {
-    @Environment(AppState.self) private var appState
-
-    let scopeLabel: String
-
-    var body: some View {
-        Image(systemName: appState.saveState.systemImage)
-            .frame(width: 16, height: 16)
-            .contentShape(Rectangle())
-            .help("\(scopeLabel)・作品の保存状態: \(appState.saveState.label)")
-            .accessibilityLabel("\(scopeLabel)の作品保存状態、\(appState.saveState.label)")
     }
 }
 

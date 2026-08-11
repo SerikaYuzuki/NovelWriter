@@ -28,8 +28,7 @@ extension EpisodeSyncCoordinator {
         if SyncContentDigest(content: content) != current.localHead.contentDigest {
             didChange = true
             try appendExplicitLocalEdit(content, createdAt: createdAt, record: &current)
-        } else if current.localEditIntent == .observed,
-                  current.remoteConfirmation == .unconfirmed {
+        } else if current.localEditIntent == .observed {
             didChange = true
             promoteObservedMutation(record: &current)
         }
@@ -96,8 +95,21 @@ extension EpisodeSyncCoordinator {
             branchID: record.branchID,
             createdAt: createdAt
         )
+        var retainedAncestry = try orderedKnownResolutionAncestry(
+            endingAt: recovery.sourceLocalRevision,
+            pendingRevisions: record.pendingRevisions,
+            supplementalRevisions: [
+                recovery.sourceLocalRevision,
+                recovery.chosenRevision,
+                recovery.supersededChosenRevision
+            ].compactMap(\.self)
+        )
+        try appendResolutionRevision(revision, to: &retainedAncestry)
+        guard retainedAncestry.count <= EpisodeSyncJournalRecord.maximumConflictPendingRevisionCount else {
+            throw EpisodeSyncJournalError.tooManyPendingRevisions
+        }
         record.localHead = revision
-        record.pendingRevisions = [revision]
+        record.pendingRevisions = retainedAncestry
         record.lastKnownRemoteHead = nil
         let updatedConflict = EpisodeConflict(base: nil, local: revision, remote: conflict.remote)
         record.conflict = updatedConflict

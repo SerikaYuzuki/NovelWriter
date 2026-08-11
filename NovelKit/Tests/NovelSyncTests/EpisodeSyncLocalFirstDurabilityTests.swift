@@ -134,6 +134,36 @@ extension EpisodeSyncLocalFirstTests {
         #expect(await server.currentHead(for: SyncTestValues.key) == nil)
     }
 
+    @Test("a same-body Undo intent after confirmed observation remains a two-parent merge input")
+    func confirmedSameBodyUndoIntentRemainsInRevisionGraph() async throws {
+        // The App may coalesce A -> B -> Undo A before the package-to-journal boundary.
+        // Calling recordLocalEdit still proves that a native mutation occurred even though
+        // the resulting digest equals the already-confirmed observed baseline.
+        let setup = try await makeDivergedPair(
+            baseContent: "A",
+            localContent: "A",
+            remoteContent: "B"
+        )
+        let explicit = try #require(await setup.journal.storedRecord(for: SyncTestValues.key))
+        let base = explicit.localHead
+        #expect(explicit.localEditIntent == .explicit && explicit.remoteConfirmation == .unconfirmed)
+        #expect(explicit.pendingRevisions == [base])
+        let remoteEdit = try #require(await setup.server.currentHead(for: SyncTestValues.key))
+        let epochBeforeTakeover = await setup.server.currentLeaseEpoch(for: SyncTestValues.key)
+
+        let synchronized = try await setup.follower.synchronizeLocalFirst(
+            expiresAt: SyncTestValues.expiry.addingTimeInterval(10),
+            createdAt: SyncTestValues.date.addingTimeInterval(3)
+        )
+        let merged = try #require(await setup.server.currentHead(for: SyncTestValues.key))
+        let materialization = try #require(syncContext(from: synchronized)?.pendingMaterialization)
+        #expect(merged.content == "B")
+        #expect(merged.parentRevisionIDs == [remoteEdit.revisionID, base.revisionID])
+        #expect(materialization.workingRevisionID == base.revisionID && materialization.integratedRevision == merged)
+        #expect(syncContext(from: synchronized)?.localHead == base)
+        #expect(await setup.server.currentLeaseEpoch(for: SyncTestValues.key) > epochBeforeTakeover)
+    }
+
     @Test("offline first edit survives restart without an explicit restore call")
     func offlineEditRestartAndReedit() async throws {
         let server = InMemoryEpisodeSyncServer()

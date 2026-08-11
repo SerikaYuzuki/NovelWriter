@@ -247,7 +247,7 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             // identityを確証できないCloudKit failureでは、既存bindingをlocal-onlyへ
             // 誤降格させずblocked bootstrapを返す。
             return blockedResult(
-                reason: .accountUnavailable,
+                reason: bootstrapBlockReason(for: error),
                 replicaID: localMetadata.replicaID,
                 metadataStore: metadataStore,
                 journalFactory: journalFactory
@@ -297,6 +297,14 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
                 journalFactory: journalFactory
             )
         )
+    }
+
+    static func bootstrapBlockReason(
+        for error: CloudKitSyncAdapterError
+    ) -> AppleDeviceSyncBlockReason {
+        error.isTransientTransportFailure
+            ? .temporarilyUnavailable
+            : .accountUnavailable
     }
 
     private static func makeReadyServices(

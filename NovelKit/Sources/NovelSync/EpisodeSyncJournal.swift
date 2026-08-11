@@ -110,8 +110,8 @@ public struct EpisodeSyncJournalRecord: Hashable, Codable, Sendable {
     }
 
     public static let currentSchemaVersion = 2
-    /// sealed 2-parent merge（最大2件）+ coalesced working/integration tail。
-    public static let maximumPendingRevisionCount = 4
+    /// 2回目のsealed mergeまでのlocal ancestry（最大4件）+ fresh-session relay。
+    public static let maximumPendingRevisionCount = 5
     public static let maximumConflictPendingRevisionCount = 3
 
     public let schemaVersion: Int

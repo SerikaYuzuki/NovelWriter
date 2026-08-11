@@ -134,6 +134,12 @@ actor AppleDeviceSyncAccountGate {
         do {
             currentScope = try await scopeResolver()
         } catch {
+            if CloudKitErrorMapper.isTransient(error) {
+                // A temporary account/network lookup failure is not evidence
+                // that the signed-in account changed. Keep the gate retryable;
+                // the App continues from its durable detached local branch.
+                throw error
+            }
             block(.accountUnavailable)
             throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
         }

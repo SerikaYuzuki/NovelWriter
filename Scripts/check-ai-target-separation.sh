@@ -40,9 +40,11 @@ jq -e '
   packageProducts($objects; "FUMINIWAExperimental") ==
     ["EditorKit", "NovelAI", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelUI"] and
   packageProducts($objects; "NovelAppTests") == [] and
-  packageProducts($objects; "NovelAppDeviceSyncTests") == ["NovelSyncTesting"] and
+  packageProducts($objects; "NovelAppDeviceSyncTests") ==
+    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelSyncCloudKit", "NovelSyncTesting", "NovelUI"] and
   packageProducts($objects; "FUMINIWAIOSTests") == [] and
-  packageProducts($objects; "FUMINIWADeviceSyncIOSTests") == ["NovelSyncTesting"] and
+  packageProducts($objects; "FUMINIWADeviceSyncIOSTests") ==
+    ["EditorKit", "NovelCore", "NovelExport", "NovelStorage", "NovelSync", "NovelSyncCloudKit", "NovelSyncTesting", "NovelUI"] and
   packageProducts($objects; "FUMINIWAExperimentalTests") == []
 ' "$audit_tmp" >/dev/null
 
@@ -55,6 +57,9 @@ jq -e '
     target($objects; $name).buildConfigurationList as $list |
       [$objects[$list].buildConfigurations[] as $configuration |
         $objects[$configuration].buildSettings];
+  def isUnhosted:
+    (.TEST_HOST // "") == "" and
+    ((.BUNDLE_LOADER // "") == "" or .BUNDLE_LOADER == "$(TEST_HOST)");
   .objects as $objects |
   (configurationSettings($objects; "NovelApp") | all(
     .PRODUCT_NAME == "FUMINIWA" and
@@ -80,18 +85,12 @@ jq -e '
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
   )) and
-  (configurationSettings($objects; "NovelAppDeviceSyncTests") | all(
-    .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA" and
-    .BUNDLE_LOADER == "$(TEST_HOST)"
-  )) and
+  (configurationSettings($objects; "NovelAppDeviceSyncTests") | all(isUnhosted)) and
   (configurationSettings($objects; "FUMINIWAIOSTests") | all(
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
   )) and
-  (configurationSettings($objects; "FUMINIWADeviceSyncIOSTests") | all(
-    .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA" and
-    .BUNDLE_LOADER == "$(TEST_HOST)"
-  )) and
+  (configurationSettings($objects; "FUMINIWADeviceSyncIOSTests") | all(isUnhosted)) and
   (configurationSettings($objects; "FUMINIWAExperimentalTests") | all(
     .TEST_HOST == "$(BUILT_PRODUCTS_DIR)/FUMINIWAExperimental.app/Contents/MacOS/FUMINIWAExperimental" and
     .BUNDLE_LOADER == "$(TEST_HOST)"
@@ -109,7 +108,9 @@ jq -e '
         ($objects[$configuration].buildSettings.SWIFT_ACTIVE_COMPILATION_CONDITIONS // "")];
   .objects as $objects |
   (conditions($objects; "NovelApp") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
+  (conditions($objects; "NovelAppDeviceSyncTests") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
   (conditions($objects; "FUMINIWAIOS") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
+  (conditions($objects; "FUMINIWADeviceSyncIOSTests") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI") | not)) and
   (conditions($objects; "FUMINIWAExperimental") | all(contains("FUMINIWA_ENABLE_EXPERIMENTAL_AI")))
 ' "$audit_tmp" >/dev/null
 

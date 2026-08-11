@@ -65,6 +65,8 @@ struct FuminiwaIOSApp: App {
                     #endif
                     await store.bootstrap()
                     #if canImport(NovelSyncCloudKit)
+                    // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
+                    await store.refreshOrPrepareSelectedEpisodeDeviceSync()
                     await deviceSyncBootstrap.value
                     await store.refreshOrPrepareSelectedEpisodeDeviceSync()
                     #endif

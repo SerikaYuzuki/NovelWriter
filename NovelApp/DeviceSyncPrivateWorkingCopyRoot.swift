@@ -1,0 +1,112 @@
+#if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+import Darwin
+import Foundation
+import NovelSyncCloudKit
+
+struct DeviceSyncPrivateWorkingCopyRoot: @unchecked Sendable {
+    struct Identity: Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    let url: URL
+    let identity: Identity
+
+    static func prepare(_ requestedURL: URL, fileManager: FileManager) throws -> Self {
+        let requested = requestedURL.standardizedFileURL
+        guard requested.isFileURL, requested.path != "/" else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try validateNoSymlinkComponents(requested)
+        try fileManager.createDirectory(at: requested, withIntermediateDirectories: true)
+        try validateNoSymlinkComponents(requested)
+        let root = requested.resolvingSymlinksInPath().standardizedFileURL
+        guard root.path == requested.path,
+              let status = try pathStatus(root),
+              status.st_mode & S_IFMT == S_IFDIR else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        return Self(
+            url: root,
+            identity: Identity(device: UInt64(status.st_dev), inode: UInt64(status.st_ino))
+        )
+    }
+
+    func destination(for session: DocumentSessionToken) throws -> URL? {
+        try validateFixedRoot()
+        guard try isEligible(session) == false else { return nil }
+        try validateFixedRoot()
+        return url.appendingPathComponent("\(UUID().uuidString).novelpkg", isDirectory: true)
+    }
+
+    func isEligible(_ session: DocumentSessionToken) throws -> Bool {
+        try validateFixedRoot()
+        let requested = session.documentURL.standardizedFileURL
+        guard requested.isFileURL,
+              requested.path != url.path,
+              requested.path.hasPrefix(url.path + "/"),
+              requested.deletingLastPathComponent().path == url.path else { return false }
+        try validateCopiedPackage(at: requested)
+        return true
+    }
+
+    func validateCopiedPackage(at packageURL: URL) throws {
+        try validateFixedRoot()
+        let requested = packageURL.standardizedFileURL
+        guard requested.isFileURL,
+              requested.path != url.path,
+              requested.deletingLastPathComponent().path == url.path else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try Self.validateNoSymlinkComponents(requested)
+        guard let initial = try Self.pathStatus(requested),
+              initial.st_mode & S_IFMT == S_IFDIR else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        let resolved = requested.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.path == requested.path,
+              resolved.path.hasPrefix(url.path + "/") else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        try validateFixedRoot()
+        guard let final = try Self.pathStatus(requested),
+              final.st_mode & S_IFMT == S_IFDIR,
+              final.st_dev == initial.st_dev,
+              final.st_ino == initial.st_ino else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+    }
+
+    func validateFixedRoot() throws {
+        try Self.validateNoSymlinkComponents(url)
+        guard let status = try Self.pathStatus(url),
+              status.st_mode & S_IFMT == S_IFDIR,
+              UInt64(status.st_dev) == identity.device,
+              UInt64(status.st_ino) == identity.inode else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+    }
+
+    private static func validateNoSymlinkComponents(_ url: URL) throws {
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        for component in url.standardizedFileURL.pathComponents.dropFirst() {
+            current.appendPathComponent(component)
+            guard let status = try pathStatus(current) else { return }
+            guard status.st_mode & S_IFMT != S_IFLNK else {
+                throw AppleDeviceSyncServicesError.unsafeRoot
+            }
+        }
+    }
+
+    private static func pathStatus(_ url: URL) throws -> stat? {
+        var status = stat()
+        if lstat(url.path, &status) == 0 {
+            return status
+        }
+        guard errno == ENOENT else {
+            throw AppleDeviceSyncServicesError.unsafeRoot
+        }
+        return nil
+    }
+}
+#endif

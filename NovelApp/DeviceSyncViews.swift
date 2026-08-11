@@ -1,117 +1,72 @@
 import NovelSync
 import SwiftUI
 
-struct DeviceSyncStatusBanner: View {
+struct DeviceSyncStatusControl: View {
+    let saveState: DocumentSaveState
     let state: DeviceSyncUIState
     let transferState: DeviceSyncTransferState
-    let identity: DeviceSyncEpisodeIdentity?
-    let forceContinue: (DeviceSyncEpisodeIdentity) -> Void
+    let localDurabilityState: DeviceSyncLocalDurabilityState
+    let hasLocalRecoveryReview: Bool
+    let isLocalRecoveryReviewReady: Bool
+    let reviewChanges: () -> Void
 
-    @State private var forceConfirmationIdentity: DeviceSyncEpisodeIdentity?
+    @State private var showsDetails = false
 
     var body: some View {
-        if let presentation {
-            HStack(spacing: 8) {
-                if presentation.showsProgress {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: presentation.systemImage)
-                }
-                Text(presentation.message)
-                Spacer()
-                if state == .readOnly {
-                    Button("このMacで続ける") {
-                        forceConfirmationIdentity = identity
-                    }
-                    .disabled(identity == nil)
-                    .buttonStyle(.borderedProminent)
+        Button {
+            if resolvedStatus == .needsReview {
+                reviewChanges()
+            } else {
+                showsDetails.toggle()
+            }
+        } label: {
+            if resolvedStatus.showsProgress {
+                ProgressView()
                     .controlSize(.small)
-                    .accessibilityIdentifier("deviceSync.forceContinue")
-                }
+            } else {
+                Image(systemName: resolvedStatus.systemImage)
             }
-            .font(.callout)
-            .foregroundStyle(presentation.isWarning ? .orange : .secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Divider() }
-            .accessibilityIdentifier("deviceSync.status")
-            .confirmationDialog(
-                "このMacで強制的に続けますか？",
-                isPresented: forceConfirmationIsPresented,
-                titleVisibility: .visible
-            ) {
-                Button("このMacで強制的に続ける", role: .destructive) {
-                    guard let expectedIdentity = forceConfirmationIdentity else { return }
-                    forceConfirmationIdentity = nil
-                    forceContinue(expectedIdentity)
-                }
-                Button("キャンセル", role: .cancel) {
-                    forceConfirmationIdentity = nil
-                }
-            } message: {
-                Text("別の端末には、まだ同期されていない本文が残っている可能性があります。その本文は失わずに保管し、あとで統合できるようにします。")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(resolvedStatus.isWarning ? .orange : .secondary)
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+        .help(resolvedStatus.accessibilityLabel)
+        .accessibilityLabel(resolvedStatus.accessibilityLabel)
+        .accessibilityHint(resolvedStatus == .needsReview ? "変更内容を確認します" : "保存と同期の詳細を表示します")
+        .accessibilityIdentifier("deviceSync.status")
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(resolvedStatus.accessibilityLabel, systemImage: resolvedStatus.systemImage)
+                    .font(.headline)
+                Text(resolvedStatus.detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .onChange(of: identity) { _, currentIdentity in
-                guard forceConfirmationIdentity != currentIdentity else { return }
-                forceConfirmationIdentity = nil
-            }
-            .onChange(of: state) { _, currentState in
-                guard currentState != .readOnly else { return }
-                forceConfirmationIdentity = nil
+            .padding(12)
+            .frame(width: 300, alignment: .leading)
+        }
+        .onChange(of: resolvedStatus) { _, current in
+            if current == .needsReview {
+                showsDetails = false
             }
         }
     }
 
-    private var forceConfirmationIsPresented: Binding<Bool> {
-        Binding(
-            get: { forceConfirmationIdentity != nil },
-            set: { isPresented in
-                if !isPresented {
-                    forceConfirmationIdentity = nil
-                }
-            }
+    var resolvedStatus: DeviceSyncEditorStatusKind {
+        let base = DeviceSyncEditorStatusKind.resolve(
+            saveState: saveState,
+            syncState: state,
+            transferState: transferState,
+            localDurability: localDurabilityState
         )
-    }
-
-    private var presentation: Presentation? {
-        switch state {
-        case .unconfigured:
-            nil
-        case .writer:
-            switch transferState {
-            case .notApplicable:
-                nil
-            case .localPending:
-                Presentation(message: "変更を端末内へ保存しています", systemImage: "internaldrive")
-            case .uploading:
-                Presentation(message: "本文を同期しています", systemImage: "arrow.up.icloud", showsProgress: true)
-            case .upToDate:
-                Presentation(message: "本文は同期済みです", systemImage: "checkmark.icloud")
-            }
-        case .episodeNotIncluded:
-            Presentation(message: "この話は本文同期の対象外です", systemImage: "iphone.slash", isWarning: true)
-        case .readOnly:
-            Presentation(message: "別端末で編集中", systemImage: "lock.fill", isWarning: true)
-        case .forcing:
-            Presentation(message: "編集権限を切り替えています", systemImage: "arrow.triangle.2.circlepath", showsProgress: true)
-        case .offlineLocal:
-            Presentation(message: "オフラインの変更を端末内に保存しています", systemImage: "icloud.slash", isWarning: true)
-        case .conflict:
-            Presentation(message: "本文の競合を統合してください", systemImage: "arrow.triangle.branch", isWarning: true)
-        case .syncing:
-            Presentation(message: "同期を確認しています", systemImage: "arrow.triangle.2.circlepath", showsProgress: true)
-        case .blocked:
-            Presentation(message: "同期を確認できません。本文は読み取り専用です", systemImage: "exclamationmark.icloud", isWarning: true)
+        if hasLocalRecoveryReview, !isLocalRecoveryReviewReady {
+            return base == .localSaveError ? .localSaveError : .savingLocally
         }
-    }
-
-    private struct Presentation {
-        let message: String
-        let systemImage: String
-        var showsProgress = false
-        var isWarning = false
+        if hasLocalRecoveryReview, base != .localSaveError, base != .savingLocally {
+            return .needsReview
+        }
+        return base
     }
 }
 
@@ -142,15 +97,15 @@ struct DeviceSyncConflictResolutionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("本文の競合を統合")
+            Text("変更の確認が必要です")
                 .font(.title2)
-            Text("共通版・この端末の変更・同期先の変更を確認し、残す本文を選んでください。統合が同期先へ保存されるまでこの画面は閉じません。")
+            Text("この端末ともう一方の端末の本文をどちらも残したまま、統合する内容を確認できます。")
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .top, spacing: 12) {
                 revisionPanel(title: "共通版", content: conflict.base?.content ?? "共通版はありません")
                 revisionPanel(title: "この端末", content: conflict.local.content)
-                revisionPanel(title: "同期先", content: conflict.remote.content)
+                revisionPanel(title: "もう一方の端末", content: conflict.remote.content)
             }
 
             Text(draft.title)
@@ -163,10 +118,10 @@ struct DeviceSyncConflictResolutionView: View {
                 .overlay { RoundedRectangle(cornerRadius: 8).stroke(.separator) }
 
             HStack {
-                Button("この端末を残す") { resolve(.keepLocal) }
-                Button("同期先を残す") { resolve(.keepRemote) }
+                Button("この端末を採用") { resolve(.keepLocal) }
+                Button("もう一方を採用") { resolve(.keepRemote) }
                 Spacer()
-                Button("手動統合を保存") { resolve(.manual(content: manualContent)) }
+                Button("手動で統合") { resolve(.manual(content: manualContent)) }
                     .buttonStyle(.borderedProminent)
             }
             .disabled(isResolving)
@@ -177,7 +132,6 @@ struct DeviceSyncConflictResolutionView: View {
         }
         .padding(20)
         .frame(minWidth: 920, minHeight: 620)
-        .interactiveDismissDisabled()
         .disabled(isResolving)
     }
 
@@ -199,6 +153,86 @@ struct DeviceSyncConflictResolutionView: View {
             .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
         }
         .frame(maxWidth: .infinity, minHeight: 220)
+    }
+}
+
+struct DeviceSyncLocalRecoveryReviewView: View {
+    let review: DeviceSyncLocalRecoveryReview
+    let currentContent: String
+    let resolve: (DeviceSyncLocalRecoveryChoice) -> Void
+
+    @State private var manualContent: String
+
+    init(
+        review: DeviceSyncLocalRecoveryReview,
+        currentContent: String,
+        resolve: @escaping (DeviceSyncLocalRecoveryChoice) -> Void
+    ) {
+        self.review = review
+        self.currentContent = currentContent
+        self.resolve = resolve
+        _manualContent = State(initialValue: currentContent)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("変更の確認が必要です")
+                .font(.title2)
+            Text("端末内に複数の本文が残っています。すべて保持したまま、続きを書く本文を選べます。")
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    revisionPanel(title: "現在の本文", content: currentContent)
+                    if review.packageContent != currentContent {
+                        revisionPanel(title: "復旧開始時の本文", content: review.packageContent)
+                    }
+                    ForEach(Array(review.preservedMarkers.enumerated()), id: \.offset) { index, marker in
+                        revisionPanel(title: "保存されていた本文 \(index + 1)", content: marker.content)
+                    }
+                }
+            }
+
+            Text("確認用下書き")
+                .font(.headline)
+            TextEditor(text: $manualContent)
+                .font(.body.monospaced())
+                .frame(minHeight: 160)
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.separator) }
+
+            HStack {
+                Button("現在の本文を採用") { resolve(.current) }
+                if review.packageContent != currentContent {
+                    Button("復旧開始時の本文を採用") { resolve(.packageSnapshot) }
+                }
+                Menu("保存されていた本文を採用") {
+                    ForEach(Array(review.preservedMarkers.enumerated()), id: \.offset) { index, marker in
+                        Button("本文 \(index + 1)") { resolve(.preserved(marker)) }
+                    }
+                }
+                Spacer()
+                Button("手動で統合") { resolve(.manual(manualContent)) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 920, minHeight: 620)
+    }
+
+    private func revisionPanel(title: String, content: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            ScrollView {
+                Text(content)
+                    .font(.body.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(8)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(width: 280, height: 240)
     }
 }
 

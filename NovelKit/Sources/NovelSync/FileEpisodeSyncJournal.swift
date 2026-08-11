@@ -3,7 +3,7 @@ import Foundation
 /// 呼び出し側が注入したapp-private rootへ、話ごとの同期journalをatomic JSONで保存する。
 /// Application Supportの場所やsecurity-scoped URLをこのtarget自身は決めない。
 public actor FileEpisodeSyncJournal: EpisodeSyncJournal {
-    public static let maximumRecordBytes = 64 * 1024 * 1024
+    public static let maximumRecordBytes = 80 * 1024 * 1024
 
     private let rootURL: URL
     private let fileManager: FileManager

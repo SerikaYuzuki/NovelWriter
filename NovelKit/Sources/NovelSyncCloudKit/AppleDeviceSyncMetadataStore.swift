@@ -5,6 +5,7 @@ import NovelSync
 public enum AppleDeviceSyncBlockReason: String, Codable, Equatable, Sendable {
     case differentCloudAccount
     case accountUnavailable
+    case temporarilyUnavailable
     case runtimeInitializationFailed
 }
 

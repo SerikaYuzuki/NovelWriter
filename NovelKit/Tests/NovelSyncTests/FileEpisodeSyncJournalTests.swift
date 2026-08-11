@@ -147,7 +147,7 @@ struct FileEpisodeSyncJournalTests {
         #expect(try await journal.load(for: SyncTestValues.key) == record)
     }
 
-    @Test("a journal file above 64 MiB is rejected before decoding")
+    @Test("a journal file above 80 MiB is rejected before decoding")
     func oversizedFileIsRejected() async throws {
         let root = temporaryRoot(named: "oversized")
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }

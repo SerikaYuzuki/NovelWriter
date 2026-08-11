@@ -274,6 +274,7 @@ extension IOSDocumentStore {
         }
         self.document = document
         documentURL = url.standardizedFileURL
+        noteDeviceSyncPackageSaved(document)
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         replaceAttachments(attachments)

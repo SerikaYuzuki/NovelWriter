@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 ///
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
 /// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
-/// 下部には保存状態と文字数だけを伝えるステータスバーを置く。上部 chrome は
+/// 執筆画面の保存・同期状態はEditor上端の小さな記号へ集約する。上部 chrome は
 /// `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
@@ -67,7 +67,9 @@ struct NovelWorkbenchView: View {
             }
             #endif
 
-            WorkbenchStatusBarView()
+            if !showsWritingActions {
+                WorkbenchStatusBarView()
+            }
         }
         .toolbar(id: "novelwriter.workbench.v3") {
             WorkbenchToolbarContent(
@@ -606,24 +608,12 @@ private struct WorkbenchStatusBarView: View {
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
-        HStack(spacing: 8) {
-            statusContent
-
-            if appState.saveState == .failed {
-                Button("再試行") {
-                    appState.retrySave()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .padding(.trailing, 8)
-            }
-        }
-        .background(.bar)
+        statusContent
+            .background(.bar)
     }
 
     private var statusContent: some View {
         HStack(spacing: 16) {
-            Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
             Text(chapterCountText)
             Text(totalCountText)
             if appState.workspaceSelection.section == .structure, editorSearchSession.didMissSearch {

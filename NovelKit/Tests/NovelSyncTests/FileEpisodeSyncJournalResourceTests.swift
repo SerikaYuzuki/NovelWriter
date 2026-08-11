@@ -4,7 +4,7 @@ import NovelSyncTesting
 import Testing
 
 extension FileEpisodeSyncJournalTests {
-    @Test("worst-case escaped conflict record remains below 64 MiB and round-trips")
+    @Test("worst-case escaped conflict record remains within the journal cap and round-trips")
     func worstCaseBoundaryRecord() async throws {
         let root = temporaryRoot(named: "boundary")
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
@@ -82,6 +82,86 @@ extension FileEpisodeSyncJournalTests {
         )
         let encoded = try FileEpisodeSyncJournal.makeEncoder().encode(record)
         #expect(encoded.count < FileEpisodeSyncJournal.maximumRecordBytes)
+
+        let journal = try FileEpisodeSyncJournal(rootURL: root)
+        try await journal.save(record)
+        #expect(try await journal.load(for: SyncTestValues.key) == record)
+    }
+
+    @Test("maximum escaped repeated-resolution relay remains within the journal cap")
+    // The whole maximum-size state is intentionally assembled in one visible fixture.
+    // swiftlint:disable:next function_body_length
+    func worstCaseRepeatedResolutionRelay() async throws {
+        let root = temporaryRoot(named: "repeated-resolution-relay-boundary")
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let count = EpisodeRevision.maximumContentUTF8Bytes
+        let remoteB = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666681",
+            parents: [],
+            content: String(repeating: "\0", count: count)
+        )
+        let remoteC = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666682",
+            parents: [remoteB.revisionID],
+            content: String(repeating: "\u{1}", count: count)
+        )
+        let localA = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666683",
+            parents: [],
+            content: String(repeating: "\u{2}", count: count),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        let packageAhead = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666684",
+            parents: [localA.revisionID],
+            content: String(repeating: "\u{3}", count: count),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        let firstChoice = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666685",
+            parents: [remoteB.revisionID, packageAhead.revisionID],
+            content: String(repeating: "\u{4}", count: count),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        let secondChoice = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666686",
+            parents: [remoteC.revisionID, firstChoice.revisionID],
+            content: String(repeating: "\u{5}", count: count),
+            replica: SyncTestValues.replicaB,
+            session: SyncTestValues.sessionB
+        )
+        let relay = try SyncTestValues.revision(
+            id: "66666666-6666-6666-6666-666666666687",
+            parents: [secondChoice.revisionID],
+            content: String(repeating: "\u{6}", count: count),
+            replica: SyncTestValues.replicaB,
+            session: SyncEditSessionID()
+        )
+        let record = try EpisodeSyncJournalRecord(
+            key: SyncTestValues.key,
+            localWorkingCopyID: SyncTestValues.localWorkingCopyID,
+            replicaID: SyncTestValues.replicaB,
+            branchID: SyncTestValues.branchID,
+            lastKnownRemoteHead: remoteC,
+            localHead: relay,
+            pendingRevisions: [localA, packageAhead, firstChoice, secondChoice, relay],
+            stagedConflictResolution: secondChoice,
+            conflictResolutionRecovery: EpisodeConflictResolutionRecovery(
+                sourceLocalRevision: packageAhead,
+                sourceRemoteRevision: remoteB,
+                chosenRevision: secondChoice,
+                supersededChosenRevision: firstChoice
+            ),
+            mode: .tracking
+        )
+        let encoded = try FileEpisodeSyncJournal.makeEncoder().encode(record)
+        #expect(
+            encoded.count < FileEpisodeSyncJournal.maximumRecordBytes,
+            "encoded bytes: \(encoded.count)"
+        )
 
         let journal = try FileEpisodeSyncJournal(rootURL: root)
         try await journal.save(record)

@@ -312,6 +312,10 @@ public extension InMemoryEpisodeSyncServer {
         }
     }
 
+    func publishIsPaused() -> Bool {
+        pausedPublishContinuation != nil
+    }
+
     func resumePausedPublish() {
         let continuation = pausedPublishContinuation
         pausedPublishContinuation = nil
@@ -329,6 +333,10 @@ public extension InMemoryEpisodeSyncServer {
         await withCheckedContinuation { continuation in
             claimPauseObservers.append(continuation)
         }
+    }
+
+    func claimIsPaused() -> Bool {
+        pausedClaimContinuation != nil
     }
 
     func resumePausedClaim() {
@@ -349,6 +357,10 @@ public extension InMemoryEpisodeSyncServer {
         await withCheckedContinuation { continuation in
             snapshotResponsePauseObservers.append(continuation)
         }
+    }
+
+    func snapshotResponseIsPaused() -> Bool {
+        pausedSnapshotResponseContinuation != nil
     }
 
     func resumePausedSnapshotResponse() {

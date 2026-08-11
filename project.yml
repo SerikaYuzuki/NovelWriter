@@ -94,6 +94,8 @@ targets:
       - path: NovelAppTests
         excludes:
           - DeviceSyncAppIntegrationTests.swift
+          - DeviceSyncPersistenceRootTests.swift
+          - DeviceSyncEditIntentStoreTests.swift
     dependencies:
       - target: NovelApp
     settings:
@@ -103,24 +105,43 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
   NovelAppDeviceSyncTests:
-    # NovelSyncTestingはNovelCore/NovelSyncを含むtest-support product。
-    # 通常App test bundleへ同居させると、Swift static productの実行時型が
-    # 二重化しDocumentRepositoryの追加capability castを壊し得るため分離する。
+    # App hostとtest bundleへDomainを二重linkしないunhosted test module。
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.0"
     sources:
+      - path: NovelApp
+        excludes:
+          - FuminiwaApp.swift
+          - Info.plist
+          - NovelApp.entitlements
+          - Assets.xcassets
+          - en.lproj
+          - ja.lproj
       - path: NovelAppTests/DeviceSyncAppIntegrationTests.swift
+      - path: NovelAppTests/DeviceSyncPersistenceRootTests.swift
+      - path: NovelAppTests/DeviceSyncEditIntentStoreTests.swift
     dependencies:
-      - target: NovelApp
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
       - package: NovelKit
         product: NovelSyncTesting
     settings:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
-        BUNDLE_LOADER: "$(TEST_HOST)"
   FUMINIWAExperimental:
     type: application
     platform: macOS
@@ -224,29 +245,52 @@ targets:
       - path: NovelAppIOSTests
         excludes:
           - IOSDeviceSyncIntegrationTests.swift
+          - IOSDeviceSyncPersistenceRootTests.swift
+          - IOSDeviceSyncEditIntentStoreTests.swift
     dependencies:
       - target: FUMINIWAIOS
     settings:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
   FUMINIWADeviceSyncIOSTests:
-    # macOS同様、NovelSyncTestingを通常test bundleから分離して
-    # NovelCore/NovelSyncの実行時型identityを一つに保つ。
+    # iOSもApp sourceを一度だけcompileするunhosted test module。
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: NovelAppIOS
+        excludes:
+          - FuminiwaIOSApp.swift
+          - Info.plist
+          - FUMINIWAIOS.entitlements
+      - path: NovelApp/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentOperationGate.swift
       - path: NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift
+      - path: NovelAppIOSTests/IOSDeviceSyncPersistenceRootTests.swift
+      - path: NovelAppIOSTests/IOSDeviceSyncEditIntentStoreTests.swift
     dependencies:
-      - target: FUMINIWAIOS
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
       - package: NovelKit
         product: NovelSyncTesting
     settings:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA"
-        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
