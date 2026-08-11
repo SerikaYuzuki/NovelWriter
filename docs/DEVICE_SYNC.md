@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-059の同期安全化は基準commit `508947d2`でsource実装と全ローカル回帰を固定済み。D-060のremote single-writer／全端末local-first設計を承認し、wire protocol v1を維持したjournal schema v2、App／UI、Simulator／local fake server、実CloudKitの順に実装予定。D-059の通常handoff、外部CloudKit Gate、署名済み実機検証は未完了の履歴として維持する
+> **状態**: D-059の同期安全化は基準commit `508947d2`でsource実装と全ローカル回帰を固定済み。D-060はwire protocol v1を維持したjournal schema v2、authority非依存local revision、offline復元、bounded multi-hunk merge、exact head／digest／epoch takeoverまで`NovelSync`へsource実装し、`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）と`NovelSyncCloudKit` 48 / 48件がローカルで通過した。Mac／iOS App／UI sourceも実装・freeze済みで、Mac Device Sync 45 / 45件とprivate-root 1 / 1件、iOS Simulator Device Sync 42 / 42件とnative focused 2 / 2件が通過した。host上の2端末in-memory local fakeも通過した一方、paired native Mac↔iPhone、手動VoiceOver／実OS process-kill campaign、署名済み実CloudKitは未完了である。現行v1に`HandoffRequest` recordはなく、cooperative handoffは将来のadditive Decision／protocolとして分離する
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
@@ -29,7 +29,7 @@ Device Syncは、Mac／iPhone、online／offline、remote holderを利用者に�
 - 初回binding時に構造が完全一致し、binding snapshotの対象EpisodeIDに含まれる **1話の本文**
 - remote headを一度に1端末だけが進めるsoft lease、epoch、fencing、CAS
 - Mac／iPhone双方で、holderやnetworkに依存しないlocal Editor入力とdetached local branch
-- 本文変更を暗黙の編集意思とする通常claim／handoff。内部takeoverが必要でもforce／lease用語を通常UIへ出さない
+- 本文変更を暗黙の編集意思とする通常claim／internal takeover。authority操作やforce／lease用語を通常UIへ出さない
 - 通信不能のまま編集、終了、再起動、再編集できるpackage外journal
 - base / local / remoteによる3-way merge、同一結果の自動collapse、非重複の2-parent自動merge、overlapだけの確認
 - mutation retry、push欠落、process終了、通信失敗からの再開
@@ -51,8 +51,9 @@ S1の初回bindingは、利用者が同期先を明示選択し、作品全体�
 - **source実装済み**: package外の`FileEpisodeSyncJournal`、atomic outbox／recovery、本文・親・pending・journal全体のresource limit、unsafe root／symlink拒否
 - **source実装済み**: `NovelSyncCloudKit`のprivate database／単一固定zone、record／`CKAsset` mapping、change-tag CAS、mutation receipt、`CKSyncEngine` change tracking、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intent、copy別journal、明示create／bind／rebind／unbindとepisode allowlist
 - **D-059基準でApp source接続済み・全ローカル回帰通過**: Mac / iOSのproduction composition、明示binding UI、native editor／保存／scene・終了境界、read-only／force／fence／競合解決画面。2026-08-11の`Scripts/check.sh`でMac通常114件／Device Sync 20件、iOS通常71件／Device Sync 15件を含む全検査が`All checks passed`となり、基準commit `508947d2`へ固定した
-- **D-060未実装**: authority非依存local revision、journal schema v2、offline bootstrap、暗黙handoff、automatic collapse／2-parent merge、native editor非上書き、上部状態記号、非blocking review。Device Sync wire protocolはv1を維持する
-- **D-059から継続する未完了**: 通常handoffのrequest／flush／grant／fetch／install全経路の完結。D-060ではlocal Editorを止めないauthority移動へ意味を変更する
+- **D-060 Domain／Apple adapter source実装済み**: Device Sync wire protocol v1を維持したjournal schema v2／v1 migration、`LocalWorkingCopyID`、authority非依存`recordLocalEdit`、observed baseline、stable detached branch、offline復元、remote不変publish、同一結果collapse、bounded multi-hunk 3-way merge、2-parent自動merge、overlap review、upload tail、2段階の競合解決materialization、exact head／digest／epoch CAS takeoverを`NovelSync`へ実装した。`NovelSync` testは94 / 94件で、内訳としてlocal-first 33件、既存coordinator 18件が通過した。一時的CloudKit unavailableとaccount／設定blockを分離したApple adapterを含む`NovelSyncCloudKit` testは48 / 48件が通過した。いずれも署名済み実CloudKit検証ではない
+- **D-060 App／UI source実装・ローカル回帰通過**: Mac／iOSにfull-body pre-package WAL、native→model→package→journal、remote nonblocking化、active editorへのremote非注入、上部状態記号、nonblocking reviewを接続した。Mac Device Syncは45 / 45件（3 suites、11.932秒）とprivate-root focused 1 / 1件、iOS Simulator Device Syncは42 / 42件（3 suites、20.544秒）が通過した。さらにiOS native focused 2 / 2件で、marked IME確定からmodel／package／journal／WAL cleanupまでと、別writer下の実`UITextView`によるreplace／delete／Undo／Redo／paste／ルビ／傍点およびlease不変を確認した
+- **現行v1にないもの**: D-059で構想したcooperative request／flush／grantの`HandoffRequest` recordは実装しておらず、D-060の現行v1はlocal journal保存後にexact remote head／digest／epochを検査するinternal takeoverでauthorityを移す。cooperative request／grantを追加する場合は、別Decision、互換性規則、wire protocol更新または明示的additive拡張、fixtureを同時に必要とする
 - **未完了**: Developer Program / CloudKit Consoleで行うcontainer・App ID・capability・profile・schema、署名済み同一account実機、Package Validator / External Change / Conflict Gate
 
 ここでいう`local metadata bootstrap`は、起動時にreplica、account scope、binding、engine stateをfail-closedに復元する処理であり、別端末の`.novelpkg`を取得する「作品bootstrap」ではない。source実装や署名なし／Simulator testの成功を、CloudKit development / production環境での利用可能性とは扱わない。
@@ -110,7 +111,7 @@ D-059基準の**Device Sync wire protocol v1**は実装・全ローカル回帰�
 - 本文へNFC / NFD変換、改行変換、末尾空白除去を行わない
 - 未知のminor fieldは保持または無視できるが、未知のmajor `protocolVersion`は拒否する
 - 日時は診断／表示用に限り、head選択、publish可否、merge winnerの判断へ使わない
-- 1 revisionの本文はUTF-8で最大1 MiB、親は最大2件、1話journalのpending revisionは最大4件、atomic publishは最大64 revision、journal JSONは最大64 MiBとする。上限超過を切り詰めたり部分適用したりせずblockedにする。journalは同じrevisionがbase / local / remote / pendingへ重複してencodeされ、JSON control characterが最大6倍へescapeされるworst caseでも64 MiB内に収まるよう、本文1 MiBとpending 4件を同時に固定する
+- 1 revisionの本文はUTF-8で最大1 MiB、親は最大2件、1話journalのpending revisionは最大5件、atomic publishは最大64 revision、journal JSONは最大80 MiBとする。競合時に保持するpendingは最大3件、materialization graphは最大4件で、fresh-session relayを含むとpendingは最大5件になる。上限超過を切り詰めたり部分適用したりせずblockedにする。1 MiBのJSON control character本文を全revisionへ置いたstaged／recovery最大状態は75,506,494 bytesであり、80 MiB上限でencode／save／loadできる専用回帰を固定する
 
 publish commandの論理例を次に示す。fixtureではfield省略、`null`、canonical encode、上限、Unicodeを固定する。
 
@@ -149,9 +150,10 @@ publish commandの論理例を次に示す。fixtureではfield省略、`null`�
 | `EpisodeControl` | `syncWorkID`, `episodeID`, `headRevisionID`, `holderDeviceID`, `holderSessionID`, `leaseEpoch`, advisory lease metadata | headとremote publish authorityを1つのCAS対象にし、takeoverとpublishの競合を直列化する。local Editorの入力可否には使わない |
 | `EpisodeRevision` | `syncWorkID`, `revisionID`, `episodeID`, `branchID`, `parentRevisionIDs`, `body`, `bodyDigest`, `mutationID` | immutable。detached local、通常publish、2-parent mergeを同じgraphへ残す |
 | `MutationReceipt` | `syncWorkID`, `mutationID`, command digest, `resultRevisionID`, resulting head / epoch | 応答消失後のretryをexactly-once相当にする。既存IDと内容が違えば拒否する |
-| `HandoffRequest` | `syncWorkID`, `requestID`, `editIntentID`, `episodeID`, requester device / session, observed head / epoch | 最初のlocal editを保存した端末が現remote writerへhandoffを依頼する一時record。本文を含めず、単独ではauthorityにならない |
 
 全recordは`syncWorkID`を検証し、EpisodeIDやrevision IDだけで別workのrecordを参照しない。固定zone内のrecord nameもwork IDをscopeに含める。
+
+現行wire protocol v1のrecord集合に`HandoffRequest`は存在しない。別holderがいる場合も、最初のlocal editをpackage／journalへ保全した後、観測したremote head ID／digestとepochのexact CASでinternal takeoverを試す。CASが競合すれば本文を取消さずdetached branchへ残して再fetchする。旧writerへflush／grantを依頼するcooperative handoffは将来のadditive protocol候補であり、現行v1の実装済み機能として扱わない。
 
 soft leaseの期限やheartbeatはUX上の「応答がない」判定にだけ使う。local wall clock、recordの表示日時、push到着順はpublish権限を与えない。権限の正は、最新`EpisodeControl`のholder / session / epochとremote CASだけである。
 
@@ -163,7 +165,7 @@ soft leaseの期限やheartbeatはUX上の「応答がない」判定にだけ�
 - revision、mutation receipt、更新後controlは同じzoneのatomic batchで保存する。atomicityを提供できない経路ではpublish成功にしない
 - `EpisodeRevision.body`はportable wire上はstringのままだが、Apple adapterは上限と大本文を考慮し、canonical UTF-8 payloadを`CKAsset`へ写像できる。metadataのdigest / byte countを検証してからinstallする
 - `CKSyncEngine`はchange tracking、pending change、push後のfetch、retry token管理に使う。lease / expected head / mutationIDのdomain検査を`CKSyncEngine`任せにしない
-- pushは通知契機であって配送保証ではない。起動、foreground復帰、handoff／internal takeover直前にもserver changesをfetchする
+- pushは通知契機であって配送保証ではない。起動、foreground復帰、claim／internal takeover直前にもserver changesをfetchする
 - `listWorks`の結果はordered structure digestで絞った明示binding候補にだけ使う。`sourceDocumentID`一致は候補順のhintに留め、候補取得、タイトルsnapshot表示、単一候補の存在だけで自動bindingしない
 
 mutation適用順は次のとおりとする。
@@ -184,48 +186,55 @@ package外のapp-private `SyncJournal`はjournal schema v2として、少なく�
 - 最後に証明できたremote revision ID／digest／exact本文と、verified／unconfirmedのbase provenance
 - 最後に観測したhead、holder / session / epoch。永続leaseは再起動後のauthorityとして使わない
 - pending revision、sealed mutation、receipt確認、最新local mutation sequence
-- handoff intent、remote acknowledgement、pending materialization
+- remote acknowledgement、pending materialization
 - review ID、base / local / remote、確認用下書き、解決checkpoint
 
 journalは`.novelpkg`保存やexportの置換対象外とし、package保存に成功した本文だけを次のlocal revisionとして記録する。journal保存完了前に「この端末に保存済み」と表示しない。packageだけが先行したprocess終了は、再起動時にpackage digestとjournal local headを比較して新しいdetached revisionとして回収する。未解決本文とその親を自動削除せず、merge revisionのremote acknowledgement／read-back、package反映、journal checkpointの全てが完了するまで保持する。
+
+app-private pre-package WALのreview用`preservedMarkers`は最大3本文とする。さらに未知／不整合なbranchが到着して上限を超える場合、既存のpackage／active WAL／preserved本文を上書き・削除せず、local integrity／recovery errorとしてfail-closedにする。その状態ではreview choiceとremote mutationを行わない。これはnetwork、別holder、account待ちを編集許可へ結合するものではなく、本文を欠落させないためのresource capである。
+
+Editor表示時の`observeLocalBase`／`observeRemoteBase`は、現在本文を`localEditIntent = observed`、pending revision 0件として保存する。閲覧baselineをexplicit editやpublish待ちへ昇格せず、claim、takeover、publishも行わない。remote本文と一致しないうえ共通祖先を証明できない場合は本文保全の`reviewRequired`になり得るが、それもremote authorityを変更しない。実際の変更callbackだけが`recordLocalEdit`を通ってexplicit／pending revisionへ進む。いったん変更してUndoで同じdigestへ戻った場合も、実変更を受けたsequenceとしてobserved baselineをexplicitへ昇格できるため、「現在の文字列が同じ」だけで編集意思を消さない。
 
 local durability、remote propagation、integrationを一つの編集可否enumへ畳み込まない。
 
 | Facet | State | 意味 |
 | --- | --- | --- |
-| local | `dirty` / `savingPackage` / `savingJournal` / `saved` / `failed` | 最新native本文の端末内durability。`saved`はpackageとjournalの両方が最新sequenceへ到達した状態 |
-| remote | `idle` / `awaitingConnectivity` / `requestingHandoff` / `awaitingAuthority` / `reconciling` / `publishing` / `synced` / `accountActionRequired` | remote処理。どの状態もlocal Editorの入力を禁止しない |
+| local | `dirty` / `savingPackage` / `savingJournal` / `saved` / `failed` | 最新native本文の端末内durability。`saved`はpackageとjournalが最新sequenceへ到達し、対応するpre-package WAL markerのexact acknowledgement／除去まで完了した状態 |
+| remote | domainの`idle` / `pending` / `offline` / `reviewRequired`と、Appの同期中／account確認状態 | remote処理。一時的な通信／CloudKit unavailableは`offline`、no account／account変更／設定不整合は設定確認に分類する。どの状態もlocal Editorの入力を禁止しない。cooperative handoff専用stateは現行v1に持たない |
 | integration | `none` / `reviewRequired` / `resolutionPending` | 同じ範囲の変更または祖先不明だけを確認対象にする。review中もlocal編集を継続する |
 
 AppのSafe Launch／Recovery、破損package、作品切替中のdocument operation gate等は従来どおり入力を止め得るが、network、remote holder、lease、account確認、fetch／publish中という理由だけでは止めない。
 
-## 7. Local-first保存と暗黙handoff
+## 7. Local-first保存と暗黙authority取得
 
 native editorから確定本文の変更通知を受けるたびにlocal mutation sequenceを進める。複数の入力を保存前にcoalesceしてもよいが、最新sequenceがpackageとjournalへ到達するまで保存済みにしない。
 
 1. native editorが確定本文を所有したまま、作品／話／Editor世代を固定したcallbackでmodelへ反映する。
-2. `DocumentSaveCoordinator`の既存revision直列化を使ってapp-private `.novelpkg`へ保存する。
-3. package保存成功後に同じ話の最新本文を再取得し、authorityを要求せずdetached local revisionとしてjournalへ保存する。
-4. journal acknowledgement後にだけlocal durabilityを`saved`へ進める。
-5. remote reconciliationを別taskへenqueueする。fetch／claim／upload中も次の入力とlocal保存を続ける。
-6. background／sleep／scene非activeではnetwork taskをcancelまたは切り離し、IME確定、package保存、journal保存だけを優先して待つ。
+2. package保存を開始する前に、作品／話／Editor世代／mutation sequence／exact本文／digestを持つfull-body edit-intent markerをapp-private pre-package WALへatomic保存する。これはprocess kill境界の回収用であり、portable revision、sync wire、`.novelpkg` metadataではない。
+3. `DocumentSaveCoordinator`の既存revision直列化を使ってapp-private `.novelpkg`へ保存する。
+4. package保存成功後に同じ話の最新本文を再取得し、authorityを要求せずdetached local revisionとしてNovelSync journalへ保存する。
+5. packageとjournalのexact acknowledgement後にWAL markerを除去し、その除去まで確認できた最新sequenceだけlocal durabilityを`saved`へ進める。
+6. remote reconciliationを別taskへenqueueする。fetch／claim／upload中も次の入力とlocal保存を続ける。
+7. background／sleep／scene非activeではnetwork taskをcancelまたは切り離し、IME確定、WAL、package保存、journal保存だけを優先して待つ。
+
+論理的な永続化順は引き続き **native editor → model → `.novelpkg` → NovelSync journal → remote** である。pre-package WALはpackage commit前の一時的なfull-body recovery guardであり、packageより新しいportable snapshotやpublish可能revisionとして扱わない。再起動時はscope、generation、digestを検査してpackageへmaterializeし、その後にNovelSync journalへ`recordLocalEdit`してexact acknowledgementできた場合だけ削除する。
 
 本文入力、paste、delete、Undo、Redo、ルビ、傍点、`……`、`――`等のcommand結果が本文を実際に変えた場合だけ、最初のlocal edit intentを作る。選択、copy、scroll、検索移動、単なる閲覧では作らない。
 
-holderが空または自分なら通常claim／renewを試す。別holderなら同じedit intentに対して重複しない`HandoffRequest`を作る。現remote writerは自端末ですでにjournal済みのtailを可能な範囲でpublishした後、remote authorityだけをgrantできる。grantのために両端末のlocal Editorを停止せず、grant後に旧writerで確定した新しい本文はdetached branchとして保存する。
+holderが空または自分なら通常claim／renewを試す。別holderなら、local journal保存後の観測head ID／digest／epochを全て条件とするinternal takeoverを試す。競合時は再fetchし、旧writerの未同期本文を消さずdetached branchとして残す。現行v1は旧writerへrequest／flush／grantを送る`HandoffRequest`を持たず、cooperative handoffを必要とする場合は将来のadditive Decision／protocolとして追加する。
 
 ## 8. Remote authorityとfencing
 
 remote writerは最新`EpisodeControl`のholder／session／epochと一致し、remote headを直接進められる1端末だけである。local Editorの入力許可とは独立させる。
 
 1. local revisionを先にjournalへ保存してから最新control／headをfetchする。
-2. holder不在ならobserved head／epochを条件に通常claimする。別holderなら通常handoffを試し、その間もlocal編集を続ける。
-3. handoffが成立しない場合でもlocal revisionを取消・破棄・remoteへpublishしない。必要なinternal takeoverはexact head／epoch CASとして実行し、通常UIにforce操作を出さない。
+2. holder不在ならobserved head／digest／epochを条件に通常claimする。別holderなら同じexact observationを条件にinternal takeoverを試し、その間もlocal編集を続ける。
+3. claim／takeoverが成立しない場合でもlocal revisionを取消・破棄・remoteへpublishしない。現行v1にcooperative handoff requestはなく、必要なauthority移動はexact head／digest／epoch CASとして実行し、通常UIにforce操作を出さない。
 4. takeoverまたはpublishが競合した場合、remote CASで一方だけを成立させる。head／epochが変わった試行は再fetchし、同じstale observationを使って繰り返さない。
 5. authorityを失った端末のpublishはremote側でstale epochとして拒否する。本文はすでにpackage／journalへ保存済みであり、detached branchとしてreconcileする。
 6. 別holderが残る、fetch／claimに失敗する、通信不能である場合、local編集を継続しながらremote stateを`awaitingAuthority`または`awaitingConnectivity`にする。
 
-lease期限やheartbeatは再試行／handoffのhintに限る。local clockだけでauthorityを成立させず、authorityの正はremote CASで確定したcontrolだけとする。「編集権」「lease」「epoch」「fencing」「fork」「強制的に続ける」は通常UIへ表示しない。
+lease期限やheartbeatは再試行のhintに限る。local clockだけでauthorityを成立させず、authorityの正はremote CASで確定したcontrolだけとする。「編集権」「lease」「epoch」「fencing」「fork」「強制的に続ける」は通常UIへ表示しない。
 
 ## 9. Offline動作
 
@@ -234,7 +243,8 @@ lease期限やheartbeatは再試行／handoffのhintに限る。local clockだ�
 - 共通祖先を証明できない場合も本文を保存するが、unconfirmed baseとして自動merge／publishしない
 - push欠落、app suspension、process kill後はpackageとjournalからEditorを先に再開し、networkが戻った後にchange tokenとremote reconciliationを再開する。local pendingを破棄してremoteだけを採用しない
 - package保存後・journal保存前にprocessが終了した場合は、再起動時にpackage本文を新しいlocal revisionとして回収する。sealed publish、acknowledgement、materializationの各境界もjournal checkpointから冪等に再開する
-- iCloud account不明、signed out、restricted、temporarily unavailable、account変更はremote状態として区別する。旧account scopeのbinding／journalをquarantineし、新accountへ送らない。local packageとjournalはそのまま編集できる
+- WAL保存後・package保存前にprocessが終了した場合は、scope／Editor世代／sequence／digestを検査してfull-body markerをpackageへmaterializeし、journalのexact acknowledgement後までmarkerを残す
+- iCloud account不明、signed out、restricted、一時的なCloudKit unavailable、account変更はremote状態として区別する。一時障害はofflineとして自動再試行し、no account／account変更／entitlement・設定不整合だけを設定確認とする。旧account scopeのbinding／journalをquarantineし、新accountへ送らない。local packageとjournalはどの分類でもそのまま編集できる
 
 ## 10. 3-way merge
 
@@ -245,10 +255,13 @@ merge入力は、証明済み共通祖先`base`、現在端末のdetached branch
 - remote headがbaseから変わっていなければauthority取得後にlocal revisionを自動publishする
 - localとremoteのexact本文／digestが同じなら重複revisionをremote headへcollapseし、競合を表示しない
 - normalizationしないUnicode scalar列に対して、base→localとbase→remoteのedit hunkを決定論的に求める
+- Myers shortest-edit-scriptで両側の全hunkを抽出し、非重複hunkを複数箇所まとめて適用する。入力は各4 MiB／1,000,000 Unicode scalar、edit distance 1,024、diff work 16,000,000を上限とし、超過時は推測せずreviewへ送る
 - base上の変更区間が互いに交差せず、同一挿入点、相手の置換／削除境界、対応が曖昧な反復領域を共有しないことを **証明できる場合だけ** 自動適用する
 - 自動結果は`[remote head, local head]`の順でexactly 2 parentを持つimmutable merge revisionとして、利用者操作やdialogなしにpublishする
 - 算出上限、曖昧なmapping、digest不一致、親欠損、同じ箇所への両側挿入はreviewへ送る
 - hunk適用順と結果をSwift / C# / Kotlinで同じfixtureへ固定する。日本語、emoji、結合文字、改行、全角空白を含める
+
+overlapが一部だけの場合、確認用下書きにはlocal側の競合範囲を保持しつつ、証明済みの安全なremote非重複hunkを反映する。自動mergeとreview draftのどちらも同じbounded mergerを使い、native editorやUTF-16 rangeへ依存しない。
 
 ### 10.2 overlap解決
 
@@ -279,11 +292,11 @@ review中もEditorとlocal保存を止めず、追加編集でlocal headを進�
 
 | 表示 | 条件 | VoiceOver |
 | --- | --- | --- |
-| チェック | 最新本文がpackageとjournalへ保存済み | この端末に保存済み。remoteも一致する場合はiCloudにも同期済み |
-| 控えめな進行表示 | local保存済みでfetch／handoff／publish中 | 同期中。この端末には保存済み |
+| チェック | 最新本文がpackageとjournalへ保存され、対応WAL markerのexact acknowledgement／除去も完了 | この端末に保存済み。remoteも一致する場合はiCloudにも同期済み |
+| 控えめな進行表示 | local保存済みでfetch／claim／takeover／publish中 | 同期中。この端末には保存済み |
 | 小さなoffline表示 | local保存済みでnetwork待ち | オフライン。この端末に保存済み |
 | 警告 | overlapまたは祖先不明のreviewあり | 統合が必要 |
-| エラー | account／設定またはlocal durabilityの確認が必要 | 同期設定を確認、またはこの端末への保存を確認 |
+| エラー | no account／account変更／entitlement・設定不整合、またはlocal durabilityの確認が必要 | 同期設定を確認、またはこの端末への保存を確認 |
 
 最新sequenceのjournal保存前にチェックへしない。詳細は記号を選択したときだけ「この端末に保存済み」「iCloudにも同期済み」「オフライン」「統合が必要」「同期設定を確認」を表示する。通常の自動merge／同期成功ではdialogや通知を出さない。
 
@@ -295,8 +308,10 @@ review中もEditorとlocal保存を止めず、追加編集でlocal headを進�
 - 作品名、話タイトル、端末名、利用者名、local path、bookmark、hardware identifierをrecord name、zone name、診断logへ入れない
 - 本文、fork、asset URL、CloudKit error payloadを通常log、analytics、crash breadcrumbへ記録しない。診断はopaque ID、状態分類、byte count等のcontent-free値に限定する
 - remote payloadのdigest、size、protocol version、parent、episode / work bindingを検証してからpackageまたはEditorへinstallする
-- account確認不能でも既存bindingのapp-private packageとpackage外journalを開き、local revision保存を継続する。旧account transportへはlive account scopeの再確認が成功するまで送信せず、account変更時は旧accountのbinding／journalをquarantineして新accountへuploadしない
-- package外journalも原稿を含む。現行sourceはapp-private root、root／symlink検査、atomic file replacementを実装済みだが、端末backupとmerge後retention / purgeの製品方針は未決定のままとする
+- account確認不能、CloudKit bootstrap失敗、entitlement未成立でも、既存bindingをapp-private local metadata／journal resolverから復元してpackage、WAL、local revision保存を継続する。remote descriptorがない間はtransport mutationを送らず、旧account transportへはlive account scopeの再確認が成功するまで送信しない。一時的なtransport／bootstrap unavailableはofflineへ分類してbootstrapを再試行し、no account／account変更／設定不整合は設定確認へ分類する。account変更時は旧accountのbinding／journalをquarantineして新accountへuploadしない
+- package外journal、pre-package WAL、merge recovery recordも原稿を含む。現行Mac／iOS sourceは信頼済みapp-private ancestorへrootをanchorし、各下位componentのsymlink、final symlink、rootのdevice／inode差し替えを通常の各操作前後でfail-closedに拒否し、atomic file replacementを行う
+- このpathname／root identity検査は、静的なsymlinkや通常のroot差し替え事故を検出する境界であり、同じ利用者権限を持つ悪意あるprocessが1操作中にrenameを競合させるsame-UID adversaryへの完全なTOCTOU耐性を主張しない。外部process／provider変更の検出、file coordination、open-in-place、より強いdescriptor-relative I/Oは未完了のExternal Change / Conflict Gateで扱う
+- 端末backupとmerge後retention / purgeの製品方針は未決定のままとする
 
 ## 13. Apple capabilityと外部Gate
 
@@ -341,6 +356,8 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 - Mac／iPhoneで同じ話を開いたまま交互に入力でき、別端末がremote writerでもEditorと執筆補助commandが無効にならない
 - fetch／uploadを意図的に停止しても入力callback、model反映、package、journalが先に完了し、networkを待たない
 - 通信不能のまま編集、終了、再起動、再編集し、package-ahead／sealed outbox／pending materializationの各境界から復元する
+- full-body WALだけが先行したprocess kill、package保存後、journal ack後、WAL除去失敗の各境界でexact本文を回収し、未ack markerを保存済み表示やremote publishへ早期昇格しない
+- review用WALが3本文の上限へ達した後の未知／不整合branchで、既存package／active WAL／preserved本文を保持し、choice／remote mutation 0件のlocal integrity errorへfail-closedにする
 - background移行時は遅いCloudKit taskを待たず、IME commit、native capture、package、journalを優先する
 - account確認不能でも既存bindingのjournalへ保存し、旧account scope再確認前および新accountへtransport mutationを送らない
 - paste、delete、Undo、Redo、ルビ、傍点、`……`、`――`は本文変更としてlocal intentを作り、選択、copy、scrollは作らない
@@ -352,7 +369,7 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 
 ### 14.3 CloudKit / 実機
 
-- Simulator／local fake serverで決定論的なMac／iPhone 2端末testを行い、交互編集、network pause、handoff、CAS競合、background、process再開を検証する
+- Simulator／local fake serverで決定論的なMac／iPhone 2端末testを行い、交互編集、network pause、claim／takeover、CAS競合、background、process再開を検証する
 - development containerでrecord mapping、atomic modify、change token、retry、zone deleteを検証する
 - 署名済みMac + iPhone / iPadを同じiCloud accountで使い、同じ話を開いたまま交互に編集する
 - Mac／iPhoneをそれぞれofflineにしてlocal編集し、再接続後のcollapse、2-parent自動merge、overlap review、stale epoch拒否を検証する
@@ -361,23 +378,50 @@ Package Validator GateとExternal Change / Conflict Gateも未完了のままで
 
 実機で一度成功しただけでは完了にしない。各mutation、head、epoch、journal stateをcontent-free traceで照合し、旧本文とremote本文がrevision graphまたはjournalのどちらかに必ず残ることを確認する。
 
+### 14.4 D-060必須scenarioの受け入れmatrix
+
+次の表は、同じ「通過」を異なる検証層で読み替えないための証跡表である。`Domain fake`はmacOS host上の`InMemoryEpisodeSyncServer`／決定論的fake、`native`は実`NSTextView`またはSimulator上の実`UITextView`、`real CloudKit`は署名済みMac＋iPhoneと実containerを意味する。test sourceが存在するだけでは通過にしない。
+
+| # | 必須scenario | 現在の自動検証 | 残る受け入れ |
+| --- | --- | --- | --- |
+| 1 | MacとiPhoneで同じ話を開いたまま交互編集 | Domain fakeで、別replica／session／journalの2 coordinatorを閉じずにMac→iPhone→Macと往復し、各local journalとremote本文の収束を確認済み | paired native Mac／iPhoneまたは2 Simulatorの同話往復は未実施 |
+| 2 | fetch／upload中も入力が止まらない | Domainでupload中のtailと再同期を確認済み。停止transportを使う回帰を含むMac 45 / 45件とiOS Simulator 42 / 42件が通過 | paired native操作とreal CloudKitの遅延通信で確認する |
+| 3 | 別端末がwriterでも最初の入力をlocal branchへ保存 | Domain fake往復で、各claim／takeover前の`recordLocalEdit` receiptとjournal durabilityを確認済み。iOS native focusedで別writer下の最初の変更をjournalへ保存しlease不変を確認済み | paired native Mac／iPhoneで確認する |
+| 4 | offline編集、終了、再起動、再編集 | Domainでoffline edit→新coordinator再起動→再編集を確認済み。Mac／iOS App回帰でWAL／package checkpoint／journal復元を確認済み | 実process終了／再起動を含むnative campaignは未実施 |
+| 5 | 日本語IME変換中の通信断、background、再接続 | macOS hostの実`NSTextView`回帰とiOS native focusedでmarked text確定からmodel／package／journal／WAL cleanupまでを確認し、Mac／iOS Appの停止transport＋background回帰も通過 | 実機の通信断→background→再接続を実施する |
+| 6 | paste、Undo、Redo、ルビ、傍点が同期状態に依存しない | macOS hostの実`NSTextView`回帰に加え、iOS native focusedで実`UITextView`のreplace／delete／Undo／Redo／paste／ルビ／傍点とlease不変を確認済み | paired nativeの手動command往復を確認する |
+| 7 | remote不変なら操作なしで同期完了 | local-first Domain suiteで自動claim／publishとexact remote headを確認済み | paired native／real CloudKitで確認する |
+| 8 | 非重複変更を操作なしで3-way merge | local-first Domain suiteでbounded multi-hunk 2-parent auto mergeを確認済み | paired native／real CloudKitで確認する |
+| 9 | 同一範囲変更は両本文を保持し警告だけ表示 | Domainでbase／local／remote／review draft保持を確認済み。Mac／iOS Appのnonblocking警告回帰も通過 | paired native画面とreal CloudKitで確認する |
+| 10 | 競合中の追加入力を失わない | Domainでreview中の新local headと解決後tailを確認済み。Mac／iOS Appのreview中local保存回帰も通過 | paired native操作で確認する |
+| 11 | merge途中でremoteが再度進んでも確認済み本文を失わない | Domainでclaim中のremote advanceを再reviewに戻し、両sourceと確認済みdraftを保持することを確認済み | paired native／real CloudKitで確認する |
+| 12 | 古いepochの遅延publishを拒否 | Domain fake往復で旧Mac epochのraw delayed publishをremoteが拒否し、head不変を確認済み | real CloudKit atomic CASで確認する |
+| 13 | upload中の追加入力を次batchで送る | Domainで複数tailを同じ同期runからdrainする回帰を確認済み。Mac／iOS Appのsealed batch後tail回帰も通過 | real CloudKitの遅延uploadで確認する |
+| 14 | background時に遅いCloudKitを待たずpackage／journalを保存 | Mac／iOS Appのpaused publish中background flush回帰が通過 | 署名済み実機backgroundで確認する |
+| 15 | account変更時に旧本文を新accountへ送らない | `NovelSyncCloudKit`のaccount fence／in-flight cancel／local fallback回帰を含む48 / 48件がhostで通過 | 署名済み実機のsign-out／account switchは未実施 |
+| 16 | process killの全境界からlocal／remoteを復元 | Domainでjournal／materialization／merge checkpointを確認済み。Mac／iOS AppのWAL→package→journal境界とkill／relaunch模擬回帰も通過 | 実OS killを各write境界へ注入するcampaignは未実施 |
+| 17 | 実`NSTextView`／`UITextView`でIME、marked text、Undo、古いcallback、Editor世代を検証 | macOS hostの実`NSTextView`回帰はlocal-first 4件、committed capture 5件、adapter integration 37件が通過。iOS Simulator full 42 / 42件とnative focused 2 / 2件も通過 | actual device IMEは未実施 |
+| 18 | VoiceOverで保存、同期中、offline、統合必要を識別 | iOS Simulator full 42 / 42件に状態／accessibility label回帰を含めて通過 | Mac／iPhone実機の手動VoiceOver操作確認は未実施 |
+
+Domain全体の実測は`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）、Apple adapterは`NovelSyncCloudKit` 48 / 48件である。App層はMac Device Sync 45 / 45件（3 suites、11.932秒）とprivate-root focused 1 / 1件、iOS Simulator Device Sync 42 / 42件（3 suites、20.544秒）とnative focused 2 / 2件が通過した。これはhost／Simulator上のunit、integration、local fake、native editor証跡であり、paired native Mac↔iPhone、署名済み実CloudKit、手動VoiceOver、実OS process-kill campaignの代用ではない。
+
 ## 15. 実装順と進捗
 
 ### 15.1 D-059安全化基準（履歴）
 
 - [x] **S1-0〜S1-4 source基盤**: protocol v1、pure `NovelSync`、file journal、CloudKit adapter、Mac／iOS App接続を実装した
 - [x] **既存ローカル回帰**: 2026-08-11の`Scripts/check.sh`でMac通常114件／Device Sync 20件、iOS通常71件／Device Sync 15件を含む全検査を通過し、commit `508947d2`へ固定した
-- [ ] **通常handoff／外部Gate**: request／grant全経路、container、署名済み実機は未完了のままD-060へ引き継ぐ
+- [ ] **D-059 cooperative handoff／外部Gate**: request／grant全経路はD-059で完結せず、D-060現行v1には引き継がない。将来のadditive Decision／protocol、container、署名済み実機は未完了である
 
-### 15.2 D-060 local-first実装（計画中）
+### 15.2 D-060 local-first実装
 
-- [ ] **LF-1 Decision / Portable contract**: D-060、指定設計文書、wire protocol v1維持／journal schema v2、golden fixtureを固定する
-- [ ] **LF-2 Detached Journal**: authority非依存`recordLocalEdit`、stable branch、offline bootstrap、v1 migration、account未確認時のlocal journalを実装する
-- [ ] **LF-3 Reconciliation / Merge**: remote不変、collapse、非重複2-parent auto merge、overlap review、upload tail、process再開をpure domainへ実装する
-- [ ] **LF-4 Handoff / Transport**: 暗黙edit intent、handoff request／grant、internal takeover、CloudKit codec／CASを実装する
-- [ ] **LF-5 App Local Durability**: Mac／iOSでnative→model→package→journalをremote taskから分離し、background／account変更／古いcallbackを処理する
-- [ ] **LF-6 Editor / UI / Accessibility**: syncによるread-onlyを撤去し、external replacement guard、上部状態記号、非blocking review、VoiceOverを実装する
-- [ ] **LF-7 Simulator / Local Fake Server**: 2端末交互編集、network pause、offline restart、IME、Undo／Redo、merge raceを検証する
+- [x] **LF-1 Decision / Portable contract**: D-060、指定設計文書、wire protocol v1維持／journal schema v2、v1 migration、golden fixtureを固定した
+- [x] **LF-2 Detached Journal**: authority非依存`recordLocalEdit`、observed baseline、stable branch、offline bootstrap、account／CloudKit確認不能時の既存binding local journal fallbackを実装した
+- [x] **LF-3 Reconciliation / Merge**: remote不変、collapse、bounded multi-hunk非重複2-parent auto merge、overlap review、upload tail、process再開、2段階競合解決をpure domainへ実装した
+- [x] **LF-4 Authority / Transport**: local journal後のclaimとexact head／digest／epoch internal takeover、stale fencing、CloudKit/account transport fenceを実装した。現行v1に`HandoffRequest`は追加しておらず、cooperative request／grantは将来の別Decision／protocolである
+- [x] **LF-5 App Local Durability**: Mac／iOSでfull-body pre-package WALとnative→model→package→journalをremote taskから分離し、background／account変更／古いcallbackを処理するsourceとApp回帰を実装した。Mac Device Sync 45 / 45件、private-root focused 1 / 1件、iOS Simulator Device Sync 42 / 42件が通過した
+- [x] **LF-6 Editor / UI / Accessibility**: syncによるread-only撤去、external replacement guard、上部状態記号、nonblocking review、VoiceOverを実装した。iOS native focused 2 / 2件でmarked IME確定、実`UITextView`の編集command、local durability、lease不変を確認し、iOS full suiteの状態／accessibility label回帰も通過した
+- [ ] **LF-7 Simulator / Local Fake Server（一部通過）**: host上の2 coordinator in-memory local fake往復、Mac Device Sync 45 / 45件、iOS Simulator Device Sync 42 / 42件、iOS native focused 2 / 2件は通過した。paired native Mac↔iPhoneでnetwork pause、offline restart、IME、Undo／Redo、merge raceを一続きにした受け入れは未実施である
 - [ ] **LF-8 Signed Real CloudKit**: container／App ID／profile／schemaを設定し、署名済みMac＋iPhoneの同一accountで実CloudKitを検証する
 
-各段階は未実装の操作をUIへ出さない。D-060文書化だけでlocal-first実装完了とはせず、source実装、Simulator／local fake server、署名済み実CloudKitを別々に報告する。Windows / Android transportはwire v1／journal schema v2／state・merge fixture確定後の独立trackとする。
+LF-1〜4のDomain検証は`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）、Apple adapter検証は`NovelSyncCloudKit` 48 / 48件がローカルで通過した。LF-5／6のApp検証はMac 45 / 45件とprivate-root 1 / 1件、iOS Simulator 42 / 42件とnative focused 2 / 2件が通過した。各段階は未実装の操作をUIへ出さない。Domain／adapter source完了、App回帰、Simulator／local fake server、署名済み実CloudKitを別々に報告し、paired native Mac↔iPhone、手動VoiceOver、実OS process-kill、signed real CloudKitを完了扱いにしない。Windows / Android transportはwire v1／journal schema v2／state・merge fixture確定後の独立trackとする。

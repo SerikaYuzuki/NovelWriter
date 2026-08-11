@@ -39,7 +39,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - **テキストエンジン**: macOSの`NSTextView`とiOSの`UITextView`をTextKit 2で明示使用する(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager`への誤アクセスによるTextKit 1フォールバックを防ぐ
 - **macOS配布**: GitHub Releases による直接配布。macOS App Sandbox は採用しない(→ D-011)。iOSの配布判断へこの非Sandbox決定を流用しない
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
-- **Apple Device Sync（D-059基準実装済み、D-060計画中）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。D-059の`NovelSync` domain、file journal、durable pending create / bind intentを含むadapter、Mac / iOS Appのproduction composition、明示binding、editor／保存／lifecycle、force／merge UIは基準commit `508947d2`で全ローカル回帰通過済み。D-060のjournal schema v2、remote single-writer／全端末local-first編集、automatic merge、native editor guard、通常UI移行は計画中で、通常handoffの残作業と外部CloudKit Gateも未完了。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059 / D-060)
+- **Apple Device Sync（D-059基準実装済み、D-060 local回帰通過）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。D-059基準はcommit `508947d2`で固定済み。D-060はwire v1／journal v2、local-first revision、offline復元、bounded multi-hunk merge、exact authority takeoverを実装し、`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件とprivate-root 1 / 1件、iOS Simulator 42 / 42件とnative focused 2 / 2件が通過した。host local fake／Simulatorをpaired nativeまたは外部CloudKit Gateの完了へ読み替えない。現行v1にcooperative `HandoffRequest`はない。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059 / D-060)
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`、AIの純粋domainだけを持つNovelAIを独立targetとして扱う。domain / adapterのsource追加をCloudKit外部Gate完了、NovelAIの追加をprovider / sidecar / UI実装済みとは扱わない(D-043 / D-059 / D-060)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
@@ -357,17 +357,23 @@ D-059／D-060の話本文Device Syncに必要なOS / transport非依存domainを
 - sync work / episode / local working copy、opaque replica / session、stable branch、immutable revision、mutation、soft lease authorityをversion付きportable値として表す
 - remote writerを1端末へ限定するexpected head、holder / session / monotonic epoch、idempotent receipt、fencingを定義するが、local Editorの入力可否をdomain stateへ結合しない
 - authorityなしでもpackage保存済み本文をdetached local revisionとしてjournalへ保存し、offline／process終了後も同じbranchから再開する
-- verified base / local / remoteから同一結果をcollapseし、非重複変更を`[remote head, local head]`の2-parent revisionへ自動mergeする。overlapまたは祖先不明だけをreview入力として返す
+- Editor表示時のobserved baselineはexplicit edit／pending revisionを作らず、claim／takeover／publishしない。祖先不明時のreviewは本文保全だけを行い、authorityを変更しない。本文を実際に変更した`recordLocalEdit`だけがstable branchをremote処理の対象へ進める
+- verified base / local / remoteから同一結果をcollapseし、固定resource budgetのUnicode scalar Myers diffで複数の非重複hunkを`[remote head, local head]`の2-parent revisionへ自動mergeする。overlap、祖先不明、budget超過だけをreview入力として返す
 - package外journal protocolとtransport非依存coordinatorを持ち、process終了、offline、応答消失、publish／takeover race、upload中の追加tailを署名なしtestで再現する。決定論的fake transportはtest専用`NovelSyncTesting`に分離する
+- journal resourceはpending最大5件、競合保持3件、materialization graph 4件、fresh-session relay込みpending 5件、JSON 80 MiBをportable契約とする。1 MiB control character本文の最大状態75,506,494 bytesをencode／save／loadする回帰で固定する
 - CloudKit record、change tag、CKAsset、account、push、containerを公開APIへ出さず、wire protocol v1とjournal schema v2のportable JSON / fixtureを将来のC# / Kotlin実装の正とする
 
-App側は **native editor → model → DocumentSaveCoordinatorによるpackage保存 → package外journal → remote reconciliation** を順序付ける。remote taskはEditor入力とlocal保存を待たせず、local durability、remote propagation、integration reviewを別状態として扱う。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
+現行wire v1に`HandoffRequest` recordはない。別holder時のauthority移動は、local revisionをjournalへ保存した後、観測したremote head ID／digest／epochを全て比較するinternal takeover CASで行う。旧writerへのcooperative request／flush／grantが必要になった場合は、将来のadditive Decision／protocolとしてfixtureと互換規則を同時に追加する。
+
+App側は **native editor → model → DocumentSaveCoordinatorによるpackage保存 → package外journal → remote reconciliation** を論理順として維持する。package commit前にはexact全文を持つapp-private full-body WALをatomic保存してprocess kill境界を回収するが、WALをportable revision、`.novelpkg` metadata、remote publish入力にはしない。review用`preservedMarkers`は最大3本文とし、さらに未知／不整合なbranchが来た場合は既存本文を保持したlocal integrity errorへfail-closedにしてchoice／remote mutationを行わない。remote taskはEditor入力とlocal保存を待たせず、local durability、remote propagation、integration reviewを別状態として扱う。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ### 4.11 NovelSyncCloudKit
 
 Apple版Device Syncのplatform adapterを担当し、`NovelSync` / `NovelCore`とApple CloudKit frameworkにだけ依存する。private databaseの単一固定zone、record／`CKAsset` mapping、server change tagによるCAS、mutation receipt、`CKSyncEngine` change tracking、account fence、engine state recovery、package外binding metadataとcopy別journalを実装する。
 
-account確認不能でも既存bindingのpackage外journalを開いてlocal保存できるようにし、remote transportだけを停止する。旧account scopeとのlive再確認が成功するまで旧account transportへ送らず、別accountへ旧revisionを送信しない。
+account確認不能でも既存bindingのpackage外journalを開いてlocal保存できるようにし、remote transportだけを停止する。旧account scopeとのlive再確認が成功するまで旧account transportへ送らず、別accountへ旧revisionを送信しない。一時的なtransport／CloudKit unavailableはofflineとしてbootstrapを再試行し、no account／account変更／entitlement・設定不整合は設定確認として区別する。
+
+CloudKit bootstrap、account、entitlementの確認に失敗しても、既存bindingはapp-private local metadataとjournal resolverへfallbackする。remote descriptorが得られない状態を同期可能と見なさず、local package／WAL／journalだけを進める。一時的なbootstrap unavailableではlocal-first編集を続けながら再試行する。unbound作品もlocal package編集を継続し、remote workへ暗黙bindingしない。
 
 remote descriptorの列挙は、ordered structure digestが一致する明示binding候補と既存bindingの検査にだけ使う。候補は作品棚／cloud library／package bootstrapではなく、候補選定時の`sourceDocumentID`一致は表示順hintに限る。明示binding時と既存binding解決時はlocal package continuityをfail-closedに検査し、利用者の選択なしに自動bindingしない。CloudKit型、change tag、account、asset、engine stateを`NovelSync`の公開API / wire / fixtureへ出さない。
 
@@ -665,12 +671,13 @@ IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機Q
 
 MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
-### Device Sync S1: 話本文local-first同期（D-059基準実装済み、D-060計画中）
+### Device Sync S1: 話本文local-first同期（D-059基準実装済み、D-060 local回帰通過）
 
-D-059によりmacOS / iOSのapp-private作業コピー間で1話本文を引き継ぐ安全基盤を実装し、基準commit `508947d2`で全ローカル回帰を固定した。D-060はそのCAS／fencing／revision graphを維持したまま、remote writerとlocal Editor入力を分離する。詳細なwire、state、CloudKit mapping、merge、実装順は **[DEVICE_SYNC.md](DEVICE_SYNC.md)** を正とする。
+D-059によりmacOS / iOSのapp-private作業コピー間で1話本文を引き継ぐ安全基盤を実装し、基準commit `508947d2`で全ローカル回帰を固定した。D-060はそのCAS／fencing／revision graphを維持したまま、remote writerとlocal Editor入力を分離し、pure DomainとMac／iOS App／UI sourceを実装した。`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件とprivate-root 1 / 1件、iOS Simulator 42 / 42件とnative focused 2 / 2件が通過済みである。host in-memory local fake／Simulator回帰をpaired native Mac↔iPhone、実OS kill、実CloudKitの完了へ読み替えない。詳細なwire、state、CloudKit mapping、merge、実装順は **[DEVICE_SYNC.md](DEVICE_SYNC.md)** を正とする。
 
 - `.novelpkg`は各端末のdurable / materialized / portable snapshotとし、live syncはpackage外のimmutable episode revision graphで行う
 - 確定本文をnative editor → model → package → journalの順に保存してからremote taskを開始し、CloudKit処理で入力／local保存を待たせない
+- package commit前のfull-body WALはapp-privateなprocess-kill recovery guardに限定し、package／wire／portable fixtureへ混ぜない。packageとjournalのexact acknowledgement前に端末内保存済みとしない
 - transport非依存`NovelSync`はwire protocol v1のportable JSON、journal schema v2、stable branch、revision、mutation、lease、CAS、3-way mergeだけを持ち、NovelStorage、EditorKit、CloudKit、SwiftData、UI型を含めない
 - EpisodeIDごとのholder / session / monotonic epochによりremote writerを1端末へ限定するが、全端末のlocal Editorはonline／offline、holder、account確認に依存せず編集できる
 - 非authority変更はdetached branchへ保存し、remote不変なら直接publish、同一結果ならcollapse、非重複なら2-parent auto merge、overlap／祖先不明だけreviewとする
@@ -678,6 +685,7 @@ D-059によりmacOS / iOSのapp-private作業コピー間で1話本文を引き�
 - review中もEditorを止めず、採用／手動統合はいずれも2-parent revisionにする。remote、package、journal checkpoint完了まで元本文を保持する
 - remote本文はnative surface、digest、IME、Undo／Redo、selection、Editor世代を再検査する明示境界だけで反映し、通常のSwiftUI updateや古いcallbackから全置換しない
 - 通常UIへforce／lease／forkを出さず、Editor上部の小さな記号と必要時だけのreview警告を使う
+- 現行wire v1に`HandoffRequest`は追加せず、別holderはexact head／digest／epoch CAS takeoverで扱う。cooperative request／grantは将来の別Decision／protocolとする
 
 S1は初回binding時に構造が一致し、そのbinding snapshotに含めたEpisodeIDのbodyだけを扱う。Apple adapterが列挙するのはexact structure一致の明示binding候補であり、作品棚のcloud libraryやpackage bootstrapではない。後から章・話を追加しても既存対象話は継続するが、新規話はlocal-onlyでremoteへ暗黙作成しない。章・話構造、メモ、作品補助data、資料、snapshot、attachment、live collaborationは後続であり、未実装の同期状態やcloud badgeを出さない。CloudKit container / App ID / capability / profile / schema deployment / 署名済み実機は外部Gateで、Package Validator / External Change / Conflict Gateも未完了のままである。
 
@@ -816,7 +824,7 @@ Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Too
 
 D-056の **Phase 7 IOS-1〜5は実装済み**で、D-058によりIOS-6の機能parityとしてプロット／伏線、登場人物、世界観、資料、設定と4つの執筆補助commandをiOS導線へ接続した。D-059以前のiOS targetは通常macOS版と同じ5 productだけをlinkし、現在はDevice Sync用の`NovelSync`と`NovelSyncCloudKit`だけを追加している。`NovelAI`、Experimental、AI provider／SDK／Node／CLI／sidecar／credentialは含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続している。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
 
-D-059の **Device Sync S1同期安全化は基準commit `508947d2`でsource実装と全ローカル回帰を固定済み**である。その履歴を残したまま、D-060の **remote single-writer／全端末local-first編集は計画中**とする。次はwire protocol v1を維持したjournal schema v2、authority非依存detached journal、automatic collapse／2-parent merge、暗黙handoff、Mac／iOSのlocal durability分離、native editor guard、上部状態記号、Simulator／local fake serverの順に進める。account確認不能でも既存bindingのpackage／journalへlocal保存し、live account scopeの再確認まで旧transportへ送らず、別accountへ旧revisionを送らない。container、App ID、capability、profile、schema deploy、署名済み同一account Mac / iPhone実機は最後まで別の外部Gateであり、Package Validator / External Change / Conflict Gateも未完了である。詳細なチェック進捗は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
+D-059のDevice Sync S1同期安全化は基準commit `508947d2`で固定済みである。D-060のremote single-writer／全端末local-first Domain、Apple adapter、Mac／iOS App sourceも実装済みで、`NovelSync` 94 / 94件、`NovelSyncCloudKit` 48 / 48件、Mac 45 / 45件とprivate-root 1 / 1件、iOS Simulator 42 / 42件とnative focused 2 / 2件が通過した。host local fake／Simulatorをpaired native Mac↔iPhone、手動VoiceOver、実OS kill、署名済み実CloudKitの完了へ読み替えない。現行v1にcooperative `HandoffRequest`はなく、追加時は別Decision／protocolとする。WAL／merge recovery rootはanchored symlinkと通常のroot identity差し替えを拒否するが、悪意あるsame-UID processとのrename競合への完全耐性は主張せず、Package Validator / External Change / Conflict Gateも未完了である。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
 
@@ -852,6 +860,17 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.77 (2026-08-11)
+
+D-060のpure Domain source実装と、App／外部検証を分けた現在地へ更新した。
+
+- wire protocol v1／journal schema v2、observed baseline、offline detached branch、exact authority takeoverを実装済みとして固定
+- bounded multi-hunk Unicode scalar merge、2-parent review解決、upload tail／process再開を`NovelSync` 94 / 94件で確認
+- pending 5／競合保持3／materialization 4／fresh relay込み5、journal 80 MiB、最大実測75,506,494 bytesをportable resource契約へ反映
+- full-body pre-package WALをapp-private recovery guardとして追加し、`.novelpkg`／wireへ含めない境界を明記
+- 現行v1に`HandoffRequest` recordがないことを訂正し、cooperative handoffを将来のadditive Decision／protocolへ分離
+- Mac 45 / 45件、iOS Simulator 42 / 42件、iOS native focused 2 / 2件を通過として追加し、paired native Mac↔iPhone、署名済み実CloudKit、手動VoiceOver、実OS kill、same-UID adversaryとExternal Change / Conflict Gateは未完了として維持
 
 ### v0.76 (2026-08-11)
 
