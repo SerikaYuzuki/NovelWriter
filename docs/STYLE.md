@@ -12,6 +12,7 @@
 - Sidebar、Outline、toolbar、form等のchromeは、macOSではシステムLight／Dark外観への追従を既定とする。iOS / iPadOSはD-057により初回だけDarkを既定とし、いずれも設定からシステム追従／Light／Darkを選び直せる。特定外観だけで成立する固定色UIにしない
 - 本文エディタのキャンバスはchromeと独立した利用者設定とし、既定は従来どおり「夜の書斎」の暗色キャンバスにする。システム外観を変えても利用者の本文配色を勝手に上書きしない
 - 画面は Project Sidebar / Outline / Editor と下部status barのワークベンチとして扱い、本文の横幅を最優先する。未実装AI用の領域は予約表示しない(D-040)
+- macOSはD-063のcloud-first chooserから作品へ入る。端末内のapp-private作業コピー、内部path、Finder入口を通常UIへ見せず、外部`.novelpkg`は「作品を取り込む…」、portable copyは「書き出す…」だけから扱う
 - iOS / iPadOSは作品棚から作品ホームへ入り、作品情報／執筆／プロット／登場人物／世界観／資料／設定を選んでから各Outline / Detailへ進む。作品棚はapp-private作業コピーだけを表示し、外部providerは標準pickerへの入口として表現する(D-057 / D-058)
 
 ## 2. カラー
@@ -71,7 +72,7 @@
 - ウィンドウ・ペインの外周余白: 20pt / グループ間: 16pt / グループ内: 8pt
 - 角丸: カード・ポップオーバー内パネル = 8pt、小さなチップ = 4pt。それ以外の角丸を発明しない
 - 固定幅の基準: Project Sidebar 初期 200pt(184〜224pt) / Outline 初期 360pt(224〜440pt) / 下部status bar 28pt / プロットのレーン幅 260pt / キャラ一覧 280pt(最小 240pt)
-- macOS起動chooserは最小720×480ptの同一window内`NavigationSplitView`とし、左のrecent sidebarを最小224pt／初期264pt／最大320pt、右を主detailとする。別welcome window、中央の巨大なbrand card、複数の浮いたpanelを作らない
+- macOS起動chooserは最小720×520ptの同一window内に、上から小さなアプリアイコン／名称、横並びの「作品を取り込む…」「新しい作品」、単一の「iCloudの作品」Listを置く1 pane構成とする。iconは56ptを基準とし、version、local path、保存場所、Finder操作、recent専用sidebar、選択detail、巨大なbrand card、複数の浮いたpanelを置かない
 - Editor は常に最も広い領域にする。幅不足時は Outline を先に縮め、本文の最小可読幅を守る
 - Workbench toolbar はシステムの高さ・padding・overflow に任せ、独自の固定高さや2段目を作らない
 - iOS Editorは本文面積を優先し、保存状態を上部のnative toolbarへ置く。重複する「本文」見出し、話タイトル入力、文字カウンター、独立した下部status barを常設しない
@@ -90,11 +91,12 @@
 - **Workbench toolbar**: [UIREVISION.md](UIREVISION.md) / [TOOLBAR.md](TOOLBAR.md) に従い、Project Sidebar 上は標準開閉、Outline上はpane固定の章・人物・ノート・資料追加、Editor上は左端の話追加・中央の補助操作・右端の話内検索とする。保存状態と章タイトルを重複表示しない
 - **Workbench status bar**: macOSでは保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない。iOS EditorはD-058によりstatus barを常設せず、保存状態を上部へ移し、文字数を重複表示しない
 - **iOS Editor accessory**: `……` / `――` / `ルビ` / `傍点`の短いlabelを横並びにし、本文キャンバスと同じ背景を使う。選択が必要な操作は無効状態を見た目とVoiceOver valueの両方で伝え、toolbarだけを唯一の入口にしない
-- **Startup / Document Selection / Recovery**: `loading`では作品を準備していることだけを静かに示し、編集操作を出さない。macOSの`documentSelection`は左に「作品を選ぶ」／「最近使った作品」の標準sidebar List、右に直近1件の名称／保存場所と「作品を開く」「Finderで表示」を置き、下部に「新規作品」「別の作品を開く…」を置く。recentが無い右detailは`ContentUnavailableView`で「作品を選んでください」／「新しい作品を作るか、保存済みの作品を開けます。」を示す。`recovery`では原因を短く説明し、再試行、Finderで表示、別作品を開く、明示的新規作成を標準ボタン階層で提示する
+- **Startup / Document Selection / Recovery**: `loading`では作品を準備していることだけを静かに示し、編集操作を出さない。macOSの`documentSelection`は上部に小さなアプリアイコン／名称と「作品を取り込む…」「新しい作品」、その下に見出し「iCloudの作品」と標準Listを1つだけ置く。各行は作品名を主、更新日時とtruthfulなiCloud／端末内状態をcaptionにし、local path、保存場所、Finder表示、別detail paneを置かない。malformed remote rowはその行だけを隔離してvalid／local行を残す。以前確認済みsame account scopeの一時offlineではcached remote-only行を残してdownload不可にし、`accountRequired`／unscoped／mismatchではlocal packageのないremote rowとtitleを表示しない。packageのないApp `remoteOpenPending` rowも`accountRequired`／different accountでは棚から除外する。cached exactはofflineでも開ける。「新しい作品」と「作品を取り込む…」はnetwork／account未確認またはremote catalog refresh失敗だけを理由に無効化せず、local install後はsame-scope一時offlineとunscoped local-onlyを別状態で表示する。作成予定snapshotのexpected package attestationをreservation前にdurable化できない新規／Import、legacy package／expected attestation nil reservation、staging read-back不一致は成功行へ出さずquarantineし、stagingを破棄して再起動後も利用可能な作品として推測採用しない。`recovery`でも内部working copyのpath／Finder入口を出さず、原因、再試行、作品を取り込む、明示的新規作成を標準button階層で提示する。外部原本に対する失敗だけはbasenameを表示してよいが、full pathは表示へ出さない。diagnostic logへapp-private path／WorkIDを出さない
+- **Startup sync truth**: local packageとaccount-scoped remote exact head／receiptが一致する行だけ`checkmark.icloud`と「iCloudと同期済み」を使う。bind完了→registry mark前に終了していても、exact package／pending projection／outbox-free journalが一致した当該WorkIDはoffline／remote catalog 0件からcached exactへ復旧できるが、推測一致では昇格しない。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`と「iCloud上の作品を確認できません」へ切り替え、checkmark、open、自動uploadを止めてlocal packageを保持する。same-scopeのlocal変更が未確認なら「このMacに保存済み、iCloudへ保存中」、以前確認済みscopeの一時offlineなら「接続後に同期」とする。`accountRequired`／unscopedでnew／Importしたworkは「このMacにのみ保存済み」／「iCloudとは関連付けられていません」とし、account確認だけで自動uploadするように見せない。remote-onlyはonline＋account確認時だけ「iCloudからダウンロード」、download済みofflineは「このMacに保存済み、オフラインでも開けます」、競合は「統合が必要」とする。account mismatchでも検証済みlocal packageは「このMacに保存済み、iCloudアカウントが異なります」として開けるがuploadせず、local packageのないremote-only row／titleはquarantineする。破損／head欠損は安全に開けない文言へ分ける。refresh中もcached rowsを消さず、色／symbolだけに依存しない。資料／snapshot履歴まで完全backup済みと読める文言を使わない
 - **WorkSync local recovery gate**: 通常chooser／Recoveryのactivationまたはcold Finder startupに続くlocal preflight中は、不透明なsemantic backgroundで背後のWorkbenchを知覚・操作不能にし、確認中はlabel付き`ProgressView`、choiceが必要なら`ContentUnavailableView`で「変更の確認が必要です」／「端末に残っている作品の版を確認してから、執筆を再開できます。」と「変更を確認」を示す。Workbenchの通常mutationをdisabledにしても、このroot-level buttonと3面reviewのchoiceはdisabledにしない。通常のcloud conflict reviewをこの全画面gateへ流用しない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
-- **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成。macOS起動chooserの右detailはinventoryの空表示ではなく選択待ちなので、D-062の「作品を選んでください」を使う
+- **空状態**: 必ず `ContentUnavailableView` を使い、文言は「〜がありません」+ 次の一歩(例:「右上の + から章を追加できます」)の2文構成。macOS起動chooserの空Listは「作品がありません」／「新しい作品を作るか、作品パッケージを取り込めます。」とし、account未設定／一時offline／読込失敗を同じ空状態に畳み込まない
 - **バッジ・カウント**: 数字は `.caption` + secondary。未回収数など注意を引くものだけ `warning` トークン
 
 ## 6. 深さ・階層
@@ -110,7 +112,7 @@
 - ドラッグ中: 元位置は `opacity 0.4`、持ち上げたカードは軽い影。ドロップ先レーンは `accent` の淡いハイライト
 - アニメーション: `.snappy`(0.2s 目安)に統一。バウンスや 0.5s 超の演出は禁止
 - キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする。本文選択の対象にしないDisclosure headerは、同じ操作へ到達できるメニュー項目を必ず持つ
-- macOS起動chooserのrecent Listは編集一覧ではないため、矢印キーで選択、Returnで選択中の「作品を開く」を実行する。`Cmd+N`は新規作品、`Cmd+O`は別作品のopen panelへ到達させ、single clickだけでは作品を開かない
+- macOS起動chooserの「iCloudの作品」Listは編集一覧ではないため、矢印キーで選択し、**Listがfocus中のときだけ**Returnで選択作品を開く。double clickでも開けるがsingle clickだけでは開かない。上部action buttonがfocus中のReturnはbutton自身へ渡す。`Cmd+N`は新規作品、`Cmd+O`は「作品を取り込む…」、`Cmd+Shift+S`は「書き出す…」へ到達させる。MVPに削除commandを置かない
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
@@ -123,7 +125,7 @@
 - エディタ下部のアクセサリバーは省スペースのため、続きの入力があっても「…」を付けない
 - 確認ダイアログのボタンは動詞(削除 / キャンセル)。「はい/いいえ」禁止
 - 説明文・空状態は「です・ます」体。感嘆符は使わない
-- macOS起動chooserは、local recentだけを示す「最近使った作品」を使う。「作品棚」「このデバイスの作品」「Files／iCloud Driveから取り込む」「iCloudの作品」「同期済み」は、実装していないlibrary／bootstrap／同期状態を示唆するため使わない
+- macOS起動chooserの見出しは「iCloudの作品」とする。「最近使った作品」「このデバイスの作品」、local path／保存場所、Finder用語を通常導線へ混ぜない。「iCloudと同期済み」はD-063のexact local attestation＋remote receiptを確認した行にだけ使い、local pending、remote-only、offline、account mismatch、破損を同じbadgeへ畳み込まない
 
 ## 9. AI エージェント向けチェックリスト(UI を触る PR の提出前に確認)
 
@@ -139,12 +141,25 @@
 - [ ] iOS Editorでは保存状態が上部にあり、重複する本文見出し／話タイトル入力／文字カウンターがなく、執筆補助バーの背景とsafe areaが本文キャンバスへ連続しているか
 - [ ] `……` / `――` / `ルビ` / `傍点`が44pt以上、VoiceOverで識別可能、IME／stale selection時に本文を変更せず、Undo 1回で戻せるか
 - [ ] Loading / Document Selection / Recovery中に編集・保存可能なWorkbenchが露出せず、chooserとRecoveryの導線がキーボードとVoiceOverで使えるか
-- [ ] macOS chooserがrecent 1件だけを標準List selectionで示し、作品名をlabel、前回作品＋保存場所をvalue、開き方をhintとして読み上げるか。System／Light／Darkで固定色や二重materialがないか
+- [ ] macOS chooserが1 paneの「iCloudの作品」Listを使い、path／Finder／detail paneを出していないか。System／Light／Darkで固定色や二重materialがなく、refresh中もcached rowsが消えないか
+- [ ] startup各行が作品名をlabel、正確なlocal／remote状態をvalue、利用可能な開き方をhintとして読み上げるか。省略タイトルは「…」とVoiceOverで分かり、remote-only offline／破損に再接続だけで必ず開けるようなhintを出していないか。account mismatchは検証済みlocal packageの有無を区別しているか
+- [ ] malformed remote rowだけを隔離し、catalog failure中もlocal-only新規／Importを無効化せず、different-account remote-only row／titleを表示していないか
+- [ ] `accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外し、旧scopeの存在／titleを漏らしていないか
+- [ ] 新規／Importのexpected package attestationをreservation前にdurable化し、legacy package／expected attestation nil reservationとstaging read-back不一致を成功行へ出さず再起動後も採用していないか。app-private WorkID／pathを表示／diagnostic logへ出していないか
+- [ ] unscoped local-only workを「接続後に同期」と表示せず、後から現れたaccountへのautomatic adopt／upload導線を出していないか
+- [ ] `checkmark.icloud`／「iCloudと同期済み」がexact local package attestation＋account-scoped remote receiptの一致に限られ、attachment／snapshot履歴を含む完全backupを示唆していないか
+- [ ] availableなcurrent catalogからacknowledged workが欠落したとき、`.cloudUnavailable`／「iCloud上の作品を確認できません」へ切り替え、checkmark／open／uploadを停止してlocal packageを保持しているか
 - [ ] WorkSync local recovery中は背後の全mutationがgateされる一方、root-levelの「変更を確認」とexact review／sessionを再検査する3面choiceが操作可能か。状態が色やspinnerだけでなく文字とVoiceOver labelでも伝わるか
 - [ ] 空状態は `ContentUnavailableView` + 規約どおりの文言か
 - [ ] 常設の影・独自ハイライト・0.5s 超のアニメーションを追加していないか
 - [ ] 破壊的ボタンに `role: .destructive` と確認ダイアログがあるか
 - [ ] 文言が 8章 の規約(体言止め・…・動詞ボタン・です・ます)に沿っているか
+
+## 10. D-063 source freeze UI証跡
+
+D-063の単一pane「iCloudの作品」chooserとProduct Truth表示はsource complete／local automated GOである。FUMINIWA macOS full xcresult device cases 208 / 208件（top-level 203件、hosted 124件＋unhosted 79件、dynamic casesを含む）、focused Cloud＋store device cases 15件／top-level 14件、hosted Startup Cloud UI 1 / 1件とfreshな`./Scripts/check.sh`の`All checks passed`を通過し、UI test分離後のhosted `NovelAppTests`は`NovelSyncTesting`へ依存しない。Cloud／store回帰はexpected attestation先行reservationとlegacy nil隔離、packageなしpending rowのaccount隔離、acknowledged work欠落時の`.cloudUnavailable`、kill-window復旧、staging不一致非採用、catalog failure中のlocal作成、malformed／different-account row隔離、private identity log redactionを含む。実Mac AppでもComputer Useによるvisual／Accessibility tree受け入れをPASSし、安全再監査はP0／P1なしである。同期層を含む全matrixは[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.13を正とする。
+
+この証跡は現行のvisual／Accessibility treeとlocal automated behaviorを確認したもので、手動VoiceOver／Full Keyboard Access、paired native、実account／account switch、実OS process kill、署名済み実CloudKitを完了したものではない。Package Validator、External Change / Conflict、production migration／minimum-version fenceを含め、ReleaseはNO-GOのままである。
 
 ## 変更の手続き
 
