@@ -57,21 +57,6 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
 
-            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail, placement: .secondaryAction) {
-                Button {
-                    isPlotCardRailPresented.toggle()
-                } label: {
-                    Label("プロットカード", systemImage: "sidebar.trailing")
-                        .labelStyle(.iconOnly)
-                }
-                .help("執筆中の章のプロットカードを表示")
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-
             ToolbarItem(id: WorkbenchToolbarItemID.deviceSyncStatus) {
                 DeviceSyncStatusControl(
                     saveState: appState.saveState,
@@ -128,6 +113,21 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 }
                 .help("原稿を書き出す…")
                 .disabled(exportPresenter.state.isExporting)
+            }
+            .customizationBehavior(.reorderable)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
+                Button {
+                    isPlotCardRailPresented.toggle()
+                } label: {
+                    Label("プロットカード", systemImage: "sidebar.trailing")
+                        .labelStyle(.iconOnly)
+                }
+                .help("執筆中の章のプロットカードを表示")
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
             }
             .customizationBehavior(.reorderable)
             .defaultCustomization(.visible)
