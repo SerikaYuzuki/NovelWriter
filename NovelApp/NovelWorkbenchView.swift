@@ -80,7 +80,7 @@ struct NovelWorkbenchView: View {
             )
         }
         .toolbarBackground(.visible, for: .windowToolbar)
-        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
+        .toolbarBackground(Color(nsColor: .controlBackgroundColor), for: .windowToolbar)
         // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
         // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
         // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
