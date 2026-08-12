@@ -127,14 +127,17 @@ struct FuminiwaApp: App {
                         await deviceSyncComposition.bootstrap()
                     }
                     #endif
-                    await appState.bootstrap(opening: startupOpenURL)
+                    await appState.bootstrap(opening: startupOpenURL, localFirst: true)
                     applicationDelegate.finishBootstrap()
                     #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
-                    // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
-                    await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
-                    await deviceSyncBootstrap.value
-                    await appState.refreshStartupLibrary()
-                    await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    // local shelf／active editorの表示をCloudKit bootstrapや
+                    // remote catalogの完了へ結び付けない。必要なremote処理は
+                    // bootstrap完了後にsingle-flightのbackground laneへ渡す。
+                    Task { @MainActor in
+                        await deviceSyncBootstrap.value
+                        await appState.refreshStartupLibrary()
+                        await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    }
                     #endif
                 }
         }
@@ -171,7 +174,10 @@ struct FuminiwaApp: App {
                     Button("作品を選ぶ") {
                         let session = appState.documentSessionToken
                         Task {
-                            _ = await appState.returnToStartupLibrary(expectedSession: session)
+                            _ = await appState.returnToStartupLibrary(
+                                expectedSession: session,
+                                localFirst: true
+                            )
                         }
                     }
                     .disabled(!appState.permitsReturnToCloudLibrary)

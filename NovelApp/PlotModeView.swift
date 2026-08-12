@@ -1,3 +1,4 @@
+import AppKit
 import CoreTransferable
 import NovelCore
 import SwiftUI
@@ -27,74 +28,99 @@ struct PlotBoardView: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 16) {
-                switch focusedSelection {
-                case .unassigned:
+        boardContent
+            .sheet(item: editingCardBinding) { card in
+                PlotCardDetailSheet(
+                    card: card,
+                    onDelete: {
+                        guard let editingCardRequest else { return }
+                        self.editingCardRequest = nil
+                        cardPendingDeletion = editingCardRequest
+                    },
+                    onClose: {
+                        editingCardRequest = nil
+                    }
+                )
+                .frame(width: 420, height: 420)
+            }
+            .confirmationDialog(
+                "プロットカードを削除しますか？",
+                isPresented: cardDeletionDialogIsPresented,
+                presenting: cardPendingDeletion
+            ) { request in
+                Button("削除", role: .destructive) {
+                    appState.deletePlotCard(id: request.value.id, expectedSession: request.session)
+                    if editingCardRequest?.value.id == request.value.id {
+                        editingCardRequest = nil
+                    }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: { request in
+                Text("「\(request.value.title)」を削除します。")
+            }
+            .onDeleteCommand {
+                guard let selectedPlotCardID = appState.selectedPlotCardID,
+                      let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else {
+                    return
+                }
+                cardPendingDeletion = SessionBoundValue(
+                    value: card,
+                    session: appState.documentSessionToken
+                )
+            }
+    }
+
+    @ViewBuilder
+    private var boardContent: some View {
+        switch focusedSelection {
+        case .unassigned:
+            cardBoard(chapterID: nil, cards: cards(in: nil))
+        case let .chapter(focusedChapterID):
+            if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
+                cardBoard(chapterID: chapter.id, cards: cards(in: chapter.id))
+            } else {
+                ContentUnavailableView(
+                    "章が見つかりません",
+                    systemImage: "rectangle.stack",
+                    description: Text("Outlineから章または未割り当てを選び直してください。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cardBoard(
+        chapterID: ChapterID?,
+        cards: [SessionBoundValue<PlotCard>]
+    ) -> some View {
+        if cards.isEmpty {
+            ContentUnavailableView(
+                "プロットカードがありません",
+                systemImage: "rectangle.stack",
+                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(16)
+            .contentShape(Rectangle())
+            .dropDestination(for: PlotCardID.self) { items, _ in
+                guard let droppedID = items.first else { return false }
+                appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
+                return true
+            }
+        } else {
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     PlotCardCanvas(
-                        chapterID: nil,
-                        cards: cards(in: nil),
+                        chapterID: chapterID,
+                        cards: cards,
                         editingCardRequest: $editingCardRequest,
                         cardPendingDeletion: $cardPendingDeletion
                     )
-                case let .chapter(focusedChapterID):
-                    if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
-                        PlotCardCanvas(
-                            chapterID: chapter.id,
-                            cards: cards(in: chapter.id),
-                            editingCardRequest: $editingCardRequest,
-                            cardPendingDeletion: $cardPendingDeletion
-                        )
-                    } else {
-                        ContentUnavailableView(
-                            "章が見つかりません",
-                            systemImage: "rectangle.stack",
-                            description: Text("Outlineから章または未割り当てを選び直してください。")
-                        )
-                        .frame(width: 260)
-                    }
                 }
+                .padding(16)
             }
-            .padding(16)
-        }
-        .sheet(item: editingCardBinding) { card in
-            PlotCardDetailSheet(
-                card: card,
-                onDelete: {
-                    guard let editingCardRequest else { return }
-                    self.editingCardRequest = nil
-                    cardPendingDeletion = editingCardRequest
-                },
-                onClose: {
-                    editingCardRequest = nil
-                }
-            )
-            .frame(width: 420, height: 420)
-        }
-        .confirmationDialog(
-            "プロットカードを削除しますか？",
-            isPresented: cardDeletionDialogIsPresented,
-            presenting: cardPendingDeletion
-        ) { request in
-            Button("削除", role: .destructive) {
-                appState.deletePlotCard(id: request.value.id, expectedSession: request.session)
-                if editingCardRequest?.value.id == request.value.id {
-                    editingCardRequest = nil
-                }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: { request in
-            Text("「\(request.value.title)」を削除します。")
-        }
-        .onDeleteCommand {
-            guard let selectedPlotCardID = appState.selectedPlotCardID,
-                  let card = appState.document.plotCards.first(where: { $0.id == selectedPlotCardID }) else {
-                return
-            }
-            cardPendingDeletion = SessionBoundValue(
-                value: card,
-                session: appState.documentSessionToken
-            )
         }
     }
 
@@ -419,15 +445,33 @@ private struct PlotCardDetailSheet: View {
     let onDelete: () -> Void
     let onClose: () -> Void
 
+    @State private var titleDraft: String
+    @State private var memoDraft: String
+    @State private var chapterDraft: ChapterID?
+
+    init(
+        card: PlotCard,
+        onDelete: @escaping () -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        self.card = card
+        self.onDelete = onDelete
+        self.onClose = onClose
+        _titleDraft = State(initialValue: card.title)
+        _memoDraft = State(initialValue: card.memo)
+        _chapterDraft = State(initialValue: card.chapterID)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                TextField("タイトル", text: selectedPlotCardTitleBinding)
+                TextField("タイトル", text: $titleDraft)
                     .onSubmit {
+                        commitDraft()
                         appState.commitPlotCardEditing()
                     }
 
-                Picker("章", selection: selectedPlotCardChapterBinding) {
+                Picker("章", selection: $chapterDraft) {
                     Text("未割り当て")
                         .tag(nil as ChapterID?)
                     ForEach(appState.document.chapters) { chapter in
@@ -436,11 +480,13 @@ private struct PlotCardDetailSheet: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("メモ")
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: selectedPlotCardMemoBinding)
-                        .frame(minHeight: 180)
+                WorkbenchLabeledEditor("メモ") {
+                    PlotCardMemoEditor(
+                        editorID: card.id,
+                        initialText: memoDraft,
+                        text: $memoDraft
+                    )
+                    .frame(minHeight: 180)
                 }
             }
             .formStyle(.grouped)
@@ -461,28 +507,94 @@ private struct PlotCardDetailSheet: View {
             appState.selectPlotCard(card.id)
         }
         .onDisappear {
+            commitDraft()
             appState.commitPlotCardEditing()
         }
     }
 
-    private var selectedPlotCardTitleBinding: Binding<String> {
-        Binding(
-            get: { appState.selectedPlotCard?.title ?? "" },
-            set: { appState.updateSelectedPlotCard(title: $0) }
-        )
+    private func commitDraft() {
+        appState.updateSelectedPlotCard(title: titleDraft, memo: memoDraft)
+        appState.updateSelectedPlotCardChapter(chapterDraft)
+    }
+}
+
+/// プロット本文の入力中はNSTextViewを唯一の正にし、SwiftUIの再描画で
+/// marked textを古いdraftへ戻さない。執筆本文と同じく、IME確定後だけdraftへ通知する。
+private struct PlotCardMemoEditor: NSViewRepresentable {
+    let editorID: PlotCardID
+    let initialText: String
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCommittedText: { text = $0 })
     }
 
-    private var selectedPlotCardMemoBinding: Binding<String> {
-        Binding(
-            get: { appState.selectedPlotCard?.memo ?? "" },
-            set: { appState.updateSelectedPlotCard(memo: $0) }
-        )
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        guard let textView = scrollView.documentView as? NSTextView else {
+            preconditionFailure("NSTextView.scrollableTextView() は常にNSTextViewをdocumentViewに持つ")
+        }
+
+        context.coordinator.textView = textView
+        textView.delegate = context.coordinator
+        textView.string = initialText
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainer?.lineFragmentPadding = 0
+
+        context.coordinator.editorID = editorID
+        return scrollView
     }
 
-    private var selectedPlotCardChapterBinding: Binding<ChapterID?> {
-        Binding(
-            get: { appState.selectedPlotCard?.chapterID },
-            set: { appState.updateSelectedPlotCardChapter($0) }
-        )
+    func updateNSView(_: NSScrollView, context: Context) {
+        context.coordinator.onCommittedText = { text = $0 }
+        guard let textView = context.coordinator.textView else { return }
+        guard context.coordinator.editorID != editorID else { return }
+
+        if textView.hasMarkedText() {
+            textView.unmarkText()
+        }
+        textView.string = initialText
+        textView.undoManager?.removeAllActions()
+        context.coordinator.editorID = editorID
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onCommittedText: (String) -> Void
+        var editorID: PlotCardID?
+        weak var textView: NSTextView?
+
+        init(onCommittedText: @escaping (String) -> Void) {
+            self.onCommittedText = onCommittedText
+            super.init()
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let changedTextView = notification.object as? NSTextView else { return }
+            textView = changedTextView
+            guard !changedTextView.hasMarkedText() else { return }
+            onCommittedText(changedTextView.string)
+        }
     }
 }

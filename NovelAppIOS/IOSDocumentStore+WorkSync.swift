@@ -92,6 +92,16 @@ extension IOSDocumentStore {
         }
     }
 
+    func refreshActiveWorkSyncWithoutPreparing() async {
+        guard usesWholeWorkDeviceSync,
+              editorCommandSession.isDocumentTransitionPrepared,
+              case .captured = editorCommandSession.captureActiveCommittedText(),
+              let identity = activeWorkSyncIdentity,
+              workSyncContextIsCurrent(identity) else { return }
+        await refreshWorkSyncRemoteAvailability(expectedIdentity: identity)
+        await synchronizeWorkSyncWithoutMaterializingEditor(expectedIdentity: identity)
+    }
+
     private func prepareWorkDeviceSyncSerially(
         expectedLookup: IOSWorkSyncLookupIdentity
     ) async {
@@ -409,7 +419,7 @@ extension IOSDocumentStore {
         }
     }
 
-    func flushPreparedWorkSyncBoundarySerially() async -> Bool {
+    func flushPreparedWorkSyncBoundarySerially(waitForRemote: Bool = true) async -> Bool {
         guard startupState == .ready,
               editorCommandSession.isDocumentTransitionPrepared else { return false }
         switch editorCommandSession.captureActiveCommittedText() {
@@ -433,6 +443,7 @@ extension IOSDocumentStore {
         guard await saveCoordinator.saveNow() else { return false }
         guard let identity = activeWorkSyncIdentity,
               workSyncContextIsCurrent(identity) else { return true }
+        guard waitForRemote else { return true }
         return await synchronizeWorkSyncAtSafeBoundary(expectedIdentity: identity)
     }
 
@@ -587,7 +598,7 @@ extension IOSDocumentStore {
         workSyncNetworkDemandGeneration &+= 1
         startWorkSyncNetworkIfNeeded(
             expectedIdentity: expectedIdentity,
-            followUpAttemptsRemaining: 1
+            followUpAttemptsRemaining: 2
         )
     }
 
@@ -613,12 +624,16 @@ extension IOSDocumentStore {
             )
             workSyncNetworkTask = nil
             guard hasNewDemand || (needsFollowUp && followUpAttemptsRemaining > 0) else { return }
-            try? await Task.sleep(for: .milliseconds(25))
+            let retryAttempt = max(0, 2 - followUpAttemptsRemaining)
+            let retryDelayMilliseconds = hasNewDemand
+                ? 25
+                : min(200, 25 * (1 << min(retryAttempt, 3)))
+            try? await Task.sleep(for: .milliseconds(retryDelayMilliseconds))
             guard !Task.isCancelled,
                   workSyncContextIsCurrent(expectedIdentity) else { return }
             startWorkSyncNetworkIfNeeded(
                 expectedIdentity: expectedIdentity,
-                followUpAttemptsRemaining: hasNewDemand ? 1 : followUpAttemptsRemaining - 1
+                followUpAttemptsRemaining: hasNewDemand ? 2 : followUpAttemptsRemaining - 1
             )
         }
     }

@@ -150,7 +150,7 @@ struct StartupDocumentSelectionView: View {
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) {
                                 selectedWorkID = work.id
-                                openSelectedWork()
+                                openSelectedWork(work)
                             }
                             .accessibilityIdentifier("startup.documentSelection.work")
                         }
@@ -208,15 +208,15 @@ struct StartupDocumentSelectionView: View {
         context.works.first { $0.id == selectedWorkID }
     }
 
-    private func openSelectedWork() {
-        guard let selectedWork else { return }
-        if !selectedWork.availability.isOpenable(connection: context.connection) {
+    private func openSelectedWork(_ work: StartupLibraryWork? = nil) {
+        guard let work = work ?? selectedWork else { return }
+        if !work.availability.isOpenable(connection: context.connection) {
             return
         }
         let session = appState.documentSessionToken
         Task {
             _ = await appState.openStartupLibraryWork(
-                selectedWork.reference,
+                work.reference,
                 expectedSession: session
             )
         }

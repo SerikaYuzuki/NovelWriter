@@ -72,13 +72,69 @@ extension IOSDocumentStore {
     @discardableResult
     func refreshCloudLibrary() async -> Bool {
         guard !deviceSyncStartupFailedSafely,
+              deviceSyncRuntime?.library != nil else { return false }
+        if let cloudLibraryRefreshTask {
+            return await cloudLibraryRefreshTask.value
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await performCloudLibraryRefresh()
+        }
+        cloudLibraryRefreshTask = task
+        let result = await task.value
+        cloudLibraryRefreshTask = nil
+        return result
+    }
+
+    /// CloudKitを待たずに、検証済みの端末内working copyだけで棚を構築する。
+    /// 起動時はこれを先に完了させ、remote catalogの確認は後段で行う。
+    @discardableResult
+    func refreshLocalCloudLibrary() async -> Bool {
+        guard !deviceSyncStartupFailedSafely,
               let runtime = deviceSyncRuntime,
               let library = runtime.library else { return false }
         libraryRefreshGeneration &+= 1
         let generation = libraryRefreshGeneration
-        cloudLibraryIsLoading = true
+
+        let local: IOSVerifiedCloudLibrarySnapshot
+        do {
+            local = try await loadVerifiedCloudLibrary(using: library, now: runtime.now())
+        } catch {
+            guard generation == libraryRefreshGeneration else { return false }
+            cloudLibraryItems = []
+            cloudLibraryRemoteEntries = [:]
+            cloudLibraryConnection = .unavailable
+            cloudLibraryIsLoading = false
+            permitsCloudLibraryMutation = false
+            mayAttemptInitialCloudPublish = false
+            operationErrorMessage = "この端末の作品情報を安全に確認できませんでした。"
+            return false
+        }
+
+        guard generation == libraryRefreshGeneration else { return false }
+        cloudLibraryItems = local.items.values.compactMap { item in
+            guard item.record?.state != .remoteOpenPending else { return nil }
+            return item.record?.state == .legacyPreserved ? nil : item.row
+        }.sorted(by: Self.cloudLibraryItemComesBefore)
+        cloudLibraryRemoteEntries = [:]
+        cloudLibraryConnection = .checking
+        cloudLibraryIsLoading = false
         permitsCloudLibraryMutation = false
         mayAttemptInitialCloudPublish = false
+        return true
+    }
+
+    private func performCloudLibraryRefresh() async -> Bool {
+        guard !deviceSyncStartupFailedSafely,
+              let runtime = deviceSyncRuntime,
+              let library = runtime.library else { return false }
+        libraryRefreshGeneration &+= 1
+        let generation = libraryRefreshGeneration
+        // CloudKit refresh is a remote status lane. It must not replace the
+        // visible shelf or disable local creation/import while transport is
+        // suspended or reconnecting.
+        cloudLibraryIsLoading = false
 
         let local: IOSVerifiedCloudLibrarySnapshot
         do {
@@ -99,28 +155,21 @@ extension IOSDocumentStore {
             guard item.record?.state != .remoteOpenPending else { return nil }
             return item.record?.state == .legacyPreserved ? nil : item.row
         }.sorted(by: Self.cloudLibraryItemComesBefore)
+        permitsCloudLibraryMutation = true
         let resumable = await library.offlineResumableRemoteOpenWorkIDs()
         guard generation == libraryRefreshGeneration else { return false }
 
         do {
             var remote = try await library.loadRemoteLibrary()
             guard generation == libraryRefreshGeneration else { return false }
-            let didRetry = await documentOperationGate.perform { [weak self] in
-                guard let self, generation == libraryRefreshGeneration else { return false }
-                do {
-                    let activeWorkID = try await library.workIDForPackageURL(documentURL)
-                    return await retryPendingCloudPublications(
-                        local: local,
-                        remote: remote,
-                        library: library,
-                        activeWorkID: activeWorkID
-                    )
-                } catch {
-                    // active判定を証明できないときはnil=inactiveへ倒さず、hidden
-                    // coordinatorを含む再送全体を止める。
-                    return false
-                }
-            }
+            guard generation == libraryRefreshGeneration else { return false }
+            let activeWorkID = try await library.workIDForPackageURL(documentURL)
+            let didRetry = await retryPendingCloudPublications(
+                local: local,
+                remote: remote,
+                library: library,
+                activeWorkID: activeWorkID
+            )
             if didRetry {
                 remote = try await library.loadRemoteLibrary()
                 guard generation == libraryRefreshGeneration else { return false }

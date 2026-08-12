@@ -25,9 +25,12 @@ private struct IOSDeviceSyncBoundaryClient {
 
 extension IOSDocumentStore {
     @discardableResult
-    func flushPreparedDeviceSyncBoundarySerially(releaseAuthority: Bool) async -> Bool {
+    func flushPreparedDeviceSyncBoundarySerially(
+        releaseAuthority: Bool,
+        waitForRemote: Bool = true
+    ) async -> Bool {
         if usesWholeWorkDeviceSync {
-            return await flushPreparedWorkSyncBoundarySerially()
+            return await flushPreparedWorkSyncBoundarySerially(waitForRemote: waitForRemote)
         }
         guard startupState == .ready, editorCommandSession.isDocumentTransitionPrepared else { return false }
         deviceSyncDraftTask?.cancel()
@@ -49,7 +52,21 @@ extension IOSDocumentStore {
         return await reconcileDeviceSyncBoundary(
             snapshot,
             releaseAuthority: releaseAuthority,
+            waitForRemote: waitForRemote,
             resolved: resolved
+        )
+    }
+
+    /// Navigation離脱用。端末内のpackage・journalを確定したら戻る操作を解放し、
+    /// CloudKitの反映は既存のsingle-flightへ引き渡す。
+    @discardableResult
+    func flushPreparedDeviceSyncBoundaryForNavigation() async -> Bool {
+        if usesWholeWorkDeviceSync {
+            return await flushPreparedWorkSyncBoundarySerially(waitForRemote: false)
+        }
+        return await flushPreparedDeviceSyncBoundarySerially(
+            releaseAuthority: false,
+            waitForRemote: false
         )
     }
 
@@ -127,6 +144,7 @@ extension IOSDocumentStore {
     private func reconcileDeviceSyncBoundary(
         _ snapshot: IOSDeviceSyncBoundarySnapshot,
         releaseAuthority: Bool,
+        waitForRemote: Bool,
         resolved: IOSDeviceSyncBoundaryClient
     ) async -> Bool {
         do {
@@ -141,6 +159,7 @@ extension IOSDocumentStore {
                 state: state,
                 content: snapshot.content,
                 releaseAuthority: releaseAuthority,
+                waitForRemote: waitForRemote,
                 resolved: resolved
             )
         } catch {
@@ -187,6 +206,7 @@ extension IOSDocumentStore {
         state: EpisodeSyncState,
         content: String,
         releaseAuthority: Bool,
+        waitForRemote: Bool,
         resolved: IOSDeviceSyncBoundaryClient
     ) async -> Bool {
         if releaseAuthority {
@@ -196,7 +216,8 @@ extension IOSDocumentStore {
                 currentContent: content
             ) else { return false }
         }
-        guard releaseAuthority,
+        guard waitForRemote,
+              releaseAuthority,
               resolved.client.remoteSynchronizationAllowed,
               shouldSynchronizeLocalFirst(state) else {
             if !resolved.client.remoteSynchronizationAllowed, case .conflict = deviceSyncState {

@@ -65,15 +65,21 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func flushDeviceSyncForBackground() async -> Bool {
+    func flushDeviceSyncForBackground(waitForRemote: Bool = true) async -> Bool {
         let inFlightDraft = deviceSyncDraftTask
         deviceSyncDraftTask = nil
         inFlightDraft?.cancel()
         return await documentOperationGate.perform { [weak self] in
             guard let self, startupState == .ready else { return true }
-            guard beginDeviceSyncBoundaryTransition() else { return false }
-            defer { endDeviceSyncBoundaryTransition() }
-            return await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: false)
+            // アプリはbackground中で入力を受け付けないため、ここでは
+            // document transitionの全画面ロックを立てない。復帰が先に
+            // 来ても、UIと入力をロックしたままにしないための境界。
+            guard editorCommandSession.prepareForDocumentTransition() else { return false }
+            defer { editorCommandSession.resumeAfterDocumentTransition() }
+            return await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: false,
+                waitForRemote: waitForRemote
+            )
         }
     }
 
@@ -83,7 +89,10 @@ extension IOSDocumentStore {
             guard let self, startupState == .ready else { return true }
             guard beginDeviceSyncBoundaryTransition() else { return false }
             defer { endDeviceSyncBoundaryTransition() }
-            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else { return false }
+            guard await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            ) else { return false }
             advanceEditorContentGeneration()
             deviceSyncSelectionDidChange()
             return true
@@ -94,16 +103,35 @@ extension IOSDocumentStore {
     func flushDeviceSyncBeforeNavigationDeparture(
         _ departure: IOSWorkspaceEditorDeparture
     ) async -> Bool {
-        await documentOperationGate.perform { [weak self] in
+        let didFlush = await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
+            isNavigationDepartureInProgress = true
+            defer { isNavigationDepartureInProgress = false }
             guard currentDocumentSessionToken == departure.session else { return true }
             let chapterID = departure.chapterID ?? selectedChapterID
             let episodeID = departure.episodeID ?? selectedEpisodeID
             guard chapterID == selectedChapterID, episodeID == selectedEpisodeID else { return true }
             guard beginDeviceSyncBoundaryTransition() else { return false }
             defer { endDeviceSyncBoundaryTransition() }
-            return await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            return await flushPreparedDeviceSyncBoundaryForNavigation()
         }
+        if didFlush, !usesWholeWorkDeviceSync {
+            scheduleDeviceSyncDepartureReconciliationIfPossible()
+        }
+        return didFlush
+    }
+
+    private func scheduleDeviceSyncDepartureReconciliationIfPossible() {
+        guard deviceSyncLocalDurabilityState != .failed,
+              let runtime = deviceSyncRuntime,
+              let identity = activeDeviceSyncIdentity,
+              deviceSyncContextIsCurrent(identity),
+              let client = deviceSyncClient(for: identity) else { return }
+        reconcileDeviceSyncAfterDeparture(
+            client: client,
+            identity: identity,
+            runtime: runtime
+        )
     }
 
     @discardableResult
@@ -122,7 +150,10 @@ extension IOSDocumentStore {
                   selectedChapterID == expectedChapterID,
                   selectedEpisodeID == expectedEpisodeID,
                   beginDeviceSyncBoundaryTransition() else { return false }
-            let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            let didFlush = await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            )
             guard didFlush,
                   currentDocumentSessionToken == expectedSession,
                   selectedChapterID == expectedChapterID,
@@ -317,7 +348,10 @@ extension IOSDocumentStore {
                   beginDeviceSyncBoundaryTransition() else { return nil }
             defer { endDeviceSyncBoundaryTransition() }
 
-            let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            let didFlush = await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            )
             guard didFlush,
                   currentDocumentSessionToken == sourceSession,
                   selectedChapterID == sourceChapterID,

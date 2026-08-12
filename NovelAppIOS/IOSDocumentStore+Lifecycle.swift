@@ -3,7 +3,7 @@ import NovelCore
 import NovelSync
 
 extension IOSDocumentStore {
-    func bootstrap() async {
+    func bootstrap(localFirst: Bool = false) async {
         guard !deviceSyncStartupFailedSafely else { return }
         if hasCompletedBootstrap {
             return
@@ -15,7 +15,7 @@ extension IOSDocumentStore {
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await performBootstrap()
+            await performBootstrap(localFirst: localFirst)
         }
         bootstrapTask = task
         await task.value
@@ -23,14 +23,20 @@ extension IOSDocumentStore {
         hasCompletedBootstrap = true
     }
 
-    private func performBootstrap() async {
+    private func performBootstrap(localFirst: Bool) async {
         guard !deviceSyncStartupFailedSafely else { return }
         startDeviceSyncSignalObservationIfNeeded()
         startupState = .loading
         if usesCloudLibrary {
             startupState = .library
             saveState = .saved
-            _ = await refreshCloudLibrary()
+            if localFirst {
+                // 端末内の検証済みコピーだけを先に棚へ出す。CloudKitの確認は
+                // FuminiwaIOSAppのbootstrap完了後にバックグラウンドで開始する。
+                _ = await refreshLocalCloudLibrary()
+            } else {
+                _ = await refreshCloudLibrary()
+            }
             return
         }
         do {
@@ -181,7 +187,10 @@ extension IOSDocumentStore {
             // `prepareForDocumentTransition()` は、未確定のIME入力をモデルへ同期する。
             // packageを先に保存し、同期中の作品ならjournal保存・best effort publish・
             // lease解放までを終えてから候補作品を扱う。
-            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else {
+            guard await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            ) else {
                 operationErrorMessage = "現在の作品を保存できなかったため、作品の切り替えを中止しました。"
                 return false
             }

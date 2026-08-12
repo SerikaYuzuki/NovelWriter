@@ -55,8 +55,12 @@ struct IOSLibraryView: View {
             }
         }
         .onAppear {
+            // Cloud libraryは起動時にlocal shelfを先に構築し、remote refreshは
+            // FuminiwaIOSApp／signal／pull-to-refreshから行う。従来ここでも
+            // refreshしていたため、画面表示のたびにCloudKitを再確認していた。
+            guard !store.usesCloudLibrary else { return }
             Task {
-                await store.refreshLibrary()
+                _ = await store.refreshLibrary()
             }
         }
     }
@@ -113,7 +117,9 @@ struct IOSLibraryView: View {
                 }
             }
             .overlay {
-                if store.cloudLibraryIsLoading {
+                // cached/local rowsがある場合はCloudKit更新中も操作を止めない。
+                // 初回で棚が空のときだけ確認中表示を出す。
+                if store.cloudLibraryIsLoading, store.cloudLibraryItems.isEmpty {
                     ProgressView("iCloudの作品を確認中…")
                         .padding()
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))

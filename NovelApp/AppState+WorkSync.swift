@@ -825,7 +825,11 @@ extension AppState {
             guard explicitlyRequested || mayRetryFreshTail,
                   explicitlyRequested || remainingTailRetries > 0,
                   workSyncContextIsCurrent(identity) else { return }
-            try? await Task.sleep(for: .milliseconds(100))
+            let retryAttempt = max(0, 4 - remainingTailRetries)
+            let retryDelayMilliseconds = explicitlyRequested
+                ? 25
+                : min(800, 25 * (1 << min(retryAttempt, 5)))
+            try? await Task.sleep(for: .milliseconds(retryDelayMilliseconds))
             guard workSyncContextIsCurrent(identity),
                   workSyncNetworkTask == nil,
                   let fresh = try? await client.coordinator.currentState(),

@@ -25,13 +25,18 @@ private struct DeviceSyncBoundaryClient {
 
 extension AppState {
     @discardableResult
-    func flushPreparedDeviceSyncBoundarySerially(releaseAuthority: Bool) async -> Bool {
+    func flushPreparedDeviceSyncBoundarySerially(
+        releaseAuthority: Bool,
+        waitForRemote: Bool = true
+    ) async -> Bool {
         guard startupState.isReady, editorCommandSession.isDocumentTransitionPrepared else { return false }
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil
         if hasCurrentWorkSyncClient {
             guard await captureAndSavePreparedWorkSyncBoundary() else { return false }
-            return await materializePendingWorkSyncAtPreparedBoundary()
+            return waitForRemote
+                ? await materializePendingWorkSyncAtPreparedBoundary()
+                : true
         }
         guard selectedChapterID != nil, selectedEpisodeID != nil else {
             return await saveCoordinator.saveNow()
@@ -50,6 +55,7 @@ extension AppState {
         return await reconcileDeviceSyncBoundary(
             snapshot,
             releaseAuthority: releaseAuthority,
+            waitForRemote: waitForRemote,
             resolved: resolved
         )
     }
@@ -147,6 +153,7 @@ extension AppState {
     private func reconcileDeviceSyncBoundary(
         _ snapshot: DeviceSyncBoundarySnapshot,
         releaseAuthority: Bool,
+        waitForRemote: Bool,
         resolved: DeviceSyncBoundaryClient
     ) async -> Bool {
         do {
@@ -161,6 +168,7 @@ extension AppState {
                 state: state,
                 content: snapshot.content,
                 releaseAuthority: releaseAuthority,
+                waitForRemote: waitForRemote,
                 resolved: resolved
             )
         } catch {
@@ -207,6 +215,7 @@ extension AppState {
         state: EpisodeSyncState,
         content: String,
         releaseAuthority: Bool,
+        waitForRemote: Bool,
         resolved: DeviceSyncBoundaryClient
     ) async -> Bool {
         if releaseAuthority {
@@ -216,9 +225,23 @@ extension AppState {
                 currentContent: content
             ) else { return false }
         }
-        guard releaseAuthority,
+        guard waitForRemote,
+              releaseAuthority,
               resolved.client.remoteSynchronizationAllowed,
               shouldSynchronizeLocalFirst(state) else {
+            if !waitForRemote,
+               releaseAuthority,
+               resolved.client.remoteSynchronizationAllowed,
+               shouldSynchronizeLocalFirst(state),
+               deviceSyncLocalRecoveryReview == nil {
+                // The foreground transition is already complete. Continue the
+                // remote lane without making the caller wait for it.
+                reconcileDeviceSyncAfterDeparture(
+                    client: resolved.client,
+                    identity: resolved.identity,
+                    runtime: resolved.runtime
+                )
+            }
             if !resolved.client.remoteSynchronizationAllowed, case .conflict = deviceSyncState {
                 return true
             }

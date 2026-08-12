@@ -141,7 +141,10 @@ extension IOSDocumentStore {
             guard expectedDigest == nil ||
                 (try? SyncWorkStructureDigest(chapters: document.chapters)) == expectedDigest,
                 document.chapters.flatMap(\.episodes).map(\.id) == allowedEpisodes else { return false }
-            guard await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true) else { return false }
+            guard await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            ) else { return false }
             guard expectedDigest == nil ||
                 (try? SyncWorkStructureDigest(chapters: document.chapters)) == expectedDigest,
                 document.chapters.flatMap(\.episodes).map(\.id) == allowedEpisodes else { return false }

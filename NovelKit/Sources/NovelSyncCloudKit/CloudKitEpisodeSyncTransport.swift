@@ -226,6 +226,38 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
         }
     }
 
+    /// Known record IDs are fetched in one CloudKit request. A missing item is
+    /// represented by an omitted dictionary entry, matching
+    /// `fetchRecordIfPresent` while preserving material errors for every other
+    /// per-record result.
+    func fetchRecordsIfPresent(_ recordIDs: [CKRecord.ID]) async throws -> [CKRecord.ID: CKRecord] {
+        guard !recordIDs.isEmpty else { return [:] }
+        let results: [CKRecord.ID: Result<CKRecord, any Error>]
+        do {
+            results = try await database.records(for: recordIDs, desiredKeys: nil)
+        } catch {
+            throw mappedOperationError(error)
+        }
+
+        var records: [CKRecord.ID: CKRecord] = [:]
+        records.reserveCapacity(recordIDs.count)
+        for recordID in recordIDs {
+            guard let result = results[recordID] else {
+                throw CloudKitSyncAdapterError.operationFailed
+            }
+            switch result {
+            case let .success(record):
+                records[recordID] = record
+            case let .failure(error):
+                if CloudKitErrorMapper.isUnknownItem(error) {
+                    continue
+                }
+                throw mappedOperationError(error)
+            }
+        }
+        return records
+    }
+
     func reconcilePublishAfterConflict(
         _ request: EpisodePublishRequest,
         commandDigest: SyncContentDigest

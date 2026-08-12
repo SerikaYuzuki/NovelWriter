@@ -63,23 +63,27 @@ struct FuminiwaIOSApp: App {
                         await deviceSyncComposition.bootstrap()
                     }
                     #endif
-                    await store.bootstrap()
+                    await store.bootstrap(localFirst: true)
                     #if canImport(NovelSyncCloudKit)
-                    // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
-                    await store.refreshOrPrepareSelectedEpisodeDeviceSync()
-                    await deviceSyncBootstrap.value
-                    // 初回のStore bootstrapはCloudKit account確認を待たずlocal shelfを
-                    // 先に出す。runtimeがreadyになった後、remote catalogを必ず再読込する。
-                    _ = await store.refreshLibrary()
-                    await store.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    // local shelfはすでに表示済み。CloudKit bootstrap、remote catalog、
+                    // active workの同期はUI taskの完了境界に含めない。
+                    Task { @MainActor in
+                        await deviceSyncBootstrap.value
+                        _ = await store.refreshCloudLibrary()
+                        await store.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    }
                     #endif
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task {
                         if newPhase == .active {
-                            await store.refreshOrPrepareSelectedEpisodeDeviceSync()
                             await store.retryPendingCloudPublicationsInBackground()
-                        } else {
+                            await store.refreshActiveDeviceSyncWithoutPreparing()
+                        } else if newPhase == .background {
+                            // `.inactive` はアプリスイッチャーや一時的な割り込みでも
+                            // 発生する。ここで保存境界を開始すると、スイッチャーの
+                            // プレビューをロード表示で覆い、復帰直後の入力も止めてしまう。
+                            // 実際に中断される `.background` でだけ端末保存を行う。
                             await store.flushDeviceSyncWithBackgroundTime()
                         }
                     }

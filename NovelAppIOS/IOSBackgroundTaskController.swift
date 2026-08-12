@@ -63,7 +63,7 @@ extension IOSDocumentStore {
     @discardableResult
     func flushDeviceSyncWithBackgroundTime() async -> Bool {
         let flushTask = Task { @MainActor [weak self] in
-            await self?.flushDeviceSyncForBackground() ?? false
+            await self?.flushDeviceSyncForBackground(waitForRemote: false) ?? false
         }
         let lease = IOSBackgroundTaskLease(
             controller: backgroundTaskController,

@@ -49,6 +49,9 @@ final class IOSDocumentStore {
     var startupState: IOSStartupState = .loading
     var saveState: IOSSaveState = .saved
     var isDocumentTransitionInProgress = false
+    /// 執筆画面から一覧へ戻る間は、端末保存を待つが全画面の準備表示は出さない。
+    /// NavigationStackの戻る操作自体は保存完了まで保留して安全性を維持する。
+    var isNavigationDepartureInProgress = false
     private(set) var documentSessionGeneration: UInt64 = 0
     private(set) var editorContentGeneration: UInt64 = 0
     var deviceSyncState: IOSDeviceSyncUIState = .unconfigured
@@ -138,6 +141,7 @@ final class IOSDocumentStore {
     @ObservationIgnored var mayAttemptInitialCloudPublish = false
     @ObservationIgnored var cloudLibraryOperationInProgress = false
     @ObservationIgnored var pendingCloudLibraryRetryTask: Task<Void, Never>?
+    @ObservationIgnored var cloudLibraryRefreshTask: Task<Bool, Never>?
 
     @ObservationIgnored
     lazy var saveCoordinator: DocumentSaveCoordinator = .init(

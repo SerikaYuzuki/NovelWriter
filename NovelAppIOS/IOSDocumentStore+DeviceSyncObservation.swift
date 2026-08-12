@@ -273,7 +273,7 @@ extension IOSDocumentStore {
                         _ = await refreshCloudLibrary()
                     case .ready:
                         await retryPendingCloudPublicationsInBackground()
-                        await refreshOrPrepareSelectedEpisodeDeviceSync()
+                        await refreshActiveDeviceSyncWithoutPreparing()
                     case .loading, .recovery:
                         break
                     }
@@ -282,6 +282,18 @@ extension IOSDocumentStore {
                 }
             } while deviceSyncSignalRefreshRequested && !Task.isCancelled
             deviceSyncSignalRefreshTask = nil
+        }
+    }
+
+    /// 復帰・Push通知では、既に準備済みで表示中の編集面だけを更新する。
+    /// 未準備作品のlocal recoveryやpackage再構築は、画面を開く安全境界へ委ねる。
+    func refreshActiveDeviceSyncWithoutPreparing() async {
+        guard startupState == .ready,
+              editorCommandSession.isDocumentTransitionPrepared else { return }
+        if usesWholeWorkDeviceSync {
+            await refreshActiveWorkSyncWithoutPreparing()
+        } else if activeDeviceSyncIdentity != nil {
+            await refreshSelectedEpisodeDeviceSync()
         }
     }
 }

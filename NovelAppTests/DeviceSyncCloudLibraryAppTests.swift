@@ -194,8 +194,30 @@ struct DeviceSyncCloudLibraryAppTests {
         #expect(await harness.hiddenResumeWorkIDs() == [inactiveWorkID])
     }
 
-    @Test("hidden再送中の作品切替は同じjournal処理が終わるまで待つ")
-    func backgroundRetrySerializesDocumentActivation() async throws {
+    @Test("統合レビュー中でも検証済みのローカル作品を作品棚から開ける")
+    func reviewRequiredLocalPackageOpensFromShelf() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        let workID = SyncWorkID()
+        let document = NovelDocument.newDocument(title: "統合レビュー中の作品")
+        try await harness.seedPublishPending(document: document, workID: workID)
+        await harness.markWorkNeedsReview(workID)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+
+        let row = try #require(selectionContext(state)?.works.first)
+        #expect(row.availability == .needsReview)
+        #expect(await state.openStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(state.startupState == .ready)
+        #expect(state.document.title == document.title)
+    }
+
+    @Test("hidden再送中も作品切替はremote待ちせずlocal境界で完了する")
+    func backgroundRetryDoesNotBlockDocumentActivation() async throws {
         let harness = try CloudLibraryHarness(connection: .offline)
         defer { Task { await harness.remove() } }
         let state = try await makeState(harness: harness)
@@ -219,7 +241,7 @@ struct DeviceSyncCloudLibraryAppTests {
             await state.returnToStartupLibrary(expectedSession: activeSession)
         }
         await allowTasksToRun()
-        #expect(state.startupState.isReady)
+        #expect(!state.startupState.isReady)
 
         await harness.resumePausedHiddenResume()
         await retry.value
@@ -566,6 +588,27 @@ struct DeviceSyncCloudLibraryAppTests {
         #expect(record?.state == .publishPending)
     }
 
+    @Test("local-first起動はremote catalog停止中でも作品棚を返す")
+    func localFirstBootstrapDoesNotWaitForRemoteCatalog() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        await harness.pauseNextRemoteLoad()
+        let state = try await makeState(harness: harness)
+
+        let bootstrap = Task { @MainActor in
+            await state.bootstrap(localFirst: true)
+        }
+        await waitUntil { await harness.remoteLoadIsPaused() }
+
+        #expect(!state.startupState.isReady)
+        let context = try #require(selectionContext(state))
+        #expect(!context.isLoading)
+        #expect(state.permitsCloudLibraryMutation)
+
+        await harness.resumePausedRemoteLoad()
+        await bootstrap.value
+    }
+
     @Test("Domainだけに残ったdownload intentは作品名を漏らさずoffline再開できる")
     func domainOnlyPendingOpenReturnsAsGenericOfflineRow() async throws {
         let harness = try CloudLibraryHarness(connection: .offline)
@@ -816,9 +859,13 @@ private actor CloudLibraryHarness {
     private var completed: Set<SyncWorkID> = []
     private var authorities: Set<SyncWorkID> = []
     private var remoteLoadFails = false
+    private var shouldPauseNextRemoteLoad = false
+    private var remoteLoadPaused = false
+    private var resumeRemoteLoadRequested = false
     private var publishCalls: [SyncWorkID] = []
     private var activeDocumentPublishCalls: [SyncWorkID] = []
     private var hiddenResumeCalls: [SyncWorkID] = []
+    private var reviewRequiredWorkIDs: Set<SyncWorkID> = []
     private var shouldPauseNextHiddenResume = false
     private var hiddenResumePaused = false
     private var mostRecentlyReservedWorkID: SyncWorkID?
@@ -899,7 +946,9 @@ private actor CloudLibraryHarness {
             canResumeRemoteOpenOffline: { await self.canResume($0) },
             offlineResumableRemoteOpenWorkIDs: { await self.resumableWorkIDs() },
             hasCompletedRemoteOpenLocally: { await self.hasCompleted($0.workID) },
-            localWorkNeedsReview: { _, _ in false },
+            localWorkNeedsReview: { workID, _ in
+                await self.reviewRequiredWorkIDs.contains(workID)
+            },
             markSynced: { try await store.markSynced(workID: $0, acknowledgedRemote: $1) },
             markNeedsReview: { try await store.markNeedsReview(workID: $0) },
             quarantineInstalledPackage: {
@@ -954,6 +1003,10 @@ private actor CloudLibraryHarness {
         authorities.insert(workID)
     }
 
+    func markWorkNeedsReview(_ workID: SyncWorkID) {
+        reviewRequiredWorkIDs.insert(workID)
+    }
+
     func seedKilledBeforeStagingAttestation(
         requested: NovelDocument,
         staged: NovelDocument,
@@ -998,6 +1051,19 @@ private actor CloudLibraryHarness {
 
     func setRemoteLoadFailure(_ value: Bool) {
         remoteLoadFails = value
+    }
+
+    func pauseNextRemoteLoad() {
+        shouldPauseNextRemoteLoad = true
+        resumeRemoteLoadRequested = false
+    }
+
+    func remoteLoadIsPaused() -> Bool {
+        remoteLoadPaused
+    }
+
+    func resumePausedRemoteLoad() {
+        resumeRemoteLoadRequested = true
     }
 
     func hideRemoteCatalog() {
@@ -1088,8 +1154,17 @@ private actor CloudLibraryHarness {
         try? FileManager.default.removeItem(at: baseURL)
     }
 
-    private func remoteSnapshot() throws -> DeviceSyncRemoteLibrarySnapshot {
+    private func remoteSnapshot() async throws -> DeviceSyncRemoteLibrarySnapshot {
         guard !remoteLoadFails else { throw CloudLibraryHarnessError.unavailable }
+        if shouldPauseNextRemoteLoad {
+            shouldPauseNextRemoteLoad = false
+            remoteLoadPaused = true
+            while !resumeRemoteLoadRequested {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            remoteLoadPaused = false
+            resumeRemoteLoadRequested = false
+        }
         return DeviceSyncRemoteLibrarySnapshot(entries: remoteEntries, connection: connection)
     }
 

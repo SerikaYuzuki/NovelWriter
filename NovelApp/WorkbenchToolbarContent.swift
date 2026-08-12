@@ -25,7 +25,10 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 Button {
                     let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.returnToStartupLibrary(expectedSession: session)
+                        _ = await appState.returnToStartupLibrary(
+                            expectedSession: session,
+                            localFirst: true
+                        )
                     }
                 } label: {
                     Label("作品を選ぶ", systemImage: "books.vertical")

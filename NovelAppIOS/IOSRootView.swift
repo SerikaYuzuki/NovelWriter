@@ -26,7 +26,8 @@ struct IOSRootView: View {
         }
         .disabled(store.isDocumentTransitionInProgress)
         .overlay {
-            if store.isDocumentTransitionInProgress {
+            if store.isDocumentTransitionInProgress,
+               !store.isNavigationDepartureInProgress {
                 ZStack {
                     Rectangle()
                         .fill(.ultraThinMaterial)

@@ -82,6 +82,26 @@ struct IOSCloudLibraryIntegrationTests {
         #expect(store.cloudLibraryItems.first?.availability == .remoteOnly)
     }
 
+    @Test("local-first起動はCloudKit確認前に端末内の作品棚を表示する")
+    func localFirstBootstrapShowsVerifiedLocalShelfBeforeRemoteRefresh() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .available)
+        defer { fixture.cleanup() }
+        let document = NovelDocument.newDocument(title: "先に表示する端末内作品")
+        let workID = SyncWorkID()
+        try await fixture.seedPublishPendingPackage(document, workID: workID)
+        let store = fixture.makeStore()
+
+        await store.bootstrap(localFirst: true)
+
+        #expect(store.startupState == .library)
+        #expect(store.cloudLibraryConnection == .checking)
+        #expect(store.cloudLibraryItems.contains(where: { $0.id == workID }))
+        #expect(await fixture.remote.remoteLoadCallCount() == 0)
+
+        #expect(await store.refreshCloudLibrary())
+        #expect(await fixture.remote.remoteLoadCallCount() == 1)
+    }
+
     @Test(
         "account未設定ではnew/importをlocal-onlyで保ちinitial publishを試さない",
         arguments: [false, true]

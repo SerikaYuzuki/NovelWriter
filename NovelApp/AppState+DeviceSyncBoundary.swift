@@ -126,7 +126,7 @@ extension AppState {
     /// Scene離脱時はIMEを確定し、packageを先に保存してからjournalへ退避する。
     /// ネットワーク同期はbest effortで、失敗しても端末内の2つの保存を巻き戻さない。
     @discardableResult
-    func flushDeviceSyncForBackground() async -> Bool {
+    func flushDeviceSyncForBackground(waitForRemote: Bool = true) async -> Bool {
         // CloudKit transport can remain suspended after cancellation. Do not wait for it
         // before committing marked text and the local package during sleep/backgrounding.
         let inFlightDraft = deviceSyncDraftTask
@@ -134,9 +134,15 @@ extension AppState {
         inFlightDraft?.cancel()
         return await documentOperationGate.perform { [weak self] in
             guard let self, startupState.isReady else { return true }
-            guard beginDocumentTransition() else { return false }
-            defer { endDocumentTransition() }
-            return await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: false)
+            // Resign-active／sleep is a local durability checkpoint, not a
+            // foreground document transition. Keep the editor authority out of
+            // the observable UI lock and leave remote reconciliation queued.
+            guard editorCommandSession.prepareForDocumentTransition() else { return false }
+            defer { editorCommandSession.resumeAfterDocumentTransition() }
+            return await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: false,
+                waitForRemote: waitForRemote
+            )
         }
     }
 
@@ -154,7 +160,10 @@ extension AppState {
                   selectedEpisodeID == expectedEpisodeID,
                   beginDocumentTransition() else { return false }
             defer { endDocumentTransition() }
-            let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            let didFlush = await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            )
             guard didFlush,
                   documentSessionToken == expectedSession,
                   selectedChapterID == expectedChapterID,
@@ -184,7 +193,10 @@ extension AppState {
                   selectedEpisodeID == expectedEpisodeID,
                   beginDocumentTransition() else { return false }
             defer { endDocumentTransition() }
-            let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            let didFlush = await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            )
             guard didFlush,
                   documentSessionToken == expectedSession,
                   selectedChapterID == expectedChapterID,
@@ -364,7 +376,10 @@ extension AppState {
                   selectedEpisodeID == sourceEpisodeID,
                   beginDocumentTransition() else { return nil }
             defer { endDocumentTransition() }
-            let didFlush = await flushPreparedDeviceSyncBoundarySerially(releaseAuthority: true)
+            let didFlush = await flushPreparedDeviceSyncBoundarySerially(
+                releaseAuthority: true,
+                waitForRemote: false
+            )
             guard didFlush,
                   documentSessionToken == sourceSession,
                   selectedChapterID == sourceChapterID,

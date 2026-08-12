@@ -4,8 +4,8 @@ import NovelSync
 public extension CloudKitEpisodeSyncTransport {
     func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
         try await ensureZone()
-        try await requireWorkExists(workID)
-        return try await materializeWorkSnapshot(fetchWorkControl(for: workID))
+        let state = try await fetchWorkAndControl(for: workID)
+        return try await materializeWorkSnapshot(state.control)
     }
 
     func fetchRevision(
@@ -13,8 +13,15 @@ public extension CloudKitEpisodeSyncTransport {
         for workID: SyncWorkID
     ) async throws -> WorkRevision {
         try await ensureZone()
-        try await requireWorkExists(workID)
-        guard let record = try await fetchRecordIfPresent(.workRevision(id, workID: workID)) else {
+        let records = try await fetchRecordsIfPresent([
+            .syncWork(workID),
+            .workRevision(id, workID: workID)
+        ])
+        guard let workRecord = records[.syncWork(workID)] else {
+            throw CloudKitSyncAdapterError.workNotFound
+        }
+        _ = try codec.decodeWorkRecord(workRecord)
+        guard let record = records[.workRevision(id, workID: workID)] else {
             throw WorkSyncTransportError.missingRevision
         }
         return try codec.decodeWorkRevisionRecord(
@@ -26,19 +33,19 @@ public extension CloudKitEpisodeSyncTransport {
 
     func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
         try await ensureZone()
-        try await requireWorkExists(request.workID)
         let commandDigest = workPlanner.commandDigest(for: request)
-        if let receipt = try await fetchWorkMutationReceipt(
-            request.mutationID,
-            workID: request.workID
-        ) {
+        let prelude = try await fetchWorkPublishPrelude(
+            workID: request.workID,
+            mutationID: request.mutationID
+        )
+        if let receipt = prelude.receipt {
             guard receipt.commandDigest == commandDigest else {
                 throw WorkSyncTransportError.mutationReuse
             }
             return try await workAcknowledgement(from: receipt)
         }
 
-        let control = try await fetchWorkControl(for: request.workID)
+        let control = prelude.control
         guard control.headRevisionID == request.expectedHeadRevisionID,
               control.headSnapshotDigest == request.expectedHeadSnapshotDigest else {
             return try await .diverged(materializeWorkSnapshot(control))
@@ -91,6 +98,73 @@ public extension CloudKitEpisodeSyncTransport {
 }
 
 extension CloudKitEpisodeSyncTransport {
+    func fetchWorkAndControl(
+        for workID: SyncWorkID
+    ) async throws -> (descriptor: SyncWorkDescriptor, control: CloudKitWorkControl) {
+        let records = try await fetchRecordsIfPresent([
+            .syncWork(workID),
+            .workControl(workID)
+        ])
+        guard let workRecord = records[.syncWork(workID)] else {
+            throw CloudKitSyncAdapterError.workNotFound
+        }
+        let descriptor = try codec.decodeWorkRecord(workRecord)
+        let control = if let controlRecord = records[.workControl(workID)] {
+            try codec.decodeWorkControlRecord(
+                controlRecord,
+                expectedWorkID: workID
+            )
+        } else {
+            CloudKitWorkControl(
+                record: nil,
+                workID: workID,
+                headRevisionID: nil,
+                headSnapshotDigest: nil
+            )
+        }
+        return (descriptor, control)
+    }
+
+    func fetchWorkPublishPrelude(
+        workID: SyncWorkID,
+        mutationID: SyncMutationID
+    ) async throws -> (
+        descriptor: SyncWorkDescriptor,
+        receipt: CloudKitWorkMutationReceipt?,
+        control: CloudKitWorkControl
+    ) {
+        let records = try await fetchRecordsIfPresent([
+            .syncWork(workID),
+            .workControl(workID),
+            .workMutationReceipt(mutationID, workID: workID)
+        ])
+        guard let workRecord = records[.syncWork(workID)] else {
+            throw CloudKitSyncAdapterError.workNotFound
+        }
+        let descriptor = try codec.decodeWorkRecord(workRecord)
+        let control = if let controlRecord = records[.workControl(workID)] {
+            try codec.decodeWorkControlRecord(
+                controlRecord,
+                expectedWorkID: workID
+            )
+        } else {
+            CloudKitWorkControl(
+                record: nil,
+                workID: workID,
+                headRevisionID: nil,
+                headSnapshotDigest: nil
+            )
+        }
+        let receipt = try records[.workMutationReceipt(mutationID, workID: workID)].map {
+            try codec.decodeWorkMutationReceipt(
+                $0,
+                expectedWorkID: workID,
+                expectedMutationID: mutationID
+            )
+        }
+        return (descriptor, receipt, control)
+    }
+
     func fetchWorkControl(for workID: SyncWorkID) async throws -> CloudKitWorkControl {
         guard let record = try await fetchRecordIfPresent(.workControl(workID)) else {
             return CloudKitWorkControl(
@@ -107,7 +181,7 @@ extension CloudKitEpisodeSyncTransport {
         _ control: CloudKitWorkControl
     ) async throws -> WorkRemoteSnapshot {
         let head: WorkRevision? = if let headID = control.headRevisionID {
-            try await fetchRevision(headID, for: control.workID)
+            try await fetchWorkRevision(headID, workID: control.workID)
         } else {
             nil
         }
@@ -126,6 +200,20 @@ extension CloudKitEpisodeSyncTransport {
             }
         }
         return WorkRemoteSnapshot(head: head)
+    }
+
+    private func fetchWorkRevision(
+        _ id: SyncRevisionID,
+        workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        guard let record = try await fetchRecordIfPresent(.workRevision(id, workID: workID)) else {
+            throw WorkSyncTransportError.missingRevision
+        }
+        return try codec.decodeWorkRevisionRecord(
+            record,
+            expectedWorkID: workID,
+            expectedRevisionID: id
+        )
     }
 
     func fetchWorkMutationReceipt(

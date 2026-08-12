@@ -38,6 +38,18 @@ extension AppState {
         }
     }
 
+    /// Foreground/wake/push refresh for an already active editor. This never
+    /// prepares a new local recovery session and therefore cannot turn a
+    /// remote refresh into an editor lock.
+    func refreshActiveDeviceSyncWithoutPreparing() async {
+        guard startupState.isReady else { return }
+        if hasCurrentWorkSyncClient {
+            await refreshWholeWorkSync()
+        } else if activeDeviceSyncIdentity != nil {
+            await refreshSelectedEpisodeDeviceSync()
+        }
+    }
+
     private func refreshSelectedEpisodeDeviceSyncSerially(
         for expectedLookup: DeviceSyncLookupIdentity
     ) async {
