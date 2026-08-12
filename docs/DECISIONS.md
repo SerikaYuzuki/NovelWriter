@@ -752,3 +752,14 @@
 - **理由**: D-061〜D-064の安全なwhole-work protocolを変えずに、同じpublish／open／refreshで直列に発生していた不要なCloudKit往復を減らすためである。batch readはreadの同時性だけを改善し、remoteのwinner選択、active editorへの注入、local durabilityの順序は変更しない。
 - **置き換える範囲**: `NovelSyncCloudKit`内部のwhole-work read pathだけを対象とし、作品棚のcatalog契約、episode legacy transport、CloudKit schema、record identity、remote materialization境界は変更しない。CloudKitのサーバー処理時間、iOS background scheduling、作品全体assetの転送時間は別の残課題として扱う。
 - **検証**: `NovelSyncCloudKit` 84 / 84件を通過し、既存の`./Scripts/check.sh`でmacOS／iOSの全テストとbuildを再検証する。これはlocal／Simulator／署名なしbuildの証跡であり、実CloudKitの実測短縮やpaired native端末の同期完了時間を証明するものではない。
+
+## D-066: 執筆画面へ章別プロットカードのスライド式参照ペインを追加する
+
+- **日付**: 2026-08-13 / **状態**: 承認・実装
+- **内容**:
+  1. macOSの執筆画面では、ツールバーの「プロットカード」から右側の参照ペインを開閉できる。ペインは選択中の章に属する既存の`PlotCard`だけを表示し、カードの追加・編集・削除は既存のプロット画面と保存経路を正とする。
+  2. 参照ペインは本文を押しのける一時的なスライド式UIとし、本文EditorのIME、selection、Undo／Redo、session境界を変更しない。章を切り替える、執筆画面を離れる、作品を切り替える場合はペインを閉じる。
+  3. 上部toolbarはSidebar／Outlineの表示状態によらず同じsemanticなwindow toolbar背景を使い、ペインの開閉によって本文とtoolbarの背景を混在させない。CoreUIのWindowControlsログはアプリ固有APIへ依存しないOS／Xcode描画警告として扱う。
+- **置き換える範囲**: D-024 / TOOLBAR.mdの一段native toolbar方針を維持したまま、執筆時の参照操作を追加する。プロットカードのpackage schema、配列順、編集・保存・同期契約は変更しない。
+- **理由**: 執筆中に本文とプロットの往復を行うため、画面遷移で文脈を失わず章のカードを確認できる必要がある。一方、常設の列を増やすと本文面積を奪うため、必要時だけ右側から開く参照ペインとする。
+- **検証**: macOS／iOSを含む既存のローカルチェックを通過させ、実機でIME、ペイン開閉、本文幅、toolbar背景、VoiceOverを確認する。CoreUIログの再発有無はOS／Xcode betaの実行環境依存として別途観測する。

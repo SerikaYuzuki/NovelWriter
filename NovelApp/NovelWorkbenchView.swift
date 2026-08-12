@@ -49,6 +49,7 @@ struct NovelWorkbenchView: View {
     @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
     @State private var sidebarFocusHandoffID: UUID?
+    @State private var isPlotCardRailPresented = false
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
@@ -71,12 +72,15 @@ struct NovelWorkbenchView: View {
                 WorkbenchStatusBarView()
             }
         }
-        .toolbar(id: "novelwriter.workbench.v3") {
+        .toolbar(id: "novelwriter.workbench.v4") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
-                showsWritingActions: showsWritingActions
+                showsWritingActions: showsWritingActions,
+                isPlotCardRailPresented: $isPlotCardRailPresented
             )
         }
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
         // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
         // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
         // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
@@ -90,6 +94,9 @@ struct NovelWorkbenchView: View {
             editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
         }
         .onChange(of: showsWritingActions) { _, isWriting in
+            if !isWriting {
+                isPlotCardRailPresented = false
+            }
             #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
             if !isWriting {
                 aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
@@ -322,7 +329,7 @@ struct NovelWorkbenchView: View {
     private var workbenchDetail: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            EditorPaneView()
+            EditorPaneView(isPlotCardRailPresented: $isPlotCardRailPresented)
         case .characters:
             CharacterDetailView { appearance in
                 Task {

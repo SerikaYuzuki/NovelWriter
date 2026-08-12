@@ -18,6 +18,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
+    @Binding var isPlotCardRailPresented: Bool
 
     var body: some CustomizableToolbarContent {
         if appState.deviceSyncRuntime?.library != nil {
@@ -53,6 +54,18 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .disabled(appState.selectedChapter == nil)
             }
             .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
+                Button {
+                    isPlotCardRailPresented.toggle()
+                } label: {
+                    Label("プロットカード", systemImage: "rectangle.stack")
+                }
+                .help("執筆中の章のプロットカードを表示")
+                .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
+            }
+            .customizationBehavior(.reorderable)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
@@ -224,6 +237,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 enum WorkbenchToolbarItemID {
     static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
+    static let plotCardRail = "workbench.plot.card.rail"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
