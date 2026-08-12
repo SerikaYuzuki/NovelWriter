@@ -499,10 +499,15 @@ struct EditorPaneView: View {
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(EditorCommandSession.self) private var editorCommandSession
     @State private var isDeviceSyncConflictPresented = false
+    @Binding private var isPlotCardRailPresented: Bool
     #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
     @Environment(\.experimentalAISelectionSession) private var experimentalAISelectionSession
     @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
     #endif
+
+    init(isPlotCardRailPresented: Binding<Bool> = .constant(false)) {
+        _isPlotCardRailPresented = isPlotCardRailPresented
+    }
 
     var body: some View {
         Group {
@@ -538,39 +543,50 @@ struct EditorPaneView: View {
                     .frame(height: 30)
                     .background(editorCanvas)
 
-                    ZStack {
-                        editorCanvas
-                        EditorView(
-                            chapterKey: SessionBoundEditorKey(
-                                value: episode.id,
-                                generation: appState.editorContentGeneration
-                            ),
-                            initialText: episode.content,
-                            selectionRequest: editorSearchSession.selectionRequest,
-                            commandSession: editorCommandSession,
-                            aiSelectionSession: aiSelectionSession,
-                            selectionContextMenuCommands: selectionPromptCommands(
-                                episodeID: episode.id,
+                    HStack(spacing: 0) {
+                        ZStack {
+                            editorCanvas
+                            EditorView(
+                                chapterKey: SessionBoundEditorKey(
+                                    value: episode.id,
+                                    generation: appState.editorContentGeneration
+                                ),
+                                initialText: episode.content,
+                                selectionRequest: editorSearchSession.selectionRequest,
+                                commandSession: editorCommandSession,
+                                aiSelectionSession: aiSelectionSession,
+                                selectionContextMenuCommands: selectionPromptCommands(
+                                    episodeID: episode.id,
+                                    chapterID: chapterID,
+                                    session: session
+                                ),
+                                configuration: editorSettings.configuration,
+                                isEditable: isEditable,
+                                onTextChange: { newText in
+                                    appState.updateEpisodeContent(
+                                        newText,
+                                        for: episode.id,
+                                        in: chapterID,
+                                        expectedSession: session,
+                                        expectedEditorContentGeneration: syncLookup.editorContentGeneration
+                                    )
+                                    #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                                    aiProofreadingOperation.refreshApplicability()
+                                    #endif
+                                }
+                            )
+                            .frame(maxWidth: editorMaximumWidth)
+                        }
+
+                        if isPlotCardRailPresented {
+                            WritingPlotCardRail(
                                 chapterID: chapterID,
-                                session: session
-                            ),
-                            configuration: editorSettings.configuration,
-                            isEditable: isEditable,
-                            onTextChange: { newText in
-                                appState.updateEpisodeContent(
-                                    newText,
-                                    for: episode.id,
-                                    in: chapterID,
-                                    expectedSession: session,
-                                    expectedEditorContentGeneration: syncLookup.editorContentGeneration
-                                )
-                                #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
-                                aiProofreadingOperation.refreshApplicability()
-                                #endif
-                            }
-                        )
-                        .frame(maxWidth: editorMaximumWidth)
+                                onClose: { isPlotCardRailPresented = false }
+                            )
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
                     }
+                    .animation(.snappy(duration: 0.2), value: isPlotCardRailPresented)
 
                     EditorAccessoryBar(
                         isEnabled: isEditable,
@@ -741,6 +757,103 @@ struct EditorPaneView: View {
         #else
         nil
         #endif
+    }
+}
+
+private struct WritingPlotCardRail: View {
+    @Environment(AppState.self) private var appState
+
+    let chapterID: ChapterID
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("プロットカード", systemImage: "rectangle.stack")
+                    .font(.headline)
+                Spacer()
+                Button(action: onClose) {
+                    Label("閉じる", systemImage: "xmark")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("プロットカードを閉じる")
+            }
+            .padding(12)
+
+            Divider()
+
+            if cards.isEmpty {
+                ContentUnavailableView(
+                    "プロットカードがありません",
+                    systemImage: "rectangle.stack",
+                    description: Text("プロット画面からこの章のカードを追加できます。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(cards) { card in
+                            WritingPlotCardReference(
+                                card: card,
+                                isSelected: appState.selectedPlotCardID == card.id,
+                                onSelect: { appState.selectPlotCard(card.id) }
+                            )
+                        }
+                    }
+                    .padding(12)
+                }
+            }
+        }
+        .frame(width: 280)
+        .frame(maxHeight: .infinity)
+        .workbenchGlassChromeStyle()
+        .overlay(alignment: .leading) {
+            Divider()
+        }
+    }
+
+    private var cards: [PlotCard] {
+        appState.document.plotCards.filter { $0.chapterID == chapterID }
+    }
+}
+
+private struct WritingPlotCardReference: View {
+    let card: PlotCard
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(NovelDocument.normalizedPlotCardTitle(card.title))
+                    .font(.headline)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !card.memo.isEmpty {
+                    Text(card.memo)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(
+                .quaternary.opacity(isSelected ? 0.8 : 0.45),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.separator, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(NovelDocument.normalizedPlotCardTitle(card.title))
+        .accessibilityHint("プロットカードを選択")
     }
 }
 
