@@ -416,7 +416,12 @@ private struct PlotBoardCard: View {
                 }
             }
             .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: 320,
+                maxHeight: 320,
+                alignment: .topLeading
+            )
             .background(.quaternary.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
