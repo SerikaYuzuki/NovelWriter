@@ -42,7 +42,7 @@ D-063の現行通常Appがliveに必要とするのは、catalogの`FUMINIWASync
 | --- | --- | --- |
 | `FUMINIWASyncWorkV1` | `protocolVersion` Int64, `workID` String, `sourceDocumentID` String, `structureDigest` String, `title` String | `recordName` QUERYABLE |
 | `FUMINIWAWorkControlV1` | `protocolVersion` Int64, `workID` String, `headRevisionID` String?, `snapshotDigest` String?, `sourceDocumentID` String?, `structureDigest` String?, `title` String?, `titleDigest` String?, `titleUTF8ByteCount` Int64?, `snapshotByteCount` Int64?, `clientCreatedAt` Date/Time? | `recordName` QUERYABLE |
-| `FUMINIWAWorkRevisionV1` | `protocolVersion` Int64, `workID` String, `revisionID` String, `parentRevisionIDs` List<String>, `branchID` String, `authorReplicaID` String, `authorSessionID` String, `clientCreatedAt` Date/Time, `snapshotDigest` String, `snapshotByteCount` Int64, `revisionDigest` String, `revisionByteCount` Int64, `revisionAsset` Asset, `mutationID` String, `attachmentCount` Int64, `attachmentManifestDigest` String? | `recordName` QUERYABLE |
+| `FUMINIWAWorkRevisionV1` | `protocolVersion` Int64, `workID` String, `revisionID` String, `parentRevisionIDs` List<String>?, `branchID` String, `authorReplicaID` String, `authorSessionID` String, `clientCreatedAt` Date/Time, `snapshotDigest` String, `snapshotByteCount` Int64, `revisionDigest` String, `revisionByteCount` Int64, `revisionAsset` Asset, `mutationID` String, `attachmentCount` Int64, `attachmentManifestDigest` String? | `recordName` QUERYABLE |
 | `FUMINIWAWorkMutationReceiptV1` | `protocolVersion` Int64, `workID` String, `mutationID` String, `commandDigest` String, `resultHeadRevisionID` String, `snapshotDigest` String | `recordName` QUERYABLE |
 
 ### 保持中の旧Episode経路（3 type）
@@ -50,7 +50,7 @@ D-063の現行通常Appがliveに必要とするのは、catalogの`FUMINIWASync
 | Record type | Fields（型。`?`はoptional） | 必須index |
 | --- | --- | --- |
 | `FUMINIWAEpisodeControlV1` | `protocolVersion` Int64, `workID` String, `episodeID` String, `leaseEpoch` Int64, `headRevisionID` String?, `holderReplicaID` String?, `holderSessionID` String?, `leaseExpiresAt` Date/Time? | `recordName` QUERYABLE |
-| `FUMINIWAEpisodeRevisionV1` | `protocolVersion` Int64, `workID` String, `episodeID` String, `revisionID` String, `parentRevisionIDs` List<String>, `branchID` String, `authorReplicaID` String, `authorSessionID` String, `clientCreatedAt` Date/Time, `bodyDigest` String, `bodyByteCount` Int64, `bodyAsset` Asset, `mutationID` String | `recordName` QUERYABLE |
+| `FUMINIWAEpisodeRevisionV1` | `protocolVersion` Int64, `workID` String, `episodeID` String, `revisionID` String, `parentRevisionIDs` List<String>?, `branchID` String, `authorReplicaID` String, `authorSessionID` String, `clientCreatedAt` Date/Time, `bodyDigest` String, `bodyByteCount` Int64, `bodyAsset` Asset, `mutationID` String | `recordName` QUERYABLE |
 | `FUMINIWAMutationReceiptV1` | `protocolVersion` Int64, `workID` String, `episodeID` String, `mutationID` String, `commandDigest` String, `resultHeadRevisionID` String, `resultLeaseEpoch` Int64, `resultHolderReplicaID` String, `resultHolderSessionID` String, `resultLeaseExpiresAt` Date/Time | `recordName` QUERYABLE |
 
 cleanなDevelopment containerにはcustom zoneがまだ存在しない。live account確認済みで、confirmed binding、cached remote head、pending downloadがない場合だけ、zone-not-foundを空の利用可能catalogとして扱う。その後、利用者の明示的新規作成が`bootstrapZoneForNewSync`を通ってzoneを作る。

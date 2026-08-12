@@ -47,6 +47,7 @@ struct CloudKitPublishPlannerTests {
         #expect(plan.savePolicy == .ifServerRecordUnchanged)
         #expect(plan.atomically)
         #expect(plan.stagedAssets.count == 1)
+        #expect(plan.recordsToSave[0][CloudKitSyncSchema.Field.parentRevisionIDs] == nil)
     }
 
     @Test("command digest survives display-time truncation but changes with exact body")

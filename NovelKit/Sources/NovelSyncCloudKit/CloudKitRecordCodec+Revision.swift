@@ -16,8 +16,9 @@ extension CloudKitRecordCodec {
         setCommonFields(on: record, workID: revision.key.workID)
         record[CloudKitSyncSchema.Field.episodeID] = revision.key.episodeID.rawValue.uuidString as CKRecordValue
         record[CloudKitSyncSchema.Field.revisionID] = revision.revisionID.rawValue.uuidString as CKRecordValue
-        record[CloudKitSyncSchema.Field.parentRevisionIDs] = revision.parentRevisionIDs
-            .map(\.rawValue.uuidString) as CKRecordValue
+        record[CloudKitSyncSchema.Field.parentRevisionIDs] = revision.parentRevisionIDs.isEmpty
+            ? nil
+            : revision.parentRevisionIDs.map(\.rawValue.uuidString) as CKRecordValue
         record[CloudKitSyncSchema.Field.branchID] = revision.branchID.rawValue.uuidString as CKRecordValue
         record[CloudKitSyncSchema.Field.authorReplicaID] = revision.authorReplicaID.rawValue.uuidString as CKRecordValue
         record[CloudKitSyncSchema.Field.authorSessionID] = revision.authorSessionID.rawValue.uuidString as CKRecordValue
@@ -117,7 +118,10 @@ extension CloudKitRecordCodec {
         _ record: CKRecord,
         expectedRevisionID: SyncRevisionID
     ) throws -> [SyncRevisionID] {
-        let parentStrings = try requiredStringArray(record, CloudKitSyncSchema.Field.parentRevisionIDs)
+        let parentStrings = try optionalNonEmptyStringArray(
+            record,
+            CloudKitSyncSchema.Field.parentRevisionIDs
+        )
         guard parentStrings.count <= 2 else {
             throw CloudKitSyncAdapterError.invalidRemoteRecord
         }

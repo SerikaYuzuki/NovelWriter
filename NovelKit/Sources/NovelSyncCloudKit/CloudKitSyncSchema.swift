@@ -128,7 +128,7 @@ enum CloudKitSyncSchema {
                 Field.bodyAsset: .asset,
                 Field.mutationID: .string
             ]),
-            optionalFields: [],
+            optionalFields: [Field.parentRevisionIDs],
             queryableSystemFields: ["recordName"]
         ),
         ProductionRecordType(
@@ -190,7 +190,10 @@ enum CloudKitSyncSchema {
                 Field.attachmentManifestDigest: .string,
                 Field.attachmentCount: .int64
             ]),
-            optionalFields: [Field.attachmentManifestDigest],
+            optionalFields: [
+                Field.parentRevisionIDs,
+                Field.attachmentManifestDigest
+            ],
             queryableSystemFields: ["recordName"]
         ),
         ProductionRecordType(

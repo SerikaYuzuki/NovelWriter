@@ -147,6 +147,22 @@ struct CloudKitWorkSyncSchemaTests {
         }
     }
 
+    @Test("revision parent lists are optional schema fields")
+    func revisionParentListsAreOptional() throws {
+        let checklist = CloudKitSyncSchema.productionSchemaChecklist
+        #expect(checklist.allSatisfy { recordType in
+            recordType.optionalFields.isSubset(of: Set(recordType.fields.keys))
+        })
+        let episodeRevisionSchema = try #require(checklist.first {
+            $0.name == CloudKitSyncSchema.RecordType.episodeRevision
+        })
+        let workRevisionSchema = try #require(checklist.first {
+            $0.name == CloudKitSyncSchema.RecordType.workRevision
+        })
+        #expect(episodeRevisionSchema.optionalFields.contains(CloudKitSyncSchema.Field.parentRevisionIDs))
+        #expect(workRevisionSchema.optionalFields.contains(CloudKitSyncSchema.Field.parentRevisionIDs))
+    }
+
     @Test("whole-work payloads use assets instead of the one-megabyte record field")
     func largeCanonicalPayloadStagesAsAsset() throws {
         let root = try makeCloudTestDirectory()

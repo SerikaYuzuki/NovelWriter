@@ -42,6 +42,7 @@ struct CloudKitWorkRecordCodecTests {
 
         let encoded = try codec.makeWorkRevisionRecord(revision, mutationID: mutationID)
         defer { codec.removeStagedAssets([encoded.stagedAsset]) }
+        #expect(encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] == nil)
         #expect(encoded.record[CloudKitSyncSchema.Field.bodyAsset] == nil)
         #expect(encoded.record[CloudKitSyncSchema.Field.revisionAsset] is CKAsset)
         #expect(encoded.record[CloudKitSyncSchema.Field.attachmentCount] as? Int64 == 0)
@@ -68,6 +69,43 @@ struct CloudKitWorkRecordCodecTests {
                 expectedMutationID: mutationID
             ) == receipt
         )
+    }
+
+    @Test("root omits an empty parent list and child requires a non-empty string list")
+    func parentListEncodingMatchesCloudKitContract() throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let codec = try CloudKitRecordCodec(assetStore: CloudKitAssetStore(rootURL: root))
+        let parentID = try SyncRevisionID(
+            rawValue: #require(UUID(uuidString: "51515151-5151-4151-8151-515151515151"))
+        )
+        let child = try makeWorkRevision(
+            id: #require(UUID(uuidString: "52525252-5252-4252-8252-525252525252")),
+            parents: [parentID]
+        )
+        let encoded = try codec.makeWorkRevisionRecord(child, mutationID: SyncMutationID())
+        defer { codec.removeStagedAssets([encoded.stagedAsset]) }
+
+        #expect(
+            encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] as? [String]
+                == [parentID.rawValue.uuidString]
+        )
+        #expect(
+            try codec.decodeWorkRevisionRecord(
+                encoded.record,
+                expectedWorkID: cloudTestWorkID,
+                expectedRevisionID: child.revisionID
+            ).parentRevisionIDs == [parentID]
+        )
+
+        encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] = [String]() as CKRecordValue
+        #expect(throws: CloudKitSyncAdapterError.invalidRemoteRecord) {
+            try codec.validateWorkRevisionMetadataRecord(
+                encoded.record,
+                expectedWorkID: cloudTestWorkID,
+                expectedRevisionID: child.revisionID
+            )
+        }
     }
 
     @Test("revision asset tampering and unsupported attachment metadata are rejected")

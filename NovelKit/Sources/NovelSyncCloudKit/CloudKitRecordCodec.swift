@@ -212,6 +212,15 @@ struct CloudKitRecordCodec: Sendable {
         return values
     }
 
+    func optionalNonEmptyStringArray(_ record: CKRecord, _ field: String) throws -> [String] {
+        guard record[field] != nil else { return [] }
+        let values = try requiredStringArray(record, field)
+        guard !values.isEmpty else {
+            throw CloudKitSyncAdapterError.invalidRemoteRecord
+        }
+        return values
+    }
+
     func requiredInt(_ record: CKRecord, _ field: String) throws -> Int {
         guard let number = record[field] as? NSNumber,
               isIntegralNumber(number),

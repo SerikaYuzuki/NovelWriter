@@ -36,6 +36,7 @@ struct CloudKitWorkPublishPlannerTests {
             CloudKitSyncSchema.RecordType.workMutationReceipt,
             CloudKitSyncSchema.RecordType.workControl
         ])
+        #expect(plan.recordsToSave[0][CloudKitSyncSchema.Field.parentRevisionIDs] == nil)
         let updatedControl = try #require(
             plan.recordsToSave.first {
                 $0.recordType == CloudKitSyncSchema.RecordType.workControl

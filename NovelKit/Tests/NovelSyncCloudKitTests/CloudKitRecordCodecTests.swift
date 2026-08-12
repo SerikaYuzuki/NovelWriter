@@ -82,6 +82,7 @@ struct CloudKitRecordCodecTests {
         )
         let encoded = try codec.makeRevisionRecord(revision, mutationID: mutationID)
         #expect(FileManager.default.fileExists(atPath: encoded.stagedAsset.url.path))
+        #expect(encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] == nil)
 
         let decoded = try codec.decodeRevisionRecord(
             encoded.record,
@@ -250,5 +251,46 @@ struct CloudKitRecordCodecTests {
         let fresh = try restarted.stage(content: "再起動後の本文")
         #expect(FileManager.default.fileExists(atPath: fresh.url.path))
         restarted.remove([fresh])
+    }
+}
+
+@Suite("CloudKit revision parent list codec")
+struct CloudKitRevisionParentListTests {
+    @Test("root omits an empty parent list and child requires a non-empty string list")
+    func parentListEncodingMatchesCloudKitContract() throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let codec = try CloudKitRecordCodec(assetStore: CloudKitAssetStore(rootURL: root))
+        let parentID = try SyncRevisionID(
+            rawValue: #require(UUID(uuidString: "41414141-4141-4141-8141-414141414141"))
+        )
+        let child = try makeCloudTestRevision(
+            id: #require(UUID(uuidString: "42424242-4242-4242-8242-424242424242")),
+            parents: [parentID],
+            content: "親の続き"
+        )
+        let encoded = try codec.makeRevisionRecord(child, mutationID: SyncMutationID())
+        defer { codec.removeStagedAssets([encoded.stagedAsset]) }
+
+        #expect(
+            encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] as? [String]
+                == [parentID.rawValue.uuidString]
+        )
+        #expect(
+            try codec.decodeRevisionRecord(
+                encoded.record,
+                expectedKey: cloudTestKey,
+                expectedRevisionID: child.revisionID
+            ).parentRevisionIDs == [parentID]
+        )
+
+        encoded.record[CloudKitSyncSchema.Field.parentRevisionIDs] = [String]() as CKRecordValue
+        #expect(throws: CloudKitSyncAdapterError.invalidRemoteRecord) {
+            try codec.validateRevisionMetadataRecord(
+                encoded.record,
+                expectedKey: cloudTestKey,
+                expectedRevisionID: child.revisionID
+            )
+        }
     }
 }
