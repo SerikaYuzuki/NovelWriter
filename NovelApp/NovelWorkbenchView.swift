@@ -77,6 +77,9 @@ struct NovelWorkbenchView: View {
                 showsWritingActions: showsWritingActions
             )
         }
+        // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
+        // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
+        // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
         .searchable(
             text: Bindable(editorSearchSession).query,
             isPresented: searchableIsPresented,
@@ -87,7 +90,6 @@ struct NovelWorkbenchView: View {
             editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
         }
         .onChange(of: showsWritingActions) { _, isWriting in
-            editorSearchSession.isSearchPresented = isWriting
             #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
             if !isWriting {
                 aiProofreadingOperation.editorSurfaceDidBecomeUnavailable()
@@ -166,9 +168,8 @@ struct NovelWorkbenchView: View {
 
     private var searchableIsPresented: Binding<Bool> {
         Binding(
-            get: { showsWritingActions && editorSearchSession.isSearchPresented },
+            get: { editorSearchSession.isSearchPresented },
             set: { newValue in
-                guard showsWritingActions else { return }
                 editorSearchSession.isSearchPresented = newValue
             }
         )
