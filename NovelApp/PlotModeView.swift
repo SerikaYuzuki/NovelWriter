@@ -110,7 +110,7 @@ struct PlotBoardView: View {
                 return true
             }
         } else {
-            ScrollView(.horizontal) {
+            ScrollView([.horizontal, .vertical]) {
                 LazyHStack(alignment: .top, spacing: 16) {
                     PlotCardCanvas(
                         chapterID: chapterID,
@@ -411,17 +411,12 @@ private struct PlotBoardCard: View {
                     Text(card.memo)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(12)
+                        .lineLimit(40)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(12)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: 320,
-                maxHeight: 320,
-                alignment: .topLeading
-            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(.quaternary.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
