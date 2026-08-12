@@ -56,16 +56,19 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
 
-            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail, placement: .primaryAction) {
                 Button {
                     isPlotCardRailPresented.toggle()
                 } label: {
-                    Label("プロットカード", systemImage: "rectangle.stack")
+                    Label("プロットカード", systemImage: "sidebar.trailing")
+                        .labelStyle(.iconOnly)
                 }
                 .help("執筆中の章のプロットカードを表示")
+                .buttonStyle(.bordered)
+                .controlSize(.large)
                 .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
