@@ -347,13 +347,15 @@ enum DeviceSyncEditorStatusKind: Hashable {
     var systemImage: String {
         switch self {
         case .savingLocally, .syncing:
-            "arrow.triangle.2.circlepath"
-        case .savedLocally, .synced:
+            "arrow.triangle.2.circlepath.icloud"
+        case .savedLocally:
             "checkmark.circle"
+        case .synced:
+            "checkmark.icloud"
         case .offline:
             "icloud.slash"
         case .needsReview:
-            "exclamationmark.triangle"
+            "exclamationmark.icloud"
         case .configurationError, .syncPreparationError:
             "exclamationmark.icloud"
         case .localSaveError:

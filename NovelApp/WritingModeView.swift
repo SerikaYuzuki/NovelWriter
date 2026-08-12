@@ -498,15 +498,19 @@ struct EditorPaneView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(EditorCommandSession.self) private var editorCommandSession
-    @State private var isDeviceSyncConflictPresented = false
     @Binding private var isPlotCardRailPresented: Bool
+    @Binding private var isDeviceSyncConflictPresented: Bool
     #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
     @Environment(\.experimentalAISelectionSession) private var experimentalAISelectionSession
     @Environment(AIProofreadingOperation.self) private var aiProofreadingOperation
     #endif
 
-    init(isPlotCardRailPresented: Binding<Bool> = .constant(false)) {
+    init(
+        isPlotCardRailPresented: Binding<Bool> = .constant(false),
+        isDeviceSyncConflictPresented: Binding<Bool> = .constant(false)
+    ) {
         _isPlotCardRailPresented = isPlotCardRailPresented
+        _isDeviceSyncConflictPresented = isDeviceSyncConflictPresented
     }
 
     var body: some View {
@@ -519,30 +523,6 @@ struct EditorPaneView: View {
                 let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
                     ?? Color(nsColor: .textBackgroundColor)
                 VStack(spacing: 0) {
-                    HStack {
-                        Spacer()
-                        DeviceSyncStatusControl(
-                            saveState: appState.saveState,
-                            state: appState.deviceSyncState,
-                            transferState: appState.deviceSyncTransferState,
-                            localDurabilityState: appState.deviceSyncLocalDurabilityState,
-                            hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil
-                                || appState.workSyncConflictReview != nil
-                                || appState.workSyncLocalRecoveryReview != nil,
-                            isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
-                                || !appState.deviceSyncLocalRecoveryPending
-                        ) {
-                            guard appState.workSyncConflictReview != nil
-                                || appState.workSyncLocalRecoveryReview != nil
-                                || appState.deviceSyncConflict != nil
-                                || appState.deviceSyncLocalRecoveryReview != nil else { return }
-                            isDeviceSyncConflictPresented = true
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 30)
-                    .background(editorCanvas)
-
                     HStack(spacing: 0) {
                         ZStack {
                             editorCanvas
