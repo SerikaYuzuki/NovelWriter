@@ -769,7 +769,16 @@
 - **日付**: 2026-08-13 / **状態**: 承認・実装
 - **内容**:
   1. 執筆画面のプロットカード参照ペインは、中央の編集操作列ではなく、検索欄の左側にある右上の`primaryAction`へ`sidebar.trailing`アイコンの独立ボタンとして表示する。本文の利用可能幅と他の編集操作を圧迫しないことを優先する。
-  2. ツールバーの背景は`windowBackgroundColor`ではなく、macOS標準の`controlBackgroundColor`を使う。スクリーンショットで確認した左上の明るめの茶色のchromeに寄せつつ、Light／Dark外観とアクセシビリティ設定への追従を維持する。
+  2. ツールバーの背景は`windowBackgroundColor`ではなく、macOS標準の`underPageBackgroundColor`を使う。スクリーンショットで確認した左上の明るめの茶色のchromeに寄せつつ、Light／Dark外観とアクセシビリティ設定への追従を維持する。
 - **置き換える範囲**: D-066の参照ペイン本体、章別カード表示、session境界、toolbarの一段構成は変更しない。変更対象は開閉入口の配置、アイコン、ボタン階層、semantic toolbar背景だけとする。
-- **理由**: 引き出しの存在と開閉状態を画面右上で見つけやすくし、本文と関係する補助操作のまとまりを崩さないためである。`controlBackgroundColor`は固定hexを増やさず、従来の暗すぎるwindow背景よりchromeの視認性を上げる。
+- **理由**: 引き出しの存在と開閉状態を画面右上で見つけやすくし、本文と関係する補助操作のまとまりを崩さないためである。`underPageBackgroundColor`は固定hexを増やさず、従来の暗すぎるwindow背景よりchromeの視認性を上げる。
 - **検証**: SwiftFormat、SwiftLint、macOS／iOSの既存テストとbuildを通し、実機で右上ボタンの配置、ペイン開閉、toolbar色、VoiceOverラベルを確認する。
+
+## D-068: クラウド同期状態を話メモの左へ移し、執筆本文上の重複表示をなくす
+
+- **日付**: 2026-08-13 / **状態**: 承認・実装
+- **内容**:
+  1. `DeviceSyncStatusControl`は執筆本文の上端に置かず、native toolbar内で話メモの左に固定する。状態に応じて`checkmark.icloud`、`icloud.slash`、`exclamationmark.icloud`などを使い、保存済み・同期中・オフライン・確認必要を表現する。
+  2. 統合確認が必要な状態では、toolbarの状態ボタンから既存のconflict reviewを開く。同期状態の表示移動で保存、IME、本文Editor、競合解決の契約は変更しない。
+- **理由**: 同期は本文編集の補助状態であり、本文面積を削る独立行ではなく、話メモと並ぶ執筆補助操作として常に見つけられる場所へ置くためである。
+- **検証**: macOS／iOSの既存ローカルチェックを通過させ、実機で同期状態の各アイコン、メモとの順序、確認画面への到達、VoiceOverラベルを確認する。

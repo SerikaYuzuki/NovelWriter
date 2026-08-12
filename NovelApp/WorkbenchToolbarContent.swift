@@ -19,6 +19,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
+    let reviewDeviceSyncChanges: () -> Void
 
     var body: some CustomizableToolbarContent {
         if appState.deviceSyncRuntime?.library != nil {
@@ -67,6 +68,23 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+
+            ToolbarItem(id: WorkbenchToolbarItemID.deviceSyncStatus) {
+                DeviceSyncStatusControl(
+                    saveState: appState.saveState,
+                    state: appState.deviceSyncState,
+                    transferState: appState.deviceSyncTransferState,
+                    localDurabilityState: appState.deviceSyncLocalDurabilityState,
+                    hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil
+                        || appState.workSyncConflictReview != nil
+                        || appState.workSyncLocalRecoveryReview != nil,
+                    isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
+                        || !appState.deviceSyncLocalRecoveryPending,
+                    reviewChanges: reviewDeviceSyncChanges
+                )
             }
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
@@ -241,6 +259,7 @@ enum WorkbenchToolbarItemID {
     static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
+    static let deviceSyncStatus = "workbench.device.sync.status"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
