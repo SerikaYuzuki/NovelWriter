@@ -20,10 +20,32 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let showsWritingActions: Bool
 
     var body: some CustomizableToolbarContent {
+        if appState.deviceSyncRuntime?.library != nil {
+            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
+                Button {
+                    let session = appState.documentSessionToken
+                    Task {
+                        _ = await appState.returnToStartupLibrary(
+                            expectedSession: session,
+                            localFirst: true
+                        )
+                    }
+                } label: {
+                    Label("作品を選ぶ", systemImage: "books.vertical")
+                }
+                .help("iCloudの作品一覧へ戻る")
+                .disabled(!appState.permitsReturnToCloudLibrary)
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+        }
+
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
-                    appState.addEpisode()
+                    Task {
+                        await appState.addEpisodeAfterDeviceSyncDeparture()
+                    }
                 } label: {
                     Label("話を追加", systemImage: "square.and.pencil")
                 }
@@ -111,7 +133,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if showsWritingActions || showsPlotActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
                 Button {
-                    appState.addChapter()
+                    Task {
+                        await appState.addChapterAfterDeviceSyncDeparture()
+                    }
                 } label: {
                     Label("章を追加", systemImage: "plus")
                 }
@@ -198,6 +222,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 }
 
 enum WorkbenchToolbarItemID {
+    static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
@@ -283,26 +308,12 @@ struct SnapshotPopover: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(presenter.snapshots) { item in
-                    HStack(spacing: 8) {
-                        Button(item.snapshot.displayName) {
-                            presenter.requestRestore(item)
-                            overlayState.presented = nil
-                        }
-                        .buttonStyle(.plain)
-                        .lineLimit(1)
-
-                        Spacer()
-
-                        Button {
-                            guard item.session == appState.documentSessionToken else { return }
-                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
-                        } label: {
-                            Label("Finderで表示", systemImage: "folder")
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Finderで表示")
+                    Button(item.snapshot.displayName) {
+                        presenter.requestRestore(item)
+                        overlayState.presented = nil
                     }
+                    .buttonStyle(.plain)
+                    .lineLimit(1)
                 }
                 .listStyle(.plain)
             }
@@ -418,8 +429,7 @@ final class SnapshotMenuPresenter {
 
     func requestRestore(_ request: SnapshotRestoreRequest) {
         guard request.session == appState.documentSessionToken,
-              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else
-        {
+              snapshots.contains(where: { $0.id == request.id && $0.session == request.session }) else {
             restoreErrorMessage = "作品が切り替わったため、スナップショット一覧を更新してください。"
             return
         }

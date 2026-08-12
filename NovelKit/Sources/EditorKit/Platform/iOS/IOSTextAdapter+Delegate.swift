@@ -1,0 +1,272 @@
+#if canImport(UIKit) && !canImport(AppKit)
+import UIKit
+
+extension IOSTextAdapter.Coordinator {
+    func textView(
+        _ textView: UITextView,
+        shouldChangeTextIn range: NSRange,
+        replacementText text: String
+    ) -> Bool {
+        shouldChangeText(in: textView, range: range, replacementText: text)
+    }
+
+    @available(iOS 26.0, *)
+    func textView(
+        _ textView: UITextView,
+        shouldChangeTextInRanges ranges: [NSValue],
+        replacementText text: String
+    ) -> Bool {
+        // D-055の規則は単一caret／selectionのUTF-16 rangeを前提とする。
+        // multi-caret入力はUIKitへ委ね、単一rangeだけを従来と同じhandlerへ収束させる。
+        guard ranges.count == 1 else { return true }
+        return shouldChangeText(
+            in: textView,
+            range: ranges[0].rangeValue,
+            replacementText: text
+        )
+    }
+
+    private func shouldChangeText(
+        in textView: UITextView,
+        range: NSRange,
+        replacementText text: String
+    ) -> Bool {
+        guard textView.isEditable else { return false }
+        guard !isApplyingPluginReplacement else { return true }
+
+        // iOSのIMEもmarked rangeを保持したまま確定入力へ入る場合がある。
+        // 確定前に記録し、marked range解放後だけD-055のR5を適用する。
+        if textView.markedTextRange != nil {
+            hasPendingIMECommit = true
+            let sourceText = textView.text ?? ""
+            if text == "\n", Range(range, in: sourceText) != nil {
+                pendingIMENewline = IOSPendingIMENewline(
+                    sourceText: sourceText,
+                    replacementRange: range,
+                    surfaceToken: commandSurfaceToken
+                )
+            }
+        }
+
+        let action = pipeline.shouldChange(
+            context: IOSEditorContext(textView: textView),
+            range: range,
+            replacement: text
+        )
+        switch action {
+        case .allow, .allowSkippingRemaining:
+            return true
+        case let .replace(replacementRange, replacementText, caretOffset):
+            applyPluginReplacement(
+                range: replacementRange,
+                text: replacementText,
+                caretOffset: caretOffset,
+                textView: textView
+            )
+            return false
+        }
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        advanceAIContentRevision()
+
+        if isApplyingPluginReplacement {
+            observedInternalTextChange = true
+            return
+        }
+        guard TextOwnershipPolicy.shouldNotifyTextChange(
+            hasMarkedText: textView.markedTextRange != nil
+        ) else {
+            hasPendingIMECommit = true
+            return
+        }
+        guard !isPerformingUndoOrRedo else { return }
+
+        if hasPendingIMECommit {
+            schedulePendingIMECommitSynchronization(from: textView)
+            return
+        }
+        synchronizeCommittedText(from: textView)
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        advanceAISelectionRevision()
+        onSelectionChange?(textView.selectedRange, commandSurfaceToken)
+
+        // 実IMEが本文変更通知時にはまだmarked rangeを持ち、その直後の選択通知で
+        // 確定する経路を取りこぼさない。pendingがある場合だけ最終同期する。
+        let shouldSynchronizeIMECommit = hasPendingIMECommit &&
+            textView.markedTextRange == nil &&
+            !isApplyingPluginReplacement &&
+            !isPerformingUndoOrRedo
+        if shouldSynchronizeIMECommit {
+            schedulePendingIMECommitSynchronization(from: textView)
+        }
+    }
+
+    func textViewDidEndComposition(
+        _ textView: UITextView,
+        surfaceToken: EditorSurfaceToken
+    ) {
+        guard commandSurfaceToken == surfaceToken,
+              hasPendingIMECommit,
+              textView.markedTextRange == nil,
+              !isApplyingPluginReplacement,
+              !isPerformingUndoOrRedo else { return }
+        synchronizeCommittedText(from: textView)
+    }
+
+    private func schedulePendingIMECommitSynchronization(from textView: UITextView) {
+        let surfaceToken = commandSurfaceToken
+        RunLoop.main.perform { [weak self, weak textView] in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let textView,
+                      self.textView === textView else { return }
+                self.textViewDidEndComposition(textView, surfaceToken: surfaceToken)
+            }
+        }
+    }
+
+    func prepareForDocumentTransition() -> Bool {
+        advanceAISelectionSurface()
+        guard let textView else {
+            isEditingSuspendedForDocumentTransition = true
+            return true
+        }
+        if textView.markedTextRange != nil {
+            hasPendingIMECommit = true
+            textView.unmarkText()
+        }
+        guard textView.markedTextRange == nil else { return false }
+        synchronizeCommittedText(from: textView)
+        isEditingSuspendedForDocumentTransition = true
+        applyEffectiveEditability(to: textView)
+        return true
+    }
+
+    func resumeAfterDocumentTransition() {
+        isEditingSuspendedForDocumentTransition = false
+        if let textView {
+            applyEffectiveEditability(to: textView)
+        }
+    }
+
+    /// 利用者の入力権限と、作品遷移中の一時停止を別々に保持する。
+    ///
+    /// 変換中に読み取り専用へ切り替わる場合は、先に現在のmarked textを
+    /// 確定して`onTextChange`へ通知する。本文・選択範囲・Undo履歴は流し直さない。
+    func updateDesiredEditability(_ isEditable: Bool, textView: UITextView) {
+        guard desiredIsEditable != isEditable else {
+            applyEffectiveEditability(to: textView)
+            return
+        }
+
+        desiredIsEditable = isEditable
+        advanceCommandSurface()
+        advanceAISelectionSurface()
+
+        if !isEditable, textView.markedTextRange != nil {
+            hasPendingIMECommit = true
+            textView.unmarkText()
+            if textView.markedTextRange == nil {
+                synchronizeCommittedText(from: textView)
+            }
+        }
+        applyEffectiveEditability(to: textView)
+    }
+
+    private func applyEffectiveEditability(to textView: UITextView) {
+        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        textView.isSelectable = true
+    }
+
+    func notifyCommittedText(from textView: UITextView) {
+        guard textView.markedTextRange == nil, !isApplyingPluginReplacement else { return }
+        let committedText = textView.text ?? ""
+        guard lastNotifiedCommittedText != committedText else { return }
+        lastNotifiedCommittedText = committedText
+        onTextChange(committedText)
+    }
+
+    private func synchronizeCommittedText(from textView: UITextView) {
+        guard textView.markedTextRange == nil, !isApplyingPluginReplacement else { return }
+
+        pipeline.didChange(context: IOSEditorContext(textView: textView))
+
+        if hasPendingIMECommit {
+            let committedNewline = pendingIMENewline
+            hasPendingIMECommit = false
+            pendingIMENewline = nil
+            if let committedNewline {
+                applyPostIMENewlineIndent(committedNewline, to: textView)
+            }
+            applyPostIMEChange(to: textView)
+        }
+
+        notifyCommittedText(from: textView)
+    }
+
+    private func applyPostIMENewlineIndent(
+        _ pending: IOSPendingIMENewline,
+        to textView: UITextView
+    ) {
+        guard commandSurfaceToken == pending.surfaceToken else { return }
+
+        let sourceBeforeReplacement = (pending.sourceText as NSString).replacingCharacters(
+            in: pending.replacementRange,
+            with: ""
+        )
+        let insertionRange = NSRange(location: pending.replacementRange.location, length: 0)
+        guard case let .replace(ruleRange, replacement, caretOffset) = IndentRules.action(
+            for: "\n",
+            in: sourceBeforeReplacement,
+            range: insertionRange
+        ), ruleRange == insertionRange else { return }
+
+        let committedText = (pending.sourceText as NSString).replacingCharacters(
+            in: pending.replacementRange,
+            with: "\n"
+        )
+        let committedSelection = NSRange(
+            location: pending.replacementRange.location + 1,
+            length: 0
+        )
+        guard textView.text == committedText,
+              textView.selectedRange == committedSelection else { return }
+
+        _ = applyInternalReplacement(
+            range: NSRange(location: pending.replacementRange.location, length: 1),
+            text: replacement,
+            caretOffset: caretOffset,
+            textView: textView
+        )
+    }
+
+    func discardPendingPlatformEdits() {
+        hasPendingIMECommit = false
+        pendingIMENewline = nil
+        pendingUndoRegistrations.removeAll()
+    }
+
+    private func applyPostIMEChange(to textView: UITextView) {
+        switch IndentRules.postChangeAction(
+            in: textView.text,
+            caretLocation: textView.selectedRange.location
+        ) {
+        case .allow:
+            break
+        case let .replace(range, text, caretOffset):
+            _ = applyInternalReplacement(
+                range: range,
+                text: text,
+                caretOffset: caretOffset,
+                textView: textView
+            )
+        case let .moveCaret(location):
+            textView.selectedRange = NSRange(location: location, length: 0)
+            IOSViewport.reveal(range: textView.selectedRange, in: textView)
+        }
+    }
+}
+#endif

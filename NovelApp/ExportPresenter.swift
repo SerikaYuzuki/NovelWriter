@@ -11,8 +11,40 @@ import UniformTypeIdentifiers
 /// この境界を差し替えてキャンセルや選択結果を再現する。
 @MainActor
 protocol ExportPanelPresenting {
-    func chooseFormat() -> ExportFormat?
-    func chooseDestination(format: ExportFormat, defaultFilename: String) -> URL?
+    func chooseFormat() -> AppExportFormat?
+    func chooseDestination(format: AppExportFormat, defaultFilename: String) -> URL?
+}
+
+/// 利用者が選べる書き出し形式。
+///
+/// 原稿レンダリングは`NovelExport`へ委譲し、portableな作品パッケージは
+/// AppStateの作品ライフサイクル境界から複製する。後者を`ExportFormat`へ
+/// 混ぜないことで、NovelExportをpackage storageへ依存させない。
+enum AppExportFormat: Hashable, Sendable {
+    case rendered(ExportFormat)
+    case novelPackage
+
+    static let plainText = Self.rendered(.plainText)
+    static let markdown = Self.rendered(.markdown)
+    static let epub = Self.rendered(.epub)
+
+    var filenameExtension: String {
+        switch self {
+        case let .rendered(format):
+            format.filenameExtension
+        case .novelPackage:
+            "novelpkg"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case let .rendered(format):
+            format.displayName
+        case .novelPackage:
+            "作品パッケージ"
+        }
+    }
 }
 
 /// 値スナップショットを指定形式で書き出す実行境界。
@@ -43,7 +75,7 @@ struct BackgroundNovelExportExecutor: ExportExecuting {
 
 enum ExportPresentationState: Equatable {
     case idle
-    case exporting(ExportFormat)
+    case exporting(AppExportFormat)
     case succeeded(filename: String)
     case failed(message: String)
     case cancelled
@@ -97,8 +129,13 @@ enum ExportPresentationState: Equatable {
 final class ExportPresenter {
     private let documentTitleProvider: @MainActor () -> String
     private let documentProvider: @MainActor () -> NovelDocument
+    private let documentSessionProvider: @MainActor () -> DocumentSessionToken?
     @ObservationIgnored private let panelPresenter: any ExportPanelPresenting
     @ObservationIgnored private let executor: any ExportExecuting
+    @ObservationIgnored private let packageExporter: @MainActor @Sendable (
+        URL,
+        DocumentSessionToken?
+    ) async throws -> Void
     @ObservationIgnored private var exportTask: Task<Void, Never>?
 
     private(set) var state: ExportPresentationState = .idle
@@ -107,26 +144,43 @@ final class ExportPresenter {
         self.init(
             documentTitleProvider: { appState.document.title },
             documentProvider: { appState.document },
+            documentSessionProvider: { appState.documentSessionToken },
             panelPresenter: MacExportPanelPresenter(),
-            executor: BackgroundNovelExportExecutor()
+            executor: BackgroundNovelExportExecutor(),
+            packageExporter: { destination, expectedSession in
+                try await appState.exportDocumentPackage(
+                    to: destination,
+                    expectedSession: expectedSession
+                )
+            }
         )
     }
 
     init(
         documentTitleProvider: @escaping @MainActor () -> String,
         documentProvider: @escaping @MainActor () -> NovelDocument,
+        documentSessionProvider: @escaping @MainActor () -> DocumentSessionToken? = { nil },
         panelPresenter: any ExportPanelPresenting,
-        executor: any ExportExecuting
+        executor: any ExportExecuting,
+        packageExporter: @escaping @MainActor @Sendable (
+            URL,
+            DocumentSessionToken?
+        ) async throws -> Void = { _, _ in
+            throw PackageExportError.unavailable
+        }
     ) {
         self.documentTitleProvider = documentTitleProvider
         self.documentProvider = documentProvider
+        self.documentSessionProvider = documentSessionProvider
         self.panelPresenter = panelPresenter
         self.executor = executor
+        self.packageExporter = packageExporter
     }
 
     func present() {
         guard !state.isExporting else { return }
         exportTask = nil
+        let expectedSession = documentSessionProvider()
 
         guard let format = panelPresenter.chooseFormat() else {
             state = .cancelled
@@ -144,14 +198,33 @@ final class ExportPresenter {
             return
         }
 
-        // 保存パネル確定後の値を一度だけ捕捉する。以降の編集はこの値へ影響しない。
-        let documentSnapshot = documentProvider()
         let destination = Self.enforcingExtension(format.filenameExtension, on: selectedDestination)
+        guard documentSessionProvider() == expectedSession else {
+            state = .failed(message: "作品が切り替わったため、書き出しを開始しませんでした。")
+            return
+        }
+        let renderedDocument: NovelDocument? = if case .rendered = format {
+            documentProvider()
+        } else {
+            nil
+        }
         state = .exporting(format)
 
-        exportTask = Task { [weak self, executor] in
+        exportTask = Task { [weak self, executor, packageExporter] in
             do {
-                try await executor.export(documentSnapshot, to: destination, format: format)
+                switch format {
+                case let .rendered(renderedFormat):
+                    // 保存パネル確定時のsessionと値を一度だけ捕捉する。
+                    guard let documentSnapshot = renderedDocument else { throw CancellationError() }
+                    try await executor.export(
+                        documentSnapshot,
+                        to: destination,
+                        format: renderedFormat
+                    )
+                case .novelPackage:
+                    // packageは現在Editorの確定と資料等の複製をAppStateのgate内で行う。
+                    try await packageExporter(destination, expectedSession)
+                }
                 guard !Task.isCancelled else {
                     self?.state = .cancelled
                     return
@@ -175,7 +248,7 @@ final class ExportPresenter {
         await exportTask?.value
     }
 
-    static func defaultFilename(documentTitle: String, format: ExportFormat) -> String {
+    static func defaultFilename(documentTitle: String, format: AppExportFormat) -> String {
         let trimmedTitle = documentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmedTitle.isEmpty ? "無題の作品" : trimmedTitle
         return "\(title).\(format.filenameExtension)"
@@ -204,20 +277,21 @@ final class ExportPresenter {
 
 @MainActor
 private final class MacExportPanelPresenter: ExportPanelPresenting {
-    private let formats: [(format: ExportFormat, title: String)] = [
+    private let formats: [(format: AppExportFormat, title: String)] = [
         (.plainText, "テキスト（.txt）"),
         (.markdown, "Markdown（.md）"),
-        (.epub, "EPUB（.epub）")
+        (.epub, "EPUB（.epub）"),
+        (.novelPackage, "ふみにわ作品パッケージ（.novelpkg）")
     ]
 
-    func chooseFormat() -> ExportFormat? {
+    func chooseFormat() -> AppExportFormat? {
         let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         picker.addItems(withTitles: formats.map(\.title))
         picker.setAccessibilityLabel("書き出し形式")
 
         let alert = NSAlert()
         alert.messageText = "書き出し形式を選択"
-        alert.informativeText = "原稿を書き出す形式を選んでください。"
+        alert.informativeText = "原稿または作品パッケージを書き出す形式を選んでください。作品パッケージには、このMacにある作品内容・資料・スナップショット履歴が含まれます。iCloud上の完全なバックアップではありません。"
         alert.alertStyle = .informational
         alert.accessoryView = picker
         alert.addButton(withTitle: "続ける")
@@ -229,9 +303,9 @@ private final class MacExportPanelPresenter: ExportPanelPresenting {
         return formats[selectedIndex].format
     }
 
-    func chooseDestination(format: ExportFormat, defaultFilename: String) -> URL? {
+    func chooseDestination(format: AppExportFormat, defaultFilename: String) -> URL? {
         let panel = NSSavePanel()
-        panel.title = "原稿を書き出す"
+        panel.title = format == .novelPackage ? "作品パッケージを書き出す" : "原稿を書き出す"
         panel.prompt = "書き出す"
         panel.nameFieldStringValue = defaultFilename
         panel.allowedContentTypes = [
@@ -257,4 +331,11 @@ private extension ExportFormat {
             "EPUB"
         }
     }
+}
+
+enum PackageExportError: Error {
+    case unavailable
+    case staleSession
+    case invalidDestination
+    case saveFailed
 }

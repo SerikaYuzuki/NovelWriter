@@ -61,6 +61,43 @@ private struct FlagListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            flagContent
+
+            Divider()
+
+            HStack {
+                Button {
+                    appState.addFlag()
+                } label: {
+                    Label("伏線を追加", systemImage: "plus")
+                }
+
+                Button(role: .destructive) {
+                    flagPendingDeletion = appState.selectedFlag.map {
+                        SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                    }
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+                .disabled(appState.selectedFlag == nil)
+
+                Spacer()
+            }
+            .padding(8)
+        }
+    }
+
+    @ViewBuilder
+    private var flagContent: some View {
+        if appState.document.flags.isEmpty {
+            ContentUnavailableView(
+                "伏線がありません",
+                systemImage: "checklist",
+                description: Text("伏線を追加ボタンから伏線を追加できます。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(16)
+        } else {
             List(selection: flagSelectionBinding) {
                 Section {
                     ForEach(sessionBoundUnresolvedFlags) { item in
@@ -88,37 +125,6 @@ private struct FlagListView: View {
                         .monospacedDigit()
                 }
             }
-            .overlay {
-                if appState.document.flags.isEmpty {
-                    ContentUnavailableView(
-                        "伏線がありません",
-                        systemImage: "checklist",
-                        description: Text("伏線を追加ボタンから伏線を追加できます。")
-                    )
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Button {
-                    appState.addFlag()
-                } label: {
-                    Label("伏線を追加", systemImage: "plus")
-                }
-
-                Button(role: .destructive) {
-                    flagPendingDeletion = appState.selectedFlag.map {
-                        SessionBoundValue(value: $0, session: appState.documentSessionToken)
-                    }
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-                .disabled(appState.selectedFlag == nil)
-
-                Spacer()
-            }
-            .padding(8)
         }
     }
 
@@ -227,8 +233,7 @@ private struct FlagDetailView: View {
     private var selectedFlagHasOrderWarning: Bool {
         guard let flag = appState.selectedFlag,
               let plantedIndex = chapterIndex(for: flag.plantedChapterID),
-              let resolvedIndex = chapterIndex(for: flag.resolvedChapterID) else
-        {
+              let resolvedIndex = chapterIndex(for: flag.resolvedChapterID) else {
             return false
         }
 

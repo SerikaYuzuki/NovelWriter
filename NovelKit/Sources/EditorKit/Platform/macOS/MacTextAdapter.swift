@@ -21,9 +21,6 @@ import SwiftUI
 /// - 章切り替え時、章専用の `UndoManager` を `removeAllActions()` でクリアし、
 ///   前章の undo 履歴が新しい章に効かないようにする。
 struct MacTextAdapter: NSViewRepresentable {
-    /// 本文とウィンドウ端の余白(docs/STYLE.md エディタ本文)。
-    private static let contentInset = NSSize(width: 16, height: 16)
-
     let chapterKey: AnyHashable
     let initialText: String
     let selectionRequest: EditorSelectionRequest?
@@ -32,6 +29,7 @@ struct MacTextAdapter: NSViewRepresentable {
     let aiSelectionSession: EditorAISelectionSession?
     let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     let configuration: EditorConfiguration
+    let isEditable: Bool
     let onTextChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -51,6 +49,7 @@ struct MacTextAdapter: NSViewRepresentable {
 
         assertTextKit2(textView)
         configure(textView)
+        EditorViewport.configure(scrollView: scrollView, textView: textView)
 
         textView.delegate = context.coordinator
         context.coordinator.onSelectionChange = { range, surfaceToken in
@@ -70,6 +69,7 @@ struct MacTextAdapter: NSViewRepresentable {
             from: context.coordinator.commandSurfaceToken
         )
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
         scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
             NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
             .textBackgroundColor
@@ -92,6 +92,7 @@ struct MacTextAdapter: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         context.coordinator.registerCommandSurface(with: commandSession)
         context.coordinator.registerAISelectionSurface(with: aiSelectionSession)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
@@ -197,6 +198,9 @@ struct MacTextAdapter: NSViewRepresentable {
         var aiContentRevision: UInt64 = 0
         var aiSelectionRevision: UInt64 = 0
         private var isPerformingUndoOrRedo = false
+        private var hasPendingIMECommit = false
+        private(set) var desiredIsEditable = true
+        private(set) var isEditingSuspendedForDocumentTransition = false
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -262,9 +266,16 @@ struct MacTextAdapter: NSViewRepresentable {
             shouldChangeTextIn affectedCharRange: NSRange,
             replacementString: String?
         ) -> Bool {
+            guard textView.isEditable else { return false }
             // 自分自身が確定させた置換を適用中の再入呼び出し。パイプラインには
             // 通さず、そのまま許可する(上記 `isApplyingPluginReplacement` 参照)。
             guard !isApplyingPluginReplacement else { return true }
+            // 実際のIME確定は、marked textを保持したままこのdelegateへ入り、
+            // `insertText`完了後にmarked rangeを解放する。確定前の時点で記録し、
+            // 続くtextDidChangeからR5後処理を一度だけ実行する。
+            if textView.hasMarkedText() {
+                hasPendingIMECommit = true
+            }
             guard let replacementString else { return true }
 
             let context = MacEditorContext(textView: textView)
@@ -292,6 +303,7 @@ struct MacTextAdapter: NSViewRepresentable {
             ) else {
                 // IME変換中は通知しない。変換確定後の textDidChange で
                 // 最新の全文が届く(docs/DESIGN.md 4.3)。
+                hasPendingIMECommit = true
                 return
             }
 
@@ -312,41 +324,26 @@ struct MacTextAdapter: NSViewRepresentable {
             // 再利用しない。AI専用surfaceだけを更新し、notation commandの
             // owner leaseや本文のUndo履歴には触れない。
             advanceAISelectionSurface()
-            guard let textView else { return true }
+            guard let textView else {
+                isEditingSuspendedForDocumentTransition = true
+                return true
+            }
             if textView.hasMarkedText() {
+                hasPendingIMECommit = true
                 textView.unmarkText()
             }
             guard !textView.hasMarkedText() else { return false }
             synchronizeCommittedText(from: textView)
-            textView.isEditable = false
+            isEditingSuspendedForDocumentTransition = true
+            applyEffectiveEditability(to: textView)
             return true
         }
 
         func resumeAfterDocumentTransition() {
-            textView?.isEditable = true
-        }
-
-        private func synchronizeCommittedText(from textView: NSTextView) {
-            guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
-
-            pipeline.didChange(context: MacEditorContext(textView: textView))
-
-            if case let .replace(range, text, caretOffset) = IndentRules.postChangeAction(
-                in: textView.string,
-                caretLocation: textView.selectedRange().location
-            ) {
-                // IMEの確定挿入とR5の後処理を別Undo単位にする。これによりUndo一回で
-                // 字下げだけが戻り、確定した鉤括弧は残る。
-                textView.breakUndoCoalescing()
-                _ = applyInternalReplacement(
-                    range: range,
-                    text: text,
-                    caretOffset: caretOffset,
-                    textView: textView
-                )
+            isEditingSuspendedForDocumentTransition = false
+            if let textView {
+                applyEffectiveEditability(to: textView)
             }
-
-            notifyCommittedText(from: textView)
         }
 
         /// plugin / command / Undoが確定した最終本文だけをモデルへ渡す。
@@ -436,7 +433,7 @@ struct MacTextAdapter: NSViewRepresentable {
             caretOffset: Int,
             textView: NSTextView
         ) -> Bool {
-            guard let textStorage = textView.textStorage else { return false }
+            guard textView.isEditable, let textStorage = textView.textStorage else { return false }
 
             isApplyingPluginReplacement = true
             defer { isApplyingPluginReplacement = false }
@@ -448,6 +445,7 @@ struct MacTextAdapter: NSViewRepresentable {
             textView.didChangeText()
 
             textView.setSelectedRange(NSRange(location: range.location + caretOffset, length: 0))
+            EditorViewport.revealCaret(in: textView)
             return true
         }
 
@@ -476,7 +474,7 @@ struct MacTextAdapter: NSViewRepresentable {
                 .foregroundColor: textColor,
                 .paragraphStyle: paragraphStyle
             ]
-            textView.textContainerInset = MacTextAdapter.contentInset
+            textView.textContainerInset = EditorViewport.textContainerInset
             textView.textStorage?.addAttributes(
                 [
                     .font: font,
@@ -491,6 +489,66 @@ struct MacTextAdapter: NSViewRepresentable {
 }
 
 extension MacTextAdapter.Coordinator {
+    /// 利用者の入力権限と、作品遷移中の一時停止を別々に保持する。
+    ///
+    /// 変換中に読み取り専用へ切り替わる場合は、先に現在のmarked textを
+    /// 確定して`onTextChange`へ通知する。本文・選択範囲・Undo履歴は流し直さない。
+    func updateDesiredEditability(_ isEditable: Bool, textView: NSTextView) {
+        guard desiredIsEditable != isEditable else {
+            applyEffectiveEditability(to: textView)
+            return
+        }
+
+        desiredIsEditable = isEditable
+        advanceCommandSurface()
+        advanceAISelectionSurface()
+
+        if !isEditable, textView.hasMarkedText() {
+            hasPendingIMECommit = true
+            textView.unmarkText()
+            if !textView.hasMarkedText() {
+                synchronizeCommittedText(from: textView)
+            }
+        }
+        applyEffectiveEditability(to: textView)
+    }
+
+    private func applyEffectiveEditability(to textView: NSTextView) {
+        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        textView.isSelectable = true
+    }
+
+    private func synchronizeCommittedText(from textView: NSTextView) {
+        guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
+
+        pipeline.didChange(context: MacEditorContext(textView: textView))
+
+        if hasPendingIMECommit {
+            hasPendingIMECommit = false
+            switch IndentRules.postChangeAction(
+                in: textView.string,
+                caretLocation: textView.selectedRange().location
+            ) {
+            case .allow:
+                break
+            case let .replace(range, text, caretOffset):
+                // IMEの確定挿入とR5の後処理を別Undo単位にする。
+                textView.breakUndoCoalescing()
+                _ = applyInternalReplacement(
+                    range: range,
+                    text: text,
+                    caretOffset: caretOffset,
+                    textView: textView
+                )
+            case let .moveCaret(location):
+                textView.setSelectedRange(NSRange(location: location, length: 0))
+                EditorViewport.revealCaret(in: textView)
+            }
+        }
+
+        notifyCommittedText(from: textView)
+    }
+
     func registerDocumentLifecycle(with session: EditorCommandSession) {
         let prepare = { [weak self] in self?.prepareForDocumentTransition() ?? true }
         let resume: () -> Void = { [weak self] in

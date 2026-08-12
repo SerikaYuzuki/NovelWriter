@@ -84,7 +84,8 @@ struct DocumentSaveCoordinatorTests {
             saveOperation: { [weak spy] document, url in
                 guard let spy else { return }
                 try await spy.perform(document, url)
-            }
+            },
+            saveEventHandler: { _ in }
         )
     }
 
@@ -420,7 +421,8 @@ struct DocumentSaveCoordinatorTests {
             },
             saveOperation: { _, _ in
                 try await Task.sleep(for: .milliseconds(500))
-            }
+            },
+            saveEventHandler: { _ in }
         )
 
         coordinator.markDirty()

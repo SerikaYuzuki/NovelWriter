@@ -12,7 +12,8 @@ import Foundation
 /// 常に `.allow` を返すので、呼び出し側でそのまま素通しできる。
 ///
 /// - 改行1文字の挿入(`replacement == "\n"`)
-/// - 鉤括弧1文字または括弧ペアの挿入(`replacement == "「"` / `"『"` / `"「」"` / `"『』"`)
+/// - 鉤括弧1文字または括弧ペアの挿入
+///   (`replacement == "「"` / `"」"` / `"『"` / `"』"` / `"「」"` / `"『』"`)
 public enum IndentRules {
     /// 字下げに用いる全角スペース(U+3000)。
     public static let fullWidthSpace: Character = "\u{3000}"
@@ -30,11 +31,21 @@ public enum IndentRules {
         case replace(range: NSRange, text: String, caretOffset: Int)
     }
 
+    /// IME確定後に適用する、本文置換またはキャレット移動の判定結果。
+    public enum PostChangeAction: Equatable {
+        /// 介入しない。
+        case allow
+        /// `range` を `text` に置き換える。
+        case replace(range: NSRange, text: String, caretOffset: Int)
+        /// 本文を変更せず、UTF-16位置へキャレットを移動する。
+        case moveCaret(location: Int)
+    }
+
     /// 改行1文字挿入・鉤括弧挿入それぞれに対する自動インデントを判定する。
     ///
     /// - Parameters:
-    ///   - replacement: 挿入しようとしている文字列。1文字の改行・鉤括弧以外は
-    ///     常に対象外(`.allow`)として扱う。
+    ///   - replacement: 挿入しようとしている文字列。1文字の改行・鉤括弧または
+    ///     対応する括弧ペア以外は常に対象外(`.allow`)として扱う。
     ///   - text: 置換前の本文全体。
     ///   - range: 置換対象の範囲(UTF-16 の `NSRange`)。
     /// - Returns: 適用すべきアクション。対象外の入力は常に `.allow`。
@@ -44,6 +55,8 @@ public enum IndentRules {
             newlineAction(in: text, range: range)
         case "「", "『", "「」", "『』":
             bracketAction(replacement: replacement, in: text, range: range)
+        case "」", "』":
+            closingBracketAction(replacement: replacement, in: text, range: range)
         default:
             .allow
         }
@@ -62,48 +75,93 @@ public enum IndentRules {
 
     // MARK: - R3: 鉤括弧
 
-    /// R3(行が全角スペース1つだけで、キャレットが行末にあるときの鉤括弧入力)を判定する。
+    /// R3(字下げ行での鉤括弧入力と、任意位置での括弧ペア入力)を判定する。
     private static func bracketAction(replacement: String, in text: String, range: NSRange) -> Action {
         // 対象は素朴なキャレット入力のみ(選択範囲の置き換えは対象外)。
-        guard range.length == 0 else { return .allow }
-        guard let line = lineBounds(at: range.location, in: text) else { return .allow }
-        guard line.content.count == 1, line.content.first == fullWidthSpace else { return .allow }
+        guard range.length == 0, Range(range, in: text) != nil else { return .allow }
 
-        // キャレットが行末(全角スペースの直後)にあることを確認する。
-        let lineEnd = line.nsRange.location + line.nsRange.length
-        guard range.location == lineEnd else { return .allow }
+        let isPair = replacement == "「」" || replacement == "『』"
 
-        let caretOffset = switch replacement {
-        case "「」", "『』":
-            1
-        default:
-            replacement.utf16.count
+        if let line = lineBounds(at: range.location, in: text) {
+            let lineEnd = line.nsRange.location + line.nsRange.length
+            let shouldReplaceIndent = line.content.count == 1
+                && line.content.first == fullWidthSpace
+                && range.location == lineEnd
+            if shouldReplaceIndent {
+                let caretOffset = isPair ? 1 : replacement.utf16.count
+                return .replace(range: line.nsRange, text: replacement, caretOffset: caretOffset)
+            }
         }
-        return .replace(range: line.nsRange, text: replacement, caretOffset: caretOffset)
+
+        // 括弧ペアは字下げの有無や文中位置にかかわらず、キャレットをペア内へ置く。
+        guard isPair else { return .allow }
+        return .replace(range: range, text: replacement, caretOffset: 1)
+    }
+
+    private enum BracketPairCaretPosition {
+        case inside
+        case after(openingLocation: Int)
+    }
+
+    /// 開き括弧の直後へ対応する閉じ括弧を入力した場合、空ペア内へキャレットを置く。
+    private static func closingBracketAction(
+        replacement: String,
+        in text: String,
+        range: NSRange
+    ) -> Action {
+        guard range.length == 0, Range(range, in: text) != nil, range.location >= 1 else {
+            return .allow
+        }
+
+        let precedingRange = NSRange(location: range.location - 1, length: 1)
+        guard let preceding = substring(in: text, range: precedingRange) else { return .allow }
+        let isMatchingEmptyPair = (preceding == "「" && replacement == "」")
+            || (preceding == "『" && replacement == "』")
+        guard isMatchingEmptyPair else { return .allow }
+
+        // 閉じ括弧は挿入しつつ、キャレットを挿入位置(開閉括弧の間)に残す。
+        return .replace(range: range, text: replacement, caretOffset: 0)
     }
 
     // MARK: - R5: IME確定後の鉤括弧
 
-    /// IME確定後の本文に、行頭の字下げと鉤括弧が並んでいる場合の後処理を判定する。
+    /// IME確定後の字下げ解除と、括弧ペア内へのキャレット移動を判定する。
     ///
-    /// `caretLocation` は鉤括弧直後のキャレット位置。行全体を走査せず、キャレットの
-    /// ある行がちょうど `　「` / `　『` である場合だけ、行頭の全角スペースを削除する。
-    public static func postChangeAction(in text: String, caretLocation: Int) -> Action {
+    /// `caretLocation` は鉤括弧直後、括弧ペア内、または括弧ペア直後のキャレット位置。
+    /// 行頭が字下げ付き鉤括弧だけなら全角スペースを削除し、任意位置の括弧ペア直後なら
+    /// 本文を変更せずキャレットをペア内へ移動する。
+    public static func postChangeAction(in text: String, caretLocation: Int) -> PostChangeAction {
         guard let line = lineBounds(at: caretLocation, in: text) else { return .allow }
-        guard caretLocation == line.nsRange.location + line.nsRange.length else { return .allow }
-        guard line.content.count == 2 else { return .allow }
-
         let characters = Array(line.content)
-        guard characters[0] == fullWidthSpace, characters[1] == "「" || characters[1] == "『" else {
-            return .allow
+        let caretOffsetInLine = caretLocation - line.nsRange.location
+        let isSingleIndentedOpeningBracket = characters.count == 2
+            && characters[0] == fullWidthSpace
+            && (characters[1] == "「" || characters[1] == "『")
+            && caretOffsetInLine == line.nsRange.length
+        let isIndentedMatchingPair = characters.count == 3
+            && characters[0] == fullWidthSpace
+            && ((characters[1] == "「" && characters[2] == "」")
+                || (characters[1] == "『" && characters[2] == "』"))
+            && (caretOffsetInLine == 2 || caretOffsetInLine == line.nsRange.length)
+
+        if isSingleIndentedOpeningBracket || isIndentedMatchingPair {
+            let caretOffset = isIndentedMatchingPair
+                ? 1
+                : caretOffsetInLine - fullWidthSpace.utf16.count
+            return .replace(
+                range: NSRange(location: line.nsRange.location, length: fullWidthSpace.utf16.count),
+                text: "",
+                caretOffset: caretOffset
+            )
         }
 
-        let bracket = String(characters[1])
-        return .replace(
-            range: NSRange(location: line.nsRange.location, length: fullWidthSpace.utf16.count),
-            text: bracket,
-            caretOffset: bracket.utf16.count
-        )
+        guard case let .after(openingLocation) = bracketPairCaretPosition(
+            in: text,
+            caretLocation: caretLocation
+        ) else {
+            return .allow
+        }
+        return .moveCaret(location: openingLocation + 1)
     }
 
     // MARK: - 補助ロジック
@@ -126,5 +184,35 @@ public enum IndentRules {
 
         let contentNSRange = NSRange(content.startIndex ..< content.endIndex, in: text)
         return (contentNSRange, content)
+    }
+
+    /// キャレットが対応する鉤括弧ペアの内側または直後にあるかをUTF-16範囲で判定する。
+    private static func bracketPairCaretPosition(
+        in text: String,
+        caretLocation: Int
+    ) -> BracketPairCaretPosition? {
+        let nsLength = (text as NSString).length
+        guard caretLocation >= 0, caretLocation <= nsLength else { return nil }
+
+        if caretLocation >= 2 {
+            let range = NSRange(location: caretLocation - 2, length: 2)
+            if let pair = substring(in: text, range: range), pair == "「」" || pair == "『』" {
+                return .after(openingLocation: range.location)
+            }
+        }
+
+        if caretLocation >= 1, caretLocation < nsLength {
+            let range = NSRange(location: caretLocation - 1, length: 2)
+            if let pair = substring(in: text, range: range), pair == "「」" || pair == "『』" {
+                return .inside
+            }
+        }
+
+        return nil
+    }
+
+    private static func substring(in text: String, range: NSRange) -> Substring? {
+        guard let stringRange = Range(range, in: text) else { return nil }
+        return text[stringRange]
     }
 }

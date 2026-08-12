@@ -11,11 +11,18 @@ options:
   bundleIdPrefix: dev.serikayuzuki
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 
 packages:
   NovelKit:
     path: NovelKit
+
+# Signing.local.xcconfig is an optional, ignored per-developer override. This
+# keeps Team selection across XcodeGen regeneration without committing a Team ID.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
 
 schemes:
   FUMINIWA:
@@ -25,6 +32,7 @@ schemes:
     test:
       targets:
         - name: NovelAppTests
+        - name: NovelAppDeviceSyncTests
   FUMINIWAExperimental:
     build:
       targets:
@@ -32,6 +40,14 @@ schemes:
     test:
       targets:
         - name: FUMINIWAExperimentalTests
+  FUMINIWAIOS:
+    build:
+      targets:
+        FUMINIWAIOS: all
+    test:
+      targets:
+        - name: FUMINIWAIOSTests
+        - name: FUMINIWADeviceSyncIOSTests
 
 targets:
   NovelApp:
@@ -51,6 +67,10 @@ targets:
         product: NovelUI
       - package: NovelKit
         product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
     settings:
       base:
         PRODUCT_NAME: FUMINIWA
@@ -64,19 +84,33 @@ targets:
         # 物理Info.plistを正とする(D-038)。
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: NovelApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NovelApp/NovelApp.entitlements
         # コード署名: ローカル実行用に自動署名。CIビルドチェックでは
         # `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` を
         # 引数で渡して署名なしビルドにする(Scripts/check.sh)。
         CODE_SIGN_STYLE: Automatic
-        # App Sandbox は採用しない(docs/DECISIONS.md D-011)。entitlements
-        # ファイルを一切持たせないことで、Sandbox capability を付与しない。
+        # App Sandbox は採用しない(docs/DECISIONS.md D-011)。Device Sync用の
+        # CloudKit / Push entitlementだけを持たせ、sandbox entitlementは付与しない。
         ENABLE_HARDENED_RUNTIME: YES
+      configs:
+        Debug:
+          FUMINIWA_APS_ENVIRONMENT: development
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Development
+        Release:
+          FUMINIWA_APS_ENVIRONMENT: production
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Production
   NovelAppTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: NovelAppTests
+        excludes:
+          - DeviceSyncAppIntegrationTests.swift
+          - DeviceSyncPersistenceRootTests.swift
+          - DeviceSyncEditIntentStoreTests.swift
+          - DeviceSyncLocalLibraryStoreTests.swift
+          - DeviceSyncCloudLibraryAppTests.swift
     dependencies:
       - target: NovelApp
     settings:
@@ -85,6 +119,47 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  NovelAppDeviceSyncTests:
+    # App hostとtest bundleへDomainを二重linkしないunhosted test module。
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: NovelApp
+        excludes:
+          - FuminiwaApp.swift
+          - Info.plist
+          - NovelApp.entitlements
+          - Assets.xcassets
+          - en.lproj
+          - ja.lproj
+      - path: NovelAppTests/DeviceSyncAppIntegrationTests.swift
+      - path: NovelAppTests/DeviceSyncPersistenceRootTests.swift
+      - path: NovelAppTests/DeviceSyncEditIntentStoreTests.swift
+      - path: NovelAppTests/DeviceSyncLocalLibraryStoreTests.swift
+      - path: NovelAppTests/DeviceSyncCloudLibraryAppTests.swift
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
+      - package: NovelKit
+        product: NovelSyncTesting
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_UNHOSTED_DEVICE_SYNC_TESTS"
   FUMINIWAExperimental:
     type: application
     platform: macOS
@@ -109,6 +184,8 @@ targets:
         product: NovelExport
       - package: NovelKit
         product: NovelAI
+      - package: NovelKit
+        product: NovelSync
     settings:
       base:
         PRODUCT_NAME: FUMINIWAExperimental
@@ -138,3 +215,109 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWAExperimental.app/Contents/MacOS/FUMINIWAExperimental"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  FUMINIWAIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovelAppIOS
+        excludes:
+          - Info.plist
+      - path: NovelApp/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentOperationGate.swift
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
+    settings:
+      base:
+        PRODUCT_NAME: FUMINIWA
+        PRODUCT_MODULE_NAME: FUMINIWAIOS
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.ios
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: NovelAppIOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NovelAppIOS/FUMINIWAIOS.entitlements
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug:
+          FUMINIWA_APS_ENVIRONMENT: development
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Development
+        Release:
+          FUMINIWA_APS_ENVIRONMENT: production
+          FUMINIWA_ICLOUD_CONTAINER_ENVIRONMENT: Production
+  FUMINIWAIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovelAppIOSTests
+        excludes:
+          - IOSDeviceSyncIntegrationTests.swift
+          - IOSDeviceSyncPersistenceRootTests.swift
+          - IOSDeviceSyncEditIntentStoreTests.swift
+          - IOSCloudLibraryIntegrationTests.swift
+    dependencies:
+      - target: FUMINIWAIOS
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  FUMINIWADeviceSyncIOSTests:
+    # iOSもApp sourceを一度だけcompileするunhosted test module。
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovelAppIOS
+        excludes:
+          - FuminiwaIOSApp.swift
+          - Info.plist
+          - FUMINIWAIOS.entitlements
+      - path: NovelApp/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentOperationGate.swift
+      - path: NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift
+      - path: NovelAppIOSTests/IOSDeviceSyncPersistenceRootTests.swift
+      - path: NovelAppIOSTests/IOSDeviceSyncEditIntentStoreTests.swift
+      - path: NovelAppIOSTests/IOSCloudLibraryIntegrationTests.swift
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+      - package: NovelKit
+        product: NovelStorage
+      - package: NovelKit
+        product: EditorKit
+      - package: NovelKit
+        product: NovelUI
+      - package: NovelKit
+        product: NovelExport
+      - package: NovelKit
+        product: NovelSync
+      - package: NovelKit
+        product: NovelSyncCloudKit
+      - package: NovelKit
+        product: NovelSyncTesting
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES

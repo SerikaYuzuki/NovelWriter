@@ -1,0 +1,520 @@
+import CloudKit
+import Foundation
+import NovelSync
+
+enum AppleCloudAccountScopeResolver {
+    static func resolve(containerIdentifier: String) async throws -> AppleCloudAccountScope {
+        guard containerIdentifier.hasPrefix("iCloud."),
+              containerIdentifier.utf8.count <= 255 else {
+            throw CloudKitSyncAdapterError.invalidConfiguration
+        }
+        let container = CKContainer(identifier: containerIdentifier)
+        let status: CKAccountStatus
+        do {
+            status = try await container.accountStatus()
+        } catch {
+            throw mappedAccountError(error)
+        }
+        switch status {
+        case .available:
+            break
+        case .noAccount:
+            throw CloudKitSyncAdapterError.accountUnavailable(.noAccount)
+        case .restricted:
+            throw CloudKitSyncAdapterError.accountUnavailable(.restricted)
+        case .couldNotDetermine:
+            throw CloudKitSyncAdapterError.accountUnavailable(.couldNotDetermine)
+        case .temporarilyUnavailable:
+            throw CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+        @unknown default:
+            throw CloudKitSyncAdapterError.accountUnavailable(.couldNotDetermine)
+        }
+
+        do {
+            let userRecordID = try await container.userRecordID()
+            return AppleCloudAccountScope(
+                containerIdentifier: containerIdentifier,
+                userRecordName: userRecordID.recordName
+            )
+        } catch {
+            throw mappedAccountError(error)
+        }
+    }
+
+    private static func mappedAccountError(_ error: any Error) -> any Error {
+        if let adapterError = error as? CloudKitSyncAdapterError {
+            return adapterError
+        }
+        let mapped = CloudKitErrorMapper.map(error)
+        if CloudKitErrorMapper.isTransient(error) {
+            return CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+        }
+        return mapped
+    }
+}
+
+actor AppleDeviceSyncAccountGate {
+    typealias ScopeResolver = @Sendable () async throws -> AppleCloudAccountScope
+
+    private let expectedScope: AppleCloudAccountScope
+    private let scopeResolver: ScopeResolver
+    private var currentAvailability: AppleDeviceSyncAvailability = .ready
+    private var signInValidationID: UUID?
+    private var activeOperations: [UUID: @Sendable () -> Void] = [:]
+
+    init(
+        expectedScope: AppleCloudAccountScope,
+        scopeResolver: @escaping ScopeResolver
+    ) {
+        self.expectedScope = expectedScope
+        self.scopeResolver = scopeResolver
+    }
+
+    func availability() -> AppleDeviceSyncAvailability {
+        if signInValidationID != nil {
+            return .blocked(.temporarilyUnavailable)
+        }
+        return currentAvailability
+    }
+
+    func requireAvailable() throws {
+        if signInValidationID != nil {
+            throw AppleDeviceSyncServicesError.blocked(.temporarilyUnavailable)
+        }
+        guard case .ready = currentAvailability else {
+            if case let .blocked(reason) = currentAvailability {
+                throw AppleDeviceSyncServicesError.blocked(reason)
+            }
+            return
+        }
+    }
+
+    /// CloudKit operationの直前に必ずlive identityを再取得する。
+    /// resolver待機中にaccount eventが入った場合も、再開後にcached readyを使わない。
+    /// preflight後とCloudKit API内のaccount switchを完全にatomicにはできないが、
+    /// accountChangeでin-flight taskをcancelし、post-operationでもfenceを再確認する。
+    func performOperation<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await requireCurrentAccountForOperation()
+
+        let operationID = UUID()
+        let task = Task<Value, any Error> {
+            try Task.checkCancellation()
+            return try await operation()
+        }
+        activeOperations[operationID] = { task.cancel() }
+        defer { activeOperations.removeValue(forKey: operationID) }
+
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            try requireAvailable()
+            return value
+        } catch {
+            if case let .blocked(reason) = availability() {
+                throw AppleDeviceSyncServicesError.blocked(reason)
+            }
+            throw error
+        }
+    }
+
+    func performMutation<Value: Sendable>(
+        _ mutation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await performOperation(mutation)
+    }
+
+    /// A newly-created CKSyncEngine reports the already-signed-in account as a
+    /// `.signIn` event when it starts without restored engine state. Fence any
+    /// in-flight operation while revalidating that live identity, but keep this
+    /// runtime usable when it is still the exact bootstrap account.
+    func revalidateForSignIn() async -> AppleDeviceSyncAvailability {
+        guard case .ready = currentAvailability else { return currentAvailability }
+
+        let validationID = UUID()
+        signInValidationID = validationID
+        cancelActiveOperations()
+
+        let currentScope: AppleCloudAccountScope
+        do {
+            currentScope = try await scopeResolver()
+        } catch {
+            guard signInValidationID == validationID else { return currentAvailability }
+            signInValidationID = nil
+            if CloudKitErrorMapper.isTransient(error) {
+                // The next remote operation performs the same live identity
+                // check. Staying retryable here cannot authorize a write.
+                return currentAvailability
+            }
+            block(.accountUnavailable)
+            return currentAvailability
+        }
+
+        // The actor can re-enter while the resolver is suspended. A later
+        // sign-out/switch fence always wins over this completed validation.
+        guard signInValidationID == validationID else { return currentAvailability }
+        signInValidationID = nil
+        guard currentScope == expectedScope else {
+            block(.differentCloudAccount)
+            return currentAvailability
+        }
+        return currentAvailability
+    }
+
+    func handleAccountChange(
+        _ kind: CloudKitAccountChangeKind
+    ) async -> AppleDeviceSyncAvailability {
+        switch kind {
+        case .signIn:
+            await revalidateForSignIn()
+        case .signOut:
+            blockForAccountChange()
+        case .switchAccounts:
+            blockForAccountChange(.differentCloudAccount)
+        }
+    }
+
+    /// CKSyncEngine sign-out/switch events fence immediately. Returning to the
+    /// old account never revives this runtime; the factory must recreate it.
+    func blockForAccountChange(
+        _ reason: AppleDeviceSyncBlockReason = .accountUnavailable
+    ) -> AppleDeviceSyncAvailability {
+        block(reason)
+        return currentAvailability
+    }
+
+    private func requireCurrentAccountForOperation() async throws {
+        try requireAvailable()
+        let currentScope: AppleCloudAccountScope
+        do {
+            currentScope = try await scopeResolver()
+        } catch {
+            if CloudKitErrorMapper.isTransient(error) {
+                // A temporary account/network lookup failure is not evidence
+                // that the signed-in account changed. Keep the gate retryable;
+                // the App continues from its durable detached local branch.
+                throw error
+            }
+            block(.accountUnavailable)
+            throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
+        }
+        try requireAvailable()
+        guard currentScope == expectedScope else {
+            block(.differentCloudAccount)
+            throw AppleDeviceSyncServicesError.blocked(.differentCloudAccount)
+        }
+    }
+
+    private func block(_ reason: AppleDeviceSyncBlockReason) {
+        signInValidationID = nil
+        guard case .ready = currentAvailability else { return }
+        currentAvailability = .blocked(reason)
+        cancelActiveOperations()
+    }
+
+    private func cancelActiveOperations() {
+        let cancellations = Array(activeOperations.values)
+        activeOperations.removeAll()
+        for cancel in cancellations {
+            cancel()
+        }
+    }
+}
+
+actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog,
+    SyncWorkLibraryCatalog, WorkSyncTransport {
+    private let transport: CloudKitEpisodeSyncTransport
+    private let accountGate: AppleDeviceSyncAccountGate
+
+    init(
+        transport: CloudKitEpisodeSyncTransport,
+        accountGate: AppleDeviceSyncAccountGate
+    ) {
+        self.transport = transport
+        self.accountGate = accountGate
+    }
+
+    func fetchSnapshot(for key: EpisodeSyncKey) async throws -> EpisodeRemoteSnapshot {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchSnapshot(for: key)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
+        }
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for key: EpisodeSyncKey
+    ) async throws -> EpisodeRevision {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchRevision(id, for: key)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
+        }
+    }
+
+    func claimLease(_ request: EpisodeLeaseClaimRequest) async throws -> EpisodeLeaseClaimResult {
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.claimLease(request)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
+        }
+    }
+
+    func releaseLease(
+        key: EpisodeSyncKey,
+        expectedAuthority: EpisodeLeaseAuthority
+    ) async throws -> EpisodeRemoteSnapshot {
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.releaseLease(
+                    key: key,
+                    expectedAuthority: expectedAuthority
+                )
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
+        }
+    }
+
+    func publish(_ request: EpisodePublishRequest) async throws -> EpisodePublishResult {
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.publish(request)
+            }
+        } catch {
+            throw Self.mappedEpisodeTransportError(error)
+        }
+    }
+
+    func fetchSnapshot(for workID: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchSnapshot(for: workID)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
+    func fetchRevision(
+        _ id: SyncRevisionID,
+        for workID: SyncWorkID
+    ) async throws -> WorkRevision {
+        do {
+            return try await accountGate.performOperation { [transport] in
+                try await transport.fetchRevision(id, for: workID)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
+    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {
+        do {
+            return try await accountGate.performMutation { [transport] in
+                try await transport.publish(request)
+            }
+        } catch {
+            throw Self.mappedWorkTransportError(error)
+        }
+    }
+
+    func createWork(_ descriptor: SyncWorkDescriptor) async throws {
+        try await accountGate.performMutation { [transport] in
+            try await transport.createWork(descriptor)
+        }
+    }
+
+    func listWorks() async throws -> [SyncWorkDescriptor] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.listWorks()
+        }
+    }
+
+    func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.listLibraryWorks()
+        }
+    }
+
+    static func mappedEpisodeTransportError(_ error: any Error) -> any Error {
+        if CloudKitErrorMapper.isTransient(error) {
+            return EpisodeSyncTransportError.unavailable
+        }
+        guard let servicesError = error as? AppleDeviceSyncServicesError,
+              case .blocked = servicesError else { return error }
+        // A previously verified writer may continue into its durable offline
+        // fork, while a fresh/non-holder App session remains read-only. The
+        // App enforces that authority distinction; NovelSync only needs the
+        // provider-neutral transport availability signal here.
+        return EpisodeSyncTransportError.unavailable
+    }
+
+    static func mappedWorkTransportError(_ error: any Error) -> any Error {
+        if CloudKitErrorMapper.isTransient(error) {
+            return WorkSyncTransportError.unavailable
+        }
+        guard let servicesError = error as? AppleDeviceSyncServicesError,
+              case .blocked = servicesError else { return error }
+        return WorkSyncTransportError.unavailable
+    }
+}
+
+actor AppleDeviceSyncJournalBoundary: EpisodeSyncJournal {
+    private let journal: FileEpisodeSyncJournal
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private let binding: SyncWorkingCopyBinding
+
+    init(
+        journal: FileEpisodeSyncJournal,
+        metadataStore: AppleDeviceSyncMetadataStore,
+        binding: SyncWorkingCopyBinding
+    ) {
+        self.journal = journal
+        self.metadataStore = metadataStore
+        self.binding = binding
+    }
+
+    func load(for key: EpisodeSyncKey) async throws -> EpisodeSyncJournalRecord? {
+        try await requireUsableBinding()
+        return try await journal.load(for: key)
+    }
+
+    func save(_ record: EpisodeSyncJournalRecord) async throws {
+        try await requireUsableBinding()
+        try await journal.save(record)
+    }
+
+    private func requireUsableBinding() async throws {
+        // This boundary is already scoped to a durable local working-copy ID.
+        // Remote account availability fences transport creation and writes,
+        // but must not disable the current holder's offline fork journal.
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+    }
+}
+
+/// D-061 journalにもEpisode journalと同じdurable binding fenceを適用する。
+/// account availabilityはremoteだけを止め、既存copyのoffline保存は止めない。
+actor AppleDeviceSyncWorkJournalBoundary: WorkSyncJournal {
+    private let journal: FileWorkSyncJournal
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private let binding: SyncWorkingCopyBinding
+
+    init(
+        journal: FileWorkSyncJournal,
+        metadataStore: AppleDeviceSyncMetadataStore,
+        binding: SyncWorkingCopyBinding
+    ) {
+        self.journal = journal
+        self.metadataStore = metadataStore
+        self.binding = binding
+    }
+
+    func load(for workID: SyncWorkID) async throws -> WorkSyncJournalRecord? {
+        try await requireUsableBinding()
+        guard workID == binding.workID else {
+            throw WorkSyncJournalError.workMismatch
+        }
+        guard let record = try await journal.load(for: workID) else {
+            return nil
+        }
+        guard record.localWorkingCopyID == binding.localWorkingCopyID else {
+            throw WorkSyncJournalError.workingCopyMismatch
+        }
+        return record
+    }
+
+    func save(_ record: WorkSyncJournalRecord) async throws {
+        try await requireUsableBinding()
+        guard record.workID == binding.workID,
+              record.localWorkingCopyID == binding.localWorkingCopyID else {
+            throw WorkSyncJournalError.workingCopyMismatch
+        }
+        try await journal.save(record)
+    }
+
+    private func requireUsableBinding() async throws {
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+    }
+}
+
+actor AppleDeviceSyncJournalFactory {
+    private let rootURL: URL
+    private let metadataStore: AppleDeviceSyncMetadataStore
+    private var journals: [LocalWorkingCopyID: AppleDeviceSyncJournalBoundary] = [:]
+    private var workJournals: [LocalWorkingCopyID: AppleDeviceSyncWorkJournalBoundary] = [:]
+
+    init(
+        rootURL: URL,
+        metadataStore: AppleDeviceSyncMetadataStore
+    ) {
+        self.rootURL = rootURL
+        self.metadataStore = metadataStore
+    }
+
+    func journal(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any EpisodeSyncJournal {
+        // A journal is an app-private durability boundary scoped by the exact
+        // local working-copy binding. Cloud account availability only fences
+        // remote transport; it must never prevent an existing copy from
+        // recording a detached local revision.
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+        if let existing = journals[binding.localWorkingCopyID] {
+            return existing
+        }
+        let bindingRoot = rootURL.appendingPathComponent(
+            binding.localWorkingCopyID.rawValue.uuidString,
+            isDirectory: true
+        )
+        let fileJournal = try FileEpisodeSyncJournal(rootURL: bindingRoot)
+        let boundary = AppleDeviceSyncJournalBoundary(
+            journal: fileJournal,
+            metadataStore: metadataStore,
+            binding: binding
+        )
+        journals[binding.localWorkingCopyID] = boundary
+        return boundary
+    }
+
+    func workJournal(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any WorkSyncJournal {
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+        if let existing = workJournals[binding.localWorkingCopyID] {
+            return existing
+        }
+        let bindingRoot = rootURL.appendingPathComponent(
+            binding.localWorkingCopyID.rawValue.uuidString,
+            isDirectory: true
+        )
+        let workRoot = bindingRoot.appendingPathComponent("work-v1", isDirectory: true)
+        let fileJournal = try FileWorkSyncJournal(rootURL: workRoot)
+        let boundary = AppleDeviceSyncWorkJournalBoundary(
+            journal: fileJournal,
+            metadataStore: metadataStore,
+            binding: binding
+        )
+        workJournals[binding.localWorkingCopyID] = boundary
+        return boundary
+    }
+}

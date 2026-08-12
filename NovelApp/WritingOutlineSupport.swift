@@ -115,10 +115,6 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                if showsSaveState {
-                    SaveStateMetadataIcon(scopeLabel: "現在編集中の章")
-                }
-
                 AIClipboardPromptMenu(
                     target: .chapter(
                         chapterID: chapter.id,
@@ -166,9 +162,6 @@ struct OutlineEpisodeRow: View {
                     Text("\(characterCount)字")
                         .monospacedDigit()
                     Spacer(minLength: 8)
-                    if showsSaveState {
-                        SaveStateMetadataIcon(scopeLabel: "現在編集中の話")
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -199,8 +192,13 @@ struct EpisodeOutlineContextMenu: View {
     var body: some View {
         Button {
             guard isCurrentSession else { return }
-            appState.selectEpisode(request.episode.id, in: request.chapterID)
-            NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+            Task {
+                guard await appState.selectEpisodeAfterDeviceSyncDeparture(
+                    request.episode.id,
+                    in: request.chapterID
+                ) else { return }
+                NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+            }
         } label: {
             Label("話メモ", systemImage: "note.text")
         }
@@ -221,11 +219,13 @@ struct EpisodeOutlineContextMenu: View {
                 ForEach(otherChapters) { destination in
                     Button(destination.title) {
                         guard isCurrentSession else { return }
-                        _ = appState.moveEpisode(
-                            id: request.episode.id,
-                            from: request.chapterID,
-                            to: destination.id
-                        )
+                        Task {
+                            await appState.moveEpisodeAfterDeviceSyncDeparture(
+                                id: request.episode.id,
+                                from: request.chapterID,
+                                to: destination.id
+                            )
+                        }
                     }
                 }
             }
@@ -265,7 +265,9 @@ struct ChapterOutlineContextMenu: View {
         Button {
             guard isCurrentSession else { return }
             onReveal()
-            appState.addEpisode(to: chapter.id)
+            Task {
+                await appState.addEpisodeAfterDeviceSyncDeparture(to: chapter.id)
+            }
         } label: {
             Label("この章に話を追加", systemImage: "square.and.pencil")
         }
@@ -273,8 +275,10 @@ struct ChapterOutlineContextMenu: View {
 
         Button {
             guard isCurrentSession else { return }
-            appState.selectChapter(chapter.id)
-            NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+            Task {
+                guard await appState.selectChapterAfterDeviceSyncDeparture(chapter.id) else { return }
+                NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+            }
         } label: {
             Label("話メモ", systemImage: "note.text")
         }
@@ -294,12 +298,12 @@ struct ChapterOutlineContextMenu: View {
                 onOpenCharacter: { characterID in
                     guard isCurrentSession else { return }
                     appState.selectCharacter(characterID)
-                    appState.selectProjectSection(.characters)
+                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
                 },
                 onOpenPlotCard: { cardID in
                     guard isCurrentSession else { return }
                     appState.selectPlotCard(cardID)
-                    appState.selectProjectSection(.plot)
+                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
                 }
             )
         } label: {
@@ -317,20 +321,6 @@ struct ChapterOutlineContextMenu: View {
 
     private var isCurrentSession: Bool {
         chapterItem.session == appState.documentSessionToken
-    }
-}
-
-private struct SaveStateMetadataIcon: View {
-    @Environment(AppState.self) private var appState
-
-    let scopeLabel: String
-
-    var body: some View {
-        Image(systemName: appState.saveState.systemImage)
-            .frame(width: 16, height: 16)
-            .contentShape(Rectangle())
-            .help("\(scopeLabel)・作品の保存状態: \(appState.saveState.label)")
-            .accessibilityLabel("\(scopeLabel)の作品保存状態、\(appState.saveState.label)")
     }
 }
 

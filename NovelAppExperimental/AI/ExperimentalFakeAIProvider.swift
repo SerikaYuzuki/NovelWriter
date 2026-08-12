@@ -33,8 +33,7 @@ struct ExperimentalFakeAIProvider: AIProvider {
         }
 
         guard let selectedText = selectedText(from: request.outbound.applicationPrompt),
-              let structuredOutput = structuredOutput(for: selectedText) else
-        {
+              let structuredOutput = structuredOutput(for: selectedText) else {
             events.fail(.invalidResponse)
             return
         }

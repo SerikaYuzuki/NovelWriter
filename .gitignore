@@ -17,6 +17,10 @@ xcuserdata/
 *.xccheckout
 *.xcscmblueprint
 
+# Per-developer Apple signing selection. The checked-in wrapper/example live in
+# Config; only the local Team ID override stays untracked.
+/Config/Signing.local.xcconfig
+
 # Build products
 build/
 *.o

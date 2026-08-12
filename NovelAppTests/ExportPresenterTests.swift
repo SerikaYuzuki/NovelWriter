@@ -9,7 +9,7 @@ struct ExportPresenterTests {
     @Test("選択形式の拡張子を既定名と保存先へ強制する", arguments: ExportFormat.allCases)
     func selectedFormatDeterminesFilenameExtension(format: ExportFormat) async throws {
         let panel = StubExportPanel(
-            format: format,
+            format: .rendered(format),
             destination: URL(fileURLWithPath: "/tmp/原稿.invalid")
         )
         let executor = RecordingExportExecutor()
@@ -33,6 +33,38 @@ struct ExportPresenterTests {
         #expect(invocation.destination.pathExtension == format.filenameExtension)
         #expect(invocation.format == format)
         #expect(snapshotCount == 1)
+    }
+
+    @Test("作品パッケージはdocument rendererを使わずactive URLを変えない複製境界へ渡す")
+    func novelPackageUsesPackageExporter() async {
+        let destination = URL(fileURLWithPath: "/tmp/持ち出し.invalid")
+        let panel = StubExportPanel(format: .novelPackage, destination: destination)
+        let executor = RecordingExportExecutor()
+        let packageExporter = RecordingPackageExporter()
+        var snapshotCount = 0
+        let presenter = ExportPresenter(
+            documentTitleProvider: { "銀河鉄道" },
+            documentProvider: {
+                snapshotCount += 1
+                return .newDocument()
+            },
+            panelPresenter: panel,
+            executor: executor,
+            packageExporter: { url, _ in
+                await packageExporter.export(to: url)
+            }
+        )
+
+        presenter.present()
+        await presenter.waitForCurrentExport()
+
+        #expect(panel.lastDefaultFilename == "銀河鉄道.novelpkg")
+        #expect(await packageExporter.destinations() == [
+            URL(fileURLWithPath: "/tmp/持ち出し.novelpkg")
+        ])
+        #expect(await executor.invocationCount() == 0)
+        #expect(snapshotCount == 0)
+        #expect(presenter.state == .succeeded(filename: "持ち出し.novelpkg"))
     }
 
     @Test("空の作品名は無題の作品を既定名にする")
@@ -267,28 +299,40 @@ struct ExportPresenterTests {
 
 @MainActor
 private final class StubExportPanel: ExportPanelPresenting {
-    let format: ExportFormat?
+    let format: AppExportFormat?
     let destination: URL?
     var onChooseDestination: (() -> Void)?
     private(set) var formatCallCount = 0
     private(set) var destinationCallCount = 0
     private(set) var lastDefaultFilename: String?
 
-    init(format: ExportFormat?, destination: URL?) {
+    init(format: AppExportFormat?, destination: URL?) {
         self.format = format
         self.destination = destination
     }
 
-    func chooseFormat() -> ExportFormat? {
+    func chooseFormat() -> AppExportFormat? {
         formatCallCount += 1
         return format
     }
 
-    func chooseDestination(format _: ExportFormat, defaultFilename: String) -> URL? {
+    func chooseDestination(format _: AppExportFormat, defaultFilename: String) -> URL? {
         destinationCallCount += 1
         lastDefaultFilename = defaultFilename
         onChooseDestination?()
         return destination
+    }
+}
+
+private actor RecordingPackageExporter {
+    private var exportedDestinations: [URL] = []
+
+    func export(to destination: URL) {
+        exportedDestinations.append(destination)
+    }
+
+    func destinations() -> [URL] {
+        exportedDestinations
     }
 }
 

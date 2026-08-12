@@ -6,7 +6,7 @@ import SwiftUI
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
 ///
 /// v1 では `DocumentGroup` は使わず、単一ウィンドウ + 明示的な Repository 構成とする
-/// (D-010)。起動時の読み込み・新規作成は `AppState.bootstrap()` に委譲し、
+/// (D-010)。起動時の作品選択・Finder指定作品の読み込みは `AppState.bootstrap()` に委譲し、
 /// ウィンドウ表示をブロックしないよう `.task` で非同期に行う。
 ///
 /// - 重要: `ApplicationDelegate.appState` の配線は、あえて `init` ではなく
@@ -36,6 +36,10 @@ struct FuminiwaApp: App {
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
     @State private var editorCommandSession: EditorCommandSession
+    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+    @State private var deviceSyncComposition: DeviceSyncProductionComposition?
+    @State private var deviceSyncPreparationFailed: Bool
+    #endif
     #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
     @State private var editorAISelectionSession: EditorAISelectionSession
     @State private var aiProofreadingOperation: AIProofreadingOperation
@@ -48,19 +52,35 @@ struct FuminiwaApp: App {
         }
 
         let editorCommandSession = EditorCommandSession()
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        let deviceSyncComposition = try? DeviceSyncProductionComposition()
+        let deviceSyncRuntime = deviceSyncComposition?.runtime
+        #else
+        let deviceSyncRuntime: DeviceSyncRuntime? = nil
+        #endif
         let appState = AppState(
             dependencies: AppDependencies(
                 userDefaults: defaults,
                 defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
-                editorCommandSession: editorCommandSession
+                editorCommandSession: editorCommandSession,
+                deviceSyncRuntime: deviceSyncRuntime
             )
         )
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        if deviceSyncComposition == nil {
+            appState.failStartupForDeviceSyncSafety()
+        }
+        #endif
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
         _editorCommandSession = State(initialValue: editorCommandSession)
+        #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+        _deviceSyncComposition = State(initialValue: deviceSyncComposition)
+        _deviceSyncPreparationFailed = State(initialValue: deviceSyncComposition == nil)
+        #endif
         #if FUMINIWA_ENABLE_EXPERIMENTAL_AI
         let editorAISelectionSession = EditorAISelectionSession()
         let aiProofreadingOperation = AIProofreadingOperation(
@@ -98,8 +118,27 @@ struct FuminiwaApp: App {
                     }
                     #endif
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
-                    await appState.bootstrap(opening: startupOpenURL)
+                    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    guard !deviceSyncPreparationFailed, let deviceSyncComposition else {
+                        appState.failStartupForDeviceSyncSafety()
+                        return
+                    }
+                    let deviceSyncBootstrap = Task {
+                        await deviceSyncComposition.bootstrap()
+                    }
+                    #endif
+                    await appState.bootstrap(opening: startupOpenURL, localFirst: true)
                     applicationDelegate.finishBootstrap()
+                    #if canImport(NovelSyncCloudKit) && !FUMINIWA_ENABLE_EXPERIMENTAL_AI
+                    // local shelf／active editorの表示をCloudKit bootstrapや
+                    // remote catalogの完了へ結び付けない。必要なremote処理は
+                    // bootstrap完了後にsingle-flightのbackground laneへ渡す。
+                    Task { @MainActor in
+                        await deviceSyncBootstrap.value
+                        await appState.refreshStartupLibrary()
+                        await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    }
+                    #endif
                 }
         }
         .commands {
@@ -107,13 +146,13 @@ struct FuminiwaApp: App {
             // 既定の「新規ウインドウ」(単一ウィンドウ方針 D-010 と衝突する)を
             // 置き換える。
             CommandGroup(replacing: .newItem) {
-                Button("新規") {
+                Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(!appState.permitsDocumentChoice)
 
-                Button("開く…") {
+                Button("作品を取り込む…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
@@ -128,24 +167,29 @@ struct FuminiwaApp: App {
                 .disabled(!appState.permitsDocumentInteraction)
             }
 
-            // Cmd+Shift+S は macOS の「別名で保存…」の慣習を優先する
-            // (docs/DECISIONS.md D-025)。スナップショット保存は Cmd+Option+S へ移す。
+            // app-private作業コピーを外へ見せず、portable `.novelpkg`は書き出しから
+            // 明示的に作る。スナップショット保存は Cmd+Option+S を維持する。
             CommandGroup(after: .saveItem) {
-                Button("別名で保存…") {
-                    documentPanelPresenter.presentSaveAsPanel()
+                if appState.deviceSyncRuntime?.library != nil {
+                    Button("作品を選ぶ") {
+                        let session = appState.documentSessionToken
+                        Task {
+                            _ = await appState.returnToStartupLibrary(
+                                expectedSession: session,
+                                localFirst: true
+                            )
+                        }
+                    }
+                    .disabled(!appState.permitsReturnToCloudLibrary)
+
+                    Divider()
                 }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!appState.permitsDocumentInteraction)
 
                 Button("書き出す…") {
                     exportPresenter.present()
                 }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!appState.permitsDocumentInteraction || exportPresenter.state.isExporting)
-
-                Button("Finder で表示") {
-                    documentPanelPresenter.revealInFinder()
-                }
-                .disabled(!appState.permitsDocumentInteraction)
 
                 Divider()
 
@@ -165,12 +209,16 @@ struct FuminiwaApp: App {
 
             CommandMenu("章") {
                 Button("章を追加") {
-                    appState.addChapter()
+                    Task {
+                        await appState.addChapterAfterDeviceSyncDeparture()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
 
                 Button("選択中の章に話を追加") {
-                    appState.addEpisode()
+                    Task {
+                        await appState.addEpisodeAfterDeviceSyncDeparture()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
 
@@ -195,11 +243,11 @@ struct FuminiwaApp: App {
                         appState: appState,
                         onOpenCharacter: { characterID in
                             appState.selectCharacter(characterID)
-                            appState.selectProjectSection(.characters)
+                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
                         },
                         onOpenPlotCard: { cardID in
                             appState.selectPlotCard(cardID)
-                            appState.selectProjectSection(.plot)
+                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
                         }
                     )
                 }
@@ -233,8 +281,10 @@ struct FuminiwaApp: App {
 
             CommandMenu("世界観") {
                 Button("ノートを追加") {
-                    appState.selectProjectSection(.worldbuilding)
-                    appState.addWorldNote()
+                    Task {
+                        guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.worldbuilding) else { return }
+                        appState.addWorldNote()
+                    }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
@@ -265,7 +315,7 @@ struct FuminiwaApp: App {
             CommandMenu("表示") {
                 ForEach(ProjectSection.allCases) { section in
                     Button {
-                        appState.selectProjectSection(section)
+                        Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(section) }
                     } label: {
                         Label(section.title, systemImage: section.systemImage)
                     }
@@ -295,14 +345,8 @@ private struct SnapshotRestoreCommands: View {
                 Text("スナップショットはありません")
             } else {
                 ForEach(presenter.snapshots) { item in
-                    Menu(item.snapshot.displayName) {
-                        Button("この状態に戻す…") {
-                            presenter.requestRestore(item)
-                        }
-                        Button("Finder で表示") {
-                            guard item.session == appState.documentSessionToken else { return }
-                            NSWorkspace.shared.activateFileViewerSelecting([item.snapshot.url])
-                        }
+                    Button(item.snapshot.displayName) {
+                        presenter.requestRestore(item)
                     }
                 }
             }

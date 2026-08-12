@@ -1,4 +1,3 @@
-import AppKit
 import NovelCore
 import SwiftUI
 
@@ -34,12 +33,6 @@ struct AttachmentListView: View {
                         AttachmentRow(attachment: item.attachment)
                             .tag(item.attachment.fileName)
                             .contextMenu {
-                                Button {
-                                    revealInFinder(item)
-                                } label: {
-                                    Label("Finderで表示", systemImage: "folder")
-                                }
-
                                 Button(role: .destructive) {
                                     attachmentPendingDeletion = item
                                 } label: {
@@ -110,18 +103,6 @@ struct AttachmentListView: View {
         )
     }
 
-    private func revealInFinder(_ item: SessionBoundAttachment) {
-        guard item.session == appState.documentSessionToken else {
-            operationMessage = OperationMessage(
-                title: "表示できませんでした",
-                body: "作品が切り替わったため、資料一覧を更新してください。"
-            )
-            return
-        }
-        guard let url = appState.attachmentPreviewURL(for: item.attachment) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
     @MainActor
     private func delete(_ request: SessionBoundAttachment) async {
         let attachment = request.attachment
@@ -155,12 +136,6 @@ struct AttachmentDetailView: View {
             Form {
                 LabeledContent("ファイル名", value: attachment.fileName)
                 LabeledContent("サイズ", value: ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))
-                if let url = appState.attachmentPreviewURL(for: attachment) {
-                    LabeledContent("場所", value: url.path)
-                    Button("Finder で表示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
             }
             .formStyle(.grouped)
             .padding(20)

@@ -35,6 +35,9 @@ struct AppDependencies {
     /// 表示中Editorの確定済み全文を、本文所有権を破らず読み取る境界。
     let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
 
+    /// Device Syncが設定済みの場合だけ注入するtransport-neutral runtime。
+    let deviceSyncRuntime: DeviceSyncRuntime?
+
     init(
         repository: DocumentRepository = NovelpkgRepository(),
         attachmentManager: AttachmentManaging? = nil,
@@ -43,7 +46,8 @@ struct AppDependencies {
         defaultDocumentDirectoryName: String = AppBuildFlavor.defaultDocumentDirectoryName,
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
-        activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil
+        activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil,
+        deviceSyncRuntime: DeviceSyncRuntime? = nil
     ) {
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
@@ -55,5 +59,6 @@ struct AppDependencies {
         self.activeCommittedTextCapture = activeCommittedTextCapture ?? {
             editorCommandSession.captureActiveCommittedText()
         }
+        self.deviceSyncRuntime = deviceSyncRuntime
     }
 }

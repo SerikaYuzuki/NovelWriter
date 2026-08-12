@@ -1,6 +1,9 @@
+// swiftlint:disable file_length
+import AppKit
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import SwiftUI
 import Testing
 
 @MainActor
@@ -13,8 +16,8 @@ struct AppStateBootstrapTests {
         #expect(!state.startupState.isReady)
     }
 
-    @Test("前回作品の読込成功後だけreadyにする")
-    func recentDocumentLoadBecomesReadyWithoutSaving() async {
+    @Test("通常起動は前回作品を読み込まず選択画面で待つ")
+    func recentDocumentAppearsInSelectionWithoutIO() async throws {
         let repository = BootstrapRepository()
         let defaults = makeUserDefaults()
         let url = packageURL("前回作品")
@@ -25,16 +28,39 @@ struct AppStateBootstrapTests {
 
         await state.bootstrap()
 
+        let context = try #require(documentSelectionContext(in: state))
+        #expect(context.recentDocument?.url == url.standardizedFileURL)
+        #expect(context.recentDocument?.displayName == "前回作品")
+        #expect(!state.startupState.isReady)
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 0)
+        #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == url.path)
+    }
+
+    @Test("選択画面で前回作品を明示した後だけ読み込んでreadyにする")
+    func selectedRecentDocumentBecomesReadyWithoutSaving() async {
+        let repository = BootstrapRepository()
+        let defaults = makeUserDefaults()
+        let url = packageURL("選んだ前回作品")
+        let document = NovelDocument.newDocument(title: "選択後に開く")
+        await repository.seed(document, at: url)
+        defaults.set(url.path, forKey: AppPreferenceKey.recentDocumentPath)
+        let state = makeState(repository: repository, defaults: defaults)
+
+        await state.bootstrap()
+        let session = state.documentSessionToken
+
+        #expect(await state.openRecentDocument(expectedSession: session))
         #expect(state.startupState == .ready)
         #expect(state.document == document)
-        #expect(state.documentURL.path == url.standardizedFileURL.path)
+        #expect(state.documentURL == url.standardizedFileURL)
         #expect(await repository.loadCount == 1)
         #expect(await repository.saveCount == 0)
         #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == url.path)
     }
 
-    @Test("前回作品を開けないときは保存もrecent更新もせずRecoveryで止まる")
-    func recentDocumentFailureFailsClosed() async {
+    @Test("選んだ前回作品を開けないときは保存もrecent更新もせずRecoveryで止まる")
+    func selectedRecentDocumentFailureFailsClosed() async {
         let repository = BootstrapRepository(loadFails: true)
         let defaults = makeUserDefaults()
         let url = packageURL("開けない作品")
@@ -42,6 +68,8 @@ struct AppStateBootstrapTests {
         let state = makeState(repository: repository, defaults: defaults)
 
         await state.bootstrap()
+        let session = state.documentSessionToken
+        #expect(await state.openRecentDocument(expectedSession: session) == false)
 
         guard case let .recovery(context) = state.startupState else {
             Issue.record("Recoveryへ移行しませんでした")
@@ -67,6 +95,7 @@ struct AppStateBootstrapTests {
         let state = makeState(repository: repository, defaults: defaults)
 
         await state.bootstrap()
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken) == false)
         await repository.setLoadFailure(false)
         await state.retryStartup()
 
@@ -77,28 +106,48 @@ struct AppStateBootstrapTests {
         #expect(await repository.saveCount == 0)
     }
 
-    @Test("recentが無い初回起動は保存成功後だけ採用する")
-    func initialDocumentIsInstalledAfterSuccessfulSave() async {
+    @Test("recentが無い初回起動も作品を自動作成せず選択画面で待つ")
+    func initialLaunchWithoutRecentWaitsForSelection() async throws {
         let repository = BootstrapRepository()
         let defaults = makeUserDefaults()
         let state = makeState(repository: repository, defaults: defaults)
 
         await state.bootstrap()
 
-        #expect(state.startupState == .ready)
-        #expect(await repository.saveCount == 1)
-        #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == state.documentURL.path)
-        #expect(state.documentURL.deletingLastPathComponent().lastPathComponent == "Drafts")
-        #expect(state.documentURL.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "FUMINIWA")
+        let context = try #require(documentSelectionContext(in: state))
+        #expect(context.recentDocument == nil)
+        #expect(!state.startupState.isReady)
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 0)
+        #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == nil)
     }
 
-    @Test("初回新規保存の失敗はrecentを作らない")
-    func initialDocumentSaveFailureEntersRecovery() async {
+    @Test("選択画面から明示した新規作品は保存成功後だけ採用する")
+    func explicitNewDocumentFromSelectionChangesRecentAfterSave() async {
+        let repository = BootstrapRepository()
+        let defaults = makeUserDefaults()
+        let state = makeState(repository: repository, defaults: defaults)
+
+        await state.bootstrap()
+        let session = state.documentSessionToken
+
+        #expect(await state.createNewDocument(expectedSession: session))
+        #expect(state.startupState == .ready)
+        #expect(state.document.title == "新規作品")
+        #expect(state.documentSessionToken != session)
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 1)
+        #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == state.documentURL.path)
+    }
+
+    @Test("選択画面から明示した新規保存の失敗はrecentを作らない")
+    func explicitInitialDocumentSaveFailureEntersRecovery() async {
         let repository = BootstrapRepository(saveFails: true)
         let defaults = makeUserDefaults()
         let state = makeState(repository: repository, defaults: defaults)
 
         await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken) == false)
 
         guard case let .recovery(context) = state.startupState else {
             Issue.record("Recoveryへ移行しませんでした")
@@ -110,7 +159,7 @@ struct AppStateBootstrapTests {
         #expect(await repository.saveCount == 1)
     }
 
-    @Test("bootstrapを二度呼んでも作品を二重に作らない")
+    @Test("bootstrapを二度呼んでも作品を読み書きしない")
     func bootstrapIsIdempotent() async {
         let repository = BootstrapRepository()
         let state = makeState(repository: repository, defaults: makeUserDefaults())
@@ -118,94 +167,94 @@ struct AppStateBootstrapTests {
         await state.bootstrap()
         await state.bootstrap()
 
-        #expect(await repository.saveCount == 1)
+        #expect(documentSelectionContext(in: state) != nil)
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 0)
     }
 
-    @Test("同時bootstrapは先行処理を待ち、Finder作品を起動処理に上書きさせない")
+    @Test("同時bootstrapは先行Finder読込の同じ完了へ合流する")
     func concurrentBootstrapWaitsForSharedCompletion() async {
         let repository = BootstrapRepository()
-        let defaults = makeUserDefaults()
         let finderURL = packageURL("待機中のFinder作品")
         let finderDocument = NovelDocument.newDocument(title: "Finderから")
         await repository.seed(finderDocument, at: finderURL)
-        await repository.pauseNextSave()
-        let state = makeState(repository: repository, defaults: defaults)
-
-        let initialBootstrap = Task { @MainActor in
-            await state.bootstrap()
-        }
-        await repository.waitUntilSaveIsPaused()
-
-        var finderBootstrapDidStart = false
-        var finderBootstrapDidReturn = false
-        let finderBootstrap = Task { @MainActor in
-            finderBootstrapDidStart = true
-            await state.bootstrap(opening: finderURL)
-            finderBootstrapDidReturn = true
-        }
-
-        // 後続bootstrapが先行I/Oへjoinする機会を与える。先行処理がまだ保存中のため、
-        // delegateがfinishBootstrap()できる状態へ戻ってはならない。
-        while !finderBootstrapDidStart {
-            await Task.yield()
-        }
-        #expect(!finderBootstrapDidReturn)
-        #expect(state.startupState == .loading)
-
-        await repository.resumeSave()
-        await initialBootstrap.value
-        await finderBootstrap.value
-
-        #expect(finderBootstrapDidReturn)
-        #expect(state.startupState == .ready)
-        #expect(state.document == finderDocument)
-        #expect(state.documentURL == finderURL.standardizedFileURL)
-        #expect(await repository.saveCount == 1)
-        #expect(await repository.loadCount == 1)
-    }
-
-    @Test("先行bootstrapも起動中に追加されたFinder読込の完了まで戻らない")
-    func initialBootstrapWaitsForQueuedFinderLoad() async {
-        let repository = BootstrapRepository()
-        let finderURL = packageURL("読込待機中のFinder作品")
-        await repository.seed(NovelDocument.newDocument(title: "Finderから"), at: finderURL)
-        await repository.pauseNextSave()
-        await repository.pauseNextLoad()
+        await repository.pauseLoad(at: finderURL)
         let state = makeState(repository: repository, defaults: makeUserDefaults())
 
         var initialBootstrapDidReturn = false
         let initialBootstrap = Task { @MainActor in
-            await state.bootstrap()
+            await state.bootstrap(opening: finderURL)
             initialBootstrapDidReturn = true
         }
-        await repository.waitUntilSaveIsPaused()
+        let didPause = await repository.waitUntilLoadIsPaused(at: finderURL)
 
-        var finderBootstrapDidStart = false
-        var finderBootstrapDidReturn = false
-        let finderBootstrap = Task { @MainActor in
-            finderBootstrapDidStart = true
-            await state.bootstrap(opening: finderURL)
-            finderBootstrapDidReturn = true
+        var joinedBootstrapDidReturn = false
+        let joinedBootstrap = Task { @MainActor in
+            await state.bootstrap()
+            joinedBootstrapDidReturn = true
         }
-        while !finderBootstrapDidStart {
-            await Task.yield()
-        }
+        await allowTasksToRun()
 
-        await repository.resumeSave()
-        await repository.waitUntilLoadIsPaused()
-
-        // Finder読込も共有Taskの一部であり、どちらの呼び出し元もdelegateへ
-        // bootstrap完了を通知できる状態へ戻ってはならない。
+        #expect(didPause)
         #expect(!initialBootstrapDidReturn)
-        #expect(!finderBootstrapDidReturn)
+        #expect(!joinedBootstrapDidReturn)
+        #expect(state.startupState == .loading)
 
-        await repository.resumeLoad()
+        await repository.resumeLoad(at: finderURL)
         await initialBootstrap.value
-        await finderBootstrap.value
+        await joinedBootstrap.value
 
         #expect(initialBootstrapDidReturn)
-        #expect(finderBootstrapDidReturn)
+        #expect(joinedBootstrapDidReturn)
+        #expect(state.startupState == .ready)
+        #expect(state.document == finderDocument)
         #expect(state.documentURL == finderURL.standardizedFileURL)
+        #expect(await repository.loadCount == 1)
+    }
+
+    @Test("先行bootstrapは起動中に追加されたFinder読込まで待つ")
+    func initialBootstrapWaitsForQueuedFinderLoad() async {
+        let repository = BootstrapRepository()
+        let firstURL = packageURL("先行Finder作品")
+        let queuedURL = packageURL("追加Finder作品")
+        await repository.seed(NovelDocument.newDocument(title: "先行作品"), at: firstURL)
+        let queuedDocument = NovelDocument.newDocument(title: "追加作品")
+        await repository.seed(queuedDocument, at: queuedURL)
+        await repository.pauseLoad(at: firstURL)
+        await repository.pauseLoad(at: queuedURL)
+        let state = makeState(repository: repository, defaults: makeUserDefaults())
+
+        var initialBootstrapDidReturn = false
+        let initialBootstrap = Task { @MainActor in
+            await state.bootstrap(opening: firstURL)
+            initialBootstrapDidReturn = true
+        }
+        let firstDidPause = await repository.waitUntilLoadIsPaused(at: firstURL)
+
+        var queuedBootstrapDidReturn = false
+        let queuedBootstrap = Task { @MainActor in
+            await state.bootstrap(opening: queuedURL)
+            queuedBootstrapDidReturn = true
+        }
+        await allowTasksToRun()
+        await repository.resumeLoad(at: firstURL)
+
+        let queuedDidPause = await repository.waitUntilLoadIsPaused(at: queuedURL)
+        #expect(firstDidPause)
+        #expect(queuedDidPause)
+        #expect(!initialBootstrapDidReturn)
+        #expect(!queuedBootstrapDidReturn)
+
+        await repository.resumeLoad(at: queuedURL)
+        await initialBootstrap.value
+        await queuedBootstrap.value
+
+        #expect(initialBootstrapDidReturn)
+        #expect(queuedBootstrapDidReturn)
+        #expect(state.startupState == .ready)
+        #expect(state.document == queuedDocument)
+        #expect(state.documentURL == queuedURL.standardizedFileURL)
+        #expect(await repository.loadCount == 2)
     }
 
     @Test("Finder指定URLはrecentより優先する")
@@ -237,13 +286,54 @@ struct AppStateBootstrapTests {
         defaults.set(brokenURL.path, forKey: AppPreferenceKey.recentDocumentPath)
         let state = makeState(repository: repository, defaults: defaults)
         await state.bootstrap()
+        #expect(await state.openRecentDocument(expectedSession: state.documentSessionToken) == false)
 
-        #expect(await state.createNewDocument())
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
 
         #expect(state.startupState == .ready)
         #expect(state.documentURL != brokenURL.standardizedFileURL)
         #expect(defaults.string(forKey: AppPreferenceKey.recentDocumentPath) == state.documentURL.path)
         #expect(await repository.saveCount == 1)
+    }
+}
+
+extension AppStateBootstrapTests {
+    @Test("作品選択画面から終了してもplaceholderを保存しない")
+    func terminationFromDocumentSelectionDoesNotSave() async {
+        let repository = BootstrapRepository()
+        let state = makeState(repository: repository, defaults: makeUserDefaults())
+
+        await state.bootstrap()
+
+        #expect(documentSelectionContext(in: state) != nil)
+        #expect(await state.saveBeforeTermination())
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 0)
+    }
+
+    @Test("作品選択画面は実NSHostingViewで副作用なくlayoutできる")
+    func documentSelectionViewLaysOutWithoutIO() async throws {
+        let repository = BootstrapRepository()
+        let defaults = makeUserDefaults()
+        let recentURL = packageURL("画面確認作品")
+        defaults.set(recentURL.path, forKey: AppPreferenceKey.recentDocumentPath)
+        let state = makeState(repository: repository, defaults: defaults)
+        await state.bootstrap()
+        let context = try #require(documentSelectionContext(in: state))
+        let presenter = DocumentPanelPresenter(appState: state)
+        let host = NSHostingView(rootView: StartupDocumentSelectionView(context: context)
+            .environment(state)
+            .environment(presenter))
+
+        host.frame = NSRect(x: 0, y: 0, width: 960, height: 640)
+        host.layoutSubtreeIfNeeded()
+
+        #expect(host.fittingSize.width >= 720)
+        #expect(host.fittingSize.height >= 480)
+        #expect(host.isHidden == false)
+        #expect(state.startupState == .documentSelection(context))
+        #expect(await repository.loadCount == 0)
+        #expect(await repository.saveCount == 0)
     }
 
     private func makeState(repository: BootstrapRepository, defaults: UserDefaults) -> AppState {
@@ -263,6 +353,17 @@ struct AppStateBootstrapTests {
         return defaults
     }
 
+    private func documentSelectionContext(in state: AppState) -> StartupDocumentSelectionContext? {
+        guard case let .documentSelection(context) = state.startupState else { return nil }
+        return context
+    }
+
+    private func allowTasksToRun(iterations: Int = 20) async {
+        for _ in 0 ..< iterations {
+            await Task.yield()
+        }
+    }
+
     private func packageURL(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("FUMINIWABootstrapTests")
@@ -274,10 +375,9 @@ private actor BootstrapRepository: DocumentRepository {
     private var documents: [String: NovelDocument] = [:]
     private var loadFails: Bool
     private var saveFails: Bool
-    private var shouldPauseNextLoad = false
-    private var shouldPauseNextSave = false
-    private var pausedLoadContinuation: CheckedContinuation<Void, Never>?
-    private var pausedSaveContinuation: CheckedContinuation<Void, Never>?
+    private var loadPathsToPause: Set<String> = []
+    private var pausedLoadContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var releasedLoadPaths: Set<String> = []
     private(set) var loadCount = 0
     private(set) var saveCount = 0
 
@@ -287,14 +387,15 @@ private actor BootstrapRepository: DocumentRepository {
     }
 
     func load(from url: URL) async throws -> NovelDocument {
+        let path = url.standardizedFileURL.path
         loadCount += 1
-        if shouldPauseNextLoad {
-            shouldPauseNextLoad = false
+        if loadPathsToPause.remove(path) != nil,
+           releasedLoadPaths.remove(path) == nil {
             await withCheckedContinuation { continuation in
-                pausedLoadContinuation = continuation
+                pausedLoadContinuations[path] = continuation
             }
         }
-        guard !loadFails, let document = documents[url.standardizedFileURL.path] else {
+        guard !loadFails, let document = documents[path] else {
             throw BootstrapRepositoryError.loadFailed
         }
         return document
@@ -302,12 +403,6 @@ private actor BootstrapRepository: DocumentRepository {
 
     func save(_ document: NovelDocument, to url: URL) async throws {
         saveCount += 1
-        if shouldPauseNextSave {
-            shouldPauseNextSave = false
-            await withCheckedContinuation { continuation in
-                pausedSaveContinuation = continuation
-            }
-        }
         guard !saveFails else { throw BootstrapRepositoryError.saveFailed }
         documents[url.standardizedFileURL.path] = document
     }
@@ -320,34 +415,34 @@ private actor BootstrapRepository: DocumentRepository {
         loadFails = shouldFail
     }
 
-    func pauseNextSave() {
-        shouldPauseNextSave = true
+    func pauseLoad(at url: URL) {
+        loadPathsToPause.insert(url.standardizedFileURL.path)
     }
 
-    func pauseNextLoad() {
-        shouldPauseNextLoad = true
-    }
-
-    func waitUntilSaveIsPaused() async {
-        while pausedSaveContinuation == nil {
-            await Task.yield()
+    func waitUntilLoadIsPaused(
+        at url: URL,
+        timeout: Duration = .seconds(2)
+    ) async -> Bool {
+        let path = url.standardizedFileURL.path
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if pausedLoadContinuations[path] != nil {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
         }
+        return pausedLoadContinuations[path] != nil
     }
 
-    func waitUntilLoadIsPaused() async {
-        while pausedLoadContinuation == nil {
-            await Task.yield()
+    func resumeLoad(at url: URL) {
+        let path = url.standardizedFileURL.path
+        if let continuation = pausedLoadContinuations.removeValue(forKey: path) {
+            continuation.resume()
+        } else {
+            // A timeout path must not leave a later-arriving load suspended forever.
+            releasedLoadPaths.insert(path)
         }
-    }
-
-    func resumeSave() {
-        pausedSaveContinuation?.resume()
-        pausedSaveContinuation = nil
-    }
-
-    func resumeLoad() {
-        pausedLoadContinuation?.resume()
-        pausedLoadContinuation = nil
     }
 }
 

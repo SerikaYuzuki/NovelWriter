@@ -313,6 +313,23 @@ public protocol DocumentCopyingRepository: DocumentRepository {
     func saveCopy(_ doc: NovelDocument, from sourceURL: URL, to destinationURL: URL) async throws
 }
 
+/// 利用者と受け渡す portable な作品パッケージを、安全に検証・複製できる保存境界。
+///
+/// App 層へ `.novelpkg` の内部構造を漏らさず、取り込み／書き出し時にだけ必要な
+/// resource 上限、symbolic link 拒否、完全 readback、最終採用前の検証を保存層へ
+/// 委譲する。通常の自動保存とは分け、既存の書き出し先を検証失敗で失わない。
+public protocol PortableDocumentPackageRepository: DocumentCopyingRepository {
+    /// package 全体の filesystem 境界と既知 document payload を検証して読み込む。
+    func validatePortablePackage(at url: URL) async throws -> NovelDocument
+
+    /// sibling temporary package を完全検証してから destination へ atomic に採用する。
+    func saveValidatedCopy(
+        _ doc: NovelDocument,
+        from sourceURL: URL,
+        to destinationURL: URL
+    ) async throws
+}
+
 /// 作品パッケージ内に保存されたスナップショットの一覧項目。
 ///
 /// 置き場所やファイル名規則は保存層の詳細であり、App 側はこの値の

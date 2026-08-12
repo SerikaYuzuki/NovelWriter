@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 ///
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
 /// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
-/// 下部には保存状態と文字数だけを伝えるステータスバーを置く。上部 chrome は
+/// 執筆画面の保存・同期状態はEditor上端の小さな記号へ集約する。上部 chrome は
 /// `WorkbenchToolbarContent` が一箇所で所有する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
@@ -67,7 +67,9 @@ struct NovelWorkbenchView: View {
             }
             #endif
 
-            WorkbenchStatusBarView()
+            if !showsWritingActions {
+                WorkbenchStatusBarView()
+            }
         }
         .toolbar(id: "novelwriter.workbench.v3") {
             WorkbenchToolbarContent(
@@ -154,9 +156,11 @@ struct NovelWorkbenchView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
                 guard appState.supportsAttachments else { return }
-                appState.selectProjectSection(.references)
-                attachmentImportSession = appState.documentSessionToken
-                isImportingAttachment = true
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.references) else { return }
+                    attachmentImportSession = appState.documentSessionToken
+                    isImportingAttachment = true
+                }
             }
     }
 
@@ -205,19 +209,16 @@ struct NovelWorkbenchView: View {
     }
 
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
-        let previous = appState.workspaceSelection.section
-        appState.selectProjectSection(section)
-
-        guard appState.workspaceSelection.section == section,
-              WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
-
-        // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
-        // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
-        // Detail側からのプログラム遷移では呼ばれないため、標準のinactive選択を妨げない。
-        let handoffID = UUID()
-        sidebarFocusHandoffID = handoffID
-        projectSidebarIsFocused = false
         Task { @MainActor in
+            let previous = appState.workspaceSelection.section
+            guard await appState.selectProjectSectionAfterDeviceSyncDeparture(section),
+                  WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
+
+            // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
+            // Listが消えた直後、新しいSidebarへだけfirst responderを引き継ぐ。
+            let handoffID = UUID()
+            sidebarFocusHandoffID = handoffID
+            projectSidebarIsFocused = false
             await Task.yield()
             guard sidebarFocusHandoffID == handoffID,
                   appState.workspaceSelection.section == section else { return }
@@ -323,14 +324,21 @@ struct NovelWorkbenchView: View {
             EditorPaneView()
         case .characters:
             CharacterDetailView { appearance in
-                appState.selectProjectSection(.structure)
-                appState.selectEpisode(appearance.episodeID, in: appearance.chapterID)
-                editorSearchSession.requestSelection(range: appearance.range)
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    guard await appState.selectEpisodeAfterDeviceSyncDeparture(
+                        appearance.episodeID,
+                        in: appearance.chapterID
+                    ) else { return }
+                    editorSearchSession.requestSelection(range: appearance.range)
+                }
             }
         case .plot:
             PlotAndFlagSplitView { chapterID in
-                appState.selectProjectSection(.structure)
-                appState.selectChapter(chapterID)
+                Task {
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    await appState.selectChapterAfterDeviceSyncDeparture(chapterID)
+                }
             }
         case .references:
             AttachmentDetailView(fileName: selectedAttachmentFileName)
@@ -342,6 +350,9 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
+                    .frame(maxWidth: 560, alignment: .leading)
+                Divider()
+                DeviceSyncSettingsView()
                     .frame(maxWidth: 560, alignment: .leading)
             }
         }
@@ -597,24 +608,12 @@ private struct WorkbenchStatusBarView: View {
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
     var body: some View {
-        HStack(spacing: 8) {
-            statusContent
-
-            if appState.saveState == .failed {
-                Button("再試行") {
-                    appState.retrySave()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .padding(.trailing, 8)
-            }
-        }
-        .background(.bar)
+        statusContent
+            .background(.bar)
     }
 
     private var statusContent: some View {
         HStack(spacing: 16) {
-            Label(appState.saveState.label, systemImage: appState.saveState.systemImage)
             Text(chapterCountText)
             Text(totalCountText)
             if appState.workspaceSelection.section == .structure, editorSearchSession.didMissSearch {
@@ -664,12 +663,6 @@ private struct ProjectInfoView: View {
 
                     GroupBox("保存情報") {
                         VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("保存場所") {
-                                Text(appState.documentURL.path)
-                                    .lineLimit(2)
-                                    .truncationMode(.middle)
-                                    .multilineTextAlignment(.trailing)
-                            }
                             LabeledContent("保存状態", value: appState.saveState.label)
                             LabeledContent("章数") {
                                 Text("\(appState.document.chapters.count)")
