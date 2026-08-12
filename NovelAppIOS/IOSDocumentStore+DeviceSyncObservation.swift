@@ -251,8 +251,37 @@ extension IOSDocumentStore {
         deviceSyncSignalTask = Task { @MainActor [weak self] in
             for await _ in signals {
                 guard !Task.isCancelled else { return }
-                await self?.refreshOrPrepareSelectedEpisodeDeviceSync()
+                self?.scheduleDeviceSyncSignalRefresh()
             }
+        }
+    }
+
+    /// Push stormを高々「実行中1回＋追随1回」へcoalesceする。作品棚ではremote
+    /// catalogを更新し、Workbenchではpending publishとactive syncを順に進める。
+    private func scheduleDeviceSyncSignalRefresh() {
+        if deviceSyncSignalRefreshTask != nil {
+            deviceSyncSignalRefreshRequested = true
+            return
+        }
+        deviceSyncSignalRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            repeat {
+                deviceSyncSignalRefreshRequested = false
+                if usesCloudLibrary {
+                    switch startupState {
+                    case .library:
+                        _ = await refreshCloudLibrary()
+                    case .ready:
+                        await retryPendingCloudPublicationsInBackground()
+                        await refreshOrPrepareSelectedEpisodeDeviceSync()
+                    case .loading, .recovery:
+                        break
+                    }
+                } else {
+                    await refreshOrPrepareSelectedEpisodeDeviceSync()
+                }
+            } while deviceSyncSignalRefreshRequested && !Task.isCancelled
+            deviceSyncSignalRefreshTask = nil
         }
     }
 }

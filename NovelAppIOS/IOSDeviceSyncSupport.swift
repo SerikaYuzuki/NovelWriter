@@ -28,6 +28,8 @@ struct IOSDeviceSyncRuntime {
     let mergeRecoveryStore: any IOSDeviceSyncMergeRecoveryStoring
     let editIntentStore: any IOSDeviceSyncEditIntentStoring
     let setup: IOSDeviceSyncSetupRuntime?
+    /// iCloudを正とする作品棚。`nil`はlegacy/test runtimeだけ。
+    let library: IOSDeviceSyncLibraryRuntime?
     let now: @Sendable () -> Date
     let leaseDuration: TimeInterval
 
@@ -49,6 +51,7 @@ struct IOSDeviceSyncRuntime {
         mergeRecoveryStore: any IOSDeviceSyncMergeRecoveryStoring = IOSInMemoryDeviceSyncMergeRecoveryStore(),
         editIntentStore: any IOSDeviceSyncEditIntentStoring = IOSInMemoryDeviceSyncEditIntentStore(),
         setup: IOSDeviceSyncSetupRuntime? = nil,
+        library: IOSDeviceSyncLibraryRuntime? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         leaseDuration: TimeInterval = 120
     ) {
@@ -61,6 +64,7 @@ struct IOSDeviceSyncRuntime {
         self.mergeRecoveryStore = mergeRecoveryStore
         self.editIntentStore = editIntentStore
         self.setup = setup
+        self.library = library
         self.now = now
         self.leaseDuration = leaseDuration
     }
@@ -68,6 +72,109 @@ struct IOSDeviceSyncRuntime {
     func leaseExpiration() -> Date {
         now().addingTimeInterval(leaseDuration)
     }
+}
+
+enum IOSDeviceSyncLibraryConnection: Equatable, Sendable {
+    case checking
+    case available
+    case offline
+    case accountRequired
+    case differentAccount
+}
+
+enum IOSDeviceSyncRemoteLibraryAvailability: Equatable, Sendable {
+    case locallyBound
+    case remoteOnly
+    case remoteDownloadPending
+    case publishPending
+}
+
+struct IOSDeviceSyncRemoteLibraryEntry: Equatable, Sendable, Identifiable {
+    var id: SyncWorkID {
+        work.workID
+    }
+
+    let work: SyncWorkLibraryEntry
+    let availability: IOSDeviceSyncRemoteLibraryAvailability
+}
+
+struct IOSDeviceSyncRemoteLibrarySnapshot: Equatable, Sendable {
+    let entries: [IOSDeviceSyncRemoteLibraryEntry]
+    let connection: IOSDeviceSyncLibraryConnection
+}
+
+struct IOSDeviceSyncPreparedLibraryWork: Sendable {
+    let entry: SyncWorkLibraryEntry
+    let document: NovelDocument
+    let packageSnapshot: WorkSnapshot
+    let bind: @Sendable (WorkSnapshot) async throws -> Void
+}
+
+/// App層からCloudKit具象型とregistry実装を隠すcloud-library境界。
+struct IOSDeviceSyncLibraryRuntime: Sendable {
+    let loadLocalInventory: @Sendable () async throws -> IOSDeviceSyncLocalLibraryInventory
+    let loadRemoteLibrary: @Sendable () async throws -> IOSDeviceSyncRemoteLibrarySnapshot
+    let packageURL: @Sendable (SyncWorkID) async throws -> URL
+    let workIDForPackageURL: @Sendable (URL) async throws -> SyncWorkID?
+    let stagingPackageURL: @Sendable (SyncWorkID) async throws -> URL
+    let validateStagingPackage: @Sendable (URL, SyncWorkID) async throws -> Void
+    let installStagingPackage: @Sendable (URL, SyncWorkID) async throws -> URL
+    let discardStagingPackage: @Sendable (URL, SyncWorkID) async throws -> Void
+    let validateInstalledPackage: @Sendable (SyncWorkID) async throws -> Void
+    let reserveForPublish: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let abortPublishReservation: @Sendable (SyncWorkID) async throws -> Void
+    let confirmPublishPackage: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let beginRemoteOpen: @Sendable (SyncWorkLibraryEntry) async throws -> Void
+    let attestRemotePackage: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation,
+        SyncWorkLibraryEntry
+    ) async throws -> Void
+    let prepareRemoteOpen: @Sendable (
+        SyncWorkLibraryEntry
+    ) async throws -> IOSDeviceSyncPreparedLibraryWork
+    let resumeRemoteOpen: @Sendable (
+        SyncWorkID
+    ) async throws -> IOSDeviceSyncPreparedLibraryWork
+    let canResumeRemoteOpenOffline: @Sendable (SyncWorkID) async -> Bool
+    let offlineResumableRemoteOpenWorkIDs: @Sendable () async -> [SyncWorkID]
+    let hasCompletedRemoteOpenLocally: @Sendable (SyncWorkLibraryEntry) async -> Bool
+    let localWorkNeedsReview: @Sendable (SyncWorkID, UUID) async throws -> Bool
+    let markSynced: @Sendable (SyncWorkID, SyncWorkLibraryEntry) async throws -> Void
+    let markNeedsReview: @Sendable (SyncWorkID) async throws -> Void
+    let quarantineInstalledPackage: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let quarantineForAccount: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let restoreRemoteOpenPending: @Sendable (
+        SyncWorkID,
+        SyncWorkLibraryEntry
+    ) async throws -> Void
+    let markLegacyPackageRecovered: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let recordPackageMutation: @Sendable (
+        SyncWorkID,
+        IOSDeviceSyncLocalPackageAttestation
+    ) async throws -> Void
+    let hasLocalPublishAuthority: @Sendable (SyncWorkID, UUID) async -> Bool
+    let publishNewWork: @Sendable (SyncWorkID, NovelDocument, URL) async throws -> Void
+    let resumeInitialWorkPublication: @Sendable (
+        SyncWorkID,
+        NovelDocument,
+        URL
+    ) async throws -> Void
 }
 
 struct IOSDeviceSyncSetupRuntime: Sendable {

@@ -319,6 +319,9 @@ extension IOSDocumentStore {
             _ = try privateWorkingCopyLocation.attestPackage(at: documentURL)
             let loaded = try await repository.load(from: documentURL)
             guard try WorkSnapshot(document: loaded) == snapshot else { return false }
+            // Package exact readbackをregistryへ先に耐久化し、直後のkillで
+            // 旧attestationを「同期済み」と誤認しない。journal確定はこの後。
+            try await recordCloudLibraryPackageMutationIfNeeded(loaded, at: documentURL)
             document = loaded
             noteDeviceSyncPackageSaved(loaded)
             advanceEditorContentGeneration()
@@ -374,6 +377,7 @@ extension IOSDocumentStore {
         try await repository.save(savedDocument, to: url)
         noteDeviceSyncPackageSaved(savedDocument)
         _ = try privateWorkingCopyLocation.attestPackage(at: url)
+        try await recordCloudLibraryPackageMutationIfNeeded(savedDocument, at: url)
 
         if let stagedRevision, let client, let snapshot {
             do {
@@ -770,6 +774,9 @@ extension IOSDocumentStore {
             let loaded = try await repository.load(from: documentURL)
             guard try WorkSnapshot(document: loaded) == revision.snapshot,
                   workSyncContextIsCurrent(expectedIdentity) else { return false }
+            // remote fast-forward／merge／conflict適用でも、package exact readback後、
+            // journal acknowledgement前にlocal registryを更新する。
+            try await recordCloudLibraryPackageMutationIfNeeded(loaded, at: documentURL)
             document = loaded
             noteDeviceSyncPackageSaved(loaded)
             advanceEditorContentGeneration()

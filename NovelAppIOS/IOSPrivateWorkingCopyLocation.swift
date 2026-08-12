@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import NovelSync
 
 enum IOSPrivateWorkingCopyLocationError: Error, Equatable {
     case unsafeRoot
@@ -187,6 +188,30 @@ extension IOSPrivateWorkingCopyLocation {
         return candidate
     }
 
+    /// Cloud libraryの作品はURLをmetadataへ保存せず、WorkIDから常に同じ
+    /// app-private packageを導出する。既存packageがあってもURLを返す。
+    func packageURL(for workID: SyncWorkID) throws -> URL {
+        try validateFixedRoot()
+        return try directChildURL(
+            forPackageName: "\(workID.rawValue.uuidString).novelpkg",
+            allowsStaging: false
+        )
+    }
+
+    func documentID(for workID: SyncWorkID) -> IOSPrivateDocumentID {
+        IOSPrivateDocumentID(packageName: "\(workID.rawValue.uuidString).novelpkg")
+    }
+
+    func workID(for packageURL: URL) throws -> SyncWorkID? {
+        try validateFixedRoot()
+        let requested = packageURL.standardizedFileURL
+        guard requested.deletingLastPathComponent() == rootURL,
+              requested.pathExtension == "novelpkg",
+              let uuid = UUID(uuidString: requested.deletingPathExtension().lastPathComponent),
+              requested.lastPathComponent == "\(uuid.uuidString).novelpkg" else { return nil }
+        return SyncWorkID(rawValue: uuid)
+    }
+
     func stagingDestination() throws -> URL {
         try validateFixedRoot()
         let name = ".import-\(UUID().uuidString).novelpkg"
@@ -196,6 +221,52 @@ extension IOSPrivateWorkingCopyLocation {
         }
         try validateFixedRoot()
         return candidate
+    }
+
+    func stagingPackageURL(for workID: SyncWorkID) throws -> URL {
+        try validateFixedRoot()
+        return try directChildURL(
+            forPackageName: ".\(workID.rawValue.uuidString).staging.novelpkg",
+            allowsStaging: true
+        )
+    }
+
+    func validateStagingPackage(at url: URL, for workID: SyncWorkID) throws {
+        let requested = url.standardizedFileURL
+        let expected = rootURL.appendingPathComponent(
+            ".\(workID.rawValue.uuidString).staging.novelpkg",
+            isDirectory: true
+        ).standardizedFileURL
+        guard requested == expected else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        _ = try attestStagingPackage(at: requested)
+    }
+
+    func installStagingPackage(_ url: URL, for workID: SyncWorkID) throws -> URL {
+        try validateStagingPackage(at: url, for: workID)
+        let staging = try attestStagingPackage(at: url)
+        let finalURL = try packageURL(for: workID)
+        guard try Self.pathStatus(finalURL) == nil else {
+            throw IOSPrivateWorkingCopyLocationError.destinationExists
+        }
+        guard renamex_np(url.path, finalURL.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw errno == EEXIST
+                ? IOSPrivateWorkingCopyLocationError.destinationExists
+                : IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        let installed = try attestMovedPackage(at: finalURL, matching: staging)
+        try revalidate(installed)
+        return finalURL
+    }
+
+    func validateInstalledPackage(for workID: SyncWorkID) throws {
+        let expected = try packageURL(for: workID)
+        let attestation = try attestPackage(at: expected)
+        guard attestation.id == documentID(for: workID) else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        try revalidate(attestation)
     }
 
     func attestPackage(for id: IOSPrivateDocumentID) throws -> PackageAttestation {
@@ -296,7 +367,8 @@ extension IOSPrivateWorkingCopyLocation {
 private extension IOSPrivateWorkingCopyLocation {
     func directChildURL(forPackageName name: String, allowsStaging: Bool) throws -> URL {
         let validName = if allowsStaging {
-            name.hasPrefix(".import-")
+            (name.hasPrefix(".import-") || name.hasSuffix(".staging.novelpkg"))
+                && name.hasPrefix(".")
                 && name.hasSuffix(".novelpkg")
                 && URL(fileURLWithPath: name).lastPathComponent == name
         } else {

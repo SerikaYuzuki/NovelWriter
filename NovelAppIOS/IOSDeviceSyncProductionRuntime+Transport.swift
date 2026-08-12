@@ -130,6 +130,13 @@ extension IOSDeviceSyncProductionRuntimeBox {
 
     static func locator(for workingCopyID: IOSPrivateDocumentID) throws -> AppleLocalDocumentLocator {
         let packageName = workingCopyID.packageName
+        if packageName.hasSuffix(".novelpkg"),
+           let uuid = UUID(uuidString: String(packageName.dropLast(".novelpkg".count))),
+           packageName == "\(uuid.uuidString).novelpkg" {
+            return try AppleLocalDocumentLocator.cloudLibrary(
+                workID: SyncWorkID(rawValue: uuid)
+            )
+        }
         let input = "FUMINIWA-APPLE-LOCAL-DOCUMENT-LOCATOR-V1\nios-private-package\n"
             + "\(packageName.utf8.count):\(packageName)"
         return try AppleLocalDocumentLocator(

@@ -68,6 +68,9 @@ struct FuminiwaIOSApp: App {
                     // 端末内WALの確認とEditor解放はCloudKit bootstrapを待たせない。
                     await store.refreshOrPrepareSelectedEpisodeDeviceSync()
                     await deviceSyncBootstrap.value
+                    // 初回のStore bootstrapはCloudKit account確認を待たずlocal shelfを
+                    // 先に出す。runtimeがreadyになった後、remote catalogを必ず再読込する。
+                    _ = await store.refreshLibrary()
                     await store.refreshOrPrepareSelectedEpisodeDeviceSync()
                     #endif
                 }
@@ -75,6 +78,7 @@ struct FuminiwaIOSApp: App {
                     Task {
                         if newPhase == .active {
                             await store.refreshOrPrepareSelectedEpisodeDeviceSync()
+                            await store.retryPendingCloudPublicationsInBackground()
                         } else {
                             await store.flushDeviceSyncWithBackgroundTime()
                         }

@@ -36,6 +36,9 @@ extension IOSDocumentStore {
     @discardableResult
     func refreshLibrary() async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
+        if deviceSyncRuntime?.library != nil {
+            return await refreshCloudLibrary()
+        }
         do {
             guard let privateWorkingCopyLocation else {
                 throw IOSPrivateWorkingCopyLocationError.unsafeRoot

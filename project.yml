@@ -272,6 +272,7 @@ targets:
           - IOSDeviceSyncIntegrationTests.swift
           - IOSDeviceSyncPersistenceRootTests.swift
           - IOSDeviceSyncEditIntentStoreTests.swift
+          - IOSCloudLibraryIntegrationTests.swift
     dependencies:
       - target: FUMINIWAIOS
     settings:
@@ -297,6 +298,7 @@ targets:
       - path: NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift
       - path: NovelAppIOSTests/IOSDeviceSyncPersistenceRootTests.swift
       - path: NovelAppIOSTests/IOSDeviceSyncEditIntentStoreTests.swift
+      - path: NovelAppIOSTests/IOSCloudLibraryIntegrationTests.swift
     dependencies:
       - package: NovelKit
         product: NovelCore

@@ -36,6 +36,7 @@ extension IOSDocumentStore {
         _ = try privateWorkingCopyLocation.attestPackage(at: url)
         try await repository.save(document, to: url)
         noteDeviceSyncPackageSaved(document)
+        try await recordCloudLibraryPackageMutationIfNeeded(document, at: url)
         let checkpointsCommitted = await commitDeviceSyncPackageCheckpoints(checkpoints)
         if !intentReady || !checkpoints.allPrepared || !checkpointsCommitted {
             deviceSyncLocalDurabilityState = .failed

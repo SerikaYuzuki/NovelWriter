@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelSync
 import SwiftUI
 import UIKit
 
@@ -12,6 +13,7 @@ struct IOSWorkbenchView: View {
             IOSLibraryView(
                 store: store,
                 openDocument: openDocument,
+                openCloudDocument: openCloudDocument,
                 makeNewDocument: makeNewDocument
             )
             .navigationDestination(for: IOSWorkspaceRoute.self) { route in
@@ -127,6 +129,14 @@ struct IOSWorkbenchView: View {
     private func makeNewDocument() {
         Task {
             guard await store.makeNewDocument(),
+                  let session = store.currentDocumentSessionToken else { return }
+            navigation.showProjectHome(for: session)
+        }
+    }
+
+    private func openCloudDocument(_ workID: SyncWorkID) {
+        Task {
+            guard await store.openCloudLibraryWork(workID),
                   let session = store.currentDocumentSessionToken else { return }
             navigation.showProjectHome(for: session)
         }

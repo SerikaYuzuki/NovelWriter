@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelSync
 
 extension IOSDocumentStore {
     func bootstrap() async {
@@ -24,7 +25,14 @@ extension IOSDocumentStore {
 
     private func performBootstrap() async {
         guard !deviceSyncStartupFailedSafely else { return }
+        startDeviceSyncSignalObservationIfNeeded()
         startupState = .loading
+        if usesCloudLibrary {
+            startupState = .library
+            saveState = .saved
+            _ = await refreshCloudLibrary()
+            return
+        }
         do {
             guard let privateWorkingCopyLocation else {
                 throw IOSPrivateWorkingCopyLocationError.unsafeRoot
@@ -60,6 +68,9 @@ extension IOSDocumentStore {
     @discardableResult
     func makeNewDocument() async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
+        if usesCloudLibrary {
+            return await makeNewCloudLibraryDocument()
+        }
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
@@ -90,6 +101,9 @@ extension IOSDocumentStore {
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
         guard !deviceSyncStartupFailedSafely else { return false }
+        if usesCloudLibrary {
+            return await importCloudLibraryPackage(from: sourceURL)
+        }
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             let transitioned = await performDocumentTransition {
@@ -177,7 +191,11 @@ extension IOSDocumentStore {
             try await operation()
             return true
         } catch {
-            operationErrorMessage = "作品を開けませんでした。元の作品は変更していません。\n\(error.localizedDescription)"
+            operationErrorMessage = if usesCloudLibrary {
+                "作品を準備できませんでした。元の作品は変更していません。通信状態とiCloud設定を確認して、もう一度お試しください。"
+            } else {
+                "作品を開けませんでした。元の作品は変更していません。\n\(error.localizedDescription)"
+            }
             return false
         }
     }
@@ -196,17 +214,34 @@ extension IOSDocumentStore {
 
             do {
                 let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                    guard let portable = repository as? PortableDocumentPackageRepository,
+                          let privateWorkingCopyLocation else {
+                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                    }
+                    let sourceURL = documentURL.standardizedFileURL
+                    let documentSnapshot = document
+                    let sourceAttestation = try privateWorkingCopyLocation.attestPackage(
+                        at: sourceURL
+                    )
                     let root = fileManager.temporaryDirectory
                         .appendingPathComponent("FUMINIWA-Export-\(UUID().uuidString)", isDirectory: true)
                     try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
                     let filename = Self.portableExportFilename(for: document.title)
                     let destination = root.appendingPathComponent(filename, isDirectory: true)
                     do {
-                        try await repository.saveCopy(
-                            document,
-                            from: documentURL,
+                        try privateWorkingCopyLocation.revalidate(sourceAttestation)
+                        try await portable.saveValidatedCopy(
+                            documentSnapshot,
+                            from: sourceURL,
                             to: destination
                         )
+                        let readback = try await portable.validatePortablePackage(at: destination)
+                        guard readback == documentSnapshot,
+                              try WorkSnapshot(document: readback)
+                              == WorkSnapshot(document: documentSnapshot) else {
+                            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                        }
+                        try privateWorkingCopyLocation.revalidate(sourceAttestation)
                         return (root: root, package: destination)
                     } catch {
                         try? fileManager.removeItem(at: root)
@@ -227,7 +262,11 @@ extension IOSDocumentStore {
                     pendingExportURL = value.package
                 }
             } catch {
-                operationErrorMessage = "作品を書き出せませんでした。\n\(error.localizedDescription)"
+                operationErrorMessage = if usesCloudLibrary {
+                    "作品を書き出せませんでした。保存先と空き容量を確認して、もう一度お試しください。"
+                } else {
+                    "作品を書き出せませんでした。\n\(error.localizedDescription)"
+                }
             }
         }
     }

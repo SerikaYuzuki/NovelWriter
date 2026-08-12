@@ -65,6 +65,9 @@ final class IOSDocumentStore {
     var workSyncIsApplyingConflict = false
     var deviceSyncSetupState: IOSDeviceSyncSetupState = .idle
     var libraryItems: [IOSDocumentLibraryItem] = []
+    var cloudLibraryItems: [IOSCloudLibraryItem] = []
+    var cloudLibraryConnection: IOSCloudLibraryConnection = .offline
+    var cloudLibraryIsLoading = false
     private(set) var attachments: [Attachment] = []
     var isImporterPresented = false
     var pendingExportURL: URL?
@@ -108,6 +111,8 @@ final class IOSDocumentStore {
         acceptedPriorPackageDigests: [SyncContentDigest]
     )?
     @ObservationIgnored var deviceSyncSignalTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncSignalRefreshTask: Task<Void, Never>?
+    @ObservationIgnored var deviceSyncSignalRefreshRequested = false
     @ObservationIgnored var deviceSyncPreparationTask: Task<Void, Never>?
     @ObservationIgnored var deviceSyncPreparationLookup: IOSDeviceSyncLookupIdentity?
     @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
@@ -127,6 +132,12 @@ final class IOSDocumentStore {
     @ObservationIgnored var pendingExportRootURL: URL?
     @ObservationIgnored var verifiedPrivateDocumentIDs: Set<IOSPrivateDocumentID> = []
     @ObservationIgnored var libraryRefreshGeneration: UInt64 = 0
+    @ObservationIgnored var cloudLibraryRemoteEntries: [SyncWorkID: SyncWorkLibraryEntry] = [:]
+    @ObservationIgnored var activeCloudWorkID: SyncWorkID?
+    @ObservationIgnored var permitsCloudLibraryMutation = false
+    @ObservationIgnored var mayAttemptInitialCloudPublish = false
+    @ObservationIgnored var cloudLibraryOperationInProgress = false
+    @ObservationIgnored var pendingCloudLibraryRetryTask: Task<Void, Never>?
 
     @ObservationIgnored
     lazy var saveCoordinator: DocumentSaveCoordinator = .init(
