@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-063のMac iCloud作品catalog、remote WorkSnapshot bootstrap、app-private work registry、新規／取込／identity不変のpackage書出を含む作品全体local-first同期はsource complete／local automated GOである。2026-08-12の最終source freezeは`NovelSync` 142 / 142件（14 suites）、`NovelSyncCloudKit` 80 / 80件（20 suites）、freshな`./Scripts/check.sh`の`All checks passed`、署名済みDebug macOS／iOS buildのentitlement read-backを通過した。署名済み実Mac Appでは同一accountのiCloud棚が`available`／0作品になるempty-catalog smokeも確認した。これは実account／container到達と初回bootstrapの証跡であり、remote CRUD、paired Mac↔iPhone、Production schema deployの完了ではない。実account switch、手動VoiceOver、実OS process-kill campaign、Package Validator、External Change / Conflict、production migration／minimum-version fenceを含めRelease NO-GOは維持する
+> **状態**: D-063のiCloud作品catalog、remote WorkSnapshot bootstrap、platform別app-private work registry、新規／取込／identity不変のpackage書出を含む作品全体local-first同期は、macOS／iOS / iPadOSともsource complete／local automated GOである。2026-08-12のfresh `./Scripts/check.sh`は`All checks passed`で、`NovelSync` 142 / 142件（14 suites）、root parent修正focused 28 / 28件を含む`NovelSyncCloudKit` 84 / 84件、macOS Device Sync 88 / 88 top-level（5 suites）、iOS Device Sync 86 / 86 top-level（4 suites）、hosted iOS App 79 / 79件、generic iOS build／build-for-testingを通過した。先行iOS xcresultのdynamic device casesは89 / 89件である。署名済み実Mac Appから既存作品の初回publishも成功し、local registryは`synced`、journalはoutbox 0／`synchronized`、catalog cacheは1件になった。`Invalid Arguments`／rate mitigationの再発はない。これはDevelopment環境の同一実accountで1作品をpublishしてread-backした証跡であり、iOS実CloudKit、remote update／delete、paired Mac↔iPhone、Production schema deployの完了ではない。実account switch、手動VoiceOver、実OS process-kill campaign、Package Validator、External Change / Conflict、production migration／minimum-version fenceを含めRelease NO-GOは維持する
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
@@ -8,7 +8,7 @@
 
 ## 0. D-061／D-063の現行whole-work／cloud library契約
 
-D-061以降、通常のMac／iOS Appが使うDevice Syncの単位はEpisode本文ではなく、`NovelDocument`全体のcanonical `WorkSnapshot`である。D-063はこのheadをMacのcloud libraryから列挙し、別端末へWorkSnapshotだけを初回materializeするcatalog／bootstrapを追加する。以下をcurrent contractとし、後続の1〜15章はD-059／D-060話本文trackの実装・検証履歴として残す。
+D-061以降、通常のMac／iOS Appが使うDevice Syncの単位はEpisode本文ではなく、`NovelDocument`全体のcanonical `WorkSnapshot`である。D-063はこのheadをMac／iPhone／iPad共通のcloud libraryから列挙し、各端末へWorkSnapshotだけを初回materializeするcatalog／bootstrapを追加する。以下をcurrent contractとし、後続の1〜15章はD-059／D-060話本文trackの実装・検証履歴として残す。
 
 ### 0.1 同期対象と非対象
 
@@ -60,6 +60,8 @@ Apple adapterは既存private database／単一固定custom zone内で、Episode
 | `FUMINIWAWorkMutationReceiptV1` | mutation ID、command digest、result headを保持しresponse loss後のretryを冪等化 |
 
 publishは`mutationID + expected head revision ID + expected head snapshot digest`を検査し、必要なimmutable revision、receipt、更新後controlをatomicに保存する。head IDまたはdigestが変わっていればwinnerを選ばずdivergenceとして再fetchする。時計、更新日時、push到着順によるlast-write-winsは禁止する。revision assetはread-back時にrecord metadata、byte count、digest、parent、work identityを検査してからdomainへ渡す。
+
+CloudKitの新規List fieldは空配列だけでは要素型を推論できないため、0-parentのroot revisionでは`parentRevisionIDs` field自体を保存せず、decode時のnilを空parentとして扱う。1〜2 parent revisionは従来どおりString Listとして保存する。空Listを新規fieldへ送って`.invalidArguments`にする実装へ戻さない。
 
 ### 0.4 whole-work 3-way mergeと3面review
 
@@ -123,7 +125,7 @@ Work conflict UIは既存Mac focused coverageを含め最終source監査した�
 
 ### 0.8 Work library catalogとidentity
 
-D-063のlibraryはprivate CloudKit上のWork headと、端末内で検証済みのworking copy inventoryを`SyncWorkID`だけでmergeする。タイトル、`NovelDocument.id`、ordered structure digest、package basenameをdeduplicate／automatic binding／削除対象判定へ使わない。exportしたpackageを再importした場合も新しいWorkIDとし、同じdocument IDを持つ別workとして扱う。
+D-063のApple版libraryはprivate CloudKit上のWork headと、各端末内で検証済みのworking copy inventoryを`SyncWorkID`だけでmergeする。タイトル、`NovelDocument.id`、ordered structure digest、package basenameをdeduplicate／automatic binding／削除対象判定へ使わない。exportしたpackageを再importした場合も新しいWorkIDとし、同じdocument IDを持つ別workとして扱う。
 
 remote catalog entryは少なくとも次をexactに持つ。
 
@@ -139,7 +141,7 @@ remote catalog titleはaccount-scoped情報である。`accountRequired`／unsco
 
 ### 0.9 app-private working copy inventory
 
-Macのactive copyは信頼済みapp-private rootの`SyncWorkingCopies-v2/<SyncWorkID>.novelpkg`へ置き、通常UIにroot／full path／Finder入口を出さない。URLはregistryへ保存せずWorkIDから導出する。canonical local locatorもpath hashではなくWorkIDを使い、旧path-derived locatorはlegacy recovery以外でD-063 workへ使わない。diagnostic logへapp-private path／WorkIDを出さず、失敗はboundedなerror categoryだけで記録する。
+各Apple端末のactive copyは信頼済みapp-private rootへ置き、通常UIにroot／full path／Finder／Files入口を出さない。macOSのcanonical packageは`SyncWorkingCopies-v2/<SyncWorkID>.novelpkg`、iOS / iPadOSはiOS専用private working-copy rootの`<SyncWorkID>.novelpkg`とし、platform間で絶対pathを共有しない。URLはregistryへ保存せずWorkIDから導出する。canonical local locatorもpath hashではなくWorkIDを使い、旧path-derived locatorはlegacy recovery以外でD-063 workへ使わない。diagnostic logと利用者向けerrorへapp-private path／WorkIDを出さず、失敗はboundedなerror categoryだけで記録する。
 
 registryは1 work 1 atomic recordとし、少なくともWorkID、package attestation、state、acknowledged remote head、pending remote headを持つ。新規／Importのreservationでは作成予定snapshotのexpected package attestationをstaging前に同recordへdurable化し、installed package未確定の間もこのexpected値を再開authorityにする。D-063以前の`reservedForPublish`でpackage／expected attestationがnilのlegacy recordは、document ID一致だけでstaging／finalを採用せずquarantineする。単一JSON全体の破損でlibraryを失う構成にせず、registry欠損時はdeterministicなpackage scanから保全する。壊れたrecord、unreadable package、unregistered／orphan packageはwork単位で隔離し、他workの一覧とopenを維持する。registryまたはpackageが曖昧な状態を`synced`へ推測昇格しない。
 
@@ -157,7 +159,7 @@ local saveではpackage read-back attestationをrecordへ反映し、以前`sync
 2. finalと同じprivate rootのdeterministic stagingへ完全packageを作る。importではsource treeをportable transfer境界で検証して複製する。
 3. stagingのpackage tree、`NovelDocument`、`WorkSnapshot`、digest／byte countをread-backし、reservationのexpected attestationと一致させる。
 4. finalが存在しないことを確認し、no-overwriteのatomic renameでinstallする。既存finalがある場合はexact prepared stateだけをresumeし、それ以外は置換しない。
-5. package attestationをregistryへ確定する。live scope確認済みならdurableなpending creation／bindingを経由してremote処理を開始する。以前確認済みのsame scopeが一時offlineならsame-scope intent／bindingだけを耐久化してremote処理を保留する。unscopedならlocal-onlyのまま編集を解放し、将来accountへの自動associationを行わない。
+5. package attestationをregistryへ確定する。live scope確認済みならdurableなpending creation／bindingを経由してremote処理を開始する。以前確認済みのsame scopeが一時offlineならsame-scope intent／bindingだけを耐久化してremote処理を保留する。unscopedまたはdifferent account中に新しく作ったunbound workはlocal-onlyのまま編集を解放し、将来accountへの自動associationを行わない。以前のscopeへexactに結び付いた検証済みcopyだけをaccount-quarantinedとして保持する。
 
 sourceとstaging／finalのpathが重なる場合、symlink、resource cap、pre／post treeまたはlogical read-backで検出した内容不一致、document／snapshot不一致はfail-closedにする。staging read-backが一致しなければstaging／finalを残さず破棄し、durable reserveを正常なworking copyへ推測昇格せず、再起動後も採用しない。失敗時は外部原本、既存final、active document、old registry recordを変更しない。ただしこのportable transfer境界だけでcopy中のhard-link／外部process変更を完全に防ぐTOCTOU耐性は主張しない。より強いfile coordination／descriptor-relative I/Oと外部変更検出は、未完了のPackage Validator／External Change / Conflict Gateで扱う。
 
@@ -173,20 +175,23 @@ remote-only openはonlineかつlive account scope確認済みの場合だけ、�
 
 各checkpointはprocess終了後に冪等resumeする。finalが存在してexact prepared headと一致する場合だけresumeし、別内容なら`needsReview`へquarantineして上書きしない。Domain bind完了後からregistryのsynced mark前に終了した場合は、exact package、pending remote projection、outbox-free journalが一致するときだけ当該WorkIDを`synced`へ復旧する。この判断はofflineかつremote catalogが0件でもlocal durable stateだけで行える。remote bootstrapからlocal-rootをbaseにした新しいoutboxを作らず、取得したremote revisionを既知のremote headとしてjournalへ導入する。
 
+iOS / iPadOSでは、D-063導入前のprivate rootにだけあるpackageを自動でremote workへ関連付けない。検証できたlegacy packageは「タップして新しい作品として取り込む」と表示し、利用者の明示操作で新WorkIDのportable copyを上記new／Import transactionへ通す。新copyのinstall／read-back後も旧package bytesを削除せず、旧registry側を`legacyPreserved`として二重取込だけを防ぐ。cold Files / Open With URLはCloud account確認中に破棄せず、library bootstrap完了後にdocument operation gateへ直列化して通常Importとして扱う。
+
 ### 0.11 startup状態とProduct Truth
 
-Mac startupは次を区別し、local durabilityとremote acknowledgementを1 badgeへ畳み込まない。
+Apple版の作品棚は次を区別し、local durabilityとremote acknowledgementを1 badgeへ畳み込まない。macOSは「このMac」、iOS / iPadOSは「この端末」と表示する。
 
 | 行状態 | 開ける条件 | 表示の意味 |
 | --- | --- | --- |
-| cached exact | local package attestationとaccount-scoped remote receipt／headが一致 | onlineでは「iCloudと同期済み」、offlineでは「このMacに保存済み、オフラインでも開けます」 |
-| same-scope local pending | local packageは検証済み、以前確認済みaccount scopeのremoteは未確認 | onlineでは「このMacに保存済み、iCloudへ保存中」、一時offlineでは「接続後に同期」 |
-| unscoped local-only | local packageは検証済み、account binding authorityなし | 「このMacにのみ保存済み」／「iCloudとは関連付けられていません」。後から現れたaccountへ自動uploadしない |
-| account-quarantined local | local packageは検証済み、以前のaccount scopeと現在scopeが不一致 | 「このMacに保存済み、iCloudアカウントが異なります」。local open／編集は許可し、旧remote title／binding／pendingをquarantineしてuploadしない |
+| cached exact | local package attestationとaccount-scoped remote receipt／headが一致 | onlineでは「iCloudと同期済み」、offlineでは「この端末に保存済み、オフラインでも開けます」 |
+| same-scope local pending | local packageは検証済み、以前確認済みaccount scopeのremoteは未確認 | onlineでは「この端末に保存済み、iCloudへ反映中」、一時offlineでは「接続後にiCloudへ同期」 |
+| unbound local-only | local packageは検証済み、account binding authorityなし。`accountRequired`／unscoped／different account中の新規・Importを含む | 「この端末にのみ保存済み」。後から現れたaccountへ自動uploadしない |
+| account-quarantined local | local packageは検証済み、以前のaccount scopeと現在scopeが不一致 | 「この端末に保存済み、iCloudアカウントが異なります」。local open／編集は許可し、旧remote title／binding／pendingをquarantineしてuploadしない |
 | remote-only | exact catalog headのみ | onlineでだけ「iCloudからダウンロード」。offline／account未確認では開かない |
-| remote download pending | exact remote revisionがaccount-scoped hidden journalへ準備済み | 「このMacへの保存を再開」。同じaccount scopeとexact intentだけで再開。`accountRequired`／different accountでlocal packageがなければ行自体を棚から除外 |
+| remote download pending | exact remote revisionがaccount-scoped hidden journalへ準備済み | 「この端末への保存を再開」。同じaccount scopeとexact intentだけで再開。`accountRequired`／different accountでlocal packageがなければ行自体を棚から除外 |
 | cloud unavailable | local packageと過去ackはexactだが、connection availableのcurrent catalogに当該WorkIDがない | `.cloudUnavailable`。「iCloud上の作品を確認できません」。checkmark／open／uploadを止め、local packageは保持 |
-| needs review | packageは読めるがremote／registry／installが曖昧 | 「このMacに保存済み、統合が必要」。通常cloud reviewはlocal編集継続、materialization曖昧時はroot gate |
+| needs review | packageは読めるがremote／registry／installが曖昧 | 「この端末に保存済み、内容の確認が必要」。通常cloud reviewはlocal編集継続、materialization曖昧時はroot gate |
+| legacy local（iOS / iPadOSのみ） | D-063以前のprivate packageを検証済み、WorkID associationなし | 「タップして新しい作品として取り込む」。明示操作までupload／削除／rekeyしない |
 | unavailable | legacy nil reservation、head欠損、package／registry破損等 | 自動で開かず、原因に応じた設定確認／Recoveryを提示 |
 
 `checkmark.icloud`と「iCloudと同期済み」はcached exactに限る。local registryの`pending`、network online、catalogに同名行があること、直前のupload開始だけでは表示しない。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`へ降格し、過去receiptだけでcheckmark／open／uploadを再開しない。`accountRequired`／different accountではlocal packageのないApp `remoteOpenPending` rowを棚から除外し、旧accountのwork存在／titleを漏らさない。状態は文字とVoiceOver valueで伝え、remote-only offline／破損へ「接続すれば必ず開ける」と誤解させるhintを出さない。account mismatchは検証済みlocal packageの有無を区別し、local packageを開ける場合もremote upload可能とは表示しない。MVPにwork delete UI／APIを置かず、CloudKit tombstone／retentionは別Decisionへ分離する。
@@ -195,7 +200,7 @@ Mac startupは次を区別し、local durabilityとremote acknowledgementを1 ba
 
 利用者が`.novelpkg`を得る操作は「書き出す…」であり、active copyを別URLへ切り替えるSave Asではない。current sessionのnative editor／form、package、Work journalをflushした後、`PortableDocumentPackageRepository`（`DocumentCopyingRepository`を含む）でsource package全体を検証済みcopyし、destinationもread-backする。capabilityがなければ`DocumentRepository.save`へfallbackしない。成功／失敗のどちらでもactive `documentURL`、document session、recent、WorkID、binding、journal、selectionを変えない。
 
-exportは **現在のMacのpackageに存在する** attachment、snapshot履歴、非hidden未知root itemを保持する。一方、D-063 remote bootstrapが取得するのはWorkSnapshotだけであり、別端末のattachment／snapshot／unknown rootは復元しない。そのため別端末で書き出したpackageにそれらがない場合がある。Device Syncをpackage全体mirror、完全backup、資料／snapshot復元、独自E2EEとして表示しない。
+exportは **現在端末のpackageに存在する** attachment、snapshot履歴、非hidden未知root itemを保持する。一方、D-063 remote bootstrapが取得するのはWorkSnapshotだけであり、別端末のattachment／snapshot／unknown rootは復元しない。そのため別端末で書き出したpackageにそれらがない場合がある。Device Syncをpackage全体mirror、完全backup、資料／snapshot復元、独自E2EEとして表示しない。
 
 ### 0.13 D-063 cutover、reset、Release Gate
 
@@ -207,33 +212,40 @@ D-063も一般配布前のdevelopment-only cutoverとする。実CloudKitへ未�
 
 reset前にexact schema readerで全stateと全hidden working copyを列挙・attestする。pending／reviewを解決し、各hidden packageはregistryをexactに再構築／保全するか、検証済み`.novelpkg`としてExportして回収する。attachment／snapshot／unknown rootはremote WorkSnapshotから戻らないため、remote head一致だけでpackageを削除せず、hidden working-copy root自体をmetadata resetの削除対象にしない。未知version、不整合、未到達package、Export失敗が1件でもあればresetを停止し、古いreader／buildを保持する。旧visible packageは明示Import→new WorkIDとし、外部原本を残す。
 
-D-063の最終source freeze（2026-08-12）は次の層別証跡で固定する。
+D-063 macOSのfreezeとiOS / iPadOS extensionの現行状態（2026-08-12）は次の層別証跡で固定する。
 
 | 境界 | D-063結果 | 証明する範囲 |
 | --- | ---: | --- |
 | `NovelSync` | 142 / 142件（14 suites） | Work domain、library projection、local-first state／mergeのpure回帰。near-cap 270,439,704 bytesを含む |
-| `NovelSyncCloudKit` | 80 / 80件（20 suites） | codec／planner／metadata／library、schema checklist、clean zone／type未生成bootstrap、same-account sign-in再検証の回帰。実remote CRUDではない |
-| FUMINIWA macOS full xcresult | device cases 208 / 208件 | top-level 203件。hosted 124件＋unhosted 79件、dynamic casesを含む。UI test分離後のhosted `NovelAppTests`は`NovelSyncTesting`非依存 |
-| focused Cloud＋store | device cases 15件／top-level 14件 | reservation attestation、account quarantine、catalog／head消失時のfail-closedを含むfocused回帰 |
-| hosted Startup Cloud UI | 1 / 1件 | Product Truthを含む起動chooserのhosted UI回帰 |
-| iOS full | 137 / 137件 | App 79件＋Device Sync 58件。local／Simulator回帰でありpaired nativeではない |
+| `NovelSyncCloudKit` | 84 / 84件（root parent focused 28 / 28件） | codec／planner／metadata／library、root revisionの空parent field省略、schema checklist、clean zone／type未生成bootstrap、same-account sign-in再検証の回帰 |
+| D-063外部Gate前 macOS full xcresult（履歴） | device cases 208 / 208件 | top-level 203件。hosted 124件＋unhosted 79件、dynamic casesを含む。UI test分離後のhosted `NovelAppTests`は`NovelSyncTesting`非依存 |
+| D-063外部Gate前 focused Cloud＋store（履歴） | device cases 15件／top-level 14件 | reservation attestation、account quarantine、catalog／head消失時のfail-closedを含むfocused回帰 |
+| D-063外部Gate前 hosted Startup Cloud UI（履歴） | 1 / 1件 | Product Truthを含む起動chooserのhosted UI回帰 |
+| iOS pre-cloud-library-extension baseline（履歴） | 137 / 137件 | App 79件＋Device Sync 58件。現行iOS extensionの証跡へ流用しない |
 | Experimental | 205 / 205件 | target分離を含む既存研究回帰。D-063や通常版provider capabilityを証明しない |
-| local CI | fresh `./Scripts/check.sh`: `All checks passed` | 現行外部Gate差分を含むrepository全体のlocal automated gate |
+| pre-iOS-extension local CI（履歴） | fresh `./Scripts/check.sh`: `All checks passed` | 当時のrepository全体local automated gate。現行iOS extensionを含まない |
 | 実Mac App | Computer Use visual／Accessibility tree PASS | 現行chooserのvisual／AX受け入れ。手動VoiceOver campaignではない |
-| 署名済みDebug build | macOS／iOS codesign・entitlement read-back PASS | Team、Development container、CloudKit、APNs環境を成果物から確認。Release／Production署名ではない |
-| 署名済み実Mac empty-catalog smoke | iCloud棚 `available`／0作品 | 同一実accountでruntimeが永久`accountRequired`にならず棚を表示。remote create／fetch／update／deleteは未検証 |
+| pre-iOS-extension署名済みDebug build（履歴） | macOS／iOS codesign・entitlement read-back PASS | Team、Development container、CloudKit、APNs環境を成果物から確認。現行iOS extension／Release／Production署名ではない |
+| 署名済み実Mac initial publish | registry `synced`／journal outbox 0・`synchronized`／catalog cache 1件 | 同一実accountのDevelopment環境で既存1作品のroot Work revision／control／receiptを保存してread-back。remote update／delete、paired nativeは未検証 |
+| iOS / iPadOS cloud library focused | 28 / 28件（1 suite、2.636秒、`xcodebuild` exit 0） | bootstrap／cold Open With、local-only new／Import、reservationとstaging／finalの終了窓復旧・mismatch保全、remote download／account復帰、stale open、needs review、legacy recovery／collision／single-flight、wrong-write、portable Export、signal coalescing |
+| iOS / iPadOS Device Sync focused xcresult | device cases 89 / 89件 | 現行D-063差分を含む`FUMINIWADeviceSyncIOSTests`。dynamic casesを含む先行xcresultで、Simulator／local transportの証跡であり実CloudKitではない |
+| iOS / iPadOS Device Sync fresh check | top-level 86 / 86件（4 suites） | fresh `./Scripts/check.sh`内の同target。上のdevice casesとは集計単位が異なる |
+| iOS / iPadOS hosted App full | 79 / 79件 | 現行D-063差分を含む`FUMINIWAIOSTests` full。Simulator受け入れであり実機／手動VoiceOverではない |
+| iOS / iPadOS build | generic build／build-for-testing PASS | `FUMINIWAIOS` app／test bundle生成 |
+| 最終署名済みiOS generic Debug build | strict codesign valid／entitlement read-back PASS | App ID `Z699T95YH7.dev.serikayuzuki.fuminiwa.ios`、Development container `iCloud.dev.serikayuzuki.fuminiwa.sync`、CloudKit、APNs `development`。実機実行／Production profileではない |
+| 現行fresh local CI | `./Scripts/check.sh`: `All checks passed` | `NovelSync` 142 / 142件（14 suites）、`NovelSyncCloudKit` 84 / 84件、macOS Device Sync top-level 88 / 88件（5 suites）を含むrepository全体gate |
 
 macOS Cloud／store回帰は、expected package attestationをreservation前にdurable化しlegacy package／expected attestation nilを隔離すること、bind完了→registry mark前のkillをoffline／remote catalog 0件からexact package＋journalで復旧すること、新規／Importのstaging read-back不一致を破棄して再起動後も採用しないこと、remote catalog全体の失敗中もlocal-only新規を保存できること、`accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外すること、available catalogからacknowledged workが欠落した場合に`.cloudUnavailable`でcheckmark／open／uploadを止めること、malformed remote rowとdifferent-account remote-only row／titleをそれぞれ隔離すること、app-private WorkID／pathをdiagnostic logへ出さないことを固定した。Work domain回帰は、`lastKnownRemoteHead`があるactive WorkSyncでcurrent remote headがnilならtyped `remoteHeadMissing`でpublish前に停止し、local head／outbox／last-known／sealed publishを保持してremote復帰後に同じrevisionを再送することを固定した。
 
-このmatrixにより現行D-063をsource complete／local automated GOとしてfreezeする。次は引き続きRelease NO-GOである。
+このmatrixによりmacOS／iOS / iPadOSの現行D-063をsource complete／local automated GOとしてfreezeする。次は引き続きRelease NO-GOである。
 
 - Package Validator GateとExternal Change / Conflict Gate
 - Development schemaの実record／index目視照合、Production schema deploy、Release／配布署名のread-back
-- 実CloudKitのremote create／fetch／update／deleteとreceipt／CAS、署名済みMac＋iPhoneの同一実accountによるpaired native whole-work往復
+- 実CloudKitのremote update／delete、別端末からのinitial fetch、競合CAS／receipt retry、署名済みMac＋iPhoneの同一実accountによるpaired native whole-work往復
 - offline remote-only、cached local offline edit、実account switch quarantine、write checkpointごとの実OS kill、手動VoiceOver／Full Keyboard Accessの受け入れ
 - production data migrationまたはminimum client version fence
 
-署名済み実Macのempty-catalog smokeをremote CRUD、端末間収束、完全backup、Production deploy、公開準備完了へ読み替えない。
+署名済み実Macのinitial publishをremote update／delete、端末間収束、完全backup、Production deploy、公開準備完了へ読み替えない。
 
 ## D-059／D-060話本文track（実装・検証履歴）
 
@@ -536,7 +548,7 @@ review中もEditorとlocal保存を止めず、追加編集でlocal headを進�
 ## 12. Security / Privacy
 
 - private CloudKit databaseはApple IDに紐づくFUMINIWAのprivate領域であり、公開databaseやCloudKit sharingをS1で使わない
-- FUMINIWA運営者の自前serverは不要だが、話本文、作品タイトルの初回discovery label、revision、opaque ID、必要な診断metadataはAppleのCloudKitへ送られる。タイトルは候補表示用snapshotであり、作品情報の双方向同期ではない。clipboard機能とは別の明示的なcloud境界として説明する
+- FUMINIWA運営者の自前serverは不要だが、WorkSnapshotに含まれる本文／メモ／作品情報／構成／人物／プロット／伏線／世界観、catalog用のbounded作品タイトル、revision、opaque ID、必要な診断metadataはAppleのCloudKitへ送られる。attachment／snapshot履歴／端末設定は送らない。clipboard機能とは別の明示的なcloud境界として説明する
 - transport／保存時暗号化をApple platformへ依存することと、FUMINIWA独自のend-to-end encryptionは同義ではない。E2EEを実装・検証するまでその表示をしない
 - 作品名、話タイトル、端末名、利用者名、local path、bookmark、hardware identifierをrecord name、zone name、診断logへ入れない
 - 本文、fork、asset URL、CloudKit error payloadを通常log、analytics、crash breadcrumbへ記録しない。診断はopaque ID、状態分類、byte count等のcontent-free値に限定する
@@ -558,7 +570,7 @@ cleanなDevelopment containerで固定zoneがまだ存在しない場合、live 
 
 zone作成後、最初のWorkControl保存前にprocessが終了すると、zoneは存在してもD-063 record typeがまだDevelopment schemaへmaterializeされていない場合がある。この時のcatalog queryがtyped `.invalidArguments`へ写像された場合は、account scopeがあり、cached remote rowとpending openがなく、全pending createと全bindingがlocator／WorkIDで完全に1対1一致する時だけ空のavailable catalogとして再開する。unbound pending create、confirmed binding、件数／WorkID不一致、cached remote row、pending openでは許可しない。zone reset、malformed row、account未確認／変更、既存remote証跡を持つzone-not-foundも引き続きfail-closedとする。
 
-restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済みの同一accountも`.signIn` eventとして通知する。これを通常のsign-out／switchと同じ永久fenceへ落とさず、進行中operationを一度cancelしてlive account scopeを再検証し、expected scopeと完全一致すればruntimeを`.ready`のまま維持する。別accountは`.differentCloudAccount`、sign-outは`.accountRequired`へfail-closedにし、一時的なidentity取得失敗は次のremote operationで再検証できるretryable状態に留める。署名済み実Macのempty-catalog smokeでは、初回起動後もiCloud棚が`available`／0作品になることを確認した。
+restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済みの同一accountも`.signIn` eventとして通知する。これを通常のsign-out／switchと同じ永久fenceへ落とさず、進行中operationを一度cancelしてlive account scopeを再検証し、expected scopeと完全一致すればruntimeを`.ready`のまま維持する。別accountは`.differentCloudAccount`、sign-outは`.accountRequired`へfail-closedにし、一時的なidentity取得失敗は次のremote operationで再検証できるretryable状態に留める。署名済み実Macの現行確認では同一accountのDevelopment環境へ既存1作品のroot revision／control／receiptを初回publishし、registry `synced`、journal outbox 0／`synchronized`、catalog cache 1件までread-backした。
 
 実装・検証には、コードだけでは完了できない次の外部作業が必要である。
 
@@ -572,7 +584,7 @@ restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済み�
 
 macOSはD-011どおり非Sandboxの直接配布を維持する。CloudKitのために`com.apple.security.app-sandbox`を追加せず、CloudKit / container / pushに必要なentitlementだけを署名済みtargetへ付ける。iOSの`remote-notification` Background ModeをmacOS設定へ機械的に追加せず、macOSはpush entitlementと起動／foreground fetchで取りこぼしを回収する。iOS targetがSandboxであることをmacOS配布判断へ逆流させない。
 
-container作成、App IDへの割当、capability有効化、profile再発行、production schema deploy、実機account状態はAccount Holder / Admin等の権限とApple Developer portal / CloudKit Consoleを要する外部Gateである。2026-08-12時点でDevelopment用macOS／iOS Debug署名とentitlement read-back、署名済み実Macの`available`／0作品までは確認済みである。Development schemaの実record／index、remote CRUD、paired device、Release／Productionは未確認であり、empty-catalog成功だけではCloudKit同期完了を証明しない。
+container作成、App IDへの割当、capability有効化、profile再発行、production schema deploy、実機account状態はAccount Holder / Admin等の権限とApple Developer portal / CloudKit Consoleを要する外部Gateである。2026-08-12時点でDevelopment用macOS／iOS Debug署名とentitlement read-back、署名済み実Macから既存1作品の初回remote create／read-backまでは確認済みである。Development schemaの全record type／field／indexのDashboard目視照合、remote update／delete、別端末initial fetch、paired device、Release／Productionは未確認であり、単一作品の初回publish成功だけではCloudKit同期完了を証明しない。
 
 進捗報告は、(1) source実装とunit／integration test、(2) Simulator／local fake server、(3) 署名済みMac＋iPhoneの実CloudKit、の3区分を混ぜずに行う。前段の成功を後段の完了へ読み替えない。
 

@@ -1,6 +1,6 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: IOS-1〜5実装済み。D-061の作品全体local-first Work Sync、safe materialization、local recovery gate、この端末／iCloud／統合案の3面reviewをiOS App／UIへsource実装し、iOS focused 56 / 56件（integration 49＋UI 7）とgeneric iOS build／build-for-testingが通過した。D-059／D-060のEpisode trackと既存のiOS Simulator 42 / 42件＋native focused 2 / 2件は別履歴として維持する。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、CloudKit外部Gate、署名済み実機、production migration／minimum-version fence、Release QAは未完了
+> **状態**: IOS-1〜5実装済み。D-061の作品全体local-first Work Syncに加え、D-063の単一「iCloudの作品」棚、WorkID由来の見えない作業コピー、remote-only初回download、local-first新規／取込、identity不変の`.novelpkg`書出、account／offline／kill fence、旧iOS private-copy明示recoveryをiOS / iPadOSへsource実装し、local automated GOとした。現行D-063差分はSimulator上の`IOSCloudLibraryIntegrationTests` 28 / 28件（1 suite）、先行xcresultの`FUMINIWADeviceSyncIOSTests` device cases 89 / 89件、fresh check runの同target 86 / 86 top-level（4 suites）、hosted `FUMINIWAIOSTests` 79 / 79件を通過し、`FUMINIWAIOS` generic build／build-for-testingもPASSした。fresh `./Scripts/check.sh`は`All checks passed`である。最終署名済みiOS generic Debug buildもstrict codesign validで、App ID、Development container、CloudKit、APNs `development`を成果物からread-backした。先行dynamic device casesとfresh top-level件数は集計単位が異なり、既存D-061やD-063 Mac-eraの件数を流用していない。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、Production deploy、production migration／minimum-version fence、Release QAは未完了
 >
 > **対象**: iOS / iPadOS 17 以降
 >
@@ -10,11 +10,11 @@
 
 macOS版で確立した`NovelCore`、`.novelpkg` v3、`NovelExport`、EditorPluginの純粋ロジックを再利用し、iPhone / iPadで安全に日本語小説を執筆できる通常版FUMINIWAを追加する。
 
-Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。最初の製品境界は、外部の`.novelpkg`をアプリ専用領域へ取り込み、その作業コピーを編集・保存し、利用者の明示操作で外部へ書き出す **app-private import / edit / export** とする。D-061のDevice Syncも外部原本を直接編集せず、作品全体snapshotをapp-private packageとpackage外Work journalへ先に保存し、別namespaceのWork wireでremote headを調停する。
+Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。製品境界は、1つの「iCloudの作品」から作品を選び、外部の`.novelpkg`はアプリ専用領域へ新WorkIDとして取り込み、見えない作業コピーを編集・保存し、利用者の明示操作でportable packageを外部へ書き出す **cloud library / app-private import / edit / export** とする。D-061／D-063のDevice Syncも外部原本を直接編集せず、作品全体snapshotをapp-private packageとpackage外Work journalへ先に保存し、別namespaceのWork wireでremote headを調停する。
 
 AI providerは接続しない。利用者が選んだ原稿から校正用／アドバイス用のplain text promptを作り、system clipboardへ明示コピーする機能だけを通常iOS版へ含める。
 
-### 1.1 現在地（2026-08-11）
+### 1.1 現在地（2026-08-12）
 
 - `FUMINIWAIOS` app / test target、iPhone / iPad対応Info.plist、D-059以前のbase 5 productだけの依存境界を実装した。現在の通常targetはDevice Sync用の`NovelSync` / `NovelSyncCloudKit`を追加している
 - app-privateな新規作成／取込／revision保存／書出、Loading / Ready / Recovery、適応的な`NavigationSplitView`を実装した
@@ -23,10 +23,11 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - `UITextView` + TextKit 2 adapterを追加し、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5、IME pending確定、Undo / Redo、末尾96pt表示余白、caret revealを接続した
 - iOS Editorの保存状態を上部へ移し、本文キャンバスと同じ背景のIME直上バーから`……` / `――` / `ルビ` / `傍点`をselection commandとして実行できるようにした
 - 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
-- generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、全ローカルCIを通過した
+- generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、D-063 iOS extension前の基準で全ローカルCIを通過した。現行extensionを含む再検証結果は別に確定する
 - D-059のportable wire / state / force / merge、package外file journal、`NovelSyncCloudKit`のprivate CloudKit adapter、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentをsource実装した。iOS production composition、明示binding、editor／scene lifecycle、read-only／force／fence／merge UIもsource接続済みで、iOS通常71件／Device Sync 15件を含む全ローカル回帰を通過した。normal handoffの全経路、container / signing / schemaと署名済み実機検証は未完了である
 - 上記D-059状態は基準commit `508947d2`の履歴として維持する。D-060のwire protocol v1を維持したjournal schema v2、authority非依存journal、observed baseline、offline bootstrap、bounded multi-hunk automatic merge、exact head／digest／epoch takeoverはDomain source実装済みである。iOS App／UI sourceもfreeze済みで、Device Sync 42 / 42件とnative focused 2 / 2件がSimulatorで通過した。paired native Mac↔iPhone、実機IME／VoiceOver／process kill、real CloudKitは完了扱いにしない。現行v1に`HandoffRequest` recordはなく、cooperative request／grantは将来の別Decision／protocolとする
-- D-061では現行通常iOS AppをWork経路へcutoverした。`WorkSnapshot` v1は作品タイトル／あらすじ、章・話構造／順序／タイトル、本文／メモ、人物、プロット、伏線、世界観を含み、attachment／snapshot履歴／端末設定／cloud library／new-device bootstrapを除外する。local stage→package→exact confirm→network、head ID＋snapshot digest CAS、mutation receipt、whole-work merge、active `UITextView`へのremote非注入、3面reviewをsource実装した。iOS focused 56 / 56件（integration 49＋UI 7）とgeneric iOS build／build-for-testingが通過した
+- D-061では現行通常iOS AppをWork経路へcutoverした。`WorkSnapshot` v1は作品タイトル／あらすじ、章・話構造／順序／タイトル、本文／メモ、人物、プロット、伏線、世界観を含み、attachment／snapshot履歴／端末設定を除外する。local stage→package→exact confirm→network、head ID＋snapshot digest CAS、mutation receipt、whole-work merge、active `UITextView`へのremote非注入、3面reviewをsource実装した。iOS focused 56 / 56件（integration 49＋UI 7）とgeneric iOS build／build-for-testingが通過した
+- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にexact headをiOS private rootへdownloadし、cached localはofflineで開く。新規／Files取込はaccount／catalog失敗を待たずnew WorkIDのlocal packageを作り、same-scopeだけ再開し、unscoped／different-accountのdataを自動uploadしない。package全体のportable書出はactive URL／session／WorkID／bindingを変えない。D-063以前のiOS private packageは自動移行せず、明示tapで新WorkIDへ検証済みcopyし、旧bytesを保持する。cold Open Withはaccount確認中に捨てずbootstrap後のImportへ直列化する
 - Episode／Workは別recordで相互の更新を観測しないため旧clientとの同時利用は非対応である。D-059／D-060は実CloudKitへdeploy／出荷していないので、D-061開発検証ではCloudKit同期dataをresetし、全test端末を同じD-061 buildへ更新する。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
@@ -36,8 +37,9 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 ### 2.1 Phase 7 MVP
 
 - iOS / iPadOS 17以降を対象にした単一の通常app targetを追加する
-- 新規作品をアプリ専用領域へ作成し、同領域の作業コピーを自動保存する
-- アプリ専用領域の複数の作業コピーを作品棚へ一覧表示し、選択した1作品を安全に開く
+- 新規作品をWorkID由来のアプリ専用領域へ作成し、同領域の作業コピーを自動保存する
+- private CloudKit catalogと検証済みlocal registryを1つの「iCloudの作品」へ投影し、選択した1作品を安全に開く
+- remote-only作品はonline＋live account確認後にexact headをiOS private rootへmaterializeし、保存済み作品はofflineでも開く
 - Files pickerで選ばれた`.novelpkg`を原本へ書き戻さず、アプリ専用領域へ取り込む
 - アプリ専用領域の作品を`.novelpkg`としてFiles / share sheetへ明示的に書き出す
 - 章／話の追加、選択、タイトル編集、並べ替え、本文編集、話メモ、検索、文字数、保存状態、Safe Launch / Recoveryを提供する
@@ -54,7 +56,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - Files、iCloud Drive、他社File Provider上の原本を直接編集するopen-in-place
 - 外部URLをrecentとして永続化するsecurity-scoped bookmark運用
 - `DocumentGroup` / `UIDocument`による、現在の`DocumentSaveCoordinator`と並立する別autosave所有者
-- 複数作品の同時編集、Device Sync D-061を超える作品cloud library／package初回download／new-device bootstrap、attachment／snapshot履歴／端末設定同期、共同編集
+- 複数作品の同時編集、D-063を超えるattachment／snapshot履歴／非hidden未知root／端末設定のCloudKit同期、package全体mirror、共同編集
 - Files / iCloud Drive / 他社File Providerを横断して常時列挙する独自ライブラリ
 - Codex / OpenRouterその他のprovider、`NovelAI`、SDK、CLI、Node、sidecar、network、credential、model設定
 - AI chatの自動起動／送信、応答取込、diff、Apply、履歴管理、clipboard自動消去
@@ -145,7 +147,7 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 
 ### 4.6 D-061 Work Sync
 
-現行iOS Appはapp-private作品の`NovelDocument`全体を`WorkSnapshot` v1として同期する。作品タイトル／あらすじ、章・話のID／所属／タイトル／順序、本文／話メモ、人物、プロットカード、伏線、世界観ノートを含める。資料／attachment、snapshot履歴、外観／本文フォント等の端末設定、作品棚のcloud library、別端末へのpackage初回download／new-device bootstrapは含めない。
+現行iOS Appはapp-private作品の`NovelDocument`全体を`WorkSnapshot` v1として同期する。作品タイトル／あらすじ、章・話のID／所属／タイトル／順序、本文／話メモ、人物、プロットカード、伏線、世界観ノートを含める。資料／attachment、snapshot履歴、外観／本文フォント等の端末設定は含めない。D-063の作品棚catalog／初回downloadはWorkSnapshotとは別のlibrary／bootstrap境界で追加し、catalog metadataをsnapshotへ埋め込まない。
 
 確定変更は次の順に処理する。
 
@@ -169,7 +171,35 @@ iOS App側はfocused 56 / 56件（integration 49＋3面review UI 7）とgeneric 
 
 Work wire v1はEpisode wire v1とは別namespaceで、Apple adapterは`FUMINIWAWorkControlV1`／`FUMINIWAWorkRevisionV1`／`FUMINIWAWorkMutationReceiptV1`を使う。旧Episode clientと相互観測しないためmixed利用は非対応で、開発data resetと全test端末の同一D-061 build更新を必須とする。production migration／minimum-version fenceを別Decisionで実装するまで出荷不可である。
 
-### 4.7 D-059／D-060 Episode本文同期（履歴）
+### 4.7 D-063 iCloud作品library／bootstrap
+
+iOS / iPadOSのroot作品棚は、private CloudKitのWork catalogとiOS端末内で検証した1 work 1 recordのregistryを`SyncWorkID`だけでmergeする。通常時は1つの「iCloudの作品」だけを表示し、package名、document ID、タイトル、構造digestによるdeduplicate／automatic bindingを行わない。path、保存場所、Files上の作業コピー、「このデバイス」と「iCloud」の二重棚を出さない。refresh失敗で検証済みlocal行を消さず、malformed remote rowはそのworkだけを隔離する。
+
+作業コピーはiOS専用の信頼済みprivate rootへ`<SyncWorkID>.novelpkg`として置き、URLをregistryへ保存せずWorkIDから導出する。registry／packageを読み直したattestationだけをlocal openの根拠にし、memory上の予定値だけで`synced`へ昇格しない。内部path／WorkIDは通常UI、Recovery、利用者向けerror、diagnostic logへ出さない。
+
+作品棚は次を区別する。
+
+- exact local attestation＋account-scoped remote receipt／head一致: onlineでは「iCloudと同期済み」、offlineでは「この端末に保存済み・オフラインでも開けます」
+- same-scope local pending: 「この端末に保存済み・iCloudへ反映中」または「接続後にiCloudへ同期」
+- unscoped local-only: 「この端末にのみ保存済み」。後から現れたaccountへ自動uploadしない
+- account-quarantined local: local open／編集は許可するが、旧scopeのtitle／binding／pendingを新accountへ送らない
+- remote-only／remote pending: available時の明示tapでこの端末へのdownload／再開を行う。account未確認／mismatchでlocal packageがなければ行とtitleを隠す
+- available catalogからacknowledged workが欠落: `.cloudUnavailable`としてcheckmark／open／uploadを止め、local packageを保持する
+- needs review／unavailable: 原因に応じてlocal編集継続またはroot recovery gateへ進み、安全に開けると推測しない
+
+remote-onlyを開くときは、表示時のexact catalog headを再検査し、account-scoped pending-open intentをasset fetch前にdurable化する。full revisionのWorkID、parent、digest、byte countを検証し、WorkSnapshotだけをsame-root stagingへmaterializeする。package read-back一致後にno-overwrite install、WorkID locator bind、remote-bootstrap journal、registry markの順で確定し、各checkpointから冪等resumeする。bind→registry mark間で終了しても、exact package／pending projection／outbox-free journalが一致するときだけofflineから当該workを復旧する。remoteからattachment／snapshot履歴／unknown root／端末設定を復元したとは扱わない。
+
+新規／Files取込はCloud account、network、catalog refreshを待たず、毎回new WorkIDのprivate packageをlocal-firstで作る。作成予定snapshotのexpected attestationをreservationへ先にdurable化し、same-root stagingの完全read-back後だけno-overwrite installする。以前確認済みsame scopeの一時offlineなら同scopeのpendingだけを復旧後に再開する。`accountRequired`／unscoped／different account中に新しく作ったunbound workはlocal-onlyとして保持し、将来accountへautomatic adopt／rebind／uploadしない。旧scope由来の検証済みcopyだけをaccount-quarantinedとして保持する。local作成を許可する判断とremote publish authorityを分離する。
+
+Files / Open Withで渡された外部packageはaccount確認中でも失わず、bootstrap完了後にdocument operation gateへ直列化して通常Importへ渡す。外部原本を変更せず、失敗時も現在作品、原本、既存finalを保持する。D-063以前のiOS private rootにだけあるpackageは自動upload／削除／rekeyせず、検証できた行に「タップして新しい作品として取り込む」と示す。明示tapで新WorkIDのportable copyを作り、new copyのinstall／read-back後も旧bytesを`legacyPreserved`として保全する。
+
+「作品を書き出す…」はnative editor／form、package、Work journalをcurrent sessionでflushし、`PortableDocumentPackageRepository`の検証済みpackage全体copyをFiles exporterへ渡す。destinationもread-backし、plain saveへfallbackしない。現在端末のattachment／snapshot履歴／unknown rootを保持するが、active URL／session／WorkID／binding／journal／selectionを変えない。remote bootstrap由来のcopyに元端末のresourceがない場合は書出にも含まれない。
+
+libraryのmutation／hidden retry／active open・save・switchはdocument operation gateで直列化する。local inventory、remote catalog load、両者のmergeはgate外で行い、選択後のmutationだけをgate内へ渡す。account switchでは旧scopeのpendingをquarantineし、同じscopeへ戻った場合だけexact identityを再検査して再開する。signal stormはcoalesceし、cold startupの`.checking`中はlocal／remoteのidentityを混ぜない。作品ホームから棚へ戻る操作はIME／form／packageを保存してnavigationだけを戻し、active WorkID／packageを切り替えない。
+
+現行sourceは実装済みで、Simulator上の`IOSCloudLibraryIntegrationTests` 28 / 28件（1 suite、2.636秒、`xcodebuild` exit 0）、先行xcresultの`FUMINIWADeviceSyncIOSTests` device cases 89 / 89件、fresh check runの同target 86 / 86 top-level（4 suites）、hosted `FUMINIWAIOSTests` 79 / 79件が通過し、`FUMINIWAIOS` generic build／build-for-testingもPASSした。focused suiteはbootstrap／cold Open With、local-only new／Import、reservationとstaging／finalの終了窓復旧・mismatch保全、remote download／account復帰、stale open／needs review、legacy recovery／collision／single-flight、wrong-write、portable Export、signal coalescingを固定する。fresh `./Scripts/check.sh`も`All checks passed`である。先行dynamic device casesとfresh top-level件数は集計単位が異なり、既存D-061 56 / 56件およびMac-eraのiOS 137 / 137件を現行差分の証跡へ流用しない。実CloudKit paired Mac↔iPhone、実account switch／offline、write checkpointごとの実OS kill、手動VoiceOver／Dynamic TypeはRelease NO-GOのままである。
+
+### 4.8 D-059／D-060 Episode本文同期（履歴）
 
 Device Syncはapp-private package同士を対象とし、iCloud Drive上の原本やpackage内部を直接同期しない。remote `EpisodeControl`のholder / session / epochはremote headを進められる1端末を表すだけで、iPhoneのEditorへ入力してよいかを表さない。同期設定、通信不能、別端末のholder、fetch／claim失敗だけを理由に本文をread-onlyにせず、MacとiPhoneで同じ話を開いたままlocal編集できる。
 
@@ -244,8 +274,9 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 
 ### 共通の情報階層
 
-- 起動後はapp-private作業コピーを「このデバイスの作品」として作品棚へ表示する
-- Files / iCloud Drive / 他社File Providerは「取り込む…」から標準pickerを開き、選択後の作業コピーだけを作品棚へ加える
+- 起動後はprivate CloudKit catalogと検証済みapp-private registryを1つの「iCloudの作品」として作品棚へ表示する。local／remoteの二重棚や内部package名は出さない
+- Files / iCloud Drive / 他社File Providerは「作品を取り込む…」から標準pickerを開き、外部原本を変更せずnew WorkIDの作業コピーだけを作品棚へ加える
+- remote-onlyはonline＋account確認後の明示tapでこの端末へ保存し、cached localはofflineでも開く。account未確認／mismatchではlocal packageのない旧scope row／titleを表示しない
 - 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
@@ -295,13 +326,15 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 4. **IOS-3 UITextView Adapter（実装済み）**: TextKit 2、所有権、selection、command session、R1' / R3 / R4 / R5、Undo / Redo、viewportを実装する
 5. **IOS-4 Document MVP / Shell（実装済み）**: app-private新規／取込／保存／書出、Safe Launch / Recovery、iPhone / iPad navigationを接続する
 6. **IOS-5 Clipboard Prompt（実装済み）**: 6種類のprompt copyとcontext / edit menu、VoiceOver / keyboard入口を接続する
-7. **IOS-6 Parity / Release QA（進行中）**: D-058のプロット／伏線、登場人物、世界観、資料、設定、執筆補助commandは実装済み。残るmacOS機能、完全round-trip、実機IME、アクセシビリティ、background／termination、性能を検証する
+7. **IOS-6 Parity / Release QA（進行中）**: D-058のプロット／伏線、登場人物、世界観、資料、設定、執筆補助commandと、D-063のiCloud作品棚／bootstrap／portable Exportはsource実装済み。D-063 focused 28 / 28件、Device Sync先行device cases 89 / 89件／fresh top-level 86 / 86件、hosted App 79 / 79件、generic build／build-for-testing、fresh local CIは通過済みで、残る完全round-trip、実機IME、アクセシビリティ、background／termination、性能を検証する
 
 各PRは意味単位で小さく保ち、生成物をコミットしない。ローカル検証だけを使い、`Scripts/check.sh`へ段階的にiOS app build / test、target separation検査を追加する。
 
 D-059／D-060のEpisode本文同期は、IOS-6と公開Release Gateを完了扱いにしない独立S1 trackとして進めた履歴である。D-059のportable wire v1、pure `NovelSync`、durable file journal、`NovelSyncCloudKit` adapter、editor／save／scene integration、明示binding、force／merge UIは基準commit `508947d2`でsource実装済み・全ローカル回帰通過の履歴として維持する。D-060は`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）、`NovelSyncCloudKit` 48 / 48件、iOS Simulator Device Sync 42 / 42件（3 suites、20.544秒）、native focused 2 / 2件が通過した。native focusedではmarked IME確定からmodel／package／journal／WAL cleanupまでと、別writer下の実`UITextView`によるreplace／delete／Undo／Redo／paste／ルビ／傍点およびlease不変を確認した。完了報告は **source実装**、**Simulator／local fake server**、**署名済みMac＋iPhoneの実CloudKit** を分離し、paired native Mac↔iPhone、手動実機VoiceOver／process killを未実施として維持する。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 15章を正とする。D-059以前のbase targetが5 productであったこと、通常targetだけが`NovelSync` / `NovelSyncCloudKit`を追加し、Experimental targetへCloudKit adapterを入れないことをtarget graph検査で区別する。
 
 D-061で現行通常iOS Appは別namespaceのwhole-work経路へcutoverした。iOS focused 56 / 56件（integration 49＋UI 7）とgeneric iOS build／build-for-testingが通過し、層別の詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章を正とする。D-059／D-060の上記件数をD-061の証拠にはしない。Episode／Work mixed clientは相互観測できないため、開発CloudKit data resetと全test端末の同一D-061 buildを必須とする。production migrationまたはminimum client version fence、paired native、手動VoiceOver、実OS kill、signed real CloudKitを完了するまで出荷不可である。
+
+D-063で作品棚／new-device bootstrapをMacだけの機能からApple版共通契約へ拡張した。iOS / iPadOSのsource実装は完了し、同じD-063 buildでfocused 28 / 28件、Device Sync先行device cases 89 / 89件／fresh top-level 86 / 86件、hosted App 79 / 79件、generic build／build-for-testing、fresh `./Scripts/check.sh`を通過したためlocal automated GOとする。Macの既存freezeやD-061 iOS件数は流用しない。
 
 ## 9. 受け入れ条件
 
@@ -318,13 +351,13 @@ D-061で現行通常iOS Appは別namespaceのwhole-work経路へcutoverした。
 - 保存失敗時にdirty状態を保持し、空作品へfallbackしない
 - scene非アクティブ化、強制終了相当、最後の入力から2秒未満の各経路で確定本文を失わない
 - app-private完成をopen-in-place／競合対応完成と誤表示しない
-- 作品棚の行identityはpackage名で一意になり、同じdocument IDを持つ複数importも別の作業コピーとして選べる
+- 作品棚の行identityは`SyncWorkID`で一意になり、同じdocument ID／タイトル／構造を持つ複数importも別の作業コピーとして選べる
 - hidden staging、非package、symlink、path traversalを作品棚とopen対象から除外する
 - 破損した1作品を警告行へ隔離し、他作品の一覧・openを妨げない
 
 ### Device Sync D-061
 
-- 作品タイトル／あらすじ、章・話構造／タイトル／順序、本文／メモ、人物、プロット、伏線、世界観が同じ`WorkSnapshot`として同期される。attachment／snapshot履歴／端末設定／cloud library／new-device bootstrapを同期済みと表示しない
+- 作品タイトル／あらすじ、章・話構造／タイトル／順序、本文／メモ、人物、プロット、伏線、世界観が同じ`WorkSnapshot`として同期される。attachment／snapshot履歴／端末設定を同期済みと表示せず、D-063のcloud library／new-device bootstrap metadataをWorkSnapshotへ混ぜない
 - network fetch／upload中も入力が止まらず、最初の変更をWork journalへstageし、package保存とexact confirmを終えてからremote処理を開始する
 - 通信不能のまま編集、終了、再起動、再編集でき、日本語IME変換中の通信断／background／再接続でも確定本文を失わない
 - paste、Undo、Redo、`……`、`――`、ルビ、傍点が同期状態に影響されず、実`UITextView`のmarked text、Undo、古いcallback、Editor世代で検証される
@@ -341,6 +374,23 @@ D-061で現行通常iOS Appは別namespaceのwhole-work経路へcutoverした。
 - Episode／Work mixed clientを非対応とし、development data reset＋全test端末の同一buildを検証する。production migration／minimum-version fenceを別Decisionで実装するまで出荷しない
 - development / production container、entitlement、profile、schema deployと、署名済みMac / iPhone実機を検証する。Simulatorと署名なしbuildだけで完了にしない
 - app-private WAL／merge recovery rootは信頼済みancestorへanchorし、中間／最終symlinkと通常のroot identity差し替えをfail-closedにする。ただし同時にrenameする悪意あるsame-UID processへの完全耐性は主張せず、External Change / Conflict Gateを未完了として維持する
+
+### Cloud library D-063
+
+- root作品棚が1つの「iCloudの作品」になり、remote catalogとlocal registryをWorkIDだけでmergeする。path、package名、document ID、タイトル、構造をidentity／deduplicateへ使わない
+- remote-onlyを明示tapした場合だけ、表示時headの再検査、pending-open先行保存、full revision read-back、same-root staging、no-overwrite install、bind、journal、registry markの順でこの端末へ保存する
+- remote downloadの各checkpointとbind→registry mark間のprocess killからexact stateだけを冪等resumeし、既存finalが別内容なら上書きしない
+- cached localはofflineで開ける。remote-onlyはoffline／account未確認で開かず、`accountRequired`／different accountではlocal packageのない旧scope row／title／pending-open identityを表示しない
+- 新規／Files取込はaccount／network／catalog失敗中でもnew WorkIDのlocal packageを作って編集できる一方、remote publish authorityがない状態をupload可能と扱わない
+- same-scope offline pendingだけを元scope復帰後に再開し、unscoped local-onlyやaccount-quarantined dataを新accountへautomatic adopt／rebind／uploadしない
+- available catalogからacknowledged workが欠落した場合は`.cloudUnavailable`としてcheckmark／open／uploadを止め、local packageを保持する
+- exact package attestationとaccount-scoped remote receipt／head一致時だけ「iCloudと同期済み」を表示し、network online、同名row、upload開始だけではcheckmarkを出さない
+- D-063以前のiOS private packageは自動移行／削除せず、明示tapでnew WorkIDへ検証済みcopyし、new copy確定後も旧bytesを`legacyPreserved`として保持する
+- cold Files / Open Withを`.checking`中に失わず、bootstrap完了後のImportへ直列化する。作品ホームから棚へ戻ってもactive package／WorkIDを変更しない
+- `.novelpkg`書出はcurrent sessionをflushして検証済みpackage全体copyを作り、destination read-back後もactive URL／session／WorkID／binding／journal／selectionを変更しない
+- remote bootstrapが同期するのはWorkSnapshotだけであり、attachment／snapshot履歴／unknown root／端末設定を完全backup／復元済みと表示しない
+- library／registry／journal／packageの利用者向けerrorとdiagnostic logへapp-private path／WorkIDを出さない
+- current iOS extensionのfocused 28 / 28件、Device Sync先行device cases 89 / 89件／fresh top-level 86 / 86件、hosted App 79 / 79件、generic build／build-for-testing、fresh `./Scripts/check.sh`を現行証跡として固定する。既存Mac／D-061件数を現行差分の証拠へ流用しない
 
 ### Editor
 
@@ -364,4 +414,4 @@ D-061で現行通常iOS Appは別namespaceのwhole-work経路へcutoverした。
 
 ## 10. Phase 7 MVP完了の定義
 
-IOS-1〜5が実装され、上記のBuild、Document safety、Editor、Clipboard / Accessibility条件をiPhone / iPad実機を含むローカル検証で満たした時点をPhase 7 MVP完了とする。Device Sync D-061の受け入れ条件、IOS-6の機能parity、Package Validator / External Change / Conflict / 配布Gateはそれぞれ別に追跡し、いずれか一つの完了を他の完了へ読み替えない。MVP完了だけでiOS一般公開準備完了とは表現しない。
+IOS-1〜5とD-063 iOS extensionが実装され、上記のBuild、Document safety、Cloud library、Editor、Clipboard / Accessibility条件をiPhone / iPad実機を含むローカル検証で満たした時点をPhase 7 MVP完了とする。Device Sync D-061、Cloud library D-063、IOS-6の機能parity、Package Validator / External Change / Conflict / 配布Gateはそれぞれ別に追跡し、いずれか一つの完了を他の完了へ読み替えない。MVP完了だけでiOS一般公開準備完了とは表現しない。
