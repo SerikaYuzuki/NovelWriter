@@ -411,7 +411,7 @@ private struct PlotBoardCard: View {
                     Text(card.memo)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
