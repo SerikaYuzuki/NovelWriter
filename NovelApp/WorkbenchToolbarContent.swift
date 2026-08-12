@@ -57,7 +57,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
 
-            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail, placement: .primaryAction) {
+            ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail, placement: .secondaryAction) {
                 Button {
                     isPlotCardRailPresented.toggle()
                 } label: {

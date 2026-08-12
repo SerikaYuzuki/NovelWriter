@@ -73,7 +73,7 @@ struct NovelWorkbenchView: View {
                 WorkbenchStatusBarView()
             }
         }
-        .toolbar(id: "novelwriter.workbench.v5") {
+        .toolbar(id: "novelwriter.workbench.v6") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
                 showsWritingActions: showsWritingActions,

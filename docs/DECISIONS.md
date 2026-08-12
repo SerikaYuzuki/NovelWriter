@@ -782,3 +782,10 @@
   2. 統合確認が必要な状態では、toolbarの状態ボタンから既存のconflict reviewを開く。同期状態の表示移動で保存、IME、本文Editor、競合解決の契約は変更しない。
 - **理由**: 同期は本文編集の補助状態であり、本文面積を削る独立行ではなく、話メモと並ぶ執筆補助操作として常に見つけられる場所へ置くためである。
 - **検証**: macOS／iOSの既存ローカルチェックを通過させ、実機で同期状態の各アイコン、メモとの順序、確認画面への到達、VoiceOverラベルを確認する。
+
+## D-069: macOSのプロットカード入口はsecondaryActionへ固定する
+
+- **日付**: 2026-08-13 / **状態**: 承認・実装
+- **内容**: プロットカード参照ボタンは`primaryAction`ではなく、macOSで利用できる`secondaryAction`へ置く。ボタンはtoolbarのカスタマイズ対象から外し、右上の独立した入口として維持する。toolbar IDは`novelwriter.workbench.v6`へ版上げし、既存のv5配置状態を引き継がない。
+- **理由**: macOSの`primaryAction`は右上ではなくleading edgeへ解決されるため、右上という製品要件を満たさない。macOS非対応の`topBarTrailing`は使わず、右側のsecondary領域へ解決されるsemantic placementを採用する。
+- **検証**: macOSのtoolbarコンパイルと既存チェックを通し、実機で検索欄との独立性、右上配置、開閉、VoiceOverラベルを確認する。
