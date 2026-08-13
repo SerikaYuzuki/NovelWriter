@@ -281,8 +281,8 @@ public struct NoteSyncRecord: Hashable, Codable, Sendable {
     }
 }
 
-enum NoteSyncCanonicalJSON {
-    static func encodePayload(_ payload: NoteSyncPayload) throws -> Data {
+public enum NoteSyncCanonicalJSON {
+    public static func encodePayload(_ payload: NoteSyncPayload) throws -> Data {
         try encoder().encode(PayloadBox(payload: payload))
     }
 
@@ -302,6 +302,26 @@ enum NoteSyncCanonicalJSON {
             try .flag(NoteSyncFlagPayload(from: decoder))
         case .worldNote:
             try .worldNote(NoteSyncWorldNotePayload(from: decoder))
+        }
+    }
+
+    public static func decodePayload(from data: Data, kind: NoteSyncEntityKind) throws -> NoteSyncPayload {
+        let decoder = JSONDecoder()
+        switch kind {
+        case .work:
+            return try .work(decoder.decode(NoteSyncWorkPayload.self, from: data))
+        case .chapter:
+            return try .chapter(decoder.decode(NoteSyncChapterPayload.self, from: data))
+        case .episode:
+            return try .episode(decoder.decode(NoteSyncEpisodePayload.self, from: data))
+        case .character:
+            return try .character(decoder.decode(NoteSyncCharacterPayload.self, from: data))
+        case .plotCard:
+            return try .plotCard(decoder.decode(NoteSyncPlotCardPayload.self, from: data))
+        case .flag:
+            return try .flag(decoder.decode(NoteSyncFlagPayload.self, from: data))
+        case .worldNote:
+            return try .worldNote(decoder.decode(NoteSyncWorldNotePayload.self, from: data))
         }
     }
 

@@ -40,7 +40,7 @@ extension AppleDeviceSyncLibraryOpenCoordinator {
                 return false
             }
             try record.validate()
-            try expected.requireExactHead(record.localHead)
+            try expected.requireCatalogIdentity(record.localHead)
             let document = try record.localHead.snapshot.materializedDocument()
             let episodeIDs = Set(document.chapters.flatMap(\.episodes).map(\.id))
             guard record.workID == expected.workID,

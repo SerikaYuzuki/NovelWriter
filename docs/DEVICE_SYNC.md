@@ -1,10 +1,10 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain実装済み**。N2 CloudKit send／fetch、N3 App 3択UI、N4 paired実機は未実装。通常Appのlive経路はN3までD-061 coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する
+> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain、N2 CloudKit adapter、N3 App 3択までsource＋unit／layout**。N4はin-memory simulationのみ。署名済みMac＋iPhone paired、実CloudKit send／fetch、Production schema deployは未実施。通常Appのproduction live経路は`NoteSyncCoordinator`（factory注入時）。既存D-061 App testはfactory未注入のため旧coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-071、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-072、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
 ## 0. D-071の現行Notes型／cloud library契約
 
@@ -47,7 +47,7 @@ dirty setは「まだ送っていないentity」だけを持ち、作品全体sn
 
 portable種類は `work`、`chapter`、`episode`、`character`、`plotCard`、`flag`、`worldNote` とする。Apple adapterのlive record typeは `FUMINIWANote*V1` とし、D-059のEpisode control／revision／leaseとD-061のWork control／revision asset／receiptを通常Appからwriteしない。
 
-`CKSyncEngine`はpending recordを実際にsave／fetchする。fetchとstate serializationだけのdriverは通常経路から外す。話本文がCloudKit record payloadを超える場合だけ、その話の`CKAsset`を使う。作品全体を1つの`CKAsset`にしない。
+`CKSyncEngine`はpending Note recordを実際にsave／fetchする。Episode／Work CAS recordはengine pendingへ載せない。話本文がCloudKit record payloadを超える場合だけ、その話の`CKAsset`を使う。作品全体を1つの`CKAsset`にしない。catalogの正は`FUMINIWANoteWorkV1`の存在であり、nil headでもdownloadできる。
 
 衝突の検出はserver change tagである。時計、更新日時、push順によるwinner選択は禁止する。
 
@@ -75,7 +75,7 @@ account mismatch、unscoped local-only、原本を変えないImport、identity�
 
 ### 0.7 cutover
 
-D-071はdevelopment cutoverである。Work revision assetとEpisode lease recordをentityへ自動migrationしない。mixed clientを主張しない。N1 domain → N2 CloudKit send／fetch → N3 App 3択UI → N4 paired実機の順で実装し、文書更新を実装済みとしない。
+D-071はdevelopment cutoverである。Work revision assetとEpisode lease recordをentityへ自動migrationしない。mixed clientを主張しない。N1 domain → N2 CloudKit send／fetch → N3 App 3択UI はsource＋unit／layoutまで完了。N4はin-memory 2 client往復／offline再送／process-kill dirty復元／account分離までで、署名済みpaired実機は未実施である。N1〜N3のlocal test成功をN4完了・実装済み同期完成としない。
 
 ## 0-hist. D-061／D-063のwhole-work／cloud library契約（履歴）
 
@@ -222,7 +222,7 @@ local saveではpackage read-back attestationをrecordへ反映し、以前`sync
 
 新規／取込のlocal reserve、private package install、registry確定はnetwork／live iCloud account確認を待たず、remote catalog refresh全体が失敗していても開始する。外部`.novelpkg`はsecurity／access scope中に読み、原本へ書き戻さない。Finder / Open Withもopen-in-placeではなくImportとして新しいWorkIDを作る。旧`~/Documents/FUMINIWA`、旧recent、export済みpackageを自動移動・削除・rekey／rebindしない。
 
-以前exactに確認したaccount scopeがmetadataへ残り、その同一scopeのlookupだけが一時的に失敗している場合は、same-scope pending creation／bindingをremote mutationなしでdurable化できる。同じscopeの復旧後だけ自動再開する。`accountRequired`／unscopedで作ったworkは検証済みlocal packageを開いて編集できるが、binding／pending remote createを作らず、後から現れたaccountへautomatic adopt／rebind／uploadしない。明示的account association UI／authorityは後続Decisionまで持たない。first account bindingはremote mutationより前にdurable化する。
+以前exactに確認したaccount scopeがmetadataへ残り、その同一scopeのlookupだけが一時的に失敗している場合は、same-scope pending creation／bindingをremote mutationなしでdurable化できる。同じscopeの復旧後だけ自動再開する。`accountRequired`／unscopedで作ったworkは検証済みlocal packageを開いて編集できるが、binding／pending remote createを作らず、後から現れたaccountへautomatic adopt／rebind／uploadしない。明示の「iCloudに保存」はsigned-in（catalog available、またはNote type未作成によるcatalog失敗）かつlocal-only／localPendingのときだけ、そのaccountへのassociation authorityになる（D-072）。offline／`accountRequired`／different accountでは出さない。first account bindingはremote mutationより前にdurable化する。
 
 新規／取込のinstall順は次とする。
 
@@ -265,7 +265,7 @@ Apple版の作品棚は次を区別し、local durabilityとremote acknowledgeme
 | legacy local（iOS / iPadOSのみ） | D-063以前のprivate packageを検証済み、WorkID associationなし | 「タップして新しい作品として取り込む」。明示操作までupload／削除／rekeyしない |
 | unavailable | legacy nil reservation、head欠損、package／registry破損等 | 自動で開かず、原因に応じた設定確認／Recoveryを提示 |
 
-`checkmark.icloud`と「iCloudと同期済み」はcached exactに限る。local registryの`pending`、network online、catalogに同名行があること、直前のupload開始だけでは表示しない。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`へ降格し、過去receiptだけでcheckmark／open／uploadを再開しない。`accountRequired`／different accountではlocal packageのないApp `remoteOpenPending` rowを棚から除外し、旧accountのwork存在／titleを漏らさない。状態は文字とVoiceOver valueで伝え、remote-only offline／破損へ「接続すれば必ず開ける」と誤解させるhintを出さない。account mismatchは検証済みlocal packageの有無を区別し、local packageを開ける場合もremote upload可能とは表示しない。MVPにwork delete UI／APIを置かず、CloudKit tombstone／retentionは別Decisionへ分離する。
+`checkmark.icloud`と「iCloudと同期済み」はcached exactに限る。local registryの`pending`、network online、catalogに同名行があること、直前のupload開始だけでは表示しない。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`へ降格し、過去receiptだけでcheckmark／open／uploadを再開しない。`accountRequired`／different accountではlocal packageのないApp `remoteOpenPending` rowを棚から除外し、旧accountのwork存在／titleを漏らさない。状態は文字とVoiceOver valueで伝え、remote-only offline／破損へ「接続すれば必ず開ける」と誤解させるhintを出さない。account mismatchは検証済みlocal packageの有無を区別し、local packageを開ける場合もremote upload可能とは表示しない。作品棚の削除は、この端末のregistryとhidden packageだけを外す（D-072）。CloudKit tombstone／複数端末retentionは別Decisionへ分離する。local-only／localPendingかつsigned-in（catalog availableまたはNote type未作成によるcatalog失敗）の行だけ、明示の「iCloudに保存」を出す。新規後のWorkbench toolbar／FileメニューとiOS作品ホームからも同じ操作へ到達できる。automatic adoptは置かない。catalog読込失敗中のlocalPendingは「接続後に同期」とせず再送可能と示す。明示保存はcatalog listより先にzone／Note typeをJIT作成し、chooserは保存そのものが終わればcatalog refresh完了を待たずに再操作できる。複製は新しいWorkIDのportable copyであり、現在作品を切り替えない。
 
 ### 0.12 portable package exportと同期外resource
 
@@ -635,7 +635,7 @@ Apple版はprivate CloudKit + `CKSyncEngine`を採用し、SwiftDataはcanonical
 
 macOS / iOSはbundle IDが別でも、同じTeamのApp IDへ同じiCloud containerを割り当てれば同じprivate databaseを利用できる。S1のcontainer identifierは **`iCloud.dev.serikayuzuki.fuminiwa.sync`** に固定し、adapterはdefault container推測に依存せず`CKContainer(identifier:)`へ明示する。両targetの署名済みentitlementには少なくともCloudKit serviceと同じcontainer identifier、Push Notifications環境が必要で、iOSのInfoには`UIBackgroundModes = remote-notification`が必要になる。source上のentitlement追加はportal上のcontainer作成、App ID割当、profile発行、schema deployの完了を意味しない。
 
-`project.yml`はDebugをAPNs `development`＋container `Development`、ReleaseをAPNs `production`＋container `Production`へ展開する。Team IDはrepositoryへ固定せず、Git管理外の`Config/Signing.local.xcconfig`をchecked-in wrapperから任意読込する。D-063の現行live経路が必要とする4 record type、sourceに保持する旧Episode経路3 type、全field／`recordName` QUERYABLE index、Production deploy、署名済み成果物のread-back手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md)を正とする。
+`project.yml`はDebugをAPNs `development`＋container `Development`、ReleaseをAPNs `production`＋container `Production`へ展開する。Team IDはrepositoryへ固定せず、Git管理外の`Config/Signing.local.xcconfig`をchecked-in wrapperから任意読込する。D-071の通常live経路はNote 7 type（`FUMINIWANote*V1`、`workID` QUERYABLE）である。sourceに残るlegacy 7 typeとProduction checklist、署名済み成果物のread-back、N4操作手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md)を正とする。
 
 cleanなDevelopment containerで固定zoneがまだ存在しない場合、live account scopeが確認済みで、confirmed binding／cached remote head／pending downloadがない時だけzone-not-foundを空のavailable catalogとして扱う。これにより明示的新規作成が`bootstrapZoneForNewSync`へ到達してzoneを作れる。
 
@@ -649,8 +649,8 @@ restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済み�
 2. macOSとiOSの別App IDを同じTeamで管理し、同じCloudKit containerを両方へ割り当てる
 3. 両targetへiCloud / CloudKitとPush Notifications capabilityを付け、同じcontainer entitlementを署名profileへ含める
 4. iOSへBackground Modesのremote notificationsを付ける。macOSはpush entitlementを持つが、iOSのBackground Modes設定を機械的に流用しない
-5. D-063 live 4 typeをDevelopmentで生成し、全7 typeをProduction checklistへ含める場合は旧Episode 3 typeを管理されたschema seedingまたはDashboard手動定義で用意する。全field型と`recordName` indexを目視検査してからproductionへ明示deployする
-6. 同じiCloud accountで署名済みMac実機とiPhone / iPad実機を使い、foreground、background、push欠落、offline、account変更を検証する
+5. D-071 live 7 type（`FUMINIWANote*V1`）をDevelopmentで生成し、各typeの`recordName` QUERYABLEとカスタムfield `workID` QUERYABLEを目視検査する。legacy 7 typeはsource inventoryとして残すが、N4の通常操作では作らない。Production deployはN4 Development pairedの後
+6. 同じiCloud accountで署名済みMac実機とiPhone / iPad実機を使い、新規作品の往復、offline、account変更、process-killを検証する。手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章
 7. Developer ID配布用macOS buildとiOS配布profileの両方でentitlement / container environmentをread-backする
 
 macOSはD-011どおり非Sandboxの直接配布を維持する。CloudKitのために`com.apple.security.app-sandbox`を追加せず、CloudKit / container / pushに必要なentitlementだけを署名済みtargetへ付ける。iOSの`remote-notification` Background ModeをmacOS設定へ機械的に追加せず、macOSはpush entitlementと起動／foreground fetchで取りこぼしを回収する。iOS targetがSandboxであることをmacOS配布判断へ逆流させない。
@@ -730,6 +730,22 @@ D-063のdevelopment cutoverでは、development custom zoneだけでなく旧loc
 | 18 | VoiceOverで保存、同期中、offline、統合必要を識別 | iOS Simulator full 42 / 42件に状態／accessibility label回帰を含めて通過 | Mac／iPhone実機の手動VoiceOver操作確認は未実施 |
 
 Domain全体の実測は`NovelSync` 94 / 94件（local-first 33件、既存coordinator 18件）、Apple adapterは`NovelSyncCloudKit` 48 / 48件である。App層はMac Device Sync 45 / 45件（3 suites、11.932秒）とprivate-root focused 1 / 1件、iOS Simulator Device Sync 42 / 42件（3 suites、20.544秒）とnative focused 2 / 2件が通過した。これはhost／Simulator上のunit、integration、local fake、native editor証跡であり、paired native Mac↔iPhone、署名済み実CloudKit、手動VoiceOver、実OS process-kill campaignの代用ではない。
+
+### 14.5 D-071 N4 署名済み検証（操作者が実施）
+
+in-memory 2 client往復はN4完了ではない。次だけを署名済みDebug／Developmentで実施し、結果はcontent-freeに返す。手順の正は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章。
+
+| # | 確認 | 期待 | 返してよいもの |
+| --- | --- | --- | --- |
+| 1 | DashboardでNote 7 typeと`workID` QUERYABLE | Development schemaがsource checklistと一致 | type名、index名、有無 |
+| 2 | 同一accountのMacで新規作品を書き、iPhone棚に出る | `FUMINIWANoteWorkV1`がcatalogの正。本文はMacで書いた内容 | 成功／失敗、Consoleの`note-sync`行、UI状態 |
+| 3 | iPhoneでその作品を開き、別の話を足してMacで見る | 欠けていたentityだけが入り、編集中Editorは巻き戻らない | 成功／失敗、衝突の有無 |
+| 4 | 片側をAirplane Modeにして保存し、再接続 | 起動は通信を待たない。再接続後にdirtyが送られる | 成功／失敗、offline表示の有無 |
+| 5 | 同じ話を両端末で違う本文にして保存 | 短い3択（この端末／iCloud／両方を別作品）。統合案なし | 選んだ選択肢と結果。本文は貼らない |
+| 6 | 保存直後にMacまたはiPhoneを強制終了し再起動 | packageが正。`note-v1` JSONに原稿がない。再送される | 成功／失敗、JSONに本文が無いことの有無 |
+| 7 | 別Apple Accountへ切り替え | 作品が混ざらない。旧accountへ送らない | 成功／失敗、表示された状態 |
+
+本文、作品名以外のタイトル詳細、path、CloudKit error payload、asset URLは貼らない。`note-sync network failed(TypeName)`、`needs review conflicts=N`、`used type scan because workID query is unavailable` はcontent-freeとして貼ってよい。
 
 ## 15. 実装順と進捗
 

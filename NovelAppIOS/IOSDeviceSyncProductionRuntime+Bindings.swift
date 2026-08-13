@@ -179,12 +179,9 @@ extension IOSDeviceSyncProductionRuntimeBox {
         ) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        try await resumeInitialWorkPublication(
+        try await publishInitialNoteSnapshot(
             binding: resolved.binding,
-            journal: resolved.workJournal,
-            transport: self,
-            initialSnapshot: initialSnapshot,
-            at: Date()
+            snapshot: initialSnapshot
         )
     }
 
@@ -233,6 +230,31 @@ extension IOSDeviceSyncProductionRuntimeBox {
                 _ = try await coordinator.bootstrapLocalSnapshot(initialSnapshot, at: date)
             }
             _ = try await coordinator.synchronize(at: date)
+        }
+        pendingWorkPublicationTasks[binding.workID] = task
+        do {
+            try await task.value
+            pendingWorkPublicationTasks[binding.workID] = nil
+        } catch {
+            pendingWorkPublicationTasks[binding.workID] = nil
+            throw error
+        }
+    }
+
+    private func publishInitialNoteSnapshot(
+        binding: SyncWorkingCopyBinding,
+        snapshot: WorkSnapshot
+    ) async throws {
+        if let existing = pendingWorkPublicationTasks[binding.workID] {
+            try await existing.value
+            return
+        }
+        let task = Task {
+            let coordinator = try await makeNoteSyncCoordinator(
+                workID: binding.workID,
+                localWorkingCopyID: binding.localWorkingCopyID
+            )
+            _ = try await coordinator.publishLocal(snapshot)
         }
         pendingWorkPublicationTasks[binding.workID] = task
         do {

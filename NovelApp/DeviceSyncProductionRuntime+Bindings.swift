@@ -186,10 +186,9 @@ extension DeviceSyncProductionRuntimeBox {
         return remotelyResolved
     }
 
-    /// A work root and binding can outlive the process while its WorkSync
-    /// journal still has a sealed or unsealed outbox. If the process died before
-    /// the first journal commit, bootstrap only from the exact validated package
-    /// snapshot supplied by the library boundary.
+    /// Library first-publish. `createWork` already wrote the Note work record.
+    /// Remaining entities go through `NoteSyncCoordinator`; Work revision
+    /// assets are not live-encoded.
     func resumeInitialWorkPublication(
         session: DocumentSessionToken,
         descriptor: SyncWorkDescriptor,
@@ -203,15 +202,14 @@ extension DeviceSyncProductionRuntimeBox {
         ) else {
             throw EpisodeSyncTransportError.unavailable
         }
-        try await resumeInitialWorkPublication(
+        try await publishInitialNoteSnapshot(
             binding: resolved.binding,
-            journal: resolved.workJournal,
-            transport: self,
-            initialSnapshot: initialSnapshot,
-            at: Date()
+            snapshot: initialSnapshot
         )
     }
 
+    /// D-063 Work journal outbox resume. Tests inject a fake `WorkSyncTransport`.
+    /// Production library first-publish uses the session overload above.
     func resumeInitialWorkPublication(
         binding: SyncWorkingCopyBinding,
         journal: any WorkSyncJournal,
@@ -257,6 +255,31 @@ extension DeviceSyncProductionRuntimeBox {
                 _ = try await coordinator.bootstrapLocalSnapshot(initialSnapshot, at: date)
             }
             _ = try await coordinator.synchronize(at: date)
+        }
+        pendingWorkPublicationTasks[binding.workID] = task
+        do {
+            try await task.value
+            pendingWorkPublicationTasks[binding.workID] = nil
+        } catch {
+            pendingWorkPublicationTasks[binding.workID] = nil
+            throw error
+        }
+    }
+
+    private func publishInitialNoteSnapshot(
+        binding: SyncWorkingCopyBinding,
+        snapshot: WorkSnapshot
+    ) async throws {
+        if let existing = pendingWorkPublicationTasks[binding.workID] {
+            try await existing.value
+            return
+        }
+        let task = Task {
+            let coordinator = try await makeNoteSyncCoordinator(
+                workID: binding.workID,
+                localWorkingCopyID: binding.localWorkingCopyID
+            )
+            _ = try await coordinator.publishLocal(snapshot)
         }
         pendingWorkPublicationTasks[binding.workID] = task
         do {

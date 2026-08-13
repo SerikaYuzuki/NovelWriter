@@ -33,6 +33,7 @@ struct StartupDocumentSelectionView: View {
     let context: StartupDocumentSelectionContext
 
     @State private var selectedWorkID: StartupLibraryWork.ID?
+    @State private var pendingLocalRemoval: StartupLibraryWork?
     @FocusState private var isLibraryFocused: Bool
 
     init(context: StartupDocumentSelectionContext) {
@@ -67,6 +68,42 @@ struct StartupDocumentSelectionView: View {
             guard isLibraryFocused, selectedWork != nil else { return .ignored }
             openSelectedWork()
             return .handled
+        }
+        .onKeyPress(.delete) {
+            guard isLibraryFocused,
+                  let work = selectedWork,
+                  work.availability.canRemoveLocalCopy else { return .ignored }
+            pendingLocalRemoval = work
+            return .handled
+        }
+        .confirmationDialog(
+            deletionTitle,
+            isPresented: Binding(
+                get: { pendingLocalRemoval != nil },
+                set: {
+                    if !$0 {
+                        pendingLocalRemoval = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("削除", role: .destructive) {
+                guard let work = pendingLocalRemoval else { return }
+                let session = appState.documentSessionToken
+                pendingLocalRemoval = nil
+                Task {
+                    _ = await appState.removeLocalStartupLibraryWork(
+                        work.reference,
+                        expectedSession: session
+                    )
+                }
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingLocalRemoval = nil
+            }
+        } message: {
+            Text(deletionMessage)
         }
     }
 
@@ -152,6 +189,9 @@ struct StartupDocumentSelectionView: View {
                                 selectedWorkID = work.id
                                 openSelectedWork(work)
                             }
+                            .contextMenu {
+                                libraryContextMenu(for: work)
+                            }
                             .accessibilityIdentifier("startup.documentSelection.work")
                         }
                     }
@@ -208,6 +248,61 @@ struct StartupDocumentSelectionView: View {
         context.works.first { $0.id == selectedWorkID }
     }
 
+    @ViewBuilder
+    private func libraryContextMenu(for work: StartupLibraryWork) -> some View {
+        if work.availability.canPublishToCloud(connection: context.connection) {
+            Button("iCloudに保存") {
+                publishWork(work)
+            }
+            .disabled(!appState.permitsCloudLibraryMutation)
+        }
+        if work.availability.canDuplicateLocalCopy {
+            Button("複製") {
+                duplicateWork(work)
+            }
+            .disabled(!appState.permitsCloudLibraryMutation)
+        }
+        if work.availability.canRemoveLocalCopy {
+            Button("このMacから削除", role: .destructive) {
+                pendingLocalRemoval = work
+            }
+            .disabled(!appState.permitsCloudLibraryMutation)
+        }
+    }
+
+    private func publishWork(_ work: StartupLibraryWork) {
+        let session = appState.documentSessionToken
+        Task {
+            _ = await appState.publishStartupLibraryWork(
+                work.reference,
+                expectedSession: session
+            )
+        }
+    }
+
+    private func duplicateWork(_ work: StartupLibraryWork) {
+        let session = appState.documentSessionToken
+        Task {
+            _ = await appState.duplicateStartupLibraryWork(
+                work.reference,
+                expectedSession: session
+            )
+        }
+    }
+
+    private var deletionTitle: String {
+        "この作品を削除しますか？"
+    }
+
+    private var deletionMessage: String {
+        switch pendingLocalRemoval?.availability {
+        case .cachedRemote, .needsReview, .cloudUnavailable:
+            "このMacの作業コピーを削除します。iCloud上の作品は消えません。"
+        default:
+            "このMacの作品を削除します。元に戻せません。"
+        }
+    }
+
     private func openSelectedWork(_ work: StartupLibraryWork? = nil) {
         guard let work = work ?? selectedWork else { return }
         if !work.availability.isOpenable(connection: context.connection) {
@@ -261,6 +356,7 @@ struct StartupDocumentSelectionView: View {
 }
 
 private struct StartupLibraryWorkRow: View {
+    @Environment(AppState.self) private var appState
     let work: StartupLibraryWork
     let connection: StartupLibraryConnection
 
@@ -286,10 +382,33 @@ private struct StartupLibraryWorkRow: View {
             }
 
             Spacer()
+
+            if work.availability.canPublishToCloud(connection: connection) {
+                Button("iCloudに保存") {
+                    let session = appState.documentSessionToken
+                    Task {
+                        _ = await appState.publishStartupLibraryWork(
+                            work.reference,
+                            expectedSession: session
+                        )
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(
+                    !appState.permitsCloudLibraryMutation
+                        || appState.isStartupLibraryOperationInProgress
+                )
+                .accessibilityIdentifier("startup.documentSelection.publish")
+            }
         }
         .padding(.vertical, 4)
         .opacity(isUnavailable ? 0.6 : 1)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(
+            children: work.availability.canPublishToCloud(connection: connection)
+                ? .contain
+                : .ignore
+        )
         .accessibilityLabel(work.displayTitle)
         .accessibilityValue(availabilityLabel)
         .accessibilityHint(accessibilityHint)
@@ -312,8 +431,10 @@ private struct StartupLibraryWorkRow: View {
             "このMacに保存済み、iCloud設定を確認"
         case .localPending where connection == .differentAccount:
             "このMacに保存済み、iCloudアカウントが異なります"
-        case .localPending:
+        case .localPending where connection == .offline:
             "このMacに保存済み、接続後に同期"
+        case .localPending:
+            "このMacに保存済み、iCloudへ再送できます"
         case .localOnly:
             "このMacにのみ保存済み"
         case .needsReview:
@@ -367,7 +488,7 @@ private struct StartupLibraryWorkRow: View {
         case .unavailable:
             return "この作品は安全に開けません。iCloud設定または作品パッケージを確認してください。"
         case .localOnly:
-            return "iCloudとは関連付けられていません。Returnキーまたはダブルクリックで開きます。"
+            return "iCloudとは関連付けられていません。iCloudに保存、複製、削除はメニューから選べます。Returnキーまたはダブルクリックで開きます。"
         case .cachedRemote, .localPending, .remoteOnly, .remotePending, .needsReview:
             let action = "Returnキーまたはダブルクリックで開きます。"
             return work.isTitleTruncated ? "作品名は省略表示されています。" + action : action

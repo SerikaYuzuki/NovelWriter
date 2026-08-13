@@ -35,6 +35,8 @@ struct DeviceSyncRuntime {
     let setup: DeviceSyncSetupRuntime?
     /// D-063のcloud-first作品棚。`nil`はExperimental/legacy transportだけ。
     let library: DeviceSyncLibraryRuntime?
+    /// D-071のentity同期。`nil`ならD-061 WorkSyncCoordinator経路を使う。
+    let makeNoteSyncCoordinator: (@Sendable (SyncWorkID, LocalWorkingCopyID) async throws -> NoteSyncCoordinator)?
     let now: @Sendable () -> Date
     let leaseDuration: TimeInterval
 
@@ -55,6 +57,10 @@ struct DeviceSyncRuntime {
         editIntentStore: any DeviceSyncEditIntentStoring = InMemoryDeviceSyncEditIntentStore(),
         setup: DeviceSyncSetupRuntime? = nil,
         library: DeviceSyncLibraryRuntime? = nil,
+        makeNoteSyncCoordinator: (@Sendable (
+            SyncWorkID,
+            LocalWorkingCopyID
+        ) async throws -> NoteSyncCoordinator)? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         leaseDuration: TimeInterval = 120
     ) {
@@ -68,6 +74,7 @@ struct DeviceSyncRuntime {
         self.editIntentStore = editIntentStore
         self.setup = setup
         self.library = library
+        self.makeNoteSyncCoordinator = makeNoteSyncCoordinator
         self.now = now
         self.leaseDuration = leaseDuration
     }
@@ -184,6 +191,8 @@ struct DeviceSyncLibraryRuntime: Sendable {
         NovelDocument,
         URL
     ) async throws -> Void
+    /// D-072: この端末のregistryとhidden packageだけを外す。CloudKitは消さない。
+    let removeLocalWork: @Sendable (SyncWorkID) async throws -> Void
 }
 
 struct DeviceSyncSetupRuntime: Sendable {
@@ -511,6 +520,15 @@ struct WorkSyncDocumentIdentity: Hashable {
 struct WorkSyncClient {
     let coordinator: WorkSyncCoordinator
     let sessionID: SyncEditSessionID
+    let remoteAvailability: DeviceSyncRemoteAvailability
+
+    var remoteSynchronizationAllowed: Bool {
+        remoteAvailability == .available
+    }
+}
+
+struct NoteSyncClient {
+    let coordinator: NoteSyncCoordinator
     let remoteAvailability: DeviceSyncRemoteAvailability
 
     var remoteSynchronizationAllowed: Bool {

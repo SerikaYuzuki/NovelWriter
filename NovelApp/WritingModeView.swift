@@ -589,7 +589,24 @@ struct EditorPaneView: View {
             editorSearchSession.handleEpisodeChange(newSelection)
         }
         .sheet(isPresented: $isDeviceSyncConflictPresented) {
-            if let review = appState.workSyncConflictReview {
+            if let conflict = appState.noteSyncConflict {
+                let session = appState.documentSessionToken
+                NoteSyncConflictResolutionView(
+                    presentation: NoteSyncConflictPresentation(workTitle: appState.document.title),
+                    isApplying: appState.isApplyingWorkSyncConflict,
+                    choose: { choice in
+                        Task {
+                            await appState.resolveNoteSyncConflict(
+                                using: choice,
+                                expectedConflict: conflict,
+                                expectedSession: session
+                            )
+                        }
+                    },
+                    reviewLater: { isDeviceSyncConflictPresented = false }
+                )
+                .id("\(conflict.workID.rawValue.uuidString)-\(conflict.keys.count)")
+            } else if let review = appState.workSyncConflictReview {
                 let session = appState.documentSessionToken
                 WorkConflictResolutionView(
                     presentation: WorkConflictPresentationAdapter.make(review: review),
@@ -659,7 +676,8 @@ struct EditorPaneView: View {
             if conflict == nil,
                appState.deviceSyncLocalRecoveryReview == nil,
                appState.workSyncConflictReview == nil,
-               appState.workSyncLocalRecoveryReview == nil {
+               appState.workSyncLocalRecoveryReview == nil,
+               appState.noteSyncConflict == nil {
                 isDeviceSyncConflictPresented = false
             }
         }
@@ -667,7 +685,8 @@ struct EditorPaneView: View {
             if review == nil,
                appState.deviceSyncConflict == nil,
                appState.workSyncConflictReview == nil,
-               appState.workSyncLocalRecoveryReview == nil {
+               appState.workSyncLocalRecoveryReview == nil,
+               appState.noteSyncConflict == nil {
                 isDeviceSyncConflictPresented = false
             }
         }
@@ -675,13 +694,24 @@ struct EditorPaneView: View {
             if review == nil,
                appState.workSyncLocalRecoveryReview == nil,
                appState.deviceSyncConflict == nil,
-               appState.deviceSyncLocalRecoveryReview == nil {
+               appState.deviceSyncLocalRecoveryReview == nil,
+               appState.noteSyncConflict == nil {
                 isDeviceSyncConflictPresented = false
             }
         }
         .onChange(of: appState.workSyncLocalRecoveryReview) { _, review in
             if review == nil,
                appState.workSyncConflictReview == nil,
+               appState.deviceSyncConflict == nil,
+               appState.deviceSyncLocalRecoveryReview == nil,
+               appState.noteSyncConflict == nil {
+                isDeviceSyncConflictPresented = false
+            }
+        }
+        .onChange(of: appState.noteSyncConflict) { _, conflict in
+            if conflict == nil,
+               appState.workSyncConflictReview == nil,
+               appState.workSyncLocalRecoveryReview == nil,
                appState.deviceSyncConflict == nil,
                appState.deviceSyncLocalRecoveryReview == nil {
                 isDeviceSyncConflictPresented = false

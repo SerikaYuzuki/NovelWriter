@@ -77,4 +77,48 @@ struct SyncWorkLibraryTests {
             try entry.requireExactHead(second)
         }
     }
+
+    @Test("Note catalog nil-head matches local package without revision snapshot identity")
+    func noteCatalogMatchesLocalPackageWithoutRevisionHead() throws {
+        let document = WorkTestValues.fullDocument()
+        let snapshot = try WorkSnapshot(document: document)
+        let records = try NoteSyncProjection.records(
+            workID: WorkTestValues.workID,
+            snapshot: snapshot
+        )
+        let workRecord = try #require(records.first { $0.key.kind == .work })
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        let localStructure = try SyncWorkStructureDigest(chapters: document.chapters)
+        let unusedDigest = SyncContentDigest(content: "unused-snapshot")
+        let titleDigest = SyncContentDigest(content: document.title)
+
+        #expect(!entry.hasWorkRevisionHead)
+        #expect(entry.structureDigest != localStructure)
+        #expect(
+            entry.matchesInstalledPackage(
+                documentID: document.id,
+                structureDigest: localStructure,
+                snapshotDigest: unusedDigest,
+                snapshotByteCount: 1,
+                titleDigest: titleDigest,
+                fullTitleUTF8ByteCount: document.title.utf8.count
+            )
+        )
+        #expect(
+            !entry.matchesInstalledPackage(
+                documentID: UUID(),
+                structureDigest: localStructure,
+                snapshotDigest: unusedDigest,
+                snapshotByteCount: 1,
+                titleDigest: titleDigest,
+                fullTitleUTF8ByteCount: document.title.utf8.count
+            )
+        )
+
+        let revision = try WorkTestValues.revision(
+            snapshot: snapshot,
+            id: "A1000000-0000-0000-0000-00000000000A"
+        )
+        try entry.requireCatalogIdentity(revision)
+    }
 }

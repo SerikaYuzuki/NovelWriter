@@ -61,7 +61,13 @@ final class IOSDeviceSyncProductionComposition: @unchecked Sendable {
             library: Self.makeLibraryRuntime(
                 runtimeBox: runtimeBox,
                 localStore: localLibraryStore
-            )
+            ),
+            makeNoteSyncCoordinator: { workID, copyID in
+                try await runtimeBox.makeNoteSyncCoordinator(
+                    workID: workID,
+                    localWorkingCopyID: copyID
+                )
+            }
         )
     }
 
@@ -204,7 +210,8 @@ final class IOSDeviceSyncProductionComposition: @unchecked Sendable {
                     allowedEpisodes: document.chapters.flatMap(\.episodes).map(\.id),
                     initialSnapshot: WorkSnapshot(document: document)
                 )
-            }
+            },
+            removeLocalWork: { try await localStore.removeLocalWork(workID: $0) }
         )
     }
 

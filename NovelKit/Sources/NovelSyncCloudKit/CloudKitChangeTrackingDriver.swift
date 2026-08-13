@@ -14,40 +14,42 @@ public enum CloudKitSyncSignal: Equatable, Sendable {
     case stateSerializationFailed
 }
 
-/// CKSyncEngineはpush後のfetch、change token、state serializationだけを担当する。
-/// lease/head CASのwriteはこのdriverへenqueueせず、CloudKitEpisodeSyncTransportが
-/// CKDatabaseのatomic conditional modifyを直接使う。
+/// CKSyncEngineはNote entityのpending save／deleteとfetch、change token、
+/// state serializationを担当する。D-059／D-061のEpisode／Work CAS recordは
+/// このpending queueへ載せない。
 public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
     public typealias StateSerializationHandler = @Sendable (Data) async -> Void
     public typealias SignalHandler = @Sendable (CloudKitSyncSignal) async -> Void
 
     static let automaticallyFetchesPushChanges = true
-    static let sendsPendingRecordChanges = false
+    static let sendsPendingRecordChanges = true
 
     private let engine: CKSyncEngine
     private let delegate: CloudKitChangeTrackingDelegate
+    let pendingMailbox: CloudKitNotePendingMailbox
 
     init(
         database: CKDatabase,
         restoredState: Data?,
         stateSerializationHandler: StateSerializationHandler?,
-        signalHandler: SignalHandler?
+        signalHandler: SignalHandler?,
+        pendingMailbox: CloudKitNotePendingMailbox = CloudKitNotePendingMailbox()
     ) throws {
         let serialization = try Self.decodeRestoredState(restoredState)
         let delegate = CloudKitChangeTrackingDelegate(
             stateSerializationHandler: stateSerializationHandler,
-            signalHandler: signalHandler
+            signalHandler: signalHandler,
+            pendingMailbox: pendingMailbox
         )
         var configuration = CKSyncEngine.Configuration(
             database: database,
             stateSerialization: serialization,
             delegate: delegate
         )
-        // push到着時は自動fetchする。write pendingを一切登録せず、batch providerもnilを返すため、
-        // lease/head CASがCKSyncEngineの通常saveへ迂回することはない。
         configuration.automaticallySync = Self.automaticallyFetchesPushChanges
         configuration.subscriptionID = CloudKitSyncSchema.subscriptionID
         self.delegate = delegate
+        self.pendingMailbox = pendingMailbox
         engine = CKSyncEngine(configuration)
     }
 
@@ -63,6 +65,33 @@ public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
         } catch {
             throw CloudKitSyncAdapterError.invalidRestoredEngineState
         }
+    }
+
+    func enqueueNoteSaves(_ records: [CKRecord]) {
+        let ordered = CloudKitNotePendingQueue.orderedSaveRecords(records)
+        pendingMailbox.store(ordered)
+        engine.state.add(pendingRecordZoneChanges: ordered.map { .saveRecord($0.recordID) })
+    }
+
+    func enqueueNoteDeletes(_ recordIDs: [CKRecord.ID]) {
+        pendingMailbox.remove(ids: recordIDs)
+        engine.state.add(pendingRecordZoneChanges: recordIDs.map { .deleteRecord($0) })
+    }
+
+    func sendPendingChanges() async throws {
+        pendingMailbox.beginSend()
+        let options = CKSyncEngine.SendChangesOptions(
+            scope: .zoneIDs([CloudKitSyncSchema.zoneID])
+        )
+        do {
+            try await engine.sendChanges(options)
+        } catch {
+            throw CloudKitErrorMapper.map(error)
+        }
+    }
+
+    func takeNoteSendOutcome() -> CloudKitNoteSendOutcome {
+        pendingMailbox.takeSendOutcome()
     }
 
     public func fetchChanges() async throws {
@@ -89,13 +118,16 @@ public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
 private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unchecked Sendable {
     private let stateSerializationHandler: CloudKitChangeTrackingDriver.StateSerializationHandler?
     private let signalHandler: CloudKitChangeTrackingDriver.SignalHandler?
+    private let pendingMailbox: CloudKitNotePendingMailbox
 
     init(
         stateSerializationHandler: CloudKitChangeTrackingDriver.StateSerializationHandler?,
-        signalHandler: CloudKitChangeTrackingDriver.SignalHandler?
+        signalHandler: CloudKitChangeTrackingDriver.SignalHandler?,
+        pendingMailbox: CloudKitNotePendingMailbox
     ) {
         self.stateSerializationHandler = stateSerializationHandler
         self.signalHandler = signalHandler
+        self.pendingMailbox = pendingMailbox
     }
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
@@ -127,6 +159,8 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
             if hasRelevantModification || hasRelevantDeletion {
                 await signalHandler?(.remoteChangesAvailable)
             }
+        case let .sentRecordZoneChanges(sent):
+            pendingMailbox.recordSendOutcome(sent)
         default:
             break
         }
@@ -151,10 +185,15 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
 
     func nextRecordZoneChangeBatch(
         _: CKSyncEngine.SendChangesContext,
-        syncEngine _: CKSyncEngine
+        syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
-        // Direct CKDatabase CASだけがwrite authority。engineのpending queueは送らない。
-        nil
+        let pending = CloudKitNotePendingQueue.noteChanges(
+            from: syncEngine.state.pendingRecordZoneChanges
+        )
+        guard !pending.isEmpty else { return nil }
+        return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: pending) { [pendingMailbox] recordID in
+            pendingMailbox.record(for: recordID)
+        }
     }
 
     func nextFetchChangesOptions(

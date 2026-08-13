@@ -7,6 +7,8 @@ struct IOSLibraryView: View {
     let openCloudDocument: (SyncWorkID) -> Void
     let makeNewDocument: () -> Void
 
+    @State private var pendingLocalRemoval: IOSCloudLibraryItem?
+
     var body: some View {
         Group {
             if store.usesCloudLibrary {
@@ -97,18 +99,27 @@ struct IOSLibraryView: View {
 
                 Section {
                     ForEach(store.cloudLibraryItems) { item in
-                        Button {
-                            openCloudDocument(item.id)
-                        } label: {
-                            IOSCloudLibraryRow(
-                                item: item,
-                                isCurrent: item.id == store.activeCloudWorkID,
+                        IOSCloudLibraryRow(
+                            item: item,
+                            isCurrent: item.id == store.activeCloudWorkID,
+                            connection: store.cloudLibraryConnection,
+                            onPublish: item.availability.canPublishToCloud(
                                 connection: store.cloudLibraryConnection
-                            )
+                            ) ? { publishWork(item) } : nil
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard canOpen(item) else { return }
+                            openCloudDocument(item.id)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!canOpen(item))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            cloudLibrarySwipeActions(for: item)
+                        }
+                        .contextMenu {
+                            cloudLibraryContextMenu(for: item)
+                        }
                         .accessibilityIdentifier("ios.cloudLibrary.work")
+                        .accessibilityAddTraits(canOpen(item) ? .isButton : [])
                     }
                 } header: {
                     Text("iCloudの作品")
@@ -127,6 +138,31 @@ struct IOSLibraryView: View {
             }
             .refreshable {
                 await store.refreshCloudLibrary()
+            }
+            .confirmationDialog(
+                "この作品を削除しますか？",
+                isPresented: Binding(
+                    get: { pendingLocalRemoval != nil },
+                    set: {
+                        if !$0 {
+                            pendingLocalRemoval = nil
+                        }
+                    }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("削除", role: .destructive) {
+                    guard let item = pendingLocalRemoval else { return }
+                    pendingLocalRemoval = nil
+                    Task {
+                        _ = await store.removeLocalCloudLibraryWork(item.id)
+                    }
+                }
+                Button("キャンセル", role: .cancel) {
+                    pendingLocalRemoval = nil
+                }
+            } message: {
+                Text(deletionMessage)
             }
         }
     }
@@ -179,6 +215,71 @@ struct IOSLibraryView: View {
             store.cloudLibraryConnection == .available
         case .cloudUnavailable, .unavailable:
             false
+        }
+    }
+
+    @ViewBuilder
+    private func cloudLibrarySwipeActions(for item: IOSCloudLibraryItem) -> some View {
+        if item.availability.canRemoveLocalCopy {
+            Button("削除", role: .destructive) {
+                pendingLocalRemoval = item
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+        if item.availability.canDuplicateLocalCopy {
+            Button("複製") {
+                duplicateWork(item)
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+        if item.availability.canPublishToCloud(connection: store.cloudLibraryConnection) {
+            Button("iCloudに保存") {
+                publishWork(item)
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+    }
+
+    @ViewBuilder
+    private func cloudLibraryContextMenu(for item: IOSCloudLibraryItem) -> some View {
+        if item.availability.canPublishToCloud(connection: store.cloudLibraryConnection) {
+            Button("iCloudに保存") {
+                publishWork(item)
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+        if item.availability.canDuplicateLocalCopy {
+            Button("複製") {
+                duplicateWork(item)
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+        if item.availability.canRemoveLocalCopy {
+            Button("この端末から削除", role: .destructive) {
+                pendingLocalRemoval = item
+            }
+            .disabled(!store.permitsCloudLibraryMutation)
+        }
+    }
+
+    private func publishWork(_ item: IOSCloudLibraryItem) {
+        Task {
+            _ = await store.publishCloudLibraryWork(item.id)
+        }
+    }
+
+    private func duplicateWork(_ item: IOSCloudLibraryItem) {
+        Task {
+            _ = await store.duplicateCloudLibraryWork(item.id)
+        }
+    }
+
+    private var deletionMessage: String {
+        switch pendingLocalRemoval?.availability {
+        case .cachedRemote, .needsReview, .cloudUnavailable:
+            "この端末の作業コピーを削除します。iCloud上の作品は消えません。"
+        default:
+            "この端末の作品を削除します。元に戻せません。"
         }
     }
 
@@ -247,6 +348,7 @@ private struct IOSCloudLibraryRow: View {
     let item: IOSCloudLibraryItem
     let isCurrent: Bool
     let connection: IOSCloudLibraryConnection
+    let onPublish: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -275,7 +377,14 @@ private struct IOSCloudLibraryRow: View {
             }
 
             Spacer(minLength: 8)
-            if showsChevron {
+            if let onPublish {
+                Button("iCloudに保存") {
+                    onPublish()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("ios.cloudLibrary.publish")
+            } else if showsChevron {
                 Image(systemName: "chevron.forward")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -283,7 +392,7 @@ private struct IOSCloudLibraryRow: View {
             }
         }
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: onPublish == nil ? .combine : .contain)
         .accessibilityLabel(item.displayTitle)
         .accessibilityValue(isCurrent ? "選択中、\(statusText)" : statusText)
     }

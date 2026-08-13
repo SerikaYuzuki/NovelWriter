@@ -182,6 +182,16 @@ struct FuminiwaApp: App {
                     }
                     .disabled(!appState.permitsReturnToCloudLibrary)
 
+                    Button("iCloudに保存") {
+                        let session = appState.documentSessionToken
+                        Task {
+                            _ = await appState.publishCurrentLibraryWork(
+                                expectedSession: session
+                            )
+                        }
+                    }
+                    .disabled(!appState.canPublishCurrentWorkToCloud)
+
                     Divider()
                 }
 

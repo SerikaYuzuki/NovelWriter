@@ -65,7 +65,8 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                     localDurabilityState: appState.deviceSyncLocalDurabilityState,
                     hasLocalRecoveryReview: appState.deviceSyncLocalRecoveryReview != nil
                         || appState.workSyncConflictReview != nil
-                        || appState.workSyncLocalRecoveryReview != nil,
+                        || appState.workSyncLocalRecoveryReview != nil
+                        || appState.noteSyncConflict != nil,
                     isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
                         || !appState.deviceSyncLocalRecoveryPending,
                     reviewChanges: reviewDeviceSyncChanges
@@ -73,6 +74,27 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             }
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
+
+            if appState.canPublishCurrentWorkToCloud {
+                ToolbarItem(id: WorkbenchToolbarItemID.cloudPublish) {
+                    Button {
+                        let session = appState.documentSessionToken
+                        Task {
+                            _ = await appState.publishCurrentLibraryWork(
+                                expectedSession: session
+                            )
+                        }
+                    } label: {
+                        Label("iCloudに保存", systemImage: "icloud.and.arrow.up")
+                    }
+                    .help("この作品をiCloudに保存します")
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("workbench.cloud.publish")
+                }
+                .customizationBehavior(.disabled)
+                .defaultCustomization(.visible)
+            }
 
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
                 Button {
@@ -260,6 +282,7 @@ enum WorkbenchToolbarItemID {
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
     static let deviceSyncStatus = "workbench.device.sync.status"
+    static let cloudPublish = "workbench.cloud.publish"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"

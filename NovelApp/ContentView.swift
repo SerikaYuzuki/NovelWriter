@@ -51,9 +51,25 @@ struct ContentView: View {
         } message: {
             Text(appState.externalDocumentOpenErrorMessage ?? "")
         }
+        .alert(
+            "作品の操作",
+            isPresented: Binding(
+                get: { appState.cloudLibraryActionMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        appState.dismissCloudLibraryActionMessage()
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(appState.cloudLibraryActionMessage ?? "")
+        }
         .overlay {
             if appState.startupState.isReady,
                appState.usesWholeWorkSyncRuntime,
+               !appState.usesNoteSyncRuntime,
                appState.deviceSyncLocalRecoveryPending {
                 StartupWorkSyncGateView(
                     requiresReview: appState.workSyncLocalRecoveryReview != nil,

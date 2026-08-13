@@ -9,6 +9,15 @@ enum IOSCloudLibraryConnection: Equatable, Sendable {
     case accountRequired
     case differentAccount
     case unavailable
+
+    var allowsExplicitCloudPublish: Bool {
+        switch self {
+        case .available, .unavailable:
+            true
+        case .checking, .offline, .accountRequired, .differentAccount:
+            false
+        }
+    }
 }
 
 enum IOSCloudLibraryAvailability: Equatable, Sendable {
@@ -22,6 +31,38 @@ enum IOSCloudLibraryAvailability: Equatable, Sendable {
     case needsReview
     case cloudUnavailable
     case unavailable
+}
+
+extension IOSCloudLibraryAvailability {
+    func canPublishToCloud(connection: IOSCloudLibraryConnection) -> Bool {
+        guard connection.allowsExplicitCloudPublish else { return false }
+        return switch self {
+        case .localOnly, .localPending:
+            true
+        case .cachedRemote, .accountQuarantined, .legacyLocal, .remoteOnly, .remotePending,
+             .needsReview, .cloudUnavailable, .unavailable:
+            false
+        }
+    }
+
+    var canDuplicateLocalCopy: Bool {
+        switch self {
+        case .localOnly, .localPending, .cachedRemote, .needsReview, .cloudUnavailable:
+            true
+        case .accountQuarantined, .legacyLocal, .remoteOnly, .remotePending, .unavailable:
+            false
+        }
+    }
+
+    var canRemoveLocalCopy: Bool {
+        switch self {
+        case .localOnly, .localPending, .cachedRemote, .accountQuarantined, .needsReview,
+             .cloudUnavailable, .unavailable:
+            true
+        case .legacyLocal, .remoteOnly, .remotePending:
+            false
+        }
+    }
 }
 
 struct IOSCloudLibraryItem: Identifiable, Equatable, Sendable {
@@ -69,10 +110,21 @@ extension IOSDocumentStore {
         deviceSyncRuntime?.library != nil
     }
 
+    var canPublishCurrentWorkToCloud: Bool {
+        guard usesCloudLibrary,
+              startupState == .ready,
+              let workID = activeCloudWorkID,
+              let item = cloudLibraryItems.first(where: { $0.id == workID }) else { return false }
+        return item.availability.canPublishToCloud(connection: cloudLibraryConnection)
+    }
+
     @discardableResult
     func refreshCloudLibrary() async -> Bool {
         guard !deviceSyncStartupFailedSafely,
               deviceSyncRuntime?.library != nil else { return false }
+        if let cloudLibraryRefreshTask {
+            _ = await cloudLibraryRefreshTask.value
+        }
         if let cloudLibraryRefreshTask {
             return await cloudLibraryRefreshTask.value
         }
@@ -543,9 +595,7 @@ extension IOSDocumentStore {
 
         for remoteItem in remote.entries {
             let entry = remoteItem.work
-            if entry.headRevisionID != nil {
-                exactEntries[entry.workID] = entry
-            }
+            exactEntries[entry.workID] = entry
             if let localItem = local.items[entry.workID],
                let attestation = localItem.attestation {
                 // 未登録の旧packageはremote identityと自動結合しない。利用者の明示
@@ -616,8 +666,7 @@ extension IOSDocumentStore {
                 // exact revisionがDomainにあり、同一scopeのoffline connectionである
                 // 場合だけ後段のgeneric resumable rowとして合流する。
                 continue
-            } else if entry.headRevisionID != nil,
-                      rows[entry.workID]?.availability != .unavailable,
+            } else if rows[entry.workID]?.availability != .unavailable,
                       remote.connection != .accountRequired,
                       remote.connection != .differentAccount {
                 let canResume = remoteItem.availability == .remoteDownloadPending
@@ -1066,10 +1115,113 @@ extension IOSDocumentStore {
         }
     }
 
+    @discardableResult
+    func publishCloudLibraryWork(_ workID: SyncWorkID) async -> Bool {
+        guard usesCloudLibrary,
+              permitsCloudLibraryMutation,
+              !cloudLibraryOperationInProgress,
+              let item = cloudLibraryItems.first(where: { $0.id == workID }),
+              item.availability.canPublishToCloud(connection: cloudLibraryConnection),
+              let library = deviceSyncRuntime?.library,
+              let portable = repository as? PortableDocumentPackageRepository else { return false }
+        cloudLibraryOperationInProgress = true
+        defer { cloudLibraryOperationInProgress = false }
+        let published = await documentOperationGate.perform { [weak self] in
+            guard let self else { return false }
+            do {
+                try await library.validateInstalledPackage(workID)
+                let url = try await library.packageURL(workID)
+                let document = try await portable.validatePortablePackage(at: url)
+                if startupState == .ready, activeCloudWorkID == workID {
+                    try await library.publishNewWork(workID, document, url)
+                } else {
+                    try await library.resumeInitialWorkPublication(workID, document, url)
+                }
+                return true
+            } catch {
+                presentCloudLibraryActionFailure(
+                    error,
+                    message: "iCloudへ保存できませんでした。この端末の作品はそのまま残っています。"
+                )
+                return false
+            }
+        }
+        _ = await refreshCloudLibrary()
+        if published, startupState == .ready, activeCloudWorkID == workID {
+            await refreshOrPrepareSelectedEpisodeDeviceSync()
+        }
+        return published
+    }
+
+    @discardableResult
+    func duplicateCloudLibraryWork(_ workID: SyncWorkID) async -> Bool {
+        guard usesCloudLibrary,
+              permitsCloudLibraryMutation,
+              !cloudLibraryOperationInProgress,
+              let item = cloudLibraryItems.first(where: { $0.id == workID }),
+              item.availability.canDuplicateLocalCopy,
+              let library = deviceSyncRuntime?.library,
+              let portable = repository as? PortableDocumentPackageRepository else { return false }
+        cloudLibraryOperationInProgress = true
+        defer { cloudLibraryOperationInProgress = false }
+        do {
+            try await library.validateInstalledPackage(workID)
+            let sourceURL = try await library.packageURL(workID)
+            let document = try await portable.validatePortablePackage(at: sourceURL)
+            return await createCloudLibraryDocument(
+                document: document,
+                sourceURL: sourceURL,
+                operationAlreadyClaimed: true,
+                activate: false
+            )
+        } catch {
+            presentCloudLibraryActionFailure(
+                error,
+                message: "作品を複製できませんでした。"
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func removeLocalCloudLibraryWork(_ workID: SyncWorkID) async -> Bool {
+        guard usesCloudLibrary,
+              permitsCloudLibraryMutation,
+              !cloudLibraryOperationInProgress,
+              let item = cloudLibraryItems.first(where: { $0.id == workID }),
+              item.availability.canRemoveLocalCopy,
+              let library = deviceSyncRuntime?.library else { return false }
+        cloudLibraryOperationInProgress = true
+        defer { cloudLibraryOperationInProgress = false }
+        let removed = await documentOperationGate.perform { [weak self] in
+            guard let self else { return false }
+            let isActive = startupState == .ready && activeCloudWorkID == workID
+            if isActive {
+                return await performDocumentTransition {
+                    try await library.removeLocalWork(workID)
+                    detachActiveDocumentAfterLocalLibraryRemoval()
+                }
+            }
+            do {
+                try await library.removeLocalWork(workID)
+                return true
+            } catch {
+                presentCloudLibraryActionFailure(
+                    error,
+                    message: "この端末の作品を外せませんでした。"
+                )
+                return false
+            }
+        }
+        _ = await refreshCloudLibrary()
+        return removed
+    }
+
     private func createCloudLibraryDocument(
         document newDocument: NovelDocument,
         sourceURL: URL?,
-        operationAlreadyClaimed: Bool = false
+        operationAlreadyClaimed: Bool = false,
+        activate: Bool = true
     ) async -> Bool {
         let hasValidOperationClaim = operationAlreadyClaimed
             ? cloudLibraryOperationInProgress
@@ -1099,49 +1251,48 @@ extension IOSDocumentStore {
             return false
         }
 
-        let transitioned = await documentOperationGate.perform { [weak self] in
-            guard let self else { return false }
-            return await performDocumentTransition {
-                var stagingURL: URL?
-                var installed = false
-                try await library.reserveForPublish(workID, expected)
-                do {
-                    let staging = try await library.stagingPackageURL(workID)
-                    stagingURL = staging
-                    if let sourceURL {
-                        try await portable.saveValidatedCopy(
-                            newDocument,
-                            from: sourceURL,
-                            to: staging
-                        )
-                    } else {
-                        try await repository.save(newDocument, to: staging)
-                    }
-                    try await library.validateStagingPackage(staging, workID)
-                    let staged = try await portable.validatePortablePackage(at: staging)
-                    let stagedAttestation = try IOSDeviceSyncLocalPackageAttestation(
-                        document: staged,
-                        updatedAt: expected.updatedAt
+        func materializeNewWork() async throws {
+            var stagingURL: URL?
+            var installed = false
+            try await library.reserveForPublish(workID, expected)
+            do {
+                let staging = try await library.stagingPackageURL(workID)
+                stagingURL = staging
+                if let sourceURL {
+                    try await portable.saveValidatedCopy(
+                        newDocument,
+                        from: sourceURL,
+                        to: staging
                     )
-                    guard stagedAttestation == expected else {
-                        throw IOSCloudLibraryOperationError.packageMismatch
-                    }
-                    let finalURL = try await library.installStagingPackage(staging, workID)
-                    stagingURL = nil
-                    installed = true
-                    try await library.validateInstalledPackage(workID)
-                    let finalReadback = try await portable.validatePortablePackage(at: finalURL)
-                    let finalAttestation = try IOSDeviceSyncLocalPackageAttestation(
-                        document: finalReadback,
-                        updatedAt: expected.updatedAt
-                    )
-                    guard finalReadback == newDocument,
-                          try WorkSnapshot(document: finalReadback)
-                          == WorkSnapshot(document: newDocument),
-                          finalAttestation == expected else {
-                        throw IOSCloudLibraryOperationError.packageMismatch
-                    }
-                    try await library.confirmPublishPackage(workID, expected)
+                } else {
+                    try await repository.save(newDocument, to: staging)
+                }
+                try await library.validateStagingPackage(staging, workID)
+                let staged = try await portable.validatePortablePackage(at: staging)
+                let stagedAttestation = try IOSDeviceSyncLocalPackageAttestation(
+                    document: staged,
+                    updatedAt: expected.updatedAt
+                )
+                guard stagedAttestation == expected else {
+                    throw IOSCloudLibraryOperationError.packageMismatch
+                }
+                let finalURL = try await library.installStagingPackage(staging, workID)
+                stagingURL = nil
+                installed = true
+                try await library.validateInstalledPackage(workID)
+                let finalReadback = try await portable.validatePortablePackage(at: finalURL)
+                let finalAttestation = try IOSDeviceSyncLocalPackageAttestation(
+                    document: finalReadback,
+                    updatedAt: expected.updatedAt
+                )
+                guard finalReadback == newDocument,
+                      try WorkSnapshot(document: finalReadback)
+                      == WorkSnapshot(document: newDocument),
+                      finalAttestation == expected else {
+                    throw IOSCloudLibraryOperationError.packageMismatch
+                }
+                try await library.confirmPublishPackage(workID, expected)
+                if activate {
                     let loadedAttachments = try await loadAttachmentsForInstall(at: finalURL)
                     guard install(finalReadback, at: finalURL, attachments: loadedAttachments) else {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
@@ -1149,27 +1300,70 @@ extension IOSDocumentStore {
                     activeCloudWorkID = workID
                     startupState = .ready
                     saveState = .saved
-                    // Remote failure is not a local creation failure. The durable
-                    // publishPending row is retried on refresh/foreground.
-                    if shouldAttemptInitialCloudPublish {
-                        try? await library.publishNewWork(workID, finalReadback, finalURL)
-                    }
-                } catch {
-                    if let stagingURL {
-                        try? await library.discardStagingPackage(stagingURL, workID)
-                    }
-                    if !installed {
-                        try? await library.abortPublishReservation(workID)
-                    }
-                    throw error
                 }
+                // Remote failure is not a local creation failure. The durable
+                // publishPending row is retried on refresh/foreground.
+                if shouldAttemptInitialCloudPublish {
+                    try? await library.publishNewWork(workID, finalReadback, finalURL)
+                }
+            } catch {
+                if let stagingURL {
+                    try? await library.discardStagingPackage(stagingURL, workID)
+                }
+                if !installed {
+                    try? await library.abortPublishReservation(workID)
+                }
+                throw error
+            }
+        }
+
+        let transitioned = await documentOperationGate.perform { [weak self] in
+            guard let self else { return false }
+            if activate {
+                return await performDocumentTransition {
+                    try await materializeNewWork()
+                }
+            }
+            do {
+                try await materializeNewWork()
+                return true
+            } catch {
+                presentCloudLibraryActionFailure(
+                    error,
+                    message: "作品を複製できませんでした。"
+                )
+                return false
             }
         }
         _ = await refreshCloudLibrary()
-        if transitioned {
+        if transitioned, activate {
             await refreshOrPrepareSelectedEpisodeDeviceSync()
         }
         return transitioned
+    }
+
+    private func detachActiveDocumentAfterLocalLibraryRemoval() {
+        let placeholder = NovelDocument.newDocument()
+        document = placeholder
+        documentURL = libraryRoot.appendingPathComponent(
+            "\(placeholder.id.uuidString).novelpkg",
+            isDirectory: true
+        )
+        selectedChapterID = placeholder.chapters.first?.id
+        selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
+        replaceAttachments([])
+        activeCloudWorkID = nil
+        startupState = .library
+        saveState = .saved
+        advanceDocumentSessionGeneration()
+        advanceEditorContentGeneration()
+        workDeviceSyncSelectionDidChange()
+        userDefaults.removeObject(forKey: Self.lastDocumentNameKey)
+    }
+
+    private func presentCloudLibraryActionFailure(_ error: any Error, message: String) {
+        print("[FUMINIWA] cloud-library action failed(\(String(reflecting: type(of: error))))")
+        operationErrorMessage = message
     }
 
     func recordCloudLibraryPackageMutationIfNeeded(

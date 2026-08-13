@@ -223,6 +223,47 @@ struct AppleDeviceSyncLibraryMetadataTests {
         #expect(quarantined.entries.isEmpty)
     }
 
+    @Test("nil-head Note catalog caches, pending-opens, and downloads entities")
+    func noteCatalogCachesAndDownloadsEntities() async throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let store = try await preparedStore(root)
+        let snapshot = try makeCloudTestWorkSnapshot()
+        let records = try NoteSyncProjection.records(workID: cloudTestWorkID, snapshot: snapshot)
+        let workRecord = try #require(records.first { $0.key.kind == .work })
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        #expect(!entry.hasWorkRevisionHead)
+
+        try await store.replaceCachedLibraryEntries([entry])
+        #expect(await store.snapshot().cachedLibraryEntries[entry.workID] == entry)
+
+        let journalRoot = root.appendingPathComponent("journals-v1", isDirectory: true)
+        let factory = AppleDeviceSyncJournalFactory(
+            rootURL: journalRoot,
+            metadataStore: store
+        )
+        let remote = NoteCatalogLibraryRemote(entry: entry, records: records)
+        let coordinator = AppleDeviceSyncLibraryOpenCoordinator(
+            replicaID: store.replicaID,
+            metadataStore: store,
+            journalFactory: factory
+        )
+
+        let prepared = try await coordinator.prepareOpen(entry, remote: remote)
+        #expect(prepared.entry == entry)
+        #expect(prepared.revision.snapshot == snapshot)
+        #expect(await store.pendingLibraryOpen(workID: entry.workID) != nil)
+        #expect(await remote.observationCounts() == NoteCatalogObservationCounts(lists: 1, notes: 1))
+
+        let resolved = try await coordinator.completePreparedOpen(
+            prepared,
+            packageSnapshot: snapshot
+        )
+        #expect(resolved.descriptor.title == snapshot.title)
+        #expect(await store.pendingLibraryOpen(workID: entry.workID) == nil)
+        #expect(await coordinator.hasCompletedRemoteOpenLocally(entry))
+    }
+
     private func preparedStore(_ root: URL) async throws -> AppleDeviceSyncMetadataStore {
         let store = try AppleDeviceSyncMetadataStore(rootURL: root)
         _ = try await store.installAccountScope(
@@ -297,6 +338,52 @@ private actor AdvancingLibraryWorkRemote: AppleDeviceSyncLibraryRemote {
             throw WorkSyncTransportError.missingRevision
         }
         return revision
+    }
+
+    func publish(_: WorkPublishRequest) async throws -> WorkPublishResult {
+        throw WorkSyncTransportError.unavailable
+    }
+}
+
+private struct NoteCatalogObservationCounts: Equatable {
+    let lists: Int
+    let notes: Int
+}
+
+private actor NoteCatalogLibraryRemote: AppleDeviceSyncLibraryRemote {
+    private let entry: SyncWorkLibraryEntry
+    private let records: [NoteSyncRecord]
+    private var listCount = 0
+    private var noteFetchCount = 0
+
+    init(entry: SyncWorkLibraryEntry, records: [NoteSyncRecord]) {
+        self.entry = entry
+        self.records = records
+    }
+
+    func observationCounts() -> NoteCatalogObservationCounts {
+        NoteCatalogObservationCounts(lists: listCount, notes: noteFetchCount)
+    }
+
+    func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
+        listCount += 1
+        return [entry]
+    }
+
+    func fetchNoteRecords(for workID: SyncWorkID) async throws -> [NoteSyncRecord] {
+        noteFetchCount += 1
+        guard workID == entry.workID else {
+            throw AppleDeviceSyncServicesError.remoteWorkNotFound
+        }
+        return records
+    }
+
+    func fetchSnapshot(for _: SyncWorkID) async throws -> WorkRemoteSnapshot {
+        WorkRemoteSnapshot(head: nil)
+    }
+
+    func fetchRevision(_: SyncRevisionID, for _: SyncWorkID) async throws -> WorkRevision {
+        throw WorkSyncTransportError.missingRevision
     }
 
     func publish(_: WorkPublishRequest) async throws -> WorkPublishResult {

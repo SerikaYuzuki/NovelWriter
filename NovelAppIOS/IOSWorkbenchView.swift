@@ -304,7 +304,22 @@ struct IOSEditorPane: View {
                 .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $isDeviceSyncConflictPresented) {
-                if let recovery = store.workSyncLocalRecoveryReview {
+                if let conflict = store.noteSyncConflict {
+                    IOSNoteSyncConflictResolutionView(
+                        workTitle: store.document.title,
+                        isApplying: store.workSyncIsApplyingConflict,
+                        choose: { choice in
+                            Task {
+                                await store.resolveNoteSyncConflict(
+                                    using: choice,
+                                    expectedConflict: conflict
+                                )
+                            }
+                        },
+                        reviewLater: { isDeviceSyncConflictPresented = false }
+                    )
+                    .id("\(conflict.workID.rawValue.uuidString)-\(conflict.keys.count)")
+                } else if let recovery = store.workSyncLocalRecoveryReview {
                     let adapter = IOSWorkLocalRecoveryPresentation(review: recovery)
                     IOSWorkConflictResolutionView(
                         presentation: adapter.presentation,

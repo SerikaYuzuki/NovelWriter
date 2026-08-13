@@ -94,6 +94,23 @@ struct DeviceSyncPrivateWorkingCopyRoot: @unchecked Sendable {
         try validateCopiedPackage(at: packageURL)
     }
 
+    /// D-072: this-device copy only. Does not delete CloudKit records.
+    func removePackages(for workID: SyncWorkID, fileManager: FileManager) throws {
+        try validateFixedRoot()
+        let staging = try stagingDestination(for: workID)
+        if try Self.pathStatus(staging) != nil {
+            try validateStagingPackage(at: staging, for: workID)
+            try fileManager.removeItem(at: staging)
+            try validateFixedRoot()
+        }
+        let final = try destination(for: workID)
+        if try Self.pathStatus(final) != nil {
+            try validateCopiedPackage(at: final, for: workID)
+            try fileManager.removeItem(at: final)
+            try validateFixedRoot()
+        }
+    }
+
     func workID(for packageURL: URL) throws -> SyncWorkID? {
         try validateFixedRoot()
         let requested = packageURL.standardizedFileURL

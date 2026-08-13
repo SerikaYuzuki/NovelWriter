@@ -61,6 +61,7 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.episode.add` | 話を追加 | 執筆時のみ表示 | 固定・Editor左端 | `AppState.addEpisode()` |
 | `workbench.plot.card.rail` | プロットカード | 執筆時のみ表示 | 移動・削除可 | 選択中の章のカードを右側のスライド式ペインに表示 |
 | `workbench.device.sync.status` | クラウド同期 | 執筆時のみ表示 | 固定・話メモの左 | 保存・iCloud同期・オフライン・統合必要の状態を表示 |
+| `workbench.cloud.publish` | iCloudに保存 | 未公開のlocal-only／localPendingかつsigned-inのときだけ表示 | 固定・同期状態の右 | 検証済みlocal packageを現在のiCloud accountへ明示保存する。Fileメニューにも同じ項目がある |
 | `workbench.chapter.memo` | 話メモ | 表示 | 移動・削除可 | 選択話のメモを popover で編集 |
 | `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
 | `workbench.export` | 書き出す… | 執筆時のみ表示 | 移動・削除可 | TXT / Markdown / EPUBの形式選択と保存パネルを開く |

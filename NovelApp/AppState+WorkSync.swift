@@ -6,6 +6,7 @@ enum WorkSyncPackageSavePreparation {
     case notApplicable
     case failed
     case prepared(WorkSyncPreparedPackageSave)
+    case notePrepared(NoteSyncPreparedPackageSave)
 }
 
 struct WorkSyncPreparedPackageSave {
@@ -13,6 +14,12 @@ struct WorkSyncPreparedPackageSave {
     let client: WorkSyncClient
     let snapshot: WorkSnapshot
     let revisionID: SyncRevisionID
+}
+
+struct NoteSyncPreparedPackageSave {
+    let identity: WorkSyncDocumentIdentity
+    let client: NoteSyncClient
+    let snapshot: WorkSnapshot
 }
 
 extension AppState {
@@ -30,7 +37,8 @@ extension AppState {
     }
 
     var hasCurrentWorkSyncClient: Bool {
-        activeWorkSyncIdentity?.documentSession == documentSessionToken && workSyncClient != nil
+        activeWorkSyncIdentity?.documentSession == documentSessionToken
+            && (workSyncClient != nil || noteSyncClient != nil)
     }
 
     /// `true`はD-061がbinding結果を処理したことを表す。legacy journalだけなら
@@ -102,8 +110,14 @@ extension AppState {
         for expectedIdentity: WorkSyncPreparationIdentity,
         resolvedLookup expectedLookup: DeviceSyncLookupIdentity?
     ) async -> Bool {
-        guard let runtime = deviceSyncRuntime,
-              let transport = runtime.workTransport else { return false }
+        guard let runtime = deviceSyncRuntime else { return false }
+        if runtime.makeNoteSyncCoordinator != nil {
+            return await prepareNoteSyncIfAvailable(
+                for: expectedIdentity,
+                resolvedLookup: expectedLookup
+            )
+        }
+        guard let transport = runtime.workTransport else { return false }
         startDeviceSyncSignalObservationIfNeeded()
         guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
 
@@ -228,6 +242,7 @@ extension AppState {
                 guard documentSessionToken == identity.documentSession else { return }
                 activeWorkSyncIdentity = identity
                 workSyncClient = client
+                isCurrentWorkBoundToCloud = true
 
                 // makeFirstResponder(nil)／EditorKit prepare後の最新本文・フォーム値を
                 // 二相保存し、それを保存層から読み戻してからだけreconcileする。
@@ -289,6 +304,9 @@ extension AppState {
     func stageWorkSyncPackageSave(
         _ document: NovelDocument
     ) async -> WorkSyncPackageSavePreparation {
+        if usesNoteSyncRuntime {
+            return await stageNoteSyncPackageSave(document)
+        }
         guard let runtime = deviceSyncRuntime,
               runtime.workTransport != nil,
               let identity = activeWorkSyncIdentity,
@@ -705,7 +723,7 @@ extension AppState {
         }
     }
 
-    private func captureAndSaveActiveWorkSyncEditorIfNeeded() async -> Bool {
+    func captureAndSaveActiveWorkSyncEditorIfNeeded() async -> Bool {
         guard editorCommandSession.isDocumentTransitionPrepared else { return false }
         if let chapterID = selectedChapterID, let episodeID = selectedEpisodeID {
             switch captureCommittedTextForDeviceSync() {
@@ -730,8 +748,12 @@ extension AppState {
     func refreshWholeWorkSync() async {
         guard let runtime = deviceSyncRuntime,
               let identity = activeWorkSyncIdentity,
-              let client = workSyncClient,
               workSyncContextIsCurrent(identity) else { return }
+        if let noteClient = noteSyncClient {
+            scheduleNoteSyncNetwork(identity: identity, client: noteClient)
+            return
+        }
+        guard let client = workSyncClient else { return }
         do {
             let structureDigest = try SyncWorkStructureDigest(chapters: document.chapters)
             let resolution = try await runtime.binding(identity.documentSession, structureDigest)
@@ -895,7 +917,7 @@ extension AppState {
         }
     }
 
-    private func markLibraryNeedsReview(_ identity: WorkSyncDocumentIdentity) async {
+    func markLibraryNeedsReview(_ identity: WorkSyncDocumentIdentity) async {
         guard workSyncContextIsCurrent(identity),
               let library = deviceSyncRuntime?.library else { return }
         try? await library.markNeedsReview(identity.workID)
@@ -936,6 +958,9 @@ extension AppState {
         workSyncRemoteBindingTask = nil
         activeWorkSyncIdentity = nil
         workSyncClient = nil
+        noteSyncClient = nil
+        isCurrentWorkBoundToCloud = false
+        noteSyncConflict = nil
         workSyncConflictReview = nil
         workSyncLocalRecoveryReview = nil
         isApplyingWorkSyncConflict = false

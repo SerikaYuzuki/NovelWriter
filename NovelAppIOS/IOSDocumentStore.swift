@@ -66,6 +66,7 @@ final class IOSDocumentStore {
     var workSyncConflictReview: WorkConflictReview?
     var workSyncLocalRecoveryReview: WorkLocalRecoveryReview?
     var workSyncIsApplyingConflict = false
+    var noteSyncConflict: NoteSyncConflict?
     var deviceSyncSetupState: IOSDeviceSyncSetupState = .idle
     var libraryItems: [IOSDocumentLibraryItem] = []
     var cloudLibraryItems: [IOSCloudLibraryItem] = []
@@ -121,6 +122,7 @@ final class IOSDocumentStore {
     @ObservationIgnored var deviceSyncPreparationGeneration: UInt64 = 0
     @ObservationIgnored var pendingDeviceSyncConflictResolution: IOSPendingDeviceSyncConflictResolution?
     @ObservationIgnored var workSyncClient: IOSWorkSyncClient?
+    @ObservationIgnored var noteSyncClient: IOSNoteSyncClient?
     @ObservationIgnored var activeWorkSyncIdentity: IOSWorkSyncIdentity?
     @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
     @ObservationIgnored var workSyncNetworkGeneration: UInt64 = 0

@@ -96,6 +96,23 @@ extension DeviceSyncProductionRuntimeBox {
         return .temporarilyOffline
     }
 
+    func makeNoteSyncCoordinator(
+        workID: SyncWorkID,
+        localWorkingCopyID: LocalWorkingCopyID
+    ) async throws -> NoteSyncCoordinator {
+        let services = try readyServices()
+        let binding = SyncWorkingCopyBinding(
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID
+        )
+        let store = try await services.noteStateStore(for: binding)
+        return NoteSyncCoordinator(
+            workID: workID,
+            store: store,
+            cloud: services.noteCloud
+        )
+    }
+
     func retryRemoteBootstrapIfNeeded() async {
         guard case let .blocked(blocked?) = state,
               blocked.availability == .blocked(.temporarilyUnavailable),

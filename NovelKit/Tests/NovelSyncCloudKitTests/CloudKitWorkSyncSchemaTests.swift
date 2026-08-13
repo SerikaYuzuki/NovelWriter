@@ -47,7 +47,7 @@ struct CloudKitWorkSyncSchemaTests {
     @Test("production checklist covers every runtime record, field type, and query index")
     func productionSchemaChecklistMatchesCodecRecords() throws {
         let checklist = CloudKitSyncSchema.productionSchemaChecklist
-        #expect(checklist.count == 7)
+        #expect(checklist.count == 14)
         #expect(
             Set(checklist.map(\.name)) == [
                 "FUMINIWASyncWorkV1",
@@ -56,7 +56,14 @@ struct CloudKitWorkSyncSchemaTests {
                 "FUMINIWAMutationReceiptV1",
                 "FUMINIWAWorkControlV1",
                 "FUMINIWAWorkRevisionV1",
-                "FUMINIWAWorkMutationReceiptV1"
+                "FUMINIWAWorkMutationReceiptV1",
+                "FUMINIWANoteWorkV1",
+                "FUMINIWANoteChapterV1",
+                "FUMINIWANoteEpisodeV1",
+                "FUMINIWANoteCharacterV1",
+                "FUMINIWANotePlotCardV1",
+                "FUMINIWANoteFlagV1",
+                "FUMINIWANoteWorldNoteV1"
             ]
         )
         #expect(checklist.allSatisfy { $0.queryableSystemFields == ["recordName"] })
@@ -64,78 +71,10 @@ struct CloudKitWorkSyncSchemaTests {
         let root = try makeCloudTestDirectory()
         defer { removeCloudTestDirectory(root) }
         let codec = try CloudKitRecordCodec(assetStore: CloudKitAssetStore(rootURL: root))
-        let structureDigest = try SyncWorkStructureDigest(
-            validating: String(repeating: "a", count: 64)
-        )
-        let descriptor = try SyncWorkDescriptor(
-            workID: cloudTestWorkID,
-            sourceDocumentID: #require(
-                UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
-            ),
-            structureDigest: structureDigest,
-            title: "schema checklist"
-        )
-        let lease = try makeCloudTestLease()
-        let episodeRevision = try makeCloudTestRevision(
-            id: #require(UUID(uuidString: "11111111-1111-4111-8111-111111111111")),
-            parents: [],
-            content: "本文"
-        )
-        let episodeMutationID = SyncMutationID()
-        let encodedEpisode = try codec.makeRevisionRecord(
-            episodeRevision,
-            mutationID: episodeMutationID
-        )
-        defer { codec.removeStagedAssets([encodedEpisode.stagedAsset]) }
-        let episodeReceipt = codec.makeMutationReceiptRecord(
-            CloudKitMutationReceipt(
-                key: cloudTestKey,
-                mutationID: episodeMutationID,
-                commandDigest: SyncContentDigest(content: "episode-command"),
-                resultHeadRevisionID: episodeRevision.revisionID,
-                resultLease: lease
-            )
-        )
+        let encoded = try encodedProductionChecklistRecords(codec: codec)
+        defer { codec.removeStagedAssets(encoded.stagedAssets) }
 
-        let workRevision = try makeWorkRevision()
-        let workMutationID = SyncMutationID()
-        let encodedWork = try codec.makeWorkRevisionRecord(
-            workRevision,
-            mutationID: workMutationID
-        )
-        defer { codec.removeStagedAssets([encodedWork.stagedAsset]) }
-        let workReceipt = codec.makeWorkMutationReceiptRecord(
-            CloudKitWorkMutationReceipt(
-                workID: cloudTestWorkID,
-                mutationID: workMutationID,
-                commandDigest: SyncContentDigest(content: "work-command"),
-                resultHeadRevisionID: workRevision.revisionID,
-                resultHeadSnapshotDigest: workRevision.snapshotDigest
-            )
-        )
-        let records = try [
-            codec.makeWorkRecord(descriptor),
-            codec.updateControlRecord(
-                nil,
-                key: cloudTestKey,
-                headRevisionID: episodeRevision.revisionID,
-                leaseEpoch: lease.authority.epoch,
-                lease: lease
-            ),
-            encodedEpisode.record,
-            episodeReceipt,
-            codec.updateWorkControlRecord(
-                nil,
-                workID: cloudTestWorkID,
-                headRevisionID: workRevision.revisionID,
-                headSnapshotDigest: workRevision.snapshotDigest,
-                libraryEntry: SyncWorkLibraryEntry(head: workRevision)
-            ),
-            encodedWork.record,
-            workReceipt
-        ]
-
-        for record in records {
+        for record in encoded.records {
             let schema = try #require(checklist.first { $0.name == record.recordType })
             let keys = Set(record.allKeys())
             #expect(schema.requiredFields.isSubset(of: keys))
@@ -208,6 +147,79 @@ struct CloudKitWorkSyncSchemaTests {
             )
         }
     }
+}
+
+private func encodedProductionChecklistRecords(
+    codec: CloudKitRecordCodec
+) throws -> (records: [CKRecord], stagedAssets: [CloudKitStagedAsset]) {
+    let structureDigest = try SyncWorkStructureDigest(
+        validating: String(repeating: "a", count: 64)
+    )
+    let descriptor = try SyncWorkDescriptor(
+        workID: cloudTestWorkID,
+        sourceDocumentID: #require(
+            UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
+        ),
+        structureDigest: structureDigest,
+        title: "schema checklist"
+    )
+    let lease = try makeCloudTestLease()
+    let episodeRevision = try makeCloudTestRevision(
+        id: #require(UUID(uuidString: "11111111-1111-4111-8111-111111111111")),
+        parents: [],
+        content: "本文"
+    )
+    let episodeMutationID = SyncMutationID()
+    let encodedEpisode = try codec.makeRevisionRecord(
+        episodeRevision,
+        mutationID: episodeMutationID
+    )
+    let episodeReceipt = codec.makeMutationReceiptRecord(
+        CloudKitMutationReceipt(
+            key: cloudTestKey,
+            mutationID: episodeMutationID,
+            commandDigest: SyncContentDigest(content: "episode-command"),
+            resultHeadRevisionID: episodeRevision.revisionID,
+            resultLease: lease
+        )
+    )
+    let workRevision = try makeWorkRevision()
+    let workMutationID = SyncMutationID()
+    let encodedWork = try codec.makeWorkRevisionRecord(
+        workRevision,
+        mutationID: workMutationID
+    )
+    let workReceipt = codec.makeWorkMutationReceiptRecord(
+        CloudKitWorkMutationReceipt(
+            workID: cloudTestWorkID,
+            mutationID: workMutationID,
+            commandDigest: SyncContentDigest(content: "work-command"),
+            resultHeadRevisionID: workRevision.revisionID,
+            resultHeadSnapshotDigest: workRevision.snapshotDigest
+        )
+    )
+    let records = try [
+        codec.makeWorkRecord(descriptor),
+        codec.updateControlRecord(
+            nil,
+            key: cloudTestKey,
+            headRevisionID: episodeRevision.revisionID,
+            leaseEpoch: lease.authority.epoch,
+            lease: lease
+        ),
+        encodedEpisode.record,
+        episodeReceipt,
+        codec.updateWorkControlRecord(
+            nil,
+            workID: cloudTestWorkID,
+            headRevisionID: workRevision.revisionID,
+            headSnapshotDigest: workRevision.snapshotDigest,
+            libraryEntry: SyncWorkLibraryEntry(head: workRevision)
+        ),
+        encodedWork.record,
+        workReceipt
+    ]
+    return (records, [encodedEpisode.stagedAsset, encodedWork.stagedAsset])
 }
 
 private func cloudKitProductionFieldType(

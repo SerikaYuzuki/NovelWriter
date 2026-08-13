@@ -20,6 +20,13 @@ enum CloudKitSyncSchema {
         static let workControl = "FUMINIWAWorkControlV1"
         static let workRevision = "FUMINIWAWorkRevisionV1"
         static let workMutationReceipt = "FUMINIWAWorkMutationReceiptV1"
+        static let noteWork = "FUMINIWANoteWorkV1"
+        static let noteChapter = "FUMINIWANoteChapterV1"
+        static let noteEpisode = "FUMINIWANoteEpisodeV1"
+        static let noteCharacter = "FUMINIWANoteCharacterV1"
+        static let notePlotCard = "FUMINIWANotePlotCardV1"
+        static let noteFlag = "FUMINIWANoteFlagV1"
+        static let noteWorldNote = "FUMINIWANoteWorldNoteV1"
     }
 
     enum Field {
@@ -59,6 +66,12 @@ enum CloudKitSyncSchema {
         static let revisionAsset = "revisionAsset"
         static let attachmentManifestDigest = "attachmentManifestDigest"
         static let attachmentCount = "attachmentCount"
+        static let entityID = "entityID"
+        static let entityKind = "entityKind"
+        static let payloadJSON = "payloadJSON"
+        static let payloadAsset = "payloadAsset"
+        static let payloadByteCount = "payloadByteCount"
+        static let contentDigest = "contentDigest"
     }
 
     enum ProductionFieldType: String, Equatable, Sendable {
@@ -74,17 +87,33 @@ enum CloudKitSyncSchema {
         let fields: [String: ProductionFieldType]
         let optionalFields: Set<String>
         let queryableSystemFields: Set<String>
+        let queryableFields: Set<String>
+
+        init(
+            name: String,
+            fields: [String: ProductionFieldType],
+            optionalFields: Set<String>,
+            queryableSystemFields: Set<String>,
+            queryableFields: Set<String> = []
+        ) {
+            self.name = name
+            self.fields = fields
+            self.optionalFields = optionalFields
+            self.queryableSystemFields = queryableSystemFields
+            self.queryableFields = queryableFields
+        }
 
         var requiredFields: Set<String> {
             Set(fields.keys).subtracting(optionalFields)
         }
     }
 
-    /// Source追加だけではproduction CloudKit schemaは更新されない。これはruntimeが
-    /// read/writeする全7 record typeとfield、production query/exportに必要なindexの正。
-    /// Developmentで実recordを生成して型を照合した後、DashboardからProductionへ
-    /// 明示deployする。全typeのsystem `recordName`をQUERYABLEにする。
-    static let productionSchemaChecklist: [ProductionRecordType] = [
+    /// Source追加だけではproduction CloudKit schemaは更新されない。legacy 7 typeは履歴、
+    /// D-071 live経路は`FUMINIWANote*V1`である。Dashboard照合の正はこのchecklist。
+    static let productionSchemaChecklist: [ProductionRecordType] =
+        legacyProductionSchemaChecklist + noteSyncProductionSchemaChecklist
+
+    static let legacyProductionSchemaChecklist: [ProductionRecordType] = [
         ProductionRecordType(
             name: RecordType.work,
             fields: productionFields([
@@ -209,11 +238,83 @@ enum CloudKitSyncSchema {
         )
     ]
 
+    static let noteSyncProductionSchemaChecklist: [ProductionRecordType] = [
+        noteSchema(RecordType.noteWork, extra: [Field.title: .string], extraOptional: [Field.title]),
+        noteSchema(RecordType.noteChapter),
+        noteSchema(RecordType.noteEpisode),
+        noteSchema(RecordType.noteCharacter),
+        noteSchema(RecordType.notePlotCard),
+        noteSchema(RecordType.noteFlag),
+        noteSchema(RecordType.noteWorldNote)
+    ]
+
     static let workSyncProductionRecordTypes = [
         RecordType.workControl,
         RecordType.workRevision,
         RecordType.workMutationReceipt
     ]
+
+    static let noteSyncProductionRecordTypes = [
+        RecordType.noteWork,
+        RecordType.noteChapter,
+        RecordType.noteEpisode,
+        RecordType.noteCharacter,
+        RecordType.notePlotCard,
+        RecordType.noteFlag,
+        RecordType.noteWorldNote
+    ]
+
+    static func recordType(for kind: NoteSyncEntityKind) -> String {
+        switch kind {
+        case .work: RecordType.noteWork
+        case .chapter: RecordType.noteChapter
+        case .episode: RecordType.noteEpisode
+        case .character: RecordType.noteCharacter
+        case .plotCard: RecordType.notePlotCard
+        case .flag: RecordType.noteFlag
+        case .worldNote: RecordType.noteWorldNote
+        }
+    }
+
+    static func entityKind(forRecordType recordType: String) -> NoteSyncEntityKind? {
+        switch recordType {
+        case RecordType.noteWork: .work
+        case RecordType.noteChapter: .chapter
+        case RecordType.noteEpisode: .episode
+        case RecordType.noteCharacter: .character
+        case RecordType.notePlotCard: .plotCard
+        case RecordType.noteFlag: .flag
+        case RecordType.noteWorldNote: .worldNote
+        default: nil
+        }
+    }
+
+    static let maximumInlinePayloadUTF8Bytes = 768 * 1024
+
+    private static func noteSchema(
+        _ name: String,
+        extra: [String: ProductionFieldType] = [:],
+        extraOptional: Set<String> = []
+    ) -> ProductionRecordType {
+        ProductionRecordType(
+            name: name,
+            fields: productionFields([
+                Field.entityID: .string,
+                Field.entityKind: .string,
+                Field.payloadJSON: .string,
+                Field.payloadAsset: .asset,
+                Field.payloadByteCount: .int64,
+                Field.contentDigest: .string
+            ]).merging(extra) { _, new in new },
+            optionalFields: Set([
+                Field.payloadJSON,
+                Field.payloadAsset,
+                Field.payloadByteCount
+            ]).union(extraOptional),
+            queryableSystemFields: ["recordName"],
+            queryableFields: [Field.workID]
+        )
+    }
 
     private static func productionFields(
         _ additional: [String: ProductionFieldType]
@@ -256,6 +357,14 @@ enum CloudKitSyncRecordNames {
 
     static func workMutationReceipt(_ mutationID: SyncMutationID, workID: SyncWorkID) -> String {
         "\(workScope(workID)).mutation.\(mutationID.rawValue.uuidString)"
+    }
+
+    static func noteEntity(_ key: NoteSyncEntityKey) -> String {
+        "v1.note.\(key.workID.rawValue.uuidString).\(key.kind.rawValue).\(key.entityID.rawValue.uuidString)"
+    }
+
+    static func isNoteEntity(_ recordName: String) -> Bool {
+        recordName.hasPrefix("v1.note.")
     }
 
     private static func episodeScope(_ key: EpisodeSyncKey) -> String {
@@ -307,6 +416,13 @@ extension CKRecord.ID {
     static func workMutationReceipt(_ mutationID: SyncMutationID, workID: SyncWorkID) -> CKRecord.ID {
         CKRecord.ID(
             recordName: CloudKitSyncRecordNames.workMutationReceipt(mutationID, workID: workID),
+            zoneID: CloudKitSyncSchema.zoneID
+        )
+    }
+
+    static func noteEntity(_ key: NoteSyncEntityKey) -> CKRecord.ID {
+        CKRecord.ID(
+            recordName: CloudKitSyncRecordNames.noteEntity(key),
             zoneID: CloudKitSyncSchema.zoneID
         )
     }

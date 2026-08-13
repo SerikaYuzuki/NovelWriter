@@ -92,6 +92,32 @@ struct DeviceSyncAppIntegrationTests {
         #expect(relaunched.deviceSyncTransferState == .upToDate)
     }
 
+    @Test("Note同期は作品確認オーバーレイをCloudKit待ちで出さない")
+    func noteSyncDoesNotHoldWholeWorkRecoveryOverlay() async throws {
+        let fixture = makeFixture(content: "本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: InMemoryWorkSyncServer(),
+            binding: { _, _ in nil },
+            makeNoteSyncCoordinator: { _, _ in
+                throw CancellationError()
+            }
+        )
+        let state = makeState(repository: repository, runtime: runtime)
+
+        #expect(await state.openDocument(at: fixture.url))
+        #expect(state.usesNoteSyncRuntime)
+        #expect(state.usesWholeWorkSyncRuntime)
+        #expect(state.startupState.isReady)
+        #expect(state.deviceSyncLocalRecoveryPending == false)
+        #expect(state.permitsDocumentInteraction)
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        #expect(state.deviceSyncAllowsEditing(for: lookup))
+    }
+
     @Test("作品package書き出しはactive identityとjournalを変えず付随dataを保持する")
     func packageExportPreservesActiveIdentityJournalAndResources() async throws {
         let directory = FileManager.default.temporaryDirectory

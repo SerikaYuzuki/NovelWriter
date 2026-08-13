@@ -61,12 +61,14 @@ struct IOSDeviceSyncLocalPackageAttestation: Codable, Hashable, Sendable {
     }
 
     func matches(_ remote: SyncWorkLibraryEntry) -> Bool {
-        documentID == remote.sourceDocumentID
-            && structureDigest == remote.structureDigest
-            && snapshotDigest == remote.headSnapshotDigest
-            && snapshotByteCount == remote.headSnapshotByteCount
-            && titleDigest == remote.titleDigest
-            && fullTitleUTF8ByteCount == remote.fullTitleUTF8ByteCount
+        remote.matchesInstalledPackage(
+            documentID: documentID,
+            structureDigest: structureDigest,
+            snapshotDigest: snapshotDigest,
+            snapshotByteCount: snapshotByteCount,
+            titleDigest: titleDigest,
+            fullTitleUTF8ByteCount: fullTitleUTF8ByteCount
+        )
     }
 }
 
@@ -106,7 +108,6 @@ struct IOSDeviceSyncLocalLibraryRecord: Codable, Hashable, Sendable, Identifiabl
                   let pendingRemote,
                   pendingRemote.workID == workID,
                   pendingRemote.sourceDocumentID == expectedDocumentID,
-                  pendingRemote.headRevisionID != nil,
                   package == nil || package?.matches(pendingRemote) == true else {
                 throw IOSDeviceSyncLocalLibraryError.invalidRegistry
             }
@@ -120,7 +121,6 @@ struct IOSDeviceSyncLocalLibraryRecord: Codable, Hashable, Sendable, Identifiabl
                   pendingRemote == nil || (
                       pendingRemote?.workID == workID
                           && pendingRemote?.sourceDocumentID == expectedDocumentID
-                          && pendingRemote?.headRevisionID != nil
                           && pendingRemote.map { package?.matches($0) == true } == true
                   ) else {
                 throw IOSDeviceSyncLocalLibraryError.invalidRegistry
@@ -282,6 +282,27 @@ actor IOSDeviceSyncLocalLibraryStore {
         ))
     }
 
+    func removeLocalWork(workID: SyncWorkID) throws {
+        try validateRoots()
+        let recordURL = recordURL(for: workID)
+        let package = try packageURL(for: workID)
+        let staging = try stagingPackageURL(for: workID)
+        let hadRecord = try pathStatus(recordURL) != nil
+        let hadPackage = try pathStatus(package) != nil
+        let hadStaging = try pathStatus(staging) != nil
+        guard hadRecord || hadPackage || hadStaging else {
+            throw IOSDeviceSyncLocalLibraryError.missingWork
+        }
+        try workingCopyLocation.removePackages(for: workID)
+        if let status = try pathStatus(recordURL) {
+            guard status.st_mode & S_IFMT == S_IFREG else {
+                throw IOSDeviceSyncLocalLibraryError.invalidRegistry
+            }
+            try fileManager.removeItem(at: recordURL)
+        }
+        try validateRoots()
+    }
+
     func abortPublishReservation(workID: SyncWorkID) throws {
         guard let record = try readRecord(for: workID) else { return }
         let staging = try stagingPackageURL(for: workID)
@@ -322,9 +343,6 @@ actor IOSDeviceSyncLocalLibraryStore {
 
     func beginRemoteOpen(_ remote: SyncWorkLibraryEntry) throws {
         try remote.validate()
-        guard remote.headRevisionID != nil else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
         if let existing = try readRecord(for: remote.workID) {
             guard existing.state == .remoteOpenPending,
                   existing.pendingRemote == remote else {

@@ -134,6 +134,101 @@ struct IOSCloudLibraryIntegrationTests {
         let workID = try #require(store.activeCloudWorkID)
         #expect(try await fixture.localStore.record(for: workID)?.state == .publishPending)
         #expect(store.cloudLibraryItems.first(where: { $0.id == workID })?.availability == .localOnly)
+        #expect(!store.canPublishCurrentWorkToCloud)
+    }
+
+    @Test("明示的なiCloud保存はaccountRequiredのlocal-onlyをpublishする")
+    func explicitPublishUploadsAccountRequiredLocalOnlyWork() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .accountRequired)
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.bootstrap()
+        #expect(await store.makeNewCloudLibraryDocument())
+        let workID = try #require(store.activeCloudWorkID)
+        #expect(await fixture.remote.publishCallCount() == 0)
+
+        await fixture.remote.setConnection(.available)
+        #expect(await store.refreshCloudLibrary())
+        #expect(await store.publishCloudLibraryWork(workID))
+        #expect(await fixture.remote.publishCallCount() >= 1)
+        let availability = store.cloudLibraryItems.first(where: { $0.id == workID })?.availability
+        #expect(availability == .cachedRemote || availability == .localPending)
+        #expect(store.operationErrorMessage == nil)
+        #expect(store.startupState == .ready)
+        #expect(store.activeCloudWorkID == workID)
+    }
+
+    @Test("別accountでは明示的なiCloud保存を始めない")
+    func explicitPublishRejectsDifferentAccount() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .differentAccount)
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.bootstrap()
+        #expect(await store.makeNewCloudLibraryDocument())
+        let workID = try #require(store.activeCloudWorkID)
+        #expect(await !(store.publishCloudLibraryWork(workID)))
+        #expect(await fixture.remote.publishCallCount() == 0)
+        #expect(!store.canPublishCurrentWorkToCloud)
+    }
+
+    @Test("catalog失敗中でもlocal-onlyの明示iCloud保存を始められる")
+    func catalogFailureAllowsExplicitPublish() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .available)
+        defer { fixture.cleanup() }
+        await fixture.remote.setRemoteLoadFailure(true)
+        let store = fixture.makeStore()
+        await store.bootstrap()
+        #expect(await store.makeNewCloudLibraryDocument())
+        let workID = try #require(store.activeCloudWorkID)
+        #expect(store.cloudLibraryConnection == .unavailable)
+        #expect(store.canPublishCurrentWorkToCloud)
+        let item = try #require(store.cloudLibraryItems.first { $0.id == workID })
+        #expect(item.availability.canPublishToCloud(connection: store.cloudLibraryConnection))
+        #expect(await store.publishCloudLibraryWork(workID))
+        #expect(await fixture.remote.publishCallCount() >= 1)
+        #expect(store.operationErrorMessage == nil)
+    }
+
+    @Test("複製は新しいWorkIDのlocal copyを残し現在作品を切り替えない")
+    func duplicateLeavesCurrentWorkAndAddsLocalCopy() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .accountRequired)
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.bootstrap()
+        #expect(await store.makeNewCloudLibraryDocument())
+        let originalID = try #require(store.activeCloudWorkID)
+        let originalTitle = store.document.title
+
+        #expect(await store.duplicateCloudLibraryWork(originalID))
+        #expect(store.activeCloudWorkID == originalID)
+        #expect(store.startupState == .ready)
+        #expect(store.document.title == originalTitle)
+        #expect(store.cloudLibraryItems.count == 2)
+        let duplicated = try #require(store.cloudLibraryItems.first { $0.id != originalID })
+        #expect(duplicated.title == originalTitle || duplicated.displayTitle == "名称未設定の作品")
+        #expect(duplicated.availability == .localOnly)
+        #expect(try await fixture.localStore.record(for: originalID) != nil)
+        #expect(try await fixture.localStore.record(for: duplicated.id) != nil)
+        #expect(await fixture.remote.publishCallCount() == 0)
+    }
+
+    @Test("この端末から削除はlocal copyだけを外す")
+    func removeLocalCopyDeletesThisDevicePackageOnly() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .accountRequired)
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.bootstrap()
+        #expect(await store.makeNewCloudLibraryDocument())
+        let workID = try #require(store.activeCloudWorkID)
+        let packageURL = store.documentURL
+
+        #expect(await store.removeLocalCloudLibraryWork(workID))
+        #expect(store.cloudLibraryItems.isEmpty)
+        #expect(store.activeCloudWorkID == nil)
+        #expect(store.startupState == .library)
+        #expect(try await fixture.localStore.record(for: workID) == nil)
+        #expect(!FileManager.default.fileExists(atPath: packageURL.path))
+        #expect(await fixture.remote.publishCallCount() == 0)
     }
 
     @Test("stagingが残るreservationはabortせずexact intentを保持する")
@@ -257,6 +352,25 @@ struct IOSCloudLibraryIntegrationTests {
         #expect(store.activeCloudWorkID == workID)
         let expectedURL = try await fixture.localStore.packageURL(for: workID)
         #expect(store.documentURL == expectedURL)
+        #expect(try await fixture.localStore.record(for: workID)?.state == .synced)
+    }
+
+    @Test("Note catalogのnil-head remote-only作品は棚に出て開ける")
+    func noteCatalogRemoteOnlyWorkMaterializesAndOpens() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .available)
+        defer { fixture.cleanup() }
+        let remote = NovelDocument.newDocument(title: "別端末のiCloud作品")
+        let workID = SyncWorkID()
+        try await fixture.remote.seedNoteRemote(remote, workID: workID)
+        let store = fixture.makeStore()
+
+        await store.bootstrap()
+        #expect(store.cloudLibraryItems.first?.availability == .remoteOnly)
+        #expect(await store.openCloudLibraryWork(workID))
+
+        #expect(store.startupState == .ready)
+        #expect(store.document == remote)
+        #expect(store.activeCloudWorkID == workID)
         #expect(try await fixture.localStore.record(for: workID)?.state == .synced)
     }
 
@@ -932,7 +1046,8 @@ private final class IOSCloudLibraryFixture: @unchecked Sendable {
             },
             resumeInitialWorkPublication: { workID, document, _ in
                 try await self.remote.publish(document, workID: workID, hidden: true)
-            }
+            },
+            removeLocalWork: { try await self.localStore.removeLocalWork(workID: $0) }
         )
         return IOSDeviceSyncRuntime(
             replicaID: SyncReplicaID(),
@@ -960,6 +1075,7 @@ private actor IOSCloudLibraryRemoteHarness {
     private var journalNeedsReview = false
     private var lookupFails = false
     private var remoteLoadCalls = 0
+    private var remoteLoadFails = false
     private var shouldPauseNextRemoteLoad = false
     private var remoteLoadPaused = false
     private var resumeRemoteLoadRequested = false
@@ -973,6 +1089,10 @@ private actor IOSCloudLibraryRemoteHarness {
 
     func setConnection(_ connection: IOSDeviceSyncLibraryConnection) {
         self.connection = connection
+    }
+
+    func setRemoteLoadFailure(_ value: Bool) {
+        remoteLoadFails = value
     }
 
     @discardableResult
@@ -995,12 +1115,30 @@ private actor IOSCloudLibraryRemoteHarness {
         return entry
     }
 
+    func seedNoteRemote(_ document: NovelDocument, workID: SyncWorkID) throws -> SyncWorkLibraryEntry {
+        let snapshot = try WorkSnapshot(document: document)
+        guard let workRecord = try NoteSyncProjection.records(workID: workID, snapshot: snapshot)
+            .first(where: { $0.key.kind == .work }) else {
+            throw IOSCloudLibraryTestError.unavailable
+        }
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        entries[workID] = IOSDeviceSyncRemoteLibraryEntry(
+            work: entry,
+            availability: completed.contains(workID) ? .locallyBound : .remoteOnly
+        )
+        documents[workID] = document
+        return entry
+    }
+
     func hideRemoteCatalog() {
         entries = [:]
     }
 
     func loadRemoteLibrary() async throws -> IOSDeviceSyncRemoteLibrarySnapshot {
         remoteLoadCalls += 1
+        if remoteLoadFails {
+            throw IOSCloudLibraryTestError.unavailable
+        }
         if shouldPauseNextRemoteLoad {
             shouldPauseNextRemoteLoad = false
             remoteLoadPaused = true

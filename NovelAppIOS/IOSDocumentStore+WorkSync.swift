@@ -47,11 +47,17 @@ extension IOSDocumentStore {
         workSyncPreparationTask = nil
         workSyncPreparationGeneration &+= 1
         workSyncClient = nil
+        noteSyncClient = nil
         activeWorkSyncIdentity = nil
         workSyncConflictReview = nil
+        noteSyncConflict = nil
         workSyncLocalRecoveryReview = nil
         workSyncIsApplyingConflict = false
-        deviceSyncLocalRecoveryPending = deviceSyncRuntime != nil
+        if usesNoteSyncRuntime {
+            deviceSyncLocalRecoveryPending = false
+        } else {
+            deviceSyncLocalRecoveryPending = deviceSyncRuntime != nil
+        }
         deviceSyncLocalRecoveryReview = nil
         deviceSyncLocalRecoveryChoicePending = false
         deviceSyncState = deviceSyncRuntime == nil ? .unconfigured : .syncing
@@ -106,8 +112,12 @@ extension IOSDocumentStore {
         expectedLookup: IOSWorkSyncLookupIdentity
     ) async {
         guard currentWorkSyncLookupIdentity == expectedLookup,
-              let runtime = deviceSyncRuntime,
-              let transport = runtime.workTransport else { return }
+              let runtime = deviceSyncRuntime else { return }
+        if runtime.makeNoteSyncCoordinator != nil {
+            await prepareNoteDeviceSyncSerially(expectedLookup: expectedLookup, runtime: runtime)
+            return
+        }
+        guard let transport = runtime.workTransport else { return }
         startDeviceSyncSignalObservationIfNeeded()
         deviceSyncState = .syncing
         deviceSyncLocalRecoveryPending = true
@@ -316,7 +326,7 @@ extension IOSDocumentStore {
         }
     }
 
-    private func rewriteObservedWorkPackage(
+    func rewriteObservedWorkPackage(
         _ snapshot: WorkSnapshot,
         expectedIdentity: IOSWorkSyncIdentity
     ) async -> Bool {
@@ -353,6 +363,17 @@ extension IOSDocumentStore {
         }
         let expectedLookup = currentWorkSyncLookupIdentity
         let identity = activeWorkSyncIdentity
+        if let noteClient = noteSyncClient,
+           let identity,
+           workSyncContextIsCurrent(identity) {
+            try await performCoordinatedNoteDocumentSave(
+                savedDocument,
+                to: url,
+                identity: identity,
+                client: noteClient
+            )
+            return
+        }
         let client = workSyncClient
         let canStage = identity.map(workSyncContextIsCurrent) == true && client != nil
         let snapshot: WorkSnapshot?
@@ -1050,7 +1071,7 @@ extension IOSDocumentStore {
         }
     }
 
-    private func continuePackageOnlyAfterWorkSyncPreflightFailure(_ message: String) {
+    func continuePackageOnlyAfterWorkSyncPreflightFailure(_ message: String) {
         workSyncClient = nil
         activeWorkSyncIdentity = nil
         workSyncLocalRecoveryReview = nil

@@ -136,20 +136,32 @@ public extension AppleDeviceSyncServices {
             locator: locator,
             proposedDescriptor: proposedDescriptor
         ) {
-            // The remote work and durable binding can both be committed before
-            // the first WorkSync publish succeeds. A restart must resume that
-            // journal instead of trying to create a second local intent, which
-            // would fail with `locatorAlreadyBound` forever.
-            guard existing.binding.workID == proposedDescriptor.workID,
-                  let resolved = try await resolve(
-                      locator,
-                      localSourceDocumentID: proposedDescriptor.sourceDocumentID
-                  ),
-                  resolved.binding == existing.binding,
-                  resolved.allowedEpisodeIDs == existing.allowedEpisodeIDs else {
+            // Local bind may already exist while the custom zone / Note type
+            // has not been materialized. `resolve` lists the catalog and would
+            // fail closed before `bootstrapZoneForNewSync` / `createWork`.
+            guard existing.binding.workID == proposedDescriptor.workID else {
                 throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
             }
-            return resolved
+            try await bootstrapZoneForNewSync()
+            try await createWork(proposedDescriptor)
+            do {
+                guard let resolved = try await resolve(
+                    locator,
+                    localSourceDocumentID: proposedDescriptor.sourceDocumentID
+                ),
+                    resolved.binding == existing.binding,
+                    resolved.allowedEpisodeIDs == existing.allowedEpisodeIDs else {
+                    throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+                }
+                return resolved
+            } catch {
+                guard Self.canResumeCreationWithoutLiveCatalog(error) else { throw error }
+                return try await resolvedWorkingCopy(
+                    locator: locator,
+                    descriptor: proposedDescriptor,
+                    expected: existing
+                )
+            }
         }
         let intent = try await accountGate.performMutation { [metadataStore] in
             try await metadataStore.preparePendingWorkCreation(
@@ -187,6 +199,35 @@ public extension AppleDeviceSyncServices {
             throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
         }
         return existing
+    }
+
+    private static func canResumeCreationWithoutLiveCatalog(_ error: any Error) -> Bool {
+        if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+            return true
+        }
+        if let servicesError = error as? AppleDeviceSyncServicesError {
+            return servicesError == .remoteWorkNotFound || servicesError == .remoteWorkHasNoHead
+        }
+        return false
+    }
+
+    private func resolvedWorkingCopy(
+        locator: AppleLocalDocumentLocator,
+        descriptor: SyncWorkDescriptor,
+        expected: AppleDeviceSyncBindingSnapshot
+    ) async throws -> AppleResolvedWorkingCopy {
+        guard let local = try await resolveLocal(locator),
+              local.binding == expected.binding,
+              local.allowedEpisodeIDs == expected.allowedEpisodeIDs else {
+            throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+        }
+        return AppleResolvedWorkingCopy(
+            binding: local.binding,
+            descriptor: descriptor,
+            allowedEpisodeIDs: local.allowedEpisodeIDs,
+            journal: local.journal,
+            workJournal: local.workJournal
+        )
     }
 
     /// 通常bindは既存locatorの行先を変えない。明示的な付け替えだけをこのAPIへ通す。

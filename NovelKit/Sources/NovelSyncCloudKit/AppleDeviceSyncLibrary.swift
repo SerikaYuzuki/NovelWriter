@@ -133,23 +133,46 @@ extension AppleDeviceSyncMetadataSnapshot {
 }
 
 enum AppleDeviceSyncLibraryBootstrapPolicy {
+    /// A signed-in empty shelf must remain `.available` so explicit first save
+    /// can JIT-create `FUMINIWANote*V1`. Missing zone, missing record type
+    /// (`unknownItem` → `recordNotFound`), and Development `invalidArguments`
+    /// before the type exists are that empty window. Cached remotes, pending
+    /// downloads, and confirmed bindings stay fail-closed.
     static func permitsEmptyAvailableCatalog(
         for error: any Error,
         metadata: AppleDeviceSyncMetadataSnapshot
     ) -> Bool {
-        guard let adapterError = error as? CloudKitSyncAdapterError else { return false }
-        return switch adapterError {
-        case .zoneUnavailable:
-            metadata.permitsInitialZoneCreation
-        case .invalidArguments:
-            metadata.permitsPendingCreateSchemaBootstrap
+        guard metadata.permitsInitialZoneCreation else { return false }
+        return isEmptyCatalogSchemaError(error)
+    }
+
+    /// Missing zone / Note type is an empty Development shelf, not a deleted graph.
+    static func isEmptyCatalogSchemaError(_ error: any Error) -> Bool {
+        let adapter: CloudKitSyncAdapterError = if let typed = error as? CloudKitSyncAdapterError {
+            typed
+        } else {
+            CloudKitErrorMapper.map(error)
+        }
+        return switch adapter {
+        case .zoneUnavailable, .invalidArguments, .recordNotFound:
+            true
+        case let .partialFailure(kinds):
+            !kinds.isEmpty && kinds.allSatisfy { kind in
+                kind == .zoneUnavailable || kind == .invalidArguments || kind == .unknownItem
+            }
         default:
             false
         }
     }
 }
 
-protocol AppleDeviceSyncLibraryRemote: SyncWorkLibraryCatalog, WorkSyncTransport {}
+protocol AppleDeviceSyncLibraryRemote: SyncWorkLibraryCatalog, WorkSyncTransport, NoteSyncLibraryFetching {}
+
+extension AppleDeviceSyncLibraryRemote {
+    func fetchNoteRecords(for _: SyncWorkID) async throws -> [NoteSyncRecord] {
+        throw AppleDeviceSyncServicesError.remoteWorkHasNoHead
+    }
+}
 
 extension AppleDeviceSyncRemoteBoundary: AppleDeviceSyncLibraryRemote {}
 
@@ -206,7 +229,7 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
             throw AppleDeviceSyncServicesError.packageSnapshotMismatch
         }
         do {
-            try prepared.entry.requireExactHead(prepared.revision)
+            try prepared.entry.requireCatalogIdentity(prepared.revision)
         } catch {
             throw AppleDeviceSyncServicesError.packageSnapshotMismatch
         }
@@ -267,7 +290,7 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
         remote: any AppleDeviceSyncLibraryRemote
     ) async throws -> AppleDeviceSyncPreparedRemoteWork {
         guard let headID = intent.entry.headRevisionID else {
-            throw AppleDeviceSyncServicesError.remoteWorkHasNoHead
+            return try await downloadAndStageNoteEntities(intent, remote: remote)
         }
         let revision = try await remote.fetchRevision(headID, for: intent.entry.workID)
         do {
@@ -275,11 +298,35 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
         } catch {
             throw AppleDeviceSyncServicesError.libraryEntryChanged
         }
+        return try await persistDownloadedRevision(revision, intent: intent, remote: remote)
+    }
 
-        // Bind and persist the full immutable revision before returning it to
-        // the App. The pending intent keeps this locator invisible until the
-        // package is atomically installed and read back. This makes every
-        // post-download crash window resumable without network.
+    private func downloadAndStageNoteEntities(
+        _ intent: ApplePendingLibraryOpenSnapshot,
+        remote: any AppleDeviceSyncLibraryRemote
+    ) async throws -> AppleDeviceSyncPreparedRemoteWork {
+        let records = try await remote.fetchNoteRecords(for: intent.entry.workID)
+        let snapshot = try NoteSyncProjection.snapshot(
+            workID: intent.entry.workID,
+            records: records
+        )
+        let revision = try WorkRevision(
+            workID: intent.entry.workID,
+            parentRevisionIDs: [],
+            branchID: SyncBranchID(),
+            authorReplicaID: replicaID,
+            authorSessionID: SyncEditSessionID(),
+            snapshot: snapshot,
+            clientCreatedAt: Date(timeIntervalSince1970: 1_787_000_000)
+        )
+        return try await persistDownloadedRevision(revision, intent: intent, remote: remote)
+    }
+
+    private func persistDownloadedRevision(
+        _ revision: WorkRevision,
+        intent: ApplePendingLibraryOpenSnapshot,
+        remote: any AppleDeviceSyncLibraryRemote
+    ) async throws -> AppleDeviceSyncPreparedRemoteWork {
         let document = try revision.snapshot.materializedDocument()
         let binding = try await metadataStore.bind(
             intent.locator,
@@ -334,7 +381,7 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
             throw AppleDeviceSyncServicesError.pendingLibraryOpenMismatch
         }
         do {
-            try intent.entry.requireExactHead(record.localHead)
+            try intent.entry.requireCatalogIdentity(record.localHead)
         } catch {
             throw AppleDeviceSyncServicesError.pendingLibraryOpenMismatch
         }
@@ -370,10 +417,10 @@ public extension AppleDeviceSyncServices {
                 metadata: metadata
             ) {
                 // `listLibraryWorks` runs behind the live account gate. A clean
-                // container may have neither the custom zone nor, after a kill
-                // between zone and first-record creation, the WorkControl type.
-                // Only the exact initial states accepted above break that
-                // list-before-create cycle. Prior remote evidence stays closed.
+                // container may have neither the custom zone nor the first
+                // `FUMINIWANoteWorkV1` type. Explicit first save JIT-creates
+                // that type, so this empty window must stay `.available`.
+                // Prior remote evidence stays closed.
                 try await accountGate.requireAvailable()
                 return makeLibrarySnapshot(
                     metadata: metadata,

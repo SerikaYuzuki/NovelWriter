@@ -49,6 +49,12 @@ public struct SyncWorkLibraryEntry: Hashable, Codable, Sendable, Identifiable {
         fullTitleUTF8ByteCount > title.utf8.count
     }
 
+    /// D-071 Note catalog rows omit the D-061 WorkRevision head by design.
+    /// Catalog truth is that the work record exists; entity fetch opens it.
+    public var hasWorkRevisionHead: Bool {
+        headRevisionID != nil
+    }
+
     public init(
         workID: SyncWorkID,
         sourceDocumentID: UUID,
@@ -205,6 +211,46 @@ public struct SyncWorkLibraryEntry: Hashable, Codable, Sendable, Identifiable {
         }
     }
 
+    /// Note catalog rows carry chapter-order-only structure and no snapshot
+    /// digest. Installed-package identity is WorkID plus document/title.
+    public func matchesInstalledPackage( // swiftlint:disable:this function_parameter_count
+        documentID: UUID,
+        structureDigest: SyncWorkStructureDigest,
+        snapshotDigest: SyncContentDigest,
+        snapshotByteCount: Int,
+        titleDigest: SyncContentDigest,
+        fullTitleUTF8ByteCount: Int
+    ) -> Bool {
+        guard documentID == sourceDocumentID,
+              titleDigest == self.titleDigest,
+              fullTitleUTF8ByteCount == self.fullTitleUTF8ByteCount else {
+            return false
+        }
+        guard hasWorkRevisionHead else {
+            return true
+        }
+        return structureDigest == self.structureDigest
+            && snapshotDigest == headSnapshotDigest
+            && snapshotByteCount == headSnapshotByteCount
+    }
+
+    public func requireCatalogIdentity(_ revision: WorkRevision) throws {
+        if hasWorkRevisionHead {
+            try requireExactHead(revision)
+            return
+        }
+        try revision.validate()
+        guard revision.workID == workID else {
+            throw SyncWorkLibraryError.workMismatch
+        }
+        let document = try revision.snapshot.materializedDocument()
+        guard document.id == sourceDocumentID,
+              SyncContentDigest(content: document.title) == titleDigest,
+              document.title.utf8.count == fullTitleUTF8ByteCount else {
+            throw SyncWorkLibraryError.snapshotMismatch
+        }
+    }
+
     public static func displayTitleProjection(_ fullTitle: String) -> String {
         guard fullTitle.utf8.count > maximumDisplayTitleUTF8Bytes else {
             return fullTitle
@@ -227,4 +273,9 @@ public struct SyncWorkLibraryEntry: Hashable, Codable, Sendable, Identifiable {
 /// Remote assetをdownloadせず、作品棚に必要な最新head metadataだけを列挙する。
 public protocol SyncWorkLibraryCatalog: Sendable {
     func listLibraryWorks() async throws -> [SyncWorkLibraryEntry]
+}
+
+/// D-071のremote-only openは、whole revisionではなくentity一式を取得する。
+public protocol NoteSyncLibraryFetching: Sendable {
+    func fetchNoteRecords(for workID: SyncWorkID) async throws -> [NoteSyncRecord]
 }

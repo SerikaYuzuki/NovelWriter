@@ -30,6 +30,8 @@ struct IOSDeviceSyncRuntime {
     let setup: IOSDeviceSyncSetupRuntime?
     /// iCloudを正とする作品棚。`nil`はlegacy/test runtimeだけ。
     let library: IOSDeviceSyncLibraryRuntime?
+    /// D-071のentity同期。`nil`ならD-061 WorkSyncCoordinator経路を使う。
+    let makeNoteSyncCoordinator: (@Sendable (SyncWorkID, LocalWorkingCopyID) async throws -> NoteSyncCoordinator)?
     let now: @Sendable () -> Date
     let leaseDuration: TimeInterval
 
@@ -52,6 +54,10 @@ struct IOSDeviceSyncRuntime {
         editIntentStore: any IOSDeviceSyncEditIntentStoring = IOSInMemoryDeviceSyncEditIntentStore(),
         setup: IOSDeviceSyncSetupRuntime? = nil,
         library: IOSDeviceSyncLibraryRuntime? = nil,
+        makeNoteSyncCoordinator: (@Sendable (
+            SyncWorkID,
+            LocalWorkingCopyID
+        ) async throws -> NoteSyncCoordinator)? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         leaseDuration: TimeInterval = 120
     ) {
@@ -65,6 +71,7 @@ struct IOSDeviceSyncRuntime {
         self.editIntentStore = editIntentStore
         self.setup = setup
         self.library = library
+        self.makeNoteSyncCoordinator = makeNoteSyncCoordinator
         self.now = now
         self.leaseDuration = leaseDuration
     }
@@ -175,6 +182,7 @@ struct IOSDeviceSyncLibraryRuntime: Sendable {
         NovelDocument,
         URL
     ) async throws -> Void
+    let removeLocalWork: @Sendable (SyncWorkID) async throws -> Void
 }
 
 struct IOSDeviceSyncSetupRuntime: Sendable {
@@ -445,6 +453,15 @@ struct IOSWorkSyncIdentity: Hashable {
 
 struct IOSWorkSyncClient {
     let coordinator: WorkSyncCoordinator
+    let remoteAvailability: IOSDeviceSyncRemoteAvailability
+
+    var remoteSynchronizationAllowed: Bool {
+        remoteAvailability == .available
+    }
+}
+
+struct IOSNoteSyncClient {
+    let coordinator: NoteSyncCoordinator
     let remoteAvailability: IOSDeviceSyncRemoteAvailability
 
     var remoteSynchronizationAllowed: Bool {

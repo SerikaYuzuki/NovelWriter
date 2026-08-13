@@ -147,8 +147,7 @@ extension AppleDeviceSyncMetadataStore {
             } catch {
                 throw AppleDeviceSyncServicesError.invalidMetadata
             }
-            guard pending.entry.headRevisionID != nil,
-                  pending.entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
+            guard pending.entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
                 throw AppleDeviceSyncServicesError.invalidMetadata
             }
             if let binding = document.bindings.first(where: { $0.locator == pending.locator }) {
@@ -168,8 +167,7 @@ extension AppleDeviceSyncMetadataStore {
             } catch {
                 throw AppleDeviceSyncServicesError.invalidMetadata
             }
-            guard entry.headRevisionID != nil,
-                  entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
+            guard entry.title.utf8.count <= CloudKitRecordCodec.maximumWorkTitleUTF8Bytes else {
                 throw AppleDeviceSyncServicesError.invalidMetadata
             }
         }

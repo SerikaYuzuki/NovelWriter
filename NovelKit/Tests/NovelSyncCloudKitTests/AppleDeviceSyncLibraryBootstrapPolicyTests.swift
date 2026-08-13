@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 import NovelSync
 @testable import NovelSyncCloudKit
@@ -17,9 +18,28 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         let clean = await store.snapshot()
 
         #expect(permits(.zoneUnavailable, metadata: clean))
-        #expect(!permits(.invalidArguments, metadata: clean))
+        #expect(permits(.invalidArguments, metadata: clean))
+        #expect(permits(.recordNotFound, metadata: clean))
+        #expect(permits(.partialFailure([.unknownItem]), metadata: clean))
+        #expect(
+            AppleDeviceSyncLibraryBootstrapPolicy.permitsEmptyAvailableCatalog(
+                for: CloudKitErrorMapper.map(CKError(.unknownItem)),
+                metadata: clean
+            )
+        )
         #expect(!permits(.zoneReset, metadata: clean))
         #expect(!permits(.invalidRemoteRecord, metadata: clean))
+        #expect(!permits(.accountUnavailable(.noAccount), metadata: clean))
+        #expect(
+            AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(
+                CloudKitSyncAdapterError.recordNotFound
+            )
+        )
+        #expect(
+            AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(
+                CloudKitSyncAdapterError.zoneUnavailable
+            )
+        )
     }
 
     @Test("schema bootstrap requires an exact pending create and binding")
@@ -36,7 +56,8 @@ struct AppleDeviceSyncBootstrapPolicyTests {
             allowedEpisodeIDs: [cloudTestEpisodeID]
         )
         let unboundPending = await store.snapshot()
-        #expect(!permits(.invalidArguments, metadata: unboundPending))
+        #expect(permits(.invalidArguments, metadata: unboundPending))
+        #expect(permits(.recordNotFound, metadata: unboundPending))
 
         _ = try await store.bind(
             locator,
@@ -44,6 +65,7 @@ struct AppleDeviceSyncBootstrapPolicyTests {
             allowedEpisodeIDs: [cloudTestEpisodeID]
         )
         let pending = await store.snapshot()
+        #expect(pending.permitsPendingCreateSchemaBootstrap)
         #expect(permits(.zoneUnavailable, metadata: pending))
         #expect(permits(.invalidArguments, metadata: pending))
     }
@@ -62,6 +84,7 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         let confirmedSnapshot = await confirmed.snapshot()
         #expect(!permits(.zoneUnavailable, metadata: confirmedSnapshot))
         #expect(!permits(.invalidArguments, metadata: confirmedSnapshot))
+        #expect(!permits(.recordNotFound, metadata: confirmedSnapshot))
 
         let cachedRoot = try makeCloudTestDirectory()
         defer { removeCloudTestDirectory(cachedRoot) }
@@ -71,6 +94,7 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         let cachedSnapshot = await cached.snapshot()
         #expect(!permits(.zoneUnavailable, metadata: cachedSnapshot))
         #expect(!permits(.invalidArguments, metadata: cachedSnapshot))
+        #expect(!permits(.recordNotFound, metadata: cachedSnapshot))
     }
 
     @Test("pending downloads and mismatched bindings stay fail-closed")

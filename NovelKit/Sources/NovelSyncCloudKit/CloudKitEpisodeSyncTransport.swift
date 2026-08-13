@@ -154,7 +154,8 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
                 throw CloudKitSyncAdapterError.zoneReset
             }
             if CloudKitErrorMapper.isUnknownItem(error) || CloudKitErrorMapper.isZoneMissing(error) {
-                zoneLifecycle = .blocked(.zoneUnavailable)
+                // A missing zone is the empty first-save window. Do not poison
+                // the actor; `bootstrapZoneForNewSync` is the only creator.
                 throw CloudKitSyncAdapterError.zoneUnavailable
             }
             // account/networkの一時失敗ではactorを永久にblockedにしない。
@@ -293,7 +294,7 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
             if adapterError.isTransientTransportFailure {
                 return EpisodeSyncTransportError.unavailable
             }
-            if adapterError == .zoneUnavailable || adapterError == .zoneReset {
+            if adapterError == .zoneReset {
                 zoneLifecycle = .blocked(adapterError)
             }
             return adapterError
@@ -308,7 +309,7 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
         } else {
             CloudKitErrorMapper.map(error)
         }
-        if mapped == .zoneUnavailable || mapped == .zoneReset {
+        if mapped == .zoneReset {
             zoneLifecycle = .blocked(mapped)
         }
         return mapped

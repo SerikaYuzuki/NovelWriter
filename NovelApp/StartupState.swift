@@ -1,4 +1,5 @@
 import Foundation
+import NovelSync
 
 enum StartupDocumentSource: Equatable {
     case recentDocument
@@ -67,8 +68,36 @@ enum StartupLibraryWorkAvailability: Hashable {
     /// local packageは検証済みだが、接続中のcurrent catalogに作品が無い。
     /// delete/tombstone意味論が無いMVPではopen/uploadを止める。
     case cloudUnavailable
-    /// account相違、破損、head欠損等により自動で開いてはいけない。
+    /// account相違、破損等により自動で開いてはいけない。
     case unavailable
+
+    func canPublishToCloud(connection: StartupLibraryConnection) -> Bool {
+        guard connection.allowsExplicitCloudPublish else { return false }
+        return switch self {
+        case .localOnly, .localPending:
+            true
+        case .cachedRemote, .remoteOnly, .remotePending, .needsReview, .cloudUnavailable, .unavailable:
+            false
+        }
+    }
+
+    var canDuplicateLocalCopy: Bool {
+        switch self {
+        case .localOnly, .localPending, .cachedRemote, .needsReview, .cloudUnavailable:
+            true
+        case .remoteOnly, .remotePending, .unavailable:
+            false
+        }
+    }
+
+    var canRemoveLocalCopy: Bool {
+        switch self {
+        case .localOnly, .localPending, .cachedRemote, .needsReview, .cloudUnavailable, .unavailable:
+            true
+        case .remoteOnly, .remotePending:
+            false
+        }
+    }
 }
 
 struct StartupLibraryWork: Identifiable, Equatable, Hashable {
@@ -102,6 +131,11 @@ struct StartupLibraryWork: Identifiable, Equatable, Hashable {
         guard isTitleTruncated, !normalized.hasSuffix("…") else { return normalized }
         return normalized + "…"
     }
+
+    var cloudWorkID: SyncWorkID? {
+        guard case let .cloudWork(raw) = reference else { return nil }
+        return SyncWorkID(rawValue: raw)
+    }
 }
 
 enum StartupLibraryConnection: Equatable {
@@ -110,6 +144,17 @@ enum StartupLibraryConnection: Equatable {
     case accountRequired
     case differentAccount
     case unavailable(message: String)
+
+    /// Catalog list failure after a signed-in account is not the same as
+    /// `accountRequired`. Explicit first save is how missing Note types appear.
+    var allowsExplicitCloudPublish: Bool {
+        switch self {
+        case .available, .unavailable:
+            true
+        case .offline, .accountRequired, .differentAccount:
+            false
+        }
+    }
 }
 
 enum StartupLibraryPresentation: Equatable {

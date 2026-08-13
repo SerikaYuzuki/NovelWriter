@@ -177,6 +177,10 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
     public let replicaID: SyncReplicaID
     public let transport: any EpisodeSyncTransport
     public let workTransport: any WorkSyncTransport
+    public var noteCloud: any NoteSyncCloudStore {
+        remoteBoundary
+    }
+
     public let signals: AsyncStream<AppleDeviceSyncSignal>
 
     let cloudTransport: CloudKitEpisodeSyncTransport
@@ -392,6 +396,12 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
             )
         }
         return recovered.value
+    }
+
+    public func noteStateStore(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any NoteSyncStateStore {
+        try await journalFactory.noteStateStore(for: binding)
     }
 
     public func availability() async -> AppleDeviceSyncAvailability {

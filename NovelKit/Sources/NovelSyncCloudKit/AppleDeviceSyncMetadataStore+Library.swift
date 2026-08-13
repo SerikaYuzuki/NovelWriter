@@ -8,8 +8,7 @@ extension AppleDeviceSyncMetadataStore {
             throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
         }
         guard entries.count <= Self.maximumCachedLibraryEntryCount,
-              Set(entries.map(\.workID)).count == entries.count,
-              entries.allSatisfy({ $0.headRevisionID != nil }) else {
+              Set(entries.map(\.workID)).count == entries.count else {
             throw AppleDeviceSyncServicesError.invalidMetadata
         }
         for entry in entries {
@@ -27,9 +26,6 @@ extension AppleDeviceSyncMetadataStore {
             throw AppleDeviceSyncServicesError.blocked(.accountUnavailable)
         }
         try entry.validate()
-        guard entry.headRevisionID != nil else {
-            throw AppleDeviceSyncServicesError.remoteWorkHasNoHead
-        }
         if let index = document.pendingLibraryOpens.firstIndex(where: {
             $0.entry.workID == entry.workID
         }) {

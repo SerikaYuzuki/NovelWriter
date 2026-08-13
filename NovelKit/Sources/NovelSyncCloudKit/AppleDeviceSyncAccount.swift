@@ -226,7 +226,7 @@ actor AppleDeviceSyncAccountGate {
 }
 
 actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog,
-    SyncWorkLibraryCatalog, WorkSyncTransport {
+    SyncWorkLibraryCatalog, WorkSyncTransport, NoteSyncCloudStore {
     private let transport: CloudKitEpisodeSyncTransport
     private let accountGate: AppleDeviceSyncAccountGate
 
@@ -345,6 +345,52 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog,
     func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
         try await accountGate.performOperation { [transport] in
             try await transport.listLibraryWorks()
+        }
+    }
+
+    func save(
+        _ records: [NoteSyncRecord],
+        expectedDigests: [NoteSyncEntityKey: SyncContentDigest],
+        forceOverwrite: Set<NoteSyncEntityKey>
+    ) async throws -> NoteSyncSendResult {
+        try await accountGate.performMutation { [transport] in
+            try await transport.save(
+                records,
+                expectedDigests: expectedDigests,
+                forceOverwrite: forceOverwrite
+            )
+        }
+    }
+
+    func delete(
+        _ keys: [NoteSyncEntityKey],
+        expectedDigests: [NoteSyncEntityKey: SyncContentDigest],
+        forceOverwrite: Set<NoteSyncEntityKey>
+    ) async throws -> NoteSyncSendResult {
+        try await accountGate.performMutation { [transport] in
+            try await transport.delete(
+                keys,
+                expectedDigests: expectedDigests,
+                forceOverwrite: forceOverwrite
+            )
+        }
+    }
+
+    func fetchAll(for workID: SyncWorkID) async throws -> [NoteSyncRecord] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchAll(for: workID)
+        }
+    }
+
+    func listWorkRecords() async throws -> [NoteSyncRecord] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.listWorkRecords()
+        }
+    }
+
+    func fetchNoteRecords(for workID: SyncWorkID) async throws -> [NoteSyncRecord] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchNoteRecords(for: workID)
         }
     }
 
@@ -516,5 +562,19 @@ actor AppleDeviceSyncJournalFactory {
         )
         workJournals[binding.localWorkingCopyID] = boundary
         return boundary
+    }
+
+    func noteStateStore(
+        for binding: SyncWorkingCopyBinding
+    ) async throws -> any NoteSyncStateStore {
+        guard await metadataStore.contains(binding) else {
+            throw AppleDeviceSyncServicesError.bindingNotFound
+        }
+        let bindingRoot = rootURL.appendingPathComponent(
+            binding.localWorkingCopyID.rawValue.uuidString,
+            isDirectory: true
+        )
+        let noteRoot = bindingRoot.appendingPathComponent("note-v1", isDirectory: true)
+        return try FileNoteSyncStateStore(rootURL: noteRoot)
     }
 }

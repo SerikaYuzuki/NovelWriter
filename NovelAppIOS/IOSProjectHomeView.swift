@@ -36,6 +36,25 @@ struct IOSProjectHomeView: View {
                 .accessibilityValue(projectAccessibilityValue)
             }
 
+            if store.canPublishCurrentWorkToCloud {
+                Section {
+                    Button {
+                        Task {
+                            guard let workID = store.activeCloudWorkID else { return }
+                            _ = await store.publishCloudLibraryWork(workID)
+                        }
+                    } label: {
+                        Label("iCloudに保存", systemImage: "icloud.and.arrow.up")
+                    }
+                    .disabled(
+                        !store.permitsCloudLibraryMutation || store.cloudLibraryOperationInProgress
+                    )
+                    .accessibilityIdentifier("ios.project.publish")
+                } footer: {
+                    Text("この端末だけの作品です。iCloudへ送るまで、ほかの端末には出ません。")
+                }
+            }
+
             Section("この作品") {
                 IOSProjectActionRow(
                     title: "作品情報",

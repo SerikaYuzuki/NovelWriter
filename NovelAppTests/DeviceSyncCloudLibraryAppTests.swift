@@ -19,6 +19,7 @@ struct DeviceSyncCloudLibraryAppTests {
         await state.bootstrap()
         #expect(state.permitsCloudLibraryMutation)
         #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(!state.canPublishCurrentWorkToCloud)
         let privateURL = state.documentURL
         let workingRoot = await harness.workingRootURL()
         #expect(privateURL.deletingLastPathComponent() == workingRoot)
@@ -35,12 +36,140 @@ struct DeviceSyncCloudLibraryAppTests {
         let row = try #require(context.works.first)
         #expect(row.title == "作品棚へ戻る前に確定する題名")
         #expect(row.availability == .localOnly)
+        #expect(!row.availability.canPublishToCloud(connection: .accountRequired))
         #expect(await state.openStartupLibraryWork(
             row.reference,
             expectedSession: state.documentSessionToken
         ))
         #expect(state.documentURL == privateURL)
         #expect(await harness.publishCallCount() == 0)
+    }
+
+    @Test("明示的なiCloud保存はaccountRequiredで作ったlocal-onlyをpublishする")
+    func explicitPublishUploadsAccountRequiredLocalOnlyWork() async throws {
+        let harness = try CloudLibraryHarness(connection: .accountRequired)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        let workID = try #require(await harness.onlyRegisteredWorkID())
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        #expect(try #require(selectionContext(state)?.works.first).availability == .localOnly)
+        #expect(await harness.publishCallCount() == 0)
+
+        await harness.setConnection(.available)
+        await state.refreshStartupLibrary()
+        let refreshed = try #require(selectionContext(state))
+        #expect(refreshed.connection == .available)
+        let row = try #require(refreshed.works.first)
+        #expect(row.availability.canPublishToCloud(connection: refreshed.connection))
+        let published = await state.publishStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        )
+        #expect(published)
+        #expect(await harness.hiddenResumeWorkIDs().contains(workID))
+        #expect(await harness.publishCallCount() >= 1)
+        let availability = try #require(selectionContext(state)?.works.first).availability
+        #expect(availability == .cachedRemote || availability == .localPending)
+        #expect(state.cloudLibraryActionMessage == nil)
+        #expect(!state.startupState.isReady)
+    }
+
+    @Test("別accountでは明示的なiCloud保存を始めない")
+    func explicitPublishRejectsDifferentAccount() async throws {
+        let harness = try CloudLibraryHarness(connection: .differentAccount)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let row = try #require(selectionContext(state)?.works.first)
+        #expect(row.availability == .localOnly)
+        #expect(!row.availability.canPublishToCloud(connection: .differentAccount))
+        #expect(await !(state.publishStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        )))
+        #expect(await harness.publishCallCount() == 0)
+    }
+
+    @Test("複製は新しいWorkIDのlocal copyを残しchooserに留まる")
+    func duplicateLeavesChooserWithTwoLocalWorks() async throws {
+        let harness = try CloudLibraryHarness(connection: .accountRequired)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        state.updateDocumentTitle("複製する題名")
+        let originalID = try #require(await harness.onlyRegisteredWorkID())
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let original = try #require(selectionContext(state)?.works.first)
+
+        #expect(await state.duplicateStartupLibraryWork(
+            original.reference,
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(!state.startupState.isReady)
+        let works = try #require(selectionContext(state)?.works)
+        #expect(works.count == 2)
+        let duplicated = try #require(works.first { $0.cloudWorkID != originalID })
+        #expect(duplicated.title == "複製する題名")
+        #expect(duplicated.availability == .localOnly)
+        #expect(try await harness.localRecord(originalID) != nil)
+        #expect(try await harness.localRecord(#require(duplicated.cloudWorkID)) != nil)
+        #expect(await harness.publishCallCount() == 0)
+    }
+
+    @Test("このMacから削除はlocal copyだけを外す")
+    func removeLocalCopyDeletesThisDevicePackageOnly() async throws {
+        let harness = try CloudLibraryHarness(connection: .accountRequired)
+        defer { Task { await harness.remove() } }
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        let workID = try #require(await harness.onlyRegisteredWorkID())
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let row = try #require(selectionContext(state)?.works.first)
+
+        #expect(await state.removeLocalStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(selectionContext(state)?.works.isEmpty == true)
+        #expect(try await harness.localRecord(workID) == nil)
+        let artifacts = try await harness.packageArtifacts(for: workID)
+        #expect(!artifacts.staging)
+        #expect(!artifacts.final)
+        #expect(await harness.publishCallCount() == 0)
+    }
+
+    @Test("Note catalogのnil-head remote-only作品は棚に出て開ける")
+    func noteCatalogRemoteOnlyWorkAppearsAndOpens() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        let workID = SyncWorkID()
+        let document = NovelDocument.newDocument(title: "別端末のiCloud作品")
+        try await harness.seedNoteCatalogRemoteOnly(document: document, workID: workID)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+
+        let row = try #require(
+            selectionContext(state)?.works.first { $0.reference == .cloudWork(workID.rawValue) }
+        )
+        #expect(row.availability == .remoteOnly)
+        #expect(row.title == document.title)
+        #expect(await state.openStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(state.startupState == .ready)
+        #expect(state.document.title == document.title)
     }
 
     @Test("別iCloudアカウントではlocal copyを開けるが自動uploadしない")
@@ -586,6 +715,97 @@ struct DeviceSyncCloudLibraryAppTests {
         let workID = try #require(await harness.onlyRegisteredWorkID())
         let record = try await harness.localRecord(workID)
         #expect(record?.state == .publishPending)
+        #expect(state.canPublishCurrentWorkToCloud)
+        #expect(state.lastStartupLibraryConnection.allowsExplicitCloudPublish)
+    }
+
+    @Test("catalog失敗中でもWorkbenchから明示iCloud保存できる")
+    func catalogFailureAllowsWorkbenchExplicitPublish() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        await harness.setRemoteLoadFailure(true)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(state.canPublishCurrentWorkToCloud)
+        #expect(await state.publishCurrentLibraryWork(
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(await harness.publishCallCount() >= 1)
+        #expect(state.cloudLibraryActionMessage == nil)
+        #expect(state.isCurrentWorkBoundToCloud)
+        #expect(!state.canPublishCurrentWorkToCloud)
+    }
+
+    @Test("catalog失敗中のlocal-only行は作品棚から明示保存できる")
+    func catalogFailureShowsChooserPublishControl() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        await harness.setRemoteLoadFailure(true)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let context = try #require(selectionContext(state))
+        #expect(context.connection.allowsExplicitCloudPublish)
+        let row = try #require(context.works.first)
+        #expect(row.availability == .localOnly)
+        #expect(row.availability.canPublishToCloud(connection: context.connection))
+        #expect(await state.publishStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        ))
+        #expect(await harness.publishCallCount() >= 1)
+        #expect(!state.isStartupLibraryOperationInProgress)
+    }
+
+    @Test("作品棚の明示保存後、catalog待ちでも再操作できる")
+    func chooserPublishClearsInProgressBeforeCatalogRefresh() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        await harness.setRemoteLoadFailure(true)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let row = try #require(selectionContext(state)?.works.first)
+
+        await harness.setRemoteLoadFailure(false)
+        await harness.pauseNextRemoteLoad()
+        let publish = Task { @MainActor in
+            await state.publishStartupLibraryWork(
+                row.reference,
+                expectedSession: state.documentSessionToken
+            )
+        }
+        await waitUntil { await harness.remoteLoadIsPaused() }
+        #expect(!state.isStartupLibraryOperationInProgress)
+        await harness.resumePausedRemoteLoad()
+        #expect(await publish.value)
+    }
+
+    @Test("作品棚の明示保存失敗後も再試行できる")
+    func chooserPublishFailureClearsInProgress() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        await harness.setRemoteLoadFailure(true)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+        #expect(await state.createNewDocument(expectedSession: state.documentSessionToken))
+        #expect(await state.returnToStartupLibrary(expectedSession: state.documentSessionToken))
+        let row = try #require(selectionContext(state)?.works.first)
+
+        await harness.failNextPublish()
+        #expect(await state.publishStartupLibraryWork(
+            row.reference,
+            expectedSession: state.documentSessionToken
+        ) == false)
+        #expect(!state.isStartupLibraryOperationInProgress)
+        #expect(state.cloudLibraryActionMessage != nil)
     }
 
     @Test("local-first起動はremote catalog停止中でも作品棚を返す")
@@ -859,6 +1079,7 @@ private actor CloudLibraryHarness {
     private var completed: Set<SyncWorkID> = []
     private var authorities: Set<SyncWorkID> = []
     private var remoteLoadFails = false
+    private var shouldFailNextPublish = false
     private var shouldPauseNextRemoteLoad = false
     private var remoteLoadPaused = false
     private var resumeRemoteLoadRequested = false
@@ -965,7 +1186,8 @@ private actor CloudLibraryHarness {
             },
             resumeInitialWorkPublication: { workID, document, _ in
                 try await self.resumeInitialPublication(workID, document: document)
-            }
+            },
+            removeLocalWork: { try await store.removeLocalWork(workID: $0) }
         )
     }
 
@@ -982,6 +1204,19 @@ private actor CloudLibraryHarness {
                 availability: .remoteOnly
             )
         ]
+    }
+
+    func seedNoteCatalogRemoteOnly(document: NovelDocument, workID: SyncWorkID) throws {
+        let snapshot = try WorkSnapshot(document: document)
+        guard let workRecord = try NoteSyncProjection.records(workID: workID, snapshot: snapshot)
+            .first(where: { $0.key.kind == .work }) else {
+            throw CloudLibraryHarnessError.missingPreparedWork
+        }
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        remoteEntries = [
+            DeviceSyncRemoteLibraryEntry(work: entry, availability: .remoteOnly)
+        ]
+        resumable[workID] = (entry, document, snapshot)
     }
 
     func seedAppOnlyRemoteIntent(document: NovelDocument, workID: SyncWorkID) async throws {
@@ -1051,6 +1286,10 @@ private actor CloudLibraryHarness {
 
     func setRemoteLoadFailure(_ value: Bool) {
         remoteLoadFails = value
+    }
+
+    func failNextPublish() {
+        shouldFailNextPublish = true
     }
 
     func pauseNextRemoteLoad() {
@@ -1217,6 +1456,10 @@ private actor CloudLibraryHarness {
 
     private func publish(_ workID: SyncWorkID, document: NovelDocument) throws {
         publishCalls.append(workID)
+        if shouldFailNextPublish {
+            shouldFailNextPublish = false
+            throw CloudLibraryHarnessError.unavailable
+        }
         guard connection != .accountRequired,
               connection != .differentAccount else {
             throw CloudLibraryHarnessError.unavailable

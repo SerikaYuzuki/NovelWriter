@@ -63,12 +63,14 @@ struct DeviceSyncLocalPackageAttestation: Codable, Hashable, Sendable {
     }
 
     func matches(_ remote: SyncWorkLibraryEntry) -> Bool {
-        documentID == remote.sourceDocumentID
-            && structureDigest == remote.structureDigest
-            && snapshotDigest == remote.headSnapshotDigest
-            && snapshotByteCount == remote.headSnapshotByteCount
-            && titleDigest == remote.titleDigest
-            && fullTitleUTF8ByteCount == remote.fullTitleUTF8ByteCount
+        remote.matchesInstalledPackage(
+            documentID: documentID,
+            structureDigest: structureDigest,
+            snapshotDigest: snapshotDigest,
+            snapshotByteCount: snapshotByteCount,
+            titleDigest: titleDigest,
+            fullTitleUTF8ByteCount: fullTitleUTF8ByteCount
+        )
     }
 }
 
@@ -83,7 +85,7 @@ struct DeviceSyncLocalLibraryRecord: Codable, Hashable, Sendable, Identifiable {
     var package: DeviceSyncLocalPackageAttestation?
     /// `.synced`の意味をremote catalogの現在値へ勝手に拡張しないためのexact ack。
     var acknowledgedRemote: SyncWorkLibraryEntry?
-    /// remote downloadを再開する際のexact head。nil-head descriptorは保存しない。
+    /// remote downloadを再開する際のexact catalog entry。Note catalogはnil-headで保存する。
     var pendingRemote: SyncWorkLibraryEntry?
 
     func validate() throws {
@@ -118,7 +120,6 @@ struct DeviceSyncLocalLibraryRecord: Codable, Hashable, Sendable, Identifiable {
                   let pendingRemote,
                   pendingRemote.workID == workID,
                   pendingRemote.sourceDocumentID == expectedDocumentID,
-                  pendingRemote.headRevisionID != nil,
                   package == nil || package?.matches(pendingRemote) == true else {
                 throw DeviceSyncLocalLibraryError.invalidRegistry
             }
@@ -288,6 +289,29 @@ actor DeviceSyncLocalLibraryStore {
 
     /// A failed new/import may remove only its empty reservation. Any staging or
     /// final package keeps the record as recovery evidence and fails closed.
+    /// Removes this device's registry record and hidden package. CloudKit
+    /// records stay; a synced work may reappear as remote-only.
+    func removeLocalWork(workID: SyncWorkID) throws {
+        try validateRoots()
+        let recordURL = recordURL(for: workID)
+        let package = try packageURL(for: workID)
+        let staging = try stagingPackageURL(for: workID)
+        let hadRecord = try pathStatus(recordURL) != nil
+        let hadPackage = try pathStatus(package) != nil
+        let hadStaging = try pathStatus(staging) != nil
+        guard hadRecord || hadPackage || hadStaging else {
+            throw DeviceSyncLocalLibraryError.missingWork
+        }
+        try workingCopyRoot.removePackages(for: workID, fileManager: fileManager)
+        if let status = try pathStatus(recordURL) {
+            guard status.st_mode & S_IFMT == S_IFREG else {
+                throw DeviceSyncLocalLibraryError.invalidRegistry
+            }
+            try fileManager.removeItem(at: recordURL)
+        }
+        try validateRoots()
+    }
+
     func abortPublishReservation(workID: SyncWorkID) throws {
         try validateRoots()
         guard let record = try readRecord(for: workID) else { return }
@@ -306,9 +330,6 @@ actor DeviceSyncLocalLibraryStore {
 
     func beginRemoteOpen(_ remote: SyncWorkLibraryEntry) throws {
         try remote.validate()
-        guard remote.headRevisionID != nil else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
         if let existing = try readRecord(for: remote.workID) {
             if existing.state == .remoteOpenPending, existing.pendingRemote == remote {
                 return

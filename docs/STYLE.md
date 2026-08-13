@@ -92,7 +92,7 @@
 - **Workbench status bar**: macOSでは保存状態、保存失敗時の再試行、選択話／作品全体の文字数、検索不一致だけを表示する。展開、AI入力、未実装機能へのクリック導線を持たせない。iOS EditorはD-058によりstatus barを常設せず、保存状態を上部へ移し、文字数を重複表示しない
 - **iOS Editor accessory**: `……` / `――` / `ルビ` / `傍点`の短いlabelを横並びにし、本文キャンバスと同じ背景を使う。選択が必要な操作は無効状態を見た目とVoiceOver valueの両方で伝え、toolbarだけを唯一の入口にしない
 - **Startup / Document Selection / Recovery**: `loading`では作品を準備していることだけを静かに示し、編集操作を出さない。macOSの`documentSelection`は上部に小さなアプリアイコン／名称と「作品を取り込む…」「新しい作品」、その下に見出し「iCloudの作品」と標準Listを1つだけ置く。各行は作品名を主、更新日時とtruthfulなiCloud／端末内状態をcaptionにし、local path、保存場所、Finder表示、別detail paneを置かない。malformed remote rowはその行だけを隔離してvalid／local行を残す。以前確認済みsame account scopeの一時offlineではcached remote-only行を残してdownload不可にし、`accountRequired`／unscoped／mismatchではlocal packageのないremote rowとtitleを表示しない。packageのないApp `remoteOpenPending` rowも`accountRequired`／different accountでは棚から除外する。cached exactはofflineでも開ける。「新しい作品」と「作品を取り込む…」はnetwork／account未確認またはremote catalog refresh失敗だけを理由に無効化せず、local install後はsame-scope一時offlineとunscoped local-onlyを別状態で表示する。作成予定snapshotのexpected package attestationをreservation前にdurable化できない新規／Import、legacy package／expected attestation nil reservation、staging read-back不一致は成功行へ出さずquarantineし、stagingを破棄して再起動後も利用可能な作品として推測採用しない。`recovery`でも内部working copyのpath／Finder入口を出さず、原因、再試行、作品を取り込む、明示的新規作成を標準button階層で提示する。外部原本に対する失敗だけはbasenameを表示してよいが、full pathは表示へ出さない。diagnostic logへapp-private path／WorkIDを出さない
-- **Startup sync truth**: local packageとaccount-scoped remoteの一致する行だけ`checkmark.icloud`と「iCloudと同期済み」を使う。same-scopeのlocal変更が未確認なら「このMacに保存済み、iCloudへ保存中」、以前確認済みscopeの一時offlineなら「接続後に同期」とする。競合は「内容の確認が必要」とする。資料／snapshot履歴まで完全backup済みと読める文言を使わない。revision／branch／merge／journal／leaseを通常画面へ出さない
+- **Startup sync truth**: local packageとaccount-scoped remoteの一致する行だけ`checkmark.icloud`と「iCloudと同期済み」を使う。same-scopeのlocal変更が未確認なら「このMacに保存済み、iCloudへ保存中」、以前確認済みscopeの一時offlineなら「接続後に同期」とする。catalog読込失敗中のlocalPendingは「接続後に同期」とせず、明示の「iCloudに保存」で再送できることを示す。競合は「内容の確認が必要」とする。資料／snapshot履歴まで完全backup済みと読める文言を使わない。revision／branch／merge／journal／leaseを通常画面へ出さない
 - **WorkSync local recovery gate**: 通常chooser／Recoveryのactivationに続くlocal package検証中は、不透明なsemantic backgroundで背後のWorkbenchを知覚・操作不能にし、確認中はlabel付き`ProgressView`、choiceが必要なら`ContentUnavailableView`で「変更の確認が必要です」と「変更を確認」を示す。通常のcloud衝突は全画面gateへ流用せず、この端末／iCloud／両方を別作品として残す、の短い3択にする。統合案は出さない
 - **カード(プロットボード)**: 背景 `.background(.quaternary.opacity(0.5))` 相当の淡い面 + `.separator` の hairline 枠 + 角丸 8pt。カードは章レーンの囲いを持たず横方向へ連続配置する。**通常時に影を付けない**(影はドラッグ中のみ、控えめに)
 - **リスト行**: 標準の `List` 選択スタイルを使う(独自ハイライトを作らない)。2行構成は「本文 `.body` + サブ `.caption` secondary」
@@ -112,7 +112,7 @@
 - ドラッグ中: 元位置は `opacity 0.4`、持ち上げたカードは軽い影。ドロップ先レーンは `accent` の淡いハイライト
 - アニメーション: `.snappy`(0.2s 目安)に統一。バウンスや 0.5s 超の演出は禁止
 - キーボード: 一覧系は Enter=編集 / ⌫=削除(確認付き)を共通作法にする。本文選択の対象にしないDisclosure headerは、同じ操作へ到達できるメニュー項目を必ず持つ
-- macOS起動chooserの「iCloudの作品」Listは編集一覧ではないため、矢印キーで選択し、**Listがfocus中のときだけ**Returnで選択作品を開く。double clickでも開けるがsingle clickだけでは開かない。上部action buttonがfocus中のReturnはbutton自身へ渡す。`Cmd+N`は新規作品、`Cmd+O`は「作品を取り込む…」、`Cmd+Shift+S`は「書き出す…」へ到達させる。MVPに削除commandを置かない
+- macOS起動chooserの「iCloudの作品」Listは編集一覧ではないため、矢印キーで選択し、**Listがfocus中のときだけ**Returnで選択作品を開く。double clickでも開けるがsingle clickだけでは開かない。上部action buttonがfocus中のReturnはbutton自身へ渡す。`Cmd+N`は新規作品、`Cmd+O`は「作品を取り込む…」、`Cmd+Shift+S`は「書き出す…」へ到達させる。List focus中のDeleteは確認付きでこのMacの作業コピーを外す。local-only／localPendingかつsigned-in（catalog失敗を含む）は行の「iCloudに保存」とcontext menuの複製／削除を出す。automatic adoptの導線は置かない
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
@@ -146,7 +146,8 @@
 - [ ] malformed remote rowだけを隔離し、catalog failure中もlocal-only新規／Importを無効化せず、different-account remote-only row／titleを表示していないか
 - [ ] `accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外し、旧scopeの存在／titleを漏らしていないか
 - [ ] 新規／Importのexpected package attestationをreservation前にdurable化し、legacy package／expected attestation nil reservationとstaging read-back不一致を成功行へ出さず再起動後も採用していないか。app-private WorkID／pathを表示／diagnostic logへ出していないか
-- [ ] unscoped local-only workを「接続後に同期」と表示せず、後から現れたaccountへのautomatic adopt／upload導線を出していないか
+- [ ] unscoped local-only workを「接続後に同期」と表示せず、後から現れたaccountへのautomatic adopt／upload導線を出していないか。明示の「iCloudに保存」はsigned-in（catalog availableまたはtype未作成によるcatalog失敗）のlocal-only／localPendingに限り、失敗をアラートで返すか。Workbench toolbarとFileメニューからも同じ操作へ到達できるか
+- [ ] 作品棚の削除がこの端末の作業コピーだけを対象にし、確認と`role: .destructive`があり、CloudKit tombstoneやremote-only削除を出していないか。複製が新しいWorkIDのcopyで現在作品を切り替えないか
 - [ ] `checkmark.icloud`／「iCloudと同期済み」がexact local package attestation＋account-scoped remote receiptの一致に限られ、attachment／snapshot履歴を含む完全backupを示唆していないか
 - [ ] availableなcurrent catalogからacknowledged workが欠落したとき、`.cloudUnavailable`／「iCloud上の作品を確認できません」へ切り替え、checkmark／open／uploadを停止してlocal packageを保持しているか
 - [ ] WorkSync local recovery中は背後の全mutationがgateされる一方、root-levelの「変更を確認」とexact review／sessionを再検査する3面choiceが操作可能か。状態が色やspinnerだけでなく文字とVoiceOver labelでも伝わるか

@@ -16,8 +16,10 @@ extension IOSDocumentStore {
 
     func deviceSyncAllowsEditing(for lookup: IOSDeviceSyncLookupIdentity) -> Bool {
         guard !deviceSyncStartupFailedSafely,
-              startupState == .ready,
-              !deviceSyncLocalRecoveryPending else { return false }
+              startupState == .ready else { return false }
+        if !usesNoteSyncRuntime, deviceSyncLocalRecoveryPending {
+            return false
+        }
         return currentDeviceSyncLookupIdentity == lookup
     }
 

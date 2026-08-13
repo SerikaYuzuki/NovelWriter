@@ -21,8 +21,10 @@ extension AppState {
 
     func deviceSyncAllowsEditing(for lookup: DeviceSyncLookupIdentity) -> Bool {
         guard !deviceSyncStartupFailedSafely,
-              startupState.isReady,
-              !deviceSyncLocalRecoveryPending else { return false }
+              startupState.isReady else { return false }
+        if !usesNoteSyncRuntime, deviceSyncLocalRecoveryPending {
+            return false
+        }
         return currentDeviceSyncLookupIdentity == lookup
     }
 
@@ -35,12 +37,13 @@ extension AppState {
             pendingDeviceSyncConflictResolution = nil
             deviceSyncConflict = nil
             if activeWorkSyncIdentity?.documentSession == documentSessionToken,
-               workSyncClient != nil {
+               workSyncClient != nil || noteSyncClient != nil {
                 deviceSyncLocalRecoveryPending = false
                 resolvedDeviceSyncLookupIdentity = currentDeviceSyncLookupIdentity
             } else {
                 clearWorkSyncClient()
-                deviceSyncLocalRecoveryPending = true
+                // Note sync must not inherit D-061's CloudKit-blocking recovery overlay.
+                deviceSyncLocalRecoveryPending = !usesNoteSyncRuntime
                 resolvedDeviceSyncLookupIdentity = nil
                 deviceSyncState = .syncing
                 deviceSyncTransferState = .notApplicable

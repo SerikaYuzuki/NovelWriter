@@ -311,3 +311,147 @@ struct NoteSyncSessionTests {
         #expect(try FileNoteSyncStateStore.makeEncoder().encode(loaded) == data)
     }
 }
+
+@Suite("Note sync coordinator and paired devices")
+struct NoteSyncCoordinatorPairingTests {
+    @Test("two in-memory clients exchange an episode edit without merging text")
+    func twoClientsRoundTripEpisodeEdit() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let ownerStore = InMemoryNoteSyncStateStore()
+        let followerStore = InMemoryNoteSyncStateStore()
+        let owner = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: ownerStore,
+            cloud: cloud
+        )
+        let follower = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: followerStore,
+            cloud: cloud
+        )
+        let base = try WorkTestValues.snapshot()
+        _ = try await owner.publishLocal(base)
+        let installed = try await follower.installFromRemote()
+        #expect(installed == base)
+
+        let edited = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "paired body"
+        }
+        let send = try await owner.publishLocal(edited)
+        #expect(!send.hasConflicts)
+        let pulled = try await follower.pullRemote(onto: installed)
+        #expect(pulled.conflict == nil)
+        #expect(try pulled.appliedSnapshot.materializedDocument().chapters[0].episodes[0].content == "paired body")
+    }
+
+    @Test("offline edit then reconnect resends dirty entities; empty fetch is not a delete")
+    func offlineThenReconnectResendsDirty() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let store = InMemoryNoteSyncStateStore()
+        let coordinator = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: store,
+            cloud: cloud
+        )
+        let base = try WorkTestValues.snapshot()
+        _ = try await coordinator.publishLocal(base)
+        let edited = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "offline then online"
+        }
+        _ = try await coordinator.recordPackageSave(edited)
+        let send = try await coordinator.publishLocal(edited)
+        #expect(send.acceptedSaves.map(\.key) == [NoteSyncFixtures.episodeKey()])
+        #expect(!send.hasConflicts)
+
+        await cloud.removeAll()
+        let pulled = try await coordinator.pullRemote(onto: edited)
+        #expect(pulled.conflict == nil)
+        #expect(pulled.keysToDelete.isEmpty)
+        #expect(try pulled.appliedSnapshot.materializedDocument().chapters[0].episodes[0].content == "offline then online")
+    }
+
+    @Test("process-kill restores the dirty set from disk and resends without copying manuscript bytes")
+    func processKillRestoresDirtySet() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-note-kill-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try FileNoteSyncStateStore(rootURL: root)
+        let cloud = InMemoryNoteSyncCloud()
+        let first = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: store,
+            cloud: cloud
+        )
+        let base = try WorkTestValues.snapshot()
+        _ = try await first.publishLocal(base)
+        let edited = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "after kill"
+        }
+        _ = try await first.recordPackageSave(edited)
+
+        let restarted = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: store,
+            cloud: cloud
+        )
+        let send = try await restarted.publishLocal(edited)
+        #expect(send.acceptedSaves.map(\.key) == [NoteSyncFixtures.episodeKey()])
+        let loaded = try #require(try await store.load(for: NoteSyncFixtures.workID))
+        let data = try FileNoteSyncStateStore.makeEncoder().encode(loaded)
+        #expect(!String(decoding: data, as: UTF8.self).contains("after kill"))
+    }
+
+    @Test("same entity edited on both devices becomes a 3-choice conflict, not a text merge")
+    func concurrentEditsConflictWithoutMerge() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let owner = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let follower = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let base = try WorkTestValues.snapshot()
+        _ = try await owner.publishLocal(base)
+        _ = try await follower.installFromRemote()
+
+        let ownerEdit = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "OWNER"
+        }
+        _ = try await owner.publishLocal(ownerEdit)
+
+        let followerEdit = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "FOLLOWER"
+        }
+        let send = try await follower.publishLocal(followerEdit)
+        #expect(send.hasConflicts)
+        #expect(send.conflictedKeys.contains(NoteSyncFixtures.episodeKey()))
+        let pulled = try await follower.pullRemote(onto: followerEdit)
+        #expect(pulled.conflict != nil)
+        let document = try pulled.appliedSnapshot.materializedDocument()
+        #expect(document.chapters[0].episodes[0].content == "FOLLOWER")
+        #expect(!document.chapters[0].episodes[0].content.contains("OWNER"))
+    }
+
+    @Test("separate clouds do not mix works across simulated account switch")
+    func accountSwitchDoesNotMixWorks() async throws {
+        let accountA = InMemoryNoteSyncCloud()
+        let accountB = InMemoryNoteSyncCloud()
+        let coordinatorA = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: accountA
+        )
+        let snapshot = try WorkTestValues.snapshot()
+        _ = try await coordinatorA.publishLocal(snapshot)
+        let fromB = try await accountB.fetchAll(for: NoteSyncFixtures.workID)
+        #expect(fromB.isEmpty)
+        let listedB = try await accountB.listWorkRecords()
+        #expect(listedB.isEmpty)
+        let listedA = try await accountA.listWorkRecords()
+        #expect(listedA.count == 1)
+    }
+}

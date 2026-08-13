@@ -260,6 +260,23 @@ extension IOSPrivateWorkingCopyLocation {
         return finalURL
     }
 
+    /// D-072: this-device copy only. Does not delete CloudKit records.
+    func removePackages(for workID: SyncWorkID) throws {
+        try validateFixedRoot()
+        let staging = try stagingPackageURL(for: workID)
+        if try Self.pathStatus(staging) != nil {
+            try validateStagingPackage(at: staging, for: workID)
+            try fileManager.removeItem(at: staging)
+            try validateFixedRoot()
+        }
+        let final = try packageURL(for: workID)
+        if try Self.pathStatus(final) != nil {
+            try validateInstalledPackage(for: workID)
+            try fileManager.removeItem(at: final)
+            try validateFixedRoot()
+        }
+    }
+
     func validateInstalledPackage(for workID: SyncWorkID) throws {
         let expected = try packageURL(for: workID)
         let attestation = try attestPackage(at: expected)

@@ -95,6 +95,66 @@ struct DeviceSyncLocalLibraryStoreTests {
         #expect(record.acknowledgedRemote == nil)
     }
 
+    @Test("removeLocalWork deletes registry record and hidden package")
+    func removeLocalWorkDeletesRegistryAndPackage() async throws {
+        let fixture = try LocalLibraryFixture()
+        defer { fixture.remove() }
+        let repository = NovelpkgRepository()
+        let document = NovelDocument.newDocument(title: "このMacから外す作品")
+        let workID = SyncWorkID()
+        try await installPending(
+            document,
+            workID: workID,
+            fixture: fixture,
+            repository: repository
+        )
+        let final = try await fixture.store.packageURL(for: workID)
+        #expect(FileManager.default.fileExists(atPath: final.path))
+
+        try await fixture.store.removeLocalWork(workID: workID)
+
+        #expect(try await fixture.store.record(for: workID) == nil)
+        #expect(!FileManager.default.fileExists(atPath: final.path))
+        await #expect(throws: DeviceSyncLocalLibraryError.missingWork) {
+            try await fixture.store.removeLocalWork(workID: workID)
+        }
+    }
+
+    @Test("Note catalog nil-head can begin remote open and mark synced")
+    func noteCatalogRemoteOpenMarksSynced() async throws {
+        let fixture = try LocalLibraryFixture()
+        defer { fixture.remove() }
+        let repository = NovelpkgRepository()
+        let document = NovelDocument.newDocument(title: "iCloudから開く作品")
+        let workID = SyncWorkID()
+        let snapshot = try WorkSnapshot(document: document)
+        let records = try NoteSyncProjection.records(workID: workID, snapshot: snapshot)
+        let workRecord = try #require(records.first { $0.key.kind == .work })
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+
+        try await fixture.store.beginRemoteOpen(entry)
+        let pending = try #require(try await fixture.store.record(for: workID))
+        #expect(pending.state == .remoteOpenPending)
+        #expect(pending.pendingRemote == entry)
+
+        let staging = try await fixture.store.stagingPackageURL(for: workID)
+        try await repository.save(document, to: staging)
+        _ = try await fixture.store.installStagingPackage(staging, for: workID)
+        let attestation = try DeviceSyncLocalPackageAttestation(
+            document: document,
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        try await fixture.store.attestRemotePackage(
+            workID: workID,
+            package: attestation,
+            expectedRemote: entry
+        )
+        try await fixture.store.markSynced(workID: workID, acknowledgedRemote: entry)
+        let synced = try #require(try await fixture.store.record(for: workID))
+        #expect(synced.state == .synced)
+        #expect(synced.acknowledgedRemote == entry)
+    }
+
     @Test("one corrupt record is isolated and orphan packages remain visible")
     func corruptRecordDoesNotEraseOtherWorks() async throws {
         let fixture = try LocalLibraryFixture()

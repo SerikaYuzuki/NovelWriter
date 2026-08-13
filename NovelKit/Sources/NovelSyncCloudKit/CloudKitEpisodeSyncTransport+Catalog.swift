@@ -4,111 +4,42 @@ import NovelSync
 
 public extension CloudKitEpisodeSyncTransport {
     func createWork(_ descriptor: SyncWorkDescriptor) async throws {
-        try await ensureZone()
-        let workRecord = try codec.makeWorkRecord(descriptor)
-        let controlRecord = try codec.makeInitialWorkControlRecord(descriptor)
-        let existingWork = try await fetchRecordIfPresent(workRecord.recordID)
-        let existingControl = try await fetchRecordIfPresent(controlRecord.recordID)
-        if let existingWork {
-            try CloudKitWorkCreationMatcher.requireIdempotentRetry(
-                existing: codec.decodeWorkRecord(existingWork),
-                requested: descriptor
-            )
-            if let existingControl {
-                try requireCompatibleCreationControl(existingControl, requested: descriptor)
-                return
-            }
-            do {
-                _ = try await modifyAtomically([controlRecord])
-            } catch {
-                if CloudKitErrorMapper.containsServerRecordChanged(error),
-                   let installed = try await fetchRecordIfPresent(controlRecord.recordID) {
-                    try requireCompatibleCreationControl(installed, requested: descriptor)
-                    return
-                }
-                throw mappedOperationError(error)
-            }
-            return
-        }
-        if let existingControl {
-            guard let installedWork = try await fetchRecordIfPresent(workRecord.recordID) else {
+        // Explicit first save is allowed to create the custom zone. `ensureZone`
+        // only confirms an existing graph and would fail the empty-shelf window.
+        try await bootstrapZoneForNewSync()
+        let entity = try makeInitialNoteWorkRecord(descriptor)
+        if let existing = try await fetchRecordIfPresent(.noteEntity(entity.key)) {
+            let installed = try codec.decodeNoteRecord(existing)
+            guard installed.key.workID == descriptor.workID,
+                  case let .work(payload) = installed.payload,
+                  payload.documentID.rawValue == descriptor.sourceDocumentID else {
                 throw SyncCatalogError.duplicateWorkID
             }
-            try CloudKitWorkCreationMatcher.requireIdempotentRetry(
-                existing: codec.decodeWorkRecord(installedWork),
-                requested: descriptor
-            )
-            try requireCompatibleCreationControl(existingControl, requested: descriptor)
             return
         }
-        do {
-            _ = try await modifyAtomically([workRecord, controlRecord])
-        } catch {
-            if CloudKitErrorMapper.containsServerRecordChanged(error) {
-                guard let installedWork = try await fetchRecordIfPresent(workRecord.recordID),
-                      let installedControl = try await fetchRecordIfPresent(controlRecord.recordID) else {
-                    throw SyncCatalogError.duplicateWorkID
-                }
-                try CloudKitWorkCreationMatcher.requireIdempotentRetry(
-                    existing: codec.decodeWorkRecord(installedWork),
-                    requested: descriptor
-                )
-                try requireCompatibleCreationControl(installedControl, requested: descriptor)
-                return
+        let encoded = try codec.makeNoteRecord(entity)
+        defer {
+            if let staged = encoded.stagedAsset {
+                codec.removeStagedAssets([staged])
             }
-            throw mappedOperationError(error)
         }
+        changeDriver.enqueueNoteSaves([encoded.record])
+        try await changeDriver.sendPendingChanges()
     }
 
     func listWorks() async throws -> [SyncWorkDescriptor] {
         try await ensureZone()
-        let query = CKQuery(
-            recordType: CloudKitSyncSchema.RecordType.work,
-            predicate: NSPredicate(value: true)
-        )
-        var descriptors: [SyncWorkDescriptor] = []
-        var page: (matchResults: [(CKRecord.ID, Result<CKRecord, any Error>)], queryCursor: CKQueryOperation.Cursor?)
-        do {
-            page = try await database.records(
-                matching: query,
-                inZoneWith: CloudKitSyncSchema.zoneID,
-                resultsLimit: CKQueryOperation.maximumResults
-            )
-        } catch {
-            throw mappedOperationError(error)
-        }
-
-        while true {
-            for (_, result) in page.matchResults {
-                switch result {
-                case let .success(record):
-                    try descriptors.append(codec.decodeWorkRecord(record))
-                case let .failure(error):
-                    throw mappedOperationError(error)
-                }
-            }
-            guard descriptors.count <= 10000 else {
-                throw CloudKitSyncAdapterError.invalidRemoteRecord
-            }
-            guard let cursor = page.queryCursor else { break }
-            do {
-                page = try await database.records(
-                    continuingMatchFrom: cursor,
-                    resultsLimit: CKQueryOperation.maximumResults
-                )
-            } catch {
-                throw mappedOperationError(error)
-            }
-        }
-        return descriptors.sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
+        let records = try await listWorkRecords()
+        return try records.map { try SyncWorkDescriptor(noteWork: $0) }
+            .sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
     }
 
     func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
         try await ensureZone()
-        let controls = try await queryAllRecords(
-            recordType: CloudKitSyncSchema.RecordType.workControl
+        let records = try await queryAllRecords(
+            recordType: CloudKitSyncSchema.RecordType.noteWork
         )
-        return CloudKitWorkLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(controls)
+        return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(records)
     }
 }
 
