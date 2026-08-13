@@ -4,14 +4,14 @@
 
 **設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** OS 間互換・Windows 実装は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)、AI統合は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md) を追加で読む。次にやるべきタスクは DESIGN.md の「11. 直近の次タスク」にある。UI磨き上げの完了記録は [docs/UIPOLISH.md](docs/UIPOLISH.md)。UI-REF-1〜6の完了記録は [docs/UIREFRESH.md](docs/UIREFRESH.md)、UI-REV完了記録は [docs/UIREVISION.md](docs/UIREVISION.md)、UI Fix の完了記録は [docs/UIFIX.md](docs/UIFIX.md)、Phase UI2 と Phase 4 の完了記録は [docs/UIDESIGN.md](docs/UIDESIGN.md) / [docs/PHASE4.md](docs/PHASE4.md))。
 
-## 現在地(2026-08-09 時点)
+## 現在地(2026-08-13 時点)
 
 - Phase 0(基盤)/ Phase 1(最小執筆環境)/ Phase 2(Editorプラグイン基盤 + 自動インデント)/ Phase 3(基本操作強化)/ Phase 4(小説執筆支援機能: 4-1〜4-6)/ 旧 Phase UI(3モード刷新)/ Phase UI2(Workbench刷新)/ UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(出力、PDF除外)完了
 - 動くもの: 章Disclosure／話リスト(追加・選択・タイトル編集・削除・並べ替え・話移動)、NSTextView エディタ、自動字下げ(改行で常時全角スペース、`「`/`『` で字下げ解除・IME確定後も対応)、話メモ、文字数表示、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、世界観ノート(一覧・追加・削除・並べ替え・本文編集)、話内検索ジャンプ、スナップショット保存・一覧・確認付き復元、作品タイトル／あらすじ編集、`.novelpkg` v3自動保存(2秒デバウンス)、Cmd+S明示保存、Cmd+Q時の終了前保存、Loading / Ready / RecoveryによるSafe Launch、作品の新規・開く・別名保存、TXT / Markdown / EPUB 3書き出し、校正／アドバイス×本文選択／話／章のAIチャット用clipboard prompt copy、システム追従／ライト／ダークを選べる2列/3列NavigationSplitView + 一段native toolbar + 保存／文字数status bar
 - 商業化基盤の現在地: ブランド移行(D-038)、Safe Launchと参照payloadのvalid UTF-8検査(D-039)、未実装AIを出荷UIへ出さないProduct Truth(D-040)、起動／作品ライフサイクルの競合防止(D-041)、アプリ外観選択(D-044)、章Disclosure改善(D-045)まで実装。**実装面の公開準備完了という意味ではない**
 - AIの現在地: 通常版は校正／アドバイス用promptを本文選択／話／章からsystem clipboardへ明示コピーするだけで、provider／network／key／process／`NovelAI`依存は0件。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界で、応答取込／Apply／履歴非保持／secure eraseは提供しない。Experimental側は`NovelAI`、Editor transaction、fake UI、Codex sidecar B1〜B4-Dを研究成果として保持する。production catalogは空、production channel／factory／callsiteと実Node／SDK／CLI／network／credential／実原稿は0件。B4-E以降とCodex／OpenRouter実providerは最新stable SDK／APIの明示再評価まで延期した(D-054)
 - 今後「商業化」として扱う範囲は、実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術に限定する(D-042)。価格、法務、販促、決済、事業運用は、ユーザーから明示依頼がない限り調査・提案・ロードマップ化しない
-- 次: 公開Releaseの **Package Validator Gate**、続いて **External Change / Conflict Gate**。B4-Eは現行taskではなく、利用者が最新stable SDK／APIの再評価を明示した場合だけ新Decisionから再開する。B4-Dまでの結果は[docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)、通常版clipboard支援は[docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)を正とする(D-040 / D-043 / D-046〜D-054)
+- 次: Device Syncは **D-071 N1**（entity record domain）。公開Releaseの **Package Validator Gate**、続いて **External Change / Conflict Gate** は維持。B4-Eは現行taskではなく、利用者が最新stable SDK／APIの再評価を明示した場合だけ新Decisionから再開する。B4-Dまでの結果は[docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)、通常版clipboard支援は[docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)を正とする(D-040 / D-043 / D-046〜D-054 / D-071)
 - Windows 並行トラックの次: **W0(schema / golden fixture / portable filename 契約の固定)**。[docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) を正とする
 
 ## リポジトリ構成

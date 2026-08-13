@@ -32,7 +32,7 @@ macOSは`com.apple.developer.aps-environment`、iOSは`aps-environment`を使う
 
 source inventoryのmachine-readableな正は`CloudKitSyncSchema.productionSchemaChecklist`である。Development環境で各record typeとfield typeを照合してからProductionへdeployする。文字列検索に使う本文fieldやtitle fieldへ不要なindex／full-text searchを付けない。
 
-D-063の現行通常Appがliveに必要とするのは、catalogの`FUMINIWASyncWorkV1`と、whole-work CASの`FUMINIWAWorkControlV1`、`FUMINIWAWorkRevisionV1`、`FUMINIWAWorkMutationReceiptV1`の4 typeである。D-059／D-060のEpisode経路3 typeは互換資料とsourceとして保持するが、D-063通常Appのlive経路ではない。
+D-063の現行通常Appがliveに必要とするのは、catalogの`FUMINIWASyncWorkV1`と、whole-work CASの`FUMINIWAWorkControlV1`、`FUMINIWAWorkRevisionV1`、`FUMINIWAWorkMutationReceiptV1`の4 typeである。D-071以降の通常App live経路は`FUMINIWANote*V1` entity recordへ切り替える契約であり、**schemaは未実装**。D-059／D-060のEpisode経路3 typeとD-061のWork 3 typeは互換資料とsourceとして保持するが、D-071 cutover後の通常App live経路ではない。
 
 `productionSchemaChecklist`はsourceに残るCloudKit codecの全量inventoryとして7 typeを列挙する。そのため全7 typeをProduction schemaへ含める場合は、全typeのsystem field `recordName`に`QUERYABLE` indexを1つ作る。通常のD-063操作だけでは旧Episode 3 typeがDevelopment schemaへ自動materializeされないので、管理されたDevelopment-only schema seedingで代表recordを作るか、CloudKit Dashboardで3 typeを手動定義・照合する。どちらの方法を使ったか記録し、通常Appで旧Episode trafficを再開した証拠にはしない。codec testはfield名／型のsource契約を検査するだけで、Dashboard上のschema生成やProduction deployを証明しない。
 

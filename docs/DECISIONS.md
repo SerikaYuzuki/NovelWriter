@@ -666,7 +666,7 @@
 
 ## D-061: Device Syncを作品全体のlocal-first snapshot同期へ切り替える
 
-- **日付**: 2026-08-11 / **状態**: 一部置換（→ D-063。whole-work local-first／CAS／merge契約は維持し、cloud library／new-device bootstrap除外だけを置き換える）。Domain／Apple adapter／Mac・iOS App source実装・focused local回帰通過（D-061はWork Domain 44 / 44件・5 suites、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件・15 suites、Mac `NovelAppDeviceSyncTests` 64 / 64件・3 suites、iOS focused 56 / 56件、generic iOS build／build-for-testingが通過。D-059／D-060の既存件数と基準commitは別の履歴として維持する。署名済み実CloudKit、paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、production migration／minimum-version fenceは未完了）
+- **日付**: 2026-08-11 / **状態**: 一部置換（→ D-063でcloud library／bootstrap、→ D-071でwhole revision `CKAsset`・作品全体3-way merge・3面reviewを置き換える）。Domain／Apple adapter／Mac・iOS App source実装・focused local回帰通過（D-061はWork Domain 44 / 44件・5 suites、CloudKit schema focused 3 / 3件を含む`NovelSyncCloudKit` full 59 / 59件・15 suites、Mac `NovelAppDeviceSyncTests` 64 / 64件・3 suites、iOS focused 56 / 56件、generic iOS build／build-for-testingが通過。D-059／D-060の既存件数と基準commitは別の履歴として維持する。署名済み実CloudKit、paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、production migration／minimum-version fenceは未完了）
 - **内容**:
   1. 現行の通常Mac／iOS Appで使うDevice Syncの単位をEpisode本文から **`NovelDocument`全体の`WorkSnapshot`** へ切り替える。v1 snapshotには作品タイトル／あらすじ、章と話のID・タイトル・所属・配列順、各話の本文／メモ、登場人物、プロットカード、伏線、世界観ノートを含める。資料binary／attachment、snapshot履歴、アプリ外観／本文フォント等の端末設定、選択状態、local path／bookmark、作品棚としてのcloud library、別端末へのpackage初回download／new-device bootstrapは含めない。`.novelpkg` v3 schemaは変更しない。
   2. `WorkSyncWireProtocol.currentVersion = 1`を、D-059／D-060のEpisode用`SyncWireProtocol` v1とは **別namespace・別互換系列** として追加する。Apple adapterも同じprivate custom zone内で`FUMINIWAWorkControlV1`、`FUMINIWAWorkRevisionV1`、`FUMINIWAWorkMutationReceiptV1`を既存Episode recordとは別に使う。番号がどちらも1であることを相互decode可能という意味にしない。
@@ -702,7 +702,7 @@
 
 ## D-063: Apple版をiCloud作品ライブラリ起点のapp-private作業コピーへ切り替える
 
-- **日付**: 2026-08-12 / **状態**: 承認。macOS／iOS / iPadOSともsource実装完了／local automated GO（Release NO-GOは継続）
+- **日付**: 2026-08-12 / **状態**: 一部置換（→ D-071。iCloud作品棚、app-private copy、account fence、Import／Exportは維持し、item 4／7／11のwhole-work journal／revision asset／3面review依存だけを置き換える）。macOS／iOS / iPadOSともsource実装完了／local automated GO（Release NO-GOは継続）
 - **内容**:
   1. Apple版の通常起動は`loading`後、1つの「iCloudの作品」を作品選択の正とする。macOSは同じwindow内の単一paneに、小さなアプリアイコン／「ふみにわ」、「作品を取り込む…」「新しい作品」、1つのListだけを表示する。iOS / iPadOSは既存の適応navigationを維持し、rootの作品棚を同じ「iCloudの作品」へ置き換える。どちらもlocal path、保存場所、Finder／Files上の作業コピー、recent専用一覧、複数のlocal／cloud棚を並べない。macOSのListはsingle clickで選択し、Listがfocus中のReturnまたはdouble clickで開く。上部buttonのkeyboard focusをrootのReturn処理が奪わない。`Cmd+N`は新規、`Cmd+O`は取込、`Cmd+Shift+S`は「書き出す…」へ到達させる。iOS / iPadOSはtap、pull-to-refresh、標準Files picker／exporterを使い、macOSのkeyboard／window配置を機械的に移植しない。
   2. 「iCloudの作品」は、private CloudKitのWork catalogと、端末内で検証したapp-private working copy registryを`SyncWorkID`だけでmergeする。作品タイトル、`NovelDocument.id`、構造digest、package名を同一作品判定に使わない。remote controlにexact headがないworkを別端末の作品として列挙しない。表示用タイトルはUTF-8 1 KiBまでのbounded projectionとし、完全タイトルのdigest／byte countをhead identityへ含める。省略時は末尾の「…」とVoiceOverで伝える。remote catalog cacheは最大1,088件（binding 1,024件＋unbound pending-open最大64件を覆う）のrecent entryにbounded化し、local-bound／pending workを優先する。refresh中／一時失敗で既存cacheを空にしない。1件のmalformed remote rowはそのWorkIDだけをquarantineし、他のvalid rowとlocal inventoryを残す。以前確認済みsame account scopeの一時offlineではcached remote-only行を残してdownloadだけを無効にするが、`accountRequired`／unscoped／account mismatchではlocal packageのないremote rowとtitleをquarantineして表示しない。
@@ -724,7 +724,7 @@
   - D-025の`Cmd+Shift+S = 別名で保存`を`Cmd+Shift+S = 書き出す…`へ置き換える。`Cmd+Option+S = スナップショットを保存`は維持する。
   - D-038 item 3の`~/Documents/FUMINIWA`を通常作業場所とする部分を、macOS app-private `SyncWorkingCopies-v2`へ置き換える。名称、UTType、`.novelpkg`互換、旧設定／旧作品を消さない契約は維持する。
   - D-056 item 2〜4とD-057 item 2の原本を変更しないImport→app-private edit→explicit Export、open-in-place禁止をmacOSへ一般化する。iOSの段階導線と初回Darkは維持するが、D-057のpackage名identityによる「このデバイスの作品」棚は、D-063有効時にWorkID identityの単一「iCloudの作品」へ置き換える。
-  - D-061 item 1／置換範囲のcloud library／new-device bootstrap除外を本Decisionのcatalog／bootstrapで置き換える。whole-work scope、stage→package→confirm、CAS、merge、3面review、active editor非注入、資料／snapshot／端末設定除外は維持する。
+  - D-061 item 1／置換範囲のcloud library／new-device bootstrap除外を本Decisionのcatalog／bootstrapで置き換える。作品全体の同期対象、active editor非注入、資料／snapshot／端末設定除外は維持する。stage→package→confirm、whole revision CAS、merge、3面reviewはD-071が置き換える。
   - D-062 item 1〜3／7のlocal recent 1件、2ペイン、保存場所／Finder表示、Finder URLの直接openを、単一paneのcloud libraryとImportへ置き換える。明示選択、Safe Launch、activation直後のlocal WorkSync preflight、local recovery gate、session token、失敗時の自動fallback禁止は維持する。
 - **理由**: 利用者が目指す体験は、MacのFinderやiPhone／iPadのFilesで作業packageを選び続けることではなく、Appleのメモに近く「どのApple端末でも同じ作品棚から選び、通信が不安定でも端末内copyですぐ書け、後で安全に統合できる」ことである。remote catalog、app-private durable copy、portable exportを別境界にすれば、通常UIからpathとcopy管理を隠しつつ、offline編集、exact CAS、原本保全、OS間の`.novelpkg`受け渡しを同時に維持できる。iCloudの表示をexact receiptへ限定し、同期外resourceを明記することで、library実装を完全backupと誤認させない。
 - **外部Gate変更前のsource freeze証跡 (2026-08-12)**: 当時のfreshな`./Scripts/check.sh`は`All checks passed`。D-063の層別回帰はnear-cap 270,439,704 bytesを含む`NovelSync` 142 / 142件（14 suites）、`NovelSyncCloudKit` 71 / 71件（19 suites）、FUMINIWA macOS xcresult device cases 208 / 208件（top-level 203件、hosted 124件＋unhosted 79件、dynamic casesを含む）、iOS 137 / 137件（App 79件＋Device Sync 58件）、Experimental 205 / 205件であった。focused Cloud＋storeはdevice cases 15件／top-level 14件、hosted Startup Cloud UIは1 / 1件である。macOS Cloud flowはexpected attestation先行reservationとlegacy nil隔離、packageなしpending rowのaccount隔離、ack済みwork欠落時の`.cloudUnavailable`、private WorkID／path log redactionを固定した。Work domainはremote head消失時のtyped `remoteHeadMissing`、state保持、同revision再送を固定した。UI test分離後のhosted `NovelAppTests`は`NovelSyncTesting`へ依存しない。実Mac AppのComputer Useによるvisual／Accessibility tree受け入れもPASSし、当時の安全再監査はP0／P1なしだった。以上は外部Gate変更前のsource complete／local automated GOの証跡であり、現行差分の証跡ではない。
@@ -734,7 +734,7 @@
 
 ## D-064: Apple版の前景UI・local durability・remote sync・materializationを分離する
 
-- **日付**: 2026-08-12 / **状態**: 承認。source実装とlocal focused testを追加（Release NO-GOは継続）
+- **日付**: 2026-08-12 / **状態**: 一部置換（→ D-071。前景UI／local durability／remote／materializationの分離とactive editor非注入は維持し、item 4の「統合案」とwhole-work journal入力だけを置き換える）。source実装とlocal focused testを追加（Release NO-GOは継続）
 - **内容**:
   1. macOS／iOSの前景UI層は、Editor／IME／selection／Undo・Redo／sessionと画面遷移を所有する。通常の編集、復帰、作品選択、作品切替はCloudKitの応答を待たずにlocalの確定境界だけで進める。同期処理が停止・失敗・offlineでも、local packageが検証済みならEditorをread-onlyにしない。
   2. local durability層は、確定した入力をmodelへ反映し、app-private `.novelpkg`をatomicに保存し、read-back／attestationとlocal registry、package外のjournal／outboxを確定する。短時間のdocument operation gateはこのlocal境界、IME確定、破壊的な切替の安全にだけ使い、remote I/Oをgate内へ入れない。
@@ -747,7 +747,7 @@
 
 ## D-065: whole-work CloudKit read round-tripを既知IDのbatch取得へ集約する
 
-- **日付**: 2026-08-13 / **状態**: 承認。source実装とlocal回帰を通過（Release NO-GOは継続）
+- **日付**: 2026-08-13 / **状態**: 履歴（→ D-071。D-061 whole-work `CKAsset`経路のread集約として保持し、Notes型entity recordの通常経路には使わない）
 - **内容**: whole-workのCloudKit transportでは、publish前のWork／WorkControl／mutation receipt、snapshot取得時のWork／WorkControl、revision取得時のWork／revisionを、既知のrecord IDに対する`CKDatabase.records(for:)`の1回のbatch readへ集約する。保存後のhead／asset read-back、atomic CAS、receipt／generation／account fence、missing itemとmaterial errorの区別は維持する。
 - **理由**: D-061〜D-064の安全なwhole-work protocolを変えずに、同じpublish／open／refreshで直列に発生していた不要なCloudKit往復を減らすためである。batch readはreadの同時性だけを改善し、remoteのwinner選択、active editorへの注入、local durabilityの順序は変更しない。
 - **置き換える範囲**: `NovelSyncCloudKit`内部のwhole-work read pathだけを対象とし、作品棚のcatalog契約、episode legacy transport、CloudKit schema、record identity、remote materialization境界は変更しない。CloudKitのサーバー処理時間、iOS background scheduling、作品全体assetの転送時間は別の残課題として扱う。
@@ -796,3 +796,32 @@
 - **内容**: プロットカード参照は特定のtoolbar領域へ固定せず、通常の`ToolbarItem`として`.reorderable`にする。初期表示は編集操作列の末尾とし、macOS標準の「ツールバーをカスタマイズ…」でユーザーが同期・メモ・スナップショット・書き出しとの順序を変更できる。検索欄とSidebar切替の構造上のアンカーは引き続き固定する。
 - **理由**: macOSのsemantic placementだけでは、プロットカードをユーザーが望む「検索欄の直前」へ確実に移動できない。プロットカードをカスタマイズ可能な編集操作として扱えば、macOS標準の導線で各ユーザーが使いやすい位置を選べる。
 - **検証**: macOSのtoolbarコンパイルと既存チェックを通し、実機でプロットカードの表示・非表示・開閉と、ツールバーカスタマイズ画面での並べ替え・再追加を確認する。
+
+## D-071: Device Syncをメモ型のlocal-first／entity record同期へ切り替える
+
+- **日付**: 2026-08-13 / **状態**: 承認。契約のみ（source未実装。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのlive経路から外す）
+- **内容**:
+  1. 使う側の同期対象は引き続き **1つの作品** である。作品タイトル／あらすじ、章・話の構成と順序、本文、メモ、人物、プロット、伏線、世界観を同期する。資料binary／attachment、`.novelpkg` の手動スナップショット履歴、端末設定、選択状態、path、CloudKit metadataは同期しない。`.novelpkg` v3は各端末の正本（画面が読むlocal store）のまま変更しない。SwiftData／Core Dataをcanonical storeにせず、独自同期サーバーも置かない。
+  2. 画面は **この端末の `.novelpkg` だけ** を開く。起動、アプリ切替で戻る、執筆画面に入る、は通信完了を待たない。検証済みlocal packageがあればofflineでも編集・保存できる。`CKSyncEngine` の送信／取得は裏で行い、失敗や遅延は状態表示だけに残す。編集中の `NSTextView`／`UITextView` へremoteを流し込まない（D-005／D-064）。
+  3. 送る単位は作品全体の1資産ではない。Appleメモの1枚に相当する **entity record** にする。portable種類は次に固定する。`work`（タイトル／あらすじ／章ID順）、`chapter`（タイトル／話ID順）、`episode`（所属章／タイトル／本文／メモ）、`character`、`plotCard`、`flag`、`worldNote`。変わったrecordだけを送り、他端末は欠けているrecordだけを取る。組み立てた結果が1つの作品である。話単位の同期管理画面、lease／holder、排他ロックは出さない。
+  4. Apple adapterは `CKSyncEngine` に **pending recordのsave／deleteを登録し、batch providerから実際に送る**。現行 `CloudKitChangeTrackingDriver` の「fetchとstateだけ担当し、writeは自前CAS」は通常経路から外す。private database／固定custom zone／account fence／engine state serializationは維持する。D-059のEpisode control／revision／lease recordと、D-061の `FUMINIWAWorkControlV1`／`FUMINIWAWorkRevisionV1`／`FUMINIWAWorkMutationReceiptV1` をlive encode／decodeしない。新しいrecord type namespace（`FUMINIWANote*V1`）を使う。本文がCloudKit record payload上限を超える話だけ、その話の `CKAsset` を使う。作品全体を1つの `CKAsset` にしない。
+  5. local保存の順は **native editor／form → model → app-private `.novelpkg` 保存 → 変更したentity IDのdurable dirty set → CKSyncEngineへpending登録** とする。dirty setはpackage外の小さなmetadataであり、作品全体snapshotの複製journalではない。package保存が終わるまでremoteへ送らない。通信失敗・終了・再起動後は同じdirty setから再送する。未送信原稿の正はpackageであり、dirty setは「どれをまだ送っていないか」だけを持つ。
+  6. 衝突の検出は編集時刻でも、作品全体の3-way mergeでもない。同じentityをこの端末がdirtyにしている間に、server change tagが変わって `serverRecordChanged` になった場合だけ衝突とする。片側だけ進んだrecordは確認せず適用／送信する。時計、更新日時、push順によるwinner選択は禁止する。`WorkSnapshotMerger` と3面「統合案」は通常Appから外す。
+  7. 同じ作品で1件以上のentityが衝突したら、内部語（revision／branch／merge／journal／lease）を出さず、作品に対して次の3つだけを選ばせる。「この端末の内容を使う」「iCloudの内容を使う」「両方を別作品として残す」。cloud衝突中もEditorとlocal保存は止めない。選択するまで衝突したremoteはpendingに保ち、入力中本文を巻き戻さない。
+     - この端末: 衝突したlocal entityをserver版の上へ送る（change tagを取り直したあとlocalをsave）。他の非衝突remoteは通常どおり取り込む。
+     - iCloud: 衝突したremote entityを、編集中surfaceでない安全な境界でpackageへ入れる。
+     - 両方残す: 今開いている内容（この端末）を **新しい `SyncWorkID`** の作品として棚に残し、元のWorkIDはiCloud側を正として取り込む。どちらも消さない。話の中に「（衝突コピー）」を増やす方式はv1では採用しない。
+  8. D-063の「iCloudの作品」棚、WorkID identity、app-private working copy、account mismatch quarantine、原本を変えないImport、identity不変のExportは維持する。catalogの正は「そのWorkIDのwork recordが存在すること」であり、whole revision ID／snapshot digest／byte countをdownloadの唯一条件にしない。remote-only openはwork recordと、そのWorkIDに属するentity record一式を取得してpackageへ組み立てる。表示用タイトルと更新日時はhintであり、winner決定に使わない。
+  9. 別Apple Accountへ切り替わっても作品を混ぜない、旧accountへ送らない、未確認accountへautomatic adoptしない契約（D-063）は維持する。手動スナップショット機能は端末内バックアップのままクラウドへ載せない。リアルタイム共同編集、Git履歴画面、独自アカウント、利用者が同期処理を管理する画面は追加しない。
+  10. D-071は公開前の **development cutover** とする。D-061 whole-work経路もD-059 Episode経路も一般出荷していない前提で、開発CloudKit zoneと旧sync metadataをresetし、全test端末を同じD-071 buildへ揃える。Work revision asset／Episode lease recordをentity recordへ自動migrationしない。mixed old／new clientの相互運用を主張しない。production migration／minimum-version fenceは別Decisionとする。それまで出荷不可。
+  11. 実装順は混ぜない。
+     - **N0（本Decision）**: DESIGN／DEVICE_SYNC／CROSS_PLATFORM／IOS／STYLEの契約を切り替える。
+     - **N1**: `NovelSync` にentity record、dirty set、衝突3択、作品組み立てのdomainとtestを追加する。mergerを通常経路から外す。
+     - **N2**: `NovelSyncCloudKit` で新record typeと、`CKSyncEngine` のsend／fetchを接続する。catalog／bootstrapをentity取得へ切り替える。
+     - **N3**: Mac／iOS Appでpackage先行、dirty enqueue、短い3択UI、内部語の非表示、active editor非注入を接続する。
+     - **N4**: 署名済みMac＋iPhoneのpaired往復、offline／復帰、account switch、process-killを検証する。N1〜N3のlocal test成功をN4完了へ読み替えない。
+  12. 完了報告は (a) sourceとunit／integration、(b) Simulator／local fake、(c) 署名済み実CloudKit を分離する。N0の文書更新を同期実装済みとしない。
+- **置き換える範囲**: D-061 item 2〜7／9のWork wire v1、whole revision `CKAsset`、mutation receipt CAS、作品全体3-way merge、3面reviewを、通常Appのlive経路として置き換える。D-061 item 1の同期対象（作品全体に含めるもの／含めないもの）、item 8のactive editor非注入、D-063の作品棚／private copy／account fence／Import／Export、D-064の層分離とlifecycleでremoteを待たない契約、D-005の本文所有権は維持する。D-059／D-060／D-061のsourceとtestは削除せず履歴とする。D-065のwhole-work batch readは旧経路の最適化として履歴にする。Files / File Provider原本のopen-in-place除外、Package Validator、External Change / Conflict Gate、AI安全境界は変更しない。
+- **理由**: Appleメモが速く、offlineでも復帰しても普通に書ける理由は、画面がlocalを正にし、変更した1枚だけを `CKSyncEngine` が裏で送ることである。ふみにわの作品は棚の上では1つだが、中身を1個の巨大資産として自前の版グラフで上げ下げしていたため、ロードと確認が重くなった。同期するものは作品全体、送るものはentity、衝突したら合成せず3択、がメモに寄せつつ小説の「1作品」を壊さない境界である。
+- **詳細**: 現行契約は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章を正とする。portable境界は[CROSS_PLATFORM.md](CROSS_PLATFORM.md)、iOSは[IOS.md](IOS.md)、画面文言は[STYLE.md](STYLE.md)、全体は[DESIGN.md](DESIGN.md)を参照する。
+

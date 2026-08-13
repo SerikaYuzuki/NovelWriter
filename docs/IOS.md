@@ -26,9 +26,9 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、D-063 iOS extension前の基準で全ローカルCIを通過した。現行extensionを含む再検証結果は別に確定する
 - D-059のportable wire / state / force / merge、package外file journal、`NovelSyncCloudKit`のprivate CloudKit adapter、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentをsource実装した。iOS production composition、明示binding、editor／scene lifecycle、read-only／force／fence／merge UIもsource接続済みで、iOS通常71件／Device Sync 15件を含む全ローカル回帰を通過した。normal handoffの全経路、container / signing / schemaと署名済み実機検証は未完了である
 - 上記D-059状態は基準commit `508947d2`の履歴として維持する。D-060のwire protocol v1を維持したjournal schema v2、authority非依存journal、observed baseline、offline bootstrap、bounded multi-hunk automatic merge、exact head／digest／epoch takeoverはDomain source実装済みである。iOS App／UI sourceもfreeze済みで、Device Sync 42 / 42件とnative focused 2 / 2件がSimulatorで通過した。paired native Mac↔iPhone、実機IME／VoiceOver／process kill、real CloudKitは完了扱いにしない。現行v1に`HandoffRequest` recordはなく、cooperative request／grantは将来の別Decision／protocolとする
-- D-061では現行通常iOS AppをWork経路へcutoverした。`WorkSnapshot` v1は作品タイトル／あらすじ、章・話構造／順序／タイトル、本文／メモ、人物、プロット、伏線、世界観を含み、attachment／snapshot履歴／端末設定を除外する。local stage→package→exact confirm→network、head ID＋snapshot digest CAS、mutation receipt、whole-work merge、active `UITextView`へのremote非注入、3面reviewをsource実装した。iOS focused 56 / 56件（integration 49＋UI 7）とgeneric iOS build／build-for-testingが通過した
-- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にexact headをiOS private rootへdownloadし、cached localはofflineで開く。新規／Files取込はaccount／catalog失敗を待たずnew WorkIDのlocal packageを作り、same-scopeだけ再開し、unscoped／different-accountのdataを自動uploadしない。package全体のportable書出はactive URL／session／WorkID／bindingを変えない。D-063以前のiOS private packageは自動移行せず、明示tapで新WorkIDへ検証済みcopyし、旧bytesを保持する。cold Open Withはaccount確認中に捨てずbootstrap後のImportへ直列化する
-- Episode／Workは別recordで相互の更新を観測しないため旧clientとの同時利用は非対応である。D-059／D-060は実CloudKitへdeploy／出荷していないので、D-061開発検証ではCloudKit同期dataをresetし、全test端末を同じD-061 buildへ更新する。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする
+- D-061では当時の通常iOS AppをWork経路へcutoverした（履歴）。D-071はlive経路をentity recordへ切り替える契約であり、sourceは未実装である。active `UITextView`へのremote非注入は維持する
+- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にこの端末へ保存し、cached localはofflineで開く。D-071のremote-only openはentity一式をpackageへ組み立てる
+- Episode／Work／Noteは別record namespaceで相互の更新を観測しない。D-071はdevelopment cutoverであり、自動migrationしない。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
 
@@ -145,31 +145,22 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 - 一覧、削除確認、共有は表示時の作品identityと資料IDを保持し、待機中に作品が変わった操作を別作品へ適用しない
 - 外部原本の資料を直接編集したり、任意の外部path／bookmarkをpackageへ保存したりしない
 
-### 4.6 D-061 Work Sync
+### 4.6 D-071 Note Sync
 
-現行iOS Appはapp-private作品の`NovelDocument`全体を`WorkSnapshot` v1として同期する。作品タイトル／あらすじ、章・話のID／所属／タイトル／順序、本文／話メモ、人物、プロットカード、伏線、世界観ノートを含める。資料／attachment、snapshot履歴、外観／本文フォント等の端末設定は含めない。D-063の作品棚catalog／初回downloadはWorkSnapshotとは別のlibrary／bootstrap境界で追加し、catalog metadataをsnapshotへ埋め込まない。
+現行iOS Appのlive同期はD-071のentity recordである。作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観を同期する。資料／attachment、snapshot履歴、端末設定は含めない。画面はapp-private `.novelpkg`を正とし、`UITextView`の入力とlocal保存を通信完了で待たせない。変わったentityだけを裏で送る。同じentityが衝突したら合成せず、この端末／iCloud／両方を別作品として残す、を選ばせる。D-063の作品棚catalogは維持し、remote-only openはentity一式をpackageへ組み立てる。
 
 確定変更は次の順に処理する。
 
 1. `UITextView`またはformの確定値を現在の`NovelDocument`へ反映する
-2. exact Work snapshotをpackage外journalへstaged revisionとしてatomic保存する
-3. 既存の保存直列化経路でapp-private `.novelpkg`を保存する
-4. packageとstaged snapshotのexact一致を確認し、journalでpublish可能なlocal headへconfirmする
-5. remote fetch／publishを別taskへenqueueし、次の入力とlocal保存を止めない
+2. 既存の保存直列化経路でapp-private `.novelpkg`を保存する
+3. 変わったentity IDをdirty setへ保存する
+4. `CKSyncEngine`へpendingを登録し、次の入力とlocal保存を止めない
 
-stage失敗時もpackage保存を止めず、次回preflightがpackageをlocal revisionとして回収する。package保存失敗時はstageをpublishしない。端末内mutationはFIFOで直列化し、network I/Oはそのlane外で行う。返答はsealed mutation／revisionと現在のobservationが一致する場合だけ適用し、network中の追加入力をlatest tailとして残す。
+再接続後、片側だけ進んだentityは確認せず取り込む／送る。同じentityを両方で変えた場合だけ確認する。iPhone／iPadとも **この端末／iCloud／両方を別作品として残す** を示し、統合案は出さない。「あとで」で閉じても衝突は保持し、cloud衝突中はEditorとlocal保存を続ける。
 
-再接続後、共通祖先に対して非重複の変更だけを作品全体で自動mergeする。同じfield／本文範囲、delete対edit／所属移動／相対順変更、両側の異なるorder変更、同一IDの異なる追加、祖先不明、resource budget超過はreviewにする。iPhoneは横方向に比較できる3 card、iPadは幅に応じた3 paneで **この端末／iCloud／統合案** を示し、それぞれを明示採用できる。「あとで」で閉じても三者をjournalへ保持し、cloud conflict中はEditorとlocal保存を続ける。
+remote callbackからactiveな`UITextView`へ本文を注入しない。編集中の話と衝突しているremoteは、話を切り替えるか利用者が選ぶまで入れない。D-061のWorkSnapshot一括転送、3-way merge、3面reviewは履歴である。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章とD-071を正とする。
 
-再起動時にpackage、staged intent、pending remoteのどれがmaterialize済みか一意に判断できないlocal recoveryは、推測で選ばず同じ比較UIを表示し、明示選択まで作品編集をgateする。これはnetworkやremote更新を理由にするread-onlyではなく、端末内のどのfull snapshotがpackage truthか曖昧な場合だけのdata-loss防止境界である。
-
-remote fetch／push callbackからactiveな`UITextView`や現在のdocumentへsnapshotを直接注入しない。作品／session／Editor surface／世代、expected digest、IME marked text、selection、Undo／Redo、未保存変更を検査し、local saveを完了したsafe boundaryだけでpackageへmaterializeする。packageを再読込した`WorkSnapshot`がexact一致した場合だけjournalをacknowledgeする。条件を満たさなければpendingのまま延期し、現在の本文を巻き戻さない。
-
-上限はsnapshot 48 MiB、各String 1 MiB、revision 50 MiB、file journal 320 MiB、outbox 3 revision、journal revision store 5件、conflict descriptor 512件、各比較excerpt 1 KiBである。excerptは画面表示用で、完全なbase／local／remote／proposed snapshotをrevision／reviewへ保持する。5 revision、完全なproposed snapshot、bounded conflictsを持つ到達可能な270,439,704 bytesのjournal保存／再読込回帰が通過している。上限超過時は切り詰めや部分同期をしない。
-
-iOS App側はfocused 56 / 56件（integration 49＋3面review UI 7）とgeneric iOS build／build-for-testingを通過した。Work Domain 44 / 44件、`NovelSyncCloudKit` 59 / 59件、Mac 64 / 64件を含む層別証跡は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.7を正とし、いずれもsigned real CloudKit／paired nativeの証跡にはしない。
-
-Work wire v1はEpisode wire v1とは別namespaceで、Apple adapterは`FUMINIWAWorkControlV1`／`FUMINIWAWorkRevisionV1`／`FUMINIWAWorkMutationReceiptV1`を使う。旧Episode clientと相互観測しないためmixed利用は非対応で、開発data resetと全test端末の同一D-061 build更新を必須とする。production migration／minimum-version fenceを別Decisionで実装するまで出荷不可である。
+D-071はdevelopment cutoverであり、Work revision／Episode leaseからの自動migrationはしない。production migration／minimum-version fenceを別Decisionで実装するまで出荷不可である。
 
 ### 4.7 D-063 iCloud作品library／bootstrap
 
@@ -281,7 +272,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
 - 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
-- Device Syncは実際のWork transport、journal、editor guardへ接続した状態だけを上部記号へ出し、単なるnetwork reachabilityを同期済みと見せない。overlap、delete対edit／move／reorder、順序競合、祖先不明で確認が必要な場合だけ、小さな警告からこの端末／iCloud／統合案の3面reviewへ進める。cloud reviewを閉じてもEditorを止めず、曖昧なlocal recoveryだけは選択まで編集をgateする
+- Device Syncは実際のentity送信／取得、dirty set、editor guardへ接続した状態だけを上部記号へ出し、単なるnetwork reachabilityを同期済みと見せない。同じentityが衝突した場合だけ、小さな警告からこの端末／iCloud／両方を別作品として残す、へ進める。cloud reviewを閉じてもEditorを止めない
 
 ### iPad
 

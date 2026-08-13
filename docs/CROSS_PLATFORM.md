@@ -165,11 +165,23 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - Windows 用 `AGENTS.md` はW0、ローカル検証スクリプトはW1の最初に追加し、本書、D-036、`.novelpkg` fixture を読む手順を必須化する
 - macOS 側の Codex は schema / fixture / Mac reader-writer、Windows 側の Codex は C# / WinUI と Windows 固有テストを担当し、互換 PR では双方の結果を照合する
 
-## 7. D-061 Work Syncのクロスプラットフォーム契約
+## 7. D-071 Note Syncのクロスプラットフォーム契約
+
+現行通常Appのlive syncは、作品を棚の1項目として扱い、転送はentity record（`work`／`chapter`／`episode`／`character`／`plotCard`／`flag`／`worldNote`）とする。Windows／AndroidはCloudKit型を持たず、同じportable JSON／fixtureを再実装する。
+
+- 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート
+- 含めない: attachment／資料binary、手動スナップショット履歴、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark
+- `.novelpkg` v3は各端末の正本のまま変更せず、CloudKit metadata、dirty set、engine stateをpackageへ保存しない
+- 衝突は同じentityのlocal dirtyとserver version不一致だけで検出する。3-way mergeと時計LWWはportable契約に含めない。選択肢はこの端末／remote／両方を別WorkIDとして残す
+- `NoteSyncWireProtocol.currentVersion = 1`はEpisode wire v1、Work wire v1とは別namespaceである
+
+D-061の`WorkSnapshot`／whole revision／3-way merge契約は履歴であり、通常Appのlive経路ではない。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章と[DECISIONS.md](DECISIONS.md) D-071を正とする。
+
+## 7-hist. D-061 Work Syncのクロスプラットフォーム契約（履歴）
 
 ### 7.1 Portable snapshotとscope
 
-現行通常Appのlive syncは、`NovelDocument`全体をcanonical化した`WorkSnapshot` v1を共有単位にする。
+当時の通常Appのlive syncは、`NovelDocument`全体をcanonical化した`WorkSnapshot` v1を共有単位にしていた。
 
 - 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート
 - 含めない: attachment／資料binary、snapshot履歴、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark、cloud catalog／account／binding metadata。D-063のlibrary／new-device bootstrapは別protocol境界としてWorkSnapshotを列挙・取得するが、catalog metadata自体をsnapshotへ埋め込まない
