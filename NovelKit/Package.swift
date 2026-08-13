@@ -32,8 +32,9 @@ let package = Package(
             name: "NovelExport",
             dependencies: ["NovelCore"]
         ),
-        // NovelSync: OS / transport 非依存のrevision・競合・同期状態機械。
+        // NovelSync: OS / transport 非依存のentity同期domain。
         // CloudKitやUI、NovelStorageを依存へ追加しない。
+        // D-059／D-061の旧revision経路は履歴として残し、D-071のNoteSyncがlive domain。
         .target(
             name: "NovelSync",
             dependencies: ["NovelCore"]

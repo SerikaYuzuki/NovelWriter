@@ -799,7 +799,7 @@
 
 ## D-071: Device Syncをメモ型のlocal-first／entity record同期へ切り替える
 
-- **日付**: 2026-08-13 / **状態**: 承認。契約のみ（source未実装。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのlive経路から外す）
+- **日付**: 2026-08-13 / **状態**: 承認。N1 domain実装済み。N2 CloudKit send／fetch、N3 App接続、N4 paired実機は未実装。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのlive経路はN3まで旧coordinatorのまま
 - **内容**:
   1. 使う側の同期対象は引き続き **1つの作品** である。作品タイトル／あらすじ、章・話の構成と順序、本文、メモ、人物、プロット、伏線、世界観を同期する。資料binary／attachment、`.novelpkg` の手動スナップショット履歴、端末設定、選択状態、path、CloudKit metadataは同期しない。`.novelpkg` v3は各端末の正本（画面が読むlocal store）のまま変更しない。SwiftData／Core Dataをcanonical storeにせず、独自同期サーバーも置かない。
   2. 画面は **この端末の `.novelpkg` だけ** を開く。起動、アプリ切替で戻る、執筆画面に入る、は通信完了を待たない。検証済みlocal packageがあればofflineでも編集・保存できる。`CKSyncEngine` の送信／取得は裏で行い、失敗や遅延は状態表示だけに残す。編集中の `NSTextView`／`UITextView` へremoteを流し込まない（D-005／D-064）。
@@ -816,7 +816,7 @@
   10. D-071は公開前の **development cutover** とする。D-061 whole-work経路もD-059 Episode経路も一般出荷していない前提で、開発CloudKit zoneと旧sync metadataをresetし、全test端末を同じD-071 buildへ揃える。Work revision asset／Episode lease recordをentity recordへ自動migrationしない。mixed old／new clientの相互運用を主張しない。production migration／minimum-version fenceは別Decisionとする。それまで出荷不可。
   11. 実装順は混ぜない。
      - **N0（本Decision）**: DESIGN／DEVICE_SYNC／CROSS_PLATFORM／IOS／STYLEの契約を切り替える。
-     - **N1**: `NovelSync` にentity record、dirty set、衝突3択、作品組み立てのdomainとtestを追加する。mergerを通常経路から外す。
+     - **N1**: `NovelSync` にentity record、dirty set、衝突3択、作品組み立てのdomainとtestを追加する。mergerを通常経路から外す。**完了（domain／unit test。App live経路は未切替）**
      - **N2**: `NovelSyncCloudKit` で新record typeと、`CKSyncEngine` のsend／fetchを接続する。catalog／bootstrapをentity取得へ切り替える。
      - **N3**: Mac／iOS Appでpackage先行、dirty enqueue、短い3択UI、内部語の非表示、active editor非注入を接続する。
      - **N4**: 署名済みMac＋iPhoneのpaired往復、offline／復帰、account switch、process-killを検証する。N1〜N3のlocal test成功をN4完了へ読み替えない。

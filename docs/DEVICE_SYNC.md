@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-071のメモ型local-first／entity record同期は **契約のみ／source未実装**。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外し、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する
+> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain実装済み**。N2 CloudKit send／fetch、N3 App 3択UI、N4 paired実機は未実装。通常Appのlive経路はN3までD-061 coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >

@@ -102,7 +102,8 @@ public enum WorkSnapshotMergeResult: Equatable, Sendable {
     case conflicted(proposed: WorkSnapshot, conflicts: [WorkFieldConflict])
 }
 
-/// stable IDごとにentityを統合する作品全体の3-way merger。
+/// D-061の作品全体3-way merger。D-071のNoteSync通常経路からは呼ばない。
+/// sourceとtestは履歴として残し、自動統合案はlive Appへ出さない。
 public enum WorkSnapshotMerger {
     public static func merge(
         base: WorkSnapshot,
