@@ -749,8 +749,8 @@ extension AppState {
         guard let runtime = deviceSyncRuntime,
               let identity = activeWorkSyncIdentity,
               workSyncContextIsCurrent(identity) else { return }
-        if let noteClient = noteSyncClient {
-            scheduleNoteSyncNetwork(identity: identity, client: noteClient)
+        if noteSyncClient != nil {
+            // D-073: foreground / push ではNote send／pullしない。明示同期だけが送る。
             return
         }
         guard let client = workSyncClient else { return }

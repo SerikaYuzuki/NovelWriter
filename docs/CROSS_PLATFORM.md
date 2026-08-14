@@ -129,7 +129,7 @@ Windows 実装着手前の W0 で、`CompatibilityFixtures/` に次を追加す�
    - Windows予約名、既知ルート名のcase variant、大小文字／Unicode正規化衝突、component / full path予算を添付取込時とpackage検証時に拒否する
    - 通常保存・別名保存・snapshot作成／復元で保存先basenameに依存しない短い一時名を使い、置換前に一時packageの最低限の構造を検証する。失敗注入で既存packageとdirty状態の保持を確認する
    - UUID・IDファイル名・日時のcanonical出力とreaderの受理範囲をschemaどおり検証する
-   - snapshotの論理作成日時はファイル名のtimestampを正とし、作成日時／更新日時などOSのファイル属性へ依存しない
+   - snapshotの論理作成日時はファイル名のtimestampを正とし、作成日時／更新日時などOSのファイル属性へ依存しない。自動スナップショットは`auto-<timestamp>.novelpkg`とし、`auto-`は種別だけを表す。timestampの読み方は手動分と同じとする(D-074)
 4. `./Scripts/check.sh` が共通fixture検証を含み、macOS上で全通しする
 
 W0ではWindowsアプリやWindows reader / writerの存在を要求しない。W0完了後に、確定したschemaとfixtureを入力としてW1を開始する。

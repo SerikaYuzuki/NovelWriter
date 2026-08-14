@@ -96,6 +96,21 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .defaultCustomization(.visible)
             }
 
+            if appState.canExplicitlySyncCurrentWork {
+                ToolbarItem(id: WorkbenchToolbarItemID.cloudSync) {
+                    Button {
+                        Task { await appState.saveAndSyncNow() }
+                    } label: {
+                        Label("iCloudと同期", systemImage: "arrow.clockwise.icloud")
+                    }
+                    .help("この端末の保存内容をiCloudと同期します")
+                    .disabled(appState.isExplicitNoteSyncInFlight)
+                    .accessibilityIdentifier("workbench.cloud.sync")
+                }
+                .customizationBehavior(.disabled)
+                .defaultCustomization(.visible)
+            }
+
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
                 Button {
                     overlayState.toggle(.memo)
@@ -283,6 +298,7 @@ enum WorkbenchToolbarItemID {
     static let plotCardRail = "workbench.plot.card.rail"
     static let deviceSyncStatus = "workbench.device.sync.status"
     static let cloudPublish = "workbench.cloud.publish"
+    static let cloudSync = "workbench.cloud.sync"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
@@ -362,7 +378,7 @@ struct SnapshotPopover: View {
                 ContentUnavailableView(
                     "スナップショットがありません",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("保存ボタンから現在の状態を記録できます。")
+                    description: Text("保存ボタンから、または編集のあと約5分で現在の状態を記録できます。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

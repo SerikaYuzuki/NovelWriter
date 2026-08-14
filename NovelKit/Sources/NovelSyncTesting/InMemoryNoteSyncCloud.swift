@@ -12,12 +12,17 @@ public actor InMemoryNoteSyncCloud: NoteSyncCloudStore {
     ) async throws -> NoteSyncSendResult {
         var result = NoteSyncSendResult()
         for record in incoming {
-            if let existing = records[record.key],
-               !forceOverwrite.contains(record.key),
-               existing.digest != expectedDigests[record.key] {
-                result.conflictedKeys.insert(record.key)
-                result.conflictedRemoteRecords.append(existing)
-                continue
+            if let existing = records[record.key] {
+                if existing.digest == record.digest {
+                    result.acceptedSaves.append(record)
+                    continue
+                }
+                if !forceOverwrite.contains(record.key),
+                   existing.digest != expectedDigests[record.key] {
+                    result.conflictedKeys.insert(record.key)
+                    result.conflictedRemoteRecords.append(existing)
+                    continue
+                }
             }
             records[record.key] = record
             result.acceptedSaves.append(record)

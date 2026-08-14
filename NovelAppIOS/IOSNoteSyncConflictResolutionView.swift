@@ -1,6 +1,10 @@
 import NovelSync
 import SwiftUI
 
+extension EnvironmentValues {
+    @Entry var iosNoteSyncConflictPresented: Binding<Bool> = .constant(false)
+}
+
 struct IOSNoteSyncConflictResolutionView: View {
     let workTitle: String
     let isApplying: Bool
@@ -42,5 +46,49 @@ struct IOSNoteSyncConflictResolutionView: View {
 
     private var displayTitle: String {
         workTitle.isEmpty ? "名称未設定の作品" : workTitle
+    }
+}
+
+struct IOSNoteSyncConflictSheetModifier: ViewModifier {
+    @Bindable var store: IOSDocumentStore
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $isPresented) {
+                if let conflict = store.noteSyncConflict {
+                    IOSNoteSyncConflictResolutionView(
+                        workTitle: store.document.title,
+                        isApplying: store.workSyncIsApplyingConflict,
+                        choose: { choice in
+                            Task {
+                                await store.resolveNoteSyncConflict(
+                                    using: choice,
+                                    expectedConflict: conflict
+                                )
+                            }
+                        },
+                        reviewLater: { isPresented = false }
+                    )
+                    .id("\(conflict.workID.rawValue.uuidString)-\(conflict.keys.count)")
+                    .presentationDetents([.medium, .large])
+                }
+            }
+            .onChange(of: store.noteSyncConflict) { _, conflict in
+                if conflict != nil {
+                    isPresented = true
+                } else {
+                    isPresented = false
+                }
+            }
+    }
+}
+
+extension View {
+    func iosNoteSyncConflictSheet(
+        store: IOSDocumentStore,
+        isPresented: Binding<Bool>
+    ) -> some View {
+        modifier(IOSNoteSyncConflictSheetModifier(store: store, isPresented: isPresented))
     }
 }

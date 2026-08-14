@@ -126,6 +126,7 @@ final class IOSDocumentStore {
     @ObservationIgnored var activeWorkSyncIdentity: IOSWorkSyncIdentity?
     @ObservationIgnored var workSyncNetworkTask: Task<Void, Never>?
     @ObservationIgnored var workSyncNetworkGeneration: UInt64 = 0
+    @ObservationIgnored var workSyncNetworkRescheduleRequested = false
     @ObservationIgnored var workSyncNetworkDemandGeneration: UInt64 = 0
     @ObservationIgnored var workSyncPreparationTask: Task<Void, Never>?
     @ObservationIgnored var workSyncPreparationGeneration: UInt64 = 0
@@ -144,6 +145,8 @@ final class IOSDocumentStore {
     @ObservationIgnored var cloudLibraryOperationInProgress = false
     @ObservationIgnored var pendingCloudLibraryRetryTask: Task<Void, Never>?
     @ObservationIgnored var cloudLibraryRefreshTask: Task<Bool, Never>?
+    @ObservationIgnored var lastAutomaticSnapshotRevision = 0
+    @ObservationIgnored var automaticSnapshotTask: Task<Void, Never>?
 
     @ObservationIgnored
     lazy var saveCoordinator: DocumentSaveCoordinator = .init(
@@ -160,6 +163,7 @@ final class IOSDocumentStore {
             switch event {
             case .dirty:
                 self?.saveState = .dirty
+                self?.scheduleAutomaticSnapshotAfterEdit()
             case .saving:
                 self?.saveState = .saving
             case .saved:

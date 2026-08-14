@@ -50,24 +50,15 @@ struct IOSDeviceSyncStatusControl: View {
     }
 
     var resolvedStatus: IOSDeviceSyncEditorStatusKind {
-        let base = IOSDeviceSyncEditorStatusKind.resolve(
+        IOSDeviceSyncEditorStatusKind.resolveForCurrentWork(
             saveState: saveState,
             syncState: state,
             transferState: transferState,
-            localDurability: localDurabilityState
+            localDurability: localDurabilityState,
+            hasLocalRecoveryReview: hasLocalRecoveryReview,
+            isLocalRecoveryReviewReady: isLocalRecoveryReviewReady,
+            usesWholeWorkSync: usesWholeWorkSync
         )
-        if hasLocalRecoveryReview, !isLocalRecoveryReviewReady {
-            return base == .localSaveError ? .localSaveError : .savingLocally
-        }
-        if hasLocalRecoveryReview, saveState != .failed, base != .savingLocally {
-            return .needsReview
-        }
-        if usesWholeWorkSync,
-           saveState == .saved,
-           localDurabilityState == .failed {
-            return .syncPreparationError
-        }
-        return base
     }
 
     private var wholeWorkDetail: String {
@@ -75,13 +66,13 @@ struct IOSDeviceSyncStatusControl: View {
         case .savingLocally:
             "作品をこの端末へ保存しています。入力はそのまま続けられます。"
         case .savedLocally:
-            "作品はこの端末に保存されています。"
+            "作品はこの端末に保存されています。iCloudへ送るには「iCloudと同期」を使います。"
         case .syncing:
             "作品はこの端末に保存されています。iCloudへの反映を続けています。"
         case .synced:
             "作品はこの端末とiCloudの両方に保存されています。"
         case .offline:
-            "作品はこの端末に保存されています。接続が戻ると自動で同期します。"
+            "作品はこの端末に保存されています。接続が戻ったら「iCloudと同期」で送れます。"
         case .needsReview:
             "両方の作品版を保ったまま保存しています。内容を確認して統合できます。"
         case .configurationError:

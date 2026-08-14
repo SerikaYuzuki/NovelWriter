@@ -219,6 +219,7 @@ actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
     var signalTask: Task<Void, Never>?
     var knownBoundLocators: Set<AppleLocalDocumentLocator> = []
     var pendingWorkPublicationTasks: [SyncWorkID: Task<Void, Error>] = [:]
+    var pendingCreateAndBindTasks: [SyncWorkID: Task<AppleResolvedWorkingCopy?, Error>] = [:]
     var bootstrapContainerIdentifier: String?
 
     init(

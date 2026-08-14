@@ -70,8 +70,70 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         #expect(permits(.invalidArguments, metadata: pending))
     }
 
-    @Test("confirmed and cached remote evidence stays fail-closed")
-    func confirmedRemoteEvidencePolicy() async throws {
+    @Test("empty catalog listing still knows local binding identities")
+    func knownIdentitiesAreMissingFromEmptyListing() async throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let store = try await preparedStore(root)
+        let locator = try AppleLocalDocumentLocator(rawValue: "known.binding")
+        _ = try await store.bind(
+            locator,
+            to: cloudTestWorkID,
+            allowedEpisodeIDs: [cloudTestEpisodeID]
+        )
+        let metadata = await store.snapshot()
+        let missing = AppleDeviceSyncKnownCatalogIdentities.missingWorkIDs(
+            listed: [],
+            metadata: metadata
+        )
+        #expect(missing == [cloudTestWorkID])
+
+        let listed = try [SyncWorkLibraryEntry(descriptor: pendingDescriptor())]
+        #expect(
+            AppleDeviceSyncKnownCatalogIdentities.missingWorkIDs(
+                listed: listed,
+                metadata: metadata
+            ).isEmpty
+        )
+        let fetched = try SyncWorkLibraryEntry(descriptor: pendingDescriptor())
+        let merged = AppleDeviceSyncKnownCatalogIdentities.merging(
+            listed: [],
+            fetched: [fetched]
+        )
+        #expect(merged.map(\.workID) == [cloudTestWorkID])
+    }
+
+    @Test("catalog-discovered unbound works stay visible when backfill adds extra local IDs")
+    func catalogDiscoveredRemoteOnlyIsNotHiddenByBackfill() {
+        let discovered = SyncWorkID()
+        #expect(
+            AppleDeviceSyncLibraryRemoteVisibility.availability(
+                workID: discovered,
+                isBound: false,
+                includeAllRemoteOnly: false,
+                catalogDiscoveredWorkIDs: [discovered]
+            ) == .remoteOnly
+        )
+        #expect(
+            AppleDeviceSyncLibraryRemoteVisibility.availability(
+                workID: discovered,
+                isBound: false,
+                includeAllRemoteOnly: false,
+                catalogDiscoveredWorkIDs: []
+            ) == nil
+        )
+        #expect(
+            AppleDeviceSyncLibraryRemoteVisibility.availability(
+                workID: cloudTestWorkID,
+                isBound: true,
+                includeAllRemoteOnly: false,
+                catalogDiscoveredWorkIDs: []
+            ) == .locallyBound
+        )
+    }
+
+    @Test("confirmed local binding still treats Note schema errors as empty catalog")
+    func confirmedBindingAllowsNoteSchemaEmptyCatalog() async throws {
         let confirmedRoot = try makeCloudTestDirectory()
         defer { removeCloudTestDirectory(confirmedRoot) }
         let confirmed = try await preparedStore(confirmedRoot)
@@ -83,9 +145,28 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         )
         let confirmedSnapshot = await confirmed.snapshot()
         #expect(!permits(.zoneUnavailable, metadata: confirmedSnapshot))
-        #expect(!permits(.invalidArguments, metadata: confirmedSnapshot))
-        #expect(!permits(.recordNotFound, metadata: confirmedSnapshot))
+        #expect(permits(.invalidArguments, metadata: confirmedSnapshot))
+        #expect(permits(.recordNotFound, metadata: confirmedSnapshot))
+        #expect(
+            permits(
+                CloudKitErrorMapper.map(
+                    CKError(
+                        .invalidArguments,
+                        userInfo: [
+                            NSUnderlyingErrorKey: NSError(
+                                domain: "CKInternalErrorDomain",
+                                code: 2015
+                            )
+                        ]
+                    )
+                ),
+                metadata: confirmedSnapshot
+            )
+        )
+    }
 
+    @Test("cached remotes stay fail-closed")
+    func cachedRemoteEvidencePolicy() async throws {
         let cachedRoot = try makeCloudTestDirectory()
         defer { removeCloudTestDirectory(cachedRoot) }
         let cached = try await preparedStore(cachedRoot)
@@ -97,7 +178,7 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         #expect(!permits(.recordNotFound, metadata: cachedSnapshot))
     }
 
-    @Test("pending downloads and mismatched bindings stay fail-closed")
+    @Test("pending downloads stay fail-closed; mismatched bindings still allow Note schema empty catalog")
     func pendingAndMismatchedEvidencePolicy() async throws {
         let pendingOpenRoot = try makeCloudTestDirectory()
         defer { removeCloudTestDirectory(pendingOpenRoot) }
@@ -129,7 +210,8 @@ struct AppleDeviceSyncBootstrapPolicyTests {
         )
         let snapshot = await mismatched.snapshot()
         #expect(snapshot.bindings.count == snapshot.pendingWorkCreations.count)
-        #expect(!permits(.invalidArguments, metadata: snapshot))
+        #expect(!permits(.zoneUnavailable, metadata: snapshot))
+        #expect(permits(.invalidArguments, metadata: snapshot))
     }
 
     private var testAccountScope: AppleCloudAccountScope {

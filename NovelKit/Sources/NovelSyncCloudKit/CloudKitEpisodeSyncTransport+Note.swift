@@ -8,6 +8,9 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
         expectedDigests: [NoteSyncEntityKey: SyncContentDigest],
         forceOverwrite: Set<NoteSyncEntityKey>
     ) async throws -> NoteSyncSendResult {
+        CloudKitSyncDiagnostic.log(
+            "note-sync save begin count=\(records.count) overwrite=\(forceOverwrite.count)"
+        )
         try await ensureZone()
         let existing = try await fetchNoteEntities(Array(Set(records.map(\.key))))
         let classified = CloudKitNoteConflictInspector.classifySaves(
@@ -50,8 +53,11 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
         ) { record in
             try codec.decodeNoteRecord(record)
         }
+        CloudKitSyncDiagnostic.log(
+            "note-sync save ok accepted=\(applied.accepted.count) identical=\(classified.identical.count) conflicts=\(applied.conflicts.count)"
+        )
         return NoteSyncSendResult(
-            acceptedSaves: applied.accepted,
+            acceptedSaves: applied.accepted + classified.identical,
             conflictedKeys: Set(applied.conflicts.map(\.key)),
             conflictedRemoteRecords: applied.conflicts
         )
@@ -93,6 +99,8 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
                 }
                 throw CloudKitErrorMapper.map(error)
             }
+            CloudKitSyncDiagnostic.log("note-sync delete pending unacked")
+            throw CloudKitSyncAdapterError.operationFailed
         }
         return NoteSyncSendResult(
             acceptedDeletes: acceptedDeletes,
@@ -102,7 +110,22 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
     }
 
     public func fetchAll(for workID: SyncWorkID) async throws -> [NoteSyncRecord] {
+        CloudKitSyncDiagnostic.log("note-sync fetchAll begin")
         try await ensureZone()
+        do {
+            let records = try await fetchAllByQuery(for: workID)
+            CloudKitSyncDiagnostic.log("note-sync fetchAll query ok count=\(records.count)")
+            return records
+        } catch {
+            guard CloudKitNoteWorkIDQuery.shouldUseRecordIDFallback(after: error) else { throw error }
+            CloudKitSyncDiagnostic.log("note-sync fetchAll used record IDs", error: error)
+            let records = try await fetchNoteGraphByRecordID(workID)
+            CloudKitSyncDiagnostic.log("note-sync fetchAll id-graph ok count=\(records.count)")
+            return records
+        }
+    }
+
+    private func fetchAllByQuery(for workID: SyncWorkID) async throws -> [NoteSyncRecord] {
         var records: [NoteSyncRecord] = []
         var usedWorkIDQuery = true
         for recordType in CloudKitSyncSchema.noteSyncProductionRecordTypes {
@@ -115,8 +138,34 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
             }
         }
         if !usedWorkIDQuery {
-            print("[FUMINIWA] note-sync fetch used type scan because workID query is unavailable")
+            CloudKitSyncDiagnostic.log("note-sync fetch used type scan because workID query is unavailable")
         }
+        return records.sorted { $0.key < $1.key }
+    }
+
+    private func fetchNoteGraphByRecordID(_ workID: SyncWorkID) async throws -> [NoteSyncRecord] {
+        guard let workCKRecord = try await fetchRecordIfPresent(.noteEntity(.work(workID))) else {
+            return []
+        }
+        let workRecord = try codec.decodeNoteRecord(workCKRecord)
+        guard case let .work(work) = workRecord.payload else {
+            return [workRecord]
+        }
+        var records: [NoteSyncRecord] = [workRecord]
+        let structure = try await fetchNoteEntities(
+            CloudKitNoteRecordIDGraph.structureKeys(workID: workID, work: work)
+        )
+        records.append(contentsOf: structure.values)
+        let chapterPayloads = structure.values.compactMap { record -> NoteSyncChapterPayload? in
+            if case let .chapter(payload) = record.payload {
+                return payload
+            }
+            return nil
+        }
+        let episodes = try await fetchNoteEntities(
+            CloudKitNoteRecordIDGraph.episodeKeys(workID: workID, chapters: chapterPayloads)
+        )
+        records.append(contentsOf: episodes.values)
         return records.sorted { $0.key < $1.key }
     }
 
@@ -175,12 +224,24 @@ extension CloudKitEpisodeSyncTransport: NoteSyncCloudStore, NoteSyncLibraryFetch
             )
             return (fetched, false)
         } catch {
+            if CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(after: error) {
+                CloudKitSyncDiagnostic.log("note-sync fetch type missing(\(recordType))")
+                return ([], false)
+            }
             guard CloudKitNoteWorkIDQuery.shouldScanType(after: error) else { throw error }
-            let scanned = try await queryRecords(
-                recordType: recordType,
-                predicate: NSPredicate(value: true)
-            )
-            return (CloudKitNoteWorkIDQuery.matching(workID, in: scanned), true)
+            do {
+                let scanned = try await queryRecords(
+                    recordType: recordType,
+                    predicate: NSPredicate(value: true)
+                )
+                return (CloudKitNoteWorkIDQuery.matching(workID, in: scanned), true)
+            } catch {
+                if CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(after: error) {
+                    CloudKitSyncDiagnostic.log("note-sync fetch type missing(\(recordType))")
+                    return ([], false)
+                }
+                throw error
+            }
         }
     }
 

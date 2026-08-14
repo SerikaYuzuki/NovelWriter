@@ -45,6 +45,9 @@ public enum CloudKitSyncAdapterError: Error, Equatable, Sendable {
 
 enum CloudKitErrorMapper {
     static func map(_ error: any Error) -> CloudKitSyncAdapterError {
+        if let adapter = error as? CloudKitSyncAdapterError {
+            return adapter
+        }
         guard let cloudError = cloudError(from: error) else {
             return .operationFailed
         }

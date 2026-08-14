@@ -264,6 +264,37 @@ struct AppleDeviceSyncLibraryMetadataTests {
         #expect(await coordinator.hasCompletedRemoteOpenLocally(entry))
     }
 
+    @Test("prepareOpen fetches by record ID when catalog listing is empty")
+    func prepareOpenFetchesByIDWhenListingEmpty() async throws {
+        let root = try makeCloudTestDirectory()
+        defer { removeCloudTestDirectory(root) }
+        let store = try await preparedStore(root)
+        let snapshot = try makeCloudTestWorkSnapshot()
+        let records = try NoteSyncProjection.records(workID: cloudTestWorkID, snapshot: snapshot)
+        let workRecord = try #require(records.first { $0.key.kind == .work })
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        let journalRoot = root.appendingPathComponent("journals-v1", isDirectory: true)
+        let factory = AppleDeviceSyncJournalFactory(
+            rootURL: journalRoot,
+            metadataStore: store
+        )
+        let remote = NoteCatalogLibraryRemote(
+            entry: entry,
+            records: records,
+            listsEmptyCatalog: true
+        )
+        let coordinator = AppleDeviceSyncLibraryOpenCoordinator(
+            replicaID: store.replicaID,
+            metadataStore: store,
+            journalFactory: factory
+        )
+
+        let prepared = try await coordinator.prepareOpen(entry, remote: remote)
+        #expect(prepared.entry == entry)
+        #expect(await remote.observationCounts() == NoteCatalogObservationCounts(lists: 1, notes: 1))
+        #expect(await remote.fetchByIDCountValue() == 1)
+    }
+
     private func preparedStore(_ root: URL) async throws -> AppleDeviceSyncMetadataStore {
         let store = try AppleDeviceSyncMetadataStore(rootURL: root)
         _ = try await store.installAccountScope(
@@ -353,20 +384,40 @@ private struct NoteCatalogObservationCounts: Equatable {
 private actor NoteCatalogLibraryRemote: AppleDeviceSyncLibraryRemote {
     private let entry: SyncWorkLibraryEntry
     private let records: [NoteSyncRecord]
+    private let listsEmptyCatalog: Bool
     private var listCount = 0
     private var noteFetchCount = 0
+    private var fetchByIDCount = 0
 
-    init(entry: SyncWorkLibraryEntry, records: [NoteSyncRecord]) {
+    init(
+        entry: SyncWorkLibraryEntry,
+        records: [NoteSyncRecord],
+        listsEmptyCatalog: Bool = false
+    ) {
         self.entry = entry
         self.records = records
+        self.listsEmptyCatalog = listsEmptyCatalog
     }
 
     func observationCounts() -> NoteCatalogObservationCounts {
         NoteCatalogObservationCounts(lists: listCount, notes: noteFetchCount)
     }
 
+    func fetchByIDCountValue() -> Int {
+        fetchByIDCount
+    }
+
     func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
         listCount += 1
+        if listsEmptyCatalog {
+            return []
+        }
+        return [entry]
+    }
+
+    func fetchLibraryWorks(workIDs: [SyncWorkID]) async throws -> [SyncWorkLibraryEntry] {
+        fetchByIDCount += 1
+        guard workIDs.contains(entry.workID) else { return [] }
         return [entry]
     }
 

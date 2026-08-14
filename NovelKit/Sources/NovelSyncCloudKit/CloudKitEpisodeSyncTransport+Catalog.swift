@@ -6,6 +6,7 @@ public extension CloudKitEpisodeSyncTransport {
     func createWork(_ descriptor: SyncWorkDescriptor) async throws {
         // Explicit first save is allowed to create the custom zone. `ensureZone`
         // only confirms an existing graph and would fail the empty-shelf window.
+        CloudKitSyncDiagnostic.log("cloudkit createWork begin")
         try await bootstrapZoneForNewSync()
         let entity = try makeInitialNoteWorkRecord(descriptor)
         if let existing = try await fetchRecordIfPresent(.noteEntity(entity.key)) {
@@ -15,6 +16,7 @@ public extension CloudKitEpisodeSyncTransport {
                   payload.documentID.rawValue == descriptor.sourceDocumentID else {
                 throw SyncCatalogError.duplicateWorkID
             }
+            CloudKitSyncDiagnostic.log("cloudkit createWork ok(existing)")
             return
         }
         let encoded = try codec.makeNoteRecord(entity)
@@ -24,22 +26,73 @@ public extension CloudKitEpisodeSyncTransport {
             }
         }
         changeDriver.enqueueNoteSaves([encoded.record])
-        try await changeDriver.sendPendingChanges()
+        do {
+            try await changeDriver.sendPendingChanges()
+            CloudKitSyncDiagnostic.log("cloudkit createWork ok(sent)")
+        } catch {
+            CloudKitSyncDiagnostic.log("cloudkit createWork sendPendingChanges failed", error: error)
+            throw error
+        }
     }
 
     func listWorks() async throws -> [SyncWorkDescriptor] {
-        try await ensureZone()
-        let records = try await listWorkRecords()
-        return try records.map { try SyncWorkDescriptor(noteWork: $0) }
-            .sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
+        do {
+            try await ensureZone()
+            let records = try await listWorkRecords()
+            return try records.map { try SyncWorkDescriptor(noteWork: $0) }
+                .sorted { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+                CloudKitSyncDiagnostic.log("cloudkit listWorks empty-schema", error: error)
+                return []
+            }
+            throw error
+        }
     }
 
     func listLibraryWorks() async throws -> [SyncWorkLibraryEntry] {
-        try await ensureZone()
-        let records = try await queryAllRecords(
-            recordType: CloudKitSyncSchema.RecordType.noteWork
+        do {
+            try await ensureZone()
+            let records = try await queryAllRecords(
+                recordType: CloudKitSyncSchema.RecordType.noteWork
+            )
+            CloudKitSyncDiagnostic.log(
+                "cloudkit catalog query ok type=\(CloudKitSyncSchema.RecordType.noteWork) count=\(records.count)"
+            )
+            return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(records)
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+                // CKError 12/2015: type missing or recordName not QUERYABLE.
+                CloudKitSyncDiagnostic.log(
+                    "cloudkit catalog query empty-schema type=\(CloudKitSyncSchema.RecordType.noteWork)",
+                    error: error
+                )
+                if AppleDeviceSyncLibraryBootstrapPolicy.isMissingZoneError(error) {
+                    CloudKitSyncDiagnostic.log("cloudkit catalog missing-zone empty")
+                    return []
+                }
+                return try await recoverLibraryWorksWhenQueryUnavailable()
+            }
+            CloudKitSyncDiagnostic.log("cloudkit catalog query failed", error: error)
+            throw error
+        }
+    }
+
+    func fetchNoteWorkDescriptor(_ workID: SyncWorkID) async throws -> SyncWorkDescriptor? {
+        guard let record = try await fetchRecordIfPresent(.noteEntity(.work(workID))) else {
+            return nil
+        }
+        return try SyncWorkDescriptor(noteWork: codec.decodeNoteRecord(record))
+    }
+
+    func fetchLibraryWorks(workIDs: [SyncWorkID]) async throws -> [SyncWorkLibraryEntry] {
+        guard !workIDs.isEmpty else { return [] }
+        let fetched = try await fetchRecordsIfPresent(workIDs.map { .noteEntity(.work($0)) })
+        CloudKitSyncDiagnostic.log(
+            "cloudkit catalog fetch-by-id count=\(fetched.count)"
         )
-        return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(records)
+        return CloudKitNoteLibraryRecordDecoder(codec: codec)
+            .decodeIsolatingMalformed(Array(fetched.values))
     }
 }
 
@@ -122,6 +175,101 @@ struct CloudKitWorkLibraryRecordDecoder {
 }
 
 private extension CloudKitEpisodeSyncTransport {
+    func recoverLibraryWorksWhenQueryUnavailable() async throws -> [SyncWorkLibraryEntry] {
+        if let listed = try await queryLibraryWorksByWorkIDField() {
+            return listed
+        }
+
+        do {
+            let dated = try await queryAllRecords(
+                recordType: CloudKitSyncSchema.RecordType.noteWork,
+                predicate: CloudKitNoteCatalogDiscovery.modificationDatePredicate(),
+                sortDescriptors: CloudKitNoteCatalogDiscovery.modificationDateSortDescriptors()
+            )
+            CloudKitSyncDiagnostic.log(
+                "cloudkit catalog date-query ok count=\(dated.count)"
+            )
+            return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(dated)
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+                CloudKitSyncDiagnostic.log("cloudkit catalog date-query empty-schema", error: error)
+            } else if CloudKitErrorMapper.isTransient(error) {
+                CloudKitSyncDiagnostic.log("cloudkit catalog date-query transient", error: error)
+                throw error
+            } else {
+                CloudKitSyncDiagnostic.log("cloudkit catalog date-query failed", error: error)
+                throw error
+            }
+        }
+
+        do {
+            try await changeDriver.fetchChanges()
+        } catch {
+            CloudKitSyncDiagnostic.log("cloudkit catalog engine-fetch failed", error: error)
+            if CloudKitErrorMapper.isTransient(error) {
+                throw error
+            }
+        }
+
+        let observed = changeDriver.pendingMailbox.observedNoteWorkIDs()
+        CloudKitSyncDiagnostic.log("cloudkit catalog engine-observed count=\(observed.count)")
+        guard !observed.isEmpty else { return [] }
+        return try await fetchLibraryWorks(workIDs: observed)
+    }
+
+    private func queryLibraryWorksByWorkIDField() async throws -> [SyncWorkLibraryEntry]? {
+        do {
+            let records = try await queryAllRecords(
+                recordType: CloudKitSyncSchema.RecordType.noteWork,
+                predicate: CloudKitNoteCatalogDiscovery.workIDPresentPredicate()
+            )
+            CloudKitSyncDiagnostic.log("cloudkit catalog workid-query ok count=\(records.count)")
+            return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(records)
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+                CloudKitSyncDiagnostic.log("cloudkit catalog workid-query empty-schema", error: error)
+            } else if CloudKitErrorMapper.isTransient(error) {
+                CloudKitSyncDiagnostic.log("cloudkit catalog workid-query transient", error: error)
+                throw error
+            } else {
+                CloudKitSyncDiagnostic.log("cloudkit catalog workid-query failed", error: error)
+                throw error
+            }
+        }
+
+        do {
+            var records: [CKRecord] = []
+            for predicate in CloudKitNoteCatalogDiscovery.workIDHexPrefixPredicates() {
+                let page = try await queryAllRecords(
+                    recordType: CloudKitSyncSchema.RecordType.noteWork,
+                    predicate: predicate
+                )
+                records.append(contentsOf: page)
+            }
+            CloudKitSyncDiagnostic.log(
+                "cloudkit catalog workid-prefix-query ok count=\(records.count)"
+            )
+            return CloudKitNoteLibraryRecordDecoder(codec: codec).decodeIsolatingMalformed(records)
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error) {
+                CloudKitSyncDiagnostic.log(
+                    "cloudkit catalog workid-prefix-query empty-schema",
+                    error: error
+                )
+                return nil
+            }
+            if CloudKitErrorMapper.isTransient(error) {
+                CloudKitSyncDiagnostic.log(
+                    "cloudkit catalog workid-prefix-query transient",
+                    error: error
+                )
+                throw error
+            }
+            CloudKitSyncDiagnostic.log("cloudkit catalog workid-prefix-query failed", error: error)
+            throw error
+        }
+    }
+
     func requireCompatibleCreationControl(
         _ record: CKRecord,
         requested descriptor: SyncWorkDescriptor
@@ -141,8 +289,15 @@ private extension CloudKitEpisodeSyncTransport {
         }
     }
 
-    func queryAllRecords(recordType: String) async throws -> [CKRecord] {
-        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+    private func queryAllRecords(
+        recordType: String,
+        predicate: NSPredicate = NSPredicate(value: true),
+        sortDescriptors: [NSSortDescriptor] = []
+    ) async throws -> [CKRecord] {
+        let query = CKQuery(recordType: recordType, predicate: predicate)
+        if !sortDescriptors.isEmpty {
+            query.sortDescriptors = sortDescriptors
+        }
         var records: [CKRecord] = []
         var page: (
             matchResults: [(CKRecord.ID, Result<CKRecord, any Error>)],
@@ -155,6 +310,10 @@ private extension CloudKitEpisodeSyncTransport {
                 resultsLimit: CKQueryOperation.maximumResults
             )
         } catch {
+            CloudKitSyncDiagnostic.log(
+                "cloudkit query failed type=\(recordType)",
+                error: error
+            )
             throw mappedOperationError(error)
         }
         while true {
@@ -163,6 +322,10 @@ private extension CloudKitEpisodeSyncTransport {
                 case let .success(record):
                     records.append(record)
                 case let .failure(error):
+                    CloudKitSyncDiagnostic.log(
+                        "cloudkit query item failed type=\(recordType)",
+                        error: error
+                    )
                     throw mappedOperationError(error)
                 }
             }
@@ -176,6 +339,10 @@ private extension CloudKitEpisodeSyncTransport {
                     resultsLimit: CKQueryOperation.maximumResults
                 )
             } catch {
+                CloudKitSyncDiagnostic.log(
+                    "cloudkit query continue failed type=\(recordType)",
+                    error: error
+                )
                 throw mappedOperationError(error)
             }
         }

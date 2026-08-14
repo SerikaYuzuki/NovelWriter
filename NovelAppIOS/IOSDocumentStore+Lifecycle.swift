@@ -329,6 +329,8 @@ extension IOSDocumentStore {
         selectedChapterID = document.chapters.first?.id
         selectedEpisodeID = document.chapters.first?.episodes.first?.id
         deviceSyncSelectionDidChange()
+        cancelAutomaticSnapshotScheduling()
+        lastAutomaticSnapshotRevision = saveCoordinator.lastSavedRevision
         if rememberRecent {
             userDefaults.set(url.lastPathComponent, forKey: Self.lastDocumentNameKey)
         }

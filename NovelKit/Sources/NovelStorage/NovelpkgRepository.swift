@@ -25,7 +25,7 @@ import NovelCore
 /// - manifest が参照する話本文は必須とし、欠損・I/O 失敗・不正 UTF-8 を
 ///   空本文に読み替えない。manifest に記載のない本文は読み込み時に無視する
 ///   (削除はしない)
-public struct NovelpkgRepository: SnapshottingDocumentRepository, DocumentCopyingRepository {
+public struct NovelpkgRepository: AutomaticSnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
     /// 読み込みは v1 / v2 / v3 を受理する。
     public static let currentFormatVersion = "3"

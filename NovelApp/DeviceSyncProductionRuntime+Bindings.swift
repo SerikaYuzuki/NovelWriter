@@ -129,6 +129,32 @@ extension DeviceSyncProductionRuntimeBox {
         descriptor: SyncWorkDescriptor,
         allowedEpisodes: [EpisodeID]
     ) async throws -> AppleResolvedWorkingCopy? {
+        if let existing = pendingCreateAndBindTasks[descriptor.workID] {
+            return try await existing.value
+        }
+        let task = Task {
+            try await self.performCreateAndBindNewWork(
+                session: session,
+                descriptor: descriptor,
+                allowedEpisodes: allowedEpisodes
+            )
+        }
+        pendingCreateAndBindTasks[descriptor.workID] = task
+        do {
+            let resolved = try await task.value
+            pendingCreateAndBindTasks[descriptor.workID] = nil
+            return resolved
+        } catch {
+            pendingCreateAndBindTasks[descriptor.workID] = nil
+            throw error
+        }
+    }
+
+    private func performCreateAndBindNewWork(
+        session: DocumentSessionToken,
+        descriptor: SyncWorkDescriptor,
+        allowedEpisodes: [EpisodeID]
+    ) async throws -> AppleResolvedWorkingCopy? {
         guard try workingCopyRoot.isEligible(session) else {
             throw EpisodeSyncTransportError.unavailable
         }
@@ -149,12 +175,14 @@ extension DeviceSyncProductionRuntimeBox {
         do {
             switch state {
             case let .ready(services):
+                CloudKitSyncDiagnostic.log("cloud-library startNew ready")
                 remotelyResolved = try await services.createAndBindNewWork(
                     locator,
                     proposedDescriptor: descriptor,
                     allowedEpisodeIDs: allowedEpisodes
                 )
             case let .blocked(blocked?):
+                CloudKitSyncDiagnostic.log("cloud-library startNew blocked")
                 _ = try await blocked.prepareAndBindPendingWorkCreation(
                     locator,
                     proposedDescriptor: descriptor,
@@ -162,6 +190,7 @@ extension DeviceSyncProductionRuntimeBox {
                 )
                 remotelyResolved = nil
             case .starting, .blocked(nil):
+                CloudKitSyncDiagnostic.log("cloud-library startNew unavailable")
                 throw EpisodeSyncTransportError.unavailable
             }
         } catch {
@@ -177,6 +206,7 @@ extension DeviceSyncProductionRuntimeBox {
                 .unbound
             }
             recordCreationFailureLocalBinding(locator, status: liveStatus)
+            CloudKitSyncDiagnostic.log("cloud-library startNew failed", error: error)
             throw error
         }
         guard try workingCopyRoot.isEligible(session) else {
@@ -274,6 +304,7 @@ extension DeviceSyncProductionRuntimeBox {
             try await existing.value
             return
         }
+        CloudKitSyncDiagnostic.log("cloud-library noteSnapshot begin")
         let task = Task {
             let coordinator = try await makeNoteSyncCoordinator(
                 workID: binding.workID,
@@ -285,8 +316,10 @@ extension DeviceSyncProductionRuntimeBox {
         do {
             try await task.value
             pendingWorkPublicationTasks[binding.workID] = nil
+            CloudKitSyncDiagnostic.log("cloud-library noteSnapshot ok")
         } catch {
             pendingWorkPublicationTasks[binding.workID] = nil
+            CloudKitSyncDiagnostic.log("cloud-library noteSnapshot failed", error: error)
             throw error
         }
     }

@@ -116,7 +116,7 @@
 - Project Sidebar: Cmd+1〜7 でセクション移動
 - Outline: Cmd+F で検索バーをピン留め表示、Esc で閉じる。上方向スクロール時の検索バー表示は補助動作であり、キーボード導線を必ず残す
 - Workbench toolbar: 編集操作は標準の「ツールバーをカスタマイズ…」で追加・削除・並べ替え可能にする。toolbar を唯一の機能入口にしない
-- 保存: `Cmd+S`はFileメニューの「保存」と一致させ、`ready`かつWorkSync local recovery gate中でない作品だけを同じ保存直列化経路で保存する
+- 保存: 未結線の作品では`Cmd+S`はFileメニューの「保存」と一致させ、`ready`かつWorkSync local recovery gate中でない作品だけを同じ保存直列化経路で保存する。iCloudへ結んだ作品では`Cmd+S`は「iCloudと同期」と一致し、同じlocal保存のあと明示同期する(D-073)。自動保存・終了前保存・話切替はlocalだけ
 
 ## 8. 文言(日本語 UI ライティング)
 
@@ -147,6 +147,7 @@
 - [ ] `accountRequired`／different accountでpackageのないApp `remoteOpenPending` rowを棚から除外し、旧scopeの存在／titleを漏らしていないか
 - [ ] 新規／Importのexpected package attestationをreservation前にdurable化し、legacy package／expected attestation nil reservationとstaging read-back不一致を成功行へ出さず再起動後も採用していないか。app-private WorkID／pathを表示／diagnostic logへ出していないか
 - [ ] unscoped local-only workを「接続後に同期」と表示せず、後から現れたaccountへのautomatic adopt／upload導線を出していないか。明示の「iCloudに保存」はsigned-in（catalog availableまたはtype未作成によるcatalog失敗）のlocal-only／localPendingに限り、失敗をアラートで返すか。Workbench toolbarとFileメニューからも同じ操作へ到達できるか
+- [ ] iCloudへ結んだ作品で、自動保存や話切替のあとに「オフライン」「iCloudへ同期中」と出さず「この端末に保存済み」か。`Cmd+S`と「iCloudと同期」だけがsend／pullし、query失敗をオフラインと読まないか
 - [ ] 作品棚の削除がこの端末の作業コピーだけを対象にし、確認と`role: .destructive`があり、CloudKit tombstoneやremote-only削除を出していないか。複製が新しいWorkIDのcopyで現在作品を切り替えないか
 - [ ] `checkmark.icloud`／「iCloudと同期済み」がexact local package attestation＋account-scoped remote receiptの一致に限られ、attachment／snapshot履歴を含む完全backupを示唆していないか
 - [ ] availableなcurrent catalogからacknowledged workが欠落したとき、`.cloudUnavailable`／「iCloud上の作品を確認できません」へ切り替え、checkmark／open／uploadを停止してlocal packageを保持しているか

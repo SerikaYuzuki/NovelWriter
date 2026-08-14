@@ -93,9 +93,33 @@ public actor NoteSyncCoordinator {
                     !result.conflictedRemoteRecords.contains { $0.key == key }
                 }
             )
-            _ = try await session.reconcile(local: snapshot, remote: delta)
+            let recon = try await session.reconcile(local: snapshot, remote: delta)
+            if recon.conflict == nil {
+                result = try await acknowledgeIdenticalCloudConflicts(
+                    result,
+                    localRecords: records
+                )
+            }
         }
         return result
+    }
+
+    private func acknowledgeIdenticalCloudConflicts(
+        _ result: NoteSyncSendResult,
+        localRecords: [NoteSyncRecord]
+    ) async throws -> NoteSyncSendResult {
+        let localByKey = Dictionary(uniqueKeysWithValues: localRecords.map { ($0.key, $0) })
+        let identical = result.conflictedRemoteRecords.filter { remote in
+            localByKey[remote.key]?.digest == remote.digest
+        }
+        guard !identical.isEmpty else { return result }
+        try await session.acknowledge(applied: identical)
+        let identicalKeys = Set(identical.map(\.key))
+        var cleared = result
+        cleared.acceptedSaves.append(contentsOf: identical)
+        cleared.conflictedKeys.subtract(identicalKeys)
+        cleared.conflictedRemoteRecords.removeAll { identicalKeys.contains($0.key) }
+        return cleared
     }
 
     public func pullRemote(onto local: WorkSnapshot) async throws -> NoteSyncReconcileResult {
@@ -128,14 +152,16 @@ public actor NoteSyncCoordinator {
     public func resolve(
         _ choice: NoteSyncConflictChoice,
         local: WorkSnapshot,
-        newWorkID: SyncWorkID
+        newWorkID: SyncWorkID,
+        expectedKeys: Set<NoteSyncEntityKey> = []
     ) async throws -> NoteSyncResolution {
         let remoteRecords = try await cloud.fetchAll(for: workID)
         let resolution = try await session.resolve(
             choice,
             local: local,
             remote: NoteSyncRemoteDelta(upserts: remoteRecords),
-            newWorkID: newWorkID
+            newWorkID: newWorkID,
+            expectedKeys: expectedKeys
         )
         if choice == .keepLocal {
             _ = try await cloud.save(

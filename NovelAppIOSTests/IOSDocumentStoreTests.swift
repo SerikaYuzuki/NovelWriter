@@ -79,6 +79,59 @@ struct IOSDocumentStoreTests {
         #expect(destinationStore.libraryItems.count == 1)
     }
 
+    @Test("スナップショット保存と復元は現在状態を退避してから戻す")
+    func snapshotSaveAndRestoreBacksUpCurrentState() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        store.updateDocumentTitle("退避前")
+        #expect(await store.saveNow())
+        let session = try #require(store.currentDocumentSessionToken)
+        #expect(await store.createSnapshot(expectedSession: session) != nil)
+
+        store.updateDocumentTitle("復元前の最新")
+        #expect(await store.saveNow())
+        let afterEdit = try #require(store.currentDocumentSessionToken)
+        let listed = await store.listSnapshots(expectedSession: afterEdit)
+        #expect(listed.count == 1)
+        let oldest = try #require(listed.last)
+        #expect(await store.restoreSnapshot(at: oldest.url, expectedSession: afterEdit))
+        #expect(store.document.title == "退避前")
+        let afterRestore = try #require(store.currentDocumentSessionToken)
+        let listedAfter = await store.listSnapshots(expectedSession: afterRestore)
+        #expect(listedAfter.count == 2)
+    }
+
+    @Test("編集後の自動スナップショットは作品全体を残し、未変更なら作らない")
+    func automaticSnapshotCapturesWholeDocumentAndSkipsUnchanged() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        store.updateDocumentTitle("自動退避の作品")
+        store.updateDocumentSynopsis("あらすじも残る")
+        #expect(await store.saveNow())
+        let session = try #require(store.currentDocumentSessionToken)
+        let first = await store.createAutomaticSnapshotIfNeeded()
+        #expect(first != nil)
+        #expect(await store.createAutomaticSnapshotIfNeeded() == nil)
+
+        let listed = await store.listSnapshots(expectedSession: session)
+        #expect(listed.filter(\.isAutomatic).count == 1)
+        #expect(listed[0].isAutomatic)
+        #expect(listed[0].displayName.hasPrefix("自動 "))
+        #expect(first?.lastPathComponent.hasPrefix("auto-") == true)
+    }
+
     @Test("recent package欠損時は新規作品へfallbackせず作品棚を表示する")
     func missingRecentShowsLibrary() async throws {
         let environment = makeEnvironment()

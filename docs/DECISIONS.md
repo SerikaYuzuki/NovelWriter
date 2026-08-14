@@ -363,6 +363,7 @@
   6. 直近の開発順はAIやPDFではなくPackage Validator Gateを優先する。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピーを一単位とし、外部変更／競合検出は続く独立Gateとして扱う。その後に署名・公証・更新・法務・サポート等の公開Gateを通す。AIとPDFの順序は、公開Gate後に需要とリスクを別々に評価する。
 - **置き換える範囲**: D-021のAI Assistant Panel常設を破棄し、chrome外観方針をシステム追従へ更新する。D-037の「AI実装後にPDF」という固定順も破棄する。D-021の3列Workbench、D-037のPhase 5完了範囲と「未実装機能を先出ししない」原則は維持する。
 - **理由**: placeholderは利用者に「使える」「本文が送信されるかもしれない」という誤解を同時に生む。執筆アプリの信用は機能数より原稿保全、表示の正直さ、OS慣習への追従、利用者が選べることから生まれる。AIやPDFの順番を商業公開の前提にせず、原稿保全と配布品質を先に完了させる。
+- **改訂**(2026-08-14): D-073により、iCloudへ結んだ作品の`Cmd+S`はlocal保存のあと明示同期する。未結線の作品と自動保存／終了前保存／話切替flushは従来どおり`saveNow()`だけ。
 
 ## D-041: 作品ライフサイクルを直列化し、古いUI操作を別作品へ適用しない
 
@@ -799,7 +800,7 @@
 
 ## D-071: Device Syncをメモ型のlocal-first／entity record同期へ切り替える
 
-- **日付**: 2026-08-13 / **状態**: 承認。N1 domain実装済み。N2 CloudKit send／fetchはsource＋unit。N3 Mac／iOS App接続はsource＋layout test。N4はin-memory simulationのみで、署名済みMac＋iPhone paired／実CloudKitは未実施。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのproduction live経路は`NoteSyncCoordinator`へ切替（既存App testはfactory未注入のため旧coordinatorのまま）
+- **日付**: 2026-08-13 / **状態**: 承認。N1 domain実装済み。N2 CloudKit send／fetchはsource＋unit。N3 Mac／iOS App接続はsource＋layout test。N4はin-memory simulationのみで、署名済みMac＋iPhone paired／実CloudKitは未実施。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのproduction live経路は`NoteSyncCoordinator`へ切替（既存App testはfactory未注入のため旧coordinatorのまま）。item 2の裏送信とitem 5のpackage保存直後pending登録はD-073で一部破棄
 - **内容**:
   1. 使う側の同期対象は引き続き **1つの作品** である。作品タイトル／あらすじ、章・話の構成と順序、本文、メモ、人物、プロット、伏線、世界観を同期する。資料binary／attachment、`.novelpkg` の手動スナップショット履歴、端末設定、選択状態、path、CloudKit metadataは同期しない。`.novelpkg` v3は各端末の正本（画面が読むlocal store）のまま変更しない。SwiftData／Core Dataをcanonical storeにせず、独自同期サーバーも置かない。
   2. 画面は **この端末の `.novelpkg` だけ** を開く。起動、アプリ切替で戻る、執筆画面に入る、は通信完了を待たない。検証済みlocal packageがあればofflineでも編集・保存できる。`CKSyncEngine` の送信／取得は裏で行い、失敗や遅延は状態表示だけに残す。編集中の `NSTextView`／`UITextView` へremoteを流し込まない（D-005／D-064）。
@@ -836,4 +837,31 @@
 - **置き換える範囲**: D-063 item 5の「明示的account association UIとauthorityは後続Decisionまで提供しない」を、signed-in（catalog availableまたはtype未作成によるcatalog失敗）かつlocal-only／localPendingに限る明示保存へ置き換える。automatic adopt禁止は維持する。D-063 item 9の「MVPではwork削除UI／APIを出さない」を、この端末のlocal removeだけへ置き換える。CloudKit tombstone／複数端末retentionは引き続き禁止し、別Decisionとする。
 - **理由**: 新しい作品がCloudKit type未作成などでlocal-onlyに留まったとき、失敗が見えず再送も試せない。明示保存は検証しやすい。既存作品の複製と、この端末の作業コピーを棚から外す操作は、Finder／Filesを見せずに日常の棚操作として必要である。
 - **詳細**: 画面・文言は[STYLE.md](STYLE.md)、棚の状態は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.10〜0.11、全体は[DESIGN.md](DESIGN.md)を参照する。
+
+## D-073: 自動保存は端末内だけ行い、iCloud送信は明示同期にする
+
+- **日付**: 2026-08-14 / **状態**: 承認・実装
+- **内容**:
+  1. 自動保存、話切替、画面遷移、終了前保存、資料操作の`saveNow()`はapp-private `.novelpkg`とdirty setまでとする。package保存の成功や失敗を、iCloudのオンライン／オフラインと混ぜない。CKQueryの12／2015（`recordName`未QUERYABLE）をオフライン表示の根拠にしない。
+  2. iCloudへ結んだ作品のFileメニュー`Cmd+S`と、Workbench／iOSの「iCloudと同期」だけが、同じlocal flushのあとNote `publishLocal`／`pullRemote`を始める。未結線の作品の`Cmd+S`は従来どおりlocal保存だけ。初回の「iCloudに保存」はD-072のまま別操作とする。
+  3. 起動、アプリ切替で戻る、執筆画面に入る、remote change signalはNote send／pullのきっかけにしない。他端末の変更は次の明示同期まで待って取り込む。衝突3択の直後だけは、選んだ結果を送るために同じ明示経路を使う。
+  4. 編集中の状態表示は、local保存済みなら「この端末に保存済み」とする。未送信のdirtyを「iCloudへ同期中」や「オフライン」としない。`checkmark.icloud`は明示同期が成功し、その後のlocal変更がないときにだけ使う。本当のaccount／network不能だけをオフラインとし、「接続が戻ると自動で同期します」とは書かない。
+  5. Development schemaで`CKQuery`が使えないときは、work recordと順序付き子entityをrecord IDで取る。作品棚は同じ窓で`workID` field query、`modificationDate` query、`CKSyncEngine`が観測したNote WorkIDのrecord ID取得を試す。queryで取れた他端末のWorkIDは、この端末既知IDのfetch-by-id補完と件数が違ってもremote-onlyとして出す。query失敗を同期失敗やオフラインへ畳み込まない。内容digestが同じchange tag衝突はackし、3択にしない。衝突3択で選んだ内容のsaveがengineにackされない場合は失敗とし、黙って3択を残さない。keepLocalは画面が出したkeysをpendingが空でも使う。
+  6. Editor openのlocal preflightが`.temporarilyOffline`でも、Note coordinatorが作れた結線済み作品の明示同期はsendを拒否しない。本当のaccount／network失敗は`publishLocal`／`pullRemote`のerror tokenで分類する。未作成のNote typeへのqueryは空として扱い、既にmap済みのadapter errorを`.operationFailed`へ潰さない。Debugでは失敗ダイアログに同じtokenを付ける（環境変数`FUMINIWA_NOTE_SYNC_DEBUG=0/1`で上書き）。path／WorkID／title／`localizedDescription`は出さない。
+- **置き換える範囲**: D-071 item 2の「`CKSyncEngine`の送信／取得は裏で行い」と、item 5のpackage保存直後のpending登録／自動再送を破棄する。dirty setをpackage保存後に残す契約と、D-005のactive editor非注入、D-040／D-041のlocal `saveNow()`直列化、D-072の初回明示保存は維持する。D-040 item 5の「`Cmd+S`は`saveNow()`と同じ」は、結線済み作品に限ってlocal flush＋明示同期へ改訂する。
+- **理由**: 話切替などのlocal保存のたびにcatalog queryが走り、Development schemaでは失敗して常時オフラインに見えた。端末保存とiCloud送信を分ければ、編集中はlocalが正で、送りたいときだけ同期できる。
+- **詳細**: 現行契約は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0.2、画面は[STYLE.md](STYLE.md)／[TOOLBAR.md](TOOLBAR.md)、全体は[DESIGN.md](DESIGN.md)を参照する。
+
+## D-074: 編集後の作品全体スナップショットを Time Machine 型で間引く
+
+- **日付**: 2026-08-14 / **状態**: 承認・実装
+- **内容**:
+  1. 自動スナップショットは一定間隔の定期実行ではない。本文、話メモ、作品情報、人物、プロット、伏線、世界観など、`NovelDocument`に属する編集があったあと約5分で、その時点の作品全体を1件残す。追加の編集では待ち時間を延長せず、1件残したあとにまた編集があれば次の5分を数える。編集が無ければ作らない。最小単位は5分とする。
+  2. 対象は話本文だけではない。章・話構造、タイトル、あらすじ、メモ、人物、プロット、伏線、世界観、その時点の資料を含む app-private `.novelpkg` 全体とする。入れ子の `snapshots/` は持たせない。iCloudへは送らない。
+  3. アプリをバックグラウンドへ移す、Macが非アクティブまたはスリープになる、ときは待ち時間を待たず、未退避の編集があれば同じ作品全体を残す。IME変換中は確定を待ってから残す。失敗をダイアログにしない。
+  4. 手動保存（ツールバー／`Cmd+Option+S`）と復元前退避は従来どおり手動扱いとし、間引きしない。
+  5. 自動分の保持は Time Machine にならい、新しいほど密、古いほど疎にする。直近1時間はすべて残し、24時間以内は同じ時間の最新1件、30日以内は同じ日の最新1件、1年以内は同じ週の最新1件、それより前は同じ月の最新1件だけ残す。
+- **置き換える範囲**: D-026の手動保存・復元前退避・一覧／復元手順は維持する。自動作成と自動分の間引きだけを追加する。
+- **理由**: 定期実行だと無編集でも増え、直近だけ固定件数だと数日前の状態へ戻れない。編集があった作品全体を、新しいほど細かく古いほど粗く残す。
+- **詳細**: 画面は[STYLE.md](STYLE.md)、iOS導線は[IOS.md](IOS.md) 4.5a、全体は[DESIGN.md](DESIGN.md) 6.4を参照する。
 

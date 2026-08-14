@@ -4,7 +4,7 @@
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-072、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-073、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
 ## 0. D-071の現行Notes型／cloud library契約
 
@@ -30,16 +30,17 @@ stable IDと表示順を分離して次を同期する。
 - local path、bookmark、端末名、利用者名、CloudKit metadata
 - 複数人のリアルタイム共同編集
 
-### 0.2 local正本と裏同期
+### 0.2 local正本と明示同期
 
 利用者の確定変更は次の順に処理する。
 
 1. native editor／formの確定値を`NovelDocument`へ反映する。
 2. 既存の保存直列化経路でapp-private `.novelpkg`を保存する。
 3. 変わったentity IDをpackage外の小さなdirty setへatomic保存する。
-4. `CKSyncEngine`へpending save／deleteを登録する。networkはEditor入力とpackage保存を待たせない。
+4. 自動保存、話切替、画面遷移、終了前保存ではここで止まる。`CKSyncEngine`へはまだ出さない。
+5. 結線済み作品の「iCloudと同期」または`Cmd+S`だけが、dirty setからpending save／deleteを登録し、sendしたあとpullする。
 
-dirty setは「まだ送っていないentity」だけを持ち、作品全体snapshotの複製ではない。通信失敗・終了・再起動後は同じdirty setから再送する。未送信原稿の正はpackageである。起動、アプリ切替で戻る、執筆画面に入る、はfetch／sendのきっかけにしてよい。通信完了を画面表示の条件にしない。
+dirty setは「まだ送っていないentity」だけを持ち、作品全体snapshotの複製ではない。通信失敗・終了・再起動後は同じdirty setを残し、次の明示同期で再送する。未送信原稿の正はpackageである。起動、アプリ切替で戻る、執筆画面に入る、はfetch／sendのきっかけにしない。通信完了を画面表示の条件にしない。CKQueryの12／2015をオフラインと表示しない。queryが使えないDevelopment schemaでは、work recordと順序付き子entityをrecord IDで取る。作品棚は同じ窓で`workID` field query（`!= ""` および hex prefix `BEGINSWITH`）、`modificationDate` query、`CKSyncEngine`が観測したNote WorkIDのrecord ID取得を試す。CKQueryが0件でも、queryで取れたWorkIDはremote-onlyとして棚に出す。fetch-by-idで補ったこの端末既知のWorkIDだけを根拠に、未発見の他端末作品を隠さない。未作成のNote typeへのqueryは空とする。衝突3択は内容digestが違う場合だけ出す。CloudKitのchange tag衝突でも内容が同じならackして3択にしない。keepLocalはsessionのpending keysが空でも、画面が出したkeysでforce overwriteする。keepLocalのCloudKit saveはengine ackなしを成功としない。Editor openのlocal preflightが付ける一時オフラインは通信待ちを避ける印であり、Note coordinatorが生きている結線済み作品の明示同期を止める根拠ではない。失敗はCloudKit error tokenで分類し、診断は`[FUMINIWA] note-sync`／`[FUMINIWA] cloud-library`にbegin／skip／send／ok／failだけを出す。Debugでは同じtokenを失敗ダイアログへ付ける。
 
 ### 0.3 entity recordとCKSyncEngine
 
@@ -265,7 +266,7 @@ Apple版の作品棚は次を区別し、local durabilityとremote acknowledgeme
 | legacy local（iOS / iPadOSのみ） | D-063以前のprivate packageを検証済み、WorkID associationなし | 「タップして新しい作品として取り込む」。明示操作までupload／削除／rekeyしない |
 | unavailable | legacy nil reservation、head欠損、package／registry破損等 | 自動で開かず、原因に応じた設定確認／Recoveryを提示 |
 
-`checkmark.icloud`と「iCloudと同期済み」はcached exactに限る。local registryの`pending`、network online、catalogに同名行があること、直前のupload開始だけでは表示しない。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`へ降格し、過去receiptだけでcheckmark／open／uploadを再開しない。`accountRequired`／different accountではlocal packageのないApp `remoteOpenPending` rowを棚から除外し、旧accountのwork存在／titleを漏らさない。状態は文字とVoiceOver valueで伝え、remote-only offline／破損へ「接続すれば必ず開ける」と誤解させるhintを出さない。account mismatchは検証済みlocal packageの有無を区別し、local packageを開ける場合もremote upload可能とは表示しない。作品棚の削除は、この端末のregistryとhidden packageだけを外す（D-072）。CloudKit tombstone／複数端末retentionは別Decisionへ分離する。local-only／localPendingかつsigned-in（catalog availableまたはNote type未作成によるcatalog失敗）の行だけ、明示の「iCloudに保存」を出す。新規後のWorkbench toolbar／FileメニューとiOS作品ホームからも同じ操作へ到達できる。automatic adoptは置かない。catalog読込失敗中のlocalPendingは「接続後に同期」とせず再送可能と示す。明示保存はcatalog listより先にzone／Note typeをJIT作成し、chooserは保存そのものが終わればcatalog refresh完了を待たずに再操作できる。複製は新しいWorkIDのportable copyであり、現在作品を切り替えない。
+`checkmark.icloud`と「iCloudと同期済み」はcached exactに限る。local registryの`pending`、network online、catalogに同名行があること、直前のupload開始だけでは表示しない。D-071のnil-head Note行は、CKQueryが空でもrecord IDで同一WorkIDを取れ、local packageのdocument／titleが一致すればcachedRemoteへ上げる。connection availableのcurrent catalogからacknowledged WorkIDが欠落した場合は`.cloudUnavailable`へ降格し、過去receiptだけでcheckmark／open／uploadを再開しない。`accountRequired`／different accountではlocal packageのないApp `remoteOpenPending` rowを棚から除外し、旧accountのwork存在／titleを漏らさない。状態は文字とVoiceOver valueで伝え、remote-only offline／破損へ「接続すれば必ず開ける」と誤解させるhintを出さない。account mismatchは検証済みlocal packageの有無を区別し、local packageを開ける場合もremote upload可能とは表示しない。作品棚の削除は、この端末のregistryとhidden packageだけを外す（D-072）。CloudKit tombstone／複数端末retentionは別Decisionへ分離する。local-only／localPendingかつsigned-in（catalog availableまたはNote type未作成によるcatalog失敗）の行だけ、明示の「iCloudに保存」を出す。新規後のWorkbench toolbar／FileメニューとiOS作品ホームからも同じ操作へ到達できる。automatic adoptは置かない。catalog読込失敗中のlocalPendingは「接続後に同期」とせず再送可能と示す。明示保存はcatalog listより先にzone／Note typeをJIT作成し、chooserは保存そのものが終わればcatalog refresh完了を待たずに再操作できる。明示保存とcatalog失敗はコンソールへ`[FUMINIWA]`のcontent-free token（CKError codeとtyped case。path／WorkIDなし）を出す。複製は新しいWorkIDのportable copyであり、現在作品を切り替えない。
 
 ### 0.12 portable package exportと同期外resource
 
@@ -639,7 +640,7 @@ macOS / iOSはbundle IDが別でも、同じTeamのApp IDへ同じiCloud contain
 
 cleanなDevelopment containerで固定zoneがまだ存在しない場合、live account scopeが確認済みで、confirmed binding／cached remote head／pending downloadがない時だけzone-not-foundを空のavailable catalogとして扱う。これにより明示的新規作成が`bootstrapZoneForNewSync`へ到達してzoneを作れる。
 
-zone作成後、最初のWorkControl保存前にprocessが終了すると、zoneは存在してもD-063 record typeがまだDevelopment schemaへmaterializeされていない場合がある。この時のcatalog queryがtyped `.invalidArguments`へ写像された場合は、account scopeがあり、cached remote rowとpending openがなく、全pending createと全bindingがlocator／WorkIDで完全に1対1一致する時だけ空のavailable catalogとして再開する。unbound pending create、confirmed binding、件数／WorkID不一致、cached remote row、pending openでは許可しない。zone reset、malformed row、account未確認／変更、既存remote証跡を持つzone-not-foundも引き続きfail-closedとする。
+zone作成後、最初のWorkControl保存前にprocessが終了すると、zoneは存在してもD-063 record typeがまだDevelopment schemaへmaterializeされていない場合がある。この時のcatalog queryがtyped `.invalidArguments`へ写像された場合は、account scopeがあり、cached remote rowとpending openがなければ空のavailable catalogとして再開する。confirmed local bindingだけを理由にNote catalogの`.invalidArguments`／`.recordNotFound`をfail-closedにしない（CKError 12 / CKInternalErrorDomain 2015は、型未作成または`recordName`がQUERYABLEでないDevelopment窓である）。その窓では`TRUEPREDICATE`のCKQueryを棚の正にせず、`modificationDate` query、`CKSyncEngine`が観測したNote WorkID、この端末がすでにbind／createしたWorkIDをrecord IDで取り直す。別端末のremote-only発見をProduction完了とは扱わず、`recordName`／`workID` QUERYABLEはN4／Dashboardのまま必要である。pending downloadとcached remote rowはfail-closedのまま。missing zoneはconfirmed bindingがあるとfail-closedにする。zone reset、malformed row、account未確認／変更も引き続きfail-closedとする。
 
 restored engine stateがない初回`CKSyncEngine`は、すでにsign-in済みの同一accountも`.signIn` eventとして通知する。これを通常のsign-out／switchと同じ永久fenceへ落とさず、進行中operationを一度cancelしてlive account scopeを再検証し、expected scopeと完全一致すればruntimeを`.ready`のまま維持する。別accountは`.differentCloudAccount`、sign-outは`.accountRequired`へfail-closedにし、一時的なidentity取得失敗は次のremote operationで再検証できるretryable状態に留める。署名済み実Macの現行確認では同一accountのDevelopment環境へ既存1作品のroot revision／control／receiptを初回publishし、registry `synced`、journal outbox 0／`synchronized`、catalog cache 1件までread-backした。
 
@@ -745,7 +746,7 @@ in-memory 2 client往復はN4完了ではない。次だけを署名済みDebug�
 | 6 | 保存直後にMacまたはiPhoneを強制終了し再起動 | packageが正。`note-v1` JSONに原稿がない。再送される | 成功／失敗、JSONに本文が無いことの有無 |
 | 7 | 別Apple Accountへ切り替え | 作品が混ざらない。旧accountへ送らない | 成功／失敗、表示された状態 |
 
-本文、作品名以外のタイトル詳細、path、CloudKit error payload、asset URLは貼らない。`note-sync network failed(TypeName)`、`needs review conflicts=N`、`used type scan because workID query is unavailable` はcontent-freeとして貼ってよい。
+本文、作品名以外のタイトル詳細、path、CloudKit error payload、asset URLは貼らない。`note-sync explicit begin`、`explicit skipped(…)`、`explicit send`、`send ok`、`network failed(TypeName)`、`needs review conflicts=N`、`used type scan because workID query is unavailable` はcontent-freeとして貼ってよい。
 
 ## 15. 実装順と進捗
 

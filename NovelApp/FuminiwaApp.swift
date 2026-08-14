@@ -160,11 +160,21 @@ struct FuminiwaApp: App {
             }
 
             CommandGroup(replacing: .saveItem) {
-                Button("保存") {
-                    Task { await appState.saveNow() }
+                if appState.canExplicitlySyncCurrentWork {
+                    Button("iCloudと同期") {
+                        Task { await appState.saveAndSyncNow() }
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(
+                        !appState.permitsDocumentInteraction || appState.isExplicitNoteSyncInFlight
+                    )
+                } else {
+                    Button("保存") {
+                        Task { await appState.saveNow() }
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!appState.permitsDocumentInteraction)
                 }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!appState.permitsDocumentInteraction)
             }
 
             // app-private作業コピーを外へ見せず、portable `.novelpkg`は書き出しから

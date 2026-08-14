@@ -77,4 +77,53 @@ struct CloudKitErrorMappingTests {
             )
         )
     }
+
+    @Test("diagnostic token keeps CKError codes and drops paths")
+    func diagnosticTokenIsContentFree() {
+        let cloud = CKError(
+            .unknownItem,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "/Users/secret/SyncWorkingCopies-v2/AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE.novelpkg"
+            ]
+        )
+        let token = CloudKitSyncDiagnostic.token(for: cloud)
+        #expect(token.contains("CKError.unknownItem"))
+        #expect(token.contains("recordNotFound"))
+        #expect(!token.contains("/Users"))
+        #expect(!token.contains("novelpkg"))
+        #expect(!token.contains("AAAAAAAA"))
+
+        let mapped = CloudKitSyncDiagnostic.token(
+            for: CloudKitSyncAdapterError.invalidArguments
+        )
+        #expect(mapped == "CloudKitSyncAdapterError.invalidArguments")
+    }
+
+    @Test("query schema errors are not treated as offline")
+    func diagnosticOfflineClassification() {
+        #expect(CloudKitSyncDiagnostic.looksTemporarilyOffline(CKError(.networkUnavailable)))
+        #expect(CloudKitSyncDiagnostic.looksTemporarilyOffline(CKError(.notAuthenticated)))
+        #expect(CloudKitSyncDiagnostic.looksTemporarilyOffline(CKError(.zoneNotFound)))
+        #expect(!CloudKitSyncDiagnostic.looksTemporarilyOffline(CKError(.invalidArguments)))
+        #expect(
+            !CloudKitSyncDiagnostic.looksTemporarilyOffline(
+                CloudKitSyncAdapterError.invalidArguments
+            )
+        )
+        #expect(
+            CloudKitErrorMapper.map(CloudKitSyncAdapterError.invalidArguments)
+                == .invalidArguments
+        )
+        #expect(
+            CloudKitSyncDiagnostic.looksTemporarilyOffline(
+                CloudKitSyncAdapterError.temporarilyUnavailable(retryAfterSeconds: nil)
+            )
+        )
+        #expect(
+            CloudKitSyncDiagnostic.looksTemporarilyOffline(
+                CloudKitSyncAdapterError.accountUnavailable(.noAccount)
+            )
+        )
+    }
 }

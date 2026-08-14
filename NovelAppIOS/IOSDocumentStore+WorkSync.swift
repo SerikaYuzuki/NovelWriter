@@ -42,6 +42,7 @@ extension IOSDocumentStore {
         workSyncNetworkTask?.cancel()
         workSyncNetworkTask = nil
         workSyncNetworkGeneration &+= 1
+        workSyncNetworkRescheduleRequested = false
         workSyncNetworkDemandGeneration &+= 1
         workSyncPreparationTask?.cancel()
         workSyncPreparationTask = nil
@@ -100,6 +101,7 @@ extension IOSDocumentStore {
 
     func refreshActiveWorkSyncWithoutPreparing() async {
         guard usesWholeWorkDeviceSync,
+              !usesNoteSyncRuntime,
               editorCommandSession.isDocumentTransitionPrepared,
               case .captured = editorCommandSession.captureActiveCommittedText(),
               let identity = activeWorkSyncIdentity,

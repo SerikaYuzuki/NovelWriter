@@ -10,6 +10,7 @@ struct CloudKitNoteWorkIDQueryTests {
     @Test("invalidArguments from a missing workID index may scan the type")
     func invalidArgumentsAllowsTypeScan() {
         #expect(CloudKitNoteWorkIDQuery.shouldScanType(after: CloudKitSyncAdapterError.invalidArguments))
+        #expect(CloudKitNoteWorkIDQuery.shouldUseRecordIDFallback(after: CloudKitSyncAdapterError.invalidArguments))
         #expect(
             CloudKitNoteWorkIDQuery.shouldScanType(
                 after: CloudKitSyncAdapterError.partialFailure([.invalidArguments])
@@ -17,6 +18,25 @@ struct CloudKitNoteWorkIDQueryTests {
         )
         #expect(!CloudKitNoteWorkIDQuery.shouldScanType(after: CloudKitSyncAdapterError.recordNotFound))
         #expect(!CloudKitNoteWorkIDQuery.shouldScanType(after: CloudKitSyncAdapterError.zoneUnavailable))
+        #expect(!CloudKitNoteWorkIDQuery.shouldUseRecordIDFallback(after: CloudKitSyncAdapterError.zoneUnavailable))
+        #expect(
+            CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(
+                after: CloudKitSyncAdapterError.recordNotFound
+            )
+        )
+        #expect(
+            CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(after: CKError(.unknownItem))
+        )
+        #expect(
+            !CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(
+                after: CloudKitSyncAdapterError.invalidArguments
+            )
+        )
+        #expect(
+            !CloudKitNoteWorkIDQuery.shouldTreatMissingTypeAsEmpty(
+                after: CloudKitSyncAdapterError.zoneUnavailable
+            )
+        )
     }
 
     @Test("type scan keeps only records whose workID field matches")

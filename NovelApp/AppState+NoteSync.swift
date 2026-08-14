@@ -35,6 +35,7 @@ extension AppState {
                 expectedIdentity.structureDigest
             )
         } catch {
+            DeviceSyncLog.note("prepare lookup-failed", error: error)
             guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
             deviceSyncState = .blocked
             deviceSyncSetupState = .unavailable(message: "iCloud作品同期の接続を確認できません")
@@ -43,6 +44,7 @@ extension AppState {
         }
         guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
         guard let resolution else {
+            DeviceSyncLog.note("prepare skipped(no-binding)")
             clearWorkSyncClient()
             resolvedDeviceSyncLookupIdentity = expectedLookup
             deviceSyncState = .unconfigured
@@ -60,10 +62,13 @@ extension AppState {
             guard let coordinator = try await runtime.makeNoteSyncCoordinator?(
                 identity.workID,
                 identity.localWorkingCopyID
-            ) else { return false }
-            let client = NoteSyncClient(
+            ) else {
+                DeviceSyncLog.note("prepare skipped(no-coordinator)")
+                return false
+            }
+            let client = makeLiveNoteSyncClient(
                 coordinator: coordinator,
-                remoteAvailability: resolution.remoteAvailability
+                preflightAvailability: resolution.remoteAvailability
             )
             await prepareResolvedNoteSync(
                 identity: identity,
@@ -73,6 +78,7 @@ extension AppState {
             )
             return true
         } catch {
+            DeviceSyncLog.note("prepare failed", error: error)
             guard currentWorkSyncPreparationIdentity == expectedIdentity else { return true }
             deviceSyncState = .blocked
             deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
@@ -111,10 +117,8 @@ extension AppState {
                 deviceSyncLocalDurabilityState = .saved
                 deviceSyncLocalRecoveryPending = false
                 resolvedDeviceSyncLookupIdentity = currentDeviceSyncLookupIdentity ?? expectedLookup
-                applyNoteSyncIdleState(client: client)
-                if client.remoteSynchronizationAllowed {
-                    scheduleNoteSyncNetwork(identity: identity, client: client)
-                }
+                let dirty = try await client.coordinator.state().dirty
+                applyNoteSyncIdleState(client: client, dirty: dirty)
             } catch {
                 guard documentSessionToken == identity.documentSession else { return }
                 deviceSyncState = .blocked
@@ -159,8 +163,8 @@ extension AppState {
             _ = try await preparation.client.coordinator.recordPackageSave(preparation.snapshot)
             guard workSyncContextIsCurrent(preparation.identity) else { return }
             deviceSyncLocalDurabilityState = .saved
-            applyNoteSyncIdleState(client: preparation.client)
-            scheduleNoteSyncNetwork(identity: preparation.identity, client: preparation.client)
+            let dirty = try await preparation.client.coordinator.state().dirty
+            applyNoteSyncIdleState(client: preparation.client, dirty: dirty)
         } catch {
             guard workSyncContextIsCurrent(preparation.identity) else { return }
             deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
@@ -168,13 +172,66 @@ extension AppState {
         }
     }
 
+    func syncBoundNoteWorkIfNeeded() async {
+        DeviceSyncLog.note("explicit begin")
+        guard noteSyncConflict == nil else {
+            DeviceSyncLog.note("explicit skipped(conflict)")
+            return
+        }
+        guard let identity = activeWorkSyncIdentity else {
+            DeviceSyncLog.note("explicit skipped(no-identity)")
+            return
+        }
+        guard workSyncContextIsCurrent(identity) else {
+            DeviceSyncLog.note("explicit skipped(stale-session)")
+            return
+        }
+        guard let client = noteSyncClient else {
+            DeviceSyncLog.note("explicit skipped(no-client)")
+            return
+        }
+        if !client.remoteSynchronizationAllowed {
+            DeviceSyncLog.note("explicit skipped(availability=\(client.remoteAvailability.logToken))")
+            deviceSyncState = .offlineLocal
+            deviceSyncTransferState = .localPending
+            cloudLibraryActionMessage =
+                "iCloudに接続できないため同期できませんでした。この端末の作品はそのまま残っています。"
+            return
+        }
+        DeviceSyncLog.note("explicit send")
+        if let inFlight = workSyncNetworkTask {
+            workSyncNetworkRescheduleRequested = true
+            await inFlight.value
+            while let followUp = workSyncNetworkTask {
+                await followUp.value
+            }
+            DeviceSyncLog.note("explicit coalesced")
+            return
+        }
+        scheduleNoteSyncNetwork(identity: identity, client: client)
+        await workSyncNetworkTask?.value
+        while let followUp = workSyncNetworkTask {
+            await followUp.value
+        }
+        DeviceSyncLog.note("explicit finished(\(deviceSyncTransferState.logToken))")
+    }
+
     func scheduleNoteSyncNetwork(
         identity: WorkSyncDocumentIdentity,
         client: NoteSyncClient
     ) {
-        guard workSyncContextIsCurrent(identity),
-              client.remoteSynchronizationAllowed,
-              noteSyncConflict == nil else { return }
+        guard workSyncContextIsCurrent(identity) else {
+            DeviceSyncLog.note("send skipped(stale-session)")
+            return
+        }
+        guard noteSyncConflict == nil else {
+            DeviceSyncLog.note("send skipped(conflict)")
+            return
+        }
+        guard client.remoteSynchronizationAllowed else {
+            DeviceSyncLog.note("send skipped(availability=\(client.remoteAvailability.logToken))")
+            return
+        }
         if workSyncNetworkTask != nil {
             workSyncNetworkRescheduleRequested = true
             return
@@ -190,16 +247,21 @@ extension AppState {
                     let pulled = try await client.coordinator.pullRemote(onto: snapshot)
                     noteSyncConflict = pulled.conflict
                     if pulled.conflict != nil {
-                        print("[FUMINIWA] note-sync needs review conflicts=\(send.conflictedKeys.count)")
+                        DeviceSyncLog.note("needs review conflicts=\(send.conflictedKeys.count)")
                         await markLibraryNeedsReview(identity)
                         deviceSyncState = .needsReview
                         deviceSyncTransferState = .localPending
+                    } else {
+                        DeviceSyncLog.note("send conflicts content-match")
+                        noteSyncConflict = nil
+                        deviceSyncState = .writer
+                        deviceSyncTransferState = .upToDate
                     }
                 } else {
                     let pulled = try await client.coordinator.pullRemote(onto: snapshot)
                     try await client.coordinator.acknowledgeReconcile(pulled)
                     if let conflict = pulled.conflict {
-                        print("[FUMINIWA] note-sync needs review conflicts=\(conflict.keys.count)")
+                        DeviceSyncLog.note("needs review conflicts=\(conflict.keys.count)")
                         noteSyncConflict = conflict
                         await markLibraryNeedsReview(identity)
                         deviceSyncState = .needsReview
@@ -208,6 +270,7 @@ extension AppState {
                         noteSyncConflict = nil
                         deviceSyncState = .writer
                         deviceSyncTransferState = .upToDate
+                        DeviceSyncLog.note("send ok")
                         if let library = deviceSyncRuntime?.library,
                            let workRecord = try await NoteSyncProjection.records(
                                workID: identity.workID,
@@ -222,9 +285,8 @@ extension AppState {
                 }
             } catch {
                 guard workSyncContextIsCurrent(identity) else { return }
-                print("[FUMINIWA] note-sync network failed(\(String(reflecting: type(of: error))))")
-                deviceSyncState = .offlineLocal
-                deviceSyncTransferState = .localPending
+                DeviceSyncLog.note("network failed", error: error)
+                applyNoteSyncNetworkFailure(error, client: client)
             }
             let requested = workSyncNetworkRescheduleRequested
             workSyncNetworkRescheduleRequested = false
@@ -232,6 +294,14 @@ extension AppState {
                 workSyncNetworkTask = nil
             }
             guard requested, workSyncContextIsCurrent(identity) else { return }
+            if noteSyncConflict != nil {
+                DeviceSyncLog.note("send skip-reschedule(conflict)")
+                return
+            }
+            if deviceSyncTransferState == .upToDate {
+                DeviceSyncLog.note("send skip-reschedule(upToDate)")
+                return
+            }
             scheduleNoteSyncNetwork(identity: identity, client: client)
         }
     }
@@ -241,12 +311,31 @@ extension AppState {
         expectedConflict: NoteSyncConflict,
         expectedSession: DocumentSessionToken
     ) async {
-        guard !isApplyingWorkSyncConflict,
-              documentSessionToken == expectedSession,
-              noteSyncConflict == expectedConflict,
-              let identity = activeWorkSyncIdentity,
-              let client = noteSyncClient,
-              workSyncContextIsCurrent(identity) else { return }
+        guard !isApplyingWorkSyncConflict else {
+            DeviceSyncLog.note("resolve skipped(applying)")
+            return
+        }
+        guard documentSessionToken == expectedSession else {
+            DeviceSyncLog.note("resolve skipped(stale-session)")
+            return
+        }
+        guard noteSyncConflict == expectedConflict else {
+            DeviceSyncLog.note("resolve skipped(stale-conflict)")
+            return
+        }
+        guard let identity = activeWorkSyncIdentity else {
+            DeviceSyncLog.note("resolve skipped(no-identity)")
+            return
+        }
+        guard let client = noteSyncClient else {
+            DeviceSyncLog.note("resolve skipped(no-client)")
+            return
+        }
+        guard workSyncContextIsCurrent(identity) else {
+            DeviceSyncLog.note("resolve skipped(stale-session)")
+            return
+        }
+        DeviceSyncLog.note("resolve begin(\(choice))")
         isApplyingWorkSyncConflict = true
         defer { isApplyingWorkSyncConflict = false }
 
@@ -254,18 +343,27 @@ extension AppState {
             guard let self,
                   documentSessionToken == expectedSession,
                   workSyncContextIsCurrent(identity),
-                  beginDocumentTransition() else { return }
+                  beginDocumentTransition() else {
+                DeviceSyncLog.note("resolve skipped(transition)")
+                return
+            }
             defer { endDocumentTransition() }
 
-            guard await captureAndSaveActiveWorkSyncEditorIfNeeded() else { return }
+            guard await captureAndSaveActiveWorkSyncEditorIfNeeded() else {
+                DeviceSyncLog.note("resolve skipped(editor-save)")
+                return
+            }
             do {
                 let local = try WorkSnapshot(document: document)
                 let newWorkID = SyncWorkID()
+                DeviceSyncLog.note("resolve fetch-and-apply")
                 let resolution = try await client.coordinator.resolve(
                     choice,
                     local: local,
-                    newWorkID: newWorkID
+                    newWorkID: newWorkID,
+                    expectedKeys: expectedConflict.keys
                 )
+                DeviceSyncLog.note("resolve applied(\(choice))")
                 guard workSyncContextIsCurrent(identity) else { return }
                 if choice != .keepLocal {
                     let installed = await persistAndInstallWorkSyncSnapshot(
@@ -281,12 +379,18 @@ extension AppState {
                 }
                 noteSyncConflict = nil
                 deviceSyncState = .syncing
-                applyNoteSyncIdleState(client: client)
+                applyNoteSyncIdleState(client: client, dirty: .empty)
+                DeviceSyncLog.note("resolve ok(\(choice))")
                 scheduleNoteSyncNetwork(identity: identity, client: client)
             } catch {
                 guard workSyncContextIsCurrent(identity) else { return }
+                DeviceSyncLog.note("resolve failed(\(choice))", error: error)
                 deviceSyncState = .needsReview
                 deviceSyncTransferState = .localPending
+                presentCloudLibraryActionFailure(
+                    error,
+                    message: "選んだ内容を保存できませんでした。この端末の作品はそのまま残っています。"
+                )
             }
         }
     }
@@ -303,13 +407,57 @@ extension AppState {
         try await library.resumeInitialWorkPublication(workID, document, destination)
     }
 
-    private func applyNoteSyncIdleState(client: NoteSyncClient) {
+    private func makeLiveNoteSyncClient(
+        coordinator: NoteSyncCoordinator,
+        preflightAvailability: DeviceSyncRemoteAvailability
+    ) -> NoteSyncClient {
+        // Local preflight stamps `.temporarilyOffline` so Editor open never waits
+        // on CloudKit (D-064). Note coordinator construction already required live
+        // services, so that stamp is not an explicit-send fence (D-073).
+        switch preflightAvailability {
+        case .available:
+            return NoteSyncClient(coordinator: coordinator, remoteAvailability: .available)
+        case .temporarilyOffline:
+            DeviceSyncLog.note("prepare live-services(temporarilyOffline)")
+            return NoteSyncClient(coordinator: coordinator, remoteAvailability: .available)
+        case .configurationBlocked:
+            DeviceSyncLog.note("prepare keep-fence(configurationBlocked)")
+            return NoteSyncClient(
+                coordinator: coordinator,
+                remoteAvailability: .configurationBlocked
+            )
+        }
+    }
+
+    private func applyNoteSyncIdleState(client: NoteSyncClient, dirty: NoteSyncDirtySet) {
         if noteSyncConflict != nil {
             deviceSyncState = .needsReview
             deviceSyncTransferState = .localPending
             return
         }
-        deviceSyncState = client.remoteSynchronizationAllowed ? .writer : .offlineLocal
-        deviceSyncTransferState = client.remoteSynchronizationAllowed ? .upToDate : .localPending
+        if !client.remoteSynchronizationAllowed {
+            deviceSyncState = .offlineLocal
+            deviceSyncTransferState = .localPending
+            return
+        }
+        deviceSyncState = .writer
+        deviceSyncTransferState = dirty.isEmpty ? .upToDate : .localPending
+    }
+
+    private func applyNoteSyncNetworkFailure(_ error: any Error, client: NoteSyncClient) {
+        deviceSyncTransferState = .localPending
+        if DeviceSyncLog.looksTemporarilyOffline(error) || !client.remoteSynchronizationAllowed {
+            DeviceSyncLog.note(
+                "network classified-offline(availability=\(client.remoteAvailability.logToken))",
+                error: error
+            )
+            deviceSyncState = .offlineLocal
+            return
+        }
+        deviceSyncState = .writer
+        presentCloudLibraryActionFailure(
+            error,
+            message: "iCloudと同期できませんでした。この端末の作品はそのまま残っています。"
+        )
     }
 }

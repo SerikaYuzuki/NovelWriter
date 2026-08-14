@@ -118,6 +118,135 @@ struct DeviceSyncAppIntegrationTests {
         #expect(state.deviceSyncAllowsEditing(for: lookup))
     }
 
+    @Test("Note同期は自動保存では送らず明示同期だけでiCloudへ出す")
+    func noteSyncSendsOnlyOnExplicitSync() async throws {
+        let fixture = makeFixture(content: "本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let cloud = InMemoryNoteSyncCloud()
+        let dirtyStore = InMemoryNoteSyncStateStore()
+        let resolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: InMemoryWorkSyncJournal()
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: InMemoryWorkSyncServer(),
+            binding: { _, _ in resolution },
+            makeNoteSyncCoordinator: { coordinatorWorkID, _ in
+                NoteSyncCoordinator(
+                    workID: coordinatorWorkID,
+                    store: dirtyStore,
+                    cloud: cloud
+                )
+            }
+        )
+        let state = makeState(repository: repository, runtime: runtime)
+
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        await waitForWorkSyncNetwork(state)
+        #expect(try await cloud.fetchAll(for: workID).isEmpty)
+        #expect(state.deviceSyncState == .writer)
+
+        state.updateDocumentTitle("自動保存だけでは送らない題")
+        #expect(await state.saveNow())
+        await waitForWorkSyncNetwork(state)
+        #expect(try await cloud.fetchAll(for: workID).isEmpty)
+        #expect(state.deviceSyncState != .offlineLocal)
+        #expect(state.deviceSyncTransferState == .localPending)
+        #expect(DeviceSyncEditorStatusKind.resolve(
+            saveState: state.saveState,
+            syncState: state.deviceSyncState,
+            transferState: state.deviceSyncTransferState,
+            localDurability: state.deviceSyncLocalDurabilityState
+        ) == .savedLocally)
+
+        #expect(await state.saveAndSyncNow())
+        await waitForWorkSyncNetwork(state)
+        let remote = try await cloud.fetchAll(for: workID)
+        #expect(!remote.isEmpty)
+        #expect(remote.contains { record in
+            if case let .work(payload) = record.payload {
+                return payload.title == "自動保存だけでは送らない題"
+            }
+            return false
+        })
+        #expect(state.deviceSyncTransferState == .upToDate)
+        #expect(DeviceSyncEditorStatusKind.resolve(
+            saveState: state.saveState,
+            syncState: state.deviceSyncState,
+            transferState: state.deviceSyncTransferState,
+            localDurability: state.deviceSyncLocalDurabilityState
+        ) == .synced)
+    }
+
+    @Test("Note明示同期はlocal preflightの一時オフラインを送信禁止にしない")
+    func noteExplicitSyncIgnoresLocalPreflightOfflineFence() async throws {
+        let fixture = makeFixture(content: "本文")
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(fixture.document, at: fixture.url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let cloud = InMemoryNoteSyncCloud()
+        let dirtyStore = InMemoryNoteSyncStateStore()
+        let localResolution = try makeResolution(
+            document: fixture.document,
+            localWorkingCopyID: localWorkingCopyID,
+            workID: workID,
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: InMemoryWorkSyncJournal(),
+            remoteAvailability: .temporarilyOffline
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: InMemoryWorkSyncServer(),
+            localWorkBinding: { _, _ in localResolution },
+            binding: { _, _ in nil },
+            makeNoteSyncCoordinator: { coordinatorWorkID, _ in
+                NoteSyncCoordinator(
+                    workID: coordinatorWorkID,
+                    store: dirtyStore,
+                    cloud: cloud
+                )
+            }
+        )
+        let state = makeState(repository: repository, runtime: runtime)
+
+        #expect(await state.openDocument(at: fixture.url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+        #expect(state.deviceSyncState == .writer)
+        #expect(state.cloudLibraryActionMessage == nil)
+
+        state.updateDocumentTitle("preflightオフラインでも明示同期する題")
+        #expect(await state.saveNow())
+        #expect(try await cloud.fetchAll(for: workID).isEmpty)
+        #expect(state.deviceSyncState != .offlineLocal)
+
+        #expect(await state.saveAndSyncNow())
+        await waitForWorkSyncNetwork(state)
+        let remote = try await cloud.fetchAll(for: workID)
+        #expect(!remote.isEmpty)
+        #expect(remote.contains { record in
+            if case let .work(payload) = record.payload {
+                return payload.title == "preflightオフラインでも明示同期する題"
+            }
+            return false
+        })
+        #expect(state.deviceSyncTransferState == .upToDate)
+        #expect(state.cloudLibraryActionMessage == nil)
+        #expect(state.deviceSyncState != .offlineLocal)
+    }
+
     @Test("作品package書き出しはactive identityとjournalを変えず付随dataを保持する")
     func packageExportPreservesActiveIdentityJournalAndResources() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -1418,6 +1547,12 @@ struct DeviceSyncAppIntegrationTests {
             transferState: .upToDate,
             localDurability: .saved
         ).accessibilityLabel == "作品データをこの端末とiCloudに同期済み")
+        #expect(DeviceSyncEditorStatusKind.resolve(
+            saveState: .saved,
+            syncState: .writer,
+            transferState: .localPending,
+            localDurability: .saved
+        ).accessibilityLabel == "この端末に保存済み")
         #expect(DeviceSyncEditorStatusKind.resolve(
             saveState: .saved,
             syncState: .offlineLocal,

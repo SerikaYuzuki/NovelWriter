@@ -17,7 +17,7 @@
 | Clipboard AI支援 | 校正／アドバイス×本文選択／話／章のplain text promptを明示操作でsystem clipboardへコピー | provider／network／key／process／`NovelAI`依存なし。clipboardは他アプリ、manager、Universal Clipboardから読まれ得る共有境界で、履歴非保持やsecure eraseを保証しない |
 | AI technical contract | `NovelAI`、EditorKit transaction、App local context、fake provider、共通UI、Codex sidecar v1からB4-D abstract mock interactive sequencingまでを研究成果として保持。通常版とのbuild graphを機械監査 | D-054によりB4-E以降と実providerを最新stable SDK／APIの明示再評価まで延期。production catalogは空、production runtime接続／CLI／network／key／実原稿は0件。`.novelpkg`は変更しない |
 | Native UX | chromeはシステムLight／Darkへ追従。本文キャンバスは独立した利用者設定で既定暗色 | 下部は保存状態、再試行、話／全体文字数、検索不一致だけを示す |
-| Explicit save | Fileメニューの`Cmd+S`を`AppState.saveNow()`へ接続 | `ready`な作品だけを自動保存・終了前保存と同じrevision直列化で保存 |
+| Explicit save | Fileメニューの`Cmd+S`を`AppState.saveNow()`へ接続。iCloud結線済みなら続けて明示同期(D-073) | `ready`な作品だけを自動保存・終了前保存と同じrevision直列化で端末へ保存し、結線済みだけiCloudへ送る |
 | Build baseline | Hardened Runtimeをproject設定で有効化 | Developer ID署名・公証済み配布物、別Mac検証の完了を意味しない |
 
 ## 保持中のExperimental provider基盤（延期）

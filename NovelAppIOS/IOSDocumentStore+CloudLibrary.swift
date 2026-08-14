@@ -242,6 +242,7 @@ extension IOSDocumentStore {
             return true
         } catch {
             guard generation == libraryRefreshGeneration else { return false }
+            DeviceSyncLog.event("catalog refresh failed", error: error)
             // local inventoryは検証済み。remote catalog例外でもlocal-only作成/取込は
             // 保持し、uploadだけpublish authorityの検査で止める。
             permitsCloudLibraryMutation = true
@@ -635,10 +636,22 @@ extension IOSDocumentStore {
                     }
                 } else if localItem.record?.state == .remoteOpenPending {
                     availability = localItem.row.availability
-                } else if entry.headRevisionID == nil {
-                    availability = localItem.record?.state == .accountQuarantined
-                        ? .accountQuarantined
-                        : .localPending
+                } else if !entry.hasWorkRevisionHead {
+                    if localItem.record?.state == .accountQuarantined {
+                        availability = .accountQuarantined
+                    } else if localItem.record?.state == .needsReview {
+                        availability = .needsReview
+                    } else if attestation.matches(entry),
+                              remoteItem.availability == .locallyBound {
+                        do {
+                            try await library.markSynced(entry.workID, entry)
+                            availability = .cachedRemote
+                        } catch {
+                            availability = .localPending
+                        }
+                    } else {
+                        availability = .localPending
+                    }
                 } else if attestation.matches(entry) {
                     availability = remoteItem.availability == .locallyBound
                         && localItem.record?.acknowledgedRemote == entry
@@ -734,6 +747,7 @@ extension IOSDocumentStore {
         activeWorkID: SyncWorkID?
     ) async -> Bool {
         guard remote.connection == .available,
+              !cloudLibraryOperationInProgress,
               let portable = repository as? PortableDocumentPackageRepository else { return false }
         var didPublish = false
         for item in local.items.values {
@@ -746,12 +760,17 @@ extension IOSDocumentStore {
                       record.expectedDocumentID
                   ) else { continue }
             do {
-                if let remoteItem = remote.entries.first(where: {
+                let alreadyOnICloud: Bool = if let remoteItem = remote.entries.first(where: {
                     $0.work.workID == record.workID
                 }),
                     remoteItem.availability == .locallyBound,
-                    expected.matches(remoteItem.work),
-                    await library.hasCompletedRemoteOpenLocally(remoteItem.work) {
+                    expected.matches(remoteItem.work) {
+                    await library.hasCompletedRemoteOpenLocally(remoteItem.work)
+                        || !remoteItem.work.hasWorkRevisionHead
+                } else {
+                    false
+                }
+                if alreadyOnICloud {
                     // Initial publish完了→App registry acknowledgement前の窓は、
                     // exact remote/domain proofをmerge側でmarkSyncedする。ここで
                     // 同じrevisionをhidden coordinatorへ二重送信しない。
@@ -1124,6 +1143,7 @@ extension IOSDocumentStore {
               item.availability.canPublishToCloud(connection: cloudLibraryConnection),
               let library = deviceSyncRuntime?.library,
               let portable = repository as? PortableDocumentPackageRepository else { return false }
+        DeviceSyncLog.event("publish begin chooser")
         cloudLibraryOperationInProgress = true
         defer { cloudLibraryOperationInProgress = false }
         let published = await documentOperationGate.perform { [weak self] in
@@ -1133,10 +1153,13 @@ extension IOSDocumentStore {
                 let url = try await library.packageURL(workID)
                 let document = try await portable.validatePortablePackage(at: url)
                 if startupState == .ready, activeCloudWorkID == workID {
+                    DeviceSyncLog.event("publish path workbench-document")
                     try await library.publishNewWork(workID, document, url)
                 } else {
+                    DeviceSyncLog.event("publish path chooser-resume")
                     try await library.resumeInitialWorkPublication(workID, document, url)
                 }
+                DeviceSyncLog.event("publish ok")
                 return true
             } catch {
                 presentCloudLibraryActionFailure(
@@ -1362,8 +1385,8 @@ extension IOSDocumentStore {
     }
 
     private func presentCloudLibraryActionFailure(_ error: any Error, message: String) {
-        print("[FUMINIWA] cloud-library action failed(\(String(reflecting: type(of: error))))")
-        operationErrorMessage = message
+        DeviceSyncLog.event("action failed", error: error)
+        operationErrorMessage = DeviceSyncLog.userFacingMessage(message, error: error)
     }
 
     func recordCloudLibraryPackageMutationIfNeeded(

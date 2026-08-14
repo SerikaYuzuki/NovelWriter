@@ -86,6 +86,7 @@ public final class CloudKitChangeTrackingDriver: @unchecked Sendable {
         do {
             try await engine.sendChanges(options)
         } catch {
+            CloudKitSyncDiagnostic.log("cloudkit sendPendingChanges failed", error: error)
             throw CloudKitErrorMapper.map(error)
         }
     }
@@ -142,6 +143,7 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
             }
         case let .accountChange(change):
             let kind = Self.accountChangeKind(change)
+            pendingMailbox.clearObservedNoteWorkIDs()
             async let cancellation: Void = syncEngine.cancelOperations()
             await signalHandler?(.accountChanged(kind))
             await cancellation
@@ -150,6 +152,9 @@ private final class CloudKitChangeTrackingDelegate: CKSyncEngineDelegate, @unche
                 await signalHandler?(.zoneReset)
             }
         case let .fetchedRecordZoneChanges(changes):
+            pendingMailbox.recordObservedNoteWorkIDs(
+                fromRecordNames: changes.modifications.map(\.record.recordID.recordName)
+            )
             let hasRelevantModification = changes.modifications.contains {
                 $0.record.recordID.zoneID == CloudKitSyncSchema.zoneID
             }

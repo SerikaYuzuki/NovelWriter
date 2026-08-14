@@ -58,6 +58,12 @@ struct IOSDeviceSyncIntegrationTests {
         ).accessibilityLabel == "この端末に保存済み、iCloudにも同期済み")
         #expect(IOSDeviceSyncEditorStatusKind.resolve(
             saveState: .saved,
+            syncState: .writer,
+            transferState: .localPending,
+            localDurability: .saved
+        ).accessibilityLabel == "この端末に保存済み")
+        #expect(IOSDeviceSyncEditorStatusKind.resolve(
+            saveState: .saved,
             syncState: .offlineLocal,
             transferState: .localPending,
             localDurability: .saved

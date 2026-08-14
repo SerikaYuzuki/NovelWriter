@@ -62,6 +62,7 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.plot.card.rail` | プロットカード | 執筆時のみ表示 | 移動・削除可 | 選択中の章のカードを右側のスライド式ペインに表示 |
 | `workbench.device.sync.status` | クラウド同期 | 執筆時のみ表示 | 固定・話メモの左 | 保存・iCloud同期・オフライン・統合必要の状態を表示 |
 | `workbench.cloud.publish` | iCloudに保存 | 未公開のlocal-only／localPendingかつsigned-inのときだけ表示 | 固定・同期状態の右 | 検証済みlocal packageを現在のiCloud accountへ明示保存する。Fileメニューにも同じ項目がある |
+| `workbench.cloud.sync` | iCloudと同期 | iCloudへ結んだ執筆中だけ表示 | 固定・「iCloudに保存」の右 | 端末へ保存済みの変更をiCloudへ送り、他端末の更新を取り込む。Fileメニューの`Cmd+S`と同じ。自動保存では送らない |
 | `workbench.chapter.memo` | 話メモ | 表示 | 移動・削除可 | 選択話のメモを popover で編集 |
 | `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
 | `workbench.export` | 書き出す… | 執筆時のみ表示 | 移動・削除可 | TXT / Markdown / EPUBの形式選択と保存パネルを開く |
@@ -72,7 +73,7 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
 | Editor search | 話内を検索 | 表示 | 右端固定 | 選択話の本文検索 |
 
-`ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。クラウド同期を編集操作列へ追加し、プロットカード参照を編集操作としてカスタマイズ可能にした現在の toolbar ID は `novelwriter.workbench.v6` とする。既存のv5カスタマイズは新しい既定配置へ移行する。
+`ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。クラウド同期を編集操作列へ追加し、プロットカード参照を編集操作としてカスタマイズ可能にした現在の toolbar ID は `novelwriter.workbench.v7` とする。既存のv6カスタマイズは新しい既定配置へ移行する。
 
 旧設計の`workbench.ai.toggle`と`Cmd+J`はD-040で撤去済みであり、別機能へIDやショートカットを再利用しない。AIを実装する場合は、プライバシーと送信同意を含む新しい製品契約を先に定義する。
 

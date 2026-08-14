@@ -367,6 +367,19 @@ enum CloudKitSyncRecordNames {
         recordName.hasPrefix("v1.note.")
     }
 
+    /// `v1.note.<workUUID>.<kind>.<entityUUID>` から WorkID だけを取る。
+    /// ログや UI には出さず、catalog の record ID 取得に使う。
+    static func workID(fromNoteRecordName name: String) -> SyncWorkID? {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 5,
+              parts[0] == "v1",
+              parts[1] == "note",
+              let uuid = UUID(uuidString: String(parts[2])) else {
+            return nil
+        }
+        return SyncWorkID(rawValue: uuid)
+    }
+
     private static func episodeScope(_ key: EpisodeSyncKey) -> String {
         "\(prefix).work.\(key.workID.rawValue.uuidString).episode.\(key.episodeID.rawValue.uuidString)"
     }

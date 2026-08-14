@@ -2,6 +2,84 @@ import Darwin
 import Foundation
 import NovelCore
 import NovelSync
+import os
+
+#if canImport(NovelSyncCloudKit)
+import NovelSyncCloudKit
+#endif
+
+enum DeviceSyncLog {
+    private static let noteLogger = Logger(
+        subsystem: "dev.serikayuzuki.fuminiwa",
+        category: "note-sync"
+    )
+    private static let libraryLogger = Logger(
+        subsystem: "dev.serikayuzuki.fuminiwa",
+        category: "cloud-library"
+    )
+
+    /// Debug ビルドは既定オン。Scheme の環境変数 `FUMINIWA_NOTE_SYNC_DEBUG=0/1` で上書きできる。
+    static var isDebugEnabled: Bool {
+        switch ProcessInfo.processInfo.environment["FUMINIWA_NOTE_SYNC_DEBUG"] {
+        case "1": true
+        case "0": false
+        default:
+            #if DEBUG
+            true
+            #else
+            false
+            #endif
+        }
+    }
+
+    static func token(_ error: any Error) -> String {
+        #if canImport(NovelSyncCloudKit)
+        CloudKitSyncDiagnostic.token(for: error)
+        #else
+        String(reflecting: type(of: error))
+        #endif
+    }
+
+    static func userFacingMessage(_ message: String, error: any Error) -> String {
+        guard isDebugEnabled else { return message }
+        return "\(message)\n\n\(token(error))"
+    }
+
+    static func event(_ name: String, error: (any Error)? = nil) {
+        emit(prefix: "cloud-library", name: name, error: error, logger: libraryLogger)
+    }
+
+    static func note(_ name: String, error: (any Error)? = nil) {
+        emit(prefix: "note-sync", name: name, error: error, logger: noteLogger)
+    }
+
+    static func looksTemporarilyOffline(_ error: any Error) -> Bool {
+        #if canImport(NovelSyncCloudKit)
+        CloudKitSyncDiagnostic.looksTemporarilyOffline(error)
+        #else
+        false
+        #endif
+    }
+
+    private static func emit(
+        prefix: String,
+        name: String,
+        error: (any Error)?,
+        logger: Logger
+    ) {
+        let line = if let error {
+            "\(prefix) \(name)(\(token(error)))"
+        } else {
+            "\(prefix) \(name)"
+        }
+        print("[FUMINIWA] \(line)")
+        if error != nil {
+            logger.error("\(line, privacy: .public)")
+        } else if isDebugEnabled {
+            logger.info("\(line, privacy: .public)")
+        }
+    }
+}
 
 enum IOSDeviceSyncLocalPersistenceError: Error {
     case editIntentUnavailable
@@ -224,12 +302,29 @@ enum IOSDeviceSyncTransferState: Hashable {
     case localPending
     case uploading
     case upToDate
+
+    var logToken: String {
+        switch self {
+        case .notApplicable: "notApplicable"
+        case .localPending: "localPending"
+        case .uploading: "uploading"
+        case .upToDate: "upToDate"
+        }
+    }
 }
 
 enum IOSDeviceSyncRemoteAvailability: Hashable, Sendable {
     case available
     case temporarilyOffline
     case configurationBlocked
+
+    var logToken: String {
+        switch self {
+        case .available: "available"
+        case .temporarilyOffline: "temporarilyOffline"
+        case .configurationBlocked: "configurationBlocked"
+        }
+    }
 }
 
 struct IOSDeviceSyncBindingResolution: Sendable {
@@ -344,13 +439,13 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
         case .savingLocally:
             "本文をこの端末へ保存しています。入力はそのまま続けられます。"
         case .savedLocally:
-            "本文はこの端末に保存されています。"
+            "本文はこの端末に保存されています。iCloudへ送るには「iCloudと同期」を使います。"
         case .syncing:
             "本文はこの端末に保存されています。iCloudへの反映を続けています。"
         case .synced:
             "本文はこの端末とiCloudの両方に保存されています。"
         case .offline:
-            "本文はこの端末に保存されています。接続が戻ると自動で同期します。"
+            "本文はこの端末に保存されています。接続が戻ったら「iCloudと同期」で送れます。"
         case .needsReview:
             "両方の本文を保ったまま保存しています。内容を確認して統合できます。"
         case .configurationError:
@@ -402,7 +497,7 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
         if syncState == .offlineLocal {
             return .offline
         }
-        if transferState == .uploading || transferState == .localPending ||
+        if transferState == .uploading ||
             syncState == .syncing || syncState == .forcing {
             return .syncing
         }
@@ -410,6 +505,35 @@ enum IOSDeviceSyncEditorStatusKind: Hashable {
             return .synced
         }
         return .savedLocally
+    }
+
+    static func resolveForCurrentWork(
+        saveState: IOSSaveState,
+        syncState: IOSDeviceSyncUIState,
+        transferState: IOSDeviceSyncTransferState,
+        localDurability: IOSDeviceSyncLocalDurabilityState,
+        hasLocalRecoveryReview: Bool,
+        isLocalRecoveryReviewReady: Bool,
+        usesWholeWorkSync: Bool
+    ) -> Self {
+        let base = resolve(
+            saveState: saveState,
+            syncState: syncState,
+            transferState: transferState,
+            localDurability: localDurability
+        )
+        if hasLocalRecoveryReview, !isLocalRecoveryReviewReady {
+            return base == .localSaveError ? .localSaveError : .savingLocally
+        }
+        if hasLocalRecoveryReview, saveState != .failed, base != .savingLocally {
+            return .needsReview
+        }
+        if usesWholeWorkSync,
+           saveState == .saved,
+           localDurability == .failed {
+            return .syncPreparationError
+        }
+        return base
     }
 }
 

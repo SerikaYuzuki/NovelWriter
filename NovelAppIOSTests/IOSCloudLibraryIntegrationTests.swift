@@ -374,6 +374,26 @@ struct IOSCloudLibraryIntegrationTests {
         #expect(try await fixture.localStore.record(for: workID)?.state == .synced)
     }
 
+    @Test("Note catalogのnil-head locallyBoundは保存ボタンを出さず再送しない")
+    func noteCatalogLocallyBoundHidesPublishAndSkipsRetry() async throws {
+        let fixture = try IOSCloudLibraryFixture(connection: .available)
+        defer { fixture.cleanup() }
+        let document = NovelDocument.newDocument(title: "この端末から送った作品")
+        let workID = SyncWorkID()
+        try await fixture.seedPublishPendingPackage(document, workID: workID)
+        try await fixture.remote.seedNoteLocallyBound(document, workID: workID)
+        await fixture.remote.setAuthority(workID, true)
+        let store = fixture.makeStore()
+
+        await store.bootstrap()
+
+        let item = try #require(store.cloudLibraryItems.first { $0.id == workID })
+        #expect(item.availability == .cachedRemote)
+        #expect(!item.availability.canPublishToCloud(connection: .available))
+        #expect(await fixture.remote.publishCallCount() == 0)
+        #expect(try await fixture.localStore.record(for: workID)?.state == .synced)
+    }
+
     @Test("cached row選択後にregistry stateが変わった場合は開かない")
     func cachedSelectionFailsClosedAfterRegistryStateChanges() async throws {
         let fixture = try IOSCloudLibraryFixture(connection: .available)
@@ -1128,6 +1148,14 @@ private actor IOSCloudLibraryRemoteHarness {
         )
         documents[workID] = document
         return entry
+    }
+
+    func seedNoteLocallyBound(_ document: NovelDocument, workID: SyncWorkID) throws {
+        let entry = try seedNoteRemote(document, workID: workID)
+        entries[workID] = IOSDeviceSyncRemoteLibraryEntry(
+            work: entry,
+            availability: .locallyBound
+        )
     }
 
     func hideRemoteCatalog() {

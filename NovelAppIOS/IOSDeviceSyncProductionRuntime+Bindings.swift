@@ -120,6 +120,32 @@ extension IOSDeviceSyncProductionRuntimeBox {
         descriptor: SyncWorkDescriptor,
         allowedEpisodes: [EpisodeID]
     ) async throws -> AppleResolvedWorkingCopy? {
+        if let existing = pendingCreateAndBindTasks[descriptor.workID] {
+            return try await existing.value
+        }
+        let task = Task {
+            try await self.performCreateAndBindNewWork(
+                workingCopyID: workingCopyID,
+                descriptor: descriptor,
+                allowedEpisodes: allowedEpisodes
+            )
+        }
+        pendingCreateAndBindTasks[descriptor.workID] = task
+        do {
+            let resolved = try await task.value
+            pendingCreateAndBindTasks[descriptor.workID] = nil
+            return resolved
+        } catch {
+            pendingCreateAndBindTasks[descriptor.workID] = nil
+            throw error
+        }
+    }
+
+    private func performCreateAndBindNewWork(
+        workingCopyID: IOSPrivateDocumentID,
+        descriptor: SyncWorkDescriptor,
+        allowedEpisodes: [EpisodeID]
+    ) async throws -> AppleResolvedWorkingCopy? {
         let locator = try Self.locator(for: workingCopyID)
         guard try locator == AppleLocalDocumentLocator.cloudLibrary(workID: descriptor.workID) else {
             throw EpisodeSyncTransportError.unavailable
@@ -134,12 +160,14 @@ extension IOSDeviceSyncProductionRuntimeBox {
             ) {
                 switch await self.state {
                 case let .ready(services):
+                    CloudKitSyncDiagnostic.log("cloud-library startNew ready")
                     return try await services.createAndBindNewWork(
                         locator,
                         proposedDescriptor: descriptor,
                         allowedEpisodeIDs: allowedEpisodes
                     )
                 case let .blocked(blocked?):
+                    CloudKitSyncDiagnostic.log("cloud-library startNew blocked")
                     _ = try await blocked.prepareAndBindPendingWorkCreation(
                         locator,
                         proposedDescriptor: descriptor,
@@ -147,6 +175,7 @@ extension IOSDeviceSyncProductionRuntimeBox {
                     )
                     return nil
                 case .starting, .blocked(nil):
+                    CloudKitSyncDiagnostic.log("cloud-library startNew unavailable")
                     throw EpisodeSyncTransportError.unavailable
                 }
             }
@@ -160,6 +189,7 @@ extension IOSDeviceSyncProductionRuntimeBox {
                 .unbound
             }
             _ = recordCreationFailureLocalBinding(locator, status: liveStatus)
+            CloudKitSyncDiagnostic.log("cloud-library startNew failed", error: error)
             throw error
         }
         _ = recordKnownLocalBinding(locator)
@@ -249,6 +279,7 @@ extension IOSDeviceSyncProductionRuntimeBox {
             try await existing.value
             return
         }
+        CloudKitSyncDiagnostic.log("cloud-library noteSnapshot begin")
         let task = Task {
             let coordinator = try await makeNoteSyncCoordinator(
                 workID: binding.workID,
@@ -260,8 +291,10 @@ extension IOSDeviceSyncProductionRuntimeBox {
         do {
             try await task.value
             pendingWorkPublicationTasks[binding.workID] = nil
+            CloudKitSyncDiagnostic.log("cloud-library noteSnapshot ok")
         } catch {
             pendingWorkPublicationTasks[binding.workID] = nil
+            CloudKitSyncDiagnostic.log("cloud-library noteSnapshot failed", error: error)
             throw error
         }
     }

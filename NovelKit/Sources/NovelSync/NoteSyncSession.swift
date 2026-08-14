@@ -88,10 +88,13 @@ public actor NoteSyncSession {
         _ choice: NoteSyncConflictChoice,
         local: WorkSnapshot,
         remote: NoteSyncRemoteDelta,
-        newWorkID: SyncWorkID
+        newWorkID: SyncWorkID,
+        expectedKeys: Set<NoteSyncEntityKey> = []
     ) async throws -> NoteSyncResolution {
         let state = try await currentState()
-        let conflictKeys = state.pendingConflictKeys
+        let conflictKeys = state.pendingConflictKeys.isEmpty
+            ? expectedKeys
+            : state.pendingConflictKeys
         let resolution = try NoteSyncReconciler.resolve(
             choice,
             workID: workID,

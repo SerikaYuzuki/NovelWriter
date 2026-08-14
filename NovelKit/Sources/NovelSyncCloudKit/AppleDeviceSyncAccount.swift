@@ -348,6 +348,18 @@ actor AppleDeviceSyncRemoteBoundary: EpisodeSyncTransport, SyncWorkCatalog,
         }
     }
 
+    func fetchNoteWorkDescriptor(_ workID: SyncWorkID) async throws -> SyncWorkDescriptor? {
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchNoteWorkDescriptor(workID)
+        }
+    }
+
+    func fetchLibraryWorks(workIDs: [SyncWorkID]) async throws -> [SyncWorkLibraryEntry] {
+        try await accountGate.performOperation { [transport] in
+            try await transport.fetchLibraryWorks(workIDs: workIDs)
+        }
+    }
+
     func save(
         _ records: [NoteSyncRecord],
         expectedDigests: [NoteSyncEntityKey: SyncContentDigest],

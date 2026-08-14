@@ -136,33 +136,13 @@ public extension AppleDeviceSyncServices {
             locator: locator,
             proposedDescriptor: proposedDescriptor
         ) {
-            // Local bind may already exist while the custom zone / Note type
-            // has not been materialized. `resolve` lists the catalog and would
-            // fail closed before `bootstrapZoneForNewSync` / `createWork`.
-            guard existing.binding.workID == proposedDescriptor.workID else {
-                throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
-            }
-            try await bootstrapZoneForNewSync()
-            try await createWork(proposedDescriptor)
-            do {
-                guard let resolved = try await resolve(
-                    locator,
-                    localSourceDocumentID: proposedDescriptor.sourceDocumentID
-                ),
-                    resolved.binding == existing.binding,
-                    resolved.allowedEpisodeIDs == existing.allowedEpisodeIDs else {
-                    throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
-                }
-                return resolved
-            } catch {
-                guard Self.canResumeCreationWithoutLiveCatalog(error) else { throw error }
-                return try await resolvedWorkingCopy(
-                    locator: locator,
-                    descriptor: proposedDescriptor,
-                    expected: existing
-                )
-            }
+            return try await resumeCompletedCreation(
+                locator,
+                proposedDescriptor: proposedDescriptor,
+                existing: existing
+            )
         }
+        CloudKitSyncDiagnostic.log("cloud-library createAndBind pending create")
         let intent = try await accountGate.performMutation { [metadataStore] in
             try await metadataStore.preparePendingWorkCreation(
                 locator,
@@ -181,10 +161,98 @@ public extension AppleDeviceSyncServices {
         try await bootstrapZoneForNewSync()
         // CloudKit側は同一workID + exact descriptorだけを冪等再試行として許す。
         try await createWork(intent.descriptor)
-        let resolved = try await bindPendingWorkCreation(intent)
-        try await accountGate.performMutation { [metadataStore] in
-            try await metadataStore.completePendingWorkCreation(intent)
+        if try await confirmedNoteWorkIdentity(intent.descriptor) {
+            CloudKitSyncDiagnostic.log(
+                "cloud-library createAndBind pending confirmed by record ID"
+            )
+            return try await completePendingCreateFromLocalBinding(intent)
         }
+        do {
+            let resolved = try await bindPendingWorkCreation(intent)
+            try await completePendingWorkCreation(intent)
+            return resolved
+        } catch {
+            guard Self.canResumeCreationWithoutLiveCatalog(error) else {
+                CloudKitSyncDiagnostic.log(
+                    "cloud-library createAndBind bind pending failed",
+                    error: error
+                )
+                throw error
+            }
+            // createWork already fetched or saved the Note work record by ID.
+            // Catalog CKQuery still needs recordName QUERYABLE (CKError 12/2015).
+            CloudKitSyncDiagnostic.log(
+                "cloud-library createAndBind pending without live catalog",
+                error: error
+            )
+            return try await completePendingCreateFromLocalBinding(intent)
+        }
+    }
+
+    private func resumeCompletedCreation(
+        _ locator: AppleLocalDocumentLocator,
+        proposedDescriptor: SyncWorkDescriptor,
+        existing: AppleDeviceSyncBindingSnapshot
+    ) async throws -> AppleResolvedWorkingCopy {
+        guard existing.binding.workID == proposedDescriptor.workID else {
+            throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+        }
+        CloudKitSyncDiagnostic.log("cloud-library createAndBind resume existing binding")
+        try await bootstrapZoneForNewSync()
+        try await createWork(proposedDescriptor)
+        if try await confirmedNoteWorkIdentity(proposedDescriptor) {
+            CloudKitSyncDiagnostic.log(
+                "cloud-library createAndBind resume confirmed by record ID"
+            )
+            return try await resolvedWorkingCopy(
+                locator: locator,
+                descriptor: proposedDescriptor,
+                expected: existing
+            )
+        }
+        do {
+            guard let resolved = try await resolve(
+                locator,
+                localSourceDocumentID: proposedDescriptor.sourceDocumentID
+            ),
+                resolved.binding == existing.binding,
+                resolved.allowedEpisodeIDs == existing.allowedEpisodeIDs else {
+                throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+            }
+            return resolved
+        } catch {
+            guard Self.canResumeCreationWithoutLiveCatalog(error) else {
+                CloudKitSyncDiagnostic.log(
+                    "cloud-library createAndBind resolve failed",
+                    error: error
+                )
+                throw error
+            }
+            CloudKitSyncDiagnostic.log(
+                "cloud-library createAndBind resolve without live catalog",
+                error: error
+            )
+            return try await resolvedWorkingCopy(
+                locator: locator,
+                descriptor: proposedDescriptor,
+                expected: existing
+            )
+        }
+    }
+
+    private func completePendingCreateFromLocalBinding(
+        _ intent: ApplePendingWorkCreationSnapshot
+    ) async throws -> AppleResolvedWorkingCopy {
+        guard let snapshot = await metadataStore.bindingSnapshot(for: intent.locator),
+              snapshot.binding.workID == intent.descriptor.workID else {
+            throw AppleDeviceSyncServicesError.pendingWorkCreationMismatch
+        }
+        let resolved = try await resolvedWorkingCopy(
+            locator: intent.locator,
+            descriptor: intent.descriptor,
+            expected: snapshot
+        )
+        try await completePendingWorkCreation(intent)
         return resolved
     }
 
@@ -279,6 +347,14 @@ public extension AppleDeviceSyncServices {
         await cloudTransport.cancelTrackedChanges()
     }
 
+    private func completePendingWorkCreation(
+        _ intent: ApplePendingWorkCreationSnapshot
+    ) async throws {
+        try await accountGate.performMutation { [metadataStore] in
+            try await metadataStore.completePendingWorkCreation(intent)
+        }
+    }
+
     private func bindPendingWorkCreation(
         _ intent: ApplePendingWorkCreationSnapshot
     ) async throws -> AppleResolvedWorkingCopy {
@@ -296,10 +372,27 @@ public extension AppleDeviceSyncServices {
         return resolved
     }
 
+    private func confirmedNoteWorkIdentity(
+        _ descriptor: SyncWorkDescriptor
+    ) async throws -> Bool {
+        guard let fetched = try await remoteBoundary.fetchNoteWorkDescriptor(
+            descriptor.workID
+        ) else {
+            return false
+        }
+        // Note work rows keep chapter order on child entities. createWork may
+        // still have an empty chapterOrder; WorkID + source document is enough.
+        return fetched.sourceDocumentID == descriptor.sourceDocumentID
+    }
+
     private func requireRemoteWork(
         _ workID: SyncWorkID,
         matching structureDigest: SyncWorkStructureDigest
     ) async throws -> SyncWorkDescriptor {
+        if let fetched = try await remoteBoundary.fetchNoteWorkDescriptor(workID),
+           fetched.workID == workID {
+            return fetched
+        }
         let works = try await remoteBoundary.listWorks()
         return try AppleDeviceSyncWorkMatcher.requireDescriptor(
             workID: workID,

@@ -11,6 +11,18 @@ extension AppState {
             !isCurrentWorkBoundToCloud
     }
 
+    var canExplicitlySyncCurrentWork: Bool {
+        startupState.isReady &&
+            permitsDocumentInteraction &&
+            noteSyncClient != nil &&
+            isCurrentWorkBoundToCloud &&
+            noteSyncConflict == nil
+    }
+
+    var isExplicitNoteSyncInFlight: Bool {
+        noteSyncClient != nil && workSyncNetworkTask != nil
+    }
+
     func dismissCloudLibraryActionMessage() {
         cloudLibraryActionMessage = nil
     }
@@ -46,6 +58,7 @@ extension AppState {
         guard canPublishCurrentWorkToCloud,
               documentSessionToken == expectedSession,
               let library = deviceSyncRuntime?.library else { return false }
+        DeviceSyncLog.event("publish begin workbench")
         let published = await documentOperationGate.perform { [weak self] in
             guard let self,
                   documentSessionToken == expectedSession,
@@ -61,6 +74,7 @@ extension AppState {
                 }
                 let document = try await portable.validatePortablePackage(at: url)
                 try await library.publishNewWork(workID, document, url)
+                DeviceSyncLog.event("publish ok")
                 return true
             } catch {
                 presentCloudLibraryActionFailure(
@@ -138,8 +152,10 @@ extension AppState {
     private func publishVerifiedLocalLibraryWork(
         _ workID: SyncWorkID
     ) async -> Bool {
+        DeviceSyncLog.event("publish begin chooser")
         guard let library = deviceSyncRuntime?.library,
               let portable = portableDocumentRepository() else {
+            DeviceSyncLog.event("publish skipped chooser missing runtime")
             return false
         }
         do {
@@ -148,10 +164,13 @@ extension AppState {
             let document = try await portable.validatePortablePackage(at: url)
             if startupState.isReady,
                documentURL.standardizedFileURL == url.standardizedFileURL {
+                DeviceSyncLog.event("publish path workbench-document")
                 try await library.publishNewWork(workID, document, url)
             } else {
+                DeviceSyncLog.event("publish path chooser-resume")
                 try await library.resumeInitialWorkPublication(workID, document, url)
             }
+            DeviceSyncLog.event("publish ok")
             return true
         } catch {
             presentCloudLibraryActionFailure(
@@ -193,8 +212,8 @@ extension AppState {
         }
     }
 
-    private func presentCloudLibraryActionFailure(_ error: any Error, message: String) {
-        print("[FUMINIWA] cloud-library action failed(\(Self.errorCategory(error)))")
-        cloudLibraryActionMessage = message
+    func presentCloudLibraryActionFailure(_ error: any Error, message: String) {
+        DeviceSyncLog.event("action failed", error: error)
+        cloudLibraryActionMessage = DeviceSyncLog.userFacingMessage(message, error: error)
     }
 }

@@ -27,7 +27,7 @@ AI providerは接続しない。利用者が選んだ原稿から校正用／ア
 - D-059のportable wire / state / force / merge、package外file journal、`NovelSyncCloudKit`のprivate CloudKit adapter、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentをsource実装した。iOS production composition、明示binding、editor／scene lifecycle、read-only／force／fence／merge UIもsource接続済みで、iOS通常71件／Device Sync 15件を含む全ローカル回帰を通過した。normal handoffの全経路、container / signing / schemaと署名済み実機検証は未完了である
 - 上記D-059状態は基準commit `508947d2`の履歴として維持する。D-060のwire protocol v1を維持したjournal schema v2、authority非依存journal、observed baseline、offline bootstrap、bounded multi-hunk automatic merge、exact head／digest／epoch takeoverはDomain source実装済みである。iOS App／UI sourceもfreeze済みで、Device Sync 42 / 42件とnative focused 2 / 2件がSimulatorで通過した。paired native Mac↔iPhone、実機IME／VoiceOver／process kill、real CloudKitは完了扱いにしない。現行v1に`HandoffRequest` recordはなく、cooperative request／grantは将来の別Decision／protocolとする
 - D-061では当時の通常iOS AppをWork経路へcutoverした（履歴）。D-071はlive経路をentity recordへ切り替え、N3までsource接続した。署名済みpairedと実CloudKitは未実施。active `UITextView`へのremote非注入は維持する
-- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にこの端末へ保存し、cached localはofflineで開く。D-071のremote-only openはentity一式をpackageへ組み立てる。D-072により、local-only行の明示「iCloudに保存」（catalog失敗中も含む）、複製、この端末からの削除を作品棚と作品ホームへ出す。CloudKit tombstoneは置かない
+- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にこの端末へ保存し、cached localはofflineで開く。D-071のremote-only openはentity一式をpackageへ組み立てる。D-072により、local-only行の明示「iCloudに保存」（catalog失敗中も含む）、複製、この端末からの削除を作品棚と作品ホームへ出す。D-073により、結線済み作品の自動保存は端末内だけ、作品ホーム／Editorの「iCloudと同期」とCommand-SだけがiCloudへ送る。CloudKit tombstoneは置かない
 - Episode／Work／Noteは別record namespaceで相互の更新を観測しない。D-071はdevelopment cutoverであり、自動migrationしない。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
@@ -47,6 +47,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - iPadはProject Sidebar / Outline / Editorの適応的な複数列、iPhoneは`NavigationStack`によるProject / Outline / Editorの段階遷移にする
 - 起点は作品棚とし、作品ホームで作品情報／執筆／書き出しを選ぶ。iPhoneは作品棚→作品ホーム→執筆Outline→Editor、iPadは同じ階層を適応的な複数列へ展開する
 - 作品ホームでプロット／伏線、登場人物、世界観、資料、設定を選び、既存packageデータを追加／編集／削除／並べ替えできる
+- 作品ホームとEditorのツールバーから、app-private `.novelpkg`の手動スナップショットを保存・一覧・確認付き復元できる。復元前に現在状態を別snapshotへ退避する。編集後約5分とアプリ退避時にも作品全体の自動スナップショットを残し、古い自動分は間引く(D-074)。snapshot履歴はiCloudへ送らない
 - iOS chromeは初回Darkを既定とし、システム追従／Light／Darkへ変更できる。外観設定はpackageへ保存しない
 - 校正／アドバイス×本文選択／話／章の6種類のprompt copyを提供する
 - Dynamic Type、VoiceOver、ハードウェアキーボード、ソフトウェアキーボード、scene非アクティブ化を検証する
@@ -145,6 +146,10 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 - 一覧、削除確認、共有は表示時の作品identityと資料IDを保持し、待機中に作品が変わった操作を別作品へ適用しない
 - 外部原本の資料を直接編集したり、任意の外部path／bookmarkをpackageへ保存したりしない
 
+### 4.5a スナップショット
+
+手動スナップショットはMacと同じくapp-private `.novelpkg`内の端末内履歴であり、CloudKitへ載せない。作品ホームとEditorのツールバーから保存・一覧・確認付き復元へ到達する。復元は現在状態を先に別snapshotへ退避し、失敗時は表示中の作品を切り替えない。編集（本文だけでなく人物・プロット・伏線・世界観などを含む）があってから約5分後にも作品全体の自動スナップショットを残し、過去へ進むほど自動分の密度を下げる(D-074)。アプリ退避時に未退避の編集があれば待ち時間を待たない。
+
 ### 4.6 D-071 Note Sync
 
 現行iOS Appのlive同期はD-071のentity recordである。作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観を同期する。資料／attachment、snapshot履歴、端末設定は含めない。画面はapp-private `.novelpkg`を正とし、`UITextView`の入力とlocal保存を通信完了で待たせない。変わったentityだけを裏で送る。同じentityが衝突したら合成せず、この端末／iCloud／両方を別作品として残す、を選ばせる。D-063の作品棚catalogは維持し、remote-only openはentity一式をpackageへ組み立てる。
@@ -156,7 +161,7 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 3. 変わったentity IDをdirty setへ保存する
 4. `CKSyncEngine`へpendingを登録し、次の入力とlocal保存を止めない
 
-再接続後、片側だけ進んだentityは確認せず取り込む／送る。同じentityを両方で変えた場合だけ確認する。iPhone／iPadとも **この端末／iCloud／両方を別作品として残す** を示し、統合案は出さない。「あとで」で閉じても衝突は保持し、cloud衝突中はEditorとlocal保存を続ける。
+再接続後、片側だけ進んだentityは確認せず取り込む／送る。同じentityを両方で変えた場合だけ確認する。iPhone／iPadとも **この端末／iCloud／両方を別作品として残す** を示し、統合案は出さない。「あとで」で閉じても衝突は保持し、cloud衝突中はEditorを止めない。3択の適用失敗はProgressViewだけで終わらせず、`[FUMINIWA] note-sync resolve`のtoken付きログと失敗ダイアログを出す。keepLocalのCloudKit saveはengine ackなしを成功としない。
 
 remote callbackからactiveな`UITextView`へ本文を注入しない。編集中の話と衝突しているremoteは、話を切り替えるか利用者が選ぶまで入れない。D-061のWorkSnapshot一括転送、3-way merge、3面reviewは履歴である。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章とD-071を正とする。
 
@@ -164,7 +169,7 @@ D-071はdevelopment cutoverであり、Work revision／Episode leaseからの自
 
 ### 4.7 D-063 iCloud作品library／bootstrap
 
-iOS / iPadOSのroot作品棚は、private CloudKitのWork catalogとiOS端末内で検証した1 work 1 recordのregistryを`SyncWorkID`だけでmergeする。通常時は1つの「iCloudの作品」だけを表示し、package名、document ID、タイトル、構造digestによるdeduplicate／automatic bindingを行わない。path、保存場所、Files上の作業コピー、「このデバイス」と「iCloud」の二重棚を出さない。refresh失敗で検証済みlocal行を消さず、malformed remote rowはそのworkだけを隔離する。
+iOS / iPadOSのroot作品棚は、private CloudKitのWork catalogとiOS端末内で検証した1 work 1 recordのregistryを`SyncWorkID`だけでmergeする。通常時は1つの「iCloudの作品」だけを表示し、package名、document ID、タイトル、構造digestによるdeduplicate／automatic bindingを行わない。path、保存場所、Files上の作業コピー、「このデバイス」と「iCloud」の二重棚を出さない。refresh失敗で検証済みlocal行を消さず、malformed remote rowはそのworkだけを隔離する。Development schemaで`TRUEPREDICATE`のCKQueryが12／2015になるときは、`workID` field query、`modificationDate` query、`CKSyncEngine`が観測したNote WorkIDのrecord ID取得を試し、catalog missのopenも同じrecord ID取得へ落とす。queryで取れた他端末作品は、この端末既知IDの補完件数が違っても棚に出す。これはQUERYABLE indexの代替ではなく、Production schema完了ではない。
 
 作業コピーはiOS専用の信頼済みprivate rootへ`<SyncWorkID>.novelpkg`として置き、URLをregistryへ保存せずWorkIDから導出する。registry／packageを読み直したattestationだけをlocal openの根拠にし、memory上の予定値だけで`synced`へ昇格しない。内部path／WorkIDは通常UI、Recovery、利用者向けerror、diagnostic logへ出さない。
 
@@ -268,11 +273,11 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 起動後はprivate CloudKit catalogと検証済みapp-private registryを1つの「iCloudの作品」として作品棚へ表示する。local／remoteの二重棚や内部package名は出さない
 - Files / iCloud Drive / 他社File Providerは「作品を取り込む…」から標準pickerを開き、外部原本を変更せずnew WorkIDの作業コピーだけを作品棚へ加える
 - remote-onlyはonline＋account確認後の明示tapでこの端末へ保存し、cached localはofflineでも開く。account未確認／mismatchではlocal packageのない旧scope row／titleを表示しない
-- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する
+- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する。作品ホームとEditorのツールバーからスナップショット一覧／保存／確認付き復元へ到達できる
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
 - 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
-- Device Syncは実際のentity送信／取得、dirty set、editor guardへ接続した状態だけを上部記号へ出し、単なるnetwork reachabilityを同期済みと見せない。同じentityが衝突した場合だけ、小さな警告からこの端末／iCloud／両方を別作品として残す、へ進める。cloud reviewを閉じてもEditorを止めない
+- Device Syncは実際のentity送信／取得、dirty set、editor guardへ接続した状態だけを上部記号へ出し、単なるnetwork reachabilityを同期済みと見せない。同じentityが衝突した場合は、明示同期のあと短い3択を出し、閉じたあとも作品ホームの「変更の確認が必要です」とEditorの警告記号から同じ3択へ戻れる。cloud reviewを閉じてもEditorを止めない
 
 ### iPad
 

@@ -232,6 +232,8 @@ final class AppState {
     /// 章をまたいで戻ったときに復元する、章ごとの最後の話選択。
     @ObservationIgnored
     private var lastSelectedEpisodeByChapter: [ChapterID: EpisodeID] = [:]
+    @ObservationIgnored private var lastAutomaticSnapshotRevision = 0
+    @ObservationIgnored private var automaticSnapshotTask: Task<Void, Never>?
 
     /// 保存要求の直列化を担う(D-017)。`document` / `documentURL` の最新値を
     /// クロージャ越しに参照するため、`self` を弱参照で捕捉できるよう `lazy` にする
@@ -723,6 +725,7 @@ final class AppState {
             guard startupLibraryRefreshIsCurrent(generation, expectedSession: expectedSession) else {
                 return
             }
+            DeviceSyncLog.event("catalog refresh failed", error: error)
             startupRemoteLibraryEntries = [:]
             // local inventory/rootはこのgenerationで検証済み。remote catalogの
             // 読込失敗はuploadを止めるが、端末内の新規・Importまで止めない。
@@ -1030,8 +1033,22 @@ final class AppState {
                     // Domainのimmutable pending revisionを先に完了し、moving headへは
                     // 通常WorkSyncで追随する。ここでcurrent catalogへ偽装しない。
                     availability = localItem.row.availability
-                } else if entry.headRevisionID == nil {
-                    availability = localItem.record?.state == .needsReview ? .needsReview : .localPending
+                } else if !entry.hasWorkRevisionHead {
+                    // D-071: Note identity is catalog truth. hasCompletedRemoteOpenLocally
+                    // is WorkControl-head specific and stays false after first save.
+                    if localItem.record?.state == .needsReview {
+                        availability = .needsReview
+                    } else if attestation.matches(entry),
+                              remoteItem.availability == .locallyBound {
+                        do {
+                            try await library.markSynced(entry.workID, entry)
+                            availability = .cachedRemote
+                        } catch {
+                            availability = .localPending
+                        }
+                    } else {
+                        availability = .localPending
+                    }
                 } else if attestation.matches(entry) {
                     let exactAck = localItem.record?.acknowledgedRemote == entry
                     availability = remoteItem.availability == .locallyBound && exactAck
@@ -1101,6 +1118,7 @@ final class AppState {
         library: DeviceSyncLibraryRuntime
     ) async -> Bool {
         guard remote.connection == .available,
+              !isStartupLibraryOperationInProgress,
               let portableRepository = repository as? PortableDocumentPackageRepository else {
             return false
         }
@@ -1114,6 +1132,22 @@ final class AppState {
                       record.workID,
                       record.expectedDocumentID
                   ) else { continue }
+            let alreadyOnICloud: Bool = if let remoteItem = remote.entries.first(where: {
+                $0.work.workID == record.workID
+            }),
+                remoteItem.availability == .locallyBound,
+                expected.matches(remoteItem.work) {
+                await library.hasCompletedRemoteOpenLocally(remoteItem.work)
+                    || !remoteItem.work.hasWorkRevisionHead
+            } else {
+                false
+            }
+            if alreadyOnICloud {
+                // Initial publish完了→App registry acknowledgement前の窓は、
+                // exact remote/domain proofをmerge側でmarkSyncedする。ここで
+                // 同じrevisionをhidden coordinatorへ二重送信しない。
+                continue
+            }
             do {
                 try await library.validateInstalledPackage(record.workID)
                 let url = try await library.packageURL(record.workID)
@@ -3536,27 +3570,122 @@ final class AppState {
     /// 現在の作品状態をスナップショットとして保存する。
     ///
     /// まず通常保存を完了させてから、対応リポジトリにスナップショット作成を依頼する。
-    /// 非対応リポジトリの場合は `nil` を返す。
+    /// 非対応リポジトリの場合は `nil` を返す。本文だけでなく人物・プロット・伏線・
+    /// 世界観・あらすじを含む作品全体を残す(D-074)。
     func createSnapshot(expectedSession: DocumentSessionToken? = nil) async -> URL? {
         await performForCurrentDocument(expectedSession: expectedSession, ifStale: nil) {
-            await createSnapshotSerially()
+            await createSnapshotSerially(kind: .manual)
         }
     }
 
-    private func createSnapshotSerially() async -> URL? {
-        guard let repository = repository as? SnapshottingDocumentRepository else { return nil }
+    func scheduleAutomaticSnapshotAfterEdit() {
+        guard startupState.isReady, !isDocumentTransitionInProgress, !isTerminationPending else { return }
+        if let automaticSnapshotTask, !automaticSnapshotTask.isCancelled {
+            return
+        }
+        automaticSnapshotTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: DocumentSnapshotPolicy.automaticDelayNanoseconds)
+            while !Task.isCancelled {
+                guard let self else { return }
+                if case .compositionInProgress = editorCommandSession.captureActiveCommittedText() {
+                    try? await Task.sleep(
+                        nanoseconds: DocumentSnapshotPolicy.automaticCompositionRetryNanoseconds
+                    )
+                    continue
+                }
+                await createAutomaticSnapshotIfNeeded()
+                return
+            }
+        }
+    }
+
+    func captureAutomaticSnapshotForBackground() async {
+        cancelAutomaticSnapshotScheduling()
+        await createAutomaticSnapshotIfNeeded()
+    }
+
+    @discardableResult
+    func createAutomaticSnapshotIfNeeded() async -> URL? {
+        await performForCurrentDocument(expectedSession: nil, ifStale: nil) {
+            await createAutomaticSnapshotSerially()
+        }
+    }
+
+    private func cancelAutomaticSnapshotScheduling() {
+        automaticSnapshotTask?.cancel()
+        automaticSnapshotTask = nil
+    }
+
+    private func scheduleAutomaticSnapshotCompositionRetry() {
+        guard automaticSnapshotTask == nil || automaticSnapshotTask?.isCancelled == true else { return }
+        automaticSnapshotTask = Task { [weak self] in
+            try? await Task.sleep(
+                nanoseconds: DocumentSnapshotPolicy.automaticCompositionRetryNanoseconds
+            )
+            guard !Task.isCancelled else { return }
+            await self?.createAutomaticSnapshotIfNeeded()
+        }
+    }
+
+    private func createAutomaticSnapshotSerially() async -> URL? {
+        automaticSnapshotTask = nil
+        guard startupState.isReady, !isDocumentTransitionInProgress, !isTerminationPending else {
+            print("[FUMINIWA] snapshot auto skipped(not-ready)")
+            return nil
+        }
+        if case .compositionInProgress = editorCommandSession.captureActiveCommittedText() {
+            print("[FUMINIWA] snapshot auto skipped(ime)")
+            scheduleAutomaticSnapshotCompositionRetry()
+            return nil
+        }
+        guard await saveCoordinator.saveNow() else {
+            print("[FUMINIWA] snapshot auto skipped(local-save-failed)")
+            return nil
+        }
+        guard saveCoordinator.lastSavedRevision > lastAutomaticSnapshotRevision else {
+            print("[FUMINIWA] snapshot auto skipped(unchanged)")
+            return nil
+        }
+        return await createSnapshotSerially(kind: .automatic)
+    }
+
+    private func createSnapshotSerially(kind: DocumentSnapshotKind) async -> URL? {
+        guard repository is SnapshottingDocumentRepository else { return nil }
         guard await saveCoordinator.saveNow() else { return nil }
         let documentSnapshot = document
         let packageURL = documentURL
 
         do {
-            return try await saveCoordinator.performExclusive {
-                try await repository.saveSnapshot(documentSnapshot, to: packageURL)
+            let url = try await saveCoordinator.performExclusive {
+                try await saveSnapshotOnRepository(
+                    documentSnapshot,
+                    to: packageURL,
+                    kind: kind
+                )
             }
+            lastAutomaticSnapshotRevision = saveCoordinator.lastSavedRevision
+            if kind == .manual {
+                cancelAutomaticSnapshotScheduling()
+            }
+            return url
         } catch {
             print("[FUMINIWA] スナップショット保存に失敗しました(\(Self.errorCategory(error)))")
             return nil
         }
+    }
+
+    private func saveSnapshotOnRepository(
+        _ document: NovelDocument,
+        to packageURL: URL,
+        kind: DocumentSnapshotKind
+    ) async throws -> URL {
+        if let repository = repository as? any AutomaticSnapshottingDocumentRepository {
+            return try await repository.saveSnapshot(document, to: packageURL, kind: kind)
+        }
+        guard let repository = repository as? SnapshottingDocumentRepository else {
+            throw CancellationError()
+        }
+        return try await repository.saveSnapshot(document, to: packageURL)
     }
 
     /// 現在の作品パッケージに保存されているスナップショットを新しい順で返す。
@@ -3678,10 +3807,29 @@ final class AppState {
     }
 
     /// Fileメニューの明示保存。自動保存と同じ直列化経路を使う。
+    /// iCloudへ結んだ作品の`Cmd+S`は、同じlocal保存のあと明示同期する(D-073)。
     @discardableResult
     func saveNow() async -> Bool {
         guard startupState.isReady else { return false }
         return await saveCoordinator.saveNow()
+    }
+
+    /// 自動保存・話切替・終了前保存は使わない。Fileメニューの`Cmd+S`と
+    /// 「iCloudと同期」だけが、local flushのあとNote send／pullを始める。
+    @discardableResult
+    func saveAndSyncNow() async -> Bool {
+        DeviceSyncLog.note("explicit requested")
+        guard permitsDocumentInteraction else {
+            DeviceSyncLog.note("explicit skipped(no-interaction)")
+            return false
+        }
+        let saved = await saveNow()
+        guard saved else {
+            DeviceSyncLog.note("explicit skipped(local-save-failed)")
+            return false
+        }
+        await syncBoundNoteWorkIfNeeded()
+        return saved
     }
 
     /// 保存失敗後に、現在の未保存 revision を明示的に再試行する。
@@ -3702,6 +3850,7 @@ final class AppState {
         switch event {
         case .dirty:
             saveState = .unsaved
+            scheduleAutomaticSnapshotAfterEdit()
         case .saving:
             saveState = .saving
         case .saved:
@@ -3860,6 +4009,8 @@ final class AppState {
         saveState = .saved
         startupState = .ready
         rememberDocumentURL(url)
+        cancelAutomaticSnapshotScheduling()
+        lastAutomaticSnapshotRevision = saveCoordinator.lastSavedRevision
     }
 
     private func advanceDocumentSession(document: NovelDocument, url: URL) {
@@ -3923,6 +4074,7 @@ final class AppState {
         ) { [weak self] _ in
             Task { @MainActor in
                 await self?.flushDeviceSyncForBackground(waitForRemote: false)
+                await self?.captureAutomaticSnapshotForBackground()
             }
         }
     }
@@ -3936,6 +4088,7 @@ final class AppState {
         ) { [weak self] _ in
             Task { @MainActor in
                 await self?.flushDeviceSyncForBackground(waitForRemote: false)
+                await self?.captureAutomaticSnapshotForBackground()
             }
         }
     }

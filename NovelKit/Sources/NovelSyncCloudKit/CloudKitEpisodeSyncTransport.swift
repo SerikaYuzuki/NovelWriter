@@ -88,13 +88,17 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
     /// missing/deleted zoneを自動再作成せずblockedにする。
     public func bootstrapZoneForNewSync() async throws {
         if case .ready = zoneLifecycle {
+            CloudKitSyncDiagnostic.log("cloudkit zone bootstrap skipped(lifecycle=ready)")
             return
         }
+        CloudKitSyncDiagnostic.log("cloudkit zone bootstrap begin")
         do {
             _ = try await database.recordZone(for: CloudKitSyncSchema.zoneID)
             zoneLifecycle = .ready
+            CloudKitSyncDiagnostic.log("cloudkit zone bootstrap ready(existing)")
             return
         } catch {
+            CloudKitSyncDiagnostic.log("cloudkit zone lookup failed", error: error)
             guard CloudKitErrorMapper.isUnknownItem(error)
                 || CloudKitErrorMapper.isZoneMissing(error)
                 || CloudKitErrorMapper.isZoneReset(error) else {
@@ -106,10 +110,13 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
         do {
             _ = try await database.save(zone)
             zoneLifecycle = .ready
+            CloudKitSyncDiagnostic.log("cloudkit zone bootstrap ready(created)")
         } catch {
+            CloudKitSyncDiagnostic.log("cloudkit zone save failed", error: error)
             if CloudKitErrorMapper.containsServerRecordChanged(error) {
                 _ = try await database.recordZone(for: CloudKitSyncSchema.zoneID)
                 zoneLifecycle = .ready
+                CloudKitSyncDiagnostic.log("cloudkit zone bootstrap ready(serverRecordChanged)")
             } else {
                 throw mappedOperationError(error)
             }
@@ -156,6 +163,7 @@ public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog
             if CloudKitErrorMapper.isUnknownItem(error) || CloudKitErrorMapper.isZoneMissing(error) {
                 // A missing zone is the empty first-save window. Do not poison
                 // the actor; `bootstrapZoneForNewSync` is the only creator.
+                CloudKitSyncDiagnostic.log("cloudkit ensureZone missing", error: error)
                 throw CloudKitSyncAdapterError.zoneUnavailable
             }
             // account/networkの一時失敗ではactorを永久にblockedにしない。

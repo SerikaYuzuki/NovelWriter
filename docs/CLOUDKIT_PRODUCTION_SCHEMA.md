@@ -71,7 +71,7 @@ payloadはinline JSONかentity `CKAsset`のどちらか一方。両方または�
 
 cleanなDevelopment containerにはcustom zoneがまだ存在しない。live account確認済みで、confirmed binding、cached remote head、pending downloadがない場合だけ、zone-not-foundを空の利用可能catalogとして扱う。その後、利用者の明示的新規作成が`bootstrapZoneForNewSync`を通ってzoneを作る。
 
-zone作成後、最初のWorkControl保存前にprocessが終了し、catalog queryがtyped `.invalidArguments`になった場合は、durableなpending createとbindingがlocator／WorkID単位で完全に1対1一致する時だけ同じ作成を再開する。unbound pending create、confirmed binding、件数／WorkID不一致、cached remote row、pending openでは再開しない。zone reset、malformed record、account未確認／変更、既存remote証跡があるzone-not-foundはfail-closedのままとする。このmappingと復旧は実Development containerのprocess-kill境界でも確認する。
+zone作成後、Note catalogのCKQueryがCKError 12 / CKInternalErrorDomain 2015（`.invalidArguments`）になるのは、`FUMINIWANoteWorkV1`が未作成か`recordName`がQUERYABLEでないDevelopment窓である。account scopeがありcached remote／pending downloadがなければ空のavailable catalogとして扱い、明示の「iCloudに保存」で型をJIT作成する。保存済みのNote workはCKQueryではなくrecord ID fetchで棚へ戻す。confirmed local bindingだけを理由にfail-closedにしない。missing zoneはconfirmed bindingがあるとfail-closed。zone reset、malformed record、account未確認／変更はfail-closedのままとする。別端末のremote-only一覧はDashboardで`recordName`と`workID`をQUERYABLEにしたあと。
 
 ## 3. Production deploy
 
@@ -115,7 +115,7 @@ N4の署名済み検証はDevelopmentとNote 7 typeで行う。この章のProdu
 
 ### 5.2 実施と報告
 
-本文、話タイトルの全文、local path、CloudKitの生error payloadは送らない。各項目は成功／失敗、画面の状態、Consoleの`[FUMINIWA] note-sync`行だけでよい。
+本文、話タイトルの全文、local path、CloudKitの生error payloadは送らない。各項目は成功／失敗、画面の状態、Consoleの`[FUMINIWA] note-sync`行だけでよい。明示同期は`explicit requested`／`explicit begin`／`explicit send`／`send ok`、拒否は`explicit skipped(…)`、通信失敗は`network failed(TypeName)`。
 
 1. **往復**: Macで新規作品を作り、話を1つ書いて保存する。iPhoneの「iCloudの作品」に同じ作品が出て、開くと本文が一致する。
 2. **逆方向**: iPhoneで別の話または人物を足して保存する。Macをforegroundに戻し、追加分だけが入る。入力中のEditorが巻き戻らない。

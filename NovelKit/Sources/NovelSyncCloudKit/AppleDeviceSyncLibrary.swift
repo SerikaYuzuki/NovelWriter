@@ -133,26 +133,31 @@ extension AppleDeviceSyncMetadataSnapshot {
 }
 
 enum AppleDeviceSyncLibraryBootstrapPolicy {
-    /// A signed-in empty shelf must remain `.available` so explicit first save
-    /// can JIT-create `FUMINIWANote*V1`. Missing zone, missing record type
-    /// (`unknownItem` → `recordNotFound`), and Development `invalidArguments`
-    /// before the type exists are that empty window. Cached remotes, pending
-    /// downloads, and confirmed bindings stay fail-closed.
+    /// A signed-in empty Note shelf must remain `.available` so explicit first
+    /// save can JIT-create `FUMINIWANote*V1`. `CKQuery` with a TRUE predicate
+    /// maps to `.invalidArguments` (CKError 12 / CKInternalErrorDomain 2015)
+    /// when the type is missing or `recordName` is not QUERYABLE.
+    ///
+    /// Missing zone still requires a pristine graph (`permitsInitialZoneCreation`)
+    /// because a deleted zone is not the same window. Cached remotes and pending
+    /// downloads stay fail-closed. Confirmed local bindings alone do not.
     static func permitsEmptyAvailableCatalog(
         for error: any Error,
         metadata: AppleDeviceSyncMetadataSnapshot
     ) -> Bool {
-        guard metadata.permitsInitialZoneCreation else { return false }
-        return isEmptyCatalogSchemaError(error)
+        guard metadata.accountScope != nil else { return false }
+        guard isEmptyCatalogSchemaError(error) else { return false }
+        if isMissingZoneError(error) {
+            return metadata.permitsInitialZoneCreation
+        }
+        guard metadata.cachedLibraryEntries.isEmpty,
+              metadata.pendingLibraryOpens.isEmpty else { return false }
+        return true
     }
 
     /// Missing zone / Note type is an empty Development shelf, not a deleted graph.
     static func isEmptyCatalogSchemaError(_ error: any Error) -> Bool {
-        let adapter: CloudKitSyncAdapterError = if let typed = error as? CloudKitSyncAdapterError {
-            typed
-        } else {
-            CloudKitErrorMapper.map(error)
-        }
+        let adapter = mappedAdapter(error)
         return switch adapter {
         case .zoneUnavailable, .invalidArguments, .recordNotFound:
             true
@@ -164,13 +169,73 @@ enum AppleDeviceSyncLibraryBootstrapPolicy {
             false
         }
     }
+
+    static func isMissingZoneError(_ error: any Error) -> Bool {
+        let adapter = mappedAdapter(error)
+        return switch adapter {
+        case .zoneUnavailable:
+            true
+        case let .partialFailure(kinds):
+            kinds.contains(.zoneUnavailable)
+        default:
+            false
+        }
+    }
+
+    private static func mappedAdapter(_ error: any Error) -> CloudKitSyncAdapterError {
+        if let typed = error as? CloudKitSyncAdapterError {
+            typed
+        } else {
+            CloudKitErrorMapper.map(error)
+        }
+    }
 }
 
-protocol AppleDeviceSyncLibraryRemote: SyncWorkLibraryCatalog, WorkSyncTransport, NoteSyncLibraryFetching {}
+protocol AppleDeviceSyncLibraryRemote: SyncWorkLibraryCatalog, WorkSyncTransport, NoteSyncLibraryFetching {
+    /// CKQuery needs `recordName` QUERYABLE. Known WorkIDs are fetched by
+    /// record ID so a Development empty-schema window can still surface
+    /// works this device already created or bound.
+    func fetchLibraryWorks(workIDs: [SyncWorkID]) async throws -> [SyncWorkLibraryEntry]
+}
 
 extension AppleDeviceSyncLibraryRemote {
     func fetchNoteRecords(for _: SyncWorkID) async throws -> [NoteSyncRecord] {
         throw AppleDeviceSyncServicesError.remoteWorkHasNoHead
+    }
+
+    func fetchLibraryWorks(workIDs: [SyncWorkID]) async throws -> [SyncWorkLibraryEntry] {
+        guard !workIDs.isEmpty else { return [] }
+        let wanted = Set(workIDs)
+        return try await listLibraryWorks().filter { wanted.contains($0.workID) }
+    }
+}
+
+enum AppleDeviceSyncKnownCatalogIdentities {
+    static func missingWorkIDs(
+        listed: [SyncWorkLibraryEntry],
+        metadata: AppleDeviceSyncMetadataSnapshot
+    ) -> [SyncWorkID] {
+        let listedIDs = Set(listed.map(\.workID))
+        var known = Set(metadata.bindings.values.map(\.binding.workID))
+        known.formUnion(metadata.pendingWorkCreations.values.map(\.descriptor.workID))
+        known.formUnion(metadata.pendingLibraryOpens.keys)
+        known.formUnion(metadata.cachedLibraryEntries.keys)
+        return known.subtracting(listedIDs).sorted {
+            $0.rawValue.uuidString < $1.rawValue.uuidString
+        }
+    }
+
+    static func merging(
+        listed: [SyncWorkLibraryEntry],
+        fetched: [SyncWorkLibraryEntry]
+    ) -> [SyncWorkLibraryEntry] {
+        var byID = Dictionary(uniqueKeysWithValues: listed.map { ($0.workID, $0) })
+        for entry in fetched where byID[entry.workID] == nil {
+            byID[entry.workID] = entry
+        }
+        return byID.values.sorted {
+            $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString
+        }
     }
 }
 
@@ -195,8 +260,16 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
         // A catalog read is validation, not an asset fetch. Persist the exact
         // intent after validating the moving head and before fetching its asset.
         let currentEntries = try await remote.listLibraryWorks()
-        guard let current = currentEntries.first(where: { $0.workID == expected.workID }) else {
-            throw AppleDeviceSyncServicesError.remoteWorkNotFound
+        let current: SyncWorkLibraryEntry
+        if let listed = currentEntries.first(where: { $0.workID == expected.workID }) {
+            current = listed
+        } else {
+            CloudKitSyncDiagnostic.log("cloud-library open catalog-miss fetch-by-id")
+            let fetched = try await remote.fetchLibraryWorks(workIDs: [expected.workID])
+            guard let match = fetched.first else {
+                throw AppleDeviceSyncServicesError.remoteWorkNotFound
+            }
+            current = match
         }
         guard current == expected else {
             throw AppleDeviceSyncServicesError.libraryEntryChanged
@@ -406,9 +479,9 @@ struct AppleDeviceSyncLibraryOpenCoordinator: Sendable {
 
 public extension AppleDeviceSyncServices {
     func loadLibrary() async throws -> AppleDeviceSyncLibrarySnapshot {
-        let remoteEntries: [SyncWorkLibraryEntry]
+        let listed: [SyncWorkLibraryEntry]
         do {
-            remoteEntries = try await remoteBoundary.listLibraryWorks()
+            listed = try await remoteBoundary.listLibraryWorks()
             try await accountGate.requireAvailable()
         } catch {
             let metadata = await metadataStore.snapshot()
@@ -420,16 +493,26 @@ public extension AppleDeviceSyncServices {
                 // container may have neither the custom zone nor the first
                 // `FUMINIWANoteWorkV1` type. Explicit first save JIT-creates
                 // that type, so this empty window must stay `.available`.
-                // Prior remote evidence stays closed.
+                // Prior remote evidence stays closed. Known WorkIDs are still
+                // fetched by record ID because CKQuery is not QUERYABLE.
+                CloudKitSyncDiagnostic.log(
+                    "cloud-library catalog empty-schema recovered as available",
+                    error: error
+                )
                 try await accountGate.requireAvailable()
+                let remoteEntries = try await backfillKnownLibraryWorks([], metadata: metadata)
                 return makeLibrarySnapshot(
                     metadata: metadata,
-                    remoteEntries: [],
+                    remoteEntries: remoteEntries,
                     connection: .available,
                     includeRemoteOnly: false
                 )
             }
             if CloudKitErrorMapper.isTransient(error) {
+                CloudKitSyncDiagnostic.log(
+                    "cloud-library catalog transient as offline",
+                    error: error
+                )
                 return makeLibrarySnapshot(
                     metadata: metadata,
                     remoteEntries: Array(metadata.cachedLibraryEntries.values),
@@ -439,6 +522,10 @@ public extension AppleDeviceSyncServices {
             }
             if let servicesError = error as? AppleDeviceSyncServicesError,
                case let .blocked(reason) = servicesError {
+                CloudKitSyncDiagnostic.log(
+                    "cloud-library catalog blocked reason=\(reason.rawValue)",
+                    error: error
+                )
                 return await makeLibrarySnapshot(
                     metadata: metadataStore.snapshot(),
                     remoteEntries: [],
@@ -448,10 +535,15 @@ public extension AppleDeviceSyncServices {
                     includeRemoteOnly: false
                 )
             }
+            CloudKitSyncDiagnostic.log("cloud-library catalog fail-closed", error: error)
             throw error
         }
 
         let metadata = await metadataStore.snapshot()
+        let remoteEntries = try await backfillKnownLibraryWorks(listed, metadata: metadata)
+        CloudKitSyncDiagnostic.log(
+            "cloud-library catalog listed=\(listed.count) remote=\(remoteEntries.count)"
+        )
         let entriesToCache = prioritizedLibraryCache(
             remoteEntries,
             metadata: metadata
@@ -487,9 +579,43 @@ public extension AppleDeviceSyncServices {
             metadata: metadataStore.snapshot(),
             remoteEntries: remoteEntries,
             connection: .available,
-            includeRemoteOnly: true,
+            includeRemoteOnly: false,
+            catalogDiscoveredWorkIDs: Set(listed.map(\.workID)),
             cacheStatus: cacheStatus
         )
+    }
+
+    private func backfillKnownLibraryWorks(
+        _ listed: [SyncWorkLibraryEntry],
+        metadata: AppleDeviceSyncMetadataSnapshot
+    ) async throws -> [SyncWorkLibraryEntry] {
+        let missing = AppleDeviceSyncKnownCatalogIdentities.missingWorkIDs(
+            listed: listed,
+            metadata: metadata
+        )
+        guard !missing.isEmpty else { return listed }
+        let fetched: [SyncWorkLibraryEntry]
+        do {
+            fetched = try await remoteBoundary.fetchLibraryWorks(workIDs: missing)
+        } catch {
+            if AppleDeviceSyncLibraryBootstrapPolicy.isEmptyCatalogSchemaError(error)
+                || CloudKitErrorMapper.isTransient(error) {
+                CloudKitSyncDiagnostic.log(
+                    "cloudkit catalog fetch-by-id skipped",
+                    error: error
+                )
+                return listed
+            }
+            throw error
+        }
+        guard !fetched.isEmpty else {
+            CloudKitSyncDiagnostic.log("cloudkit catalog fetch-by-id empty")
+            return listed
+        }
+        CloudKitSyncDiagnostic.log(
+            "cloudkit catalog fetch-by-id recovered count=\(fetched.count)"
+        )
+        return AppleDeviceSyncKnownCatalogIdentities.merging(listed: listed, fetched: fetched)
     }
 
     /// Persists the exact-head/destination intent before any asset fetch. The
@@ -549,6 +675,7 @@ public extension AppleDeviceSyncServices {
         remoteEntries: [SyncWorkLibraryEntry],
         connection: AppleDeviceSyncLibraryConnection,
         includeRemoteOnly: Bool,
+        catalogDiscoveredWorkIDs: Set<SyncWorkID> = [],
         cacheStatus: AppleDeviceSyncLibraryCacheStatus = .current
     ) -> AppleDeviceSyncLibrarySnapshot {
         var entriesByWorkID: [SyncWorkID: AppleDeviceSyncLibraryEntry] = [:]
@@ -562,13 +689,11 @@ public extension AppleDeviceSyncServices {
                 )
             }
         }
-        if includeRemoteOnly {
-            for pending in metadata.pendingLibraryOpens.values {
-                entriesByWorkID[pending.entry.workID] = AppleDeviceSyncLibraryEntry(
-                    work: pending.entry,
-                    availability: .remoteDownloadPending
-                )
-            }
+        for pending in metadata.pendingLibraryOpens.values {
+            entriesByWorkID[pending.entry.workID] = AppleDeviceSyncLibraryEntry(
+                work: pending.entry,
+                availability: .remoteDownloadPending
+            )
         }
         for entry in remoteEntries {
             if metadata.pendingWorkCreations.values.contains(where: {
@@ -583,12 +708,12 @@ public extension AppleDeviceSyncServices {
                 // downloaded revision while its two-phase open is incomplete.
                 continue
             }
-            let availability: AppleDeviceSyncLibraryAvailability
-            if boundWorkIDs.contains(entry.workID) {
-                availability = .locallyBound
-            } else if includeRemoteOnly {
-                availability = .remoteOnly
-            } else {
+            guard let availability = AppleDeviceSyncLibraryRemoteVisibility.availability(
+                workID: entry.workID,
+                isBound: boundWorkIDs.contains(entry.workID),
+                includeAllRemoteOnly: includeRemoteOnly,
+                catalogDiscoveredWorkIDs: catalogDiscoveredWorkIDs
+            ) else {
                 continue
             }
             entriesByWorkID[entry.workID] = AppleDeviceSyncLibraryEntry(
@@ -640,6 +765,23 @@ public extension AppleDeviceSyncServices {
             }
         }
         return Array(ordered.prefix(AppleDeviceSyncMetadataStore.maximumCachedLibraryEntryCount))
+    }
+}
+
+enum AppleDeviceSyncLibraryRemoteVisibility {
+    static func availability(
+        workID: SyncWorkID,
+        isBound: Bool,
+        includeAllRemoteOnly: Bool,
+        catalogDiscoveredWorkIDs: Set<SyncWorkID>
+    ) -> AppleDeviceSyncLibraryAvailability? {
+        if isBound {
+            return .locallyBound
+        }
+        if includeAllRemoteOnly || catalogDiscoveredWorkIDs.contains(workID) {
+            return .remoteOnly
+        }
+        return nil
     }
 }
 

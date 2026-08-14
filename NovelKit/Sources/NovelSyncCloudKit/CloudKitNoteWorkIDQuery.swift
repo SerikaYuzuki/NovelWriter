@@ -14,6 +14,19 @@ enum CloudKitNoteWorkIDQuery {
         return allowsTypeScan(CloudKitErrorMapper.map(error))
     }
 
+    static func shouldUseRecordIDFallback(after error: any Error) -> Bool {
+        shouldScanType(after: error)
+    }
+
+    /// A Note type that has never been saved is missing from Development
+    /// schema. Querying it is `unknownItem`, not "this work has no rows".
+    static func shouldTreatMissingTypeAsEmpty(after error: any Error) -> Bool {
+        if let adapter = error as? CloudKitSyncAdapterError {
+            return isMissingType(adapter)
+        }
+        return isMissingType(CloudKitErrorMapper.map(error))
+    }
+
     static func matching(_ workID: SyncWorkID, in records: [CKRecord]) -> [CKRecord] {
         let expected = workID.rawValue.uuidString
         return records.filter { record in
@@ -27,6 +40,17 @@ enum CloudKitNoteWorkIDQuery {
             true
         case let .partialFailure(kinds):
             kinds.contains(.invalidArguments)
+        default:
+            false
+        }
+    }
+
+    private static func isMissingType(_ error: CloudKitSyncAdapterError) -> Bool {
+        switch error {
+        case .recordNotFound:
+            true
+        case let .partialFailure(kinds):
+            kinds == [.unknownItem]
         default:
             false
         }

@@ -160,6 +160,7 @@ struct CloudKitNoteConflictInspectorTests {
             forceOverwrite: []
         )
         #expect(classified.accepted.isEmpty)
+        #expect(classified.identical.isEmpty)
         #expect(classified.conflicts == [remote])
 
         let forced = CloudKitNoteConflictInspector.classifySaves(
@@ -169,6 +170,36 @@ struct CloudKitNoteConflictInspectorTests {
             forceOverwrite: [key]
         )
         #expect(forced.accepted == [local])
+        #expect(forced.identical.isEmpty)
         #expect(forced.conflicts.isEmpty)
+    }
+
+    @Test("same-content unacked records are identical, not a 3-choice")
+    func identicalUnackedContentIsNotConflict() throws {
+        let key = NoteSyncEntityKey.work(cloudTestWorkID)
+        let record = try NoteSyncRecord(
+            key: key,
+            payload: .work(
+                NoteSyncWorkPayload(
+                    documentID: WorkStableID(rawValue: cloudTestWorkID.rawValue),
+                    title: "same",
+                    synopsis: "",
+                    chapterOrder: [],
+                    characterOrder: [],
+                    plotCardOrder: [],
+                    flagOrder: [],
+                    worldNoteOrder: []
+                )
+            )
+        )
+        let classified = CloudKitNoteConflictInspector.classifySaves(
+            incoming: [record],
+            existing: [key: record],
+            expectedDigests: [:],
+            forceOverwrite: []
+        )
+        #expect(classified.accepted.isEmpty)
+        #expect(classified.identical == [record])
+        #expect(classified.conflicts.isEmpty)
     }
 }

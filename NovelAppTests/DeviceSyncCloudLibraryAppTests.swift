@@ -172,6 +172,28 @@ struct DeviceSyncCloudLibraryAppTests {
         #expect(state.document.title == document.title)
     }
 
+    @Test("Note catalogのnil-head locallyBoundは保存ボタンを出さず再送しない")
+    func noteCatalogLocallyBoundHidesPublishAndSkipsRetry() async throws {
+        let harness = try CloudLibraryHarness(connection: .available)
+        defer { Task { await harness.remove() } }
+        let workID = SyncWorkID()
+        let document = NovelDocument.newDocument(title: "このMacから送った作品")
+        try await harness.seedPublishPending(document: document, workID: workID)
+        try await harness.seedNoteCatalogLocallyBound(document: document, workID: workID)
+        let state = try await makeState(harness: harness)
+
+        await state.bootstrap()
+
+        let row = try #require(
+            selectionContext(state)?.works.first { $0.reference == .cloudWork(workID.rawValue) }
+        )
+        #expect(row.availability == .cachedRemote)
+        #expect(!row.availability.canPublishToCloud(connection: .available))
+        #expect(await harness.publishCallCount() == 0)
+        let record = try #require(await harness.localRecord(workID))
+        #expect(record.state == .synced)
+    }
+
     @Test("別iCloudアカウントではlocal copyを開けるが自動uploadしない")
     func differentAccountKeepsLocalWorkQuarantined() async throws {
         let harness = try CloudLibraryHarness(connection: .differentAccount)
@@ -1217,6 +1239,18 @@ private actor CloudLibraryHarness {
             DeviceSyncRemoteLibraryEntry(work: entry, availability: .remoteOnly)
         ]
         resumable[workID] = (entry, document, snapshot)
+    }
+
+    func seedNoteCatalogLocallyBound(document: NovelDocument, workID: SyncWorkID) throws {
+        let snapshot = try WorkSnapshot(document: document)
+        guard let workRecord = try NoteSyncProjection.records(workID: workID, snapshot: snapshot)
+            .first(where: { $0.key.kind == .work }) else {
+            throw CloudLibraryHarnessError.missingPreparedWork
+        }
+        let entry = try SyncWorkLibraryEntry(noteWork: workRecord)
+        remoteEntries = [
+            DeviceSyncRemoteLibraryEntry(work: entry, availability: .locallyBound)
+        ]
     }
 
     func seedAppOnlyRemoteIntent(document: NovelDocument, workID: SyncWorkID) async throws {

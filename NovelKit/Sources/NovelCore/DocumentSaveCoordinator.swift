@@ -67,6 +67,11 @@ public final class DocumentSaveCoordinator {
     private var waiters: [CheckedContinuation<Bool, Never>] = []
     private var debouncedSaveTask: Task<Void, Never>?
 
+    /// 直近にディスクへ書き出せた revision。まだ一度も保存していなければ 0。
+    public var lastSavedRevision: Int {
+        savedRevision
+    }
+
     /// `performExclusive(_:)` の実行中かどうか(Phase 4 レビュー F-A)。
     private var isExclusiveRunning = false
     /// `isExclusiveRunning` の間に来た `saveNow()` 呼び出しが登録する継続。

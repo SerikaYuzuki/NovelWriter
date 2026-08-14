@@ -454,4 +454,47 @@ struct NoteSyncCoordinatorPairingTests {
         let listedA = try await accountA.listWorkRecords()
         #expect(listedA.count == 1)
     }
+
+    @Test("first send of already-matching cloud records acks without a 3-choice")
+    func identicalUnackedRecordsDoNotBecomeReview() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let owner = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let follower = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let snapshot = try WorkTestValues.snapshot()
+        _ = try await owner.publishLocal(snapshot)
+        let send = try await follower.publishLocal(snapshot)
+        #expect(!send.hasConflicts)
+        let pulled = try await follower.pullRemote(onto: snapshot)
+        #expect(pulled.conflict == nil)
+    }
+
+    @Test("keepLocal uses presented keys when the session has no pending content conflict")
+    func keepLocalUsesPresentedKeysWhenSessionPendingEmpty() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let coordinator = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let local = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "LOCAL ONLY"
+        }
+        _ = try await coordinator.recordPackageSave(local)
+        let resolution = try await coordinator.resolve(
+            .keepLocal,
+            local: local,
+            newWorkID: NoteSyncFixtures.forkedWorkID,
+            expectedKeys: [NoteSyncFixtures.episodeKey()]
+        )
+        #expect(resolution.currentForceSendKeys == Set([NoteSyncFixtures.episodeKey()]))
+        #expect(try resolution.currentWorkSnapshot.materializedDocument().chapters[0].episodes[0].content == "LOCAL ONLY")
+    }
 }

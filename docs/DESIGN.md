@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.86
+# ふみにわ 設計書 v0.89
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -6,7 +6,7 @@
 ## 1. 目的
 
 **ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
-macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版と将来の Windows WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。Phase 7でiOS / iPadOS対応へ着手し、D-059〜D-063でapp-private作品とiCloud作品棚の基盤を実装した。D-071では通常Appのlive同期を、作品全体の1資産＋3-way mergeから、Appleメモ型のlocal-first／entity record同期へ切り替える。画面は `.novelpkg` を正として通信を待たず、変わった話・人物等だけを`CKSyncEngine`が裏で送る。衝突したら合成せず、この端末／iCloud／両方を別作品として残す、の3択にする。D-063の「iCloudの作品」、見えないplatform別app-private working copy、原本を変えないImport、identity不変のExportは維持する。Windows、Android、PDF出力、校正、要約、差分管理なども独立した境界で追加できるようにする。
+macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版と将来の Windows WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。Phase 7でiOS / iPadOS対応へ着手し、D-059〜D-063でapp-private作品とiCloud作品棚の基盤を実装した。D-071では通常Appのlive同期を、作品全体の1資産＋3-way mergeから、Appleメモ型のlocal-first／entity record同期へ切り替える。画面は `.novelpkg` を正として通信を待たず、変わった話・人物等だけをdirtyに残す。iCloudへの送信と取得は、自動保存ではなく明示の「iCloudと同期」／結線済み作品の`Cmd+S`で行う(D-073)。衝突したら合成せず、この端末／iCloud／両方を別作品として残す、の3択にする。D-063の「iCloudの作品」、見えないplatform別app-private working copy、原本を変えないImport、identity不変のExportは維持する。Windows、Android、PDF出力、校正、要約、差分管理なども独立した境界で追加できるようにする。
 
 初期段階では、以下を最優先する。
 
@@ -25,7 +25,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - Apple 向けライブラリ群は Swift の multiplatform library として作成し、Windows 版は同じ境界を .NET class library で再実装する
 - iOS / iPadOS はPhase 7として着手し、Swiftの共有domain／保存／editor ruleを再利用しつつ端末別の適応UIを実装する(D-056)
 - Windows 版は WinUI 3 + C# / .NET で別実装し、Swift ソースの直接共有ではなく schema・fixture・純粋ロジックの入出力仕様を共有する
-- Device Syncはapp-private `.novelpkg`を各端末の正本として維持する。現行通常Appのlive経路はD-071のentity recordとし、native editor→model→package保存→dirty set→`CKSyncEngine` pendingのあとだけremoteへ出す。全端末のlocal Editorはnetworkに依存せず編集できる。D-059〜D-061のEpisode／Work wireとwhole revision `CKAsset`、3-way mergeは実装履歴として残し、CloudKit等のtransportはplatform adapterへ閉じ込める(D-059〜D-071)
+- Device Syncはapp-private `.novelpkg`を各端末の正本として維持する。現行通常Appのlive経路はD-071のentity recordとし、native editor→model→package保存→dirty setまでを自動保存とする。`CKSyncEngine` pendingへの登録とsend／fetchは、結線済み作品の明示同期（toolbar「iCloudと同期」／`Cmd+S`）のあとだけ行う(D-073)。全端末のlocal Editorはnetworkに依存せず編集できる。D-059〜D-061のEpisode／Work wireとwhole revision `CKAsset`、3-way mergeは実装履歴として残し、CloudKit等のtransportはplatform adapterへ閉じ込める(D-059〜D-073)
 - Apple版の通常起動は1つの「iCloudの作品」から始め、remote catalogと検証済みplatform別app-private copyをWorkIDでmergeする。Macは単一pane、iPhone／iPadは適応navigationを使う。local path／Finder／Files上の作業copyを見せず、Finder / Open With／Files pickerも外部原本を直接開かずImport→new WorkIDとする。cached copyはofflineで開き、remote-onlyはonline＋account確認後だけdownloadする。activation直後のlocal WorkSync preflight／recovery gateは維持する(D-063)
 - AppKit / UIKit などのプラットフォーム依存処理は EditorKit 内に閉じ込める
 - NovelCore はプラットフォーム非依存の純粋なモデル層にする
@@ -40,7 +40,7 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - **テキストエンジン**: macOSの`NSTextView`とiOSの`UITextView`をTextKit 2で明示使用する(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager`への誤アクセスによるTextKit 1フォールバックを防ぐ
 - **macOS配布**: GitHub Releases による直接配布。macOS App Sandbox は採用しない(→ D-011)。iOSの配布判断へこの非Sandbox決定を流用しない
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
-- **Apple Device Sync（D-071契約、N2 CloudKit send／fetchとN3 App 3択はsource＋unit。N4はin-memory simulationのみ。署名済みpaired／Production schemaは未実施。D-063 libraryはlocal automated GO、Release NO-GO継続）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。画面はapp-private `.novelpkg`を正とし、通信を待たない。live経路は作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観をentity recordとして送り、変わったrecordだけを転送する。D-063のWorkID catalog／private working copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。attachment／snapshot履歴／unknown root／端末設定は同期しない。whole revision `CKAsset`、mutation receipt CAS、作品全体3-way merge、3面reviewは通常経路から外す。衝突は同じentityの`serverRecordChanged`だけで検出し、この端末／iCloud／両方を別作品として残す、を選ばせる。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する。D-063までのlocal証跡（`NovelSync` 142 / 142件、`NovelSyncCloudKit` 84 / 84件等）は旧経路の履歴であり、D-071実装済みへ流用しない(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059〜D-071)
+- **Apple Device Sync（D-071契約、N2 CloudKit send／fetchとN3 App 3択はsource＋unit。N4はin-memory simulationのみ。署名済みpaired／Production schemaは未実施。D-063 libraryはlocal automated GO、Release NO-GO継続）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。画面はapp-private `.novelpkg`を正とし、通信を待たない。live経路は作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観をentity recordとして送り、変わったrecordだけを転送する。自動保存はpackageとdirty setまでとし、send／fetchは明示同期だけが行う(D-073)。D-063のWorkID catalog／private working copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。attachment／snapshot履歴／unknown root／端末設定は同期しない。whole revision `CKAsset`、mutation receipt CAS、作品全体3-way merge、3面reviewは通常経路から外す。衝突は同じentityの`serverRecordChanged`だけで検出し、この端末／iCloud／両方を別作品として残す、を選ばせる。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する。D-063までのlocal証跡（`NovelSync` 142 / 142件、`NovelSyncCloudKit` 84 / 84件等）は旧経路の履歴であり、D-071実装済みへ流用しない(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059〜D-071)
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`、AIの純粋domainだけを持つNovelAIを独立targetとして扱う。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。domain / adapterのsource追加をCloudKit外部Gate完了、NovelAIの追加をprovider / sidecar / UI実装済みとは扱わない(D-043 / D-059〜D-071)
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
@@ -395,7 +395,7 @@ AI adapterを組み立てるPRでは、CodexとOpenRouterを別の具象依存�
 
 書き出しはAppStateの保存依存ではなく `ExportPresenter` の実行境界へ注入する。保存パネル確定後に `AppState.document` を値スナップショットとして一度だけ取得し、`NovelExporter` の生成／書込みをMainActor外で実行する。
 
-Device Sync有効化時は、`NovelSync`のNote transport／dirty set／library protocolへ`NovelSyncCloudKit` composition、app-private dirty store、WorkIDから導出するplatform別private working-copy root、1 work 1 atomic recordのlocal library registryを注入する。macOSは`SyncWorkingCopies-v2`、iOS / iPadOSはiOS専用private rootを使い、絶対pathを共有契約にしない。AppState／`IOSDocumentStore`やEditorKitが`CKContainer` / `CKRecord`を直接生成せず、App層はlocal package save → dirty enqueue → remote pendingと、catalog merge、private staging／install、document operation gate／Editor commandの順序だけを所有する。account / engine bootstrapやcatalog refreshに失敗しても、new／Importのlocal reserve→private package→registryをlocal-firstで完了できる。remote-only openはentity一式をpackageへ組み立てる。以前確認済みaccount scopeが一時offlineならsame-scope pendingだけを耐久化し、同じscopeでだけ自動再開する。`accountRequired`／unscoped／different account中に作ったunbound workはlocal-onlyに留め、後から現れたaccountへautomatic adopt／rebind／uploadしない。App層のdiagnostic logと利用者向けerrorへapp-private path／WorkIDを出さない。
+Device Sync有効化時は、`NovelSync`のNote transport／dirty set／library protocolへ`NovelSyncCloudKit` composition、app-private dirty store、WorkIDから導出するplatform別private working-copy root、1 work 1 atomic recordのlocal library registryを注入する。macOSは`SyncWorkingCopies-v2`、iOS / iPadOSはiOS専用private rootを使い、絶対pathを共有契約にしない。AppState／`IOSDocumentStore`やEditorKitが`CKContainer` / `CKRecord`を直接生成せず、App層はlocal package save → dirty enqueueと、明示同期時のremote send／pull、catalog merge、private staging／install、document operation gate／Editor commandの順序だけを所有する。account / engine bootstrapやcatalog refreshに失敗しても、new／Importのlocal reserve→private package→registryをlocal-firstで完了できる。remote-only openはentity一式をpackageへ組み立てる。以前確認済みaccount scopeが一時offlineならsame-scope pendingだけを耐久化し、同じscopeでだけ自動再開する。`accountRequired`／unscoped／different account中に作ったunbound workはlocal-onlyに留め、後から現れたaccountへautomatic adopt／rebind／uploadしない。App層のdiagnostic logと利用者向けerrorへapp-private path／WorkIDを出さない。
 
 ### 5.2 AppState
 
@@ -511,8 +511,8 @@ D-063／D-071のDevice Syncもこのapp-private境界を使う。`.novelpkg`全�
 - 章順と章内の話順は `manifest.json` で管理する
 - 保存はアトミックに行い、データ破損を起こしにくくする
 - 自動保存はデバウンス(例: 入力停止2秒後 + 話切り替え時 + アプリ非アクティブ時)
-- `Cmd+S`は自動保存・終了前保存と同じrevision直列化経路で直ちにapp-private working copyへ保存する。`ready`でない間と、D-061／D-063の曖昧なlocal recoveryで通常mutationがgateされている間は利用者保存を開始しない
-- スナップショットの保存・一覧・復元を提供し、復元前に現在状態を別snapshotへ退避する
+- 自動保存・話切替・終了前保存の`saveNow()`はapp-private working copyへだけ保存する。iCloudへ結んだ作品の`Cmd+S`と「iCloudと同期」は、同じlocal保存のあとNote send／pullを行う(D-073)。未結線の作品の`Cmd+S`はlocal保存だけ。`ready`でない間と、D-061／D-063の曖昧なlocal recoveryで通常mutationがgateされている間は利用者保存を開始しない
+- スナップショットの保存・一覧・復元を提供し、復元前に現在状態を別snapshotへ退避する。自動スナップショットは本文だけでなく人物・プロット・伏線・世界観・あらすじを含む作品全体を、編集があってから約5分後に残す。過去へ進むほど自動分の密度を下げ、手動分は消さない(D-074)。iCloudへは送らない
 - 作品activation／新規／取込／remote bootstrap／package書出／復元／資料操作はFIFOに直列化する。現在作品に属する非同期操作は呼び出し時のsession tokenを保持し、待機中に作品・URL・世代が変わった場合は別作品へ適用せず中止する(D-041 / D-063)
 - 新規／取込／remote bootstrapのprivate installとsnapshot復元の退避・書き戻しは通常保存と同じ排他境界で確定する。lock順はdocument operation gate → revision保存直列化とし、逆順取得しない。既存finalを別内容で上書きしない
 - 作品切替・取込・remote bootstrap・復元・終了前は、フォームと表示中のIME変換を旧作品へ確定してモデルへ同期し、最終保存／installまでWorkbench全体の変更を停止する。同じ子IDを持つ別WorkIDも本文install世代でEditorを再読込する。package書出はcurrent sessionをflushするがactive URL／session／WorkID／binding／caret／Undoを変更しない。終了要求後は新しい作品操作を受け付けない(D-041 / D-063)
@@ -855,7 +855,7 @@ Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Too
 
 D-056の **Phase 7 IOS-1〜5は実装済み**で、D-058によりIOS-6の機能parityとしてプロット／伏線、登場人物、世界観、資料、設定と4つの執筆補助commandをiOS導線へ接続した。D-059以前のiOS targetは通常macOS版と同じ5 productだけをlinkし、現在はDevice Sync用の`NovelSync`と`NovelSyncCloudKit`だけを追加している。`NovelAI`、Experimental、AI provider／SDK／Node／CLI／sidecar／credentialは含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続している。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
 
-**Device Syncの実装側の次作業は無い。** N4の残りは操作者による署名済みMac＋iPhone検証である（手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章）。公開Releaseの次Gateは **Package Validator Gate** のまま。D-071のN2／N3はsourceとunit／layoutまで完了し、N4 in-memory simulationもdomain testとしてある。署名済み実CloudKit paired、Production schema deploy、実account switch／実OS killは未実施であり、N1〜N3のlocal test成功をN4完了・同期完成・出荷可能へ読み替えない。
+**Device Syncの実装側の次作業は無い。** D-073の明示同期（自動保存はlocal、`Cmd+S`／「iCloudと同期」だけがsend／pull）はsource＋local testまで入れた。N4の残りは操作者による署名済みMac＋iPhone検証である（手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章）。公開Releaseの次Gateは **Package Validator Gate** のまま。D-071のN2／N3はsourceとunit／layoutまで完了し、N4 in-memory simulationもdomain testとしてある。署名済み実CloudKit paired、Production schema deploy、実account switch／実OS killは未実施であり、N1〜N3のlocal test成功をN4完了・同期完成・出荷可能へ読み替えない。
 
 D-063はD-062の明示選択とpreflight／recovery safetyを維持しつつ、Apple版の作品選択を1つの「iCloudの作品」へ置き換える。Macは単一pane、iPhone／iPadは既存の適応navigationを使うが、どちらもremote catalogと検証済みprivate registryをWorkIDでmergeし、path／Finder／Files上の作業copyを隠す。cached copyはofflineで開き、remote-onlyはonline＋account確認後にdurable pending-open→exact revision fetch→private staging→read-back→no-overwrite installする。bind→registry mark間で終了してもexact package／journalからoffline復旧できる。新規／Importはexpected attestationをreservation前にdurable化し、legacy nil reservationを自動採用しない。offline／account未確認またはcatalog failure中でもnew WorkIDのprivate copyを作って編集でき、staging read-back不一致は破棄して再起動後も採用しない。以前確認済みscopeの一時offlineだけ同scopeで自動再開し、unscoped／different-account中のunbound workは後から現れたaccountへ自動uploadしない。旧scope由来のcopyだけをaccount-quarantinedとして保持する。accountRequired／different accountではpackageなしremote-open pending rowを棚から除外する。malformed remote rowだけを隔離し、different-account remote-only row／titleを表示しない。available catalogからack済みworkが欠落すれば`.cloudUnavailable`でcheckmark／open／uploadを止める。active WorkSyncでlast-known headが消えた場合はtyped `remoteHeadMissing`でpublish前停止し、local stateを保持してremote復帰後に同revisionを再送する。app-private WorkID／pathはdiagnostic log／利用者向けerrorへ出さない。外部原本は保持し、package Exportはactive identity不変とする。iOSの旧private packageは自動移行せず、明示tapでnew WorkIDへcopyして旧bytesを保持する。`checkmark.icloud`はexact local attestation＋account-scoped remote receipt一致だけに使い、資料／snapshotまで完全backup済みと表示しない。restored stateのない初回`CKSyncEngine`のsame-account `.signIn`はin-flight operationをcancelしてlive identityを再検証し、一致時はreadyを維持する。macOS／iOS / iPadOSともsource complete／local automated GOである。
 
@@ -903,6 +903,34 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 
 ## 変更履歴
 
+### v0.89 (2026-08-14)
+
+D-074として、編集後の作品全体自動スナップショットと Time Machine 型の間引きを追加した。
+
+- 定期タイマーではなく、本文・人物・プロット・伏線・世界観などの編集があってから約5分後に1件残す。最小単位は5分
+- アプリを退避するときも、未退避の編集があれば同じ作品全体を残す
+- 直近1時間は密に残し、24時間は時間ごと、30日は日ごと、1年は週ごと、それより前は月ごとに間引く。手動保存は消さない
+- snapshot履歴は従来どおりiCloudへ送らない。N4署名済みpaired／Production schemaは未実施のまま
+
+### v0.88 (2026-08-14)
+
+D-073として、自動保存を端末内に限り、iCloud送信を明示同期へ分けた。
+
+- 話切替／デバウンス保存は`.novelpkg`とdirty setまで。CKQuery失敗をオフライン表示にしない
+- 結線済み作品の`Cmd+S`とtoolbar／iOSの「iCloudと同期」だけがsend／pullする
+- Editor openのlocal preflightオフラインは明示同期の送信禁止にしない。失敗は`[FUMINIWA] note-sync`のtokenで分類する
+- Development schemaでqueryできないときはworkと子entityをrecord IDで取る
+- N4署名済みpaired／Production schemaは未実施のまま
+
+### v0.87 (2026-08-14)
+
+CKQueryがCKError 12 / 2015（`recordName`未QUERYABLE）でも、明示保存した作品を棚へ戻せるようにした。
+
+- catalogは失敗したqueryを空とせず、既知WorkIDをrecord IDで取り直す
+- `createWork`後のpending createはcatalog listを待たず、同じrecord ID確認で完了する
+- D-071のnil-head Note行は、local packageと一致すれば`cachedRemote`へ上げ、自動再送しない
+- 別端末のremote-only発見は引き続きDashboardの`recordName`／`workID` QUERYABLEが必要。N4署名済みpairedは未実施
+
 ### v0.86 (2026-08-14)
 
 D-072の明示「iCloudに保存」を、signed-in後の空catalog／Note type未作成によるcatalog失敗でも出せるようにした。
@@ -910,6 +938,8 @@ D-072の明示「iCloudに保存」を、signed-in後の空catalog／Note type�
 - 作品棚の読込失敗をiCloud未設定と同一視しない。`.unavailable`のlocal-only／localPendingでも明示保存できる
 - 新規後のWorkbench toolbarとFileメニュー、iOS作品ホームにも同じ項目を出す
 - 既存のlocal bindingがあっても、明示保存はcatalog listの前にzone作成と`createWork`を再試行する。chooserは保存後のcatalog待ちでボタンを灰のままにしない
+- `FUMINIWANoteWorkV1`のCKQueryがCKError 12 / CKInternalErrorDomain 2015（型未作成または`recordName`未QUERYABLE）のときは、cached remoteがなければ空のavailable catalogとして扱う
+- 初回createWorkがrecord IDで成功したあと、catalog queryなしでpending createを完了できる
 - `accountRequired`／different account／offlineでは出さない。automatic adoptは禁止のまま
 
 ### v0.85 (2026-08-14)
