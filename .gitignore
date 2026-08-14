@@ -5,6 +5,7 @@ Package.resolved
 
 # Xcode
 DerivedData/
+.derivedData/
 # XcodeGen で生成する生成物(docs/DECISIONS.md D-008)。正は project.yml。
 *.xcodeproj/
 *.xcodeproj/xcuserdata/

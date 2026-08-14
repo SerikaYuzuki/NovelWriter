@@ -1,10 +1,10 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain、N2 CloudKit adapter、N3 App 3択までsource＋unit／layout**。N4はin-memory simulationのみ。署名済みMac＋iPhone paired、実CloudKit send／fetch、Production schema deployは未実施。通常Appのproduction live経路は`NoteSyncCoordinator`（factory注入時）。既存D-061 App testはfactory未注入のため旧coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する
+> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain、N2 CloudKit adapter、N3 App 3択までsource＋unit／layout**。N4はin-memory simulationのみ。署名済みMac＋iPhone paired、実CloudKit send／fetch、Production schema deployは未実施。通常Appのproduction live経路は`NoteSyncCoordinator`（factory注入時）。**エージェントは本章（0章）だけを live 契約として読む。** 0-hist と 1〜15章は D-059〜D-061 の履歴であり、新しい同期コードの仕様ではない。既存D-061 App testはfactory未注入のため旧coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-073、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-074、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
 ## 0. D-071の現行Notes型／cloud library契約
 

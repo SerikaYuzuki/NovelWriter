@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.89
+# ふみにわ 設計書 v0.90
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -527,17 +527,19 @@ D-063／D-071のDevice Syncもこのapp-private境界を使う。`.novelpkg`全�
 
 ## 7. 将来機能
 
+話内検索ジャンプ、キャラクター最小管理と登場話ジャンプ、プロットカード／伏線、世界観ノート、資料、TXT / Markdown / EPUB 3、clipboard prompt は実装済みである。ここには未実装または延期だけを残す。
+
 ### 7.1 検索
 
-作品内検索 / 話内検索 / 検索結果ジャンプ / ハイライト表示
+作品全体検索／置換、本文ハイライトの永続表示は未実装。話内検索ジャンプは実装済み。
 
 ### 7.2 キャラクター管理
 
-名前 / ふりがな / メモ / 関係性 / 登場章 / AI用キャラクター要約
+名前／ふりがな／メモ／登場話ジャンプは実装済み。関係性グラフと AI 用要約は未実装。
 
 ### 7.3 プロット管理
 
-シーンカード / 時系列 / フラグ管理 / 未回収伏線リスト / 章との紐付け
+カードと伏線トラッカーは実装済み。時系列ビューは未実装。
 
 ### 7.4 書き出し
 
@@ -851,33 +853,19 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ## 11. 直近の次タスク
 
-Phase 0 / 1 / 2 / 3 / 4 / 旧 Phase UI / Phase UI2 / Phase 4.5 / Toolbar-1 / Toolbar-2 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5(TXT / Markdown / EPUB 3、macOSアプリ統合)は完了済み(→ 変更履歴)。商業化基盤のうちブランド移行、Safe Launch、参照payloadのvalid UTF-8検査、Product Truth / system appearance、起動／作品ライフサイクルの競合防止は実装済み(D-038〜D-041)。
+Phase 0〜5（PDF除く）、Phase 7 の IOS-1〜5 と D-058 の機能接続、D-063 の iCloud 作品棚、D-071〜D-074 の Note 同期／明示同期／自動スナップショットは source として入っている。完了記録と当時の test 件数は変更履歴および各完了 MD を正とし、ここへ再掲しない。コードの live 経路と負債は [CODE_HEALTH.md](CODE_HEALTH.md)。
 
-D-056の **Phase 7 IOS-1〜5は実装済み**で、D-058によりIOS-6の機能parityとしてプロット／伏線、登場人物、世界観、資料、設定と4つの執筆補助commandをiOS導線へ接続した。D-059以前のiOS targetは通常macOS版と同じ5 productだけをlinkし、現在はDevice Sync用の`NovelSync`と`NovelSyncCloudKit`だけを追加している。`NovelAI`、Experimental、AI provider／SDK／Node／CLI／sidecar／credentialは含めない。字下げと鉤括弧はUIKit側へ複製せず、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5を実`UITextView`へ接続している。直近は[IOS.md](IOS.md)のIOS-6としてiPhone / iPad実機IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripを検証する。これらを終えるまでPhase 7 MVP完了とは扱わない。
+依頼がない限り新機能は増やさない。着手順:
 
-**Device Syncの実装側の次作業は無い。** D-073の明示同期（自動保存はlocal、`Cmd+S`／「iCloudと同期」だけがsend／pull）はsource＋local testまで入れた。N4の残りは操作者による署名済みMac＋iPhone検証である（手順は[CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章）。公開Releaseの次Gateは **Package Validator Gate** のまま。D-071のN2／N3はsourceとunit／layoutまで完了し、N4 in-memory simulationもdomain testとしてある。署名済み実CloudKit paired、Production schema deploy、実account switch／実OS killは未実施であり、N1〜N3のlocal test成功をN4完了・同期完成・出荷可能へ読み替えない。
+1. **Package Validator Gate**（公開Releaseの次）。duplicate ID／不正参照、symlink 拒否、resource limit、孤児 payload の保全、元作品を直接直さない修復コピー、置換前検証。D-063 の portable tree 検証だけで完了としない。詳細は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)
+2. **External Change / Conflict Gate**。Finder／Files の移動削除、同期サービス、別プロセス。open-in-place は両 Gate の前に宣言しない
+3. **N4 操作者検証**。コード待ちは無い。署名済み Mac＋iPhone の手順は [CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章。local test 成功を N4 完了・出荷可能へ読まない
+4. **Windows W0**。schema / golden fixture / portable filename。[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+5. **IOS-6**。実機 IME、VoiceOver / Dynamic Type、scene／termination、macOS との round-trip。[IOS.md](IOS.md)。終わるまで Phase 7 MVP 完了としない
 
-D-063はD-062の明示選択とpreflight／recovery safetyを維持しつつ、Apple版の作品選択を1つの「iCloudの作品」へ置き換える。Macは単一pane、iPhone／iPadは既存の適応navigationを使うが、どちらもremote catalogと検証済みprivate registryをWorkIDでmergeし、path／Finder／Files上の作業copyを隠す。cached copyはofflineで開き、remote-onlyはonline＋account確認後にdurable pending-open→exact revision fetch→private staging→read-back→no-overwrite installする。bind→registry mark間で終了してもexact package／journalからoffline復旧できる。新規／Importはexpected attestationをreservation前にdurable化し、legacy nil reservationを自動採用しない。offline／account未確認またはcatalog failure中でもnew WorkIDのprivate copyを作って編集でき、staging read-back不一致は破棄して再起動後も採用しない。以前確認済みscopeの一時offlineだけ同scopeで自動再開し、unscoped／different-account中のunbound workは後から現れたaccountへ自動uploadしない。旧scope由来のcopyだけをaccount-quarantinedとして保持する。accountRequired／different accountではpackageなしremote-open pending rowを棚から除外する。malformed remote rowだけを隔離し、different-account remote-only row／titleを表示しない。available catalogからack済みworkが欠落すれば`.cloudUnavailable`でcheckmark／open／uploadを止める。active WorkSyncでlast-known headが消えた場合はtyped `remoteHeadMissing`でpublish前停止し、local stateを保持してremote復帰後に同revisionを再送する。app-private WorkID／pathはdiagnostic log／利用者向けerrorへ出さない。外部原本は保持し、package Exportはactive identity不変とする。iOSの旧private packageは自動移行せず、明示tapでnew WorkIDへcopyして旧bytesを保持する。`checkmark.icloud`はexact local attestation＋account-scoped remote receipt一致だけに使い、資料／snapshotまで完全backup済みと表示しない。restored stateのない初回`CKSyncEngine`のsame-account `.signIn`はin-flight operationをcancelしてlive identityを再検証し、一致時はreadyを維持する。macOS／iOS / iPadOSともsource complete／local automated GOである。
+Release NO-GO のまま残るもの: Production schema deploy、production migration／minimum-version fence、AppIcon、Developer ID 署名・公証、更新機構。N4 と Package Validator が終わっても「公開準備完了」とは書かない。
 
-現行D-071 local証跡は`./Scripts/check.sh`の`All checks passed`、`NovelSync` 156 / 156件（18 suites）、`NovelSyncCloudKit` 91 / 91件（25 suites）、macOS Device Sync 90 / 90（5 suites）、iOS Device Sync 87 / 87（4 suites）、hosted Mac NoteSync 3択 2 / 2、hosted iOS NoteSync 3択 2 / 2、`FUMINIWAExperimental` を含む。N2〜N4のlocal成功を署名済みpaired、Production deploy、出荷可能へ読み替えない。
-
-D-061／D-063はdevelopment-only cutoverである。development CloudKit zoneと旧local sync metadata／journal／registryをresetし、全test端末を同じD-063 buildへ揃えるが、outbox／stage／pending／reviewがあればblind resetしない。全hidden packageをexact inventoryし、registry再構築／保全または検証済みExportで回収できないpackageが1件でもあればresetを停止する。attachment／snapshot／unknown rootはremoteから戻らないため、hidden root自体をmetadata resetで削除しない。production migration／minimum-version fenceを別Decisionで実装するまで出荷不可である。実CloudKit remote update／delete／別端末initial fetch、paired native Mac↔iPhone、手動VoiceOver、実OS kill、Package Validator / External Change / Conflict Gateも未完了である。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
-
-D-054によりCodex／OpenRouterの実provider統合は先送りし、通常版のAI支援を **校正／アドバイス用promptのsystem clipboard copy** へ切り替えた。本文の明示選択、1話、1章からpurpose別のplain textを作り、利用者の明示操作でコピーするだけで、provider、network、key、process、`NovelAI`、response取込、Applyへ依存しない。system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界として扱い、履歴非保持やsecure eraseを主張しない。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
-
-B4-Dまでのpure domain、Editor transaction、fake UI、Experimental分離、sidecar protocol、canonical manifest、合成capture、Darwin supervisor、B3、B4-A〜Dは削除せず研究成果として保持する。production catalogは空、production channel／factory／callsiteと実Node／SDK／CLI／network／credential／実原稿は0件である。B4-E以降は直近taskではなく、利用者がその時点の最新stable SDK／APIを明示的に再評価すると決めた場合だけ、新Decisionとthreat modelから再開する。結果と未達Gateは[Codex SDK feasibility実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。
-
-公開Releaseトラックの次Gateは引き続き **Package Validator Gate** である。D-063 Import／Exportのbounded portable tree検証だけでGate完了とはせず、duplicate ID／不正参照、package rootと既知pathのsymlink拒否、深さ・件数・byte数のresource limit、孤児payloadの隔離保全、元作品を直接変更しない修復コピー、置換前検証を共通の検証境界として設計・実装する。Finder／Files移動や削除、同期サービス、別プロセスとの外部変更／競合検出は、責務と受け入れ条件を混ぜないよう続く独立Gateとする。Mac／iOSとも外部原本を直接編集せずapp-private作業コピーへ限定し、両Gate完了前にopen-in-place対応を宣言しない。さらにD-071のN1〜N4と、実CloudKit paired device、Production deploy、production migration／minimum-version fence、paired offline／account switch／process-kill／VoiceOver campaignもRelease NO-GOである。完了後もAppIcon、Developer ID署名・公証、更新機構、locked Macを含む配布QAが残るため、Experimental AIの動作を実装面の公開準備完了とは表現しない。今後の「商業化」作業は実装・機能品質に限定する(D-042)。実装状況は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
-
-D-043の原稿・送信安全契約は将来provider統合を再開する場合も維持する。`FUMINIWAExperimental`の研究コードは保持するが実providerへ接続せず、通常の`FUMINIWA` app targetはcompile／link／bundle時にproviderと入口を除外する。通常版に許可するのはD-054の非通信clipboard prompt支援だけである。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
-
-Phase 5 の作品→章→話の配列順、空章・空話、空タイトル、改行の共通規則は [PHASE5.md](PHASE5.md) を正とする。UI-REV完了記録は [UIREVISION.md](UIREVISION.md)。上部 chrome の現行設計は [TOOLBAR.md](TOOLBAR.md) / D-032。
-
-Windows 並行トラックは **W0「schema / golden fixture / portable filename 契約の固定」**から開始する。詳細と完了条件は [CROSS_PLATFORM.md](CROSS_PLATFORM.md) を正とし、W0完了後にWindows上でW1(Core + Storage)へ進む。
-
-Phase UI2 の完了記録は **[UIDESIGN.md](UIDESIGN.md)**。現在の出荷UIは Project Sidebar / Outline / Editor と下部status barで構成し、当時のAI Assistant placeholderはD-040により撤去済みである。
-
-Phase 4(小説執筆支援機能)の実行記録は [PHASE4.md](PHASE4.md) を参照。4-1〜4-6 すべて完了済み(Nice to have の未実施分は PHASE4.md のチェックボックスに残してあり、一部は UIDESIGN.md の Nice に引き継いだ)。
+通常版 AI は clipboard copy だけ（[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)）。B4-E / 実 provider は明示再評価と新 Decision まで着手しない。Device Sync の live 契約は [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章**。GitHub へ載せる手順は CODE_HEALTH.md 7章。
 
 ## 12. 非目標
 
@@ -902,6 +890,14 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.90 (2026-08-14)
+
+エージェント向けに、live 経路と履歴経路を分け、11章から件数・cutover 手順の再掲を外した。
+
+- [CODE_HEALTH.md](CODE_HEALTH.md) を追加し、太いファイル、Mac/iOS 複製、Work 経路の残し方、GitHub への載せ方を固定した
+- 7章を未実装／延期だけに直し、実装済みの検索・人物・プロットを将来機能として読ませない
+- Device Sync の次作業はコードではなく N4 操作者検証のまま
 
 ### v0.89 (2026-08-14)
 

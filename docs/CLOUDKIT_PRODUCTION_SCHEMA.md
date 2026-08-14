@@ -1,6 +1,6 @@
 # CloudKit署名・Production Schemaチェックリスト
 
-この文書はD-063のApple外部Gateを再現可能に実行するためのoperator checklistである。containerはprivate databaseだけを使い、固定identifierは`iCloud.dev.serikayuzuki.fuminiwa.sync`、zoneは`FUMINIWA.DeviceSync.v1`である。署名済みempty-catalog smokeをremote CRUD、paired device、Production deploy、Release GOへ読み替えない。
+この文書はD-063のApple外部Gateを再現可能に実行するためのoperator checklistである。containerはprivate databaseだけを使い、固定identifierは`iCloud.dev.serikayuzuki.fuminiwa.sync`、zoneは`FUMINIWA.DeviceSync.v1`である。署名済みempty-catalog smokeをremote CRUD、paired device、Production deploy、Release GOへ読み替えない。live 契約は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章。0章の件数は当時の local 証跡であり、再計測せずに更新しない。
 
 ## 0. 現在の検証状態（2026-08-13）
 

@@ -1,34 +1,24 @@
 # FUMINIWA iOS / iPadOS Phase 7 実装計画
 
-> **状態**: IOS-1〜5実装済み。D-061の作品全体local-first Work Syncに加え、D-063の単一「iCloudの作品」棚、WorkID由来の見えない作業コピー、remote-only初回download、local-first新規／取込、identity不変の`.novelpkg`書出、account／offline／kill fence、旧iOS private-copy明示recoveryをiOS / iPadOSへsource実装し、local automated GOとした。現行D-063差分はSimulator上の`IOSCloudLibraryIntegrationTests` 28 / 28件（1 suite）、先行xcresultの`FUMINIWADeviceSyncIOSTests` device cases 89 / 89件、fresh check runの同target 86 / 86 top-level（4 suites）、hosted `FUMINIWAIOSTests` 79 / 79件を通過し、`FUMINIWAIOS` generic build／build-for-testingもPASSした。fresh `./Scripts/check.sh`は`All checks passed`である。最終署名済みiOS generic Debug buildもstrict codesign validで、App ID、Development container、CloudKit、APNs `development`を成果物からread-backした。先行dynamic device casesとfresh top-level件数は集計単位が異なり、既存D-061やD-063 Mac-eraの件数を流用していない。paired native Mac↔iPhone、手動VoiceOver、実OS process-kill campaign、Production deploy、production migration／minimum-version fence、Release QAは未完了
+> **状態**: IOS-1〜5実装済み。現行 live 同期は D-071 の Note entity と D-073 の明示同期。D-063 の「iCloudの作品」棚、app-private 作業コピー、remote-only 初回 download、local-first 新規／取込、identity 不変の `.novelpkg` 書出は source 実装。D-061 の WorkSnapshot 一括転送は履歴。N4 署名済み paired、Production schema、Package Validator、実機 IOS-6 は未完了。件数の再掲はせず、live 契約は [DEVICE_SYNC.md](DEVICE_SYNC.md) 0章、負債は [CODE_HEALTH.md](CODE_HEALTH.md)
 >
 > **対象**: iOS / iPadOS 17 以降
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md)、[DEVICE_SYNC.md](DEVICE_SYNC.md)、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md)、[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)
 
 ## 1. 目的
 
 macOS版で確立した`NovelCore`、`.novelpkg` v3、`NovelExport`、EditorPluginの純粋ロジックを再利用し、iPhone / iPadで安全に日本語小説を執筆できる通常版FUMINIWAを追加する。
 
-Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。製品境界は、1つの「iCloudの作品」から作品を選び、外部の`.novelpkg`はアプリ専用領域へ新WorkIDとして取り込み、見えない作業コピーを編集・保存し、利用者の明示操作でportable packageを外部へ書き出す **cloud library / app-private import / edit / export** とする。D-061／D-063のDevice Syncも外部原本を直接編集せず、作品全体snapshotをapp-private packageとpackage外Work journalへ先に保存し、別namespaceのWork wireでremote headを調停する。
+Phase 7はmacOS UIの縮小移植ではない。作品・保存・本文編集の意味は共有しつつ、iPadでは複数列、iPhoneでは段階遷移という各端末に適したシェルを作る。製品境界は、1つの「iCloudの作品」から作品を選び、外部の`.novelpkg`はアプリ専用領域へ新WorkIDとして取り込み、見えない作業コピーを編集・保存し、利用者の明示操作でportable packageを外部へ書き出す **cloud library / app-private import / edit / export** とする。live 同期は D-071 の entity record と D-073 の明示同期であり、D-061 の WorkSnapshot 一括転送は履歴である。
 
 AI providerは接続しない。利用者が選んだ原稿から校正用／アドバイス用のplain text promptを作り、system clipboardへ明示コピーする機能だけを通常iOS版へ含める。
 
-### 1.1 現在地（2026-08-12）
+### 1.1 現在地（2026-08-14）
 
-- `FUMINIWAIOS` app / test target、iPhone / iPad対応Info.plist、D-059以前のbase 5 productだけの依存境界を実装した。現在の通常targetはDevice Sync用の`NovelSync` / `NovelSyncCloudKit`を追加している
-- app-privateな新規作成／取込／revision保存／書出、Loading / Ready / Recovery、適応的な`NavigationSplitView`を実装した
-- app-private作業コピーを再選択できる作品棚と、作品ホーム→作品情報／執筆→Outline→Editorの段階導線をD-057で追加した
-- プロット／伏線、登場人物、世界観、資料、設定を既存domainと保存へ接続し、作品ホームとiPad Project Sidebarから選べるようにした
-- `UITextView` + TextKit 2 adapterを追加し、共有`IndentRules`とD-055後のR1' / R3 / R4 / R5、IME pending確定、Undo / Redo、末尾96pt表示余白、caret revealを接続した
-- iOS Editorの保存状態を上部へ移し、本文キャンバスと同じ背景のIME直上バーから`……` / `――` / `ルビ` / `傍点`をselection commandとして実行できるようにした
-- 校正／アドバイス×本文選択／話／章のclipboard prompt copyを実装し、通常iOS targetに`NovelAI`、provider、network、credential、subprocessを入れていない
-- generic iOS build、iPhone Simulator上のEditorKit／iOS app tests、target separation検査を`Scripts/check.sh`へ組み込み、D-063 iOS extension前の基準で全ローカルCIを通過した。現行extensionを含む再検証結果は別に確定する
-- D-059のportable wire / state / force / merge、package外file journal、`NovelSyncCloudKit`のprivate CloudKit adapter、account fence、engine state recovery、local metadata bootstrap、durable pending create / bind intentをsource実装した。iOS production composition、明示binding、editor／scene lifecycle、read-only／force／fence／merge UIもsource接続済みで、iOS通常71件／Device Sync 15件を含む全ローカル回帰を通過した。normal handoffの全経路、container / signing / schemaと署名済み実機検証は未完了である
-- 上記D-059状態は基準commit `508947d2`の履歴として維持する。D-060のwire protocol v1を維持したjournal schema v2、authority非依存journal、observed baseline、offline bootstrap、bounded multi-hunk automatic merge、exact head／digest／epoch takeoverはDomain source実装済みである。iOS App／UI sourceもfreeze済みで、Device Sync 42 / 42件とnative focused 2 / 2件がSimulatorで通過した。paired native Mac↔iPhone、実機IME／VoiceOver／process kill、real CloudKitは完了扱いにしない。現行v1に`HandoffRequest` recordはなく、cooperative request／grantは将来の別Decision／protocolとする
-- D-061では当時の通常iOS AppをWork経路へcutoverした（履歴）。D-071はlive経路をentity recordへ切り替え、N3までsource接続した。署名済みpairedと実CloudKitは未実施。active `UITextView`へのremote非注入は維持する
-- D-063ではroot作品棚をMacと同じWorkID catalog／local registry projectionによる「iCloudの作品」へ切り替えた。remote-onlyは明示tap後にこの端末へ保存し、cached localはofflineで開く。D-071のremote-only openはentity一式をpackageへ組み立てる。D-072により、local-only行の明示「iCloudに保存」（catalog失敗中も含む）、複製、この端末からの削除を作品棚と作品ホームへ出す。D-073により、結線済み作品の自動保存は端末内だけ、作品ホーム／Editorの「iCloudと同期」とCommand-SだけがiCloudへ送る。CloudKit tombstoneは置かない
-- Episode／Work／Noteは別record namespaceで相互の更新を観測しない。D-071はdevelopment cutoverであり、自動migrationしない。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする
+- `FUMINIWAIOS` と段階導線、TextKit 2 の `UITextView`、clipboard prompt、D-063 の作品棚、D-071／D-073 の Note 明示同期、D-074 の自動スナップショットまで source 実装
+- 実機 IME / VoiceOver / scene、署名済み paired、Production schema は未検証。Phase 7 MVP 完了とは扱わない
+- 過去の test 件数と D-059〜D-061 の cutover 記録は履歴。live は [DEVICE_SYNC.md](DEVICE_SYNC.md) 0章
 
 IOS-1〜5のコード実装は完了している。ただし、本書の完了条件に含むiPhone / iPad実機の日本語IME、VoiceOver / Dynamic Type、hardware keyboard、scene／termination、macOSとの完全round-tripは未検証であるため、Phase 7 MVPまたは一般公開準備の完了とはまだ扱わない。次はIOS-6 Parity / Release QAとして追跡する。
 
@@ -152,14 +142,14 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 
 ### 4.6 D-071 Note Sync
 
-現行iOS Appのlive同期はD-071のentity recordである。作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観を同期する。資料／attachment、snapshot履歴、端末設定は含めない。画面はapp-private `.novelpkg`を正とし、`UITextView`の入力とlocal保存を通信完了で待たせない。変わったentityだけを裏で送る。同じentityが衝突したら合成せず、この端末／iCloud／両方を別作品として残す、を選ばせる。D-063の作品棚catalogは維持し、remote-only openはentity一式をpackageへ組み立てる。
+現行iOS Appのlive同期はD-071のentity recordである。作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観を同期する。資料／attachment、snapshot履歴、端末設定は含めない。画面はapp-private `.novelpkg`を正とし、`UITextView`の入力とlocal保存を通信完了で待たせない。同じentityが衝突したら合成せず、この端末／iCloud／両方を別作品として残す、を選ばせる。D-063の作品棚catalogは維持し、remote-only openはentity一式をpackageへ組み立てる。
 
 確定変更は次の順に処理する。
 
 1. `UITextView`またはformの確定値を現在の`NovelDocument`へ反映する
 2. 既存の保存直列化経路でapp-private `.novelpkg`を保存する
 3. 変わったentity IDをdirty setへ保存する
-4. `CKSyncEngine`へpendingを登録し、次の入力とlocal保存を止めない
+4. 自動保存・話切替・画面遷移ではここで止まる。`CKSyncEngine`への pending と send／pull は、結線済み作品の「iCloudと同期」または Command-S だけが始める(D-073)
 
 再接続後、片側だけ進んだentityは確認せず取り込む／送る。同じentityを両方で変えた場合だけ確認する。iPhone／iPadとも **この端末／iCloud／両方を別作品として残す** を示し、統合案は出さない。「あとで」で閉じても衝突は保持し、cloud衝突中はEditorを止めない。3択の適用失敗はProgressViewだけで終わらせず、`[FUMINIWA] note-sync resolve`のtoken付きログと失敗ダイアログを出す。keepLocalのCloudKit saveはengine ackなしを成功としない。
 

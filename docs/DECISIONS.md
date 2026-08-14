@@ -800,7 +800,7 @@
 
 ## D-071: Device Syncをメモ型のlocal-first／entity record同期へ切り替える
 
-- **日付**: 2026-08-13 / **状態**: 承認。N1 domain実装済み。N2 CloudKit send／fetchはsource＋unit。N3 Mac／iOS App接続はsource＋layout test。N4はin-memory simulationのみで、署名済みMac＋iPhone paired／実CloudKitは未実施。D-061／D-063のwhole-work `CKAsset`経路は履歴として保持し、通常Appのproduction live経路は`NoteSyncCoordinator`へ切替（既存App testはfactory未注入のため旧coordinatorのまま）。item 2の裏送信とitem 5のpackage保存直後pending登録はD-073で一部破棄
+- **日付**: 2026-08-13 / **状態**: 承認。N1〜N3 source＋unit／layout。N4はin-memory simulationのみ。署名済みpaired／実CloudKitは未実施。通常Appの live 経路は`NoteSyncCoordinator`。**item 2 の裏送信と item 5 の package 保存直後 pending 登録は D-073 が破棄。同期の手順は D-073 と [DEVICE_SYNC.md](DEVICE_SYNC.md) 0.2 を正とする。** D-061／D-063のwhole-work `CKAsset`経路は履歴。既存App testはfactory未注入のため旧coordinatorのまま
 - **内容**:
   1. 使う側の同期対象は引き続き **1つの作品** である。作品タイトル／あらすじ、章・話の構成と順序、本文、メモ、人物、プロット、伏線、世界観を同期する。資料binary／attachment、`.novelpkg` の手動スナップショット履歴、端末設定、選択状態、path、CloudKit metadataは同期しない。`.novelpkg` v3は各端末の正本（画面が読むlocal store）のまま変更しない。SwiftData／Core Dataをcanonical storeにせず、独自同期サーバーも置かない。
   2. 画面は **この端末の `.novelpkg` だけ** を開く。起動、アプリ切替で戻る、執筆画面に入る、は通信完了を待たない。検証済みlocal packageがあればofflineでも編集・保存できる。`CKSyncEngine` の送信／取得は裏で行い、失敗や遅延は状態表示だけに残す。編集中の `NSTextView`／`UITextView` へremoteを流し込まない（D-005／D-064）。
