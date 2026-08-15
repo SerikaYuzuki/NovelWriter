@@ -3,10 +3,15 @@
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
 
+> **D-079 current-code note (2026-08-16):** 本書のD-071〜D-076節に登場する
+> `NovelSyncCloudKit`、iCloud、CKSyncEngine、旧runtimeの記述は履歴資料である。
+> 現行targetからCloudKit adapter／entitlement／bootstrap／専用testを削除し、
+> SQLite local canonical＋Rust Snapshot Sync＋Sign in with Appleだけを実行経路とする。
+
 ## 1. 目的
 
 **ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
-macOS 版を先行実装としつつ、iOS / iPadOS版と将来のWindows WinUI版でも同じ作品を、通信を待たず安全に編集・復元できることを製品要件とする。D-077により、通常編集の端末内正本はapp-private SQLite、byte payloadはcontent-addressed store、`.novelpkg`は検証済みImport／Export用portable artifactとする。保存と同じtransactionで作品全体のdense SnapshotとSyncIntentを確定し、workerが送信直前にSealedAttemptを作ってRust serverへ変更objectだけを非同期複製する。画面遷移／close／quitはremoteを待たず、通信復帰後に自動再開する。同じ論理entityが分岐した場合は、この端末／オンライン／両方を別作品として残す、の3択にし、時計で勝者を決めない。現行D-071〜D-074の`.novelpkg`＋CloudKit Note実装は非破壊移行が完了するまで残すが、新規同期設計の正はD-077と[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)である。
+macOS 版を先行実装としつつ、iOS / iPadOS版と将来のWindows WinUI版でも同じ作品を、通信を待たず安全に編集・復元できることを製品要件とする。D-077により、通常編集の端末内正本はapp-private SQLite、byte payloadはcontent-addressed store、`.novelpkg`は検証済みImport／Export用portable artifactとする。保存と同じtransactionで作品全体のdense SnapshotとSyncIntentを確定し、workerが送信直前にSealedAttemptを作ってRust serverへ変更objectだけを非同期複製する。画面遷移／close／quitはremoteを待たず、通信復帰後に自動再開する。同じ論理entityが分岐した場合は、この端末／オンライン／両方を別作品として残す、の3択にし、時計で勝者を決めない。`.novelpkg`はImport／Export専用とし、旧CloudKit Note実装はアプリから利用しない。新規同期設計の正はD-077〜D-079と[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)である。
 
 初期段階では、以下を最優先する。
 
@@ -42,7 +47,7 @@ macOS 版を先行実装としつつ、iOS / iPadOS版と将来のWindows WinUI�
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
 - **Snapshot Sync（D-077／D-078／D-079）**: 端末内はSQLite＋CAS、remoteはRust HTTP API＋PostgreSQL＋S3互換object storeとする。autosave／lifecycle checkpointはcurrent state、immutable Snapshot、SyncIntentをatomicにcommitし、network workerが送信前にSealedAttemptを固定して自動再開する。expected `{generation, snapshotID}`によるhead CAS、operation receipt、cursor pull、3択Conflict、online history、attachment transferを共通protocolにする。v1はserver-readableでE2EEなし、Production認証はSign in with Appleを使う。旧CloudKit adapterは削除し、CloudKitを同期経路・entitlement・package migration sourceとして扱わない。公開endpointとquotaは技術既定を置き、Release NO-GOを維持する(→ [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md), [AUTH.md](AUTH.md), D-077〜D-079)
 - **テスト**: swift-testing(`@Test`)を使用
-- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Mac／iOSで共有するlocal library状態・attestation・registry値型の`NovelLibrary`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`を扱う。`NovelLibrary`はNovelCore／NovelSync（必要な保存検証はNovelStorage API境界）だけを参照し、SwiftUI／AppKit／UIKit／CloudKitへ依存しない。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。AI provider targetはD-075で削除し、再開時は最新APIを別Decisionで再設計する
+- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Mac／iOSで共有するlocal library状態・attestation・registry値型の`NovelLibrary`、SQLite canonical storeの`NovelLocalStore`、`NovelAuth`／`NovelAuthApple`、test専用の`NovelSyncTesting`を扱う。`NovelLibrary`はNovelCore／NovelSync（必要な保存検証はNovelStorage API境界）だけを参照し、SwiftUI／AppKit／UIKit／CloudKitへ依存しない。旧Apple adapterの記述は履歴であり、現行targetへ追加しない。AI provider targetはD-075で削除し、再開時は最新APIを別Decisionで再設計する
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
 - **AI支援構成**: 現行の通常版はprovider／networkへ接続せず、校正／アドバイス用promptをsystem clipboardへ明示コピーするだけである。EditorKitは将来の外部提案にも使える選択transaction・IME・stale・one-shot置換境界を保持する。停止中のExperimental provider／fake UI／sidecarはD-075で削除し、再開時は旧実装を自動再利用しない
 
@@ -70,7 +75,8 @@ FUMINIWA
     │   └── EPUBRenderer.swift
     ├── NovelLibrary              (共有local library状態／attestation／registry値型)
     ├── NovelSync                  (source実装済みのOS・transport非依存domain)
-    ├── NovelSyncCloudKit          (Apple private CloudKit adapter)
+    ├── NovelLocalStore            (SQLite canonical store／CAS／Snapshot worker)
+    ├── NovelAuth / NovelAuthApple (FUMINIWA session／Sign in with Apple)
     ├── NovelSyncTesting           (test専用fake。製品targetへlinkしない)
     ├── EditorKit
     │   ├── EditorView.swift
