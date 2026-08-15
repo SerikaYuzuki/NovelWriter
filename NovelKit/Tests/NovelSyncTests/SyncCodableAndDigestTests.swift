@@ -1,5 +1,6 @@
 import Foundation
 import NovelSync
+import NovelSyncLegacy
 import Testing
 
 @Suite("NovelSync wire and digest")

@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "NovelSync", targets: ["NovelSync"]),
+        .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
         .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
         .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
         .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
@@ -39,6 +40,13 @@ let package = Package(
             name: "NovelSync",
             dependencies: ["NovelCore"]
         ),
+        // D-076 R5: filesystem journals for the retired Episode/Work
+        // protocols are kept in a compatibility target. The target depends
+        // on the live domain only for its public journal contracts and IDs.
+        .target(
+            name: "NovelSyncLegacy",
+            dependencies: ["NovelSync", "NovelCore"]
+        ),
         // Shared local-library state and attestation models. Filesystem roots,
         // CloudKit, and platform UI remain in the app adapters.
         .target(
@@ -53,7 +61,7 @@ let package = Package(
         // Apple private CloudKit adapter。CloudKit型とchange tagをNovelSyncへ漏らさない。
         .target(
             name: "NovelSyncCloudKit",
-            dependencies: ["NovelSync", "NovelCore"]
+            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelCore"]
         ),
         .target(
             name: "EditorKit",
@@ -81,7 +89,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NovelSyncTests",
-            dependencies: ["NovelSync", "NovelSyncTesting", "NovelCore"],
+            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelSyncTesting", "NovelCore"],
             resources: [.process("Fixtures")]
         ),
         .testTarget(

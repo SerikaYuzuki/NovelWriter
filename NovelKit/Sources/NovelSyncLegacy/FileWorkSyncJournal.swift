@@ -1,4 +1,5 @@
 import Foundation
+import NovelSync
 
 /// 呼び出し側が注入したapp-private rootへ、作品単位journalをatomic JSON保存する。
 public actor FileWorkSyncJournal: WorkSyncJournal {

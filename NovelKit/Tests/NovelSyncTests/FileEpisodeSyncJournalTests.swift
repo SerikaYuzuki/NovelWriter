@@ -1,5 +1,6 @@
 import Foundation
 import NovelSync
+import NovelSyncLegacy
 import NovelSyncTesting
 import Testing
 

@@ -4,6 +4,7 @@
 import Foundation
 import NovelCore
 import NovelSync
+import NovelSyncLegacy
 import Testing
 
 @Suite("File whole-work sync journal")

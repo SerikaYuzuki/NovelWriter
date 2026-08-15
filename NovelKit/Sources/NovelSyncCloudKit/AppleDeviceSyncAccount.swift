@@ -1,6 +1,7 @@
 import CloudKit
 import Foundation
 import NovelSync
+import NovelSyncLegacy
 
 enum AppleCloudAccountScopeResolver {
     static func resolve(containerIdentifier: String) async throws -> AppleCloudAccountScope {

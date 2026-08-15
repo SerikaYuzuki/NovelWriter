@@ -32,8 +32,8 @@ NovelKit/Sources/NovelSync/EpisodeSyncJournal+Validation.swift
 NovelKit/Sources/NovelSync/EpisodeSyncJournal.swift
 NovelKit/Sources/NovelSync/EpisodeSyncModels.swift
 NovelKit/Sources/NovelSync/EpisodeSyncTransport.swift
-NovelKit/Sources/NovelSync/FileEpisodeSyncJournal.swift
-NovelKit/Sources/NovelSync/FileWorkSyncJournal.swift
+NovelKit/Sources/NovelSyncLegacy/FileEpisodeSyncJournal.swift
+NovelKit/Sources/NovelSyncLegacy/FileWorkSyncJournal.swift
 NovelKit/Sources/NovelSync/WorkSnapshotMerger.swift
 NovelKit/Sources/NovelSync/WorkSyncCoordinator.swift
 NovelKit/Sources/NovelSync/WorkSyncJournal.swift
@@ -87,4 +87,6 @@ binding・package snapshot境界へ置き換える。その後に共有値型と
 4. `.novelpkg` schema、Note wire、CloudKit Note record、offline／account fenceの
    挙動を変えず、`./Scripts/check.sh` を通す。
 
-このinventoryはR5の実装準備であり、target追加・source移動の完了記録ではない。
+R5dで上記2つのfilesystem journalを`NovelSyncLegacy`へ移した。残りの候補は
+依存境界を切り分けるまで`NovelSync`／`NovelSyncCloudKit`側へ残している。
+このinventoryはR5全体の完了記録ではない。
