@@ -1,6 +1,9 @@
 import AppKit
 import EditorKit
 import Foundation
+import NovelAuth
+import NovelAuthApple
+import NovelLocalStore
 import SwiftUI
 
 /// アプリのエントリポイント(docs/DESIGN.md 5.3)。
@@ -52,12 +55,29 @@ struct FuminiwaApp: App {
         let deviceSyncComposition = try? DeviceSyncProductionComposition()
         let deviceSyncRuntime = deviceSyncComposition?.runtime
         #endif
+        let syncServerURL = URL(
+            string: defaults.string(forKey: "fuminiwa.syncServerURL")
+                ?? "http://192.168.11.5:18080"
+        ) ?? URL(string: "http://192.168.11.5:18080")!
+        let authTransport = FuminiwaHTTPAuthTransport(baseURL: syncServerURL)
+        #if canImport(Security)
+        let authSessionCoordinator = AuthSessionCoordinator(
+            transport: authTransport,
+            vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync")
+        )
+        #else
+        let authSessionCoordinator: AuthSessionCoordinator? = nil
+        #endif
+        let appleSignInCoordinator = AppleSignInCoordinator()
         let appState = AppState(
             dependencies: AppDependencies(
                 userDefaults: defaults,
                 defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
                 editorCommandSession: editorCommandSession,
-                deviceSyncRuntime: deviceSyncRuntime
+                deviceSyncRuntime: deviceSyncRuntime,
+                authSessionCoordinator: authSessionCoordinator,
+                appleSignInCoordinator: appleSignInCoordinator,
+                snapshotSyncTransport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL)
             )
         )
         #if canImport(NovelSyncCloudKit)
@@ -90,6 +110,7 @@ struct FuminiwaApp: App {
                 .task {
                     applicationDelegate.attach(appState: appState)
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
+                    await appState.restoreFuminiwaSession()
                     #if canImport(NovelSyncCloudKit)
                     guard !deviceSyncPreparationFailed, let deviceSyncComposition else {
                         appState.failStartupForDeviceSyncSafety()
@@ -100,6 +121,7 @@ struct FuminiwaApp: App {
                     }
                     #endif
                     await appState.bootstrap(opening: startupOpenURL, localFirst: true)
+                    await appState.resumePendingSnapshotSync()
                     applicationDelegate.finishBootstrap()
                     #if canImport(NovelSyncCloudKit)
                     // local shelf／active editorの表示をCloudKit bootstrapや
@@ -114,6 +136,22 @@ struct FuminiwaApp: App {
                 }
         }
         .commands {
+            CommandMenu("アカウント") {
+                switch appState.authUIState {
+                case .signedIn:
+                    Button("サインアウト") {
+                        Task { await appState.signOutFromFuminiwa() }
+                    }
+                case .unavailable, .signedOut, .failed:
+                    Button("Appleでサインイン") {
+                        Task { await appState.signInWithApple() }
+                    }
+                case .signingIn:
+                    Button("Appleでサインイン中…") {}
+                        .disabled(true)
+                }
+            }
+
             // 新規作品はこのアプリの作品ライフサイクルの入口であり、`WindowGroup`
             // 既定の「新規ウインドウ」(単一ウィンドウ方針 D-010 と衝突する)を
             // 置き換える。

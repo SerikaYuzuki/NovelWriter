@@ -143,6 +143,8 @@ struct StartupDocumentSelectionView: View {
                 .disabled(!appState.permitsCloudLibraryMutation)
                 .accessibilityIdentifier("startup.documentSelection.new")
             }
+
+            FuminiwaAuthStatusView()
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 32)
@@ -357,6 +359,55 @@ struct StartupDocumentSelectionView: View {
             "このMacにある作品は開けますが、このアカウントへ自動では送信しません。"
         case let .unavailable(message):
             message
+        }
+    }
+}
+
+private struct FuminiwaAuthStatusView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(appState.authUIState.label, systemImage: iconName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            switch appState.authUIState {
+            case .signedOut, .failed:
+                Button("Appleでサインイン") {
+                    Task { await appState.signInWithApple() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(appState.authUIState == .signingIn)
+                .accessibilityIdentifier("auth.signInWithApple")
+            case .signingIn:
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Appleでサインイン中")
+            case .signedIn:
+                Button("サインアウト") {
+                    Task { await appState.signOutFromFuminiwa() }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("auth.signOut")
+            case .unavailable:
+                EmptyView()
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("auth.status")
+    }
+
+    private var iconName: String {
+        switch appState.authUIState {
+        case .signedIn:
+            "person.crop.circle.fill"
+        case .signingIn:
+            "arrow.triangle.2.circlepath.circle"
+        case .failed:
+            "exclamationmark.triangle"
+        case .signedOut, .unavailable:
+            "person.crop.circle"
         }
     }
 }

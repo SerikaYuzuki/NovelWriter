@@ -1,6 +1,9 @@
 import EditorKit
 import Foundation
+import NovelAuth
+import NovelAuthApple
 import NovelCore
+import NovelLocalStore
 import NovelStorage
 
 /// アプリが使う依存関係の組み立てを担当する(docs/DESIGN.md 5.1)。
@@ -38,6 +41,12 @@ struct AppDependencies {
     /// Device Syncが設定済みの場合だけ注入するtransport-neutral runtime。
     let deviceSyncRuntime: DeviceSyncRuntime?
 
+    /// Sign in with Apple is an optional account layer. Local editing remains
+    /// available when the auth server is unreachable or not configured.
+    let authSessionCoordinator: AuthSessionCoordinator?
+    let appleSignInCoordinator: AppleSignInCoordinator?
+    let snapshotSyncTransport: (any SnapshotSyncTransport)?
+
     init(
         repository: DocumentRepository = NovelpkgRepository(),
         attachmentManager: AttachmentManaging? = nil,
@@ -47,7 +56,10 @@ struct AppDependencies {
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
         activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil,
-        deviceSyncRuntime: DeviceSyncRuntime? = nil
+        deviceSyncRuntime: DeviceSyncRuntime? = nil,
+        authSessionCoordinator: AuthSessionCoordinator? = nil,
+        appleSignInCoordinator: AppleSignInCoordinator? = nil,
+        snapshotSyncTransport: (any SnapshotSyncTransport)? = nil
     ) {
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
@@ -60,5 +72,8 @@ struct AppDependencies {
             editorCommandSession.captureActiveCommittedText()
         }
         self.deviceSyncRuntime = deviceSyncRuntime
+        self.authSessionCoordinator = authSessionCoordinator
+        self.appleSignInCoordinator = appleSignInCoordinator
+        self.snapshotSyncTransport = snapshotSyncTransport
     }
 }

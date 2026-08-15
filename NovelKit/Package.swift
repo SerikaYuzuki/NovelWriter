@@ -14,6 +14,9 @@ let package = Package(
         .library(name: "NovelSync", targets: ["NovelSync"]),
         .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
         .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
+        .library(name: "NovelLocalStore", targets: ["NovelLocalStore"]),
+        .library(name: "NovelAuth", targets: ["NovelAuth"]),
+        .library(name: "NovelAuthApple", targets: ["NovelAuthApple"]),
         .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
         .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
@@ -52,6 +55,26 @@ let package = Package(
         .target(
             name: "NovelLibrary",
             dependencies: ["NovelCore", "NovelSync"]
+        ),
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite"
+        ),
+        // D-077 R1: SQLite is the local canonical store. The package codec
+        // remains an import/export boundary and is deliberately not a
+        // dependency of this target.
+        .target(
+            name: "NovelLocalStore",
+            dependencies: ["NovelCore", "NovelSync", "NovelAuth", "CSQLite"]
+        ),
+        // Provider-neutral auth/session domain. Apple is the only v1 adapter;
+        // adding another provider must not change sync's AccountID contract.
+        .target(
+            name: "NovelAuth"
+        ),
+        .target(
+            name: "NovelAuthApple",
+            dependencies: ["NovelAuth"]
         ),
         // 決定論的fake transport。製品targetからはlinkせず、同期契約testで使う。
         .target(
@@ -95,6 +118,14 @@ let package = Package(
         .testTarget(
             name: "NovelLibraryTests",
             dependencies: ["NovelLibrary", "NovelCore", "NovelSync"]
+        ),
+        .testTarget(
+            name: "NovelLocalStoreTests",
+            dependencies: ["NovelLocalStore", "NovelCore", "NovelSync"]
+        ),
+        .testTarget(
+            name: "NovelAuthTests",
+            dependencies: ["NovelAuth", "NovelAuthApple"]
         ),
         .testTarget(
             name: "NovelSyncCloudKitTests",

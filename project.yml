@@ -65,6 +65,12 @@ targets:
       - package: NovelKit
         product: NovelLibrary
       - package: NovelKit
+        product: NovelLocalStore
+      - package: NovelKit
+        product: NovelAuth
+      - package: NovelKit
+        product: NovelAuthApple
+      - package: NovelKit
         product: NovelSyncCloudKit
     settings:
       base:
@@ -149,6 +155,12 @@ targets:
       - package: NovelKit
         product: NovelLibrary
       - package: NovelKit
+        product: NovelLocalStore
+      - package: NovelKit
+        product: NovelAuth
+      - package: NovelKit
+        product: NovelAuthApple
+      - package: NovelKit
         product: NovelSyncCloudKit
       - package: NovelKit
         product: NovelSyncTesting
@@ -185,6 +197,12 @@ targets:
         product: NovelSync
       - package: NovelKit
         product: NovelLibrary
+      - package: NovelKit
+        product: NovelLocalStore
+      - package: NovelKit
+        product: NovelAuth
+      - package: NovelKit
+        product: NovelAuthApple
       - package: NovelKit
         product: NovelSyncCloudKit
     settings:
@@ -262,6 +280,12 @@ targets:
         product: NovelSync
       - package: NovelKit
         product: NovelLibrary
+      - package: NovelKit
+        product: NovelLocalStore
+      - package: NovelKit
+        product: NovelAuth
+      - package: NovelKit
+        product: NovelAuthApple
       - package: NovelKit
         product: NovelSyncCloudKit
       - package: NovelKit

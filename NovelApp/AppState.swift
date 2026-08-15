@@ -1,7 +1,10 @@
 import AppKit
 import EditorKit
 import Foundation
+import NovelAuth
+import NovelAuthApple
 import NovelCore
+import NovelLocalStore
 import NovelSync
 import Observation
 
@@ -34,6 +37,29 @@ enum DocumentSaveState: Equatable {
             "checkmark.circle"
         case .failed:
             "exclamationmark.triangle"
+        }
+    }
+}
+
+enum AuthUIState: Equatable {
+    case unavailable
+    case signedOut
+    case signingIn
+    case signedIn(accountID: String)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .unavailable:
+            "アカウント同期は未設定"
+        case .signedOut:
+            "未サインイン"
+        case .signingIn:
+            "サインイン中…"
+        case let .signedIn(accountID):
+            "サインイン済み（\(accountID)）"
+        case let .failed(message):
+            message
         }
     }
 }
@@ -109,6 +135,11 @@ final class AppState {
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
     /// 現在作品がこのaccountへbind済みなら明示保存は出さない。
     var isCurrentWorkBoundToCloud = false
+    /// FUMINIWA発行セッション。Appleのcredentialやtokenはここへ保持せず、
+    /// AuthSessionCoordinatorのKeychain vaultだけが永続化する。
+    var authSession: FuminiwaSession?
+    var authUIState: AuthUIState
+    var lastSnapshotSyncOutcome: SnapshotSyncOutcome = .idle
     /// production syncのlocal metadataを確立できなかったprocessは、
     /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
     var deviceSyncStartupFailedSafely = false
@@ -184,6 +215,12 @@ final class AppState {
     /// active Editorから確定済み本文だけを読み取る。IME変換中は本文を返さない。
     let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
     @ObservationIgnored let deviceSyncRuntime: DeviceSyncRuntime?
+    /// Post-cutover SQLite canonical store. The legacy package remains the
+    /// portable import/export surface; it is no longer the live authority.
+    @ObservationIgnored let localCanonicalStore: LocalSQLiteStore?
+    @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
+    @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
+    @ObservationIgnored let localSnapshotSyncWorker: LocalSnapshotSyncWorker?
     @ObservationIgnored var deviceSyncClients: [DeviceSyncClientKey: DeviceSyncClient] = [:]
     @ObservationIgnored var activeDeviceSyncIdentity: DeviceSyncEpisodeIdentity?
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: DeviceSyncLookupIdentity?
@@ -300,6 +337,26 @@ final class AppState {
         clipboardWriter = dependencies.clipboardWriter
         activeCommittedTextCapture = dependencies.activeCommittedTextCapture
         deviceSyncRuntime = dependencies.deviceSyncRuntime
+        authSessionCoordinator = dependencies.authSessionCoordinator
+        appleSignInCoordinator = dependencies.appleSignInCoordinator
+        let localStoreURL = Self.localCanonicalStoreURL(
+            fileManager: dependencies.fileManager,
+            directoryName: dependencies.defaultDocumentDirectoryName
+        )
+        localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
+        if let localCanonicalStore,
+           let snapshotSyncTransport = dependencies.snapshotSyncTransport,
+           let authSessionCoordinator = dependencies.authSessionCoordinator {
+            localSnapshotSyncWorker = LocalSnapshotSyncWorker(
+                store: localCanonicalStore,
+                transport: snapshotSyncTransport,
+                sessionProvider: {
+                    try await authSessionCoordinator.currentSession()
+                }
+            )
+        } else {
+            localSnapshotSyncWorker = nil
+        }
         deviceSyncTransferState = .notApplicable
         deviceSyncLocalDurabilityState = .notApplicable
 
@@ -334,6 +391,8 @@ final class AppState {
         saveState = .unsaved
         startupState = initialStartupState
         permitsCloudLibraryMutation = deviceSyncRuntime == nil
+        authSession = nil
+        authUIState = authSessionCoordinator == nil ? .unavailable : .signedOut
         externalDocumentOpenErrorMessage = nil
         aiClipboardPromptCopyNotice = nil
         let storedSection = dependencies.userDefaults.string(forKey: Self.projectSectionKey) ?? ""
@@ -349,5 +408,17 @@ final class AppState {
             dependencies.userDefaults.set(ProjectSection.projectInfo.rawValue, forKey: Self.projectSectionKey)
         }
         attachments = []
+    }
+
+    private static func localCanonicalStoreURL(
+        fileManager: FileManager,
+        directoryName: String
+    ) -> URL {
+        let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
+        return root
+            .appendingPathComponent(directoryName, isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("library.sqlite")
     }
 }

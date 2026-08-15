@@ -2,9 +2,80 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelLocalStore
 import NovelSync
 
 extension AppState {
+    private struct LocalManifest: Encodable {
+        let schemaVersion: Int
+        let workId: UUID
+        let parentSnapshotIds: [String]
+        let entries: [LocalManifestEntry]
+    }
+
+    private struct LocalManifestEntry: Encodable {
+        let entityKey: String
+        let objectId: String
+        let byteCount: Int
+        let contentType: String
+    }
+
+    /// Commits the same saved NovelDocument to SQLite in one local transaction.
+    /// The current runtime uses the document UUID as the provisional WorkID;
+    /// the migration ledger can replace this binding without changing the
+    /// document identity or the portable package format.
+    private func commitLocalCanonicalSnapshot(_ document: NovelDocument) async -> Bool {
+        guard let store = localCanonicalStore else { return true }
+        do {
+            let snapshot = try WorkSnapshot(document: document)
+            let objectBytes = try WorkCanonicalJSON.encodeSnapshot(snapshot)
+            let objectID = SyncContentDigest(content: String(decoding: objectBytes, as: UTF8.self)).rawValue
+            let workID = document.id
+            let previous = try await store.workState(for: workID)
+            let manifest = LocalManifest(
+                schemaVersion: 1,
+                workId: workID,
+                parentSnapshotIds: previous?.currentLocalSnapshotID.map { [$0] } ?? [],
+                entries: [
+                    LocalManifestEntry(
+                        entityKey: "work/document",
+                        objectId: objectID,
+                        byteCount: objectBytes.count,
+                        contentType: "application/json"
+                    )
+                ]
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let manifestBytes = try encoder.encode(manifest)
+            let snapshotID = SyncContentDigest(content: String(decoding: manifestBytes, as: UTF8.self)).rawValue
+            let createdAtKey = "fuminiwa.documentCreatedAt.\(document.id.uuidString.lowercased())"
+            let createdAt: String
+            if let existing = userDefaults.string(forKey: createdAtKey) {
+                createdAt = existing
+            } else {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+                createdAt = formatter.string(from: Date())
+                userDefaults.set(createdAt, forKey: createdAtKey)
+            }
+            _ = try await store.commitSnapshot(
+                workID: workID,
+                documentID: document.id,
+                documentCreatedAt: createdAt,
+                snapshotID: snapshotID,
+                parentSnapshotIDs: manifest.parentSnapshotIds,
+                manifest: manifestBytes,
+                objects: [LocalObject(objectID: objectID, bytes: objectBytes)],
+                reason: .autosave
+            )
+            return true
+        } catch {
+            print("[FUMINIWA] SQLite正本への保存に失敗しました(\(Self.errorCategory(error)))")
+            return false
+        }
+    }
+
     func performCoordinatedDocumentSave(
         _ document: NovelDocument,
         to url: URL
@@ -66,6 +137,8 @@ extension AppState {
         _ expectedDocument: NovelDocument,
         at url: URL
     ) async -> Bool {
+        guard await commitLocalCanonicalSnapshot(expectedDocument) else { return false }
+        scheduleSnapshotSync(for: expectedDocument.id)
         guard let runtime = deviceSyncRuntime,
               let library = runtime.library else { return true }
         do {
