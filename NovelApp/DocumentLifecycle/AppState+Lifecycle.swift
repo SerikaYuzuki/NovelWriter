@@ -683,6 +683,11 @@ extension AppState {
         rememberDocumentURL(url)
         cancelAutomaticSnapshotScheduling()
         lastAutomaticSnapshotRevision = saveCoordinator.lastSavedRevision
+        if usesSnapshotSyncRuntime {
+            Task { @MainActor [weak self] in
+                await self?.ensureLocalSnapshotSeeded(for: newDocument)
+            }
+        }
     }
 
     func advanceDocumentSession(document: NovelDocument, url: URL) {

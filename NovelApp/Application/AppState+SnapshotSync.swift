@@ -1,7 +1,29 @@
 import Foundation
+import NovelCore
 import NovelLocalStore
 
 extension AppState {
+    /// Existing `.novelpkg` documents predate the SQLite authority. Seed one
+    /// canonical local snapshot when they are opened so an explicit sync can
+    /// publish an unchanged work as well as a newly edited work.
+    func ensureLocalSnapshotSeeded(for document: NovelDocument) async {
+        guard usesSnapshotSyncRuntime, let store = localCanonicalStore else { return }
+        do {
+            guard try await store.workState(for: document.id) == nil else {
+                DeviceSyncLog.snapshot("seed skipped(existing-local-state)")
+                return
+            }
+            guard await commitLocalCanonicalSnapshot(document) else {
+                DeviceSyncLog.snapshot("seed failed(local-commit)")
+                return
+            }
+            scheduleSnapshotSync(for: document.id)
+            DeviceSyncLog.snapshot("seeded existing document")
+        } catch {
+            DeviceSyncLog.snapshot("seed failed", error: error)
+        }
+    }
+
     /// Starts remote replay after the local commit boundary. The caller never
     /// awaits network completion, so navigation/background/quit remain local
     /// first even when the server is unavailable.

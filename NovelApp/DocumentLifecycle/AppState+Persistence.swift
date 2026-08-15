@@ -24,7 +24,7 @@ extension AppState {
     /// The current runtime uses the document UUID as the provisional WorkID;
     /// the migration ledger can replace this binding without changing the
     /// document identity or the portable package format.
-    private func commitLocalCanonicalSnapshot(_ document: NovelDocument) async -> Bool {
+    func commitLocalCanonicalSnapshot(_ document: NovelDocument) async -> Bool {
         guard let store = localCanonicalStore else { return true }
         do {
             let snapshot = try WorkSnapshot(document: document)
