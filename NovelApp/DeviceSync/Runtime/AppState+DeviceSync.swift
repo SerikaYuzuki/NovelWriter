@@ -32,6 +32,18 @@ extension AppState {
         deviceSyncDraftTask?.cancel()
         deviceSyncDraftTask = nil
         deviceSyncEditIntentLineage = nil
+        if usesSnapshotSyncRuntime {
+            clearWorkSyncClient()
+            activeDeviceSyncIdentity = nil
+            pendingDeviceSyncConflictResolution = nil
+            deviceSyncConflict = nil
+            deviceSyncLocalRecoveryPending = false
+            resolvedDeviceSyncLookupIdentity = currentDeviceSyncLookupIdentity
+            deviceSyncState = .unconfigured
+            deviceSyncTransferState = .notApplicable
+            deviceSyncLocalDurabilityState = .notApplicable
+            return
+        }
         if usesWholeWorkSyncRuntime {
             activeDeviceSyncIdentity = nil
             pendingDeviceSyncConflictResolution = nil
@@ -70,6 +82,14 @@ extension AppState {
     }
 
     func prepareDeviceSync(for expectedLookup: DeviceSyncLookupIdentity) async {
+        guard !usesSnapshotSyncRuntime else {
+            deviceSyncLocalRecoveryPending = false
+            deviceSyncLocalDurabilityState = .notApplicable
+            deviceSyncTransferState = .notApplicable
+            deviceSyncState = .unconfigured
+            resolvedDeviceSyncLookupIdentity = expectedLookup
+            return
+        }
         while let inFlight = deviceSyncPreparationTask {
             let observedGeneration = deviceSyncPreparationGeneration
             let observedLookup = deviceSyncPreparationLookup
@@ -130,6 +150,7 @@ extension AppState {
         baseContentDigest: SyncContentDigest,
         previousContentDigest: SyncContentDigest
     ) {
+        guard !usesSnapshotSyncRuntime else { return }
         guard deviceSyncRuntime != nil,
               currentDeviceSyncLookupIdentity == expectedLookup else { return }
         if hasCurrentWorkSyncClient {

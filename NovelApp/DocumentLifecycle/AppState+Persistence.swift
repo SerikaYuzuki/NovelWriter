@@ -81,6 +81,23 @@ extension AppState {
         to url: URL
     ) async throws {
         do {
+            // Post-cutover the editor must not enter the legacy CloudKit
+            // preparation gate. SQLite commit is the local durability
+            // boundary; the Rust worker is scheduled only after it succeeds.
+            // Keep writing the portable package for the import/export bridge
+            // until that bridge is fully detached from the live document URL.
+            if usesSnapshotSyncRuntime {
+                try await repository.save(document, to: url)
+                noteDeviceSyncPackageSaved(document)
+                guard await recordLocalLibraryPackageSave(document, at: url) else {
+                    deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
+                    return
+                }
+                deviceSyncLocalDurabilityState = .saved
+                deviceSyncTransferState = .notApplicable
+                return
+            }
+
             let workPreparation = await stageWorkSyncPackageSave(document)
             switch workPreparation {
             case .notApplicable:

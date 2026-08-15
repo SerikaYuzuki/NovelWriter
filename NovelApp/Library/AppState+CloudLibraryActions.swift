@@ -4,7 +4,8 @@ import NovelSync
 
 extension AppState {
     var canPublishCurrentWorkToCloud: Bool {
-        startupState.isReady &&
+        guard !usesSnapshotSyncRuntime else { return false }
+        return startupState.isReady &&
             permitsDocumentInteraction &&
             lastStartupLibraryConnection.allowsExplicitCloudPublish &&
             deviceSyncRuntime?.library != nil &&
@@ -12,7 +13,10 @@ extension AppState {
     }
 
     var canExplicitlySyncCurrentWork: Bool {
-        startupState.isReady &&
+        if usesSnapshotSyncRuntime {
+            return startupState.isReady && permitsDocumentInteraction
+        }
+        return startupState.isReady &&
             permitsDocumentInteraction &&
             noteSyncClient != nil &&
             isCurrentWorkBoundToCloud &&
@@ -20,7 +24,10 @@ extension AppState {
     }
 
     var isExplicitNoteSyncInFlight: Bool {
-        noteSyncClient != nil && workSyncNetworkTask != nil
+        if usesSnapshotSyncRuntime {
+            return isSnapshotSyncInFlight
+        }
+        return noteSyncClient != nil && workSyncNetworkTask != nil
     }
 
     func dismissCloudLibraryActionMessage() {

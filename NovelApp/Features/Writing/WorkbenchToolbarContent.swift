@@ -57,16 +57,23 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
 
         if showsWritingActions || appState.hasPendingDeviceSyncReview {
             ToolbarItem(id: WorkbenchToolbarItemID.deviceSyncStatus) {
-                DeviceSyncStatusControl(
-                    saveState: appState.saveState,
-                    state: appState.deviceSyncState,
-                    transferState: appState.deviceSyncTransferState,
-                    localDurabilityState: appState.deviceSyncLocalDurabilityState,
-                    hasLocalRecoveryReview: appState.hasPendingDeviceSyncReview,
-                    isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
-                        || !appState.deviceSyncLocalRecoveryPending,
-                    reviewChanges: reviewDeviceSyncChanges
-                )
+                if appState.usesSnapshotSyncRuntime {
+                    SnapshotSyncStatusControl(
+                        saveState: appState.saveState,
+                        outcome: appState.lastSnapshotSyncOutcome
+                    )
+                } else {
+                    DeviceSyncStatusControl(
+                        saveState: appState.saveState,
+                        state: appState.deviceSyncState,
+                        transferState: appState.deviceSyncTransferState,
+                        localDurabilityState: appState.deviceSyncLocalDurabilityState,
+                        hasLocalRecoveryReview: appState.hasPendingDeviceSyncReview,
+                        isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
+                            || !appState.deviceSyncLocalRecoveryPending,
+                        reviewChanges: reviewDeviceSyncChanges
+                    )
+                }
             }
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
@@ -97,11 +104,24 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             if appState.canExplicitlySyncCurrentWork {
                 ToolbarItem(id: WorkbenchToolbarItemID.cloudSync) {
                     Button {
-                        Task { await appState.saveAndSyncNow() }
+                        Task {
+                            if appState.usesSnapshotSyncRuntime {
+                                _ = await appState.saveAndSyncSnapshotNow()
+                            } else {
+                                _ = await appState.saveAndSyncNow()
+                            }
+                        }
                     } label: {
-                        Label("iCloudと同期", systemImage: "arrow.clockwise.icloud")
+                        Label(
+                            appState.usesSnapshotSyncRuntime ? "サーバーと同期" : "iCloudと同期",
+                            systemImage: "arrow.clockwise.icloud"
+                        )
                     }
-                    .help("この端末の保存内容をiCloudと同期します")
+                    .help(
+                        appState.usesSnapshotSyncRuntime
+                            ? "この端末の保存内容をサーバーと同期します"
+                            : "この端末の保存内容をiCloudと同期します"
+                    )
                     .disabled(appState.isExplicitNoteSyncInFlight)
                     .accessibilityIdentifier("workbench.cloud.sync")
                 }

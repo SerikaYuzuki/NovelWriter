@@ -3,6 +3,7 @@ import NovelSync
 
 extension AppState {
     func refreshSelectedEpisodeDeviceSync() async {
+        guard !usesSnapshotSyncRuntime else { return }
         if hasCurrentWorkSyncClient {
             await refreshWholeWorkSync()
             return
@@ -43,6 +44,7 @@ extension AppState {
     /// remote refresh into an editor lock.
     func refreshActiveDeviceSyncWithoutPreparing() async {
         guard startupState.isReady else { return }
+        guard !usesSnapshotSyncRuntime else { return }
         if hasCurrentWorkSyncClient {
             await refreshWholeWorkSync()
         } else if activeDeviceSyncIdentity != nil {
@@ -241,6 +243,7 @@ extension AppState {
     /// CloudKit/accountの起動完了signalは、binding解決前にも届く。
     /// 既存clientはexact fenceを再照合し、未解決の話はbindingからやり直す。
     func refreshOrPrepareSelectedEpisodeDeviceSync() async {
+        guard !usesSnapshotSyncRuntime else { return }
         let expectedLookup = currentDeviceSyncLookupIdentity
         if let inFlight = deviceSyncPreparationTask {
             let generation = deviceSyncPreparationGeneration
@@ -264,6 +267,7 @@ extension AppState {
     }
 
     func startDeviceSyncSignalObservationIfNeeded() {
+        guard !usesSnapshotSyncRuntime else { return }
         guard deviceSyncSignalTask == nil,
               let signals = deviceSyncRuntime?.remoteChangeSignals else { return }
         deviceSyncSignalTask = Task { @MainActor [weak self] in

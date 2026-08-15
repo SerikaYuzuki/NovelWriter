@@ -78,27 +78,24 @@ public actor LocalSnapshotSyncWorker {
             guard let snapshot = try await store.snapshot(id: intent.localSnapshotID) else {
                 throw SnapshotSyncError.transport("missing local snapshot \(intent.localSnapshotID)")
             }
-            let objectIDs = try Self.objectIDs(in: snapshot.manifest)
-            for objectID in objectIDs {
-                guard let bytes = try await store.object(id: objectID) else {
-                    throw SnapshotSyncError.transport("missing local object \(objectID)")
-                }
-                try await transport.uploadObject(
-                    objectID: objectID,
-                    bytes: bytes,
-                    accessToken: session.accessToken
-                )
-            }
-            try await transport.registerSnapshot(
+            // Offline edits can coalesce the outbox to a leaf whose local
+            // parent has never reached the server. Register the complete
+            // parent chain first so the server's lineage validation does not
+            // turn a normal reconnect into a false sync failure.
+            _ = try await ensureSnapshotChain(
+                snapshot,
                 workID: workID,
-                snapshotID: snapshot.id,
-                manifest: snapshot.manifest,
-                accessToken: session.accessToken
+                accessToken: session.accessToken,
+                visited: []
             )
             let state = try await store.workState(for: workID)
-            let expectedHead = state?.acknowledgedHeadSnapshotID.map {
+            let expectedHead = intent.expectedHeadSnapshotID.map {
                 RemoteSnapshotHead(
-                    generation: state?.acknowledgedHeadGeneration ?? 0,
+                    // A changed acknowledged ID is intentionally represented
+                    // with a stale generation; CAS then returns a conflict.
+                    generation: state?.acknowledgedHeadSnapshotID == $0
+                        ? state?.acknowledgedHeadGeneration ?? 0
+                        : 0,
                     snapshotID: $0
                 )
             }
@@ -121,6 +118,45 @@ public actor LocalSnapshotSyncWorker {
             }
         }
         return latestOutcome
+    }
+
+    private func ensureSnapshotChain(
+        _ snapshot: LocalSnapshotRecord,
+        workID: UUID,
+        accessToken: String,
+        visited: Set<String>
+    ) async throws -> Set<String> {
+        var visited = visited
+        guard visited.insert(snapshot.id).inserted else { return visited }
+        for parentID in snapshot.parentSnapshotIDs {
+            guard let parent = try await store.snapshot(id: parentID) else {
+                throw SnapshotSyncError.transport("missing local parent snapshot \(parentID)")
+            }
+            visited = try await ensureSnapshotChain(
+                parent,
+                workID: workID,
+                accessToken: accessToken,
+                visited: visited
+            )
+        }
+        let objectIDs = try Self.objectIDs(in: snapshot.manifest)
+        for objectID in objectIDs {
+            guard let bytes = try await store.object(id: objectID) else {
+                throw SnapshotSyncError.transport("missing local object \(objectID)")
+            }
+            try await transport.uploadObject(
+                objectID: objectID,
+                bytes: bytes,
+                accessToken: accessToken
+            )
+        }
+        try await transport.registerSnapshot(
+            workID: workID,
+            snapshotID: snapshot.id,
+            manifest: snapshot.manifest,
+            accessToken: accessToken
+        )
+        return visited
     }
 
     private static func objectIDs(in manifest: Data) throws -> [String] {

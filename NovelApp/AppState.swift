@@ -140,6 +140,7 @@ final class AppState {
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState
     var lastSnapshotSyncOutcome: SnapshotSyncOutcome = .idle
+    var isSnapshotSyncInFlight = false
     /// production syncのlocal metadataを確立できなかったprocessは、
     /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
     var deviceSyncStartupFailedSafely = false
@@ -323,6 +324,14 @@ final class AppState {
     static let recentDocumentPathKey = AppPreferenceKey.recentDocumentPath
     static let projectSectionKey = AppPreferenceKey.projectSection
     static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
+
+    /// D-078 cutover: the SQLite/Rust lane is the live sync authority. The
+    /// legacy CloudKit runtime remains available to migration tooling/tests,
+    /// but must not participate in the editor lifecycle once this worker is
+    /// configured.
+    var usesSnapshotSyncRuntime: Bool {
+        localSnapshotSyncWorker != nil
+    }
 
     init(
         dependencies: AppDependencies,

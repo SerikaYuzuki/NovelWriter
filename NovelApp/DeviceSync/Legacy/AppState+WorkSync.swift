@@ -58,6 +58,13 @@ extension AppState {
     /// Episode選択に依存しない作品単位のsingle-flight preflight。
     /// 章だけで話が0件の作品でも、編集を解放する前にbindingとwork journalを読む。
     func prepareWholeWorkSync(for expectedIdentity: WorkSyncPreparationIdentity) async {
+        guard !usesSnapshotSyncRuntime else {
+            deviceSyncLocalRecoveryPending = false
+            deviceSyncLocalDurabilityState = .notApplicable
+            deviceSyncTransferState = .notApplicable
+            deviceSyncState = .unconfigured
+            return
+        }
         while let inFlight = workSyncPreparationTask {
             let observedGeneration = workSyncPreparationGeneration
             let observedIdentity = workSyncPreparationIdentity

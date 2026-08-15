@@ -10,10 +10,36 @@ extension AppState {
         Task { [weak self] in
             do {
                 let outcome = try await worker.sync(workID: workID)
-                self?.lastSnapshotSyncOutcome = outcome
+                guard let self else { return }
+                self.lastSnapshotSyncOutcome = outcome
             } catch {
                 self?.lastSnapshotSyncOutcome = .offline
             }
+        }
+    }
+
+    /// Explicit sync for the post-cutover lane. Local save remains the only
+    /// required boundary; this action additionally waits for one remote
+    /// attempt so the status can immediately show uploaded/offline/conflict.
+    @discardableResult
+    func saveAndSyncSnapshotNow() async -> Bool {
+        guard usesSnapshotSyncRuntime, permitsDocumentInteraction else { return false }
+        let saved = await saveNow()
+        guard saved, let worker = localSnapshotSyncWorker else { return saved }
+        isSnapshotSyncInFlight = true
+        defer { isSnapshotSyncInFlight = false }
+        do {
+            let outcome = try await worker.sync(workID: document.id)
+            lastSnapshotSyncOutcome = outcome
+            switch outcome {
+            case .uploaded, .idle:
+                return true
+            case .offline, .needsChoice:
+                return false
+            }
+        } catch {
+            lastSnapshotSyncOutcome = .offline
+            return false
         }
     }
 

@@ -1,5 +1,76 @@
 import NovelSync
+import NovelLocalStore
 import SwiftUI
+
+struct SnapshotSyncStatusControl: View {
+    let saveState: DocumentSaveState
+    let outcome: SnapshotSyncOutcome
+
+    @State private var showsDetails = false
+
+    private var title: String {
+        if saveState != .saved { return "この端末へ保存中" }
+        switch outcome {
+        case .uploaded: return "この端末とサーバーに同期済み"
+        case .needsChoice: return "この端末に保存済み、確認が必要"
+        case .offline, .idle: return "この端末に保存済み、同期待ち"
+        }
+    }
+
+    private var detail: String {
+        if saveState != .saved {
+            return "変更内容をこの端末へ保存しています。入力はそのまま続けられます。"
+        }
+        switch outcome {
+        case .uploaded:
+            return "変更内容はこの端末とサーバーに保存されています。"
+        case .needsChoice:
+            return "変更内容はこの端末に保存されています。もう一方の版とどちらを残すか確認してください。"
+        case .offline, .idle:
+            return "変更内容はこの端末に保存されています。接続が戻ると自動で同期します。"
+        }
+    }
+
+    private var systemImage: String {
+        if saveState != .saved { return "arrow.triangle.2.circlepath.icloud" }
+        switch outcome {
+        case .uploaded: return "checkmark.icloud"
+        case .needsChoice: return "exclamationmark.icloud"
+        case .offline, .idle: return "icloud.slash"
+        }
+    }
+
+    private var isWarning: Bool {
+        if saveState != .saved { return false }
+        if case .needsChoice = outcome { return true }
+        return false
+    }
+
+    var body: some View {
+        Button { showsDetails.toggle() } label: {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isWarning ? .orange : .secondary)
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityHint("保存と同期の詳細を表示します")
+        .accessibilityIdentifier("snapshotSync.status")
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(title, systemImage: systemImage)
+                    .font(.headline)
+                Text(detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(width: 300, alignment: .leading)
+        }
+    }
+}
 
 struct DeviceSyncStatusControl: View {
     let saveState: DocumentSaveState

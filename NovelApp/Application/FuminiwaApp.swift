@@ -41,7 +41,6 @@ struct FuminiwaApp: App {
     @State private var editorCommandSession: EditorCommandSession
     #if canImport(NovelSyncCloudKit)
     @State private var deviceSyncComposition: DeviceSyncProductionComposition?
-    @State private var deviceSyncPreparationFailed: Bool
     #endif
 
     init() {
@@ -52,7 +51,12 @@ struct FuminiwaApp: App {
 
         let editorCommandSession = EditorCommandSession()
         #if canImport(NovelSyncCloudKit)
-        let deviceSyncComposition = try? DeviceSyncProductionComposition()
+        // D-078 cutover: CloudKit remains compiled for migration/tests, but
+        // the live app uses SQLite + the Rust Snapshot Sync server. Creating
+        // the legacy composition here would still start its preparation gate
+        // and surface a misleading iCloud retry state after a successful
+        // local commit.
+        let deviceSyncComposition: DeviceSyncProductionComposition? = nil
         let deviceSyncRuntime = deviceSyncComposition?.runtime
         #endif
         let syncServerURL = URL(
@@ -93,7 +97,6 @@ struct FuminiwaApp: App {
         _editorCommandSession = State(initialValue: editorCommandSession)
         #if canImport(NovelSyncCloudKit)
         _deviceSyncComposition = State(initialValue: deviceSyncComposition)
-        _deviceSyncPreparationFailed = State(initialValue: deviceSyncComposition == nil)
         #endif
     }
 
@@ -112,12 +115,8 @@ struct FuminiwaApp: App {
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
                     await appState.restoreFuminiwaSession()
                     #if canImport(NovelSyncCloudKit)
-                    guard !deviceSyncPreparationFailed, let deviceSyncComposition else {
-                        appState.failStartupForDeviceSyncSafety()
-                        return
-                    }
-                    let deviceSyncBootstrap = Task {
-                        await deviceSyncComposition.bootstrap()
+                    let deviceSyncBootstrap = deviceSyncComposition.map { composition in
+                        Task { await composition.bootstrap() }
                     }
                     #endif
                     await appState.bootstrap(opening: startupOpenURL, localFirst: true)
@@ -127,10 +126,12 @@ struct FuminiwaApp: App {
                     // local shelf／active editorの表示をCloudKit bootstrapや
                     // remote catalogの完了へ結び付けない。必要なremote処理は
                     // bootstrap完了後にsingle-flightのbackground laneへ渡す。
-                    Task { @MainActor in
-                        await deviceSyncBootstrap.value
-                        await appState.refreshStartupLibrary()
-                        await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                    if let deviceSyncBootstrap {
+                        Task { @MainActor in
+                            await deviceSyncBootstrap.value
+                            await appState.refreshStartupLibrary()
+                            await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
+                        }
                     }
                     #endif
                 }
@@ -171,8 +172,14 @@ struct FuminiwaApp: App {
 
             CommandGroup(replacing: .saveItem) {
                 if appState.canExplicitlySyncCurrentWork {
-                    Button("iCloudと同期") {
-                        Task { await appState.saveAndSyncNow() }
+                    Button(appState.usesSnapshotSyncRuntime ? "サーバーと同期" : "iCloudと同期") {
+                        Task {
+                            if appState.usesSnapshotSyncRuntime {
+                                _ = await appState.saveAndSyncSnapshotNow()
+                            } else {
+                                _ = await appState.saveAndSyncNow()
+                            }
+                        }
                     }
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(
