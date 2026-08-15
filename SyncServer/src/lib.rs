@@ -347,7 +347,7 @@ pub struct ObjectRecord {
     pub bytes: Bytes,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotManifest {
     #[serde(rename = "schemaVersion")]
@@ -359,7 +359,7 @@ pub struct SnapshotManifest {
     pub entries: Vec<SnapshotEntry>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotEntry {
     #[serde(rename = "entityKey")]
@@ -906,9 +906,10 @@ async fn register_snapshot(
     validate_manifest(&manifest, &state).await?;
     let mut locked = state.write().await;
     if let Some(existing) = locked.snapshots.get(&snapshot_id) {
-        if existing.work_id != work_id
-            || serde_json::to_vec(existing).map_err(|_| ApiError::Internal)? != body
-        {
+        // Compare the decoded canonical model, not re-serialized bytes. A
+        // retry from another language may use a different JSON member order
+        // while representing the exact same manifest.
+        if existing.work_id != work_id || existing != &manifest {
             return Err(ApiError::Conflict(
                 "snapshotId already contains different bytes".into(),
             ));
@@ -1692,5 +1693,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first_bytes, replay_bytes);
+    }
+
+    #[tokio::test]
+    async fn registering_the_same_manifest_is_idempotent_after_server_reparse() {
+        let app = test_app();
+        let object = Bytes::from_static(b"snapshot-object");
+        let object_id = digest(&object);
+        let object_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/objects/{object_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::from(object.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(object_response.status(), StatusCode::OK);
+
+        let work_id = Uuid::new_v4();
+        // This is the Swift canonical member order. The server stores a
+        // decoded manifest, so a retry must not compare against Rust's own
+        // struct serialization order.
+        let manifest = format!(
+            "{{\"entries\":[{{\"byteCount\":{},\"contentType\":\"application/octet-stream\",\"entityKey\":\"work/document\",\"objectId\":\"{}\"}}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"{}\"}}",
+            object.len(), object_id, work_id
+        );
+        let snapshot_id = digest(manifest.as_bytes());
+        let register = || {
+            app.clone().oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/works/{work_id}/snapshots/{snapshot_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(manifest.clone()))
+                    .unwrap(),
+            )
+        };
+        let first = register().await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let retry = register().await.unwrap();
+        assert_eq!(retry.status(), StatusCode::OK);
+        let retry_body = axum::body::to_bytes(retry.into_body(), 4096).await.unwrap();
+        assert!(String::from_utf8_lossy(&retry_body).contains("alreadyRegistered"));
     }
 }
