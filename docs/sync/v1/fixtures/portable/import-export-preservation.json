@@ -1,0 +1,117 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "portable-import-export-preservation",
+  "description": "Known content, attachments, unconsumed package items, empty directories, and raw legacy snapshots survive SQLite adoption, retry, restore, keep-both, and Export without becoming sync payload accidentally.",
+  "initialPackage": {
+    "validated": true,
+    "knownModelDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "items": [
+      {"pathComponents": ["attachments", "資料.PNG"], "kind": "file", "byteCount": 4, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "classification": "attachment"},
+      {"pathComponents": ["episodes", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA.md"], "kind": "file", "byteCount": 6, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "classification": "knownMaterialized"},
+      {"pathComponents": ["episodes", "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB.md"], "kind": "file", "byteCount": 7, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "classification": "preservedOrphan"},
+      {"pathComponents": ["future-feature"], "kind": "directory", "classification": "preservedOpaque"},
+      {"pathComponents": ["future-feature", "empty"], "kind": "directory", "classification": "preservedOpaque"},
+      {"pathComponents": ["future-feature", "data.bin"], "kind": "file", "byteCount": 5, "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "classification": "preservedOpaque"},
+      {"pathComponents": ["snapshots", "auto-20260815T000000Z.novelpkg", "manifest.json"], "kind": "file", "byteCount": 8, "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "classification": "rawLegacySnapshot"}
+    ]
+  },
+  "importIntent": {
+    "reservedWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "reservedAttachmentIds": {
+      "attachments/資料.PNG": "50000000-0000-0000-0000-000000000001"
+    },
+    "sealedAttachmentOrder": ["50000000-0000-0000-0000-000000000001"],
+    "attachmentOrderComparator": "originalFilenameUtf8Bytes",
+    "portableInventoryComparator": "originalRelativePathComponentsUtf8BytesDirectoryBeforeDescendant"
+  },
+  "commands": [
+    {"type": "persistImportIntentAndAttachmentIds"},
+    {"type": "simulateProcessExit"},
+    {"type": "resumeImport"},
+    {"type": "restoreKnownSnapshot"},
+    {"type": "keepBothClone"},
+    {"type": "exportOriginalAndClone"},
+    {"type": "simulateRemoteSamePortableNameAddition"},
+    {"type": "simulateKnownPlusLocalBundleExportLimitExceeded"}
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedIntentDurable": true,
+      "expectedAttachmentId": "50000000-0000-0000-0000-000000000001",
+      "expectedAttachmentOrderDurable": true,
+      "expectedPackageMutationCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedError": "simulatedProcessExit",
+      "expectedDurableAttachmentId": "50000000-0000-0000-0000-000000000001",
+      "expectedPackageMutationCount": 0
+    },
+    {
+      "step": 3,
+      "expectedAttachmentId": "50000000-0000-0000-0000-000000000001",
+      "expectedAttachmentIdRegenerated": false,
+      "expectedAttachmentOrderRescanned": false,
+      "expectedPreservedInventoryPaths": [
+        "episodes/BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB.md",
+        "future-feature",
+        "future-feature/empty",
+        "future-feature/data.bin",
+        "snapshots/auto-20260815T000000Z.novelpkg/manifest.json"
+      ],
+      "expectedPortableInventoryIsSyncPayload": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedPortableInventoryChanged": false,
+      "expectedRawLegacySnapshotChanged": false,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedCloneWorkId": "60000000-0000-0000-0000-000000000001",
+      "expectedCasBytesCopied": false,
+      "expectedIndependentWorkResourceReferenceSets": 2,
+      "expectedBothReferenceSetsAreGcRoots": true,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedKnownModelLogicalEquality": true,
+      "expectedUpdatedAtPolicy": "newCanonicalUtcAtExportAdoption",
+      "expectedAttachmentBytesExact": true,
+      "expectedOpaquePathsKindsAndBytesExact": true,
+      "expectedRawLegacySnapshotSubtreeExact": true,
+      "expectedNewSqliteHistoryNestedIntoPackage": false,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "remoteAttachment": {"id": "50000000-0000-0000-0000-000000000002", "displayName": "資料.png"},
+      "expectedPortableCollisionKeyEqual": true,
+      "expectedClassification": "needsChoice",
+      "expectedAutomaticUnion": false,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedKnownSnapshotPreserved": true,
+      "expectedOpaqueBytesPreserved": true,
+      "expectedEditingAvailable": true,
+      "expectedExportState": "repairRequired",
+      "expectedAutomaticDeletionCount": 0,
+      "expectedError": "portableExportLimitExceeded"
+    }
+  ],
+  "forbiddenOutcomes": [
+    "follow a symlink, junction, or hard-link dependency",
+    "drop an orphan payload because the known model does not reference it",
+    "upload the opaque portable inventory as Snapshot entities",
+    "overwrite a preserved path with a later known payload",
+    "delete either manuscript branch because a complete portable Export is temporarily blocked"
+  ]
+}

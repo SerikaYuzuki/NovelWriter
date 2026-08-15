@@ -1,0 +1,71 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "autosave-checkpoint-promotion",
+  "description": "Lifecycle promotion reuses the current leaf SnapshotID so earlier dense siblings do not become ancestors and remain prunable.",
+  "initialState": {
+    "stableCheckpointSnapshotId": "0000000000000000000000000000000000000000000000000000000000000000",
+    "snapshots": [
+      {
+        "label": "stable-0",
+        "snapshotId": "0000000000000000000000000000000000000000000000000000000000000000",
+        "parents": [],
+        "occurrences": ["manual"]
+      }
+    ]
+  },
+  "commands": [
+    {
+      "type": "commitDenseAutosave",
+      "label": "autosave-a",
+      "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expectedParents": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "type": "commitDenseAutosave",
+      "label": "autosave-b",
+      "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedParents": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "type": "flushLifecycleWithoutContentChange",
+      "expectedPromotedSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectedNewSnapshotCount": 0,
+      "expectedAddedOccurrence": "lifecycle"
+    },
+    {
+      "type": "commitDenseAutosave",
+      "label": "autosave-c",
+      "snapshotId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedParents": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "type": "applyRetention"
+    }
+  ],
+  "expected": {
+    "stableCheckpointSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "currentLocalSnapshotId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "ancestorClosureOfCurrent": [
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "prunableSnapshotIds": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "promotedSnapshotRetained": true,
+    "denseSiblingBecameAncestor": false
+  },
+  "forbiddenOutcomes": [
+    "create a new lifecycle Snapshot whose parent is autosave-b",
+    "make autosave-a an ancestor of autosave-b",
+    "retain autosave-a only because a newer checkpoint was chained through it"
+  ]
+}

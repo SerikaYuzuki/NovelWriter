@@ -1,0 +1,66 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "entity-diff-disjoint-safe-union",
+  "description": "Local changes the title while remote changes an episode body; no field- or text-level merge is performed.",
+  "initialState": {
+    "commonBaseKnown": true,
+    "baseSnapshotId": "1111111111111111111111111111111111111111111111111111111111111111",
+    "localSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+    "remoteSnapshotId": "3333333333333333333333333333333333333333333333333333333333333333",
+    "baseEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "work/title": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "localEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "work/title": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "remoteEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "work/title": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "commands": [
+    {
+      "type": "reconcileManifests"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedClassification": "safeUnion",
+      "expectedPerEntity": [
+        {
+          "entityKey": "episode/20000000-0000-0000-0000-000000000001/body",
+          "classification": "remoteOnlyChange",
+          "selectedObjectId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "entityKey": "work/title",
+          "classification": "localOnlyChange",
+          "selectedObjectId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "expectedMergedEntries": {
+        "episode/20000000-0000-0000-0000-000000000001/body": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "work/title": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expectedParentSnapshotIds": [
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "expectedConflictEntityKeys": [],
+      "ui": {
+        "editingAvailable": true,
+        "needsChoiceVisible": false
+      },
+      "expectedError": null
+    }
+  ],
+  "forbiddenOutcomes": [
+    "merge inside the episode body string",
+    "use a timestamp or arrival order as winner",
+    "present a conflict choice for disjoint EntityKeys"
+  ]
+}

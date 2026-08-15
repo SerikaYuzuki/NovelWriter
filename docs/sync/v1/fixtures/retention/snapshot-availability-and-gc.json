@@ -1,0 +1,208 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-snapshot-availability-and-gc",
+  "description": "Time buckets select checkpoints while protected references remain payload roots; graph metadata survives payload pruning.",
+  "policy": {
+    "anchorTime": "2026-08-15T12:00:00Z",
+    "bucketTimeZone": "UTC",
+    "withinOneHour": "retainAll",
+    "withinTwentyFourHours": "retainNewestPerUtcHour",
+    "withinThirtyDays": "retainNewestPerUtcDay",
+    "withinOneYear": "retainNewestPerIsoUtcWeek",
+    "older": "retainNewestPerUtcMonth",
+    "tieBreak": "higherOccurrenceSequenceThenOccurrenceIdUtf8",
+    "objectSweepGraceSeconds": 604800
+  },
+  "initialState": {
+    "snapshots": [
+      {
+        "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111",
+        "capturedAt": "2024-06-01T10:00:00Z",
+        "occurrenceSequence": 1,
+        "protection": "currentHead",
+        "objectIds": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      {
+        "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+        "capturedAt": "2024-06-03T10:00:00Z",
+        "occurrenceSequence": 2,
+        "protection": "userPinned",
+        "objectIds": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "snapshotId": "3333333333333333333333333333333333333333333333333333333333333333",
+        "capturedAt": "2024-06-05T10:00:00Z",
+        "occurrenceSequence": 3,
+        "protection": null,
+        "objectIds": [
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ]
+      },
+      {
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+        "capturedAt": "2024-06-20T10:00:00Z",
+        "occurrenceSequence": 4,
+        "protection": null,
+        "objectIds": [
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ]
+      },
+      {
+        "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "capturedAt": "2026-08-15T10:05:00Z",
+        "occurrenceSequence": 5,
+        "protection": null,
+        "objectIds": [
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      },
+      {
+        "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+        "capturedAt": "2026-08-15T10:45:00Z",
+        "occurrenceSequence": 6,
+        "protection": null,
+        "objectIds": [
+          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ]
+      },
+      {
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "capturedAt": "2026-08-15T11:10:00Z",
+        "occurrenceSequence": 7,
+        "protection": null,
+        "objectIds": [
+          "abababababababababababababababababababababababababababababababab"
+        ]
+      },
+      {
+        "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888",
+        "capturedAt": "2026-08-15T11:50:00Z",
+        "occurrenceSequence": 8,
+        "protection": "latestIntent",
+        "objectIds": [
+          "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc"
+        ]
+      },
+      {
+        "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999",
+        "capturedAt": "2024-06-04T10:00:00Z",
+        "occurrenceSequence": 9,
+        "protection": "unresolvedDivergence",
+        "objectIds": [
+          "dededededededededededededededededededededededededededededededede"
+        ]
+      },
+      {
+        "snapshotId": "1212121212121212121212121212121212121212121212121212121212121212",
+        "capturedAt": "2024-06-02T09:00:00Z",
+        "occurrenceSequence": 10,
+        "protection": "currentLocal",
+        "objectIds": [
+          "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacac"
+        ]
+      },
+      {
+        "snapshotId": "1313131313131313131313131313131313131313131313131313131313131313",
+        "capturedAt": "2024-06-03T09:00:00Z",
+        "occurrenceSequence": 11,
+        "protection": "resolvedConflictWithinNinetyDays",
+        "resolvedAt": "2026-08-01T00:00:00Z",
+        "objectIds": [
+          "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadad"
+        ]
+      },
+      {
+        "snapshotId": "1414141414141414141414141414141414141414141414141414141414141414",
+        "capturedAt": "2024-06-02T10:00:00Z",
+        "occurrenceSequence": 12,
+        "protection": "resolvedConflictExpired",
+        "resolvedAt": "2026-04-01T00:00:00Z",
+        "objectIds": [
+          "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae"
+        ]
+      }
+    ],
+    "operationReceiptReferences": [
+      {
+        "snapshotId": "3333333333333333333333333333333333333333333333333333333333333333",
+        "isPayloadRoot": false
+      }
+    ]
+  },
+  "commands": [
+    {
+      "type": "selectRetainedSnapshots"
+    },
+    {
+      "type": "markPayloadRoots"
+    },
+    {
+      "type": "prunePayloadAvailabilityAfterGrace"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedRetainedSnapshotIds": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "1212121212121212121212121212121212121212121212121212121212121212",
+        "1313131313131313131313131313131313131313131313131313131313131313",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        "6666666666666666666666666666666666666666666666666666666666666666",
+        "7777777777777777777777777777777777777777777777777777777777777777",
+        "8888888888888888888888888888888888888888888888888888888888888888",
+        "9999999999999999999999999999999999999999999999999999999999999999"
+      ],
+      "expectedPrunableSnapshotIds": [
+        "1414141414141414141414141414141414141414141414141414141414141414",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "5555555555555555555555555555555555555555555555555555555555555555"
+      ],
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedMarkedObjectIds": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "abababababababababababababababababababababababababababababababab",
+        "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+        "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc",
+        "dededededededededededededededededededededededededededededededededede",
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      ],
+      "expectedUnmarkedObjectIds": [
+        "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      ],
+      "expectedReceiptActsAsRoot": false,
+      "expectedCurrentLocalActsAsRoot": true,
+      "expectedUnresolvedDivergenceActsAsRoot": true,
+      "expectedResolvedConflictWithinNinetyDaysActsAsRoot": true,
+      "expectedResolvedConflictAfterNinetyDaysActsAsRoot": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedAvailability": {
+        "1414141414141414141414141414141414141414141414141414141414141414": false,
+        "3333333333333333333333333333333333333333333333333333333333333333": false,
+        "5555555555555555555555555555555555555555555555555555555555555555": false
+      },
+      "expectedGraphMetadataStillPresent": true,
+      "expectedPrunedToLineageStub": true,
+      "expectedListedAsRestorable": false,
+      "expectedParentEdgesRecursivelyMarkPayload": false,
+      "expectedError": null
+    }
+  ]
+}

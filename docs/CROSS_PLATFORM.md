@@ -1,8 +1,8 @@
 # クロスプラットフォーム設計契約
 
-**契約版: `.novelpkg` 1 / Snapshot Sync wire 1 / local SQLite logical schema 1 / Work・Note・Episode Sync（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
+**契約版: `.novelpkg` 1 / Snapshot Sync wire 1 draft / local SQLite logical schema 1 draft / Work・Note・Episode Sync（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: D-077のSQLite local canonical／Snapshot Sync契約を採択、Rust server MVP実装中。Apple／Windows client、canonical cross-language fixture、旧CloudKit migration、Production運用は未実装でRelease NO-GO。`.novelpkg` v1〜v3の公開互換は維持するが、通常autosave先ではなくImport／Export artifactへ変更する。現行CloudKit Note／旧Work／Episodeのsourceと検証結果はmigration input／履歴であり、D-077実装済みの証拠へ流用しない。**
+**状態: D-077のSQLite local canonical／Snapshot Sync契約を設計採択。Rust server、Apple／Windows client、canonical cross-language fixture、旧CloudKit migration、Production運用はすべて未実装でRelease NO-GO。`.novelpkg` v1〜v3の公開互換は維持するが、通常autosave先ではなくImport／Export artifactへ変更する。現行CloudKit Note／旧Work／Episodeのsourceと検証結果はmigration input／履歴であり、D-077実装済みの証拠へ流用しない。**
 
 本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。通常local storeは各OSがSQLite logical schemaを独立実装し、端末間へDB fileを渡さない。同期とonline履歴はcanonical whole-work Snapshot、利用者との受け渡しは`.novelpkg`、旧CloudKitはread-only migration sourceとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、packageはD-036、次世代syncはD-077と[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする。
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | Import／Exportの公開互換境界。macOSがExportした作品をWindowsでImportし、その逆も成立させる |
 | Snapshot Sync wire v1 | [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、canonical bytes／hash／CAS fixture | whole-work manifest、content-addressed entity／attachment、operation receipt、expected head CAS、cursor、Conflict、retentionを共有。SQLite／HTTP／UIの具象型は共有しない |
-| local SQLite logical schema v1 | table責務、migration fixture、transaction scenario | DB fileは共有しない。SwiftはGRDB等、C#はMicrosoft.Data.Sqlite等で独立実装し、WorkID／Snapshot／Outboxの意味とkill recovery結果を一致させる |
+| local SQLite logical schema v1 | table責務、migration fixture、transaction scenario | DB fileは共有しない。SwiftはGRDB、C#はMicrosoft.Data.Sqlite等で独立実装し、WorkID／Snapshot／SyncIntent／SealedAttemptの意味とkill recovery結果を一致させる |
 | Note／Work／Episode Sync（履歴） | [DEVICE_SYNC.md](DEVICE_SYNC.md)と既存fixture | 旧CloudKit migration／rollback専用。D-077 clientからwriteせず、mixed authorityにしない |
 | Episode Sync wire v1／journal schema v2（履歴） | [DEVICE_SYNC.md](DEVICE_SYNC.md) 1〜15章、既存fixture | D-059／D-060の話本文revision／lease／detached branchの実装・検証履歴。Work wireと相互decode／mixed運用しない |
 | 作品→章→話、各 ID、配列順、空要素の意味 | 仕様と fixture | Swift の型を C# から直接参照せず、同じ意味のモデルを各言語で実装する |
@@ -44,6 +44,7 @@
 - 本文、メモ、タイトルなどの Unicode 文字列は、保存時に NFC / NFD 変換や改行変換を暗黙に行わない。入力された値を保持する
 - 改行の正規化が必要な出力形式は [PHASE5.md](PHASE5.md) の Export 境界で行い、`.novelpkg` の読み書きでは本文を書き換えない
 - JSON内のUUID値はハイフン付き36文字を受理し、英字の大小を区別せず解釈する。新規保存時のJSON値とIDファイル名は大文字形式をcanonicalとする。IDファイル名はcanonicalな大文字名を要求し、JSON値と大小文字だけ異なるファイルを本文欠損として黙って扱わない
+- Snapshot Sync境界では同じUUID logical valueをlowercaseでcanonical化する。Importはpackage UUIDをcase-insensitive parseしてからlowercase SQLite／wire値へ変換し、Exportはuppercase package値／IDファイル名へ戻す。packageのraw UUID表記をObjectIDへ直接hashしない
 - ChapterIDとEpisodeIDは文書全体で一意、その他のentity IDは各domain内で一意とする。重複IDは後勝ちで上書きせず、読み込み／保存前検証で型付きエラーにする
 - `manifest.json` の `createdAt` / `updatedAt` は ISO 8601 の UTC 文字列とする。`createdAt`は作品の初回保存時に設定し、通常保存・別名保存・OS間round-tripで保持する。`updatedAt`はwriterが保存ごとに現在UTCへ更新する。表示時だけ各 OS のローカル日時へ変換する。W0のschemaでreaderの受理文法、writerのcanonical書式と精度を固定する
 - v3のwire表現は現行writerを基準にschemaへ列挙する。`formatVersion`はJSON文字列であり、UUIDも項目により直接の文字列または`{"rawValue":"UUID"}`形式を使う。C#モデル側の都合で平坦化して保存形式を変えない
@@ -51,9 +52,9 @@
 ### 2.3 ファイル名と大小文字
 
 - 既知ルート名 (`manifest.json`、`episodes`、`episode-notes` など)の照合は仕様上の綴りを正とする。異なる大小文字の既知項目を別項目として作らない
-- macOS / Windows の一般的な大小文字を区別しないファイルシステムを前提に、同一ディレクトリの衝突判定は NFC 正規化後の ordinal case-insensitive で行う。保存済みの本文・タイトルは正規化せず、ファイル名の衝突判定キーだけに使う
+- macOS / Windows の一般的な大小文字を区別しないファイルシステムを前提に、同一directoryの衝突判定keyは、元のUnicode scalar列へ **Unicode 15.1.0** のNFCを適用し、同版`CaseFolding.txt`のDefault Full Case Folding（status `C`／`F`、Turkic `T`は不使用）を適用し、同版NFCを再適用したUTF-8 bytesとする。Unicode 15.1.0の`UnicodeData.txt`／`CompositionExclusions.txt`／`CaseFolding.txt`から生成したtableとsource hashをR0 artifactへ固定し、Foundation、ICU、locale、Rust／.NET標準APIのversion依存結果をauthorityにしない。元のfile名、本文、タイトル自体は正規化しない
 - 新しく取り込む添付ファイル名は Windows でも作成可能な名前へ制限する。`< > : " / \ | ? *`、U+0000〜U+001F、末尾の空白／ピリオドを許可しない。大文字小文字を無視し、ファイル名の最初のピリオドより前が `CON` / `PRN` / `AUX` / `NUL` / `COM1`〜`COM9` / `LPT1`〜`LPT9` / `COM¹`〜`COM³` / `LPT¹`〜`LPT³` になる名前も許可しない(`NUL.tar.gz` も不可)
-- W0で、APFS / NTFS双方の1 component上限とWindowsのfull path上限を考慮した長さ予算をfixtureで固定する。writerの一時ファイル／一時パッケージ名は保存先basenameへUUID等を付け足さず、同じ親に短い固定prefix + UUIDで作る
+- portable pathはrootからのrelative component列で検証し、depthは16以下、各original componentはUTF-8で255 bytes以下かつUTF-16で240 code units以下、`/`でjoinしたrelative pathはUTF-8で768 bytes以下かつUTF-16で512 code units以下とする。separatorもrelative budgetへ数え、normalization後の長さへ読み替えない。Export先のabsolute pathはOS別上限を採用直前にも検査する。writerの一時file／一時package名は保存先basenameへUUID等を付け足さず、同じ親に短い固定prefix＋UUIDで作る
 - 既存作品に非互換な添付名がある場合、黙って欠落・上書きしない。移行前の名前と変更後の名前をユーザーへ示したうえで安全に改名するか、読み取り専用で開いて修復を促す
 
 ### 2.4 前方互換と安全性
@@ -85,7 +86,7 @@ Windows/
 ├── Fuminiwa.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
 ├── Fuminiwa.Storage.Sqlite   (端末内canonical store、migration、CAS)
 ├── Fuminiwa.Storage.Novelpkg (.novelpkg Import／Export codec)
-├── Fuminiwa.Sync.Protocol    (Snapshot／Outbox／Conflictの純粋domain)
+├── Fuminiwa.Sync.Protocol    (Snapshot／Intent／Attempt／Conflictの純粋domain)
 ├── Fuminiwa.Sync.Http        (Rust API adapter、background worker)
 ├── Fuminiwa.Export           (Core のみに依存する出力)
 ├── Fuminiwa.Editor           (UI 非依存のEditor rules / actions)
@@ -124,10 +125,10 @@ Windows 実装着手前の W0 で、`CompatibilityFixtures/` に次を追加す�
 - characters / plot / flags / project / world / world-notes / attachments / snapshots / 未知ルート項目を含む作品
 - 言語非依存の JSON Schema または同等のフィールド表。Swift の `Codable` 実装だけを仕様にしない
 - Export の期待結果と、純粋な Editor rule の入出力 fixture
-- Windows予約名(多重拡張子・上付き数字を含む)、大小文字／正規化衝突、component / full path境界、短い一時名、symlink拒否のfixture。junction / reparse pointは拒否すべき宣言的test vectorをW0で定義し、実体を使う動的テストはW1で追加する
+- Windows予約名(多重拡張子・上付き数字を含む)、Unicode 15.1 collision key、component／relative／absolute path境界、短い一時名、symlink拒否のfixture。junction／reparse pointは拒否すべき宣言的test vectorをW0で定義し、実体を使う動的testはW1で追加する
 - fixtureごとに期待論理モデルと相対パス + SHA-256 inventoryを持つ。JSONは意味比較、本文・添付・未知項目はbyte比較とし、ACL / xattr / ADS / ファイル時刻は互換対象外にする
 - Snapshot wire v1のcanonical manifest、object hash、expected head CAS、operation retry、Conflict、resource capをSwift／Rust／C#で同じexpected bytes／resultにする
-- SQLite migration、autosave transaction、CAS rename、Outbox sealの各checkpointでkillし、旧headまたは完全な新headへ戻るscenario fixtureを持つ
+- SQLite migration、autosave transaction、CAS rename、Intent commit／Attempt sealの各checkpointでkillし、旧headまたは完全な新headへ戻るscenario fixtureを持つ
 
 ### 4.1 W0 の完了条件
 
@@ -137,7 +138,7 @@ Windows 実装着手前の W0 で、`CompatibilityFixtures/` に次を追加す�
    - package rootと既知pathの各componentでsymlinkを辿らない。Windows側でjunction / reparse pointを拒否するための期待結果もfixtureに定義する
    - **macOS補修済み、fixture体系への統合は未完了**: manifest / world参照payloadの欠損・I/O失敗・invalid UTF-8と、存在するメモのinvalid UTF-8を空値へ救済しない。空メモのファイル省略だけを維持する
    - **未完了**: 壊れたJSON、不正参照、重複ID、version別必須項目の欠落を、空値や旧versionとして黙って救済しない。互換のため残す救済だけをschemaに列挙する
-   - Windows予約名、既知ルート名のcase variant、大小文字／Unicode正規化衝突、component / full path予算を添付取込時とpackage検証時に拒否する
+   - Windows予約名、既知root名のcase variant、Unicode 15.1 collision key衝突、固定component／relative path予算と実際のabsolute destination上限を添付取込時とpackage検証／Export採用時に拒否する
    - 通常保存・別名保存・snapshot作成／復元で保存先basenameに依存しない短い一時名を使い、置換前に一時packageの最低限の構造を検証する。失敗注入で既存packageとdirty状態の保持を確認する
    - UUID・IDファイル名・日時のcanonical出力とreaderの受理範囲をschemaどおり検証する
    - snapshotの論理作成日時はファイル名のtimestampを正とし、作成日時／更新日時などOSのファイル属性へ依存しない。自動スナップショットは`auto-<timestamp>.novelpkg`とし、`auto-`は種別だけを表す。timestampの読み方は手動分と同じとする(D-074)
@@ -160,7 +161,7 @@ macOS の `./Scripts/check.sh` と、W1で追加する `pwsh -File Windows/Scrip
 1. **W0: 契約固定** — `.novelpkg`、SQLite logical schema、Snapshot canonical bytes／hash／CAS、resource capのfixtureを固定する
 2. **W1: Windows Core + Storage** — SQLite＋CAS、v1〜v3 Import／v3 Export、Mac↔Windows round-trip、kill recoveryを成立させる
 3. **W2: 最小 WinUI 執筆環境** — 新規・開く・autosave、章／話Outline、日本語IME、Undo / Redo、local history
-4. **W3: Snapshot Sync** — HTTP worker、Outbox／Inbox、account fence、3択Conflict、online historyをRust fixtureに接続する
+4. **W3: Snapshot Sync** — HTTP worker、Intent／Attempt／Inbox、account fence、3択Conflict、online historyをRust fixtureに接続する
 5. **W4: 執筆支援 parity / 配布** — メモ、人物、プロット、伏線、世界観、資料、検索、Phase 5 ExportとWindows配布
 
 macOS の次タスクPackage Validator GateはW0の一部と重なるため、同じschema・fixture・失敗分類を使って進める。ただしPackage Validatorの一部を実装しただけでW0完了とはしない。Windows reader / writerが存在する前の `.novelpkg` schema変更は、本書・schema・fixture・macOS検証を同じPRで更新する。W1以降はWindows検証も完了条件へ加える。
@@ -183,11 +184,11 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート、通常attachment metadata／bytes
 - 含めない: unknown portable resource、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark、credential
 - local SQLite schema／driverはplatform実装でありwireへ出さない。`.novelpkg`もserverへuploadせず、Import／Export artifactに限る
-- headは`{generation, snapshotID}`、retryはoperation IDで冪等化し、時計、filesystem timestamp、push順をwinner判断に使わない
-- 共通baseから変更EntityKeyが完全に非重複ならpayload内部をmergeせず2-parent Snapshotへ統合する。同じepisode本文／outline等の同一keyだけをこの端末／online／両方の3択へ送る
+- headは`{generation, snapshotID}`、headなしは`null`、存在するgenerationは`1...9007199254740991`のJSON安全整数、retryはoperation IDで冪等化し、時計、filesystem timestamp、push順をwinner判断に使わない
+- 共通baseから変更EntityKeyが非重複でも、entity presence／order／参照のdependency closureと作品全体invariantがvalidな場合だけpayload内部をmergeせず2-parent Snapshotへ統合する。episode title／body／memo、chapter order等は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) 4.2のkey粒度を使い、同一key、delete対依存変更、構造不整合をこの端末／online／両方の3択へ送る
 - remote objectはhash／byte count／schema／accountを検査してInboxへstageし、active editorへ直接注入しない
 - local／online Snapshotに同じretention／restoreの意味を使い、restoreは過去内容を持つ新Snapshotを作る
-- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)とserver integration fixtureを正にする
+- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と`docs/sync/v1/`のOpenAPI／schema／fixtureを正にする。ただし現時点の`docs/sync/v1/`はE2EE／account Decision前の`designCandidate`でR0未freezeである。server integration testは適合証拠であって仕様authorityではない
 
 ## 7-hist-a. D-071 Note Syncのクロスプラットフォーム契約（移行前の実装）
 

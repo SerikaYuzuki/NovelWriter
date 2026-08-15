@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:entity:flag",
+  "title": "Flag Entity v1",
+  "$comment": "The payload id must equal the UUID segment of its flag/{id} EntityKey; the work/flag-order payload carries display order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "title",
+    "note",
+    "isResolved",
+    "plantedChapterId",
+    "resolvedChapterId"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/lowercaseUuid"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "isResolved": {
+      "type": "boolean"
+    },
+    "plantedChapterId": {
+      "$ref": "#/$defs/nullableUuid"
+    },
+    "resolvedChapterId": {
+      "$ref": "#/$defs/nullableUuid"
+    }
+  },
+  "$defs": {
+    "lowercaseUuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "nullableUuid": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/lowercaseUuid"
+        }
+      ]
+    }
+  }
+}

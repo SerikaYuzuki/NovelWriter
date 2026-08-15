@@ -1,0 +1,454 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "remote-command-concurrent-same-object-finalize",
+  "description": "Two devices may reserve separate uploads after concurrently observing one tenant-scoped ObjectID as missing, but finalize serializes on the tenant/ObjectID lifecycle lock: one upload adopts the sole current incarnation, and every valid or invalid loser terminally releases only its own reservation with a receipt and fenced cleanup intent.",
+  "binding": {
+    "serverInstanceId": "51000000-0000-0000-0000-000000000001",
+    "protocolEpoch": 1,
+    "accountId": "51000000-0000-0000-0000-000000000002"
+  },
+  "object": {
+    "objectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "byteCount": 12
+  },
+  "commonSetup": {
+    "beforePlanning": {
+      "objectLifecycleRow": null,
+      "remotePresence": false,
+      "quota": {
+        "limitBytes": 5368709120,
+        "usedBytes": 4096,
+        "reservedBytes": 0
+      }
+    },
+    "concurrentPlanning": [
+      {
+        "deviceId": "device-a",
+        "observedMissingObjectIds": [
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      },
+      {
+        "deviceId": "device-b",
+        "observedMissingObjectIds": [
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      }
+    ],
+    "afterCreateReceipts": {
+      "quota": {
+        "usedBytes": 4096,
+        "reservedBytes": 24,
+        "reservationCreateCount": 2,
+        "quotaChangedEventCount": 2
+      },
+      "uploads": [
+        {
+          "deviceId": "device-a",
+          "uploadId": "51000000-0000-0000-0000-000000000003",
+          "createOperationId": "51000000-0000-0000-0000-000000000004",
+          "finalizeOperationId": "51000000-0000-0000-0000-000000000005",
+          "state": "openWithCompleteTemporaryBytes",
+          "reservedBytes": 12,
+          "temporaryKey": "tenant/account-a/uploads/51000000-0000-0000-0000-000000000003/complete",
+          "plannedIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a"
+        },
+        {
+          "deviceId": "device-b",
+          "uploadId": "51000000-0000-0000-0000-000000000006",
+          "createOperationId": "51000000-0000-0000-0000-000000000007",
+          "finalizeOperationId": "51000000-0000-0000-0000-000000000008",
+          "state": "openWithCompleteTemporaryBytes",
+          "reservedBytes": 12,
+          "temporaryKey": "tenant/account-a/uploads/51000000-0000-0000-0000-000000000006/complete",
+          "plannedIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-b"
+        }
+      ]
+    },
+    "sealedCommands": [
+      {
+        "kind": "createObjectUpload",
+        "operationId": "51000000-0000-0000-0000-000000000004",
+        "canonicalCommandUtf8": "{\"object\":{\"byteCount\":12,\"objectId\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"operationId\":\"51000000-0000-0000-0000-000000000004\"}",
+        "commandDigest": "5f3d2720d3f74b111a4d64b429cf56d864fb4e24a13fc954ee71a66857efa9f1"
+      },
+      {
+        "kind": "createObjectUpload",
+        "operationId": "51000000-0000-0000-0000-000000000007",
+        "canonicalCommandUtf8": "{\"object\":{\"byteCount\":12,\"objectId\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"operationId\":\"51000000-0000-0000-0000-000000000007\"}",
+        "commandDigest": "221405cfbffd4e10735afcfe5ca5b2d90536cebf586b6d39b497b9aea05f955c"
+      },
+      {
+        "kind": "finalizeObjectUpload",
+        "operationId": "51000000-0000-0000-0000-000000000005",
+        "canonicalCommandUtf8": "{\"object\":{\"byteCount\":12,\"objectId\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"operationId\":\"51000000-0000-0000-0000-000000000005\",\"uploadId\":\"51000000-0000-0000-0000-000000000003\"}",
+        "commandDigest": "63403ccecb0222a16ace97fe617c9e25938d57641fa4c6d62d5bc98e4d7b463f"
+      },
+      {
+        "kind": "finalizeObjectUpload",
+        "operationId": "51000000-0000-0000-0000-000000000008",
+        "canonicalCommandUtf8": "{\"object\":{\"byteCount\":12,\"objectId\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"},\"operationId\":\"51000000-0000-0000-0000-000000000008\",\"uploadId\":\"51000000-0000-0000-0000-000000000006\"}",
+        "commandDigest": "d5b3dae7d9316b61afe910ab6245dfc5be0709782c29d4017f949b945844cfd4"
+      }
+    ]
+  },
+  "serializationContract": {
+    "missingObjectObservationCreatesReservation": false,
+    "eachCreateUploadOwnsExactlyOneReservation": true,
+    "crossUploadFinalizeFence": "tenantAndObjectIdLifecycleLock",
+    "terminalCommitLockOrder": [
+      "tenantObjectIdLifecycleRow",
+      "uploadRow"
+    ],
+    "winnerRule": "the first valid finalize transaction that commits while the ObjectID is unavailable adopts its verified immutable incarnation",
+    "loserRule": "after acquiring the same ObjectID lock, validate the loser's own bytes and read back the existing current incarnation before committing either alreadyAvailable or a terminal semantic rejection",
+    "cleanupTargetFence": "uploadIdAndPlannedIncarnationKeyMustNotEqualCurrentIncarnation",
+    "receiptReplayMayMoveQuota": false
+  },
+  "cases": [
+    {
+      "caseId": "valid-loser-converges-to-already-available",
+      "temporaryBytes": {
+        "deviceA": {
+          "actualByteCount": 12,
+          "actualSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "deviceB": {
+          "actualByteCount": 12,
+          "actualSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "commands": [
+        {
+          "type": "verifyBothTemporaryBodiesAndBeginConcurrentFinalize"
+        },
+        {
+          "type": "deviceAFinalizeWinsObjectLifecycleLock",
+          "operationId": "51000000-0000-0000-0000-000000000005"
+        },
+        {
+          "type": "deviceBFinalizeAcquiresObjectLifecycleLockAfterA",
+          "operationId": "51000000-0000-0000-0000-000000000008"
+        },
+        {
+          "type": "deviceBCommitAlreadyAvailableAndLoseResponse"
+        },
+        {
+          "type": "deviceBReplayFinalizeExactly"
+        },
+        {
+          "type": "runFencedLoserCleanup"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedDeviceATemporaryVerified": true,
+          "expectedDeviceBTemporaryVerified": true,
+          "expectedBothBodiesMatchDescriptor": true,
+          "expectedObjectLifecycleCommitCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 24
+          },
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedSingleAtomicPostgresCommit": {
+            "winnerUploadId": "51000000-0000-0000-0000-000000000003",
+            "winnerUploadState": "finalized",
+            "objectState": "available",
+            "currentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+            "currentIncarnationReadBackVerified": true,
+            "remotePresence": true,
+            "quotaUsedBytes": 4108,
+            "quotaReservedBytes": 12,
+            "winnerReservationConvertedToUsedCount": 1,
+            "winnerReceipt": {
+              "operationId": "51000000-0000-0000-0000-000000000005",
+              "commandDigest": "63403ccecb0222a16ace97fe617c9e25938d57641fa4c6d62d5bc98e4d7b463f",
+              "finalizedAt": "2026-08-15T01:00:01.000Z",
+              "object": {
+                "objectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "byteCount": 12
+              },
+              "outcome": "finalized",
+              "quotaReservationDisposition": "convertedToUsed",
+              "quotaUsedBytesAdded": 12,
+              "uploadState": "finalized"
+            },
+            "quotaChangedEvent": {
+              "eventId": "51000000-0000-0000-0000-000000000010",
+              "type": "quotaChanged",
+              "limitBytes": 5368709120,
+              "reservedBytes": 12,
+              "usedBytes": 4108
+            }
+          },
+          "expectedAdoptedCurrentIncarnationCount": 1,
+          "expectedPartiallyVisibleCommitStateCount": 0,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedObjectStateObservedUnderLock": "available",
+          "expectedExistingIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+          "expectedExistingIncarnationReadBackSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "expectedExistingIncarnationReadBackByteCount": 12,
+          "expectedDeviceBOwnTemporaryBodyStillVerified": true,
+          "expectedDeviceBPlannedIncarnationAdopted": false,
+          "expectedCurrentIncarnationKeyChanged": false,
+          "expectedError": null
+        },
+        {
+          "step": 4,
+          "expectedSingleAtomicPostgresCommit": {
+            "loserUploadId": "51000000-0000-0000-0000-000000000006",
+            "loserUploadState": "finalized",
+            "loserReservationReleasedCount": 1,
+            "quotaUsedBytes": 4108,
+            "quotaReservedBytes": 0,
+            "usedQuotaDeltaBytes": 0,
+            "additionalRemotePresenceMutationCount": 0,
+            "cleanupIntent": {
+              "cleanupIntentId": "51000000-0000-0000-0000-000000000012",
+              "uploadId": "51000000-0000-0000-0000-000000000006",
+              "targets": [
+                {
+                  "kind": "temporaryObject",
+                  "key": "tenant/account-a/uploads/51000000-0000-0000-0000-000000000006/complete"
+                },
+                {
+                  "kind": "unadoptedPlannedIncarnationIfPresent",
+                  "key": "tenant/account-a/objects/ee/incarnation-device-b"
+                }
+              ],
+              "state": "pending"
+            },
+            "successReceipt": {
+              "operationId": "51000000-0000-0000-0000-000000000008",
+              "commandDigest": "d5b3dae7d9316b61afe910ab6245dfc5be0709782c29d4017f949b945844cfd4",
+              "finalizedAt": "2026-08-15T01:00:02.000Z",
+              "object": {
+                "objectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "byteCount": 12
+              },
+              "outcome": "alreadyAvailable",
+              "quotaReservationDisposition": "releasedAsDuplicate",
+              "quotaUsedBytesAdded": 0,
+              "uploadState": "finalized",
+              "currentIncarnationKeyIsNotExposedOnWire": true
+            },
+            "quotaChangedEvent": {
+              "eventId": "51000000-0000-0000-0000-000000000011",
+              "type": "quotaChanged",
+              "limitBytes": 5368709120,
+              "reservedBytes": 0,
+              "usedBytes": 4108
+            }
+          },
+          "expectedError": "transportResponseLost",
+          "expectedClientAcknowledged": false,
+          "expectedAdoptedCurrentIncarnationCount": 1
+        },
+        {
+          "step": 5,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredAlreadyAvailableReceiptReplayed": true,
+          "expectedAdditionalReservationReleaseCount": 0,
+          "expectedAdditionalUsedQuotaDeltaBytes": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedAdditionalCleanupIntentCount": 0,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+          "expectedQuota": {
+            "usedBytes": 4108,
+            "reservedBytes": 0
+          },
+          "expectedError": null
+        },
+        {
+          "step": 6,
+          "expectedCleanupIntentId": "51000000-0000-0000-0000-000000000012",
+          "expectedDeviceBTemporaryObjectDeleted": true,
+          "expectedDeviceBPlannedIncarnationDeletedIfPresent": true,
+          "expectedDeviceACurrentIncarnationDeleted": false,
+          "expectedCleanupIntentState": "complete",
+          "expectedCurrentIncarnationCount": 1,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "adopt both planned incarnation keys as current for one tenant/ObjectID",
+        "charge used quota for device B when the object is already available",
+        "return alreadyAvailable without verifying device B temporary bytes and reading back the existing incarnation",
+        "release device A reservation from device B terminal transaction",
+        "delete device A current incarnation through device B cleanup intent",
+        "release device B reservation again when its lost acknowledgement replays"
+      ]
+    },
+    {
+      "caseId": "invalid-loser-is-terminally-rejected",
+      "temporaryBytes": {
+        "deviceA": {
+          "actualByteCount": 12,
+          "actualSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "deviceB": {
+          "actualByteCount": 12,
+          "actualSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      "commands": [
+        {
+          "type": "verifyDeviceATemporaryBodyAndDetectDeviceBHashMismatch"
+        },
+        {
+          "type": "deviceAFinalizeWinsObjectLifecycleLock",
+          "operationId": "51000000-0000-0000-0000-000000000005"
+        },
+        {
+          "type": "deviceBCommitTerminalRejectionAndLoseResponse",
+          "operationId": "51000000-0000-0000-0000-000000000008"
+        },
+        {
+          "type": "deviceBReplayRejectedFinalizeExactly"
+        },
+        {
+          "type": "runFencedRejectedUploadCleanup"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedDeviceATemporaryVerified": true,
+          "expectedDeviceBActualHashReadFromStorage": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "expectedDeviceBDeclaredObjectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "expectedDeviceBValidationResult": "hashMismatch",
+          "expectedS3EtagAcceptedAsHashEvidence": false,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 24
+          },
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedSingleAtomicPostgresCommit": {
+            "winnerUploadId": "51000000-0000-0000-0000-000000000003",
+            "winnerUploadState": "finalized",
+            "objectState": "available",
+            "currentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+            "quotaUsedBytes": 4108,
+            "quotaReservedBytes": 12,
+            "winnerReservationConvertedToUsedCount": 1,
+            "remotePresence": true,
+            "winnerReceiptOutcome": "finalized"
+          },
+          "expectedAdoptedCurrentIncarnationCount": 1,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedExistingObjectObservedUnderLifecycleLock": true,
+          "expectedExistingIncarnationReadBackVerified": true,
+          "expectedAlreadyAvailableMayOverrideInvalidOwnBytes": false,
+          "expectedSingleAtomicPostgresCommit": {
+            "loserUploadId": "51000000-0000-0000-0000-000000000006",
+            "loserUploadState": "expired",
+            "loserUploadTerminalCause": "validationRejected",
+            "loserReservationReleasedCount": 1,
+            "quotaUsedBytes": 4108,
+            "quotaReservedBytes": 0,
+            "usedQuotaDeltaBytes": 0,
+            "cleanupIntent": {
+              "cleanupIntentId": "51000000-0000-0000-0000-000000000022",
+              "uploadId": "51000000-0000-0000-0000-000000000006",
+              "targets": [
+                {
+                  "kind": "temporaryObject",
+                  "key": "tenant/account-a/uploads/51000000-0000-0000-0000-000000000006/complete"
+                },
+                {
+                  "kind": "unadoptedPlannedIncarnationIfPresent",
+                  "key": "tenant/account-a/objects/ee/incarnation-device-b"
+                }
+              ],
+              "state": "pending"
+            },
+            "terminalErrorReceipt": {
+              "operationId": "51000000-0000-0000-0000-000000000008",
+              "commandDigest": "d5b3dae7d9316b61afe910ab6245dfc5be0709782c29d4017f949b945844cfd4",
+              "code": "hashMismatch",
+              "expiredUploadId": "51000000-0000-0000-0000-000000000006",
+              "recoveryAction": "createReplacementUpload",
+              "requestId": "51000000-0000-0000-0000-000000000023",
+              "retryability": "never",
+              "uploadState": "expired"
+            },
+            "quotaChangedEvent": {
+              "eventId": "51000000-0000-0000-0000-000000000021",
+              "type": "quotaChanged",
+              "limitBytes": 5368709120,
+              "reservedBytes": 0,
+              "usedBytes": 4108
+            }
+          },
+          "expectedError": "transportResponseLost",
+          "expectedClientAcknowledged": false,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a"
+        },
+        {
+          "step": 4,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredHashMismatchReceiptReplayed": true,
+          "expectedUploadState": "expired",
+          "expectedUploadTerminalCause": "validationRejected",
+          "expectedAdditionalReservationReleaseCount": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedAdditionalCleanupIntentCount": 0,
+          "expectedAlreadyAvailableOutcome": false,
+          "expectedQuota": {
+            "usedBytes": 4108,
+            "reservedBytes": 0
+          },
+          "expectedError": null
+        },
+        {
+          "step": 5,
+          "expectedCleanupIntentId": "51000000-0000-0000-0000-000000000022",
+          "expectedDeviceBTemporaryObjectDeleted": true,
+          "expectedDeviceBPlannedIncarnationDeletedIfPresent": true,
+          "expectedDeviceACurrentIncarnationDeleted": false,
+          "expectedCleanupIntentState": "complete",
+          "expectedCurrentIncarnationCount": 1,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/ee/incarnation-device-a",
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "return alreadyAvailable solely because device A won while device B supplied invalid bytes",
+        "retain device B quota reservation after its terminal semantic rejection",
+        "adopt device B invalid planned incarnation",
+        "mutate or delete device A current incarnation while rejecting device B",
+        "release device B reservation or emit its quota event more than once on receipt replay",
+        "allow device B to change bytes under the same receipted finalize operation"
+      ]
+    }
+  ],
+  "expectedGlobalInvariants": {
+    "concurrentMissingObservationsMayCreateTwoReservations": true,
+    "adoptedCurrentIncarnationCount": 1,
+    "winnerReservationConvertedToUsedExactlyOnce": true,
+    "eachLoserReservationReleasedExactlyOnce": true,
+    "validLoserUsedQuotaDeltaBytes": 0,
+    "invalidLoserIsNeverMaskedByExistingAvailability": true,
+    "loserTerminalStateCleanupIntentQuotaEventAndReceiptAtomic": true,
+    "lostAcknowledgementReplayAdditionalQuotaDeltaBytes": 0,
+    "cleanupCannotCrossCurrentIncarnationFence": true
+  }
+}

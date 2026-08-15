@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:snapshot",
+  "title": "FUMINIWA Snapshot Manifest v1",
+  "description": "A complete, immutable EntityKey to ObjectID map for one work. This is a pre-freeze R0 design candidate until the E2EE decision is recorded.",
+  "$comment": "The received UTF-8 JSON must already be RFC 8785 JCS bytes. parentSnapshotIds are sorted by lowercase digest and entries are sorted by entityKey UTF-8 bytes. Each of the nine mandatory work singleton/order EntityKeys is present exactly once; empty strings and arrays represent an empty work. Ordering, canonical bytes, globally unique EntityKeys, EntityKey/contentType compatibility, payload-ID/key agreement, referential integrity, parent lineage, and object byte read-back are semantic validation beyond JSON Schema. Structured entity objects are capped at 16777216 canonical bytes; attachment bytes are capped at 262144000 bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workId",
+    "parentSnapshotIds",
+    "entries"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "workId": {
+      "$ref": "#/$defs/lowercaseUuid"
+    },
+    "parentSnapshotIds": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 100000,
+      "items": {
+        "$ref": "#/$defs/entry"
+      },
+      "allOf": [
+        { "$ref": "#/$defs/hasWorkDocument" },
+        { "$ref": "#/$defs/hasWorkTitle" },
+        { "$ref": "#/$defs/hasWorkSynopsis" },
+        { "$ref": "#/$defs/hasWorkChapterOrder" },
+        { "$ref": "#/$defs/hasWorkCharacterOrder" },
+        { "$ref": "#/$defs/hasWorkPlotCardOrder" },
+        { "$ref": "#/$defs/hasWorkFlagOrder" },
+        { "$ref": "#/$defs/hasWorkWorldNoteOrder" },
+        { "$ref": "#/$defs/hasWorkAttachmentOrder" }
+      ]
+    }
+  },
+  "$defs": {
+    "hasWorkDocument": {
+      "contains": { "properties": { "entityKey": { "const": "work/document" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkTitle": {
+      "contains": { "properties": { "entityKey": { "const": "work/title" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkSynopsis": {
+      "contains": { "properties": { "entityKey": { "const": "work/synopsis" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkChapterOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/chapter-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkCharacterOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/character-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkPlotCardOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/plot-card-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkFlagOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/flag-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkWorldNoteOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/world-note-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "hasWorkAttachmentOrder": {
+      "contains": { "properties": { "entityKey": { "const": "work/attachment-order" } }, "required": ["entityKey"] },
+      "minContains": 1,
+      "maxContains": 1
+    },
+    "lowercaseUuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "entityKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(work/(document|title|synopsis|chapter-order|character-order|plot-card-order|flag-order|world-note-order|attachment-order)|chapter/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(title|episode-order)|episode/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(title|body|memo)|character/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|plot-card/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|flag/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|world-note/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|attachment/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(metadata|bytes))$"
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byteCount",
+        "contentType",
+        "entityKey",
+        "objectId"
+      ],
+      "properties": {
+        "byteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144000
+        },
+        "contentType": {
+          "type": "string",
+          "enum": [
+            "application/octet-stream",
+            "application/vnd.fuminiwa.entity+json;version=1"
+          ]
+        },
+        "entityKey": {
+          "$ref": "#/$defs/entityKey"
+        },
+        "objectId": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

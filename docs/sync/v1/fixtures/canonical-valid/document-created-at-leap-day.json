@@ -1,0 +1,22 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "canonicalization": "RFC8785",
+  "description": "A calendar-valid leap-day work/document timestamp in the only accepted UTC whole-second lexical form.",
+  "entityObject": {
+    "schema": "../../entity-schemas/work-document.schema.json",
+    "inputModel": {
+      "schemaVersion": 1,
+      "documentId": "10000000-0000-0000-0000-000000000002",
+      "documentCreatedAt": "2024-02-29T23:59:59Z"
+    },
+    "expectedCanonicalUtf8": "{\"documentCreatedAt\":\"2024-02-29T23:59:59Z\",\"documentId\":\"10000000-0000-0000-0000-000000000002\",\"schemaVersion\":1}",
+    "expectedByteCount": 114,
+    "expectedSha256": "8815b12b2d5a611ceaf85200220f5005e1609e3bbcd1a36bceea46fa83606b7f",
+    "expectedDecodeModel": {
+      "schemaVersion": 1,
+      "documentId": "10000000-0000-0000-0000-000000000002",
+      "documentCreatedAt": "2024-02-29T23:59:59Z"
+    }
+  }
+}

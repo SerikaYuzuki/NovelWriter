@@ -1,0 +1,87 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "sealed-upload-command-replay",
+  "description": "Upload create, byte transfer, and finalize survive lost acknowledgements and process exits without duplicate sessions or mutable commands.",
+  "binding": {"serverInstanceId": "90000000-0000-0000-0000-000000000001", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000001"},
+  "object": {"objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "byteCount": 12},
+  "commands": [
+    {"type": "sealCreateUpload", "operationId": "70000000-0000-0000-0000-000000000001"},
+    {"type": "sendCreateAndLoseAck"},
+    {"type": "restartAndReplayCreateExactly"},
+    {"type": "putCompleteBytesAndExitBeforeLocalAck"},
+    {"type": "restartAndPutCompleteBytesToSameUpload"},
+    {"type": "sealFinalize", "operationId": "70000000-0000-0000-0000-000000000002"},
+    {"type": "sendFinalizeAndLoseAck"},
+    {"type": "restartAndReplayFinalizeExactly"},
+    {"type": "simulateSeparateUploadExpiry"}
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedCommandCommittedBeforeNetwork": true,
+      "expectedCanonicalRequestImmutable": true,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "serverCreatedUploadId": "80000000-0000-0000-0000-000000000001",
+      "expectedLocalState": "createAckUnknown",
+      "expectedError": "simulatedLostAck"
+    },
+    {
+      "step": 3,
+      "expectedOperationId": "70000000-0000-0000-0000-000000000001",
+      "expectedExactRequestBytesReused": true,
+      "expectedUploadId": "80000000-0000-0000-0000-000000000001",
+      "expectedServerUploadSessionCount": 1,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedUploadId": "80000000-0000-0000-0000-000000000001",
+      "expectedError": "simulatedProcessExit"
+    },
+    {
+      "step": 5,
+      "expectedSameUploadId": true,
+      "expectedCompleteBodyReplace": true,
+      "expectedHashAndByteCountMatch": true,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedCommandCommittedBeforeNetwork": true,
+      "expectedOperationId": "70000000-0000-0000-0000-000000000002",
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedLocalState": "finalizeAckUnknown",
+      "expectedError": "simulatedLostAck"
+    },
+    {
+      "step": 8,
+      "expectedExactFinalizeReplay": true,
+      "expectedFinalObjectCount": 1,
+      "expectedRemotePresenceCommittedAfterReadBack": true,
+      "expectedError": null
+    },
+    {
+      "step": 9,
+      "expiredUploadId": "80000000-0000-0000-0000-000000000002",
+      "expectedTypedTransition": "uploadExpired",
+      "expectedExpiredSessionRetainedAs": "retired",
+      "expectedOldReceiptsRetained": true,
+      "expectedNewCreateOperationIdRequired": true,
+      "expectedError": null
+    }
+  ],
+  "sealedCommandKinds": ["createObjectUpload", "finalizeObjectUpload", "publish", "classify", "resolveConflict", "pin", "restore"],
+  "forbiddenOutcomes": [
+    "generate a new create operation ID after a timeout without uploadExpired",
+    "create a second upload session after only losing the create acknowledgement",
+    "mark remote presence before finalize receipt and object read-back",
+    "mutate canonical request bytes under an existing operation ID"
+  ]
+}

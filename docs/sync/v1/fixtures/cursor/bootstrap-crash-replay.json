@@ -1,0 +1,126 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "cursor-bootstrap-crash-replay",
+  "description": "Bootstrap uses a barrier; a crash before inbox+cursor commit causes harmless at-least-once page replay.",
+  "cursorContract": {
+    "clientMustTreatAsOpaque": true,
+    "afterCursorIsExclusive": true,
+    "delivery": "atLeastOnce",
+    "pageOrdering": "tenantCommitOrder"
+  },
+  "initialState": {
+    "sqlite": {
+      "cursor": null,
+      "remoteInbox": []
+    },
+    "server": {
+      "bootstrapBarrierCursor": "AQEAAABkLWJhcnJpZXI",
+      "libraryAtBarrier": [
+        {
+          "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+          "head": {
+            "generation": 7,
+            "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "eventAfterBarrier": {
+        "eventId": "50000000-0000-0000-0000-000000000001",
+        "type": "headChanged",
+        "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+        "head": {
+          "generation": 8,
+          "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      "nextCursor": "AQEAAABlLXBhZ2UtMQ"
+    }
+  },
+  "commands": [
+    {
+      "type": "beginBootstrap"
+    },
+    {
+      "type": "stageLibraryAtBarrier"
+    },
+    {
+      "type": "pullChanges",
+      "afterCursor": "AQEAAABkLWJhcnJpZXI"
+    },
+    {
+      "type": "crashBeforeSqliteCommit"
+    },
+    {
+      "type": "pullChanges",
+      "afterCursor": "AQEAAABkLWJhcnJpZXI"
+    },
+    {
+      "type": "commitInboxAndCursorAtomically"
+    },
+    {
+      "type": "simulateCursorExpiry"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedBarrierCursor": "AQEAAABkLWJhcnJpZXI",
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedSqliteHeadGeneration": 7,
+      "expectedSqliteCursor": "AQEAAABkLWJhcnJpZXI",
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedPageEventIds": [
+        "50000000-0000-0000-0000-000000000001"
+      ],
+      "expectedNextCursor": "AQEAAABlLXBhZ2UtMQ",
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedSqlite": {
+        "cursor": "AQEAAABkLWJhcnJpZXI",
+        "remoteInboxContainsEventIds": []
+      },
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": "simulatedProcessExit"
+    },
+    {
+      "step": 5,
+      "expectedPageEventIds": [
+        "50000000-0000-0000-0000-000000000001"
+      ],
+      "expectedDeliveryClassification": "allowedReplay",
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedSqlite": {
+        "cursor": "AQEAAABlLXBhZ2UtMQ",
+        "remoteInboxContainsEventIds": [
+          "50000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "expectedActiveEditorMutation": false,
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedAction": "fullBootstrapWithoutDeletingLocalCurrentIntentAttemptOrConflict",
+      "expectedCursorAdvance": false,
+      "uiEditingExistingLocalWorks": true,
+      "expectedError": "cursorExpired"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "canonicalization": "RFC8785",
+  "description": "A Japanese string with an embedded LF and a supplementary-plane character; no normalization or line-ending rewrite is allowed.",
+  "entityObject": {
+    "schema": "../../entity-schemas/string-value.schema.json",
+    "inputModel": {
+      "schemaVersion": 1,
+      "value": "三国志のも\n𠮷野家"
+    },
+    "expectedCanonicalUtf8": "{\"schemaVersion\":1,\"value\":\"三国志のも\\n𠮷野家\"}",
+    "expectedCanonicalUtf8Hex": "7b22736368656d6156657273696f6e223a312c2276616c7565223a22e4b889e59bbde5bf97e381aee382825c6ef0a0aeb7e9878ee5aeb6227d",
+    "expectedByteCount": 57,
+    "expectedSha256": "402020af3cbbeeaebca8763829cc1d04f09f5f6fd3e5f3bc454719145b4c5b4d",
+    "expectedDecodeModel": {
+      "schemaVersion": 1,
+      "value": "三国志のも\n𠮷野家"
+    }
+  }
+}

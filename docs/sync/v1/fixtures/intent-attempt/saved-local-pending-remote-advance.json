@@ -1,0 +1,53 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "saved-local-pending-remote-advance",
+  "description": "A clean editor does not authorize remote fast-forward when a durable local Snapshot is still pending upload.",
+  "initialState": {
+    "workId": "11111111-2222-4333-8444-555555555555",
+    "currentLocalSnapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lastRemoteEquivalentLocalSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "lastAcknowledgedRemoteHead": {
+      "generation": 7,
+      "snapshotId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "observedRemoteHead": {
+      "generation": 8,
+      "snapshotId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "localGeneration": 19,
+    "pendingSyncIntent": {
+      "localGeneration": 19,
+      "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "pendingSealedAttempt": false,
+    "pendingObjectTransfer": false,
+    "pendingDivergence": false,
+    "pendingConflict": false,
+    "editorHasUnsavedChanges": false,
+    "formHasUnsavedChanges": false,
+    "editorHasMarkedText": false,
+    "documentSessionMatches": true,
+    "editorSurfaceGenerationMatches": true
+  },
+  "command": {
+    "type": "stageRemoteAndEvaluateFastForward",
+    "expectedCurrentLocalSnapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expectedLocalGeneration": 19
+  },
+  "expected": {
+    "remoteStoredInInbox": true,
+    "fastForwardApplied": false,
+    "currentLocalSnapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "localSnapshotRemainsRestorable": true,
+    "pendingSyncIntentPreserved": true,
+    "nextAction": "reconcile",
+    "reason": "currentLocalDiffersFromLastRemoteEquivalentLocal",
+    "remoteCallbackInjectedIntoActiveEditor": false
+  },
+  "forbiddenOutcomes": [
+    "treat a clean editor as proof that no durable local work exists",
+    "replace current local content before the pending Intent is reconciled",
+    "clear the pending Intent because a newer remote head was observed"
+  ]
+}

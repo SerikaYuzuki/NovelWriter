@@ -1,0 +1,186 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "migration-non-destructive-cutover-retry",
+  "description": "Legacy package and CloudKit candidates survive a crash and are cut over without dual authority or an implicit winner.",
+  "initialState": {
+    "legacySourceId": "legacy-package-0001",
+    "reservedWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "authorityMarker": "legacyReadOnly",
+    "ledgerCheckpoint": null,
+    "legacySources": {
+      "package": {
+        "present": true,
+        "readOnly": true,
+        "rawArchiveSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "cloudKit": {
+        "present": true,
+        "readOnly": true,
+        "localCandidateSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "remoteCandidateSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "legacyConflictPresent": true
+      }
+    },
+    "sqlite": {
+      "workPresent": false,
+      "candidateSnapshots": []
+    },
+    "server": {
+      "workPresent": false
+    }
+  },
+  "commands": [
+    {
+      "type": "inventoryAndAttest"
+    },
+    {
+      "type": "archiveLegacyBytes"
+    },
+    {
+      "type": "copyCandidatesToSqliteAndCas"
+    },
+    {
+      "type": "verifyCandidateBytesAndPortableExport"
+    },
+    {
+      "type": "simulateProcessExit"
+    },
+    {
+      "type": "resumeMigration"
+    },
+    {
+      "type": "uploadInitialSnapshotsAndReadBack"
+    },
+    {
+      "type": "commitAuthorityCutover"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedLedgerCheckpoint": "discovered",
+      "expectedAuthorityMarker": "legacyReadOnly",
+      "expectedLegacyMutationCount": 0,
+      "ui": {
+        "affectedWorkEditable": false,
+        "otherWorksAvailable": true
+      },
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedArchiveReadBackVerified": true,
+      "expectedLedgerCheckpoint": "discovered",
+      "expectedLegacyDeletionCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedLedgerCheckpoint": "copied",
+      "expectedAuthorityMarker": "sqlitePrepared",
+      "expectedWorkDocumentAnchorSource": "verifiedPackageManifest",
+      "expectedAllCandidateWorkDocumentObjectIdsEqual": true,
+      "expectedCandidateSnapshots": [
+        {
+          "source": "packageCurrent",
+          "semanticWinner": false,
+          "localRole": "editableCurrent"
+        },
+        {
+          "source": "cloudKitLocal",
+          "semanticWinner": false,
+          "localRole": "preservedReviewCandidate"
+        },
+        {
+          "source": "cloudKitRemote",
+          "semanticWinner": false,
+          "localRole": "verifiedRemoteOperationalBaseline"
+        }
+      ],
+      "expectedLegacyConflictCleared": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedLedgerCheckpoint": "verified",
+      "expectedOriginalByteInventoriesEqual": true,
+      "expectedPortableExportReadBackValid": true,
+      "expectedAuthorityMarker": "sqlitePrepared",
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedDurableLedgerCheckpoint": "verified",
+      "expectedAuthorityMarker": "sqlitePrepared",
+      "expectedLegacyDeletionCount": 0,
+      "expectedError": "simulatedProcessExit"
+    },
+    {
+      "step": 6,
+      "expectedResumeFrom": "verified",
+      "expectedReservedWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+      "expectedDuplicateWorkCount": 0,
+      "expectedDuplicateSnapshotCount": 0,
+      "expectedCloudKitWriteCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedInitialServerHeadSource": "cloudKitRemote",
+      "expectedInitialServerHeadMeaning": "operationalBaselineNotSemanticWinner",
+      "expectedBaselinePublish": {
+        "expectedHead": null,
+        "parentCount": 0,
+        "generation": 1
+      },
+      "expectedCandidatePublishes": [
+        {
+          "source": "packageCurrent",
+          "expectedHead": null,
+          "outcome": "divergenceBaseUnknown"
+        },
+        {
+          "source": "cloudKitLocal",
+          "expectedHead": null,
+          "outcome": "divergenceBaseUnknown"
+        }
+      ],
+      "expectedDivergenceCount": 2,
+      "expectedNeedsChoiceConflictCount": 2,
+      "expectedManifestReadBackVerified": true,
+      "expectedEveryObjectReadBackVerified": true,
+      "expectedHeadAndConflictReadBackVerified": true,
+      "expectedAuthorityMarker": "serverVerified",
+      "expectedServerBindingCommitted": false,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedLedgerCheckpoint": "committed",
+      "expectedAuthorityMarker": "sqliteAuthoritative",
+      "expectedServerBindingCommitted": true,
+      "expectedLocalCurrentSource": "packageCurrent",
+      "expectedServerHeadSource": "cloudKitRemote",
+      "expectedUnresolvedConflictCount": 2,
+      "expectedCloudKitMode": "readOnlyMigrationSource",
+      "expectedLegacyArchiveRetained": true,
+      "expectedLegacyDeletionEarliest": "maxOfOneMajorReleaseAndNinetyDaysPlusRollbackAndExportProof",
+      "ui": {
+        "affectedWorkEditable": true,
+        "otherWorksAvailable": true
+      },
+      "expectedError": null
+    }
+  ],
+  "workDocumentAnchorRule": "Use one verified package manifest documentId and createdAt to create the immutable work/document anchor, then inject that exact object into every legacy content candidate. This is independent of content winner selection. If no trusted package exists or package identities disagree, keep the work in migration review and create no baseline.",
+  "baselineRule": "A last verified CloudKit remote value may become the initial server head only as continuity of the prior online state. It is not a semantic winner. Every distinct local/review candidate is then published with expectedHead null to create a base-unknown Divergence, classified needsChoice and read back before binding. If no verified remote exists and multiple candidates remain, keep the work in migration review without a server head until the user chooses.",
+  "forbiddenOutcomes": [
+    "replace the editable package current with the operational remote baseline",
+    "clear the legacy review when the baseline head is created",
+    "commit server binding before the head and all unresolved conflicts are read back",
+    "pick a candidate by timestamp or arrival order"
+  ],
+  "isolationRule": "If another work is corrupt or unknown-schema, quarantine only that work and keep the rest of the library available.",
+  "lateLegacyChangeRule": "If CloudKit changes after inventory, do not complete cutover; re-inventory or preserve the new value as another Conflict candidate."
+}

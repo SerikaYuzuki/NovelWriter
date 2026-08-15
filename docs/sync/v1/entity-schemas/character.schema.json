@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:entity:character",
+  "title": "Character Entity v1",
+  "description": "Every nullable field is required; null is the only representation of an absent optional value.",
+  "$comment": "The payload id must equal the UUID segment of its character/{id} EntityKey; the work/character-order payload carries display order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "kana",
+    "memo",
+    "colorHex",
+    "role",
+    "age",
+    "gender",
+    "firstPerson",
+    "secondPerson",
+    "speechStyle",
+    "appearance",
+    "personality",
+    "background"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/lowercaseUuid"
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "kana": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "memo": {
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "colorHex": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
+    },
+    "role": {
+      "$ref": "#/$defs/nullableLongText"
+    },
+    "age": {
+      "$ref": "#/$defs/nullableShortText"
+    },
+    "gender": {
+      "$ref": "#/$defs/nullableShortText"
+    },
+    "firstPerson": {
+      "$ref": "#/$defs/nullableShortText"
+    },
+    "secondPerson": {
+      "$ref": "#/$defs/nullableShortText"
+    },
+    "speechStyle": {
+      "$ref": "#/$defs/nullableLongText"
+    },
+    "appearance": {
+      "$ref": "#/$defs/nullableLongText"
+    },
+    "personality": {
+      "$ref": "#/$defs/nullableLongText"
+    },
+    "background": {
+      "$ref": "#/$defs/nullableLongText"
+    }
+  },
+  "$defs": {
+    "lowercaseUuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "nullableShortText": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4096
+    },
+    "nullableLongText": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000000
+    }
+  }
+}

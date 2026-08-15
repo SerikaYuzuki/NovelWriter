@@ -1,0 +1,243 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-first-head-before-checkpoint",
+  "description": "When a Work has no remote head, the worker publishes and reads back the newest local state T as the discoverable zero-parent root before recording older manual checkpoint S; a process kill after root commit cannot hide T or discard the durable checkpoint intent.",
+  "identities": {
+    "workId": "70000000-0000-0000-0000-000000000001",
+    "offlineManualS": "5555555555555555555555555555555555555555555555555555555555555555",
+    "newerLocalT": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "initialState": {
+    "local": {
+      "currentLocalSnapshotId": null,
+      "localGeneration": 0,
+      "lastAcknowledgedRemoteHead": null,
+      "checkpointReplicationIntent": null,
+      "syncIntent": null
+    },
+    "server": {
+      "head": null,
+      "libraryContainsWork": false,
+      "registeredSnapshotIds": [],
+      "historyOccurrenceCount": 0
+    }
+  },
+  "commands": [
+    {
+      "type": "commitOfflineManualCheckpoint",
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "parents": [],
+      "localGeneration": 1,
+      "reason": "manualCheckpoint",
+      "ensurePinned": true,
+      "capturedRemoteBase": null
+    },
+    {
+      "type": "commitOfflineNewerEdit",
+      "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "parents": [],
+      "localGeneration": 2
+    },
+    {
+      "type": "bootstrapAndSelectFirstHeadLane",
+      "observedRemoteHead": null
+    },
+    {
+      "type": "uploadRegisterAndSealRootPublishForNewestT",
+      "operationId": "70000000-0000-0000-0000-000000000002",
+      "candidateSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedHead": null
+    },
+    {
+      "type": "sendRootPublishAndKillAfterServerCommitBeforeClientAck"
+    },
+    {
+      "type": "readLibraryFromIndependentClientBeforeOriginalClientRestart"
+    },
+    {
+      "type": "restartAndReplayRootPublishExactly"
+    },
+    {
+      "type": "readBackHeadAndLibraryDiscoverabilityBeforeCheckpointLane"
+    },
+    {
+      "type": "registerRemoteEquivalentCheckpointS",
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "parents": []
+    },
+    {
+      "type": "recordSnapshotCheckpointS",
+      "operationId": "70000000-0000-0000-0000-000000000003",
+      "reason": "manualCheckpoint",
+      "ensurePinned": true
+    },
+    {
+      "type": "readBackHeadLibraryAndCheckpoint"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedLocal": {
+        "currentLocalSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "localGeneration": 1,
+        "checkpointReplicationIntentSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "checkpointEnsurePinned": true
+      },
+      "expectedRemoteDependencyForLocalSave": false,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedLocal": {
+        "currentLocalSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "localGeneration": 2,
+        "checkpointReplicationIntentSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "syncIntentSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedCheckpointIntentCoalescedIntoSyncIntent": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedSelectedLane": "firstHeadRootPublish",
+      "expectedSelectedRootSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedCheckpointCommandSentBeforeRoot": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedRootParents": [],
+      "expectedAttemptCommittedBeforeNetwork": true,
+      "expectedCheckpointIntentStillDurable": true,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedServer": {
+        "head": {
+          "generation": 1,
+          "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+        },
+        "libraryContainsWork": true,
+        "libraryHeadSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "headChangedEventCount": 1,
+        "publishReceiptStored": true
+      },
+      "expectedLocalRootAcknowledged": false,
+      "expectedCheckpointIntentStillDurable": true,
+      "expectedError": "simulatedProcessKill"
+    },
+    {
+      "step": 6,
+      "expectedIndependentLibraryContainsWork": true,
+      "expectedIndependentLibraryHead": {
+        "generation": 1,
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedOriginalClientRestartRequiredForDiscoverability": false,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedOperationId": "70000000-0000-0000-0000-000000000002",
+      "expectedRequestEquality": "byteForByte",
+      "expectedStoredReceiptReplayed": true,
+      "expectedAdditionalHeadGeneration": 0,
+      "expectedAdditionalLibraryItemCount": 0,
+      "expectedCheckpointIntentStillDurable": true,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedLastAcknowledgedRemoteHead": {
+        "generation": 1,
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedLibraryDiscoverabilityReadBack": true,
+      "expectedSyncIntent": null,
+      "expectedCheckpointReplicationIntentSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "expectedNextLane": "checkpointReplication",
+      "expectedError": null
+    },
+    {
+      "step": 9,
+      "expectedCheckpointRegistered": true,
+      "expectedCheckpointParents": [],
+      "expectedWorkAnchorMatchesHeadT": true,
+      "expectedHead": {
+        "generation": 1,
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedError": null
+    },
+    {
+      "step": 10,
+      "expectedCheckpointOccurrenceCount": 1,
+      "expectedCheckpoint": {
+        "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "reason": "manualCheckpoint",
+        "available": true,
+        "pinned": true
+      },
+      "expectedHeadUnchanged": true,
+      "expectedError": null
+    },
+    {
+      "step": 11,
+      "expectedLibraryHeadSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedCheckpointHistorySnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "expectedCheckpointReplicationIntent": null,
+      "expectedAvailableSnapshotIds": [
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        "7777777777777777777777777777777777777777777777777777777777777777"
+      ],
+      "expectedError": null
+    }
+  ],
+  "defensiveServerCase": {
+    "initialState": {
+      "head": null,
+      "libraryContainsWork": false,
+      "checkpointSnapshotRegistered": true,
+      "checkpointSnapshotAvailable": true,
+      "checkpointSnapshotPinned": false,
+      "historyOccurrenceCount": 0
+    },
+    "command": {
+      "type": "recordSnapshotCheckpoint",
+      "operationId": "70000000-0000-0000-0000-000000000010",
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "reason": "manualCheckpoint",
+      "ensurePinned": true
+    },
+    "expected": {
+      "typedResult": {
+        "code": "workHeadRequired"
+      },
+      "headMutationCount": 0,
+      "historyOccurrenceDelta": 0,
+      "pinMutationCount": 0,
+      "changeEventDelta": 0,
+      "libraryItemDelta": 0,
+      "checkpointSnapshotPinned": false,
+      "checkpointSnapshotAvailable": true,
+      "requiresNewCheckpointOperationAfterFirstHeadReadBack": true
+    },
+    "forbiddenOutcomes": [
+      "make a Work library-discoverable by recording history without a head",
+      "pin or add a checkpoint occurrence before rejecting workHeadRequired",
+      "auto-publish older checkpoint S as the first head",
+      "reuse the rejected checkpoint operation as the root publish operation"
+    ]
+  },
+  "forbiddenOutcomes": [
+    "record checkpoint S before a first remote head exists",
+    "choose older manual S instead of newest T as the first head",
+    "clear checkpoint S intent when publishing T",
+    "require the original client to restart before other clients can discover T",
+    "process checkpoint replication before root publish receipt and library read-back",
+    "publish S as an intermediate head"
+  ]
+}

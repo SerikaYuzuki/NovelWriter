@@ -12,6 +12,7 @@
 | [DESIGN.md](DESIGN.md) 1〜6・9・11章 | 現行契約と次タスク |
 | [DECISIONS.md](DECISIONS.md) D-077 | SQLite正本、Rust Snapshot Sync、非破壊migrationの次世代契約 |
 | [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) | 次世代local schema責務、wire、server、Conflict、履歴、実装順、Release Gate |
+| [SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md) | Lunaへ渡すR0成果物、module境界、state machine、PR完了条件 |
 | [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章／0-current章** | 0章はD-077概要、0-currentは移行前のlive Note実装 |
 | [IOS.md](IOS.md) 1〜2章、4.5a、4.6 | iOS の現行導線 |
 | [CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md) | 通常版 AI（clipboard のみ） |
@@ -29,7 +30,7 @@ D-071本文のitem 2（裏でsend／fetch）とitem 5（package保存直後のpe
 
 ## 2. live 経路と履歴経路
 
-通常Mac / iOS Appの **移行前production runtime** は`NoteSyncCoordinator`を注入する（D-071）。自動保存はpackageとdirty setまで、iCloudへ出すのは明示同期だけ（D-073）。D-077のSQLite clientは未実装であり、Rust server MVPや文書追加をruntime切替済みと扱わない。
+通常Mac / iOS Appの **移行前production runtime** は`NoteSyncCoordinator`を注入する（D-071）。自動保存はpackageとdirty setまで、iCloudへ出すのは明示同期だけ（D-073）。D-077のRust server／SQLite clientは未実装であり、設計文書追加をruntime切替済みと扱わない。
 
 D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP worker、Rust serverを別境界として追加する。現行CloudKitはread-only migration adapterへ段階的に縮小し、同じ作品をpackage／SQLiteへdual-writeしたりCloudKit／新serverへdual-publishしたりしない。
 
@@ -39,9 +40,9 @@ D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP wo
 - D-059 の Episode lease / CAS / holder と、D-061 の whole revision `CKAsset` / 3-way merge。`NovelSync` / `NovelSyncCloudKit` の source と CloudKit schema checklist の legacy type として残る
 - 旧Experimentalのprovider UI・fake provider・Codex sidecar B1〜B4-DはD-075で削除済み。再開時は最新APIから再設計する
 
-旧経路は履歴として残すが、通常 App の新しい分岐をこれらへ足さない。新しい同期・棚・衝突のコードは Note 経路だけに足す。
+旧経路は履歴として残すが、通常Appの新しい分岐をこれらへ足さない。移行前CloudKit runtimeのbug fixだけをNote経路へ限定し、D-077の新しい同期・棚・衝突は独立したSnapshot／SQLite／HTTP境界へ実装する。
 
-`usesWholeWorkDeviceSync` と `usesNoteSyncRuntime` の二重フラグは、旧経路を残したためのもの。新しい UI 状態を足すなら Note 側の意味だけを使い、Work 用語（revision / branch / merge / journal / lease）を画面へ出さない。
+`usesWholeWorkDeviceSync` と `usesNoteSyncRuntime` の二重フラグは、旧経路を残したためのもの。移行前UIの修正はNote側の意味だけを使い、Work用語（revision / branch / merge / journal / lease）を画面へ出さない。D-077 UIはこの二重フラグへ第3分岐を足さず、cutover用compositionとfeature flagから新しいlocal-first状態を供給する。
 
 ## 3. いま直した方がいいこと（機能追加ではない）
 
@@ -52,7 +53,7 @@ D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP wo
 2. **`AppState.swift` と CloudLibrary**
    本体はプロパティと `init` だけ。起動棚のrefresh/mergeは `NovelApp/Library/AppState+StartupLibrary.swift`、package readbackは `StartupLibraryLoader.swift`、pure row projectionは `StartupLibraryProjection.swift`、開く／新規／recoveryは `AppState+StartupLibraryOpening.swift`、document transitionは `NovelApp/DocumentLifecycle/AppState+Lifecycle.swift` と `DocumentLifecyclePermissionPolicy.swift`、章・選択は `NovelApp/Features/Writing/AppState+Outline.swift`、人物・プロット・伏線は `NovelApp/Features/ProjectInfo/AppState+ProjectFeatures.swift`、資料は `NovelApp/Features/Attachments/AppState+Attachments.swift`、保存は `NovelApp/DocumentLifecycle/AppState+Persistence.swift`、スナップショットは `NovelApp/Features/ProjectInfo/AppState+Snapshots.swift`。iOS CloudLibrary は models / refresh / open / mutations に分けた。新しい 200 行を `AppState.swift` 本体へ足さない。保存 coordinator は触らない。分割に伴い一部 stored state の setter が module-internal へ広がっているため、`private(set)` を型で回復するのは次の境界整理タスクとする。
 3. **Work 経路と Note 経路の条件分岐**
-   同じメソッドが `if usesNoteSyncRuntime` で二系統になっている。通常 runtime は Note 固定なので、新コードは Note 側だけ書き、Work 側は旧 test が通る最小限に留める。
+   同じメソッドが `if usesNoteSyncRuntime` で二系統になっている。移行前runtimeのbug fixはNote側だけに書き、Work側は旧testが通る最小限に留める。D-077はこの条件分岐へ足さず、R1〜R6の独立module／compositionで置き換える。
 4. **`.derivedData/`**
    `.gitignore` 済み。コミットしない。
 5. **GitHub `origin/main` とローカル履歴の分岐**
@@ -89,13 +90,13 @@ D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP wo
 - B4-E、Codex / OpenRouter 実 provider、network、key、実原稿送信
 - Production CloudKit schema を「完了」と書くこと。Dashboard deploy は未実施
 - CloudKit tombstone、automatic adopt、open-in-place、Files 上の原本編集
-- 自動保存のたびに iCloud send／pull を戻すこと（D-073）
+- 移行前CloudKit runtimeで、自動保存のたびにiCloud send／pullを戻すこと（D-073）。D-077のSQLite commit後に別HTTP workerを起こす設計とは区別する
 - clipboard prompt を provider 実行へ拡張すること（D-054）
 - 価格・法務・販促（D-042）
 - N4 署名済み Mac＋iPhone をコードだけで完了扱いすること
 - ローカル `main` への直接 push、GitHub `main` への force push
 
-次の実装はD-077のR0 Rust server MVP、R1 SQLite LocalStore＋Package Validator、R2 client worker、R3 Conflict／online history、R4 migration／Production hardeningの順。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) 10章。
+次の実装は利用者が着手を指示した後、D-077のR0 Contract freeze（コードなし）から始める。R1 Snapshot domain＋SQLite／CAS、R2 Import／Export、R3 networkなしlocal product、R4 Rust server、R5 HTTP worker、R6 Conflict／online history、R7 migration、R8 Production hardeningの順とする。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)。
 
 ## 7. GitHub へ載せる方針
 

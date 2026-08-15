@@ -1,0 +1,149 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "baseFixture": "../canonical-valid/minimal-root.json",
+  "cases": [
+    {
+      "id": "duplicate-key",
+      "inputCarrier": "rawUtf8",
+      "mutation": "append a second schemaVersion member to the root object",
+      "expectedValidationStage": "ijsonParse",
+      "expectedClass": "duplicateKey"
+    },
+    {
+      "id": "unknown-field",
+      "inputCarrier": "jsonModel",
+      "mutation": "add root member capturedAt with value 2026-08-15T00:00:00Z",
+      "expectedValidationStage": "jsonSchema",
+      "expectedClass": "unknownField"
+    },
+    {
+      "id": "noncanonical-whitespace",
+      "inputCarrier": "rawUtf8",
+      "mutation": "insert one U+0020 after the first colon",
+      "expectedValidationStage": "jcsByteComparison",
+      "expectedClass": "nonCanonicalJson"
+    },
+    {
+      "id": "noncanonical-escape",
+      "inputCarrier": "rawUtf8",
+      "mutation": "encode the first lowercase a in workId as \\u0061",
+      "expectedValidationStage": "jcsByteComparison",
+      "expectedClass": "nonCanonicalJson"
+    },
+    {
+      "id": "noncanonical-key-order",
+      "inputCarrier": "rawUtf8",
+      "mutation": "place workId before entries in the root object",
+      "expectedValidationStage": "jcsByteComparison",
+      "expectedClass": "nonCanonicalJson"
+    },
+    {
+      "id": "float-for-integer",
+      "inputCarrier": "rawUtf8",
+      "mutation": "replace the first byteCount integer token with the same value followed by .0",
+      "expectedValidationStage": "integerTokenPolicy",
+      "expectedClass": "nonCanonicalNumber"
+    },
+    {
+      "id": "unsafe-integer",
+      "inputCarrier": "rawUtf8",
+      "mutation": "replace byteCount with 9007199254740992",
+      "expectedValidationStage": "ijsonParse",
+      "expectedClass": "unsafeInteger"
+    },
+    {
+      "id": "uppercase-uuid",
+      "inputCarrier": "jsonModel",
+      "mutation": "uppercase A-F in workId",
+      "expectedValidationStage": "jsonSchema",
+      "expectedClass": "invalidIdentifier"
+    },
+    {
+      "id": "uppercase-digest",
+      "inputCarrier": "jsonModel",
+      "mutation": "uppercase A-F in entries[0].objectId",
+      "expectedValidationStage": "jsonSchema",
+      "expectedClass": "invalidDigest"
+    },
+    {
+      "id": "invalid-utf8",
+      "inputCarrier": "rawHex",
+      "mutation": "inject octet ff between JSON string quotes",
+      "expectedValidationStage": "utf8Decode",
+      "expectedClass": "invalidUtf8"
+    },
+    {
+      "id": "unpaired-surrogate",
+      "inputCarrier": "rawUtf8",
+      "mutation": "replace a string value with the six ASCII octets \\ud800",
+      "expectedValidationStage": "ijsonParse",
+      "expectedClass": "unpairedSurrogate"
+    },
+    {
+      "id": "parent-order",
+      "inputCarrier": "jsonModel",
+      "mutation": "set parentSnapshotIds to ffff...ffff followed by 0000...0000",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "nonCanonicalParentOrder"
+    },
+    {
+      "id": "entry-order",
+      "inputCarrier": "jsonModel",
+      "mutation": "place work/title before work/document",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "nonCanonicalEntryOrder"
+    },
+    {
+      "id": "duplicate-entity-key",
+      "inputCarrier": "jsonModel",
+      "mutation": "append a second work/document entry with another ObjectID",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "duplicateEntityKey"
+    },
+    {
+      "id": "missing-mandatory-work-singleton",
+      "inputCarrier": "jsonModel",
+      "mutation": "remove the work/synopsis entry from the otherwise minimal materializable work",
+      "expectedValidationStage": "jsonSchema",
+      "expectedClass": "missingMandatoryEntity"
+    },
+    {
+      "id": "impossible-document-created-at",
+      "inputCarrier": "objectStream",
+      "mutation": "set documentCreatedAt to 2026-02-31T00:00:00Z and recompute the object digest",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "invalidPortableTimestamp"
+    },
+    {
+      "id": "non-leap-year-february-29",
+      "inputCarrier": "objectStream",
+      "mutation": "set documentCreatedAt to 2025-02-29T00:00:00Z and recompute the object digest",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "invalidPortableTimestamp"
+    },
+    {
+      "id": "changed-work-document-after-root",
+      "inputCarrier": "scenario",
+      "mutation": "publish a child whose work/document ObjectID differs from its parent",
+      "expectedValidationStage": "snapshotSemantics",
+      "expectedClass": "immutableWorkDocumentChanged"
+    },
+    {
+      "id": "object-size-exceeded",
+      "inputCarrier": "jsonModel",
+      "mutation": "set byteCount to 262144001",
+      "expectedValidationStage": "jsonSchema",
+      "expectedClass": "objectTooLarge"
+    },
+    {
+      "id": "entity-payload-size-exceeded",
+      "inputCarrier": "snapshotManifestAndFinalizedObject",
+      "mutation": "register a structured SnapshotEntry whose finalized ObjectID resolves to 16777217 canonical entity bytes",
+      "expectedValidationStage": "snapshotRegistrationEntryContext",
+      "expectedClass": "limitExceeded",
+      "expectedLimitName": "structuredObjectBytes",
+      "expectedObjectFinalizeAcceptedAsBytesOnly": true
+    }
+  ]
+}

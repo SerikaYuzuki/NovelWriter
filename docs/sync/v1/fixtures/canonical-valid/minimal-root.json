@@ -1,0 +1,121 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "canonicalization": "RFC8785",
+  "description": "The minimal materializable empty work: all nine required singleton/order EntityKeys and a zero-parent root Snapshot.",
+  "entityObjects": [
+    {
+      "name": "workDocument",
+      "schema": "../../entity-schemas/work-document.schema.json",
+      "usedByEntityKeys": ["work/document"],
+      "inputModel": {
+        "schemaVersion": 1,
+        "documentId": "10000000-0000-0000-0000-000000000001",
+        "documentCreatedAt": "2026-08-15T00:00:00Z"
+      },
+      "expectedDecodeModel": {
+        "schemaVersion": 1,
+        "documentId": "10000000-0000-0000-0000-000000000001",
+        "documentCreatedAt": "2026-08-15T00:00:00Z"
+      },
+      "expectedCanonicalUtf8": "{\"documentCreatedAt\":\"2026-08-15T00:00:00Z\",\"documentId\":\"10000000-0000-0000-0000-000000000001\",\"schemaVersion\":1}",
+      "expectedByteCount": 114,
+      "expectedSha256": "73fff3e0b41badf6d611642d5a4411b426adb3ec2aacc59797873f32d7f2eb51"
+    },
+    {
+      "name": "emptyStringValue",
+      "schema": "../../entity-schemas/string-value.schema.json",
+      "usedByEntityKeys": ["work/synopsis", "work/title"],
+      "inputModel": {
+        "schemaVersion": 1,
+        "value": ""
+      },
+      "expectedDecodeModel": {
+        "schemaVersion": 1,
+        "value": ""
+      },
+      "expectedCanonicalUtf8": "{\"schemaVersion\":1,\"value\":\"\"}",
+      "expectedByteCount": 30,
+      "expectedSha256": "6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb"
+    },
+    {
+      "name": "emptyIdOrder",
+      "schema": "../../entity-schemas/id-order.schema.json",
+      "usedByEntityKeys": [
+        "work/attachment-order",
+        "work/chapter-order",
+        "work/character-order",
+        "work/flag-order",
+        "work/plot-card-order",
+        "work/world-note-order"
+      ],
+      "inputModel": {
+        "schemaVersion": 1,
+        "ids": []
+      },
+      "expectedDecodeModel": {
+        "schemaVersion": 1,
+        "ids": []
+      },
+      "expectedCanonicalUtf8": "{\"ids\":[],\"schemaVersion\":1}",
+      "expectedByteCount": 28,
+      "expectedSha256": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"
+    }
+  ],
+  "snapshotManifest": {
+    "schema": "../../snapshot.schema.json",
+    "inputModel": {
+      "schemaVersion": 1,
+      "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+      "parentSnapshotIds": [],
+      "entries": [
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/attachment-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/chapter-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/character-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 114, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/document", "objectId": "73fff3e0b41badf6d611642d5a4411b426adb3ec2aacc59797873f32d7f2eb51"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/flag-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/plot-card-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 30, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/synopsis", "objectId": "6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb"},
+        {"byteCount": 30, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/title", "objectId": "6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/world-note-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"}
+      ]
+    },
+    "expectedDecodeModel": {
+      "schemaVersion": 1,
+      "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+      "parentSnapshotIds": [],
+      "entries": [
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/attachment-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/chapter-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/character-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 114, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/document", "objectId": "73fff3e0b41badf6d611642d5a4411b426adb3ec2aacc59797873f32d7f2eb51"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/flag-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/plot-card-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"},
+        {"byteCount": 30, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/synopsis", "objectId": "6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb"},
+        {"byteCount": 30, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/title", "objectId": "6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb"},
+        {"byteCount": 28, "contentType": "application/vnd.fuminiwa.entity+json;version=1", "entityKey": "work/world-note-order", "objectId": "952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee"}
+      ]
+    },
+    "expectedCanonicalUtf8": "{\"entries\":[{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/attachment-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"},{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/chapter-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"},{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/character-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"},{\"byteCount\":114,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/document\",\"objectId\":\"73fff3e0b41badf6d611642d5a4411b426adb3ec2aacc59797873f32d7f2eb51\"},{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/flag-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"},{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/plot-card-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"},{\"byteCount\":30,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/synopsis\",\"objectId\":\"6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb\"},{\"byteCount\":30,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/title\",\"objectId\":\"6eff32d43eeb4ee368a35d7ca9376d5ee94a7c21f8abc929cb3cb37d2b2634eb\"},{\"byteCount\":28,\"contentType\":\"application/vnd.fuminiwa.entity+json;version=1\",\"entityKey\":\"work/world-note-order\",\"objectId\":\"952c532b782bee0c8e580dbcc9b784804995df6b1bf088b1e15bd485d6986dee\"}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8\"}",
+    "expectedByteCount": 1811,
+    "expectedSha256": "01a4821463a4cebe73bee01010332d2ec160fd6d411146c1141579273eda9fb3"
+  },
+  "publishCommand": {
+    "schema": "../../publish-command.schema.json",
+    "inputModel": {
+      "operationId": "40000000-0000-0000-0000-000000000001",
+      "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+      "expectedHead": null,
+      "candidateSnapshotId": "01a4821463a4cebe73bee01010332d2ec160fd6d411146c1141579273eda9fb3"
+    },
+    "expectedDecodeModel": {
+      "operationId": "40000000-0000-0000-0000-000000000001",
+      "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+      "expectedHead": null,
+      "candidateSnapshotId": "01a4821463a4cebe73bee01010332d2ec160fd6d411146c1141579273eda9fb3"
+    },
+    "expectedCanonicalUtf8": "{\"candidateSnapshotId\":\"01a4821463a4cebe73bee01010332d2ec160fd6d411146c1141579273eda9fb3\",\"expectedHead\":null,\"operationId\":\"40000000-0000-0000-0000-000000000001\",\"workId\":\"9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8\"}",
+    "expectedByteCount": 211,
+    "expectedSha256": "1456601e126c4587d56e76b938e681d649e1d4b3200fc25e7f6b8ee44696fdf5"
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "intent-attempt-lost-ack-exact-retry",
+  "description": "A server commit succeeds, its response is lost, and process restart replays exactly the sealed attempt.",
+  "digestContract": {
+    "requestDigestLocation": "localSealedAttemptAndServerReceiptOnly",
+    "publishWireFields": [
+      "candidateSnapshotId",
+      "expectedHead",
+      "operationId",
+      "workId"
+    ],
+    "publishWireContainsRequestDigest": false,
+    "calculation": "client and server independently SHA-256 the exact RFC 8785 command bytes"
+  },
+  "initialState": {
+    "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "sqlite": {
+      "currentLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+      "localGeneration": 42,
+      "lastAcknowledgedHead": {
+        "generation": 7,
+        "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "syncIntent": {
+        "latestLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+        "localGeneration": 42
+      },
+      "sealedAttempt": null
+    },
+    "server": {
+      "head": {
+        "generation": 7,
+        "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "receipt": null
+    }
+  },
+  "commands": [
+    {
+      "type": "observeRemote"
+    },
+    {
+      "type": "sealAttempt",
+      "operationId": "40000000-0000-0000-0000-000000000001"
+    },
+    {
+      "type": "publish",
+      "transportOutcome": "responseLostAfterServerCommit"
+    },
+    {
+      "type": "restartClientProcess"
+    },
+    {
+      "type": "retrySealedAttempt"
+    },
+    {
+      "type": "readBackAndAcknowledge"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedSqlite": {
+        "syncIntentPresent": true,
+        "sealedAttemptPresent": false
+      },
+      "expectedServerHeadGeneration": 7,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedSqlite": {
+        "syncIntentPresent": true,
+        "sealedAttempt": {
+          "operationId": "40000000-0000-0000-0000-000000000001",
+          "requestDigest": "3721e6aeb4fc52bc12c101ec81ed7bfc8c1c42ff883093957b8376d056785127",
+          "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+          "expectedHead": {
+            "generation": 7,
+            "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "candidateSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+          "sourceLocalGeneration": 42,
+          "sourceLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "publishDigestInputCanonicalUtf8": "{\"candidateSnapshotId\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"expectedHead\":{\"generation\":7,\"snapshotId\":\"1111111111111111111111111111111111111111111111111111111111111111\"},\"operationId\":\"40000000-0000-0000-0000-000000000001\",\"workId\":\"9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8\"}"
+      },
+      "expectedServerHeadGeneration": 7,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedSqlite": {
+        "syncIntentPresent": true,
+        "sealedAttemptPresent": true,
+        "acknowledged": false
+      },
+      "expectedServer": {
+        "head": {
+          "generation": 8,
+          "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "receiptStoredForOperationId": "40000000-0000-0000-0000-000000000001"
+      },
+      "uiEditingAvailable": true,
+      "expectedError": "transportResponseLost"
+    },
+    {
+      "step": 4,
+      "expectedSqlite": {
+        "syncIntentPresent": true,
+        "sealedAttemptPresent": true
+      },
+      "expectedNextAction": "retrySameAttemptBeforeObservingNewIntent",
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedRequestEquality": "byteForByte",
+      "expectedOperationId": "40000000-0000-0000-0000-000000000001",
+      "expectedServerResult": "replayStoredReceiptWithoutIncrementingHead",
+      "expectedServerHeadGeneration": 8,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedSqlite": {
+        "lastAcknowledgedHead": {
+          "generation": 8,
+          "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "syncIntent": null,
+        "sealedAttempt": null
+      },
+      "expectedServerHeadGeneration": 8,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    }
+  ]
+}

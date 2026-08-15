@@ -1,0 +1,237 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-gc-reference-race",
+  "description": "Local save and server Snapshot registration serialize reference adoption with two-phase GC so no committed reference can point at deleted bytes; a GC-first server race is recovered through typed replanning and a fresh immutable incarnation.",
+  "sharedObject": {
+    "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "byteCount": 12,
+    "snapshotEntryContentType": "application/vnd.fuminiwa.episode.v1+jcs"
+  },
+  "policy": {
+    "localSerialization": "CASMutationGatePerObjectId",
+    "serverSerialization": "tenantObjectLifecycleRowLockInObjectIdOrder",
+    "gcStates": ["available", "quarantined", "deleting"],
+    "physicalKeysAreImmutableIncarnations": true,
+    "objectSweepGraceSeconds": 604800
+  },
+  "cases": [
+    {
+      "caseId": "local-mark-then-concurrent-save",
+      "initialState": {
+        "objectState": "available",
+        "physicalBytesVerified": true,
+        "hardReferenceCount": 0,
+        "currentLocalSnapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "commands": [
+        {
+          "type": "markLocalGcCandidate",
+          "deletionToken": "10000000-0000-0000-0000-000000000001"
+        },
+        {
+          "type": "stageConcurrentSaveBytesBeforeGate",
+          "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "type": "commitSaveThroughCasMutationGate"
+        },
+        {
+          "type": "resumeLocalSweepWithOldToken"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedObjectState": "quarantined",
+          "expectedDeletionToken": "10000000-0000-0000-0000-000000000001",
+          "expectedPhysicalBytesPresent": true,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedStagingHashAndByteCountVerified": true,
+          "expectedCommittedReference": false,
+          "expectedUiSaveBlockedByGc": false,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedGateHeldAcrossReferenceDecision": true,
+          "expectedQuarantineCancelledInSameSqliteTransactionAsReference": true,
+          "expectedObjectState": "available",
+          "expectedCurrentLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+          "expectedCommittedReferenceCount": 1,
+          "expectedReferenceHasVerifiedBytes": true,
+          "expectedError": null
+        },
+        {
+          "step": 4,
+          "expectedOldTokenStillMatches": false,
+          "expectedPhysicalDeleteCount": 0,
+          "expectedObjectState": "available",
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "commit the new Snapshot reference before cancelling quarantine",
+        "unlink the CAS path after the new reference commits",
+        "treat a quarantined but valid object as missing without rechecking under CASMutationGate"
+      ]
+    },
+    {
+      "caseId": "server-mark-then-register-rescues-incarnation",
+      "initialState": {
+        "objectState": "available",
+        "hardReferenceCount": 0,
+        "currentIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+        "snapshotRegistered": false
+      },
+      "commands": [
+        {
+          "type": "markServerGcCandidate",
+          "deletionToken": "10000000-0000-0000-0000-000000000002"
+        },
+        {
+          "type": "registerSnapshot",
+          "snapshotId": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "type": "resumeServerSweepWithOldToken"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedObjectState": "quarantined",
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+          "expectedPhysicalBytesPresent": true,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedLifecycleRowLocked": true,
+          "expectedExactIncarnationReverified": true,
+          "expectedQuarantineCancelledAndReferenceInsertedInOnePostgresTransaction": true,
+          "expectedObjectState": "available",
+          "expectedSnapshotRegistered": true,
+          "expectedSnapshotReferenceCount": 1,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedOldTokenStillMatches": false,
+          "expectedPhysicalDeleteCount": 0,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "commit Snapshot entry references outside the transaction that rescues quarantine",
+        "let the old deletion token delete an incarnation rescued to available",
+        "return registration success while the object row remains quarantined"
+      ]
+    },
+    {
+      "caseId": "server-gc-first-replans-and-adopts-new-incarnation",
+      "initialState": {
+        "objectState": "quarantined",
+        "hardReferenceCount": 0,
+        "currentIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+        "deletionToken": "10000000-0000-0000-0000-000000000003",
+        "snapshotRegistered": false
+      },
+      "commands": [
+        {
+          "type": "commitServerGcDeletingAfterRootRecheck"
+        },
+        {
+          "type": "attemptRegisterSnapshot",
+          "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        {
+          "type": "queryMissingObjectsForCurrentBinding"
+        },
+        {
+          "type": "createUploadPutAndFinalizeExactBytes",
+          "createOperationId": "20000000-0000-0000-0000-000000000001",
+          "finalizeOperationId": "20000000-0000-0000-0000-000000000002",
+          "newIncarnationKey": "tenant/account-a/objects/aa/incarnation-new"
+        },
+        {
+          "type": "registerSnapshotAfterTransferReplan",
+          "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        {
+          "type": "completeLateDeleteForOldToken"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedObjectState": "deleting",
+          "expectedDeletingIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+          "expectedDeletionToken": "10000000-0000-0000-0000-000000000003",
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedSnapshotRegistered": false,
+          "expectedObjectReferenceInserted": false,
+          "expectedTypedError": {
+            "code": "objectAvailabilityChanged",
+            "recoveryAction": "replanObjectTransfer"
+          },
+          "expectedBlindRetry": false
+        },
+        {
+          "step": 3,
+          "expectedMissingObjectIds": [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "expectedPresenceFromAnotherBindingReused": false,
+          "expectedError": null
+        },
+        {
+          "step": 4,
+          "expectedActualBytesHashAndSizeVerified": true,
+          "expectedWaitedForOldLifecycleDeletionDecision": true,
+          "expectedObjectIdUnchanged": true,
+          "expectedCurrentIncarnationKey": "tenant/account-a/objects/aa/incarnation-new",
+          "expectedNewIncarnationKeyDiffersFromOld": true,
+          "expectedObjectState": "available",
+          "expectedError": null
+        },
+        {
+          "step": 5,
+          "expectedTransferPlanRevalidated": true,
+          "expectedSnapshotRegistered": true,
+          "expectedSnapshotReferenceCount": 1,
+          "expectedReferencedIncarnationKey": "tenant/account-a/objects/aa/incarnation-new",
+          "expectedError": null
+        },
+        {
+          "step": 6,
+          "expectedDeletedIncarnationKey": "tenant/account-a/objects/aa/incarnation-old",
+          "expectedNewIncarnationDeleted": false,
+          "expectedCurrentMappingCleared": false,
+          "expectedObjectState": "available",
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "blindly retry registration while the object is deleting",
+        "reuse the deleting physical key for newly finalized bytes",
+        "allow the old deletion token to delete or clear the new incarnation",
+        "change ObjectID when only the physical incarnation changes",
+        "commit a Snapshot reference before the replacement incarnation is available"
+      ]
+    }
+  ],
+  "expectedGlobalInvariants": {
+    "committedReferenceWithoutVerifiedBytes": false,
+    "physicalDeleteCanCrossIncarnationFence": false,
+    "saveOrRegisterWinsByTimestamp": false,
+    "raceIsSerializedByLifecycleStateAndToken": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:entity:string-value",
+  "title": "String Value Entity v1",
+  "description": "Payload for a title, synopsis, episode body, episode memo, or chapter title EntityKey.",
+  "$comment": "maxLength counts Unicode scalar values. A pure semantic validator also caps the raw UTF-8 value at 1048576 bytes so every valid known Snapshot remains exportable as novelpkg v3. The separately enforced canonical UTF-8 entity-object limit is 16777216 bytes. No Unicode normalization or line-ending conversion is permitted before hashing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "value"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "value": {
+      "type": "string",
+      "maxLength": 1048576
+    }
+  }
+}

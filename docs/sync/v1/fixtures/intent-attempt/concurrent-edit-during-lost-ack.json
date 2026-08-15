@@ -1,0 +1,119 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "intent-attempt-concurrent-edit-during-lost-ack",
+  "description": "An old sealed publish commits and loses its response while the user creates a newer local generation. Receipt replay must acknowledge only the old source and preserve the newer Intent.",
+  "initialState": {
+    "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "lastAcknowledgedHead": {
+      "generation": 7,
+      "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "sealedAttempt": {
+      "operationId": "40000000-0000-0000-0000-000000000001",
+      "sourceLocalGeneration": 42,
+      "sourceLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+      "candidateSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+      "expectedHead": {
+        "generation": 7,
+        "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "syncIntent": {
+      "localGeneration": 42,
+      "latestLocalSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "stableCheckpoint": {
+      "localGeneration": 41,
+      "snapshotId": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "commands": [
+    {
+      "type": "publish",
+      "transportOutcome": "responseLostAfterServerCommit"
+    },
+    {
+      "type": "recordLocalEdit",
+      "localGeneration": 43,
+      "latestLocalSnapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "type": "recordLifecycleCheckpoint",
+      "localGeneration": 43,
+      "localSnapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "type": "restartClientProcess"
+    },
+    {
+      "type": "retrySealedAttempt"
+    },
+    {
+      "type": "readBackAndConditionallyAcknowledge"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedServerHead": {
+        "generation": 8,
+        "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "expectedClientAcknowledged": false,
+      "expectedError": "transportResponseLost"
+    },
+    {
+      "step": 2,
+      "expectedSyncIntent": {
+        "localGeneration": 43,
+        "latestLocalSnapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expectedSealedAttemptUnchanged": true,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedStableCheckpoint": {
+        "localGeneration": 43,
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedNextAction": "retrySameAttemptBeforeProcessingNewIntent",
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedRequestEquality": "byteForByte",
+      "expectedServerResult": "replayStoredReceiptWithoutIncrementingHead",
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedLastAcknowledgedHead": {
+        "generation": 8,
+        "snapshotId": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "expectedSealedAttempt": null,
+      "expectedSyncIntent": {
+        "localGeneration": 43,
+        "latestLocalSnapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expectedAcknowledgedOccurrenceForSource": true,
+      "expectedStableCheckpoint": {
+        "localGeneration": 43,
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expectedNextAction": "buildCandidateFromGeneration43UnderAcknowledgedHead",
+      "forbiddenOutcomes": [
+        "clear generation 43 because generation 42 was acknowledged",
+        "move stable checkpoint backward from generation 43 to acknowledged generation 42"
+      ],
+      "expectedError": null
+    }
+  ]
+}

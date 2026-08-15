@@ -1,0 +1,329 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-manual-unpin-payload-release",
+  "description": "A manual checkpoint defaults to ensurePinned=true, can only be unpinned by an explicit setSnapshotPin(false), and can release payload into an unavailable lineage stub only after every hard root is absent; receipts replay exactly and unreferenced object bytes recover quota after grace-period GC.",
+  "policy": {
+    "manualCheckpointDefaultEnsurePinned": true,
+    "unpinCommand": "setSnapshotPin",
+    "payloadReleaseCommand": "releaseSnapshotPayload",
+    "releaseRequiresAllHardRootsAbsent": true,
+    "clientReleaseGuards": [
+      "currentLocal",
+      "pendingObjectTransfer",
+      "sealedAttempt",
+      "latestIntent",
+      "checkpointReplication",
+      "migration"
+    ],
+    "serverReleaseBlockers": [
+      "currentHead",
+      "pinned",
+      "serverKnownInProgressOperation",
+      "unresolvedDivergence",
+      "unresolvedConflict",
+      "resolvedConflictWithinNinetyDays",
+      "migration"
+    ],
+    "objectSweepGraceSeconds": 604800,
+    "operationReceiptIsPayloadRoot": false,
+    "explicitReleaseOverridesAutomaticBucketRetention": true
+  },
+  "cases": [
+    {
+      "caseId": "manual-unpin-release-replay-and-gc",
+      "identities": {
+        "workId": "60000000-0000-0000-0000-000000000001",
+        "headSnapshotId": "8888888888888888888888888888888888888888888888888888888888888888",
+        "manualSnapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+        "uniqueObjectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "initialState": {
+        "head": {
+          "generation": 8,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        },
+        "manualSnapshot": {
+          "registered": true,
+          "available": true,
+          "pinned": false,
+          "entryMapPresent": true,
+          "canonicalManifestPayloadPresent": true,
+          "canonicalManifestByteCount": 128,
+          "hardRootsExceptPin": []
+        },
+        "object": {
+          "objectId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "byteCount": 12,
+          "state": "available",
+          "snapshotReferenceCount": 1,
+          "otherReferenceCount": 0
+        },
+        "quota": {
+          "usedFinalizedObjectBytes": 4108,
+          "usedCanonicalManifestBytes": 1024,
+          "reservedUploadBytes": 0
+        }
+      },
+      "commands": [
+        {
+          "type": "recordSnapshotCheckpoint",
+          "operationId": "60000000-0000-0000-0000-000000000002",
+          "workId": "60000000-0000-0000-0000-000000000001",
+          "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+          "reason": "manualCheckpoint",
+          "ensurePinned": true,
+          "ensurePinnedSource": "manualCheckpointClientDefault"
+        },
+        {
+          "type": "setSnapshotPin",
+          "operationId": "60000000-0000-0000-0000-000000000003",
+          "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+          "pinned": false
+        },
+        {
+          "type": "replaySetSnapshotPinExactly"
+        },
+        {
+          "type": "releaseSnapshotPayload",
+          "operationId": "60000000-0000-0000-0000-000000000004",
+          "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+          "transportOutcome": "responseLostAfterServerCommit"
+        },
+        {
+          "type": "restartAndReplayReleaseExactly"
+        },
+        {
+          "type": "runObjectGcAfterGrace"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedCheckpointOccurrenceCount": 1,
+          "expectedEffectivePinned": true,
+          "expectedSnapshotAvailable": true,
+          "expectedClientDefaultMaterializedOnWireAsEnsurePinnedTrue": true,
+          "expectedHead": {
+            "generation": 8,
+            "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+          },
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedEffectivePinned": false,
+          "expectedSnapshotAvailable": true,
+          "expectedEntryMapPresent": true,
+          "expectedPayloadReleasedByUnpinAlone": false,
+          "expectedReceiptStored": true,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredReceiptReplayed": true,
+          "expectedAdditionalPinMutationCount": 0,
+          "expectedEffectivePinned": false,
+          "expectedError": null
+        },
+        {
+          "step": 4,
+          "expectedHardRootRecheckInReleaseTransaction": true,
+          "expectedHardRootCount": 0,
+          "expectedSnapshot": {
+            "available": false,
+            "pinned": false,
+            "userReleasedPayload": true,
+            "entryMapPresent": false,
+            "canonicalManifestPayloadPresent": false,
+            "lineageMetadataPresent": true,
+            "listedAsRestorable": false
+          },
+          "expectedObject": {
+            "snapshotReferenceCount": 0,
+            "state": "available",
+            "graceGcEligible": true
+          },
+          "expectedHeadUnchanged": true,
+          "expectedQuota": {
+            "usedFinalizedObjectBytes": 4108,
+            "usedCanonicalManifestBytes": 896,
+            "manifestBytesRecovered": 128
+          },
+          "expectedReceiptStored": true,
+          "expectedClientAcknowledged": false,
+          "expectedError": "transportResponseLost"
+        },
+        {
+          "step": 5,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredReceiptReplayed": true,
+          "expectedAdditionalAvailabilityChangeCount": 0,
+          "expectedAdditionalReferenceDeleteCount": 0,
+          "expectedAdditionalManifestQuotaDelta": 0,
+          "expectedSnapshotAvailable": false,
+          "expectedAutomaticBucketRehydration": false,
+          "expectedLineageStubStillPresent": true,
+          "expectedError": null
+        },
+        {
+          "step": 6,
+          "expectedObjectStateTransitions": [
+            "available",
+            "quarantined",
+            "deleting",
+            "deleted"
+          ],
+          "expectedPhysicalBytesDeletedAfterGrace": true,
+          "expectedQuota": {
+            "usedFinalizedObjectBytes": 4096,
+            "usedCanonicalManifestBytes": 896,
+            "reservedUploadBytes": 0,
+            "objectBytesRecovered": 12,
+            "manifestBytesRecoveredAtRelease": 128
+          },
+          "expectedSnapshotLineageStubPresent": true,
+          "expectedReceiptStillReplayable": true,
+          "expectedReceiptRetainedObjectBytes": false,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "default a manual checkpoint to ensurePinned=false",
+        "interpret a later checkpoint ensurePinned=false as an unpin",
+        "release payload as an implicit side effect of setSnapshotPin(false)",
+        "remove graph lineage metadata when releasing payload",
+        "delete object bytes before the grace period and final hard-root recheck",
+        "count operation receipts as object-retention roots",
+        "charge released unreferenced bytes against quota forever"
+      ]
+    },
+    {
+      "caseId": "explicit-reregister-rehydrates-once",
+      "initialState": {
+        "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+        "available": false,
+        "userReleasedPayload": true,
+        "lineageStubPresent": true,
+        "canonicalManifestPayloadPresent": false,
+        "allReferencedObjectsAvailable": true,
+        "canonicalManifestByteCount": 128,
+        "usedCanonicalManifestBytes": 896,
+        "quotaHeadroomBytes": 128
+      },
+      "commands": [
+        "explicitlyRegisterExactSnapshotManifest",
+        "replaySameContentAddressedPut"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedQuotaPreflight": true,
+          "expectedSnapshotAvailable": true,
+          "expectedEntryMapPresent": true,
+          "expectedCanonicalManifestPayloadPresent": true,
+          "expectedUsedCanonicalManifestBytes": 1024,
+          "expectedManifestQuotaDelta": 128,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedResult": "alreadyRegisteredAndAvailable",
+          "expectedUsedCanonicalManifestBytes": 1024,
+          "expectedManifestQuotaDelta": 0,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "rehydrate automatically from a retention scheduler or pin alone",
+        "charge canonical manifest bytes twice on replay",
+        "partially restore entries when quota preflight or object validation fails"
+      ]
+    },
+    {
+      "caseId": "protected-current-head-rejects-release",
+      "identities": {
+        "workId": "60000000-0000-0000-0000-000000000010",
+        "protectedSnapshotId": "9999999999999999999999999999999999999999999999999999999999999999",
+        "objectId": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "initialState": {
+        "head": {
+          "generation": 3,
+          "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        "snapshot": {
+          "available": true,
+          "pinned": false,
+          "entryMapPresent": true,
+          "hardRoots": ["currentHead"]
+        },
+        "object": {
+          "state": "available",
+          "snapshotReferenceCount": 1
+        },
+        "quotaUsedFinalizedObjectBytes": 8192
+      },
+      "command": {
+        "type": "releaseSnapshotPayload",
+        "operationId": "60000000-0000-0000-0000-000000000011",
+        "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "commands": [
+        {
+          "type": "sendReleaseForCurrentHead"
+        },
+        {
+          "type": "replaySameProtectedRelease"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedTypedResult": {
+            "code": "snapshotPayloadProtected",
+            "blockingRootKinds": ["currentHead"]
+          },
+          "expectedSnapshotMutationCount": 0,
+          "expectedPinMutationCount": 0,
+          "expectedReferenceDeleteCount": 0,
+          "expectedObjectState": "available",
+          "expectedQuotaUsedFinalizedObjectBytes": 8192,
+          "expectedReceiptStoredForProtectedOutcome": true,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedStoredReceiptReplayed": true,
+          "expectedSnapshot": {
+            "available": true,
+            "pinned": false,
+            "entryMapPresent": true
+          },
+          "expectedHead": {
+            "generation": 3,
+            "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+          },
+          "expectedAdditionalMutationCount": 0,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "treat pinned=false as sufficient release authority",
+        "release current head payload before another head commits",
+        "return snapshotPayloadProtected after partially deleting entry references",
+        "recover quota for bytes that remain referenced by the current head"
+      ]
+    }
+  ],
+  "expectedGlobalInvariants": {
+    "manualCheckpointDefaultPinned": true,
+    "explicitUnpinRequiredBeforeRelease": true,
+    "hardRootCheckAndPayloadStubCommitAtomic": true,
+    "protectedReleaseHasNoPayloadMutation": true,
+    "manifestQuotaRecoveryOccursInReleaseTransaction": true,
+    "objectQuotaRecoveryRequiresPhysicalObjectGc": true,
+    "reregisterRehydratesAndRechargesManifestExactlyOnce": true
+  }
+}

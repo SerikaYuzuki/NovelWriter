@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:publish-command",
+  "title": "FUMINIWA Publish Command v1",
+  "description": "The immutable command sealed before the first network byte is sent.",
+  "$comment": "The wire command contains exactly these four fields. Client and server independently compute requestDigest as SHA-256 of the exact RFC 8785 JCS command bytes; no client-supplied digest is accepted. A first publish uses expectedHead=null and a zero-parent candidate. A non-root candidate must directly contain the expected snapshot as a parent. Receipt replay and lineage are semantic server checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operationId",
+    "workId",
+    "expectedHead",
+    "candidateSnapshotId"
+  ],
+  "properties": {
+    "operationId": {
+      "$ref": "#/$defs/lowercaseUuid"
+    },
+    "workId": {
+      "$ref": "#/$defs/lowercaseUuid"
+    },
+    "expectedHead": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/head"
+        }
+      ]
+    },
+    "candidateSnapshotId": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "lowercaseUuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "snapshotId"
+      ],
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "snapshotId": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "portable-uuid-case-boundary",
+  "description": "novelpkg uppercase UUID spelling and Snapshot lowercase spelling represent the same 128-bit logical identity without making platform-dependent ObjectIDs.",
+  "packageInput": {
+    "documentId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "episodePayloadFile": "ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB.md",
+    "uuidParsePolicy": "caseInsensitiveHyphenated36To128BitLogicalValue"
+  },
+  "expectedLocalAndWire": {
+    "documentId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "reservedImportWorkIdNotReadFromPackage": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "episodeId": "abcdefab-cdef-abcd-efab-cdefabcdefab",
+    "entityKey": "episode/abcdefab-cdef-abcd-efab-cdefabcdefab/body",
+    "workDocumentCanonicalUtf8": "{\"documentCreatedAt\":\"2026-08-15T00:00:00Z\",\"documentId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"schemaVersion\":1}",
+    "workDocumentByteCount": 114,
+    "workDocumentObjectId": "1f58c2781a587e75d51b7ba356bbdb85115a39f5c5d768e56422d65a28b768b6"
+  },
+  "expectedPackageExport": {
+    "documentId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+    "episodePayloadFile": "ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB.md"
+  },
+  "expected": {
+    "logicalUuidEquality": true,
+    "rawPackageUuidTextHashedDirectly": false,
+    "wireUsesLowercase": true,
+    "packageWriterUsesUppercase": true,
+    "secondImportObjectId": "1f58c2781a587e75d51b7ba356bbdb85115a39f5c5d768e56422d65a28b768b6",
+    "roundTripLogicalIdentityPreserved": true
+  },
+  "forbiddenOutcomes": [
+    "reject an otherwise valid package only because its JSON UUID contains uppercase A-F",
+    "hash uppercase package UUID text as a Snapshot entity payload",
+    "write lowercase UUID values or lowercase ID filenames into a canonical v3 novelpkg",
+    "treat uppercase and lowercase forms as different logical entities"
+  ]
+}

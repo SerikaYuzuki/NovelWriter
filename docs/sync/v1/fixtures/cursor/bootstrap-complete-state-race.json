@@ -1,0 +1,354 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "cursor-bootstrap-complete-state-race",
+  "description": "Bootstrap stages every library and current-state page at barrier B, closes all post-barrier races through event replay plus affected-list refetch, and installs library, review state, history, and cursor in one SQLite transaction; crash replay is duplicate-free and cursor expiry restarts the entire bootstrap.",
+  "cursorContract": {
+    "clientMustTreatAsOpaque": true,
+    "afterCursorIsExclusive": true,
+    "delivery": "atLeastOnce",
+    "eventOrdering": "tenantCommitOrder",
+    "stagingIsNonAuthoritative": true,
+    "installBoundary": "singleSQLiteTransaction"
+  },
+  "identities": {
+    "workW": "80000000-0000-0000-0000-000000000001",
+    "headH": "8888888888888888888888888888888888888888888888888888888888888888",
+    "divergenceD": "80000000-0000-0000-0000-000000000002",
+    "conflictC": "80000000-0000-0000-0000-000000000003",
+    "historyOccurrenceO": "80000000-0000-0000-0000-000000000004",
+    "historySnapshotO": "4444444444444444444444444444444444444444444444444444444444444444",
+    "historyOccurrenceO2": "80000000-0000-0000-0000-000000000005",
+    "historySnapshotO2": "5555555555555555555555555555555555555555555555555555555555555555",
+    "newWork": "80000000-0000-0000-0000-000000000006",
+    "newWorkHead": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "stateAtBarrier": {
+    "barrierCursor": "AQEAAACALWJhcnJpZXItMTAw",
+    "library": [
+      {
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "head": {
+          "generation": 5,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    ],
+    "currentDivergences": [
+      {
+        "divergenceId": "80000000-0000-0000-0000-000000000002",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "state": "unclassified"
+      }
+    ],
+    "currentConflicts": [
+      {
+        "conflictId": "80000000-0000-0000-0000-000000000003",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "state": "needsChoice"
+      }
+    ],
+    "history": [
+      {
+        "occurrenceId": "80000000-0000-0000-0000-000000000004",
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+        "reason": "manualCheckpoint",
+        "pinned": true,
+        "available": true
+      }
+    ]
+  },
+  "postBarrierConcurrentCommits": [
+    {
+      "commitSequence": 101,
+      "mutation": "resolveConflictC",
+      "event": {
+        "eventId": "81000000-0000-0000-0000-000000000001",
+        "type": "conflictChanged",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "conflictId": "80000000-0000-0000-0000-000000000003",
+        "state": "resolved"
+      }
+    },
+    {
+      "commitSequence": 102,
+      "mutation": "recordNewHistoryOccurrenceO2",
+      "event": {
+        "eventId": "81000000-0000-0000-0000-000000000002",
+        "type": "snapshotRetentionChanged",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "pinned": true,
+        "available": true
+      }
+    },
+    {
+      "commitSequence": 103,
+      "mutation": "explicitlyUnpinHistorySnapshotO",
+      "event": {
+        "eventId": "81000000-0000-0000-0000-000000000003",
+        "type": "snapshotRetentionChanged",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+        "pinned": false,
+        "available": true
+      }
+    },
+    {
+      "commitSequence": 104,
+      "mutation": "releaseHistorySnapshotOPayload",
+      "event": {
+        "eventId": "81000000-0000-0000-0000-000000000004",
+        "type": "snapshotRetentionChanged",
+        "workId": "80000000-0000-0000-0000-000000000001",
+        "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+        "pinned": false,
+        "available": false
+      }
+    },
+    {
+      "commitSequence": 105,
+      "mutation": "publishFirstHeadForNewWork",
+      "event": {
+        "eventId": "81000000-0000-0000-0000-000000000005",
+        "type": "headChanged",
+        "workId": "80000000-0000-0000-0000-000000000006",
+        "head": {
+          "generation": 1,
+          "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      }
+    }
+  ],
+  "pagePlan": {
+    "bootstrapLibraryPages": ["library-page-1", "library-final"],
+    "currentDivergencePages": ["divergence-page-1", "divergence-final"],
+    "currentConflictPages": ["conflict-page-1", "conflict-final"],
+    "currentHistoryPages": ["history-page-1", "history-final"],
+    "allPageTokensMustBeConsumedInOrder": true,
+    "noPageMayInstallDirectlyIntoAuthoritativeTables": true
+  },
+  "commands": [
+    {
+      "type": "startBootstrap",
+      "bootstrapId": "80000000-0000-0000-0000-000000000010"
+    },
+    {
+      "type": "stageEveryStableLibraryPage"
+    },
+    {
+      "type": "applyPostBarrierConcurrentServerCommits"
+    },
+    {
+      "type": "stageEveryCurrentDivergenceConflictAndHistoryPage"
+    },
+    {
+      "type": "pullAllChangesStrictlyAfterBarrier",
+      "afterCursor": "AQEAAACALWJhcnJpZXItMTAw"
+    },
+    {
+      "type": "deduplicateEventsAndRefetchEveryAffectedCurrentList"
+    },
+    {
+      "type": "pullClosureChangesAfterRefetchUntilStablePrefix",
+      "expectedFinalCursor": "AQEAAACALWZpbmFsLTEwNQ"
+    },
+    {
+      "type": "simulateProcessKillBeforeAtomicInstall"
+    },
+    {
+      "type": "restartAndReplaySameBootstrapWhileSessionValid"
+    },
+    {
+      "type": "installLibraryReviewHistoryAndCursorAtomically"
+    },
+    {
+      "type": "redeliverAlreadyInstalledEventPage"
+    },
+    {
+      "type": "simulateSeparateCursorExpiryDuringBootstrap"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedBarrierCursor": "AQEAAACALWJhcnJpZXItMTAw",
+      "expectedStableLibraryWorkIds": [
+        "80000000-0000-0000-0000-000000000001"
+      ],
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedAllLibraryPagesStaged": true,
+      "expectedLibraryFinalMarkerSeen": true,
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedServerCommitSequences": [101, 102, 103, 104, 105],
+      "expectedBarrierViewMutated": false,
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedEveryCurrentListFinalMarkerSeen": true,
+      "expectedStagingMayContainMixedPreAndPostBarrierState": true,
+      "expectedStagedDivergenceIds": [
+        "80000000-0000-0000-0000-000000000002"
+      ],
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedEventIdsInCommitOrder": [
+        "81000000-0000-0000-0000-000000000001",
+        "81000000-0000-0000-0000-000000000002",
+        "81000000-0000-0000-0000-000000000003",
+        "81000000-0000-0000-0000-000000000004",
+        "81000000-0000-0000-0000-000000000005"
+      ],
+      "expectedDuplicateEventIdsAllowedByTransport": true,
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedRefetches": [
+        "workWConflictsAllPages",
+        "workWHistoryAllPages",
+        "newWorkLibraryProjection"
+      ],
+      "expectedStagedConflictCState": "resolved",
+      "expectedStagedHistory": [
+        {
+          "occurrenceId": "80000000-0000-0000-0000-000000000005",
+          "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+          "pinned": true,
+          "available": true
+        },
+        {
+          "occurrenceId": "80000000-0000-0000-0000-000000000004",
+          "snapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+          "pinned": false,
+          "available": false
+        }
+      ],
+      "expectedStagedLibraryIncludesNewWork": true,
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedClosurePageEvents": [],
+      "expectedFinalCursor": "AQEAAACALWZpbmFsLTEwNQ",
+      "expectedStagingClosedUnderPostBarrierEvents": true,
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedError": "simulatedProcessKill",
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedSqlite": {
+        "cursor": null,
+        "remoteLibraryItemCount": 0,
+        "remoteReviewItemCount": 0,
+        "remoteHistoryOccurrenceCount": 0
+      },
+      "expectedStagingTrustedAfterRestart": false
+    },
+    {
+      "step": 9,
+      "expectedSameBootstrapSessionMayReplayIfUnexpired": true,
+      "expectedAllPagesAndEventsRestaged": true,
+      "expectedEventDeduplicationKey": "eventId",
+      "expectedEntityDeduplicationKeys": [
+        "workId",
+        "divergenceId",
+        "conflictId",
+        "occurrenceId"
+      ],
+      "expectedAuthoritativeSqliteInstallCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 10,
+      "expectedSingleSQLiteTransaction": {
+        "libraryWorkIds": [
+          "80000000-0000-0000-0000-000000000001",
+          "80000000-0000-0000-0000-000000000006"
+        ],
+        "libraryHeads": {
+          "80000000-0000-0000-0000-000000000001": {
+            "generation": 5,
+            "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+          },
+          "80000000-0000-0000-0000-000000000006": {
+            "generation": 1,
+            "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+          }
+        },
+        "reviewDivergenceIds": [
+          "80000000-0000-0000-0000-000000000002"
+        ],
+        "reviewConflictIds": [],
+        "historyOccurrenceIds": [
+          "80000000-0000-0000-0000-000000000004",
+          "80000000-0000-0000-0000-000000000005"
+        ],
+        "historySnapshotO": {
+          "pinned": false,
+          "available": false,
+          "listedAsRestorable": false
+        },
+        "historySnapshotO2": {
+          "pinned": true,
+          "available": true,
+          "listedAsRestorable": true
+        },
+        "cursor": "AQEAAACALWZpbmFsLTEwNQ"
+      },
+      "expectedAuthoritativeSqliteInstallCount": 1,
+      "expectedMissingWorkIds": [],
+      "expectedMissingEventIds": [],
+      "expectedDuplicateWorkCount": 0,
+      "expectedDuplicateReviewCount": 0,
+      "expectedDuplicateHistoryOccurrenceCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 11,
+      "expectedDeliveryClassification": "allowedReplay",
+      "expectedAdditionalLibraryItemCount": 0,
+      "expectedAdditionalReviewItemCount": 0,
+      "expectedAdditionalHistoryOccurrenceCount": 0,
+      "expectedCursorRegression": false,
+      "expectedError": null
+    },
+    {
+      "step": 12,
+      "expectedError": "cursorExpired",
+      "expectedAction": "discardEntireRemoteBootstrapStageAndStartNewFullBootstrap",
+      "expectedResumeOldBarrier": false,
+      "expectedPartialInstallFromExpiredStage": false,
+      "expectedPreserveLocalCurrentIntentAttemptConflict": true,
+      "expectedCursorAdvanceFromExpiredStage": false
+    }
+  ],
+  "forbiddenOutcomes": [
+    "install the stable library page before current review and history closure is staged",
+    "advance the cursor while any staged page or affected-list refetch is missing",
+    "leave resolved Conflict C in the needs-choice review queue",
+    "miss history occurrence O2 because no full history refetch followed its retention event",
+    "show released occurrence O as pinned, available, or restorable",
+    "miss the new Work because it was absent from the stable barrier library page",
+    "trust non-authoritative staging after process restart without replay",
+    "duplicate works, review records, history occurrences, or events under at-least-once delivery",
+    "resume an expired cursor or install any prefix from its abandoned stage"
+  ]
+}

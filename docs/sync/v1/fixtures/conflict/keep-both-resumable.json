@@ -1,0 +1,209 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "conflict-keep-both-resumable",
+  "description": "One EntityKey conflicts, disjoint edits are retained, and keep-both is one idempotent atomic server operation.",
+  "initialState": {
+    "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+    "conflictId": "60000000-0000-0000-0000-000000000001",
+    "displayedLocalGeneration": 42,
+    "displayedRemoteHead": {
+      "generation": 9,
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "baseSnapshotId": "1111111111111111111111111111111111111111111111111111111111111111",
+    "localSnapshotId": "4444444444444444444444444444444444444444444444444444444444444444",
+    "remoteSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+    "baseEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "3333333333333333333333333333333333333333333333333333333333333333",
+      "work/synopsis": "2222222222222222222222222222222222222222222222222222222222222222",
+      "work/title": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "localEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "work/synopsis": "2222222222222222222222222222222222222222222222222222222222222222",
+      "work/title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "remoteEntries": {
+      "episode/20000000-0000-0000-0000-000000000001/body": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "work/synopsis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "work/title": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "commands": [
+    {
+      "type": "classifyDivergence"
+    },
+    {
+      "type": "presentNeedsChoice"
+    },
+    {
+      "type": "chooseKeepBothAsSeparateWork",
+      "newWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be9"
+    },
+    {
+      "type": "sealAtomicKeepBothResolution",
+      "operationId": "60000000-0000-0000-0000-000000000002"
+    },
+    {
+      "type": "resolveKeepBothAtomically",
+      "transportOutcome": "responseLostAfterServerCommit"
+    },
+    {
+      "type": "simulateProcessExit"
+    },
+    {
+      "type": "retrySameAtomicResolution"
+    },
+    {
+      "type": "readBackBothAndResolveConflict"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedClassification": "needsChoice",
+      "expectedSafeUnion": {
+        "work/synopsis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "work/title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expectedConflictingEntities": [
+        {
+          "entityKey": "episode/20000000-0000-0000-0000-000000000001/body",
+          "reason": "bothChangedDifferently",
+          "baseObjectId": "3333333333333333333333333333333333333333333333333333333333333333",
+          "localObjectId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "remoteObjectId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedChoices": [
+        "useThisDevice",
+        "useOnline",
+        "keepBothAsSeparateWorks"
+      ],
+      "uiEditingAvailable": true,
+      "expectedActiveEditorMutation": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "precondition": {
+        "currentLocalGeneration": 42,
+        "currentRemoteHeadGeneration": 9
+      },
+      "expectedOriginalWorkResolutionEntries": {
+        "episode/20000000-0000-0000-0000-000000000001/body": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "work/synopsis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "work/title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expectedOriginalWorkParents": [
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        "5555555555555555555555555555555555555555555555555555555555555555"
+      ],
+      "expectedNewWorkRoot": {
+        "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be9",
+        "parentSnapshotIds": [],
+        "entries": {
+          "episode/20000000-0000-0000-0000-000000000001/body": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "work/synopsis": "2222222222222222222222222222222222222222222222222222222222222222",
+          "work/title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expectedOriginalResolutionSnapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+      "expectedNewWorkRootSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedPendingKeepBoth": {
+        "reservedNewWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be9",
+        "reservedRootSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "normalRootPublishLane": "blockedUntilAtomicReceiptReadBack",
+        "reuseReservationAfterLocalOrRemoteHeadStale": true
+      },
+      "expectedIndependentCloneRootSyncIntent": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedSqlite": {
+        "conflictState": "resolving",
+        "cloneNormalPublishLane": "blocked",
+        "sealedResolution": {
+          "operationId": "60000000-0000-0000-0000-000000000002",
+          "locallyComputedRequestDigest": "83111229b43545824f01296a316a3618b209354769ddb61b44dca116958d4f18",
+          "canonicalCommandUtf8": "{\"choice\":\"keepBothAsSeparateWorks\",\"conflictId\":\"60000000-0000-0000-0000-000000000001\",\"expectedOriginalHead\":{\"generation\":9,\"snapshotId\":\"5555555555555555555555555555555555555555555555555555555555555555\"},\"newWorkId\":\"9aaf8ad1-4598-4e9f-b16c-caba5a3e7be9\",\"newWorkRootSnapshotId\":\"7777777777777777777777777777777777777777777777777777777777777777\",\"operationId\":\"60000000-0000-0000-0000-000000000002\",\"originalResolutionSnapshotId\":\"6666666666666666666666666666666666666666666666666666666666666666\",\"workId\":\"9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8\"}",
+          "choice": "keepBothAsSeparateWorks",
+          "conflictId": "60000000-0000-0000-0000-000000000001",
+          "workId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be8",
+          "expectedOriginalHead": {
+            "generation": 9,
+            "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "originalResolutionSnapshotId": "6666666666666666666666666666666666666666666666666666666666666666",
+          "newWorkId": "9aaf8ad1-4598-4e9f-b16c-caba5a3e7be9",
+          "newWorkRootSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      },
+      "expectedServerMutationCount": 0,
+      "uiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedSqlite": {
+        "conflictState": "resolving",
+        "sealedResolutionPresent": true,
+        "acknowledged": false
+      },
+      "expectedServer": {
+        "originalWorkHead": {
+          "generation": 10,
+          "snapshotId": "6666666666666666666666666666666666666666666666666666666666666666"
+        },
+        "newWorkHead": {
+          "generation": 1,
+          "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+        },
+        "conflictState": "resolved",
+        "receiptStoredForOperationId": "60000000-0000-0000-0000-000000000002"
+      },
+      "expectedAtomicOutcome": "bothHeadsAndReceiptCommittedOrNone",
+      "expectedError": "transportResponseLost"
+    },
+    {
+      "step": 6,
+      "expectedRestartAction": "retrySameSealedResolutionBeforeAnyNewConflictAction",
+      "expectedLocalConflictResolved": false,
+      "expectedSealedResolutionPresent": true,
+      "expectedCloneNormalPublishLane": "blocked",
+      "uiEditingAvailable": true,
+      "expectedError": "simulatedProcessExit"
+    },
+    {
+      "step": 7,
+      "expectedRequestEquality": "byteForByte",
+      "expectedOperationId": "60000000-0000-0000-0000-000000000002",
+      "expectedServerResult": "replayStoredReceiptWithoutIncrementingEitherHead",
+      "expectedOriginalWorkHeadGeneration": 10,
+      "expectedNewWorkHeadGeneration": 1,
+      "expectedDuplicateNewWorkCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedSqlite": {
+        "conflictState": "resolved",
+        "sealedResolution": null,
+        "pendingKeepBoth": null,
+        "cloneNormalPublishLane": "released"
+      },
+      "expectedSelectedAndUnselectedPayloadRetained": true,
+      "expectedSafeMaterializationOnly": true,
+      "expectedError": null
+    }
+  ],
+  "staleRule": "Before sealing, a changed local generation prevents the request. At the server, a changed original remote head rejects the transaction. In either local-or-remote-head stale case neither work head advances, the client reclassifies, and the same reserved newWorkId/root is reused instead of creating another clone.",
+  "newWorkCollisionRule": "If read-back proves that the reserved newWorkId is owned by a different operation, neither head has changed, and the response is newWorkAlreadyExists, the same pendingKeepBoth row retires that reservation and atomically reserves exactly one unused WorkID with its recomputed zero-parent root and a new operation ID. The local clone state is not duplicated; this collision path is not the stale-reuse path.",
+  "atomicityRule": "The original Work remote-choice two-parent resolution, new Work zero-parent root, Conflict state, change events, and operation receipt commit in one server transaction."
+}

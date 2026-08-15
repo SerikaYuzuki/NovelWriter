@@ -1,0 +1,232 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-checkpoint-replication-with-newer-edit",
+  "description": "A pinned manual checkpoint S captured from base B is replicated as online history without moving the head, while a newer local edit T remains the only head-publish candidate; a lost checkpoint acknowledgement replays exactly and preserves both available Snapshots.",
+  "identities": {
+    "workId": "30000000-0000-0000-0000-000000000001",
+    "baseB": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "checkpointS": "5555555555555555555555555555555555555555555555555555555555555555",
+    "newerEditT": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "initialState": {
+    "local": {
+      "currentLocalSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "localGeneration": 20,
+      "lastAcknowledgedRemoteHead": {
+        "generation": 10,
+        "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "checkpointReplicationIntent": null,
+      "syncIntent": null
+    },
+    "server": {
+      "head": {
+        "generation": 10,
+        "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "history": [
+        {
+          "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "reason": "published",
+          "pinned": false,
+          "available": true
+        }
+      ]
+    }
+  },
+  "commands": [
+    {
+      "type": "commitPinnedManualCheckpoint",
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+      "parents": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "localGeneration": 21,
+      "reason": "manualCheckpoint",
+      "ensurePinned": true,
+      "capturedRemoteBase": {
+        "generation": 10,
+        "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "type": "commitNewerLocalEdit",
+      "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "remoteCandidateParents": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "localGeneration": 22
+    },
+    {
+      "type": "registerRemoteEquivalentCheckpoint",
+      "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    {
+      "type": "sealRecordSnapshotCheckpoint",
+      "operationId": "30000000-0000-0000-0000-000000000002",
+      "canonicalCommandUtf8": "{\"ensurePinned\":true,\"operationId\":\"30000000-0000-0000-0000-000000000002\",\"reason\":\"manualCheckpoint\",\"snapshotId\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"workId\":\"30000000-0000-0000-0000-000000000001\"}",
+      "locallyComputedRequestDigest": "0a17387c544d86a9481a5366c77b2cde234f0dfe5b11b37d7e6a4d65be79f58a"
+    },
+    {
+      "type": "sendRecordSnapshotCheckpoint",
+      "transportOutcome": "responseLostAfterServerCommit"
+    },
+    {
+      "type": "restartAndReplayCheckpointCommandExactly"
+    },
+    {
+      "type": "readBackCheckpointOccurrencePinAndEntries"
+    },
+    {
+      "type": "registerAndPublishNewerEditOnly",
+      "operationId": "30000000-0000-0000-0000-000000000003",
+      "candidateSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedHead": {
+        "generation": 10,
+        "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "type": "readBackHeadAndBothSnapshots"
+    },
+    {
+      "type": "recordLifecycleOccurrenceForAlreadyPinnedCheckpoint",
+      "operationId": "30000000-0000-0000-0000-000000000004",
+      "canonicalCommandUtf8": "{\"ensurePinned\":false,\"operationId\":\"30000000-0000-0000-0000-000000000004\",\"reason\":\"lifecycleCheckpoint\",\"snapshotId\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"workId\":\"30000000-0000-0000-0000-000000000001\"}",
+      "locallyComputedRequestDigest": "f7d3a6f01c47f1d6f73fabb134d14fcdeab3d99cbe9ee24ca59a61a574b7346c"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedLocal": {
+        "currentLocalSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "checkpointReplicationIntentPresent": true,
+        "checkpointProtectedFromLocalGc": true
+      },
+      "expectedServerHeadGeneration": 10,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedLocal": {
+        "currentLocalSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "localGeneration": 22,
+        "checkpointReplicationIntentSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "syncIntentSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedCheckpointIntentAbsorbedIntoLatestSyncIntent": false,
+      "expectedUiEditingAvailable": true,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedCheckpointSnapshotAvailable": true,
+      "expectedCheckpointParents": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "expectedServerHead": {
+        "generation": 10,
+        "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedCommandCommittedBeforeNetwork": true,
+      "expectedCheckpointIntentPresent": true,
+      "expectedSyncIntentForNewerEditPresent": true,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedServer": {
+        "head": {
+          "generation": 10,
+          "snapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "checkpointOccurrenceCountForOperation": 1,
+        "checkpointOccurrenceId": "30000000-0000-0000-0000-000000000005",
+        "checkpointSnapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "checkpointPinned": true,
+        "checkpointAvailable": true,
+        "receiptStored": true
+      },
+      "expectedClientAcknowledged": false,
+      "expectedError": "transportResponseLost"
+    },
+    {
+      "step": 6,
+      "expectedOperationId": "30000000-0000-0000-0000-000000000002",
+      "expectedRequestEquality": "byteForByte",
+      "expectedOriginalRecordedAtReplayed": true,
+      "expectedOccurrenceId": "30000000-0000-0000-0000-000000000005",
+      "expectedCheckpointOccurrenceCountForOperation": 1,
+      "expectedServerHeadGeneration": 10,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedRemoteEquivalentMappingCommitted": true,
+      "expectedCheckpointReplicationIntent": null,
+      "expectedSyncIntentSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedCheckpointHistoryEntry": {
+        "occurrenceId": "30000000-0000-0000-0000-000000000005",
+        "snapshotId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "reason": "manualCheckpoint",
+        "pinned": true,
+        "available": true
+      },
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedPublishedSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedServerHead": {
+        "generation": 11,
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedCheckpointPublishedAsIntermediateHead": false,
+      "expectedError": null
+    },
+    {
+      "step": 9,
+      "expectedAvailableSnapshotIds": [
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        "7777777777777777777777777777777777777777777777777777777777777777"
+      ],
+      "expectedRestorableSnapshotIds": [
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        "7777777777777777777777777777777777777777777777777777777777777777"
+      ],
+      "expectedPinnedSnapshotIds": [
+        "5555555555555555555555555555555555555555555555555555555555555555"
+      ],
+      "expectedHeadSnapshotId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "expectedError": null
+    },
+    {
+      "step": 10,
+      "expectedLifecycleOccurrenceAdded": true,
+      "expectedLifecycleOccurrenceId": "30000000-0000-0000-0000-000000000006",
+      "expectedEffectivePinned": true,
+      "expectedExplicitUnpinOperationCount": 0,
+      "expectedServerHead": {
+        "generation": 11,
+        "snapshotId": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      "expectedError": null
+    }
+  ],
+  "forbiddenOutcomes": [
+    "coalesce the pinned manual checkpoint intent into the newer SyncIntent",
+    "publish checkpoint S as the Work head",
+    "rebase checkpoint S onto newer edit T after capture",
+    "clear the newer edit T when the checkpoint acknowledgement arrives",
+    "create a second history occurrence when replaying the same checkpoint operation",
+    "mark S online-saved before receipt and Snapshot read-back",
+    "prune S while its checkpoint replication intent or pin is active",
+    "interpret ensurePinned false as an unpin"
+  ]
+}

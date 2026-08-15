@@ -1,0 +1,248 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "retention-restore-before-atomic",
+  "description": "An online restore protects the exact expected old head H as a pinned restoreBefore occurrence in the same PostgreSQL transaction that publishes restore candidate R, records history/change rows, and stores the receipt; stale expected heads apply no protection or head mutation.",
+  "identities": {
+    "workId": "50000000-0000-0000-0000-000000000001",
+    "remoteHeadH": "8888888888888888888888888888888888888888888888888888888888888888",
+    "selectedOldS": "2222222222222222222222222222222222222222222222222222222222222222",
+    "restoreCandidateR": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "advancedHeadQ": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "restoreCandidateContract": {
+    "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sortedParents": [
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      "8888888888888888888888888888888888888888888888888888888888888888"
+    ],
+    "entriesEqualSelectedSnapshot": true,
+    "registered": true,
+    "available": true
+  },
+  "cases": [
+    {
+      "caseId": "applied-response-lost-exact-replay",
+      "initialState": {
+        "serverHead": {
+          "generation": 12,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        },
+        "history": {
+          "restoreBeforeOccurrenceCountForH": 0,
+          "snapshotRestoreOccurrenceCountForR": 0
+        },
+        "payloadState": {
+          "headHAvailable": true,
+          "headHPinned": false,
+          "selectedSAvailable": true,
+          "restoreCandidateRAvailable": true
+        },
+        "changeSequence": 40,
+        "receipt": null
+      },
+      "command": {
+        "type": "restoreSnapshotContent",
+        "operationId": "50000000-0000-0000-0000-000000000002",
+        "workId": "50000000-0000-0000-0000-000000000001",
+        "expectedHead": {
+          "generation": 12,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        },
+        "selectedSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+        "restoreSnapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "canonicalCommandUtf8": "{\"expectedHead\":{\"generation\":12,\"snapshotId\":\"8888888888888888888888888888888888888888888888888888888888888888\"},\"operationId\":\"50000000-0000-0000-0000-000000000002\",\"restoreSnapshotId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"selectedSnapshotId\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"workId\":\"50000000-0000-0000-0000-000000000001\"}"
+      },
+      "commands": [
+        {
+          "type": "sendRestoreCommand",
+          "transportOutcome": "responseLostAfterServerCommit"
+        },
+        {
+          "type": "restartAndReplayRestoreCommandExactly"
+        },
+        {
+          "type": "readBackHeadHistoryPinChangeAndSnapshotPayloads"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedSinglePostgresTransaction": {
+            "restoreBeforeOccurrence": {
+              "occurrenceId": "50000000-0000-0000-0000-000000000004",
+              "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888",
+              "reason": "restoreBefore",
+              "available": true,
+              "pinned": true
+            },
+            "head": {
+              "generation": 13,
+              "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "snapshotRestoreOccurrence": {
+              "occurrenceId": "50000000-0000-0000-0000-000000000005",
+              "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "reason": "snapshotRestore",
+              "available": true
+            },
+            "changeRowsAdded": 1,
+            "receiptStoredForOperationId": "50000000-0000-0000-0000-000000000002"
+          },
+          "expectedResult": {
+            "outcome": "restored",
+            "protectedRestoreBeforeOccurrenceId": "50000000-0000-0000-0000-000000000004",
+            "protectedRestoreBeforeSnapshotId": "8888888888888888888888888888888888888888888888888888888888888888",
+            "effectivePinned": true,
+            "selectedSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+            "head": {
+              "generation": 13,
+              "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          "expectedClientAcknowledged": false,
+          "expectedError": "transportResponseLost"
+        },
+        {
+          "step": 2,
+          "expectedOperationId": "50000000-0000-0000-0000-000000000002",
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredReceiptReplayed": true,
+          "expectedOriginalRecordedAtValuesReplayed": true,
+          "expectedRestoreBeforeOccurrenceId": "50000000-0000-0000-0000-000000000004",
+          "expectedSnapshotRestoreOccurrenceId": "50000000-0000-0000-0000-000000000005",
+          "expectedHeadGeneration": 13,
+          "expectedRestoreBeforeOccurrenceCountForH": 1,
+          "expectedSnapshotRestoreOccurrenceCountForR": 1,
+          "expectedAdditionalChangeRows": 0,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedHead": {
+            "generation": 13,
+            "snapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "expectedHardPayloadRoots": [
+            "8888888888888888888888888888888888888888888888888888888888888888",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "expectedRestorableSnapshotIds": [
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            "8888888888888888888888888888888888888888888888888888888888888888",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "expectedHeadHAvailable": true,
+          "expectedHeadHPinned": true,
+          "expectedHeadHRetainedByParentEdgeAlone": false,
+          "expectedHeadHRetainedByRestoreBeforePin": true,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "advance head before the restoreBefore occurrence and pin are committed",
+        "commit restoreBefore protection without committing the restore head and receipt",
+        "create duplicate history occurrences or generation increments on exact receipt replay",
+        "retain old head H only because it is a parent edge",
+        "point head directly at selected historical Snapshot S"
+      ]
+    },
+    {
+      "caseId": "stale-expected-head-no-protection-mutation",
+      "initialState": {
+        "serverHead": {
+          "generation": 13,
+          "snapshotId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "expectedByCommand": {
+          "generation": 12,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        },
+        "history": {
+          "restoreBeforeOccurrenceCountForH": 0,
+          "restoreBeforeOccurrenceCountForQ": 0,
+          "snapshotRestoreOccurrenceCountForR": 0
+        },
+        "payloadState": {
+          "headHAvailable": true,
+          "headHPinned": false,
+          "advancedHeadQAvailable": true,
+          "advancedHeadQPinned": false,
+          "restoreCandidateRAvailable": true
+        },
+        "changeSequence": 41,
+        "receipt": null
+      },
+      "command": {
+        "type": "restoreSnapshotContent",
+        "operationId": "50000000-0000-0000-0000-000000000003",
+        "workId": "50000000-0000-0000-0000-000000000001",
+        "expectedHead": {
+          "generation": 12,
+          "snapshotId": "8888888888888888888888888888888888888888888888888888888888888888"
+        },
+        "selectedSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+        "restoreSnapshotId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "commands": [
+        {
+          "type": "sendRestoreCommandAgainstAdvancedHead"
+        },
+        {
+          "type": "replaySameStaleCommand"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedResult": {
+            "outcome": "stale",
+            "currentHead": {
+              "generation": 13,
+              "snapshotId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            },
+            "protectedRestoreBeforeOccurrenceId": null,
+            "protectedRestoreBeforeSnapshotId": null,
+            "effectivePinned": null
+          },
+          "expectedHeadMutationCount": 0,
+          "expectedRestoreBeforeOccurrenceDelta": 0,
+          "expectedSnapshotRestoreOccurrenceDelta": 0,
+          "expectedPinMutationCount": 0,
+          "expectedChangeRowDelta": 0,
+          "expectedReceiptStoredForStaleOutcome": true,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedStoredReceiptReplayed": true,
+          "expectedHead": {
+            "generation": 13,
+            "snapshotId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "expectedRestoreBeforeOccurrenceCountForH": 0,
+          "expectedRestoreBeforeOccurrenceCountForQ": 0,
+          "expectedSnapshotRestoreOccurrenceCountForR": 0,
+          "expectedHeadHPinned": false,
+          "expectedAdvancedHeadQPinned": false,
+          "expectedAdditionalMutationCount": 0,
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "protect stale expected head H after observing head Q",
+        "protect current head Q by reinterpreting the stale command",
+        "publish restore candidate R against a different head than the sealed expectedHead",
+        "create restoreBefore or snapshotRestore history for a stale outcome",
+        "emit a change row for a stale restore",
+        "return a non-null effectivePinned value when no restore-before target exists"
+      ]
+    }
+  ],
+  "expectedGlobalInvariants": {
+    "appliedRestoreAtomicAcrossHistoryPinHeadChangeAndReceipt": true,
+    "lostAcknowledgementCreatesDuplicateMutation": false,
+    "staleRestoreMutatesHeadHistoryOrPins": false,
+    "selectedHistoricalSnapshotBecomesHeadDirectly": false
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "account-resource-presence-fence",
+  "description": "One local CAS object may be shared by works, but verified remote presence is scoped to the exact server, epoch, account tenant, and credential-bound account fence.",
+  "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "localCas": {"available": true, "byteCount": 12},
+  "bindings": {
+    "accountA": {"serverInstanceId": "90000000-0000-0000-0000-000000000001", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000001", "accountFence": "ZmVuY2UtYWNjb3VudC1hLXYx"},
+    "accountB": {"serverInstanceId": "90000000-0000-0000-0000-000000000001", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000002", "accountFence": "ZmVuY2UtYWNjb3VudC1iLXYx"},
+    "accountANewFence": {"serverInstanceId": "90000000-0000-0000-0000-000000000001", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000001", "accountFence": "ZmVuY2UtYWNjb3VudC1hLXYy"},
+    "replacementServerA": {"serverInstanceId": "90000000-0000-0000-0000-000000000002", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000001", "accountFence": "ZmVuY2UtYWNjb3VudC1hLXYx"}
+  },
+  "initialRemotePresenceRows": [
+    {"binding": "accountA", "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verified": true}
+  ],
+  "commands": [
+    {"type": "preparePublish", "binding": "accountB"},
+    {"type": "findMissingObjects", "binding": "accountB"},
+    {"type": "uploadFinalizeAndReadBack", "binding": "accountB"},
+    {"type": "preparePublish", "binding": "replacementServerA"},
+    {"type": "preparePublish", "binding": "accountANewFence"},
+    {"type": "findMissingObjects", "binding": "accountANewFence"}
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedAccountAPresenceReused": false,
+      "expectedUploadSkipped": false,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "serverResponse": "missing",
+      "expectedCrossTenantExistenceLeak": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedNewPresenceBinding": "accountB",
+      "expectedPresenceCommittedAfterFinalizeReadBack": true,
+      "expectedAccountARowChanged": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedOldServerInstancePresenceReused": false,
+      "expectedMissingQueryRequired": true,
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedSameAccountIdPresenceReusedAcrossFence": false,
+      "expectedMissingQueryRequired": true,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "serverResponse": "missing",
+      "expectedOldFencePresenceTreatedAsAuthority": false,
+      "expectedError": null
+    }
+  ],
+  "remotePresencePrimaryKey": ["serverInstanceId", "protocolEpoch", "accountId", "accountFence", "objectId"],
+  "forbiddenOutcomes": [
+    "store uploaded as one boolean on the local CAS object row",
+    "skip upload in account B because account A has the same ObjectID",
+    "reuse presence after the same AccountID receives a new account fence",
+    "reuse presence after a server at the same address is reinstalled",
+    "reveal cross-tenant object existence"
+  ]
+}

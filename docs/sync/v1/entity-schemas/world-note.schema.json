@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v1:entity:world-note",
+  "title": "World Note Entity v1",
+  "$comment": "The payload id must equal the UUID segment of its world-note/{id} EntityKey; the work/world-note-order payload carries display order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "title",
+    "content"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 1048576,
+      "description": "The pure semantic validator additionally caps raw UTF-8 content at 1048576 bytes for novelpkg v3 export closure."
+    }
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "portable-name-path-policy",
+  "description": "All clients and the server derive the same filename collision key and enforce the same original-path budgets without OS or locale behavior.",
+  "policy": {
+    "unicodeVersion": "15.1.0",
+    "normalizationBeforeAndAfterCaseFold": "NFC",
+    "caseFoldingSource": "CaseFolding.txt",
+    "caseFoldingStatuses": ["C", "F"],
+    "turkicStatusIncluded": false,
+    "comparison": "collisionKeyUtf8Bytes",
+    "platformUnicodeApisAuthoritative": false,
+    "generatedTablesAndUnicodeSourceHashesRequiredAtR0Freeze": true,
+    "maximumDepth": 16,
+    "maximumOriginalComponentUtf8Bytes": 255,
+    "maximumOriginalComponentUtf16CodeUnits": 240,
+    "maximumJoinedRelativePathUtf8Bytes": 768,
+    "maximumJoinedRelativePathUtf16CodeUnits": 512,
+    "relativeSeparator": "/"
+  },
+  "collisionGroups": [
+    {
+      "inputs": ["Straße.TXT", "STRASSE.txt"],
+      "expectedCollisionKey": "strasse.txt",
+      "expectedCollisionKeyUtf8Hex": "737472617373652e747874"
+    },
+    {
+      "inputs": ["ΟΣ.txt", "ος.TXT"],
+      "expectedCollisionKey": "οσ.txt",
+      "expectedCollisionKeyUtf8Hex": "cebfcf832e747874"
+    },
+    {
+      "inputs": ["İ.txt", "i̇.TXT"],
+      "expectedCollisionKey": "i̇.txt",
+      "expectedCollisionKeyUtf8Hex": "69cc872e747874"
+    },
+    {
+      "inputs": ["Kelvin.txt", "Kelvin.TXT"],
+      "expectedCollisionKey": "kelvin.txt",
+      "expectedCollisionKeyUtf8Hex": "6b656c76696e2e747874"
+    },
+    {
+      "inputs": ["é.txt", "é.TXT"],
+      "expectedCollisionKey": "é.txt",
+      "expectedCollisionKeyUtf8Hex": "c3a92e747874"
+    },
+    {
+      "inputs": ["資料.PNG", "資料.png"],
+      "expectedCollisionKey": "資料.png",
+      "expectedCollisionKeyUtf8Hex": "e8b387e696992e706e67"
+    }
+  ],
+  "distinctPairs": [
+    {
+      "inputs": ["ı.txt", "I.TXT"],
+      "expectedCollisionKeys": ["ı.txt", "i.txt"],
+      "expectedEqual": false,
+      "reason": "default folding is not Turkic folding"
+    }
+  ],
+  "rejectedNames": [
+    {"input": "NUL.tar.gz", "reason": "windowsReservedDeviceNameBeforeFirstDot"},
+    {"input": "com¹.txt", "reason": "windowsReservedSuperscriptDeviceName"},
+    {"input": "LPT9", "reason": "windowsReservedDeviceName"},
+    {"input": "trailing. ", "reason": "windowsTrailingDotOrSpace"},
+    {"input": "a<b.txt", "reason": "windowsForbiddenCharacter"},
+    {"input": ".", "reason": "dotComponent"},
+    {"input": "..", "reason": "dotDotComponent"}
+  ],
+  "generatedBoundaryVectors": [
+    {
+      "id": "component-utf8-exact",
+      "components": [{"repeatScalar": "資", "count": 85}],
+      "expectedOriginalComponentUtf8Bytes": 255,
+      "expectedOriginalComponentUtf16CodeUnits": 85,
+      "expectedAccepted": true
+    },
+    {
+      "id": "component-utf8-over",
+      "components": [{"repeatScalar": "資", "count": 86}],
+      "expectedOriginalComponentUtf8Bytes": 258,
+      "expectedOriginalComponentUtf16CodeUnits": 86,
+      "expectedAccepted": false,
+      "expectedViolation": "portableComponentUtf8Bytes"
+    },
+    {
+      "id": "component-utf16-exact",
+      "components": [{"repeatScalar": "a", "count": 240}],
+      "expectedOriginalComponentUtf8Bytes": 240,
+      "expectedOriginalComponentUtf16CodeUnits": 240,
+      "expectedAccepted": true
+    },
+    {
+      "id": "component-utf16-over",
+      "components": [{"repeatScalar": "a", "count": 241}],
+      "expectedOriginalComponentUtf8Bytes": 241,
+      "expectedOriginalComponentUtf16CodeUnits": 241,
+      "expectedAccepted": false,
+      "expectedViolation": "portableComponentUtf16CodeUnits"
+    },
+    {
+      "id": "relative-utf8-exact",
+      "components": [
+        {"repeatScalar": "資", "count": 85},
+        {"repeatScalar": "料", "count": 85},
+        {"repeatScalar": "文", "count": 84},
+        {"repeatScalar": "a", "count": 3}
+      ],
+      "expectedJoinedRelativePathUtf8Bytes": 768,
+      "expectedJoinedRelativePathUtf16CodeUnits": 260,
+      "expectedAccepted": true
+    },
+    {
+      "id": "relative-utf8-over",
+      "components": [
+        {"repeatScalar": "資", "count": 85},
+        {"repeatScalar": "料", "count": 85},
+        {"repeatScalar": "文", "count": 84},
+        {"repeatScalar": "a", "count": 4}
+      ],
+      "expectedJoinedRelativePathUtf8Bytes": 769,
+      "expectedJoinedRelativePathUtf16CodeUnits": 261,
+      "expectedAccepted": false,
+      "expectedViolation": "portableRelativePathUtf8Bytes"
+    },
+    {
+      "id": "relative-utf16-exact",
+      "components": [
+        {"repeatScalar": "a", "count": 240},
+        {"repeatScalar": "b", "count": 240},
+        {"repeatScalar": "c", "count": 30}
+      ],
+      "expectedJoinedRelativePathUtf8Bytes": 512,
+      "expectedJoinedRelativePathUtf16CodeUnits": 512,
+      "expectedAccepted": true
+    },
+    {
+      "id": "relative-utf16-over",
+      "components": [
+        {"repeatScalar": "a", "count": 240},
+        {"repeatScalar": "b", "count": 240},
+        {"repeatScalar": "c", "count": 31}
+      ],
+      "expectedJoinedRelativePathUtf8Bytes": 513,
+      "expectedJoinedRelativePathUtf16CodeUnits": 513,
+      "expectedAccepted": false,
+      "expectedViolation": "portableRelativePathUtf16CodeUnits"
+    },
+    {
+      "id": "depth-exact",
+      "generatedComponents": {"value": "a", "count": 16},
+      "expectedAccepted": true
+    },
+    {
+      "id": "depth-over",
+      "generatedComponents": {"value": "a", "count": 17},
+      "expectedAccepted": false,
+      "expectedViolation": "portablePackageDepth"
+    }
+  ]
+}

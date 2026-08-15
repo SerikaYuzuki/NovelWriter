@@ -1,0 +1,65 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "conflict-concurrent-edit-during-resolution",
+  "description": "All three conflict choices seal their source local generation. An edit made after bytes are sent survives lost-ACK resolution and is reconciled on top of the resolved remote head without editor injection.",
+  "sharedInitialState": {
+    "workId": "71000000-0000-0000-0000-000000000001",
+    "conflictId": "71000000-0000-0000-0000-000000000002",
+    "sourceLocalGeneration": 52,
+    "sourceLocalSnapshotId": "5252525252525252525252525252525252525252525252525252525252525252",
+    "expectedRemoteHead": {
+      "generation": 9,
+      "snapshotId": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    "newerLocalGeneration": 53,
+    "newerLocalSnapshotId": "5353535353535353535353535353535353535353535353535353535353535353"
+  },
+  "choices": [
+    "useThisDevice",
+    "useOnline",
+    "keepBoth"
+  ],
+  "commandSequence": [
+    "flushAndSealPendingResolutionAtGeneration52",
+    "sendAtLeastOneByte",
+    "autosaveEditAsGeneration53",
+    "serverCommitResolutionAndLoseResponse",
+    "restartAndReplayExactCommand",
+    "readBackAndConditionallyAcknowledge"
+  ],
+  "expectedForEveryChoice": {
+    "pendingResolutionSeals": [
+      "sourceLocalGeneration",
+      "sourceLocalSnapshotId",
+      "choice",
+      "resolutionSnapshotId",
+      "sealedRemoteCommandId"
+    ],
+    "resolvedRemoteHeadGeneration": 10,
+    "localCurrentAfterAcknowledge": {
+      "localGeneration": 53,
+      "snapshotId": "5353535353535353535353535353535353535353535353535353535353535353"
+    },
+    "syncIntentAfterAcknowledge": {
+      "localGeneration": 53,
+      "latestLocalSnapshotId": "5353535353535353535353535353535353535353535353535353535353535353"
+    },
+    "acknowledgedThroughLocalGeneration": 52,
+    "nextAction": "reconcileGeneration53AgainstResolvedRemoteHead",
+    "activeEditorInjectionCount": 0,
+    "exactCommandReplayCountAfterLostAck": 1
+  },
+  "keepBothAdditionalExpectation": {
+    "cloneRootPublishedExactlyOnce": true,
+    "cloneEditsAfterReservationRemainInSeparateIntent": true,
+    "partialOriginalOrCloneCommitAllowed": false
+  },
+  "forbiddenOutcomes": [
+    "materialize the online choice over local generation 53",
+    "clear the generation 53 SyncIntent when generation 52 resolves",
+    "rewrite the sealed choice to include the later edit",
+    "discard or duplicate keep-both clone edits",
+    "inject resolution content into an active editor"
+  ]
+}

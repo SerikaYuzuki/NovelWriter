@@ -1,0 +1,73 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "entity-diff-delete-vs-edit-dependency-closure",
+  "description": "Local deletes one episode while remote edits its body. A raw per-key merge would orphan the remote body, so the episode presence dependency closure requires a choice.",
+  "entityIds": {
+    "chapterId": "10000000-0000-0000-0000-000000000001",
+    "episodeId": "20000000-0000-0000-0000-000000000001"
+  },
+  "initialState": {
+    "commonBaseKnown": true,
+    "baseSnapshotId": "1111111111111111111111111111111111111111111111111111111111111111",
+    "localSnapshotId": "2222222222222222222222222222222222222222222222222222222222222222",
+    "remoteSnapshotId": "3333333333333333333333333333333333333333333333333333333333333333",
+    "baseEntries": {
+      "chapter/10000000-0000-0000-0000-000000000001/episode-order": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "episode/20000000-0000-0000-0000-000000000001/body": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "episode/20000000-0000-0000-0000-000000000001/memo": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "episode/20000000-0000-0000-0000-000000000001/title": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "localEntries": {
+      "chapter/10000000-0000-0000-0000-000000000001/episode-order": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "remoteEntries": {
+      "chapter/10000000-0000-0000-0000-000000000001/episode-order": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "episode/20000000-0000-0000-0000-000000000001/body": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "episode/20000000-0000-0000-0000-000000000001/memo": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "episode/20000000-0000-0000-0000-000000000001/title": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "commands": [
+    {
+      "type": "reconcileManifestsWithDependencyClosure"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedRawConflictEntityKeys": [
+        "episode/20000000-0000-0000-0000-000000000001/body"
+      ],
+      "expectedClassification": "needsChoice",
+      "expectedConflictDependencyClosure": [
+        "chapter/10000000-0000-0000-0000-000000000001/episode-order",
+        "episode/20000000-0000-0000-0000-000000000001/body",
+        "episode/20000000-0000-0000-0000-000000000001/memo",
+        "episode/20000000-0000-0000-0000-000000000001/title"
+      ],
+      "expectedKeepLocalEntries": {
+        "chapter/10000000-0000-0000-0000-000000000001/episode-order": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "expectedKeepOnlineEntries": {
+        "chapter/10000000-0000-0000-0000-000000000001/episode-order": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "episode/20000000-0000-0000-0000-000000000001/body": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "episode/20000000-0000-0000-0000-000000000001/memo": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "episode/20000000-0000-0000-0000-000000000001/title": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "expectedKeepLocalInvariantValid": true,
+      "expectedKeepOnlineInvariantValid": true,
+      "expectedAutomaticUnion": false,
+      "ui": {
+        "editingAvailable": true,
+        "needsChoiceVisible": true
+      },
+      "expectedError": null
+    }
+  ],
+  "forbiddenOutcomes": [
+    "keep the remote body while deleting its title, memo, and membership",
+    "classify disjoint raw keys as structurally safe without validation",
+    "choose a winner by timestamp or arrival order"
+  ]
+}

@@ -1,0 +1,203 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "remote-command-finalize-storage-db-crash",
+  "description": "Object finalize verifies actual temporary bytes, read-backs one immutable planned incarnation, and only then atomically commits PostgreSQL availability, quota, scoped presence, and receipt; crashes on either side of that transaction recover without missing bytes, duplicate quota, or unsafe orphan adoption.",
+  "binding": {
+    "serverInstanceId": "40000000-0000-0000-0000-000000000001",
+    "protocolEpoch": 1,
+    "accountId": "40000000-0000-0000-0000-000000000002"
+  },
+  "object": {
+    "objectId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "byteCount": 12,
+    "futureSnapshotEntryContentTypeNotUsedByFinalize": "application/vnd.fuminiwa.episode.v1+jcs"
+  },
+  "initialState": {
+    "postgres": {
+      "quotaLimitBytes": 5368709120,
+      "quotaUsedBytes": 4096,
+      "quotaReservedBytes": 12,
+      "objectLifecycleRow": null,
+      "remotePresence": false,
+      "finalizeReceipt": null,
+      "upload": {
+        "uploadId": "40000000-0000-0000-0000-000000000003",
+        "createOperationId": "40000000-0000-0000-0000-000000000004",
+        "finalizeOperationId": "40000000-0000-0000-0000-000000000005",
+        "state": "completeTemporaryBytes",
+        "requestDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "temporaryKey": "tenant/account-a/uploads/40000000-0000-0000-0000-000000000003/complete",
+        "plannedIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001"
+      }
+    },
+    "objectStorage": {
+      "temporaryObjectPresent": true,
+      "temporaryActualByteCount": 12,
+      "temporaryActualSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "plannedIncarnationPresent": false,
+      "unreferencedOrphanKeys": [
+        "tenant/account-a/objects/ff/incarnation-abandoned-before-fixture"
+      ]
+    }
+  },
+  "commands": [
+    {
+      "type": "sealFinalizeCommandBeforeNetwork",
+      "operationId": "40000000-0000-0000-0000-000000000005",
+      "uploadId": "40000000-0000-0000-0000-000000000003"
+    },
+    {
+      "type": "streamReadTemporaryObjectAndVerifyActualBytes"
+    },
+    {
+      "type": "copyToPlannedImmutableIncarnationAndReadBack"
+    },
+    {
+      "type": "simulateProcessKillAfterStorageReadBackBeforePostgresCommit"
+    },
+    {
+      "type": "restartAndRecoverSameFinalizeOperation"
+    },
+    {
+      "type": "commitPostgresFinalizeTransaction"
+    },
+    {
+      "type": "simulateResponseLossAfterPostgresCommit"
+    },
+    {
+      "type": "replayExactFinalizeCommand"
+    },
+    {
+      "type": "sweepUnreferencedPhysicalOrphansAfterGrace"
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedCommandCommittedBeforeNetwork": true,
+      "expectedCanonicalRequestImmutable": true,
+      "expectedPlannedIncarnationKeyAlreadyDurable": true,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedEvidenceSource": "streamedTemporaryObjectBytes",
+      "expectedActualSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedActualByteCount": 12,
+      "expectedS3EtagAcceptedAsHashEvidence": false,
+      "expectedClientMetadataAcceptedAsHashEvidence": false,
+      "expectedPostgresObjectAvailable": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedImmutableIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001",
+      "expectedIncarnationReadBackSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "expectedIncarnationReadBackByteCount": 12,
+      "expectedPostgres": {
+        "quotaUsedBytes": 4096,
+        "quotaReservedBytes": 12,
+        "objectLifecycleRow": null,
+        "remotePresence": false,
+        "finalizeReceipt": null
+      },
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedError": "simulatedProcessKill",
+      "expectedDurableRecoveryInputs": {
+        "uploadId": "40000000-0000-0000-0000-000000000003",
+        "operationId": "40000000-0000-0000-0000-000000000005",
+        "plannedIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001",
+        "quotaReservationBytes": 12
+      },
+      "expectedObjectVisibleAsAvailable": false,
+      "expectedQuotaCharged": false,
+      "expectedRemotePresence": false
+    },
+    {
+      "step": 5,
+      "expectedSameOperationId": "40000000-0000-0000-0000-000000000005",
+      "expectedSameUploadId": "40000000-0000-0000-0000-000000000003",
+      "expectedSamePlannedIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001",
+      "expectedExistingIncarnationReadBackAgain": true,
+      "expectedSecondQuotaReservation": false,
+      "expectedSecondPhysicalIncarnationRequired": false,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedSingleAtomicPostgresCommit": {
+        "objectState": "available",
+        "currentIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001",
+        "quotaUsedBytes": 4108,
+        "quotaReservedBytes": 0,
+        "remotePresence": true,
+        "presenceBindingMatchesRequest": true,
+        "finalizeReceiptStoredForOperationId": "40000000-0000-0000-0000-000000000005"
+      },
+      "expectedPartiallyVisibleCommitStateCount": 0,
+      "expectedQuotaChargeCountForObject": 1,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedError": "transportResponseLost",
+      "expectedPostgresCommitStillDurable": true,
+      "expectedObjectDownloadable": true,
+      "expectedClientAcknowledged": false
+    },
+    {
+      "step": 8,
+      "expectedRequestEquality": "byteForByte",
+      "expectedStoredReceiptReplayed": true,
+      "expectedOriginalFinalizedAtReplayed": true,
+      "expectedPhysicalCopyCountAddedByReplay": 0,
+      "expectedQuotaUsedBytes": 4108,
+      "expectedQuotaReservedBytes": 0,
+      "expectedQuotaChargeCountForObject": 1,
+      "expectedRemotePresenceRowCount": 1,
+      "expectedError": null
+    },
+    {
+      "step": 9,
+      "expectedDeletedOrphanKeys": [
+        "tenant/account-a/objects/ff/incarnation-abandoned-before-fixture"
+      ],
+      "expectedCurrentIncarnationDeleted": false,
+      "expectedCurrentIncarnationKey": "tenant/account-a/objects/cc/incarnation-planned-001",
+      "expectedOrphanBytesCountedAgainstQuota": false,
+      "expectedPostgresReferencedKeyDeletedBeforeReference": false,
+      "expectedError": null
+    }
+  ],
+  "crashRecoveryMatrix": [
+    {
+      "crashPoint": "afterTemporaryVerificationBeforeImmutableAdoption",
+      "recovery": "reverifyTemporaryBytesAndAdoptTheDurablePlannedKey",
+      "quotaDelta": 0
+    },
+    {
+      "crashPoint": "afterImmutableReadBackBeforePostgresCommit",
+      "recovery": "readBackTheSamePlannedKeyThenCommitOnce",
+      "quotaDeltaBeforeRecoveryCommit": 0
+    },
+    {
+      "crashPoint": "afterPostgresCommitBeforeResponse",
+      "recovery": "replayTheStoredReceiptWithoutStorageMutation",
+      "additionalQuotaDelta": 0
+    }
+  ],
+  "forbiddenOutcomes": [
+    "mark the object available from Content-Length, ETag, or client metadata without reading actual bytes",
+    "commit quota, availability, scoped presence, or success receipt before immutable incarnation read-back",
+    "allocate a different incarnation key after only losing the process between S3 and PostgreSQL",
+    "charge quota both when reserving and when replaying finalize",
+    "return finalize success while any PostgreSQL success component is absent",
+    "adopt an untracked orphan as the current incarnation",
+    "delete the PostgreSQL-referenced incarnation during orphan cleanup",
+    "change the sealed finalize request under the same operation ID"
+  ]
+}

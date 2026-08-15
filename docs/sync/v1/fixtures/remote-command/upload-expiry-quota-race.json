@@ -1,0 +1,373 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "remote-command-upload-expiry-quota-race",
+  "description": "Upload expiry and finalize serialize on the same durable upload lifecycle row so exactly one terminal transition owns the quota reservation: expiry releases it once and schedules resumable cleanup, while finalize converts it to used quota and publishes presence once.",
+  "binding": {
+    "serverInstanceId": "50000000-0000-0000-0000-000000000001",
+    "protocolEpoch": 1,
+    "accountId": "50000000-0000-0000-0000-000000000002"
+  },
+  "object": {
+    "objectId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "byteCount": 12
+  },
+  "sharedInitialState": {
+    "quota": {
+      "limitBytes": 5368709120,
+      "usedBytes": 4096,
+      "reservedBytes": 12,
+      "reservationCreateCount": 1,
+      "reservationTerminalTransitionCount": 0,
+      "quotaChangedEventCount": 1
+    },
+    "upload": {
+      "uploadId": "50000000-0000-0000-0000-000000000003",
+      "createOperationId": "50000000-0000-0000-0000-000000000004",
+      "finalizeOperationId": "50000000-0000-0000-0000-000000000005",
+      "state": "openWithCompleteTemporaryBytes",
+      "expiresAt": "2026-08-15T01:00:00.000Z",
+      "reservedBytes": 12,
+      "temporaryKey": "tenant/account-a/uploads/50000000-0000-0000-0000-000000000003/complete",
+      "plannedIncarnationKey": "tenant/account-a/objects/dd/incarnation-planned-001",
+      "temporaryActualByteCount": 12,
+      "temporaryActualSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "createReceipt": {
+      "operationId": "50000000-0000-0000-0000-000000000004",
+      "commandDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "outcome": "uploadCreated",
+      "uploadId": "50000000-0000-0000-0000-000000000003",
+      "expiresAt": "2026-08-15T01:00:00.000Z"
+    },
+    "remotePresence": false,
+    "finalizeReceipt": null
+  },
+  "serializationContract": {
+    "contenders": [
+      "expireUpload",
+      "finalizeObjectUploadPostgresCommit"
+    ],
+    "sharedFence": "tenantQuotaRowThenUploadLifecycleRowForUpdate",
+    "winnerRule": "the first transaction to validate and commit the open upload state owns the one reservation terminal transition",
+    "loserRule": "after locking, re-read terminal state and commit no competing quota or presence mutation",
+    "physicalDeleteOutsideQuotaTransaction": true,
+    "cleanupRetriesMayMutateQuota": false
+  },
+  "cases": [
+    {
+      "caseId": "expiry-wins",
+      "commands": [
+        {
+          "type": "expireUploadAfterDeadline",
+          "uploadId": "50000000-0000-0000-0000-000000000003",
+          "cleanupIntentId": "50000000-0000-0000-0000-000000000009"
+        },
+        {
+          "type": "simulateProcessKillAfterExpiryCommitBeforeTemporaryDelete"
+        },
+        {
+          "type": "restartCleanupWorkerAndSimulateTemporaryDeleteFailure"
+        },
+        {
+          "type": "sendSealedFinalizeForExpiredUpload",
+          "operationId": "50000000-0000-0000-0000-000000000005"
+        },
+        {
+          "type": "replayExpiredFinalizeExactly"
+        },
+        {
+          "type": "recheckCurrentBindingObjectPresence"
+        },
+        {
+          "type": "createReplacementUpload",
+          "operationId": "50000000-0000-0000-0000-000000000006"
+        },
+        {
+          "type": "replayOriginalCreateReceiptExactly",
+          "operationId": "50000000-0000-0000-0000-000000000004"
+        },
+        {
+          "type": "resumeCleanupIntentAndDeleteOldTemporaryObject"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedSingleAtomicPostgresCommit": {
+            "uploadState": "expired",
+            "uploadReservedBytes": 0,
+            "quotaUsedBytes": 4096,
+            "quotaReservedBytes": 0,
+            "reservationReleaseCount": 1,
+            "cleanupIntent": {
+              "cleanupIntentId": "50000000-0000-0000-0000-000000000009",
+              "uploadId": "50000000-0000-0000-0000-000000000003",
+              "temporaryKey": "tenant/account-a/uploads/50000000-0000-0000-0000-000000000003/complete",
+              "state": "pending"
+            },
+            "quotaChangedEvent": {
+              "eventId": "50000000-0000-0000-0000-000000000010",
+              "type": "quotaChanged",
+              "limitBytes": 5368709120,
+              "reservedBytes": 0,
+              "usedBytes": 4096
+            }
+          },
+          "expectedPartialCommitStateCount": 0,
+          "expectedPhysicalDeleteInsideTransaction": false,
+          "expectedUncommittedPlannedIncarnationIfPresent": "unreferencedOrphanEligibleOnlyAfterGrace",
+          "expectedRemotePresence": false,
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedError": "simulatedProcessKill",
+          "expectedUploadState": "expired",
+          "expectedCleanupIntentDurable": true,
+          "expectedTemporaryObjectMayRemain": true,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 0
+          },
+          "expectedReservationReleaseCount": 1,
+          "expectedQuotaChangedEventCount": 2
+        },
+        {
+          "step": 3,
+          "expectedCleanupResumedFromIntentId": "50000000-0000-0000-0000-000000000009",
+          "expectedTemporaryDeleteAttempted": true,
+          "expectedTemporaryObjectMayRemain": true,
+          "expectedCleanupIntentState": "pending",
+          "expectedAdditionalReservationReleaseCount": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 0
+          },
+          "expectedError": "simulatedObjectStoreDeleteFailure"
+        },
+        {
+          "step": 4,
+          "expectedTerminalReceiptStored": true,
+          "expectedTypedResult": {
+            "code": "uploadExpired",
+            "expiredUploadId": "50000000-0000-0000-0000-000000000003",
+            "recoveryAction": "createReplacementUpload",
+            "requestId": "50000000-0000-0000-0000-000000000011",
+            "retryability": "never"
+          },
+          "expectedObjectAvailable": false,
+          "expectedRemotePresence": false,
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedError": null
+        },
+        {
+          "step": 5,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredUploadExpiredReceiptReplayed": true,
+          "expectedAdditionalFinalizeMutationCount": 0,
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedError": null
+        },
+        {
+          "step": 6,
+          "expectedMissingObjectIds": [
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ],
+          "expectedExpiredCreateReceiptTreatedAsPresenceEvidence": false,
+          "expectedError": null
+        },
+        {
+          "step": 7,
+          "expectedNewCreateOperationId": "50000000-0000-0000-0000-000000000006",
+          "expectedNewUploadId": "50000000-0000-0000-0000-000000000007",
+          "expectedUploadIdDiffersFromExpiredUpload": true,
+          "expectedExactlyOneLiveReservationForObject": true,
+          "expectedReplacementReservationBytes": 12,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 12
+          },
+          "expectedReservationCreateCount": 2,
+          "expectedReservationTerminalTransitionCount": 1,
+          "expectedQuotaChangedEvent": {
+            "eventId": "50000000-0000-0000-0000-000000000012",
+            "type": "quotaChanged",
+            "limitBytes": 5368709120,
+            "reservedBytes": 12,
+            "usedBytes": 4096
+          },
+          "expectedError": null
+        },
+        {
+          "step": 8,
+          "expectedHistoricalReceiptReplayed": {
+            "operationId": "50000000-0000-0000-0000-000000000004",
+            "commandDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "uploadCreated",
+            "uploadId": "50000000-0000-0000-0000-000000000003",
+            "expiresAt": "2026-08-15T01:00:00.000Z"
+          },
+          "expectedOldUploadReopened": false,
+          "expectedAdditionalReservationCount": 0,
+          "expectedLiveUploadIds": [
+            "50000000-0000-0000-0000-000000000007"
+          ],
+          "expectedQuotaReservedBytes": 12,
+          "expectedError": null
+        },
+        {
+          "step": 9,
+          "expectedSameCleanupIntentId": "50000000-0000-0000-0000-000000000009",
+          "expectedOldTemporaryObjectDeleted": true,
+          "expectedCleanupIntentState": "complete",
+          "expectedExpiredUploadRowRetainedForReceiptAndFence": true,
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 12
+          },
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "release the old reservation more than once when expiry or cleanup retries",
+        "return finalize success after the expiry transaction owns the terminal transition",
+        "reopen or re-reserve the expired upload when the original create receipt replays",
+        "reuse the expired upload ID or create operation ID for the replacement upload",
+        "make physical temporary-object deletion a prerequisite for releasing reserved quota",
+        "change quota when a temporary delete fails or resumes"
+      ]
+    },
+    {
+      "caseId": "finalize-wins",
+      "commands": [
+        {
+          "type": "verifyTemporaryBytesAndReadBackPlannedImmutableIncarnation"
+        },
+        {
+          "type": "commitFinalizePostgresTransaction",
+          "operationId": "50000000-0000-0000-0000-000000000005"
+        },
+        {
+          "type": "runExpiryWorkerAfterDeadline"
+        },
+        {
+          "type": "simulatePostFinalizeTemporaryDeleteFailure"
+        },
+        {
+          "type": "replaySuccessfulFinalizeExactly"
+        },
+        {
+          "type": "replayOriginalCreateReceiptExactly",
+          "operationId": "50000000-0000-0000-0000-000000000004"
+        }
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "expectedActualTemporarySha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "expectedActualTemporaryByteCount": 12,
+          "expectedImmutableIncarnationKey": "tenant/account-a/objects/dd/incarnation-planned-001",
+          "expectedImmutableReadBackVerified": true,
+          "expectedPostgresTerminalMutationCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4096,
+            "reservedBytes": 12
+          },
+          "expectedError": null
+        },
+        {
+          "step": 2,
+          "expectedSingleAtomicPostgresCommit": {
+            "uploadState": "finalized",
+            "uploadReservedBytes": 0,
+            "objectState": "available",
+            "currentIncarnationKey": "tenant/account-a/objects/dd/incarnation-planned-001",
+            "quotaUsedBytes": 4108,
+            "quotaReservedBytes": 0,
+            "remotePresence": true,
+            "finalizeReceiptStoredForOperationId": "50000000-0000-0000-0000-000000000005",
+            "quotaChangedEvent": {
+              "eventId": "50000000-0000-0000-0000-000000000020",
+              "type": "quotaChanged",
+              "limitBytes": 5368709120,
+              "reservedBytes": 0,
+              "usedBytes": 4108
+            }
+          },
+          "expectedReservationConvertedToUsedCount": 1,
+          "expectedPartialCommitStateCount": 0,
+          "expectedError": null
+        },
+        {
+          "step": 3,
+          "expectedUploadStateObservedUnderLock": "finalized",
+          "expectedExpiryOutcome": "noOp",
+          "expectedExpiredStateMutationCount": 0,
+          "expectedReservationReleaseCount": 0,
+          "expectedCleanupIntentForCurrentIncarnationCount": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedObjectState": "available",
+          "expectedRemotePresence": true,
+          "expectedError": null
+        },
+        {
+          "step": 4,
+          "expectedTemporaryDeleteAttempted": true,
+          "expectedTemporaryObjectMayRemain": true,
+          "expectedCurrentImmutableIncarnationDeleted": false,
+          "expectedObjectStillDownloadable": true,
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedAdditionalQuotaChangedEventCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4108,
+            "reservedBytes": 0
+          },
+          "expectedError": "simulatedObjectStoreDeleteFailure"
+        },
+        {
+          "step": 5,
+          "expectedRequestEquality": "byteForByte",
+          "expectedStoredFinalizeReceiptReplayed": true,
+          "expectedAdditionalPresenceMutationCount": 0,
+          "expectedAdditionalQuotaDeltaBytes": 0,
+          "expectedObjectState": "available",
+          "expectedError": null
+        },
+        {
+          "step": 6,
+          "expectedHistoricalCreateReceiptUploadId": "50000000-0000-0000-0000-000000000003",
+          "expectedUploadStateAfterReplay": "finalized",
+          "expectedUploadReopened": false,
+          "expectedAdditionalReservationCount": 0,
+          "expectedQuota": {
+            "usedBytes": 4108,
+            "reservedBytes": 0
+          },
+          "expectedError": null
+        }
+      ],
+      "forbiddenOutcomes": [
+        "expire an upload after finalize committed its terminal state",
+        "release reserved quota after it was converted to used quota",
+        "publish object presence or a success receipt outside the finalize transaction",
+        "delete the current immutable incarnation while cleaning temporary upload bytes",
+        "change quota because post-finalize temporary cleanup fails or retries",
+        "re-reserve bytes when the original create receipt replays"
+      ]
+    }
+  ],
+  "expectedGlobalInvariants": {
+    "oneReservationHasExactlyOneTerminalOwner": true,
+    "expiryStateReservationReleaseCleanupIntentAndQuotaEventAtomic": true,
+    "finalizeStateUsedQuotaPresenceAndReceiptAtomic": true,
+    "oldCreateReceiptReplayIsHistoricalOnly": true,
+    "replacementRequiresDistinctCreateOperationIdAndUploadId": true,
+    "cleanupIsCrashResumable": true,
+    "temporaryDeleteFailureQuotaDeltaBytes": 0,
+    "quotaCanNeverBeBothReleasedAndConvertedForOneReservation": true
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "portable-string-value-size-boundary",
+  "description": "Every string-value EntityKey, including work title, synopsis, chapter title, episode title/body/memo, uses the same raw UTF-8 one-MiB limit independent of JSON quote bytes.",
+  "limit": {
+    "name": "stringValueRawUtf8Bytes",
+    "maximum": 1048576,
+    "appliesTo": [
+      "work/title",
+      "work/synopsis",
+      "chapter/{id}/title",
+      "episode/{id}/title",
+      "episode/{id}/body",
+      "episode/{id}/memo"
+    ]
+  },
+  "vectors": [
+    {
+      "id": "multibyte-exact-limit-title",
+      "entityKey": "work/title",
+      "generator": {
+        "repeatScalar": "あ",
+        "repeatCount": 349525,
+        "suffix": "a"
+      },
+      "expectedRawUtf8ByteCount": 1048576,
+      "expectedAccepted": true
+    },
+    {
+      "id": "multibyte-one-byte-over-synopsis",
+      "entityKey": "work/synopsis",
+      "generator": {
+        "repeatScalar": "あ",
+        "repeatCount": 349525,
+        "suffix": "aa"
+      },
+      "expectedRawUtf8ByteCount": 1048577,
+      "expectedAccepted": false,
+      "expectedValidationStage": "snapshotRegistrationEntryContext",
+      "expectedClass": "limitExceeded",
+      "expectedLimitName": "stringValueRawUtf8Bytes"
+    },
+    {
+      "id": "same-rule-episode-body",
+      "entityKey": "episode/11111111-2222-3333-4444-555555555555/body",
+      "generator": {
+        "repeatScalar": "a",
+        "repeatCount": 1048577,
+        "suffix": ""
+      },
+      "expectedRawUtf8ByteCount": 1048577,
+      "expectedAccepted": false,
+      "expectedLimitName": "stringValueRawUtf8Bytes"
+    }
+  ],
+  "forbiddenOutcomes": [
+    "exempt work title or synopsis from the string-value limit",
+    "count UTF-16 code units instead of raw UTF-8 bytes",
+    "apply the limit at object finalize without SnapshotEntry content context",
+    "silently truncate the string"
+  ]
+}

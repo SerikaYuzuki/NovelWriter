@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "intent-attempt-concurrent-edit-during-remote-head-mutation",
+  "description": "Every local-origin head mutation seals its source local generation. A newer local autosave survives the response and is reconciled against the resulting remote head.",
+  "mutationKinds": [
+    "publish",
+    "classifySafeUnion",
+    "resolveConflict",
+    "restoreOnlineSnapshot"
+  ],
+  "sharedState": {
+    "sourceLocalGeneration": 70,
+    "sourceLocalSnapshotId": "7070707070707070707070707070707070707070707070707070707070707070",
+    "newerLocalGeneration": 71,
+    "newerLocalSnapshotId": "7171717171717171717171717171717171717171717171717171717171717171"
+  },
+  "sequence": [
+    "sealMutationWithSourceGeneration70",
+    "sendAtLeastOneByte",
+    "autosaveGeneration71",
+    "receiveOrReplayAppliedReceipt",
+    "readBackRemoteHeadAndFeatureState",
+    "conditionallyAcknowledgeSource"
+  ],
+  "expectedForEveryMutationKind": {
+    "remoteBaselineAdvances": true,
+    "featureStateMayAdvanceThroughSource": true,
+    "localCurrentGeneration": 71,
+    "localCurrentSnapshotId": "7171717171717171717171717171717171717171717171717171717171717171",
+    "syncIntentGeneration": 71,
+    "acknowledgedThroughLocalGeneration": 70,
+    "nextAction": "reconcileGeneration71AgainstReadBackRemoteHead",
+    "activeEditorInjectionCount": 0
+  },
+  "forbiddenOutcomes": [
+    "clear generation 71 because generation 70 changed the remote head",
+    "materialize the mutation result over generation 71",
+    "rewrite the sealed command to include generation 71",
+    "treat receipt replay as authority to mutate the active editor"
+  ]
+}

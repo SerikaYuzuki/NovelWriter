@@ -1,0 +1,160 @@
+{
+  "fixtureVersion": 1,
+  "status": "designCandidate",
+  "scenarioId": "backup-db-cas-generation-barrier",
+  "description": "A physical backup derives its exact CAS inventory from the completed staging database while concurrent source saves remain allowed.",
+  "backupPolicy": {
+    "firstTrigger": "nextIdleOrBackgroundAfterFirstContentCommit",
+    "recurringMaximumVerifiedAgeSeconds": 86400,
+    "recurringTriggers": ["foregroundIdle", "enterBackground"],
+    "requiredBoundaryTriggers": [
+      "beforeSQLiteSchemaMigration",
+      "afterSQLiteSchemaMigration",
+      "beforeSyncEngineCutover",
+      "afterSyncEngineCutover"
+    ],
+    "minimumMostRecentVerifiedGenerationsRetained": 3,
+    "neverImplicitlyDeleteLastVerifiedGenerations": 2,
+    "preMigrationRetentionAfterVerifiedPostMigrationSeconds": 2592000,
+    "backupObjectsDeduplicatedAcrossGenerations": true,
+    "ordinarySaveOrCloseAwaitsBackup": false,
+    "localCommitContinuesWhenBackupStoreIsFull": true,
+    "requiredMigrationMutatesDatabaseWhenPreBackupFails": false
+  },
+  "initialState": {
+    "sourceDatabaseGeneration": 42,
+    "sourceReachableObjectIds": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "committedBackupGenerations": [40],
+    "gcSweepBarrierHeld": false
+  },
+  "commands": [
+    {"type": "sealBackupIntentAndAcquireGcSweepBarrier"},
+    {"type": "sqliteOnlineBackupToStaging"},
+    {
+      "type": "commitConcurrentSourceSave",
+      "newSourceGeneration": 43,
+      "addedObjectId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {"type": "quickCheckAndDeriveRootSetFromStagingDatabase"},
+    {"type": "commitActiveSourceCasPinsThenReleaseGcSweepBarrier"},
+    {"type": "runConcurrentLocalGc"},
+    {"type": "copyAndReadBackPinnedCasToIndependentBackupStore"},
+    {"type": "simulateProcessExitBeforeCommitMarker"},
+    {"type": "resumeSameBackupId"},
+    {"type": "fsyncInventoryDigestAndCommitMarkerThenReleaseSourcePins"},
+    {"type": "restoreIntoEmptyRoot"}
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "expectedDurableBackupIntent": true,
+      "expectedGcSweepBarrierHeld": true,
+      "expectedSourceWritesBlocked": false,
+      "expectedError": null
+    },
+    {
+      "step": 2,
+      "expectedStagingDatabaseGeneration": 42,
+      "expectedRawDatabaseFileCopyUsed": false,
+      "expectedCommitMarker": false,
+      "expectedError": null
+    },
+    {
+      "step": 3,
+      "expectedSourceDatabaseGeneration": 43,
+      "expectedStagingDatabaseGeneration": 42,
+      "expectedSourceWritesBlocked": false,
+      "expectedError": null
+    },
+    {
+      "step": 4,
+      "expectedStagingDatabaseQuickCheck": "ok",
+      "expectedInventoryDerivedFrom": "completedStagingDatabaseGeneration42",
+      "expectedPinnedObjectIds": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ],
+      "expectedExcludedConcurrentObjectIds": [
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      ],
+      "expectedError": null
+    },
+    {
+      "step": 5,
+      "expectedActivePinsDurable": true,
+      "expectedGcSweepBarrierHeld": false,
+      "expectedError": null
+    },
+    {
+      "step": 6,
+      "expectedPinnedObjectDeletionCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 7,
+      "expectedIndependentBackupObjectCount": 3,
+      "expectedAllObjectHashesAndByteCountsReadBack": true,
+      "expectedCommitMarker": false,
+      "expectedError": null
+    },
+    {
+      "step": 8,
+      "expectedError": "simulatedProcessExit",
+      "expectedGenerationListedAsRestoreCandidate": false,
+      "expectedActivePinsDurablyRecoverable": true
+    },
+    {
+      "step": 9,
+      "expectedResumeStagingDatabaseGeneration": 42,
+      "expectedDuplicateBackupCount": 0,
+      "expectedError": null
+    },
+    {
+      "step": 10,
+      "expectedInventoryDigestVerified": true,
+      "expectedCommitMarkerFsynced": true,
+      "expectedGenerationListedAsRestoreCandidate": true,
+      "expectedSourcePinsReleasedAfterCommit": true,
+      "expectedError": null
+    },
+    {
+      "step": 11,
+      "expectedAdoptedDatabaseGeneration": 42,
+      "expectedDatabaseQuickCheck": "ok",
+      "expectedAllBackupCasObjectsReadBack": true,
+      "expectedConcurrentSourceGenerationIncluded": false,
+      "expectedEmptyDatabaseFallback": false,
+      "expectedError": null
+    }
+  ],
+  "forbiddenOutcomes": [
+    "derive the CAS inventory from the live source after it advanced to generation 43",
+    "allow GC to delete source CAS before active pins are durable",
+    "list a staging generation without a durable commit marker",
+    "restore the SQLite database when any object in its own inventory is missing or corrupt",
+    "treat the independently committed backup as a permanent source CAS root",
+    "create an empty library after backup validation failure",
+    "block an ordinary save or close while waiting for a scheduled backup",
+    "mutate the old database when a required pre-migration backup failed",
+    "delete the last two verified generations merely to make room for a new backup"
+  ],
+  "lifecycleExpectations": {
+    "backupStoreFull": {
+      "localEditingAvailable": true,
+      "status": "localBackupPendingForSpace",
+      "verifiedGenerationDeletionBelowMinimum": false
+    },
+    "databaseCorruptionAtLaunch": {
+      "candidateOrder": "newestVerifiedFirst",
+      "requiresCommitMarker": true,
+      "requiresDatabaseQuickCheck": true,
+      "requiresEveryBackupObjectReadBack": true,
+      "emptyDatabaseFallback": false
+    }
+  }
+}
