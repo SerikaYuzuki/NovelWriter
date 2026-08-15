@@ -13,6 +13,7 @@ docker compose up --build
 `FUMINIWA_DEV_TOKEN` は開発時だけ有効な bearer です。Apple の本番設定
 （`APPLE_CLIENT_IDS`、`APPLE_TEAM_ID`、`APPLE_KEY_ID`、`APPLE_PRIVATE_KEY_PEM`、
 `FUMINIWA_VAULT_KEY_B64`）は `.env` や secret store から注入し、リポジトリへ保存しません。
+`.env`へPEMを直接書く場合は、改行をリテラルの`\\n`として1行にし、`BEGIN/END PRIVATE KEY`を含めます。
 
 開発用の疎通確認:
 
