@@ -370,6 +370,8 @@ D-071の現行Device Syncに必要なOS / transport非依存domainを担当す�
 
 D-059／D-060のEpisode本文Device Sync domainと、D-061のWork snapshot／revision／merger／file journalは実装履歴と互換資料として削除しない。ただし現行通常AppはNote経路へcutoverし、旧clientとの同時利用は相互の更新を観測できない。一般配布前に全端末更新を強制できるminimum client version fenceまたは明示migrationを実装・検証するまで出荷不可とし、mixed client安全性を主張しない。
 
+通常Mac／iOSのproduction compositionは `workTransport: nil` とし、Work同期を組み立てない。`WorkSyncTransport` の注入は旧test／互換runtimeに限り、target分離が完了するまで履歴sourceを保持する（D-076 R5a）。
+
 D-059／D-060 Episode trackとD-061 Work trackの保持契約は、DEVICE_SYNC.mdの履歴節を正とする。App側の論理順は **native editor → model → DocumentSaveCoordinatorによるpackage保存 → dirty set → remote pending** である。remote taskはEditor入力とlocal保存を待たせない。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
 ### 4.12 NovelSyncCloudKit

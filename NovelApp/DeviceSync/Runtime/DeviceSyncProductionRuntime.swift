@@ -45,7 +45,10 @@ final class DeviceSyncProductionComposition: @unchecked Sendable {
         runtime = DeviceSyncRuntime(
             replicaID: localBootstrap.replicaID,
             transport: runtimeBox,
-            workTransport: runtimeBox,
+            // R5a: normal production composition is Note-only. Legacy Work
+            // transport remains injectable for compatibility/test runtimes
+            // until the package target split is completed.
+            workTransport: nil,
             localWorkBinding: { session, _ in
                 try await runtimeBox.resolveLocalWork(
                     session: session,

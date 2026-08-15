@@ -75,7 +75,7 @@ D-071 本文の item 2（裏で send／fetch）と item 5（package 保存直後
 | --- | --- | --- |
 | A. 共有 Device Sync サポート | ログと Note factory は寄せ済み。残るのは runtime / library / edit intent の対 | CloudKit 型を NovelCore へ出さない |
 | B. AppState 分割 | chooser / lifecycle / outline / 保存 / スナップショットは extension 済み。残るのは Work 経路ファイル | 保存 coordinator の書き換え |
-| C. Work 経路の縮小 | 通常 App の production factory から Work coordinator 組み立てを読まなくする。test 用 factory は残す | `NovelSync` の Work 型削除 |
+| C. Work 経路の縮小 | 通常 App の production composition は `workTransport: nil` とし、Note 経路だけを組み立てる。test／互換 factory の Work 注入は残す | `NovelSync` の Work 型削除 |
 | D. catalog 発見 | コメントで「Development 窓」と明記し、Production 完了後に prefix scan を外す Decision を取る | 今すぐ query を削除して棚を壊す |
 | E. 文書 | 本ファイルと DESIGN 11章を正にし、件数を本文から外す | 完了記録 MD の削除 |
 
