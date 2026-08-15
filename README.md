@@ -3,6 +3,7 @@
 ことばを育て、物語を編む。macOS ファーストのマルチプラットフォーム小説執筆アプリです。長編・中編小説を快適に書き、同じ `.novelpkg` をmacOSとWindowsで安全に扱えることを目指します。
 
 - **macOS UI**: SwiftUI(アプリシェル) + AppKit の `NSTextView`(本文エディタ実体、`NSViewRepresentable` 経由)
+- **iOS / iPadOS UI**: SwiftUI の適応シェル + UIKit の `UITextView`。iPhone は段階 navigation、iPad は複数列
 - **Windows UI(計画)**: WinUI 3 + C# / .NET。同一リポジトリの `Windows/` 配下へ実装する
 - **macOSテキストエンジン**: TextKit 2
 - **保存形式**: `.novelpkg` v3(フォルダパッケージ。`manifest.json` + `episodes/*.md` + `attachments/`)
@@ -14,28 +15,26 @@
 
 ## ステータス
 
-**Phase 5まで完了(PDFは未実装)**。章／話の階層管理、本文編集、話メモ、キャラクター管理、登場話ジャンプ、プロットカード、伏線管理、資料添付、文字数表示、話内検索、スナップショット保存・復元、作品の新規・開く・別名保存、`.novelpkg` v3への自動保存、`Cmd+S`明示保存、Cmd+Q時の終了前保存が動く。Editorプラグイン基盤と日本語小説向け自動字下げ(改行で全角スペース、`「`/`『`で字下げ解除、IME変換中は不介入)も実装済み。UIはシステムLight／Darkへ追従するNavigationSplitView、一段native toolbar、保存／文字数status barのワークベンチになった。通常版では、本文選択／話／章から校正用・アドバイス用のプロンプトをsystem clipboardへコピーできる。
+**Phase 5まで完了(PDFは未実装)**。macOS の執筆ワークベンチに加え、iOS / iPadOS の作品棚〜執筆（IOS-1〜5、D-058）も source として入っている。iCloud 作品棚(D-063)、メモ型 entity 同期(D-071)、明示同期(D-073)、編集後の作品全体自動スナップショット(D-074)も source 実装。**署名済み Mac＋iPhone の N4、Production schema、Package Validator、一般公開準備は未完了。**
 
-商業化基盤の最初の範囲として、製品名を「ふみにわ / FUMINIWA」へ移行し、旧設定と既存作品を保持した。起動はLoading / Ready / Recoveryの三状態で、前回作品を開けない場合に空の新規作品へ置き換えない。manifest / worldが参照する本文は必須valid UTF-8、存在する話メモもvalid UTF-8を要求する。実処理のないprovider panelと`Cmd+J`は出荷UIから撤去した。通常版に追加するAI支援は「校正用／アドバイス用プロンプトをコピー」という実在する非通信操作だけで、FUMINIWA自身がAIを実行・送信したようには表示しない(D-038〜D-040 / D-054)。
+章／話の階層管理、本文編集、話メモ、キャラクター、プロット／伏線、世界観、資料、話内検索、スナップショット、`.novelpkg` v3 自動保存、`Cmd+S`（結線済みなら明示同期）、TXT / Markdown / EPUB 3、校正／アドバイス用 prompt の clipboard copy が動く。
 
-個人用AIのExperimental基盤は、Codex sidecar protocolからB4-DのExperimental-only／mock-only abstract interactive transport sequencingまで合成検証した。B4-D 5 suitesは54/54、Experimental全体は205/205 passしたが、production catalogは空で、具象production channel／factory／callsite、実Node／SDK／CLI、network、key、実原稿は0件である。D-054によりB4-E以降と実provider統合は、利用者が最新stable SDK／APIの再評価を明示的に決めるまで延期した。コードとtestは研究成果として保持し、通常版へ接続しない。実装結果と未達Gateは[Codex SDK feasibility実装レポート](docs/CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を参照。
-
-通常版のclipboard支援はprovider、network、key、process、`NovelAI`へ依存しない。コピー後のsystem clipboardは他アプリ、clipboard manager、Universal Clipboard等から読まれ得る共有境界で、FUMINIWAは自動送信、自動paste、応答取込、Apply、履歴非保持、secure eraseを提供しない。対象scopeとprivacy契約は[AIチャット用クリップボード支援](docs/CLIPBOARD_AI_ASSIST.md)を参照。
-
-次はPackage Validator Gate(duplicate ID／不正参照、symlink、resource limit、孤児payload保全、修復コピー、保存前検証)。Finder移動や同期サービス等の外部変更／競合検出は、その次の独立Gateとして扱う。その後もAppIcon、Developer ID署名・公証済み成果物、更新機構、配布QAが残る。**現段階は商業公開可能という意味ではない。** 詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md) を参照。
+次の実装 Gate は Package Validator。詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md)。エージェントは [AGENTS.md](AGENTS.md) と [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) を先に読む。
 
 Windows並行トラックはW0として、言語非依存schema・golden fixture・portable filename契約の固定から始める。W0完了後、Windows上でWinUI版のCore / Storage実装へ進む(D-036)。
 
 ## モジュール構成
 
-現行macOS本体は `NovelKit` というローカル Swift Package(SwiftPM)としてまとめている。Xcode アプリターゲット(`NovelApp`)はこのパッケージに依存する形で構成している(D-008)。Windows版は同じ依存方向を .NET class libraryで再実装し、Swiftソースは直接共有しない。
+現行本体は `NovelKit` というローカル Swift Package と、macOS の `NovelApp`、iOS の `NovelAppIOS` で構成する(D-008)。Windows版は同じ依存方向を .NET class libraryで再実装し、Swiftソースは直接共有しない。
 
 | モジュール | 役割 | 依存 |
 | --- | --- | --- |
 | `NovelCore` | データモデル・ID型・保存層の抽象プロトコル | なし |
 | `NovelStorage` | `.novelpkg` の読み書き | `NovelCore` |
 | `NovelExport` | TXT / Markdown / EPUB 3の生成とアトミック書き出し | `NovelCore` |
-| `EditorKit` | 本文エディタ(`NSTextView` アダプタ、入力プラグイン基盤) | `NovelCore` |
+| `NovelSync` | Device Sync の OS 非依存 domain（live は Note entity） | `NovelCore` |
+| `NovelSyncCloudKit` | private CloudKit adapter | `NovelSync` / `NovelCore` |
+| `EditorKit` | 本文エディタ（macOS `NSTextView` / iOS `UITextView`、プラグイン） | `NovelCore` |
 | `NovelUI` | 再利用可能な SwiftUI 部品 | `NovelCore` |
 | `PreviewSupport` | SwiftUI Preview 用の固定データ | `NovelCore` |
 
@@ -46,13 +45,12 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 検証はすべてローカルで行う(GitHub Actions などのクラウド CI は使わない → docs/DECISIONS.md D-014)。マージ前に必ず以下を実行する:
 
 ```bash
-(cd Sidecars/Codex && npm ci --ignore-scripts --no-audit --no-fund)
 ./Scripts/check.sh
 ```
 
-内容: SwiftFormat(lint)→ SwiftLint → Codex sidecar protocol・deployment manifest／固定allowlist packager・exact SDK合成captureのNodeテスト→ `swift test`(swift-testing)→ iOS 向けコンパイルチェック(共有コードへの AppKit 混入検出。ビルドのみ、iOS アプリ本体は未実装)→ 通常版／Experimental版macOSアプリのテスト(合成helperだけを使うDarwin process supervisor、native manifest verifier、合成Mach-O／filesystemとspawnしないOS Security smokeを使う非実行Node inspector、合成ad-hoc helperのconstructor／`main` marker 0 + 拒否／回収とOS署名helper成功を使うsuspended identity probe、in-memory channelだけを使うB4-D abstract interactive transportを含む)。
+内容: SwiftFormat(lint) → SwiftLint → `swift test`(NovelKit) → iOS 向け NovelKit コンパイル → `FUMINIWA` の macOS テスト → iOS Simulator 上の EditorKit と `FUMINIWAIOS` テスト。停止中のprovider／sidecar実装は通常の検証グラフへ含めない。
 
-必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node依存はlockfileどおり`npm ci --ignore-scripts`で展開し、インストールスクリプトを実行させない。現在のSDKテストは合成fake CLIだけを使い、実provider通信、API key、実原稿を使わない。Node 18以降は開発時captureを走らせる条件であり、実provider runtimeのallowlistではない。個別に実行したい場合はスクリプト内のコマンドを参照。
+必要なツール: Xcode、`brew install swiftformat swiftlint xcodegen jq ripgrep`。provider／network／sidecarの再開は、最新の公式APIを対象に新しいDecisionを作ってから行う。
 
 ## アプリの生成と実行
 
@@ -64,7 +62,7 @@ brew install xcodegen
 open FUMINIWA.xcodeproj
 ```
 
-Xcode 上でスキーム `FUMINIWA` を選択し Run すれば起動する。`project.yml` を変更したときは `./Scripts/generate-project.sh` を再実行してプロジェクトを作り直すこと。
+Xcode 上でスキーム `FUMINIWA`（macOS）または `FUMINIWAIOS`（iOS Simulator）を選んで Run する。`project.yml` を変えたときは `./Scripts/generate-project.sh` を再実行する。
 
 改名前のcheckoutから更新した環境では、Git管理外の旧`NovelWriter.xcodeproj`が残ることがある。生成スクリプトは旧プロジェクトを一時領域へ退避してから`FUMINIWA.xcodeproj`を生成する。Xcodeで旧ウィンドウを開いている場合は閉じ、`FUMINIWA.xcodeproj`／`FUMINIWA`スキームを開き直す。
 

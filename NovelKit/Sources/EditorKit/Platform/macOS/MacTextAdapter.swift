@@ -29,6 +29,7 @@ struct MacTextAdapter: NSViewRepresentable {
     let aiSelectionSession: EditorAISelectionSession?
     let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     let configuration: EditorConfiguration
+    let isEditable: Bool
     let onTextChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -68,6 +69,7 @@ struct MacTextAdapter: NSViewRepresentable {
             from: context.coordinator.commandSurfaceToken
         )
         context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
         scrollView.backgroundColor = NSColor(hex: configuration.backgroundColorHex) ??
             NSColor(hex: EditorConfiguration.defaultBackgroundColorHex) ??
             .textBackgroundColor
@@ -90,6 +92,7 @@ struct MacTextAdapter: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         context.coordinator.registerCommandSurface(with: commandSession)
         context.coordinator.registerAISelectionSurface(with: aiSelectionSession)
+        context.coordinator.updateDesiredEditability(isEditable, textView: textView)
         let shouldLoadText = TextOwnershipPolicy.shouldLoadText(
             previousChapterKey: context.coordinator.currentChapterKey,
             newChapterKey: chapterKey
@@ -196,6 +199,8 @@ struct MacTextAdapter: NSViewRepresentable {
         var aiSelectionRevision: UInt64 = 0
         private var isPerformingUndoOrRedo = false
         private var hasPendingIMECommit = false
+        private(set) var desiredIsEditable = true
+        private(set) var isEditingSuspendedForDocumentTransition = false
 
         /// 章専用の undo 管理。`NSResponder.undoManager`(ウィンドウ共有)には
         /// 頼らず、`undoManager(for:)` でこの専用インスタンスを返すことで、
@@ -261,6 +266,7 @@ struct MacTextAdapter: NSViewRepresentable {
             shouldChangeTextIn affectedCharRange: NSRange,
             replacementString: String?
         ) -> Bool {
+            guard textView.isEditable else { return false }
             // 自分自身が確定させた置換を適用中の再入呼び出し。パイプラインには
             // 通さず、そのまま許可する(上記 `isApplyingPluginReplacement` 参照)。
             guard !isApplyingPluginReplacement else { return true }
@@ -318,19 +324,26 @@ struct MacTextAdapter: NSViewRepresentable {
             // 再利用しない。AI専用surfaceだけを更新し、notation commandの
             // owner leaseや本文のUndo履歴には触れない。
             advanceAISelectionSurface()
-            guard let textView else { return true }
+            guard let textView else {
+                isEditingSuspendedForDocumentTransition = true
+                return true
+            }
             if textView.hasMarkedText() {
                 hasPendingIMECommit = true
                 textView.unmarkText()
             }
             guard !textView.hasMarkedText() else { return false }
             synchronizeCommittedText(from: textView)
-            textView.isEditable = false
+            isEditingSuspendedForDocumentTransition = true
+            applyEffectiveEditability(to: textView)
             return true
         }
 
         func resumeAfterDocumentTransition() {
-            textView?.isEditable = true
+            isEditingSuspendedForDocumentTransition = false
+            if let textView {
+                applyEffectiveEditability(to: textView)
+            }
         }
 
         /// plugin / command / Undoが確定した最終本文だけをモデルへ渡す。
@@ -420,7 +433,7 @@ struct MacTextAdapter: NSViewRepresentable {
             caretOffset: Int,
             textView: NSTextView
         ) -> Bool {
-            guard let textStorage = textView.textStorage else { return false }
+            guard textView.isEditable, let textStorage = textView.textStorage else { return false }
 
             isApplyingPluginReplacement = true
             defer { isApplyingPluginReplacement = false }
@@ -476,6 +489,35 @@ struct MacTextAdapter: NSViewRepresentable {
 }
 
 extension MacTextAdapter.Coordinator {
+    /// 利用者の入力権限と、作品遷移中の一時停止を別々に保持する。
+    ///
+    /// 変換中に読み取り専用へ切り替わる場合は、先に現在のmarked textを
+    /// 確定して`onTextChange`へ通知する。本文・選択範囲・Undo履歴は流し直さない。
+    func updateDesiredEditability(_ isEditable: Bool, textView: NSTextView) {
+        guard desiredIsEditable != isEditable else {
+            applyEffectiveEditability(to: textView)
+            return
+        }
+
+        desiredIsEditable = isEditable
+        advanceCommandSurface()
+        advanceAISelectionSurface()
+
+        if !isEditable, textView.hasMarkedText() {
+            hasPendingIMECommit = true
+            textView.unmarkText()
+            if !textView.hasMarkedText() {
+                synchronizeCommittedText(from: textView)
+            }
+        }
+        applyEffectiveEditability(to: textView)
+    }
+
+    private func applyEffectiveEditability(to textView: NSTextView) {
+        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        textView.isSelectable = true
+    }
+
     private func synchronizeCommittedText(from textView: NSTextView) {
         guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
 

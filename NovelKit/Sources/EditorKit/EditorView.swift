@@ -3,8 +3,7 @@ import SwiftUI
 /// 本文エディタを提供する SwiftUI View。
 ///
 /// macOS では `NSTextView`(TextKit 2)をラップした実装(`MacTextAdapter`)を表示する。
-/// iOS 版はまだ実装しておらず、プレースホルダの View を表示する
-/// (docs/DESIGN.md 7章 Phase 7 で `UITextView` アダプタに置き換える予定)。
+/// iOS / iPadOS では `UITextView`(TextKit 2)をラップした`IOSTextAdapter`を表示する。
 ///
 /// Public API に `NSTextView` / `UITextView` を一切出さない(docs/DESIGN.md 9.2)。
 ///
@@ -27,6 +26,7 @@ public struct EditorView: View {
     private let aiSelectionSession: EditorAISelectionSession?
     private let selectionContextMenuCommands: [EditorSelectionContextMenuCommand]
     private let configuration: EditorConfiguration
+    private let isEditable: Bool
     private let onTextChange: (String) -> Void
 
     /// - Parameters:
@@ -43,6 +43,9 @@ public struct EditorView: View {
     ///   - selectionContextMenuCommands: 標準の本文context menuへ追加する、
     ///     AppKit非依存の選択範囲command。空配列なら標準menuだけを表示する。
     ///   - configuration: エディタの表示設定。本文は流し直さず、表示属性だけを更新する。
+    ///   - isEditable: `false`なら本文の選択・copy・scrollは維持し、
+    ///     通常入力とcommand置換だけを停止する。作品遷移の一時停止とは別に扱い、
+    ///     遷移完了後もこの値が`false`なら編集可能に戻さない。
     ///   - onTextChange: 本文が変更されるたびに、そのときの全文を渡して呼び出される
     ///     コールバック。IME 変換中には呼ばれない。
     public init(
@@ -53,6 +56,7 @@ public struct EditorView: View {
         aiSelectionSession: EditorAISelectionSession? = nil,
         selectionContextMenuCommands: [EditorSelectionContextMenuCommand] = [],
         configuration: EditorConfiguration = EditorConfiguration(),
+        isEditable: Bool = true,
         onTextChange: @escaping (String) -> Void
     ) {
         self.chapterKey = chapterKey
@@ -62,6 +66,7 @@ public struct EditorView: View {
         self.aiSelectionSession = aiSelectionSession
         self.selectionContextMenuCommands = selectionContextMenuCommands
         self.configuration = configuration
+        self.isEditable = isEditable
         self.onTextChange = onTextChange
     }
 
@@ -76,25 +81,22 @@ public struct EditorView: View {
             aiSelectionSession: aiSelectionSession,
             selectionContextMenuCommands: selectionContextMenuCommands,
             configuration: configuration,
+            isEditable: isEditable,
             onTextChange: onTextChange
         )
         #elseif canImport(UIKit)
-        UnimplementedEditorView()
+        IOSTextAdapter(
+            chapterKey: chapterKey,
+            initialText: initialText,
+            selectionRequest: selectionRequest,
+            command: commandSession.pendingCommand,
+            commandSession: commandSession,
+            aiSelectionSession: aiSelectionSession,
+            selectionContextMenuCommands: selectionContextMenuCommands,
+            configuration: configuration,
+            isEditable: isEditable,
+            onTextChange: onTextChange
+        )
         #endif
     }
 }
-
-#if canImport(UIKit) && !canImport(AppKit)
-/// iOS 版はまだ実装していないことを示すプレースホルダ View。
-///
-/// `UITextView` アダプタは docs/DESIGN.md ロードマップの Phase 7 で追加する
-/// (docs/DECISIONS.md D-013)。それまでは iOS 向けビルドが通ることだけを保証する。
-struct UnimplementedEditorView: View {
-    var body: some View {
-        Text("iOS版は未実装です")
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding()
-    }
-}
-#endif

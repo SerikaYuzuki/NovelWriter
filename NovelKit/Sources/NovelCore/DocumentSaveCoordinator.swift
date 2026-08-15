@@ -52,7 +52,7 @@ public final class DocumentSaveCoordinator {
     public typealias CurrentStateProvider = () -> (document: NovelDocument, url: URL)?
 
     /// 実際の保存処理。`DocumentRepository.save(_:to:)` と同じ形。
-    public typealias SaveOperation = (NovelDocument, URL) async throws -> Void
+    public typealias SaveOperation = @MainActor @Sendable (NovelDocument, URL) async throws -> Void
     /// 保存状態の通知先。`DocumentSaveCoordinator` 自体は UI 状態を持たない。
     public typealias SaveEventHandler = @MainActor @Sendable (SaveEvent) -> Void
 
@@ -66,6 +66,11 @@ public final class DocumentSaveCoordinator {
     private var isSaving = false
     private var waiters: [CheckedContinuation<Bool, Never>] = []
     private var debouncedSaveTask: Task<Void, Never>?
+
+    /// 直近にディスクへ書き出せた revision。まだ一度も保存していなければ 0。
+    public var lastSavedRevision: Int {
+        savedRevision
+    }
 
     /// `performExclusive(_:)` の実行中かどうか(Phase 4 レビュー F-A)。
     private var isExclusiveRunning = false

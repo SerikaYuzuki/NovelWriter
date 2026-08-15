@@ -8,8 +8,18 @@ public extension NovelpkgRepository {
     /// ユーザー通知などに使うだけに留める。
     @discardableResult
     func saveSnapshot(_ doc: NovelDocument, to url: URL) async throws -> URL {
+        try await saveSnapshot(doc, to: url, kind: .manual)
+    }
+
+    /// 手動または自動のスナップショットを保存する。自動分は過去へ進むほど疎になるよう間引く(D-074)。
+    @discardableResult
+    func saveSnapshot(
+        _ doc: NovelDocument,
+        to url: URL,
+        kind: DocumentSnapshotKind
+    ) async throws -> URL {
         try await Task.detached(priority: .utility) {
-            try Self.performSaveSnapshot(doc, to: url)
+            try Self.performSaveSnapshot(doc, to: url, kind: kind)
         }.value
     }
 
@@ -29,8 +39,20 @@ public extension NovelpkgRepository {
     }
 }
 
+extension NovelpkgRepository {
+    func pruneAutomaticSnapshots(in url: URL, now: Date) throws {
+        try Self.pruneAutomaticSnapshots(in: url, now: now, fileManager: FileManager.default)
+    }
+}
+
 private extension NovelpkgRepository {
-    static func performSaveSnapshot(_ doc: NovelDocument, to url: URL) throws -> URL {
+    static let automaticSnapshotFilePrefix = "auto-"
+
+    static func performSaveSnapshot(
+        _ doc: NovelDocument,
+        to url: URL,
+        kind: DocumentSnapshotKind
+    ) throws -> URL {
         let fileManager = FileManager.default
         let snapshotsURL = url.appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
 
@@ -41,10 +63,14 @@ private extension NovelpkgRepository {
         }
 
         let timestamp = snapshotTimestamp()
-        var snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp).novelpkg", isDirectory: true)
+        let fileName = snapshotFileName(timestamp: timestamp, kind: kind, suffix: nil)
+        var snapshotURL = snapshotsURL.appendingPathComponent(fileName, isDirectory: true)
         var suffix = 2
         while fileManager.fileExists(atPath: snapshotURL.path) {
-            snapshotURL = snapshotsURL.appendingPathComponent("\(timestamp)-\(suffix).novelpkg", isDirectory: true)
+            snapshotURL = snapshotsURL.appendingPathComponent(
+                snapshotFileName(timestamp: timestamp, kind: kind, suffix: suffix),
+                isDirectory: true
+            )
             suffix += 1
         }
 
@@ -57,6 +83,13 @@ private extension NovelpkgRepository {
                 snapshotsSourceURL: nil,
                 fileManager: fileManager
             )
+            if kind == .automatic {
+                try pruneAutomaticSnapshots(
+                    in: url,
+                    now: Date(),
+                    fileManager: fileManager
+                )
+            }
             return snapshotURL
         } catch let error as NovelpkgError {
             try? fileManager.removeItem(at: snapshotURL)
@@ -105,13 +138,17 @@ private extension NovelpkgRepository {
                 let values = try? snapshotURL.resourceValues(
                     forKeys: [.creationDateKey, .contentModificationDateKey]
                 )
-                let createdAt = values?.creationDate
+                let isAutomatic = isAutomaticSnapshotFileName(snapshotURL.lastPathComponent)
+                let createdAt = snapshotDate(fromFileName: snapshotURL.lastPathComponent)
+                    ?? values?.creationDate
                     ?? values?.contentModificationDate
                     ?? Date.distantPast
+                let formatted = formatter.string(from: createdAt)
                 return DocumentSnapshotInfo(
                     url: snapshotURL,
                     createdAt: createdAt,
-                    displayName: formatter.string(from: createdAt)
+                    displayName: isAutomatic ? "自動 \(formatted)" : formatted,
+                    isAutomatic: isAutomatic
                 )
             }
             .sorted { lhs, rhs in
@@ -180,5 +217,69 @@ private extension NovelpkgRepository {
         formatter.dateStyle = .medium
         formatter.timeStyle = .medium
         return formatter
+    }
+
+    static func snapshotFileName(
+        timestamp: String,
+        kind: DocumentSnapshotKind,
+        suffix: Int?
+    ) -> String {
+        let stamped = if let suffix {
+            "\(timestamp)-\(suffix)"
+        } else {
+            timestamp
+        }
+        switch kind {
+        case .manual:
+            return "\(stamped).novelpkg"
+        case .automatic:
+            return "\(automaticSnapshotFilePrefix)\(stamped).novelpkg"
+        }
+    }
+
+    static func isAutomaticSnapshotFileName(_ fileName: String) -> Bool {
+        fileName.hasPrefix(automaticSnapshotFilePrefix)
+    }
+
+    static func snapshotDate(fromFileName fileName: String) -> Date? {
+        var stem = (fileName as NSString).deletingPathExtension
+        if stem.hasPrefix(automaticSnapshotFilePrefix) {
+            stem.removeFirst(automaticSnapshotFilePrefix.count)
+        }
+        if let zIndex = stem.lastIndex(of: "Z"), zIndex < stem.index(before: stem.endIndex) {
+            stem = String(stem[...zIndex])
+        }
+        guard let tIndex = stem.firstIndex(of: "T") else { return nil }
+        let datePart = stem[..<tIndex]
+        let timePart = stem[stem.index(after: tIndex)...]
+            .replacingOccurrences(of: "-", with: ":")
+        let iso = "\(datePart)T\(timePart)"
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: iso) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }
+
+    static func pruneAutomaticSnapshots(
+        in packageURL: URL,
+        now: Date,
+        fileManager: FileManager
+    ) throws {
+        let listed = try performListSnapshots(in: packageURL)
+        let snapshotsRoot = packageURL
+            .appendingPathComponent(snapshotsDirectoryName, isDirectory: true)
+            .standardizedFileURL.path
+        let rootPrefix = snapshotsRoot.hasSuffix("/") ? snapshotsRoot : snapshotsRoot + "/"
+        for url in DocumentSnapshotRetention.automaticURLsToDelete(from: listed, now: now) {
+            let candidate = url.standardizedFileURL.path
+            guard candidate.hasPrefix(rootPrefix),
+                  isAutomaticSnapshotFileName(url.lastPathComponent) else {
+                continue
+            }
+            try? fileManager.removeItem(at: url)
+        }
     }
 }

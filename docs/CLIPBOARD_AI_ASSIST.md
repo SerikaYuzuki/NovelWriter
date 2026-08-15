@@ -116,8 +116,7 @@ FUMINIWAはclipboardへ書いたpromptをUserDefaults、通常ログ、診断、
 
 clipboard支援は通常の`FUMINIWA` app targetへ入るが、次へ依存しない。
 
-- `NovelAI`
-- `NovelAppExperimental`のsourceまたはcompile flag
+- provider-specific targetやExperimental source
 - Codex／OpenRouter adapter、SDK、CLI、Node、sidecar resource
 - `URLSession`等のnetwork client
 - Keychain credential
@@ -134,5 +133,5 @@ prompt生成の純粋ロジックとclipboard writeのplatform境界を分け、
 - 空選択、invalid UTF-16、IME marked text、surface失効、作品session変更、対象削除でclipboard writeが0件になる。
 - 成功時はexact 1 write、write失敗時は本文／モデル／保存状態／既存packageを変更しない。
 - copy前後で`.novelpkg`、snapshot、UserDefaults、通常ログが変わらない。
-- 通常targetのbuild graphとbundleに`NovelAI`、Experimental AI source、provider SDK／CLI／Node／sidecar artifact、network／process起動経路が追加されない。
+- 通常targetのbuild graphとbundleにprovider SDK／CLI／Node／sidecar artifact、network／process起動経路が追加されない。AIを再開するときは最新APIを別Decisionで再評価する。
 - UI labelとVoiceOver labelが「プロンプトをコピー」であることを伝え、AI処理済みと誤認させない。

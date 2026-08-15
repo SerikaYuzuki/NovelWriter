@@ -1,0 +1,4787 @@
+[
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 58,
+        "line": 198,
+        "file": "NovelApp/AppState.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    @ObservationIgnored var deviceSyncEditIntentLineage: ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "location": {
+        "character": 29,
+        "line": 222,
+        "file": "NovelApp/AppState.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "reason": "Variable name 'permitsDeviceSyncSelectionMutationAfterFlush' should be between 3 and 40 characters long"
+    },
+    "text": "    @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "location": {
+        "character": 29,
+        "line": 223,
+        "file": "NovelApp/AppState.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "reason": "Variable name 'permitsDeviceSyncProjectSectionMutationAfterFlush' should be between 3 and 40 characters long"
+    },
+    "text": "    @ObservationIgnored var permitsDeviceSyncProjectSectionMutationAfterFlush = false"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 290,
+        "file": "NovelApp/AppState.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    init("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 277,
+        "file": "NovelApp/Application/FuminiwaApp.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 121 characters"
+    },
+    "text": "                        guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.worldbuilding) else { return }"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 4,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Enum body should span 350 lines or less excluding comments and whitespace: currently spans 412 lines"
+    },
+    "text": "enum WorkConflictPresentationAdapter {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 12,
+        "line": 42,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines"
+    },
+    "text": "    static func make(localRecovery: WorkLocalRecoveryReview) -> WorkConflictReviewPresentation {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 20,
+        "line": 103,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private static func revision("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 20,
+        "line": 122,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 7"
+    },
+    "text": "    private static func revision("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 167,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 15"
+    },
+    "text": "    private static func detailBlocks("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 20,
+        "line": 167,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 81 lines"
+    },
+    "text": "    private static func detailBlocks("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 287,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private static func changedFields("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 328,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    private static func detail("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 365,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 16"
+    },
+    "text": "    private static func field(for conflict: WorkFieldConflict) -> WorkConflictField {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 434,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 434"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 482,
+        "file": "NovelApp/DeviceSync/Conflict/WorkConflictResolutionView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 482"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 109,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    private func prepareWorkSyncIfAvailable("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 109,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 96 lines"
+    },
+    "text": "    private func prepareWorkSyncIfAvailable("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 220,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    private func prepareResolvedWorkSync("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 220,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 66 lines"
+    },
+    "text": "    private func prepareResolvedWorkSync("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 13,
+        "line": 220,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private func prepareResolvedWorkSync("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 505,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    private func prepareExactPackageForWorkConflictChoice("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 568,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 18"
+    },
+    "text": "    func resolveWorkSyncLocalRecovery("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 568,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 81 lines"
+    },
+    "text": "    func resolveWorkSyncLocalRecovery("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 803,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 14"
+    },
+    "text": "    func scheduleWorkSyncNetwork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 803,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    func scheduleWorkSyncNetwork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 968,
+        "file": "NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 968"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "    func prepareNoteSyncIfAvailable("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 234,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 19"
+    },
+    "text": "    func scheduleNoteSyncNetwork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 234,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 111 lines"
+    },
+    "text": "    func scheduleNoteSyncNetwork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 351,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 14"
+    },
+    "text": "    func resolveNoteSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 351,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 82 lines"
+    },
+    "text": "    func resolveNoteSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 572,
+        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 572"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 93,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncLocalRecovery.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    private func reconcileDeviceSyncLocalRecoverySnapshot("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 53,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncObservation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    private func refreshSelectedEpisodeDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 53,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncObservation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 61 lines"
+    },
+    "text": "    private func refreshSelectedEpisodeDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 50,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncPreparation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func prepareDeviceSyncSerially(for expectedLookup: DeviceSyncLookupIdentity) async {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 286,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncPreparation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    private func loadDeviceSyncPreparationMarkers(_ preparation: DeviceSyncPreparation) async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 475,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncPreparation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 475"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 143,
+        "file": "NovelApp/DeviceSync/Runtime/AppState+DeviceSyncSetup.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private func performDeviceSyncSetupMutation("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 153,
+        "file": "NovelApp/DeviceSync/Runtime/DeviceSyncProductionRuntime+Bindings.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    private func performCreateAndBindNewWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 153,
+        "file": "NovelApp/DeviceSync/Runtime/DeviceSyncProductionRuntime+Bindings.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    private func performCreateAndBindNewWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 13,
+        "file": "NovelApp/DeviceSync/Runtime/DeviceSyncProductionRuntime.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 59 lines"
+    },
+    "text": "    init(fileManager: FileManager = .default) throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 20,
+        "line": 77,
+        "file": "NovelApp/DeviceSync/Runtime/DeviceSyncProductionRuntime.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 100 lines"
+    },
+    "text": "    private static func makeLibraryRuntime("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 564,
+        "file": "NovelApp/DeviceSync/Runtime/DeviceSyncSupport.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 564"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 300,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 16"
+    },
+    "text": "    func createPrivateLibraryWorkSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 300,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 103 lines"
+    },
+    "text": "    func createPrivateLibraryWorkSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 536,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private func saveDocumentSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 536,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 54 lines"
+    },
+    "text": "    private func saveDocumentSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "location": {
+        "character": 9,
+        "line": 722,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "reason": "Variable name 'permitsSynchronousDeviceSyncSelectionMutation' should be between 3 and 40 characters long"
+    },
+    "text": "    var permitsSynchronousDeviceSyncSelectionMutation: Bool {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 734,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 128 characters"
+    },
+    "text": "        if let remembered = lastSelectedEpisodeByChapter[chapterID], chapter.episodes.contains(where: { $0.id == remembered }) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 809,
+        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 809"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "A doc comment should be attached to a declaration",
+      "location": {
+        "character": 5,
+        "line": 93,
+        "file": "NovelApp/DocumentLifecycle/AppState+Persistence.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "orphaned_doc_comment",
+      "ruleName": "Orphaned Doc Comment",
+      "reason": "A doc comment should be attached to a declaration"
+    },
+    "text": "    /// holderのdeinitで一度だけ解除するアプリ非アクティブ通知のtoken。"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 238,
+        "file": "NovelApp/DocumentLifecycle/AppState+Persistence.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func persistAndInstallWorkSyncSnapshot("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 138,
+        "file": "NovelApp/Features/Attachments/AttachmentModeView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 127 characters"
+    },
+    "text": "                LabeledContent(\"サイズ\", value: ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 180,
+        "file": "NovelApp/Features/Attachments/ExportPresenter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func present() {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 180,
+        "file": "NovelApp/Features/Attachments/ExportPresenter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    func present() {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 294,
+        "file": "NovelApp/Features/Attachments/ExportPresenter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 130 characters"
+    },
+    "text": "        alert.informativeText = \"原稿または作品パッケージを書き出す形式を選んでください。作品パッケージには、このMacにある作品内容・資料・スナップショット履歴が含まれます。iCloud上の完全なバックアップではありません。\""
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 600,
+        "file": "NovelApp/Features/Plot/PlotModeView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 600"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 112,
+        "file": "NovelApp/Features/ProjectInfo/AppState+ProjectFeatures.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func updateSelectedCharacterProfileField(_ field: CharacterProfileField, value: String) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 487,
+        "file": "NovelApp/Features/ProjectInfo/AppState+ProjectFeatures.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 487"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 479,
+        "file": "NovelApp/Features/Writing/AppState+Outline.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 129 characters"
+    },
+    "text": "            let fallbackChapterID = document.chapters.indices.contains(fallbackIndex) ? document.chapters[fallbackIndex].id : nil"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 517,
+        "file": "NovelApp/Features/Writing/AppState+Outline.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 128 characters"
+    },
+    "text": "              ? document.chapters.first(where: { $0.id == sourceChapterID })?.episodes.firstIndex(where: { $0.id == episodeID })"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 655,
+        "file": "NovelApp/Features/Writing/AppState+Outline.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 655"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 294,
+        "file": "NovelApp/Features/Writing/EditorPaneView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 147 characters"
+    },
+    "text": "            guard rejectedID == pendingOperation?.id || rejectedID == notationSheet?.snapshot.id || rejectedID == lastReplacementID else { return }"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Trailing closure syntax should not be used when passing more than one closure argument",
+      "location": {
+        "character": 15,
+        "line": 303,
+        "file": "NovelApp/Features/Writing/EditorPaneView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "multiple_closures_with_trailing_closure",
+      "ruleName": "Multiple Closures with Trailing Closure",
+      "reason": "Trailing closure syntax should not be used when passing more than one closure argument"
+    },
+    "text": "            ) { notation in"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 322,
+        "file": "NovelApp/Features/Writing/EditorPaneView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 126 characters"
+    },
+    "text": "    private func handleSelectionSnapshot(_ snapshot: EditorSelectionSnapshot?, for pendingOperation: PendingEditorOperation) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 463,
+        "file": "NovelApp/Features/Writing/EditorPaneView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 463"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 36,
+        "file": "NovelApp/Features/Writing/NovelWorkbenchView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 306 lines"
+    },
+    "text": "struct NovelWorkbenchView: View {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 706,
+        "file": "NovelApp/Features/Writing/NovelWorkbenchView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 706"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 110,
+        "file": "NovelApp/Features/Writing/OutlineView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 259 lines"
+    },
+    "text": "struct OutlineView: View {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 486,
+        "file": "NovelApp/Features/Writing/OutlineView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 486"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 502,
+        "file": "NovelApp/Features/Writing/WorkbenchToolbarContent.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 502"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 96,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    private func performStartupLibraryRefresh() async {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 96,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 113 lines"
+    },
+    "text": "    private func performStartupLibraryRefresh() async {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 241,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 18"
+    },
+    "text": "    private func mergeStartupLibrary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 241,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 95 lines"
+    },
+    "text": "    private func mergeStartupLibrary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 366,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    private func retryAccountScopedPendingPublications("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 459,
+        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 459"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 259,
+        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 16"
+    },
+    "text": "    private func openVerifiedLocalLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 259,
+        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines"
+    },
+    "text": "    private func openVerifiedLocalLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 357,
+        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 18"
+    },
+    "text": "    private func materializeAndOpenLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 357,
+        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 104 lines"
+    },
+    "text": "    private func materializeAndOpenLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 524,
+        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 524"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 147,
+        "file": "NovelApp/Library/DeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 432 lines"
+    },
+    "text": "actor DeviceSyncLocalLibraryStore {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 628,
+        "file": "NovelApp/Library/DeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 628"
+    },
+    "text": "#endif"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 29,
+        "file": "NovelApp/Library/StartupViews.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 306 lines"
+    },
+    "text": "struct StartupDocumentSelectionView: View {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 646,
+        "file": "NovelApp/Library/StartupViews.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 646"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 16,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 77 lines"
+    },
+    "text": "    init(review: WorkLocalRecoveryReview) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 205,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 16"
+    },
+    "text": "    init(conflict: WorkFieldConflict) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 267,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 122 characters"
+    },
+    "text": "                changed: base.map { $0.characters != snapshot.characters || $0.characterOrder != snapshot.characterOrder }"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 288,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 122 characters"
+    },
+    "text": "                changed: base.map { $0.worldNotes != snapshot.worldNotes || $0.worldNoteOrder != snapshot.worldNoteOrder }"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 293,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 15"
+    },
+    "text": "    func detailBlocks(in snapshot: WorkSnapshot) -> [IOSWorkConflictDetailBlock] {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 293,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 81 lines"
+    },
+    "text": "    func detailBlocks(in snapshot: WorkSnapshot) -> [IOSWorkConflictDetailBlock] {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 467,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictPresentationAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 467"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 513,
+        "file": "NovelAppIOS/DeviceSync/Conflict/IOSWorkConflictResolutionView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 513"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 113,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 19"
+    },
+    "text": "    private func prepareWorkDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 113,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 115 lines"
+    },
+    "text": "    private func prepareWorkDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 359,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    func performCoordinatedWorkDocumentSave("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 359,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 76 lines"
+    },
+    "text": "    func performCoordinatedWorkDocumentSave("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 551,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 140 characters"
+    },
+    "text": "                                                               resolution.binding.localWorkingCopyID == expectedIdentity.localWorkingCopyID,"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 730,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 17"
+    },
+    "text": "    func synchronizeWorkSyncAtSafeBoundary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 730,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func synchronizeWorkSyncAtSafeBoundary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 849,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 15"
+    },
+    "text": "    func resolveWorkSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 849,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 86 lines"
+    },
+    "text": "    func resolveWorkSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 1086,
+        "file": "NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 1086"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func prepareNoteDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 73 lines"
+    },
+    "text": "    func prepareNoteDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 227,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 20"
+    },
+    "text": "    func scheduleNoteSyncNetwork(expectedIdentity: IOSWorkSyncIdentity) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 227,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 113 lines"
+    },
+    "text": "    func scheduleNoteSyncNetwork(expectedIdentity: IOSWorkSyncIdentity) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 343,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    func resolveNoteSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 343,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 69 lines"
+    },
+    "text": "    func resolveNoteSyncConflict("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 546,
+        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 546"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "location": {
+        "character": 53,
+        "line": 43,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`"
+    },
+    "text": "        snapshotDigest = SyncContentDigest(content: String(decoding: canonical, as: UTF8.self))"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 87,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func validate() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 140,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 487 lines"
+    },
+    "text": "actor IOSDeviceSyncLocalLibraryStore {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 664,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncLocalLibraryStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 664"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 13,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncProductionRuntime.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Initializer body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    init("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 20,
+        "line": 108,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncProductionRuntime.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 104 lines"
+    },
+    "text": "    private static func makeLibraryRuntime("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 12,
+        "line": 431,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncSupport.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 7"
+    },
+    "text": "    static func resolveForCurrentWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 521,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncSupport.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 521"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 89,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncLocalRecovery.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    private func reconcileDeviceSyncLocalRecoverySnapshot("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 37,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncObservation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    private func refreshSelectedEpisodeDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 37,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncObservation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 61 lines"
+    },
+    "text": "    private func refreshSelectedEpisodeDeviceSyncSerially("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 279,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncPreparation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 64 lines"
+    },
+    "text": "    private func loadIOSDeviceSyncPreparationMarkers(_ preparation: IOSDeviceSyncPreparation) async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 474,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncPreparation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 474"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 125,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncSetup.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private func performDeviceSyncSetupMutation("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 125,
+        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDocumentStore+DeviceSyncSetup.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    private func performDeviceSyncSetupMutation("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 26,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 12"
+    },
+    "text": "    private func performBootstrap(localFirst: Bool) async {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 218,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore+Lifecycle.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    func requestExport() async {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 7,
+        "line": 41,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Class body should span 250 lines or less excluding comments and whitespace: currently spans 313 lines"
+    },
+    "text": "final class IOSDocumentStore {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 58,
+        "line": 111,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    @ObservationIgnored var deviceSyncEditIntentLineage: ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "location": {
+        "character": 29,
+        "line": 134,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "reason": "Variable name 'permitsDeviceSyncSelectionMutationAfterFlush' should be between 3 and 40 characters long"
+    },
+    "text": "    @ObservationIgnored var permitsDeviceSyncSelectionMutationAfterFlush = false"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Identifier names should only contain alphanumeric characters and start with a lowercase character or should only contain capital letters. In an exception to the above, variable names may start with a capital letter when they are declared as static. Variable names should not be too long or too short.",
+      "location": {
+        "character": 17,
+        "line": 376,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "identifier_name",
+      "ruleName": "Identifier Name",
+      "reason": "Variable name 'permitsSynchronousDeviceSyncSelectionMutation' should be between 3 and 40 characters long"
+    },
+    "text": "    private var permitsSynchronousDeviceSyncSelectionMutation: Bool {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 499,
+        "file": "NovelAppIOS/DocumentLifecycle/IOSDocumentStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 499"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 165,
+        "file": "NovelAppIOS/Features/ProjectInfo/IOSDocumentStore+Snapshots.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines"
+    },
+    "text": "    private func restoreSnapshotSerially(at snapshotURL: URL) async -> Bool {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 35,
+        "file": "NovelAppIOS/Features/Writing/IOSWorkbenchView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private func destination(for route: IOSWorkspaceRoute) -> some View {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 547,
+        "file": "NovelAppIOS/Features/Writing/IOSWorkbenchView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 547"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 404,
+        "file": "NovelAppIOS/Features/Writing/IOSWritingView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 404"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 77,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 14"
+    },
+    "text": "    private func performCloudLibraryRefresh() async -> Bool {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 77,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 76 lines"
+    },
+    "text": "    private func performCloudLibraryRefresh() async -> Bool {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 296,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    private func verifyCloudLibraryRecord("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 296,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 106 lines"
+    },
+    "text": "    private func verifyCloudLibraryRecord("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 414,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 33"
+    },
+    "text": "    private func mergeCloudLibrary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 414,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 174 lines"
+    },
+    "text": "    private func mergeCloudLibrary("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 711,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 711"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 111,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryMutations.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 113 lines"
+    },
+    "text": "    func createCloudLibraryDocument("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 9,
+        "line": 145,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryMutations.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 61 lines"
+    },
+    "text": "        func materializeNewWork() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 49,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryOpen.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 18"
+    },
+    "text": "    private func openVerifiedCloudLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 49,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryOpen.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 72 lines"
+    },
+    "text": "    private func openVerifiedCloudLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 127,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryOpen.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 15"
+    },
+    "text": "    private func materializeCloudLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 127,
+        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryOpen.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 91 lines"
+    },
+    "text": "    private func materializeCloudLibraryWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 4,
+        "file": "NovelAppIOS/Library/IOSLibraryView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 297 lines"
+    },
+    "text": "struct IOSLibraryView: View {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 448,
+        "file": "NovelAppIOS/Library/IOSLibraryView.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 21"
+    },
+    "text": "    static func statusText("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 585,
+        "file": "NovelAppIOS/Library/IOSLibraryView.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 585"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 461,
+        "file": "NovelAppIOS/Library/IOSPrivateWorkingCopyLocation.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 461"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 12,
+        "file": "NovelAppIOSTests/IOSCloudLibraryIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 763 lines"
+    },
+    "text": "struct IOSCloudLibraryIntegrationTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 994,
+        "file": "NovelAppIOSTests/IOSCloudLibraryIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 87 lines"
+    },
+    "text": "    private func makeRuntime() -> IOSDeviceSyncRuntime {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 1397,
+        "file": "NovelAppIOSTests/IOSCloudLibraryIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 1397"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 11,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 3084 lines"
+    },
+    "text": "struct IOSDeviceSyncIntegrationTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 41,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines"
+    },
+    "text": "    func editorStatusDistinguishesDurabilityAndPropagation() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 117,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 61 lines"
+    },
+    "text": "    func productionEditIntentStoreKeepsOnlyLatestBody() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 272,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 82 lines"
+    },
+    "text": "    func firstBoundIntentRecoversBeforeAnyJournalBaseline() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 453,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 64 lines"
+    },
+    "text": "    func preservedRecoveryCapacityFailsClosedWithoutOverwritingActiveEvidence() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 577,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines"
+    },
+    "text": "    func sameBodyRecoveryChoiceAdvancesSequenceBeforeAcknowledgement() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 654,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func newerPackageCheckpointSupersedesStaleMarkerWithNewSequence() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 723,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 100 lines"
+    },
+    "text": "    func staleRecoveryCompletionCannotDeleteNetZeroTailMarker() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 866,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 57 lines"
+    },
+    "text": "    func staleBindingLookupCannotOverwriteNewSelection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 930,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 73 lines"
+    },
+    "text": "    func stalePreservedMarkerCompletionCannotOverwriteNewSelection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1064,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 66 lines"
+    },
+    "text": "    func readySignalDuringLocalOnlyPreparationIsRevalidated() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1137,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "    func markedTextCommittedDuringPreparationBeatsStoredIntent() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1211,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 69 lines"
+    },
+    "text": "    func failedLatestIntentCannotRollBackSavedPackage() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1429,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 100 lines"
+    },
+    "text": "    func staleClaimCannotReleaseAuthorityAfterReselection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1575,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 99 lines"
+    },
+    "text": "    func realTextViewRemainsEditableWhileAnotherDeviceIsRemoteWriter() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1737,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func remoteRefreshNeverInjectsIntoActiveTextView() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2009,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 164 lines"
+    },
+    "text": "    func conflictForceRacePreservesLatestLocalChain() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2238,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 76 lines"
+    },
+    "text": "    func wholeWorkAutomaticMergeMaterializesOnlyAtSafeBoundary() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2322,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    func wholeWorkFlushesUnsavedMetadataBeforeRemoteMaterialization() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2589,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines"
+    },
+    "text": "    func wholeWorkLocalRecoveryRequiresExplicitChoiceAfterRelaunch() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2654,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 72 lines"
+    },
+    "text": "    func wholeWorkPreflightSerializesProjectMutationWithRecovery() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2732,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    func wholeWorkConflictChoiceRetriesExactPendingRevision() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2794,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 77 lines"
+    },
+    "text": "    func wholeWorkPreflightFailureContinuesPackageOnlyEditing() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 13,
+        "line": 2875,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private func makeWholeWorkStore("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 13,
+        "line": 2893,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private func makeWholeWorkStore("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 2963,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 65 lines"
+    },
+    "text": "    private func verifyWorkJournalFailureFencesPendingRemote("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
+      "location": {
+        "character": 15,
+        "line": 3523,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_name",
+      "ruleName": "Type Name",
+      "reason": "Type name 'IOSAvailabilityControlledWorkSyncTransport' should be between 3 and 40 characters long"
+    },
+    "text": "private actor IOSAvailabilityControlledWorkSyncTransport: WorkSyncTransport {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 30,
+        "line": 3850,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    private var storedScope: (workingCopyIdentity: String, documentID: UUID, episodeID: EpisodeID)?"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
+      "location": {
+        "character": 15,
+        "line": 4002,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_name",
+      "ruleName": "Type Name",
+      "reason": "Type name 'IOSPausablePreservedRemovalDeviceSyncEditIntentStore' should be between 3 and 40 characters long"
+    },
+    "text": "private actor IOSPausablePreservedRemovalDeviceSyncEditIntentStore: IOSDeviceSyncEditIntentStoring {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 4249,
+        "file": "NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 4249"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 7,
+        "file": "NovelAppIOSTests/IOSDocumentStoreTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 268 lines"
+    },
+    "text": "struct IOSDocumentStoreTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 10,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 379 lines"
+    },
+    "text": "struct IOSWorkConflictResolutionViewTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 105,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 86 lines"
+    },
+    "text": "    func adaptsDomainReview() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 334,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines"
+    },
+    "text": "    private func makeLongBodyReview() throws -> ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 49,
+        "line": 334,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    private func makeLongBodyReview() throws -> ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "When the index or the item is not used, `.enumerated()` can be removed.",
+      "location": {
+        "character": 71,
+        "line": 384,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "unused_enumerated",
+      "ruleName": "Unused Enumerated",
+      "reason": "When the item is not used, `.indices` should be used instead of `.enumerated()`"
+    },
+    "text": "        let conflicts = [firstID, secondID].enumerated().map { index, _ in"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 410,
+        "file": "NovelAppIOSTests/IOSWorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 410"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelAppTests/AppStateDocumentLifecycleTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 671 lines"
+    },
+    "text": "struct AppStateDocumentLifecycleTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 1002,
+        "file": "NovelAppTests/AppStateDocumentLifecycleTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 1002"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 11,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 4075 lines"
+    },
+    "text": "struct DeviceSyncAppIntegrationTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 122,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func noteSyncSendsOnlyOnExplicitSync() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 192,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    func noteExplicitSyncIgnoresLocalPreflightOfflineFence() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 251,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 79 lines"
+    },
+    "text": "    func packageExportPreservesActiveIdentityJournalAndResources() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 444,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 71 lines"
+    },
+    "text": "    func corruptPackageReadbackCannotAcknowledgeWorkRecoveryChoice() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 522,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 72 lines"
+    },
+    "text": "    func wholeWorkRestartRecoveryChoiceMaterializesStagedRevision() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 653,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 87 lines"
+    },
+    "text": "    func startupSelectionPreflightsWholeWorkRecoveryOutsideWritingSection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 789,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 83 lines"
+    },
+    "text": "    func startupSelectionWithoutEpisodesRestoresBoundWorkJournalBeforeEditing() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 920,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    func wholeWorkLocalPreflightDoesNotWaitForRemoteBinding() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1029,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 103 lines"
+    },
+    "text": "    func wholeWorkDisjointOfflineEditsMergeAtSafeDeparture() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1140,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 108 lines"
+    },
+    "text": "    func wholeWorkConflictIsRetainedUntilExplicitChoice() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1257,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines"
+    },
+    "text": "    func wholeWorkPreflightPreservesEditsMadeWhileBindingWaits() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1333,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 59 lines"
+    },
+    "text": "    func wholeWorkRestoreKeepsSelectionGatedUntilRecoveryIsDurable() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1412,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "    func workConflictMaterializationFailureDoesNotAcceptOppositeStaleChoice() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1532,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 76 lines"
+    },
+    "text": "    func editorStatusDistinguishesDurabilityAndPropagation() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1614,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 61 lines"
+    },
+    "text": "    func productionEditIntentStoreKeepsOnlyLatestBody() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1769,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 78 lines"
+    },
+    "text": "    func firstBoundIntentRecoversBeforeAnyJournalBaseline() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1907,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func preservedRecoveryRemainsUntilRemoteAcknowledgement() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 1964,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func preservedRecoveryCapacityFailsClosedWithoutOverwritingActiveEvidence() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2033,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 59 lines"
+    },
+    "text": "    func preservedRecoveryClearsAfterRemoteAcknowledgement() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2098,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 80 lines"
+    },
+    "text": "    func sameBodyRecoveryChoiceAdvancesSequenceBeforeAcknowledgement() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2184,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 83 lines"
+    },
+    "text": "    func newerPackageCheckpointSupersedesStaleMarkerWithNewSequence() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2273,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 117 lines"
+    },
+    "text": "    func staleRecoveryCompletionCannotDeleteNetZeroTailMarker() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2423,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func privateWorkingCopyRootRejectsSymlinksAndReplacement() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2507,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines"
+    },
+    "text": "    func staleBindingLookupCannotOverwriteNewSelection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2570,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 74 lines"
+    },
+    "text": "    func stalePreservedMarkerCompletionCannotOverwriteNewSelection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2651,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    func stalePackageOnlyCompletionCannotOverwriteNewSelection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2748,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 69 lines"
+    },
+    "text": "    func readySignalDuringLocalOnlyPreparationIsRevalidated() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2823,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 62 lines"
+    },
+    "text": "    func failedLatestIntentCannotRollBackSavedPackage() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 2890,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 57 lines"
+    },
+    "text": "    func publishReusesPersistedInputIntent() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3004,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func duplicateRefreshJoinsSingleRemoteInspection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3062,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 112 lines"
+    },
+    "text": "    func staleClaimCannotReleaseAuthorityAfterReselection() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3263,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 98 lines"
+    },
+    "text": "    func twoBoundCopiesUseIndependentJournals() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3419,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    func publishRetriesTailAfterInterruptedSealedBatch() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3588,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    func staleFenceResponseCannotRollBackDraftPublish() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3653,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 121 lines"
+    },
+    "text": "    func materializedConflictChoiceResumesAfterRelaunchBeforeRemotePublish() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 3780,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 163 lines"
+    },
+    "text": "    func conflictForceRacePreservesLatestLocalChain() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 3964,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 78 lines"
+    },
+    "text": "    private func assertWorkConflictChoicePreservesPackageTail("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 4095,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    private func conflictedWorkRecord("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 13,
+        "line": 4095,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private func conflictedWorkRecord("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Number of function parameters should be low.",
+      "location": {
+        "character": 13,
+        "line": 4160,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_parameter_count",
+      "ruleName": "Function Parameter Count",
+      "reason": "Function should have 5 parameters or less: it currently has 6"
+    },
+    "text": "    private func workRevision("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 4367,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 70 lines"
+    },
+    "text": "    func noteSyncRestoresPendingConflictOnPrepare() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
+      "location": {
+        "character": 15,
+        "line": 4788,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_name",
+      "ruleName": "Type Name",
+      "reason": "Type name 'PausableCountingDeviceSyncBindingResolver' should be between 3 and 40 characters long"
+    },
+    "text": "private actor PausableCountingDeviceSyncBindingResolver {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type name should only contain alphanumeric characters, start with an uppercase character and span between 3 and 40 characters in length.\nPrivate types may start with an underscore.",
+      "location": {
+        "character": 15,
+        "line": 4925,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_name",
+      "ruleName": "Type Name",
+      "reason": "Type name 'PausablePreservedRemovalDeviceSyncEditIntentStore' should be between 3 and 40 characters long"
+    },
+    "text": "private actor PausablePreservedRemovalDeviceSyncEditIntentStore: DeviceSyncEditIntentStoring {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 5118,
+        "file": "NovelAppTests/DeviceSyncAppIntegrationTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 5118"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 12,
+        "file": "NovelAppTests/DeviceSyncCloudLibraryAppTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 350 lines or less excluding comments and whitespace: currently spans 867 lines"
+    },
+    "text": "struct DeviceSyncCloudLibraryAppTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 460,
+        "file": "NovelAppTests/DeviceSyncCloudLibraryAppTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 83 lines"
+    },
+    "text": "    func productionRuntimeResumesDurableWorkOutboxExactlyOnce() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 9,
+        "line": 1094,
+        "file": "NovelAppTests/DeviceSyncCloudLibraryAppTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 395 lines"
+    },
+    "text": "private actor CloudLibraryHarness {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 41,
+        "line": 1100,
+        "file": "NovelAppTests/DeviceSyncCloudLibraryAppTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    private var resumable: [SyncWorkID: (SyncWorkLibraryEntry, NovelDocument, WorkSnapshot)] = [:]"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 1572,
+        "file": "NovelAppTests/DeviceSyncCloudLibraryAppTests.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 1000 lines or less: currently contains 1572"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelAppTests/ExportPresenterTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 255 lines"
+    },
+    "text": "struct ExportPresenterTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 430,
+        "file": "NovelAppTests/ExportPresenterTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 430"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 12,
+        "file": "NovelAppTests/StartupCloudLibraryViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func simpleShelfLaysOutWithoutPaths() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 147,
+        "file": "NovelAppTests/WorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 73 lines"
+    },
+    "text": "    private func makeLongBodyReview() throws -> ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 49,
+        "line": 147,
+        "file": "NovelAppTests/WorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    private func makeLongBodyReview() throws -> ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "When the index or the item is not used, `.enumerated()` can be removed.",
+      "location": {
+        "character": 71,
+        "line": 200,
+        "file": "NovelAppTests/WorkConflictResolutionViewTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "unused_enumerated",
+      "ruleName": "Unused Enumerated",
+      "reason": "When the item is not used, `.indices` should be used instead of `.enumerated()`"
+    },
+    "text": "        let conflicts = [firstID, secondID].enumerated().map { index, _ in"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 6,
+        "file": "NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter+Commands.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    func applyEditorCommandIfNeeded("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 23,
+        "file": "NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 348 lines"
+    },
+    "text": "struct MacTextAdapter: NSViewRepresentable {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 639,
+        "file": "NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 639"
+    },
+    "text": "#endif"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 521,
+        "file": "NovelKit/Sources/NovelCore/Models.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 521"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 12,
+        "line": 103,
+        "file": "NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    static func performListSnapshots(in url: URL) throws -> [DocumentSnapshotInfo] {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 402,
+        "file": "NovelKit/Sources/NovelSync/NoteSyncReconciler.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 402"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 592,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncAccount.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 592"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 481,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 95 lines"
+    },
+    "text": "    func loadLibrary() async throws -> AppleDeviceSyncLibrarySnapshot {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 563,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 125 characters"
+    },
+    "text": "            let connection: AppleDeviceSyncLibraryConnection = if let servicesError = error as? AppleDeviceSyncServicesError,"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 673,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    private func makeLibrarySnapshot("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 673,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines"
+    },
+    "text": "    private func makeLibrarySnapshot("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 850,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 850"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 114,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncMetadataStore.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 250 lines or less excluding comments and whitespace: currently spans 251 lines"
+    },
+    "text": "actor AppleDeviceSyncMetadataStore {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 128,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncServices+WorkingCopies.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func createAndBindNewWork("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 460,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncServices+WorkingCopies.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 460"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 427,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncServices.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 427"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 292,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Catalog.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    private func queryAllRecords("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 12,
+        "line": 6,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Note.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    public func save("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 57,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Note.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 143 characters"
+    },
+    "text": "            \"note-sync save ok accepted=\\(applied.accepted.count) identical=\\(classified.identical.count) conflicts=\\(applied.conflicts.count)\""
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 6,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Operations.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    func inspectRevisionRecords("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 67,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Operations.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 13"
+    },
+    "text": "    func modifyAtomically(_ records: [CKRecord]) async throws -> [CKRecord.ID: CKRecord] {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 67,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Operations.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 55 lines"
+    },
+    "text": "    func modifyAtomically(_ records: [CKRecord]) async throws -> [CKRecord.ID: CKRecord] {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 12,
+        "line": 4,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Publish.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines"
+    },
+    "text": "    public func publish(_ request: EpisodePublishRequest) async throws -> EpisodePublishResult {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 34,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 59 lines"
+    },
+    "text": "    func publish(_ request: WorkPublishRequest) async throws -> WorkPublishResult {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 23,
+        "line": 131,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    ) async throws -> ("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 277,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    func inspectWorkRevisionRecords("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 8,
+        "line": 7,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitEpisodeSyncTransport.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 250 lines or less excluding comments and whitespace: currently spans 283 lines"
+    },
+    "text": "public actor CloudKitEpisodeSyncTransport: EpisodeSyncTransport, SyncWorkCatalog,"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Tuples shouldn't have too many members. Create a custom type instead.",
+      "location": {
+        "character": 10,
+        "line": 156,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitNotePendingQueue.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "large_tuple",
+      "ruleName": "Large Tuple",
+      "reason": "Tuples should have at most 2 members"
+    },
+    "text": "    ) -> (accepted: [NoteSyncRecord], identical: [NoteSyncRecord], conflicts: [NoteSyncRecord]) {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 55,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitPublishPlanner.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 54 lines"
+    },
+    "text": "    func validate("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 15,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec+Receipt.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 129 characters"
+    },
+    "text": "        record[CloudKitSyncSchema.Field.resultHeadRevisionID] = receipt.resultHeadRevisionID.rawValue.uuidString as CKRecordValue"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 13,
+        "line": 155,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    private func decodeWorkLibraryEntry("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`",
+      "location": {
+        "character": 22,
+        "line": 234,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "optional_data_string_conversion",
+      "ruleName": "Optional Data -> String Conversion",
+      "reason": "Prefer failable `String(bytes:encoding:)` initializer when converting `Data` to `String`"
+    },
+    "text": "            content: String(decoding: canonical, as: UTF8.self)"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 266,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "    func decodeWorkRevisionRecord("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 462,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec+Work.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 462"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 105,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 129 characters"
+    },
+    "text": "        record[CloudKitSyncSchema.Field.holderReplicaID] = lease?.authority.holderReplicaID.rawValue.uuidString as CKRecordValue?"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 106,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitRecordCodec.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 129 characters"
+    },
+    "text": "        record[CloudKitSyncSchema.Field.holderSessionID] = lease?.authority.holderSessionID.rawValue.uuidString as CKRecordValue?"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 47,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitSyncError.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 14"
+    },
+    "text": "    static func map(_ error: any Error) -> CloudKitSyncAdapterError {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 5,
+        "line": 146,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitSyncError.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 11"
+    },
+    "text": "    static func failureKind(_ error: any Error) -> CloudKitPartialFailureKind {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 7,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitSyncSchema.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Enum body should span 250 lines or less excluding comments and whitespace: currently spans 299 lines"
+    },
+    "text": "enum CloudKitSyncSchema {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 442,
+        "file": "NovelKit/Sources/NovelSyncCloudKit/CloudKitSyncSchema.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 442"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 403,
+        "file": "NovelKit/Sources/NovelSyncTesting/InMemoryEpisodeSyncServer.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 403"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 458,
+        "file": "NovelKit/Tests/EditorKitTests/EditorAISelectionTransactionTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 458"
+    },
+    "text": "#endif"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 131,
+        "file": "NovelKit/Tests/EditorKitTests/EditorReadOnlyIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 51 lines"
+    },
+    "text": "    func localFirstEditabilityKeepsAllMutationPathsAvailable() {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 18,
+        "file": "NovelKit/Tests/EditorKitTests/MacTextAdapterIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 293 lines"
+    },
+    "text": "struct MacTextAdapterIntegrationTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 912,
+        "file": "NovelKit/Tests/EditorKitTests/MacTextAdapterIntegrationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 912"
+    },
+    "text": "#endif"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 12,
+        "file": "NovelKit/Tests/NovelCoreTests/DocumentSaveCoordinatorTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 299 lines"
+    },
+    "text": "struct DocumentSaveCoordinatorTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 440,
+        "file": "NovelKit/Tests/NovelCoreTests/DocumentSaveCoordinatorTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 440"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncLibraryMetadataTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 273 lines"
+    },
+    "text": "struct AppleDeviceSyncLibraryMetadataTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncLibraryMetadataTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func downloadedHeadResumesOfflineAcrossConcurrentPublish() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 85,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncLibraryMetadataTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 63 lines"
+    },
+    "text": "    func remoteOpenTwoPhaseRestartSafety() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 443,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncLibraryMetadataTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 443"
+    },
+    "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncMetadataAllowlistTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 66 lines"
+    },
+    "text": "    func episodeAllowlistValidation() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncMetadataStoreTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 330 lines"
+    },
+    "text": "struct AppleDeviceSyncMetadataStoreTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 263,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncMetadataStoreTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 87 lines"
+    },
+    "text": "    func journalsAreScopedByLocalWorkingCopy() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 10,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncOfflineJournalTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 60 lines"
+    },
+    "text": "    func localBootstrapResolvesBoundCopyWithoutCloudKitAuthority() async throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/AppleDeviceSyncPendingWorkCreationTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 282 lines"
+    },
+    "text": "struct AppleDeviceSyncPendingWorkCreationTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 8,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitPublishPlannerTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Struct body should span 250 lines or less excluding comments and whitespace: currently spans 276 lines"
+    },
+    "text": "struct CloudKitPublishPlannerTests {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 54,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitPublishPlannerTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 53 lines"
+    },
+    "text": "    func commandDigestIsRestartStable() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 159,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitPublishPlannerTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 58 lines"
+    },
+    "text": "    func unsafePlansAreRejected() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 223,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitPublishPlannerTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "    func acknowledgementDoesNotRestoreOldAuthority() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Lines should not span too many characters.",
+      "location": {
+        "character": 1,
+        "line": 17,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitRecordCodecTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "line_length",
+      "ruleName": "Line Length",
+      "reason": "Line should be 120 characters or less; currently it has 127 characters"
+    },
+    "text": "        #expect(control == \"v1.work.4D875891-E4A9-45CC-B0E3-9CB9024EAA18.episode.635158B4-E377-4D24-9338-9691442CFF94.control\")"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 123,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitRecordCodecTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 52 lines"
+    },
+    "text": "    func metadataTypeAndParentValidation() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 11,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitWorkRecordCodecTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 56 lines"
+    },
+    "text": "    func wholeWorkRecordsRoundTrip() throws {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 9,
+        "line": 152,
+        "file": "NovelKit/Tests/NovelSyncCloudKitTests/CloudKitWorkSyncSchemaTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 50 lines or less excluding comments and whitespace: currently spans 68 lines"
+    },
+    "text": "private func encodedProductionChecklistRecords("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Files should not span too many lines.",
+      "location": {
+        "character": 1,
+        "line": 629,
+        "file": "NovelKit/Tests/NovelSyncTests/NoteSyncTests.swift"
+      },
+      "severity": "warning",
+      "ruleIdentifier": "file_length",
+      "ruleName": "File Length",
+      "reason": "File should contain 400 lines or less: currently contains 629"
+    },
+    "text": "}"
+  }
+]

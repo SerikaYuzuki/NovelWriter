@@ -15,7 +15,7 @@
 - 章／話追加、話メモ、スナップショット、話内検索など、執筆中に頻繁に使う操作を近くへ置く
 - macOS 標準のツールバーカスタマイズを使い、編集操作をユーザーごとに並べ替え・追加・削除できるようにする
 
-この刷新で、現在の `EditorTopBarView` と、その下へ展開する2段目の `SearchBar` は廃止する。保存状態は下部のstatus bar、選択中の章名は Outline の選択行を正とし、上部で重複表示しない。
+この刷新で、現在の `EditorTopBarView` と、その下へ展開する2段目の `SearchBar` は廃止する。Editor の local 保存／同期状態は上部 native toolbar の小さな記号を正とし、下部 status bar と重複表示しない(D-060 / D-068 / D-073)。選択中の章名は Outline の選択行を正とし、上部で重複表示しない。結線済み作品では「iCloudと同期」を toolbar に出し、自動保存では iCloud へ送らない。
 
 ## 2. 既定レイアウト
 
@@ -47,7 +47,7 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 ### Editor 上部
 
 - 一段だけの操作列とし、本文の上に独自バーや展開式検索行を追加しない
-- 既定ではEditor左端に「話を追加」、中央に話メモ・スナップショット・プロットカード追加・書き出し、右端に話内検索を置く。Outline固有の追加操作はOutline上の固定項目として表示する
+- 既定ではEditor左端に「話を追加」、中央にクラウド同期・話メモ・スナップショット・書き出し・プロットカード参照、右端に話内検索を置く。プロットカード参照は右側から開くスライド式ペインで、選択中の章のカードを表示する。プロットカード参照を含む編集操作はツールバーのカスタマイズで並べ替え・削除できる。Outline固有の追加操作はOutline上の固定項目として表示する
 - 操作はアイコン中心とし、アクセシビリティラベルと `.help` を必ず付ける
 - ボタンの背景、角丸、影は独自に作らず、ネイティブ toolbar の外観へ委ねる
 
@@ -59,6 +59,10 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | Outline identity | 作品名 + `N章` | 表示 | 固定 | 情報表示のみ |
 | `workbench.chapter.add` | 章を追加 | 執筆・プロット時のみ表示 | 固定 | `AppState.addChapter()` |
 | `workbench.episode.add` | 話を追加 | 執筆時のみ表示 | 固定・Editor左端 | `AppState.addEpisode()` |
+| `workbench.plot.card.rail` | プロットカード | 執筆時のみ表示 | 移動・削除可 | 選択中の章のカードを右側のスライド式ペインに表示 |
+| `workbench.device.sync.status` | クラウド同期 | 執筆時のみ表示 | 固定・話メモの左 | 保存・iCloud同期・オフライン・統合必要の状態を表示 |
+| `workbench.cloud.publish` | iCloudに保存 | 未公開のlocal-only／localPendingかつsigned-inのときだけ表示 | 固定・同期状態の右 | 検証済みlocal packageを現在のiCloud accountへ明示保存する。Fileメニューにも同じ項目がある |
+| `workbench.cloud.sync` | iCloudと同期 | iCloudへ結んだ執筆中だけ表示 | 固定・「iCloudに保存」の右 | 端末へ保存済みの変更をiCloudへ送り、他端末の更新を取り込む。Fileメニューの`Cmd+S`と同じ。自動保存では送らない |
 | `workbench.chapter.memo` | 話メモ | 表示 | 移動・削除可 | 選択話のメモを popover で編集 |
 | `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
 | `workbench.export` | 書き出す… | 執筆時のみ表示 | 移動・削除可 | TXT / Markdown / EPUBの形式選択と保存パネルを開く |
@@ -69,7 +73,7 @@ macOS が toolbar item の厳密な座標を決めるため、「各ペインの
 | `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
 | Editor search | 話内を検索 | 表示 | 右端固定 | 選択話の本文検索 |
 
-`ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。UI-POL-4で既定配置を変更したため、toolbar 全体の ID は `novelwriter.workbench.v3` へ版上げした。Phase 5の `workbench.export` 追加では既存配置をリセットせず、Fileメニューの代替入口を保証したうえでv3を維持する。
+`ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。クラウド同期を編集操作列へ追加し、プロットカード参照を編集操作としてカスタマイズ可能にした現在の toolbar ID は `novelwriter.workbench.v7` とする。既存のv6カスタマイズは新しい既定配置へ移行する。
 
 旧設計の`workbench.ai.toggle`と`Cmd+J`はD-040で撤去済みであり、別機能へIDやショートカットを再利用しない。AIを実装する場合は、プライバシーと送信同意を含む新しい製品契約を先に定義する。
 

@@ -1,6 +1,6 @@
 # Codex SDK sidecar隔離feasibility 実装レポート
 
-**基準日: 2026-08-09 / 結論: B4-Dまでを保持し、実provider統合は最新stable SDKの明示再評価まで延期**
+**基準日: 2026-08-09 / 現在の扱い: D-075で実装・fixture・testを削除した履歴資料。実provider統合は最新stable SDKの明示再評価まで延期**
 
 本書は、ふみにわ（FUMINIWA）の個人用Experimental AIとして調査・実装したCodex SDK sidecar隔離feasibilityを、再開時に検証可能な形で残す日付固定の結果記録である。現在の製品ロードマップや実行承認ではない。延期判断は[D-054](DECISIONS.md)、当時の詳細な技術契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
@@ -11,7 +11,7 @@
 - B4-Cのchildはidentity観測後もresumeされずkill／direct reapされ、B4-D transportへ変換されていない。
 - B4-Dはin-memory mock channelのsequencing feasibilityであり、実runtime B4-Dの完了、Codex利用可能、AI対応、公開可能のいずれも意味しない。
 - B4-E以降を独自に積み増す作業は停止し、将来の公式stable SDK／APIがより小さく検証可能な境界を提供した時点で、明示的に再評価する。
-- 実装済みコード、fixture、test、文書は削除せず、NO-GO境界を含む調査成果として保持する。
+- 実装済みコード、fixture、testはD-075で削除した。NO-GO境界、検討結果、当時の検証値だけを調査履歴として保持する。
 
 ## 2. 目標と非目標
 

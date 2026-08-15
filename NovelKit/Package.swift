@@ -11,8 +11,12 @@ let package = Package(
         .library(name: "NovelCore", targets: ["NovelCore"]),
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
+        .library(name: "NovelSync", targets: ["NovelSync"]),
+        .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
+        .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
+        .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
+        .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
-        .library(name: "NovelAI", targets: ["NovelAI"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
@@ -29,13 +33,39 @@ let package = Package(
             name: "NovelExport",
             dependencies: ["NovelCore"]
         ),
+        // NovelSync: OS / transport 非依存のentity同期domain。
+        // CloudKitやUI、NovelStorageを依存へ追加しない。
+        // D-059／D-061の旧revision経路は履歴として残し、D-071のNoteSyncがlive domain。
+        .target(
+            name: "NovelSync",
+            dependencies: ["NovelCore"]
+        ),
+        // D-076 R5: filesystem journals for the retired Episode/Work
+        // protocols are kept in a compatibility target. The target depends
+        // on the live domain only for its public journal contracts and IDs.
+        .target(
+            name: "NovelSyncLegacy",
+            dependencies: ["NovelSync", "NovelCore"]
+        ),
+        // Shared local-library state and attestation models. Filesystem roots,
+        // CloudKit, and platform UI remain in the app adapters.
+        .target(
+            name: "NovelLibrary",
+            dependencies: ["NovelCore", "NovelSync"]
+        ),
+        // 決定論的fake transport。製品targetからはlinkせず、同期契約testで使う。
+        .target(
+            name: "NovelSyncTesting",
+            dependencies: ["NovelSync", "NovelCore"]
+        ),
+        // Apple private CloudKit adapter。CloudKit型とchange tagをNovelSyncへ漏らさない。
+        .target(
+            name: "NovelSyncCloudKit",
+            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelCore"]
+        ),
         .target(
             name: "EditorKit",
             dependencies: ["NovelCore"]
-        ),
-        // NovelAI: provider-neutralな送受信契約のみ。原稿モデル・Storage・UIに依存しない。
-        .target(
-            name: "NovelAI"
         ),
         .target(
             name: "NovelUI",
@@ -58,12 +88,21 @@ let package = Package(
             dependencies: ["NovelExport", "NovelCore"]
         ),
         .testTarget(
-            name: "EditorKitTests",
-            dependencies: ["EditorKit"]
+            name: "NovelSyncTests",
+            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelSyncTesting", "NovelCore"],
+            resources: [.process("Fixtures")]
         ),
         .testTarget(
-            name: "NovelAITests",
-            dependencies: ["NovelAI"]
+            name: "NovelLibraryTests",
+            dependencies: ["NovelLibrary", "NovelCore", "NovelSync"]
+        ),
+        .testTarget(
+            name: "NovelSyncCloudKitTests",
+            dependencies: ["NovelSyncCloudKit", "NovelSync", "NovelCore"]
+        ),
+        .testTarget(
+            name: "EditorKitTests",
+            dependencies: ["EditorKit"]
         ),
         .testTarget(
             name: "NovelUITests",

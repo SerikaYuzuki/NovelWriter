@@ -1,6 +1,6 @@
 # AI統合 技術契約
 
-**状態: B4-Dまでのprovider統合研究を保持して凍結 / production catalogは空、具象production channel／factory／callsite、実provider／CLI／network、approved runtime、Node version、immutable verify-to-use、Keychain、OS隔離、parent death後の回収は未実装 / B4-E以降は最新stable SDK／APIの明示再評価まで延期 / 通常版の現行AI支援はprovider非依存のclipboard prompt copy**
+**状態: D-075でprovider／fake UI／sidecarの実装・fixture・testを削除。以下はB4-Dまでの研究を残す履歴・再設計条件であり、現行の実装・build target・production catalogではない / B4-E以降は最新stable SDK／APIの明示再評価まで延期 / 通常版の現行AI支援はprovider非依存のclipboard prompt copy**
 
 本書は、ふみにわ（FUMINIWA）が将来provider統合を再開するときの実装境界と安全条件、およびB4-Dまでに固定した研究成果を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046〜D-054、現行のAI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)、実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
 
@@ -8,7 +8,7 @@
 
 ## 0. 現在の判断
 
-D-054により、Codex／OpenRouterの実provider統合、B4-E以降、network、credential、実原稿送信は現在の実装ロードマップから外した。B1〜B4-Dのコード、fixture、test、本書の安全契約は削除せず保持するが、利用者がその時点の最新stable SDK／APIを明示的に再評価すると決めるまで、新しいproduction runtime、adapter、approval entryを追加しない。
+D-075により、Codex／OpenRouterの実provider統合、B4-E以降、network、credential、実原稿送信は実装ロードマップから外し、B1〜B4-Dのコード、fixture、testも削除した。本書に残る安全契約と研究記録は将来の再設計条件であり、現行のproduction runtime、adapter、approval entry、Experimental targetを意味しない。再開時は最新stable SDK／APIを明示的に再評価する。
 
 通常版`FUMINIWA`の現行AI支援は、校正／アドバイス×本文選択／話／章のplain text promptをsystem clipboardへ明示コピーする非通信機能である。provider、network、API key、subprocess、`NovelAI`、本書のconfirmed outbound／response／Apply境界へ依存しない。system clipboardへ出た内容はFUMINIWAのmemory-only境界の外にあり、他アプリ、clipboard manager、Universal Clipboard等から読まれ得る。詳細は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。
 
@@ -27,7 +27,7 @@ B4-Dまでの実装結果、commit、検証値、未達Gate、再評価条件は
 9. **providerを勝手に切り替えない。** Codexの失敗、timeout、rate limit、認証失敗をOpenRouterへ自動fallbackしない。provider変更は利用者の明示操作と、新しい送信先を示すpreviewの再確認を必要とする。
 10. **未確認の保持／利用上限をUIで補わない。** provider／service側の保持期間と学習利用、SDK／CLIがlocalに作るartifactの場所・範囲・保持期間、providerの料金単位とrequest上限は一次資料と実測で確認する。個人用Experimentalでは確認済み値と未保証を送信前に区別し、公開Releaseでは根拠を固定する。未確認値を「履歴なし」「無料」「上限あり」等として表示しない。
 11. **providerが違っても操作作法を分岐させない。** Codex SDKとAPI経路（初期はOpenRouter）は、同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示ApplyのUIとoperation orchestratorを使う。provider固有のtransport、credential、model設定、保持情報、errorだけをadapterへ閉じ込める。
-12. **個人用Experimentalと公開Releaseをbuild graphで分ける。** 個人利用中は、実処理と安全条件を満たしたAI UIを別app target／scheme `FUMINIWAExperimental`で先行できる。通常の`FUMINIWA` app targetはcompile flag、target dependency、resource copyの段階でAI入口とprovider artifactを含めず、runtime flagだけに依存して隠さない。target／scheme／bundle ID／既定保存rootの分離と生成projectの機械監査は実装済みである。Experimentalは旧製品のrecent URL／設定を自動移行せず、既存作品は利用者が明示的に開く。実sidecar追加時と公開判断時には両Archiveのgraph／bundle inventoryを再検証する。
+12. **個人用Experimentalと公開Releaseをbuild graphで分ける（履歴）。** 旧実装では、実処理と安全条件を満たすAI UIを別app target／scheme `FUMINIWAExperimental`で先行する境界を定めていた。D-075でtarget／scheme／sourceを削除したため、将来再開時はこの境界をそのまま復活させず、新Decisionでbuild graphと保存境界を再設計する。
 
 ## 2. 最初の利用フロー
 
@@ -84,7 +84,7 @@ providerが受け取れるのは、明示確認済みの`AIApplicationPayload`�
 
 ## 4. 純粋domain境界
 
-純粋domain PRで実装した範囲は、providerとUIから独立した`NovelAI`のprovider-neutral outbound契約だけである。名称を含む実際のtargetと公開APIは実装diffを正とし、本書から存在しない機能を補わない。
+純粋domain PRで実装した範囲は、providerとUIから独立した旧`NovelAI`のprovider-neutral outbound契約だった。D-075でtarget／公開API／testを削除したため、これは将来APIの根拠ではなく研究履歴として読む。
 
 純粋domain PRに含めたもの:
 
@@ -125,7 +125,7 @@ App側はprovider-neutralな`AIProofreadingOperation`相当のorchestratorを一
 
 Swift／Node間のwire形式とstate machineは[`Sidecars/Codex/PROTOCOL.md`](../Sidecars/Codex/PROTOCOL.md)を正とする(D-047)。本文を含まない`hello`／`ready`でruntime identityを検査してからだけ`start`を許可し、valid start後は`started`と単一terminalを返す。v1はtoken deltaを捏造せず、Codex結果本文は完了後だけ共有UIへ渡す。protocol mockの成功を実SDK接続、隔離、orphanなしの証明として扱わない。
 
-canonical deployment manifest v1とB3 packager／verifier境界の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする(D-049)。Node packagerはDarwin arm64のSDK／CLI 0.147.0に固定した21 fileと派生15 directoryを新規rootへ実コピーし、exact metadata／lock SRI、source hash、destination canonical manifestを一致させる。Swift native verifierは`FUMINIWAExperimental`だけにcompileされ、Node oracle（digest `15b98ccf…d35288`、278 bytes）とcanonical v1を一致させる。いずれもbuild-time identity candidate／primitiveである。B4-Aでnative compile-time approvalの型とvalidationを追加し、B4-Bでcanonical raw path／`realpath`／`F_GETPATH`、owner／mode／`nlink`／size／SHA-256、strict thin／fat Mach-O、no-network Security validity／requested architecture別CDHashを512 MiB上限で観測する非実行native inspectorを追加した。production catalogは意図的に空で、B4-B inspector resultは非authorityであり、approved digest／runtimeとNode versionは存在しない。B4-Cではprobe-onlyのsuspended actual-process identityを追加したが、そのobservationも非authorityである。完全なloaded artifact inventoryとimmutable verify-to-import／path-based spawn bindingもまだ存在しない。
+ canonical deployment manifest v1とB3 packager／verifier境界の正は[`Sidecars/Codex/MANIFEST.md`](../Sidecars/Codex/MANIFEST.md)とする(D-049)。これはD-075で実装を削除する前の研究記録であり、現行target／runtime／catalogへ接続されていない。
 
 2026-08-09時点の調査baselineは公式npmのstable（非alpha）`0.147.0`である。Checkpoint B1で`@openai/codex-sdk` `0.147.0`と対応CLI packageをlockfileへexact pinし、実通信しない合成CLIだけでargv／stdin／schema temporary file／environment／usage／cancel／errorをcaptureした。これは恒久採用versionではなく、provider実装／更新PRごとに公式公開物を再確認し、その時点でreviewしたstable non-alphaをexact pinする。semver range（`^0.147.0`等）は使わず、更新ごとにprotocol capture、tool surface、artifact、cancel、sandbox Gateを再実行する。
 
@@ -184,7 +184,7 @@ channelのatomic `requestCancellation(cancelFrame:)`はphaseに応じたoptional
 
 以下はprovider統合を再開する場合の受け入れGateであり、現在のclipboard prompt支援には適用しない。D-054によりExperimental Gateへ進む実装自体を延期している。
 
-- **個人用Experimental Gate**: Editor bridgeの誤適用防止、exact SDK／CLI／Node version・実行path・cryptographic hashとlockfile／package integrity、request専用cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file-read拒否、本文等を残さない診断、cancel／timeout／終了時のprocess tree回収、local artifact inventory、wire／event／time／process上限を実機で通す。これを満たした実処理だけを`FUMINIWA_ENABLE_EXPERIMENTAL_AI`付き`FUMINIWAExperimental` app targetの同一AI UIへ出してよい。
+- **個人用Experimental Gate（将来再設計）**: Editor bridgeの誤適用防止、exact SDK／CLI／Node version・実行path・cryptographic hashとlockfile／package integrity、request専用cwd／`CODEX_HOME`、environment allowlist、Keychain、OS-level file-read拒否、本文等を残さない診断、cancel／timeout／終了時のprocess tree回収、local artifact inventory、wire／event／time／process上限を実機で通す。実装を再開する場合は、D-075後に新Decisionで定める専用targetへ接続する。
 - **公開Release Gate**: Experimental Gateに加え、runtime／SDK／CLI／sidecarのbundle固定と起動前hash検証、arm64／x86_64、nested signing、Hardened Runtime、Archive、notarization、stapling、Gatekeeper、clean Mac更新検証をすべて通す。通常の`Release`へAIを含める判断は別のDecision更新を必要とする。
 
 個人用Experimentalでは、開発機に明示的に用意したNode／sidecarを使ってよく、universal bundle、署名、公証をUI開発の前提にしない。ただし実行path、version、cryptographic hashとlockfile／package integrityを固定・検査し、ambientなglobal Node／Codex、通常の`~/.codex`、作品repository、親environmentへ暗黙fallbackしない。Experimentalで省略できるのは配布成立の検証だけで、原稿、credential、supply-chain identity、file access、process lifecycleの安全条件ではない。
@@ -273,7 +273,7 @@ requestを閉じる、またはアプリが終了すると、FUMINIWAが保持�
 
 1. **契約 + 純粋domain**: D-043、本書、provider-neutralなdraft → instruction ID／単一`applicationPrompt`／response schema IDとexact schemaを持つpreview → provider／purpose／budget／input countとともに`AIApplicationPayload`へ封印したone-shot confirmed outbound、domain所有executor、raw structured outputのstrict decode、provider descriptor、domain budget、result／error、event stream protocol、fake、決定論的契約テストだけ。local identity、stale判定、実通信、process、UI、package変更なし。
 2. **Editor bridge（完了）**: EditorKitのopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用と、document session／episode／source digestを保持するApp local contextを実装した。送信前／適用前stale判定をfake providerで統合テストし、local identityをconfirmed outboundへ混ぜない。
-3. **共有orchestrator + fake UI（完了）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。別app target／scheme `FUMINIWAExperimental`だけに露出し、通常の`FUMINIWA` targetから`NovelAI`、Experimental source、compile flagを生成project監査で除外する。実sidecar追加後はArchive inventoryも再検証する。
+3. **共有orchestrator + fake UI（履歴・削除済み）**: provider-neutralなrequest state machineと、同一のexact preview、明示確認、cancel、diff、stale、Copy、Apply UIをfake providerで接続した。D-075でfake UI／`FUMINIWAExperimental`／`NovelAI`を削除したため、将来再開時は旧実装を復活させず、新Decisionと最新APIから再設計する。
 4. **Codex sidecar protocol（完了）**: content-free attestation、固定framing、上限、typed event、cancel、重複terminal拒否をmockで検証し、実instruction／schemaと合成本文を使うNode／Swift共通fixtureを一致させた(D-047)。実SDK／CLI、credential、network、process起動は含まない。
 5. **Manifest primitive + exact SDK capture（B1完了）**: canonical deployment manifest v1のNode builder／verifierを合成treeで固定し、SDK／CLI package 0.147.0をexact pinして合成CLIだけでSDK argv／stdin／schema／environment／usage／cancel／errorをcaptureした。Node 22.23.1と26.4.0のUnicode出力差も固定した。この段階単独ではpackager、native verifier、process supervisor、networkを含まない。
 6. **Darwin native supervisor（B2完了）**: `posix_spawn`／new process group、3 pipe同時処理、stdin／stdout／stderr cap、first-wins cancel／timeout／failure、TERM→KILL、`waitid(WNOWAIT)` anchor、direct child `waitpid`、post-reap `ESRCH`を合成helperで固定した(D-048)。macOS 27では`pipe2` runtime symbolをprobeし、stderr内容を保持しない。実SDK／CLI、network、credential、manifest verifier、OS sandbox、parent death後の回収は含まない。

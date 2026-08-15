@@ -1,0 +1,325 @@
+import Foundation
+import NovelSync
+@testable import NovelSyncCloudKit
+import Testing
+
+@Suite("Apple Device Sync account gate")
+struct AppleDeviceSyncAccountGateTests {
+    @Test("every remote operation revalidates live account scope before work")
+    func differentAccountBlocksBeforeOperation() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+        try await gate.performOperation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+        await probe.resetWrite()
+
+        await box.setScope(accountScope("account-b"))
+        await #expect(
+            throws: AppleDeviceSyncServicesError.blocked(.differentCloudAccount)
+        ) {
+            try await gate.performOperation {
+                await probe.recordWrite()
+            }
+        }
+        let wroteAfterSwitch = await probe.didWrite
+        let availability = await gate.availability()
+        #expect(!wroteAfterSwitch)
+        #expect(availability == .blocked(.differentCloudAccount))
+    }
+
+    @Test("an account event immediately fences and cancels an in-flight delayed write")
+    func accountEventCancelsDelayedWrite() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+        let operation = Task {
+            try await gate.performMutation {
+                await probe.markStarted()
+                try await Task.sleep(for: .seconds(60))
+                await probe.recordWrite()
+            }
+        }
+        await probe.waitUntilStarted()
+        await box.setScope(accountScope("account-b"))
+
+        let availability = await gate.blockForAccountChange()
+        #expect(availability == .blocked(.accountUnavailable))
+        await #expect(
+            throws: AppleDeviceSyncServicesError.blocked(.accountUnavailable)
+        ) {
+            try await operation.value
+        }
+        let wroteAfterEvent = await probe.didWrite
+        #expect(!wroteAfterEvent)
+    }
+
+    @Test("an initial same-account sign-in revalidates without permanently fencing the runtime")
+    func initialSameAccountSignInRemainsReady() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+
+        let availability = await gate.revalidateForSignIn()
+        #expect(availability == .ready)
+        try await gate.performOperation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
+    @Test("same-account sign-in cancels an in-flight mutation before keeping the runtime ready")
+    func sameAccountSignInCancelsInFlightMutation() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: original)
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+        let operation = Task {
+            try await gate.performMutation {
+                await probe.markStarted()
+                try await Task.sleep(for: .seconds(60))
+                await probe.recordWrite()
+            }
+        }
+        await probe.waitUntilStarted()
+
+        #expect(await gate.revalidateForSignIn() == .ready)
+        var operationWasCancelled = false
+        do {
+            try await operation.value
+        } catch {
+            operationWasCancelled = true
+        }
+        #expect(operationWasCancelled)
+        let wroteBeforeValidation = await probe.didWrite
+        #expect(!wroteBeforeValidation)
+
+        try await gate.performMutation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
+    @Test("a sign-in event for another account fences before later operations")
+    func differentAccountSignInFencesRuntime() async throws {
+        let original = accountScope("account-a")
+        let box = AccountScopeBox(scope: accountScope("account-b"))
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { await box.resolve() }
+        )
+
+        let availability = await gate.revalidateForSignIn()
+        #expect(availability == .blocked(.differentCloudAccount))
+        await #expect(
+            throws: AppleDeviceSyncServicesError.blocked(.differentCloudAccount)
+        ) {
+            try await gate.performOperation {
+                await probe.recordWrite()
+            }
+        }
+        let didWrite = await probe.didWrite
+        #expect(!didWrite)
+    }
+
+    @Test("a temporary sign-in identity failure stays retryable")
+    func temporarySignInValidationFailureStaysRetryable() async throws {
+        let original = accountScope("account-a")
+        let resolver = OneShotAccountScopeResolver(
+            firstError: CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable),
+            scope: original
+        )
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: { try await resolver.resolve() }
+        )
+
+        #expect(await gate.revalidateForSignIn() == .ready)
+        try await gate.performOperation {
+            await probe.recordWrite()
+        }
+        #expect(await probe.didWrite)
+    }
+
+    @Test("a temporary live identity failure stays retryable and never writes")
+    func temporaryAccountFailureStaysRetryable() async throws {
+        let original = accountScope("account-a")
+        let probe = DelayedOperationProbe()
+        let gate = AppleDeviceSyncAccountGate(
+            expectedScope: original,
+            scopeResolver: {
+                throw CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+            }
+        )
+
+        await #expect(
+            throws: CloudKitSyncAdapterError.accountUnavailable(.temporarilyUnavailable)
+        ) {
+            try await gate.performMutation {
+                await probe.recordWrite()
+            }
+        }
+        let didWrite = await probe.didWrite
+        #expect(!didWrite)
+        #expect(await gate.availability() == .ready)
+    }
+
+    @Test("episode transport maps an account fence to provider-neutral unavailability")
+    func accountFenceMapsToTransportUnavailability() {
+        for reason in [
+            AppleDeviceSyncBlockReason.accountUnavailable,
+            .differentCloudAccount,
+            .temporarilyUnavailable,
+            .runtimeInitializationFailed
+        ] {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(
+                AppleDeviceSyncServicesError.blocked(reason)
+            )
+            #expect(mapped as? EpisodeSyncTransportError == .unavailable)
+        }
+
+        let unrelated = AppleDeviceSyncServicesError.invalidMetadata
+        let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(unrelated)
+        #expect(mapped as? AppleDeviceSyncServicesError == unrelated)
+    }
+
+    @Test("episode transport maps only transient CloudKit failures to unavailability")
+    func transientCloudKitFailuresMapToTransportUnavailability() {
+        let transientErrors: [CloudKitSyncAdapterError] = [
+            .temporarilyUnavailable(retryAfterSeconds: 2),
+            .accountUnavailable(.temporarilyUnavailable),
+            .partialFailure([.temporarilyUnavailable])
+        ]
+        for error in transientErrors {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(error)
+            #expect(mapped as? EpisodeSyncTransportError == .unavailable)
+        }
+
+        let permanent = CloudKitSyncAdapterError.partialFailure([
+            .temporarilyUnavailable,
+            .permissionFailure
+        ])
+        let mapped = AppleDeviceSyncRemoteBoundary.mappedEpisodeTransportError(permanent)
+        #expect(mapped as? CloudKitSyncAdapterError == permanent)
+    }
+
+    @Test("whole-work transport uses the same account fence without exposing CloudKit errors")
+    func workTransportUsesAccountFence() {
+        for reason in [
+            AppleDeviceSyncBlockReason.accountUnavailable,
+            .differentCloudAccount,
+            .temporarilyUnavailable,
+            .runtimeInitializationFailed
+        ] {
+            let mapped = AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(
+                AppleDeviceSyncServicesError.blocked(reason)
+            )
+            #expect(mapped as? WorkSyncTransportError == .unavailable)
+        }
+
+        let transient = CloudKitSyncAdapterError.temporarilyUnavailable(
+            retryAfterSeconds: 1
+        )
+        #expect(
+            AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(transient)
+                as? WorkSyncTransportError == .unavailable
+        )
+        let permanent = CloudKitSyncAdapterError.permissionFailure
+        #expect(
+            AppleDeviceSyncRemoteBoundary.mappedWorkTransportError(permanent)
+                as? CloudKitSyncAdapterError == permanent
+        )
+    }
+
+    private func accountScope(_ userRecordName: String) -> AppleCloudAccountScope {
+        AppleCloudAccountScope(
+            containerIdentifier: "iCloud.dev.serikayuzuki.fuminiwa.sync",
+            userRecordName: userRecordName
+        )
+    }
+}
+
+private actor AccountScopeBox {
+    private var scope: AppleCloudAccountScope
+
+    init(scope: AppleCloudAccountScope) {
+        self.scope = scope
+    }
+
+    func resolve() -> AppleCloudAccountScope {
+        scope
+    }
+
+    func setScope(_ scope: AppleCloudAccountScope) {
+        self.scope = scope
+    }
+}
+
+private actor OneShotAccountScopeResolver {
+    private var firstError: CloudKitSyncAdapterError?
+    private let scope: AppleCloudAccountScope
+
+    init(firstError: CloudKitSyncAdapterError, scope: AppleCloudAccountScope) {
+        self.firstError = firstError
+        self.scope = scope
+    }
+
+    func resolve() throws -> AppleCloudAccountScope {
+        if let firstError {
+            self.firstError = nil
+            throw firstError
+        }
+        return scope
+    }
+}
+
+private actor DelayedOperationProbe {
+    private(set) var didWrite = false
+    private var didStart = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        didStart = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        if didStart {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func recordWrite() {
+        didWrite = true
+    }
+
+    func resetWrite() {
+        didWrite = false
+    }
+}

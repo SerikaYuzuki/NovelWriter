@@ -8,14 +8,14 @@ This document defines the bytes measured by `sidecar_bundle_sha256` in Codex
 sidecar protocol v1. It is a supply-chain identity format, not a package
 installer, a code-signing replacement, or an OS sandbox.
 
-Checkpoint B3 implements two narrower identity primitives:
+Checkpoint B3 historically implemented two narrower identity primitives:
 
 - a Node packager that copies a fixed 21-file, Darwin arm64, Codex 0.147.0
   allowlist into a newly created candidate root; and
-- an internal Swift verifier compiled only into `FUMINIWAExperimental`, with
+- an internal Swift verifier that was compiled only into `FUMINIWAExperimental`, with
   canonical bytes matching the Node v1 oracle.
 
-The resulting digest is a **build-time identity candidate**, not a production
+The resulting digest was a **build-time identity candidate**, not a production
 approval or an execution capability. B4-A now provides the Experimental native
 compile-time approval contract, but its nested production catalog is
 intentionally empty and consumes no candidate. B4-B adds an Experimental-only,

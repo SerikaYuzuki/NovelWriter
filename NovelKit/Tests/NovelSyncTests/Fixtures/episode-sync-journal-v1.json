@@ -1,0 +1,62 @@
+{
+  "branchID" : "22222222-2222-2222-2222-222222222222",
+  "key" : {
+    "episodeID" : "11111111-1111-1111-1111-111111111111",
+    "workID" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+  },
+  "lastKnownRemoteHead" : {
+    "authorReplicaID" : "33333333-3333-3333-3333-333333333333",
+    "authorSessionID" : "44444444-4444-4444-4444-444444444444",
+    "branchID" : "22222222-2222-2222-2222-222222222222",
+    "clientCreatedAt" : "2026-08-11T00:00:00Z",
+    "content" : "本文\n😀",
+    "contentDigest" : "5e9881153301593305f2390502e85b44f38f1e9c6b0d1a91111077221a8ea3ad",
+    "key" : {
+      "episodeID" : "11111111-1111-1111-1111-111111111111",
+      "workID" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+    },
+    "parentRevisionIDs" : [
+      "55555555-5555-5555-5555-555555555555"
+    ],
+    "protocolVersion" : 1,
+    "revisionID" : "66666666-6666-6666-6666-666666666666"
+  },
+  "localHead" : {
+    "authorReplicaID" : "33333333-3333-3333-3333-333333333333",
+    "authorSessionID" : "44444444-4444-4444-4444-444444444444",
+    "branchID" : "22222222-2222-2222-2222-222222222222",
+    "clientCreatedAt" : "2026-08-11T00:00:01Z",
+    "content" : "本文\n😀\n続き",
+    "contentDigest" : "473f8623795d638c4134079f925b9700d39692863281e7fd54177d1054829277",
+    "key" : {
+      "episodeID" : "11111111-1111-1111-1111-111111111111",
+      "workID" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+    },
+    "parentRevisionIDs" : [
+      "66666666-6666-6666-6666-666666666666"
+    ],
+    "protocolVersion" : 1,
+    "revisionID" : "66666666-6666-6666-6666-666666666667"
+  },
+  "mode" : "forcedFork",
+  "pendingRevisions" : [
+    {
+      "authorReplicaID" : "33333333-3333-3333-3333-333333333333",
+      "authorSessionID" : "44444444-4444-4444-4444-444444444444",
+      "branchID" : "22222222-2222-2222-2222-222222222222",
+      "clientCreatedAt" : "2026-08-11T00:00:01Z",
+      "content" : "本文\n😀\n続き",
+      "contentDigest" : "473f8623795d638c4134079f925b9700d39692863281e7fd54177d1054829277",
+      "key" : {
+        "episodeID" : "11111111-1111-1111-1111-111111111111",
+        "workID" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+      },
+      "parentRevisionIDs" : [
+        "66666666-6666-6666-6666-666666666666"
+      ],
+      "protocolVersion" : 1,
+      "revisionID" : "66666666-6666-6666-6666-666666666667"
+    }
+  ],
+  "schemaVersion" : 1
+}

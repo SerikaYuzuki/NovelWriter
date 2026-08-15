@@ -147,3 +147,58 @@ import Testing
         atPath: packageURL.appendingPathComponent("notes", isDirectory: true).path
     ))
 }
+
+@Test func automaticSnapshotUsesPrefixedNameAndDisplayName() async throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("AutomaticSnapshot.novelpkg")
+    let repository = NovelpkgRepository()
+    let doc = NovelDocument(title: "自動退避", chapters: [Chapter(title: "第1章", content: "本文")])
+
+    try await repository.save(doc, to: packageURL)
+    let snapshotURL = try await repository.saveSnapshot(doc, to: packageURL, kind: .automatic)
+    let listed = try await repository.listSnapshots(in: packageURL)
+
+    #expect(snapshotURL.lastPathComponent.hasPrefix("auto-"))
+    #expect(listed.count == 1)
+    #expect(listed[0].isAutomatic)
+    #expect(listed[0].displayName.hasPrefix("自動 "))
+}
+
+@Test func automaticSnapshotsThinOlderHoursWhileKeepingManual() throws {
+    let tempDir = try makeTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let packageURL = tempDir.appendingPathComponent("AutomaticSnapshotThin.novelpkg")
+    let snapshotsURL = packageURL.appendingPathComponent("snapshots", isDirectory: true)
+    try FileManager.default.createDirectory(at: snapshotsURL, withIntermediateDirectories: true)
+
+    func plant(_ fileName: String) throws {
+        try FileManager.default.createDirectory(
+            at: snapshotsURL.appendingPathComponent(fileName, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+    }
+
+    try plant("2026-08-01T08-00-00.000Z.novelpkg")
+    try plant("auto-2026-08-13T15-10-00.000Z.novelpkg")
+    try plant("auto-2026-08-13T15-50-00.000Z.novelpkg")
+    try plant("auto-2026-08-13T14-05-00.000Z.novelpkg")
+    try plant("auto-2026-08-14T11-40-00.000Z.novelpkg")
+
+    let repository = NovelpkgRepository()
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-08-14T12:00:00Z"))
+    try repository.pruneAutomaticSnapshots(in: packageURL, now: now)
+
+    let remaining = try FileManager.default.contentsOfDirectory(
+        at: snapshotsURL,
+        includingPropertiesForKeys: nil
+    ).map(\.lastPathComponent).sorted()
+    #expect(remaining == [
+        "2026-08-01T08-00-00.000Z.novelpkg",
+        "auto-2026-08-13T14-05-00.000Z.novelpkg",
+        "auto-2026-08-13T15-50-00.000Z.novelpkg",
+        "auto-2026-08-14T11-40-00.000Z.novelpkg"
+    ])
+}

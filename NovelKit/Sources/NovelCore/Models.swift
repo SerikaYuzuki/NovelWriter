@@ -313,6 +313,150 @@ public protocol DocumentCopyingRepository: DocumentRepository {
     func saveCopy(_ doc: NovelDocument, from sourceURL: URL, to destinationURL: URL) async throws
 }
 
+/// 利用者と受け渡す portable な作品パッケージを、安全に検証・複製できる保存境界。
+///
+/// App 層へ `.novelpkg` の内部構造を漏らさず、取り込み／書き出し時にだけ必要な
+/// resource 上限、symbolic link 拒否、完全 readback、最終採用前の検証を保存層へ
+/// 委譲する。通常の自動保存とは分け、既存の書き出し先を検証失敗で失わない。
+public protocol PortableDocumentPackageRepository: DocumentCopyingRepository {
+    /// package 全体の filesystem 境界と既知 document payload を検証して読み込む。
+    func validatePortablePackage(at url: URL) async throws -> NovelDocument
+
+    /// sibling temporary package を完全検証してから destination へ atomic に採用する。
+    func saveValidatedCopy(
+        _ doc: NovelDocument,
+        from sourceURL: URL,
+        to destinationURL: URL
+    ) async throws
+}
+
+/// スナップショットの作成契機(D-026 / D-074)。
+public enum DocumentSnapshotKind: Equatable, Sendable {
+    /// ツールバー／ショートカットからの明示保存、または復元前の退避。
+    case manual
+    /// 編集後の遅延、またはアプリ退避時の端末内自動保存。
+    case automatic
+}
+
+/// 端末内自動スナップショットの遅延と、過去へ進むほど疎になる保持(D-074)。
+public enum DocumentSnapshotPolicy: Sendable {
+    /// 編集があってから、この時間が経ったら作品全体を1つ残す。追加の編集ではタイマーを延長しない。最小単位は5分。
+    public static let automaticDelayNanoseconds: UInt64 = 5 * 60 * 1_000_000_000
+    /// 発火時にIME変換中だった場合の再試行間隔。
+    public static let automaticCompositionRetryNanoseconds: UInt64 = 15 * 1_000_000_000
+    /// この時間より新しい自動スナップショットは間引かない。
+    public static let recentKeepAll: TimeInterval = 60 * 60
+    /// この時間より新しい自動スナップショットは、同じ時間帯で最新の1件だけ残す。
+    public static let hourlyUntil: TimeInterval = 24 * 60 * 60
+    /// この時間より新しい自動スナップショットは、同じ日の最新の1件だけ残す。
+    public static let dailyUntil: TimeInterval = 30 * 24 * 60 * 60
+    /// この時間より新しい自動スナップショットは、同じ週の最新の1件だけ残す。それより古いものは月ごと1件。
+    public static let weeklyUntil: TimeInterval = 365 * 24 * 60 * 60
+}
+
+/// 自動スナップショットだけを対象にする保持判定。手動分は削除候補にしない。
+public enum DocumentSnapshotRetention: Sendable {
+    /// 間引く自動スナップショットのURL。新しい順に見て、各時間帯の最新だけを残す。
+    public static func automaticURLsToDelete(
+        from snapshots: [DocumentSnapshotInfo],
+        now: Date,
+        calendar: Calendar = utcGregorianCalendar
+    ) -> [URL] {
+        var keptBuckets: Set<RetentionBucket> = []
+        var urlsToDelete: [URL] = []
+        let automatic = snapshots
+            .filter(\.isAutomatic)
+            .sorted { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt {
+                    return lhs.createdAt > rhs.createdAt
+                }
+                return lhs.url.lastPathComponent > rhs.url.lastPathComponent
+            }
+
+        for snapshot in automatic {
+            let bucket = RetentionBucket(
+                createdAt: snapshot.createdAt,
+                now: now,
+                calendar: calendar
+            )
+            if bucket.keepsAll {
+                continue
+            }
+            if keptBuckets.contains(bucket) {
+                urlsToDelete.append(snapshot.url)
+            } else {
+                keptBuckets.insert(bucket)
+            }
+        }
+        return urlsToDelete
+    }
+
+    public static var utcGregorianCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        return calendar
+    }
+}
+
+private struct RetentionBucket: Hashable {
+    enum Granularity: Hashable {
+        case recent
+        case hour(year: Int, month: Int, day: Int, hour: Int)
+        case day(year: Int, month: Int, day: Int)
+        case week(weekOfYear: Int, yearForWeekOfYear: Int)
+        case month(year: Int, month: Int)
+    }
+
+    let granularity: Granularity
+
+    var keepsAll: Bool {
+        granularity == .recent
+    }
+
+    init(createdAt: Date, now: Date, calendar: Calendar) {
+        let age = now.timeIntervalSince(createdAt)
+        if age < DocumentSnapshotPolicy.recentKeepAll {
+            granularity = .recent
+            return
+        }
+        if age < DocumentSnapshotPolicy.hourlyUntil {
+            let components = calendar.dateComponents([.year, .month, .day, .hour], from: createdAt)
+            granularity = .hour(
+                year: components.year ?? 0,
+                month: components.month ?? 0,
+                day: components.day ?? 0,
+                hour: components.hour ?? 0
+            )
+            return
+        }
+        if age < DocumentSnapshotPolicy.dailyUntil {
+            let components = calendar.dateComponents([.year, .month, .day], from: createdAt)
+            granularity = .day(
+                year: components.year ?? 0,
+                month: components.month ?? 0,
+                day: components.day ?? 0
+            )
+            return
+        }
+        if age < DocumentSnapshotPolicy.weeklyUntil {
+            let components = calendar.dateComponents([.weekOfYear, .yearForWeekOfYear], from: createdAt)
+            granularity = .week(
+                weekOfYear: components.weekOfYear ?? 0,
+                yearForWeekOfYear: components.yearForWeekOfYear ?? 0
+            )
+            return
+        }
+        let components = calendar.dateComponents([.year, .month], from: createdAt)
+        granularity = .month(
+            year: components.year ?? 0,
+            month: components.month ?? 0
+        )
+    }
+}
+
 /// 作品パッケージ内に保存されたスナップショットの一覧項目。
 ///
 /// 置き場所やファイル名規則は保存層の詳細であり、App 側はこの値の
@@ -328,11 +472,14 @@ public struct DocumentSnapshotInfo: Identifiable, Hashable, Sendable {
     public let createdAt: Date
     /// UI 向けの表示名(保存層がロケールに合わせて組み立てる)。
     public let displayName: String
+    /// 自動保存なら `true`。手動保存と復元前退避は `false`(D-074)。
+    public let isAutomatic: Bool
 
-    public init(url: URL, createdAt: Date, displayName: String) {
+    public init(url: URL, createdAt: Date, displayName: String, isAutomatic: Bool = false) {
         self.url = url
         self.createdAt = createdAt
         self.displayName = displayName
+        self.isAutomatic = isAutomatic
     }
 }
 
@@ -361,4 +508,14 @@ public protocol SnapshottingDocumentRepository: DocumentRepository {
     ///   - snapshotURL: 書き戻すスナップショットの URL。
     ///   - packageURL: 現在の作品パッケージURL。
     func restoreSnapshot(from snapshotURL: URL, into packageURL: URL) async throws
+}
+
+/// 手動／自動の区別と、自動分の間引きができるスナップショット保存。
+public protocol AutomaticSnapshottingDocumentRepository: SnapshottingDocumentRepository {
+    @discardableResult
+    func saveSnapshot(
+        _ doc: NovelDocument,
+        to url: URL,
+        kind: DocumentSnapshotKind
+    ) async throws -> URL
 }
