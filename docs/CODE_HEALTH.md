@@ -44,11 +44,11 @@ D-071 本文の item 2（裏で send／fetch）と item 5（package 保存直後
 
 優先は上から。依頼が「機能を足す」でない限り、ここから選ぶ。
 
-1. **Mac と iOS の Device Sync 複製**  
+1. **Mac と iOS の Device Sync 複製**
    D-076 R2でFeature／責務別ディレクトリへ移動し、R4でlocal libraryの状態／attestation／record／inventoryを `NovelKit/Sources/NovelLibrary/` へ統合した。`DeviceSyncLog` は `NovelApp/DeviceSync/Note/DeviceSyncLog.swift`。Note coordinator 組み立ては `AppleDeviceSyncServices.makeNoteSyncCoordinator` に寄せた。runtime / bindings / transport / library / edit intent のOS固有対は残っているが、共有状態機械は複製しない。UIKit / AppKit と `IOSDocumentStore` / `AppState` の呼び出し口、private root、CloudKit compositionだけを各 App に残す。CloudKit 型を NovelCore／NovelLibrary へ出さない。
 2. **`AppState.swift` と CloudLibrary**
    本体はプロパティと `init` だけ。起動棚のrefresh/mergeは `NovelApp/Library/AppState+StartupLibrary.swift`、package readbackは `StartupLibraryLoader.swift`、pure row projectionは `StartupLibraryProjection.swift`、開く／新規／recoveryは `AppState+StartupLibraryOpening.swift`、document transitionは `NovelApp/DocumentLifecycle/AppState+Lifecycle.swift` と `DocumentLifecyclePermissionPolicy.swift`、章・選択は `NovelApp/Features/Writing/AppState+Outline.swift`、人物・プロット・伏線は `NovelApp/Features/ProjectInfo/AppState+ProjectFeatures.swift`、資料は `NovelApp/Features/Attachments/AppState+Attachments.swift`、保存は `NovelApp/DocumentLifecycle/AppState+Persistence.swift`、スナップショットは `NovelApp/Features/ProjectInfo/AppState+Snapshots.swift`。iOS CloudLibrary は models / refresh / open / mutations に分けた。新しい 200 行を `AppState.swift` 本体へ足さない。保存 coordinator は触らない。分割に伴い一部 stored state の setter が module-internal へ広がっているため、`private(set)` を型で回復するのは次の境界整理タスクとする。
-3. **Work 経路と Note 経路の条件分岐**  
+3. **Work 経路と Note 経路の条件分岐**
    同じメソッドが `if usesNoteSyncRuntime` で二系統になっている。通常 runtime は Note 固定なので、新コードは Note 側だけ書き、Work 側は旧 test が通る最小限に留める。
 4. **`.derivedData/`**
    `.gitignore` 済み。コミットしない。
