@@ -1276,21 +1276,6 @@
   },
   {
     "violation": {
-      "ruleDescription": "Files should not span too many lines.",
-      "location": {
-        "character": 1,
-        "line": 628,
-        "file": "NovelApp/Library/DeviceSyncLocalLibraryStore.swift"
-      },
-      "severity": "warning",
-      "ruleIdentifier": "file_length",
-      "ruleName": "File Length",
-      "reason": "File should contain 400 lines or less: currently contains 628"
-    },
-    "text": "#endif"
-  },
-  {
-    "violation": {
       "ruleDescription": "Type bodies should not span too many lines",
       "location": {
         "character": 1,
@@ -1738,21 +1723,6 @@
       "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 487 lines"
     },
     "text": "actor IOSDeviceSyncLocalLibraryStore {"
-  },
-  {
-    "violation": {
-      "ruleDescription": "Files should not span too many lines.",
-      "location": {
-        "character": 1,
-        "line": 664,
-        "file": "NovelAppIOS/DeviceSync/Runtime/IOSDeviceSyncLocalLibraryStore.swift"
-      },
-      "severity": "warning",
-      "ruleIdentifier": "file_length",
-      "ruleName": "File Length",
-      "reason": "File should contain 400 lines or less: currently contains 664"
-    },
-    "text": "}"
   },
   {
     "violation": {
@@ -3896,21 +3866,6 @@
       "ruleIdentifier": "file_length",
       "ruleName": "File Length",
       "reason": "File should contain 400 lines or less: currently contains 402"
-    },
-    "text": "}"
-  },
-  {
-    "violation": {
-      "ruleDescription": "Files should not span too many lines.",
-      "location": {
-        "character": 1,
-        "line": 592,
-        "file": "NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncAccount.swift"
-      },
-      "severity": "warning",
-      "ruleIdentifier": "file_length",
-      "ruleName": "File Length",
-      "reason": "File should contain 400 lines or less: currently contains 592"
     },
     "text": "}"
   },

@@ -4,40 +4,14 @@ import NovelCore
 import NovelLibrary
 import NovelSync
 
-typealias IOSDeviceSyncLocalLibraryError = LibraryRegistryError
-typealias IOSDeviceSyncLocalLibraryState = LibraryRecordState
-typealias IOSDeviceSyncLocalPackageAttestation = LocalPackageAttestation
-typealias IOSDeviceSyncLocalLibraryRecord = LibraryRecord
-typealias IOSDeviceSyncLocalLibraryInventory = LibraryInventory
 /// Cloud accountに依存しないapp-private working-copy inventory。
 /// URLは保存せず、WorkIDから固定package名を毎回導出する。
 actor IOSDeviceSyncLocalLibraryStore {
-    private struct RecordEnvelope: Codable {
-        static let currentVersion = 1
-
-        let version: Int
-        let record: IOSDeviceSyncLocalLibraryRecord
-    }
-
-    private struct RootIdentity: Equatable, Sendable {
-        let device: UInt64
-        let inode: UInt64
-
-        init(_ status: stat) {
-            device = UInt64(status.st_dev)
-            inode = UInt64(status.st_ino)
-        }
-    }
-
-    private static let maximumRecordBytes = 2 * 1024 * 1024
     private static let maximumRecords = 20000
 
-    private let registryRootURL: URL
-    private let registryRootIdentity: RootIdentity
+    private let registry: IOSDeviceSyncLocalLibraryRegistry
     private let workingCopyLocation: IOSPrivateWorkingCopyLocation
     private let fileManager: FileManager
-    private let encoder: JSONEncoder
-    private let decoder = JSONDecoder()
 
     init(
         registryRootURL: URL,
@@ -45,24 +19,19 @@ actor IOSDeviceSyncLocalLibraryStore {
         workingCopyLocation: IOSPrivateWorkingCopyLocation,
         fileManager: FileManager = .default
     ) throws {
-        let root = try Self.prepareRoot(
+        registry = try IOSDeviceSyncLocalLibraryRegistry(
             registryRootURL,
             trustedAncestorURL: trustedAncestorURL,
             fileManager: fileManager
         )
-        self.registryRootURL = root.url
-        registryRootIdentity = root.identity
         self.workingCopyLocation = workingCopyLocation
         self.fileManager = fileManager
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        self.encoder = encoder
     }
 
     func inventory() throws -> IOSDeviceSyncLocalLibraryInventory {
         try validateRoots()
         let urls = try fileManager.contentsOfDirectory(
-            at: registryRootURL,
+            at: registry.rootURL,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         )
@@ -72,7 +41,7 @@ actor IOSDeviceSyncLocalLibraryStore {
         var records: [IOSDeviceSyncLocalLibraryRecord] = []
         var unreadable: Set<SyncWorkID> = []
         for url in urls {
-            guard let workID = canonicalWorkID(for: url) else { continue }
+            guard let workID = registry.canonicalWorkID(for: url) else { continue }
             do {
                 guard let record = try readRecord(for: workID) else {
                     unreadable.insert(workID)
@@ -84,7 +53,10 @@ actor IOSDeviceSyncLocalLibraryStore {
             }
         }
         let registered = Set(records.map(\.workID)).union(unreadable)
-        let unregistered = try packageWorkIDs().subtracting(registered)
+        let unregistered = try registry.packageWorkIDs(
+            using: workingCopyLocation,
+            fileManager: fileManager
+        ).subtracting(registered)
         try validateRoots()
         records.sort { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
         return IOSDeviceSyncLocalLibraryInventory(
@@ -143,7 +115,7 @@ actor IOSDeviceSyncLocalLibraryStore {
     ) throws {
         try expectedPackage.validate()
         guard try readRecord(for: workID) == nil,
-              try pathStatus(packageURL(for: workID)) == nil else {
+              try registry.pathStatus(packageURL(for: workID)) == nil else {
             throw IOSDeviceSyncLocalLibraryError.duplicateWork
         }
         try writeRecord(IOSDeviceSyncLocalLibraryRecord(
@@ -158,17 +130,17 @@ actor IOSDeviceSyncLocalLibraryStore {
 
     func removeLocalWork(workID: SyncWorkID) throws {
         try validateRoots()
-        let recordURL = recordURL(for: workID)
+        let recordURL = registry.recordURL(for: workID)
         let package = try packageURL(for: workID)
         let staging = try stagingPackageURL(for: workID)
-        let hadRecord = try pathStatus(recordURL) != nil
-        let hadPackage = try pathStatus(package) != nil
-        let hadStaging = try pathStatus(staging) != nil
+        let hadRecord = try registry.pathStatus(recordURL) != nil
+        let hadPackage = try registry.pathStatus(package) != nil
+        let hadStaging = try registry.pathStatus(staging) != nil
         guard hadRecord || hadPackage || hadStaging else {
             throw IOSDeviceSyncLocalLibraryError.missingWork
         }
         try workingCopyLocation.removePackages(for: workID)
-        if let status = try pathStatus(recordURL) {
+        if let status = try registry.pathStatus(recordURL) {
             guard status.st_mode & S_IFMT == S_IFREG else {
                 throw IOSDeviceSyncLocalLibraryError.invalidRegistry
             }
@@ -181,12 +153,12 @@ actor IOSDeviceSyncLocalLibraryStore {
         guard let record = try readRecord(for: workID) else { return }
         let staging = try stagingPackageURL(for: workID)
         guard record.state == .reservedForPublish,
-              try pathStatus(packageURL(for: workID)) == nil,
-              try pathStatus(staging) == nil else {
+              try registry.pathStatus(packageURL(for: workID)) == nil,
+              try registry.pathStatus(staging) == nil else {
             throw IOSDeviceSyncLocalLibraryError.invalidTransition
         }
-        let url = recordURL(for: workID)
-        guard let status = try pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
+        let url = registry.recordURL(for: workID)
+        guard let status = try registry.pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
             throw IOSDeviceSyncLocalLibraryError.invalidRegistry
         }
         try fileManager.removeItem(at: url)
@@ -224,7 +196,7 @@ actor IOSDeviceSyncLocalLibraryStore {
             }
             return
         }
-        guard try pathStatus(packageURL(for: remote.workID)) == nil else {
+        guard try registry.pathStatus(packageURL(for: remote.workID)) == nil else {
             throw IOSDeviceSyncLocalLibraryError.invalidTransition
         }
         try writeRecord(IOSDeviceSyncLocalLibraryRecord(
@@ -391,148 +363,22 @@ actor IOSDeviceSyncLocalLibraryStore {
 
     private func readRecord(for workID: SyncWorkID) throws -> IOSDeviceSyncLocalLibraryRecord? {
         try validateRoots()
-        let url = recordURL(for: workID)
-        guard let status = try pathStatus(url) else { return nil }
-        guard status.st_mode & S_IFMT == S_IFREG,
-              status.st_size >= 0,
-              status.st_size <= Self.maximumRecordBytes else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else { throw IOSDeviceSyncLocalLibraryError.invalidRegistry }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: Self.maximumRecordBytes + 1) ?? Data()
-        guard data.count <= Self.maximumRecordBytes else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let envelope = try decoder.decode(RecordEnvelope.self, from: data)
-        guard envelope.version == RecordEnvelope.currentVersion,
-              envelope.record.workID == workID else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        try envelope.record.validate()
+        let record = try registry.readRecord(for: workID)
         try validateRoots()
-        return envelope.record
+        return record
     }
 
     private func writeRecord(_ record: IOSDeviceSyncLocalLibraryRecord) throws {
-        try record.validate()
-        let data = try encoder.encode(RecordEnvelope(
-            version: RecordEnvelope.currentVersion,
-            record: record
-        ))
-        guard data.count <= Self.maximumRecordBytes else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let url = recordURL(for: record.workID)
-        if let status = try pathStatus(url), status.st_mode & S_IFMT != S_IFREG {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        try data.write(to: url, options: .atomic)
+        try registry.writeRecord(record)
         try validateRoots()
-        guard let status = try pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-    }
-
-    private func recordURL(for workID: SyncWorkID) -> URL {
-        registryRootURL.appendingPathComponent(
-            "\(workID.rawValue.uuidString).json",
-            isDirectory: false
-        )
-    }
-
-    private func canonicalWorkID(for url: URL) -> SyncWorkID? {
-        guard url.deletingLastPathComponent().standardizedFileURL == registryRootURL,
-              url.pathExtension == "json",
-              let uuid = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
-              url.lastPathComponent == "\(uuid.uuidString).json" else { return nil }
-        return SyncWorkID(rawValue: uuid)
-    }
-
-    private func packageWorkIDs() throws -> Set<SyncWorkID> {
-        let urls = try fileManager.contentsOfDirectory(
-            at: workingCopyLocation.rootURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        guard urls.count <= Self.maximumRecords else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        var workIDs: Set<SyncWorkID> = []
-        for url in urls {
-            if let workID = try workingCopyLocation.workID(for: url) {
-                workIDs.insert(workID)
-            }
-        }
-        return workIDs
     }
 
     private func validateRoots() throws {
-        var status = stat()
-        guard lstat(registryRootURL.path, &status) == 0,
-              status.st_mode & S_IFMT == S_IFDIR,
-              RootIdentity(status) == registryRootIdentity else {
-            throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-        }
+        try registry.validateRoot()
         do {
             try workingCopyLocation.validateFixedRoot()
         } catch {
             throw IOSDeviceSyncLocalLibraryError.unsafeRoot
         }
-    }
-
-    private func pathStatus(_ url: URL) throws -> stat? {
-        var status = stat()
-        if lstat(url.path, &status) == 0 {
-            return status
-        }
-        guard errno == ENOENT else {
-            throw IOSDeviceSyncLocalLibraryError.invalidRegistry
-        }
-        return nil
-    }
-
-    private static func prepareRoot(
-        _ requestedURL: URL,
-        trustedAncestorURL: URL,
-        fileManager: FileManager
-    ) throws -> (url: URL, identity: RootIdentity) {
-        let requested = requestedURL.standardizedFileURL
-        let trusted = trustedAncestorURL.standardizedFileURL.resolvingSymlinksInPath()
-        guard requested.isFileURL, trusted.isFileURL,
-              requested.path != "/", trusted.path != "/",
-              requested.path.hasPrefix(trustedAncestorURL.standardizedFileURL.path + "/") else {
-            throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-        }
-        let relative = requested.pathComponents.dropFirst(
-            trustedAncestorURL.standardizedFileURL.pathComponents.count
-        )
-        guard relative.allSatisfy({ component in
-            !component.isEmpty && component != "." && component != ".."
-                && URL(fileURLWithPath: component).lastPathComponent == component
-        }) else {
-            throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-        }
-        var canonical = trusted
-        for component in relative {
-            canonical.appendPathComponent(component, isDirectory: true)
-            var status = stat()
-            if lstat(canonical.path, &status) == 0,
-               status.st_mode & S_IFMT != S_IFDIR {
-                throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-            }
-        }
-        try fileManager.createDirectory(at: canonical, withIntermediateDirectories: true)
-        guard canonical.resolvingSymlinksInPath().standardizedFileURL == canonical.standardizedFileURL else {
-            throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-        }
-        var status = stat()
-        guard lstat(canonical.path, &status) == 0,
-              status.st_mode & S_IFMT == S_IFDIR else {
-            throw IOSDeviceSyncLocalLibraryError.unsafeRoot
-        }
-        return (canonical.standardizedFileURL, RootIdentity(status))
     }
 }

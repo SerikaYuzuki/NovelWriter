@@ -4,31 +4,15 @@ import NovelCore
 import NovelLibrary
 import NovelSync
 
-typealias DeviceSyncLocalLibraryError = LibraryRegistryError
-typealias DeviceSyncLocalLibraryState = LibraryRecordState
-typealias DeviceSyncLocalPackageAttestation = LocalPackageAttestation
-typealias DeviceSyncLocalLibraryRecord = LibraryRecord
-typealias DeviceSyncLocalLibraryInventory = LibraryInventory
 #if canImport(NovelSyncCloudKit)
 /// CloudKit accountに依存しない、app-private working copyの耐久inventory。
 /// URLは保存せず`workID -> SyncWorkingCopies-v2/<workID>.novelpkg`から導出する。
 actor DeviceSyncLocalLibraryStore {
-    private struct RecordEnvelope: Codable {
-        static let currentVersion = 1
-
-        let version: Int
-        let record: DeviceSyncLocalLibraryRecord
-    }
-
-    private static let maximumRecordBytes = 2 * 1024 * 1024
     private static let maximumRecords = 20000
 
-    private let registryRootURL: URL
-    private let registryRootIdentity: FileDeviceSyncMergeRecoveryStore.RootIdentity
+    private let registry: DeviceSyncLocalLibraryRegistry
     private let workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
     private let fileManager: FileManager
-    private let encoder: JSONEncoder
-    private let decoder = JSONDecoder()
 
     init(
         registryRootURL: URL,
@@ -36,24 +20,19 @@ actor DeviceSyncLocalLibraryStore {
         workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot,
         fileManager: FileManager = .default
     ) throws {
-        let prepared = try FileDeviceSyncMergeRecoveryStore.prepareAnchoredRoot(
+        registry = try DeviceSyncLocalLibraryRegistry(
             registryRootURL,
             trustedAncestorURL: trustedAncestorURL,
             fileManager: fileManager
         )
-        self.registryRootURL = prepared.url
-        registryRootIdentity = prepared.identity
         self.workingCopyRoot = workingCopyRoot
         self.fileManager = fileManager
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        self.encoder = encoder
     }
 
     func inventory() throws -> DeviceSyncLocalLibraryInventory {
         try validateRoots()
         let urls = try fileManager.contentsOfDirectory(
-            at: registryRootURL,
+            at: registry.rootURL,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         )
@@ -63,7 +42,7 @@ actor DeviceSyncLocalLibraryStore {
         var records: [DeviceSyncLocalLibraryRecord] = []
         var unreadable: Set<SyncWorkID> = []
         for url in urls {
-            guard let workID = canonicalWorkID(for: url) else { continue }
+            guard let workID = registry.canonicalWorkID(for: url) else { continue }
             do {
                 let record = try readRecord(for: workID)
                 guard let record else {
@@ -76,7 +55,10 @@ actor DeviceSyncLocalLibraryStore {
             }
         }
         let registered = Set(records.map(\.workID)).union(unreadable)
-        let unregistered = try packageWorkIDs().subtracting(registered)
+        let unregistered = try registry.packageWorkIDs(
+            at: workingCopyRoot.url,
+            fileManager: fileManager
+        ).subtracting(registered)
         try validateRoots()
         records.sort { $0.workID.rawValue.uuidString < $1.workID.rawValue.uuidString }
         return DeviceSyncLocalLibraryInventory(
@@ -137,7 +119,7 @@ actor DeviceSyncLocalLibraryStore {
         guard try readRecord(for: workID) == nil else {
             throw DeviceSyncLocalLibraryError.duplicateWork
         }
-        guard try pathStatus(packageURL(for: workID)) == nil else {
+        guard try registry.pathStatus(packageURL(for: workID)) == nil else {
             throw DeviceSyncLocalLibraryError.duplicateWork
         }
         try writeRecord(
@@ -161,17 +143,17 @@ actor DeviceSyncLocalLibraryStore {
     /// records stay; a synced work may reappear as remote-only.
     func removeLocalWork(workID: SyncWorkID) throws {
         try validateRoots()
-        let recordURL = recordURL(for: workID)
+        let recordURL = registry.recordURL(for: workID)
         let package = try packageURL(for: workID)
         let staging = try stagingPackageURL(for: workID)
-        let hadRecord = try pathStatus(recordURL) != nil
-        let hadPackage = try pathStatus(package) != nil
-        let hadStaging = try pathStatus(staging) != nil
+        let hadRecord = try registry.pathStatus(recordURL) != nil
+        let hadPackage = try registry.pathStatus(package) != nil
+        let hadStaging = try registry.pathStatus(staging) != nil
         guard hadRecord || hadPackage || hadStaging else {
             throw DeviceSyncLocalLibraryError.missingWork
         }
         try workingCopyRoot.removePackages(for: workID, fileManager: fileManager)
-        if let status = try pathStatus(recordURL) {
+        if let status = try registry.pathStatus(recordURL) {
             guard status.st_mode & S_IFMT == S_IFREG else {
                 throw DeviceSyncLocalLibraryError.invalidRegistry
             }
@@ -184,12 +166,12 @@ actor DeviceSyncLocalLibraryStore {
         try validateRoots()
         guard let record = try readRecord(for: workID) else { return }
         guard record.state == .reservedForPublish,
-              try pathStatus(packageURL(for: workID)) == nil,
-              try pathStatus(stagingPackageURL(for: workID)) == nil else {
+              try registry.pathStatus(packageURL(for: workID)) == nil,
+              try registry.pathStatus(stagingPackageURL(for: workID)) == nil else {
             throw DeviceSyncLocalLibraryError.invalidTransition
         }
-        let url = recordURL(for: workID)
-        guard let status = try pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
+        let url = registry.recordURL(for: workID)
+        guard let status = try registry.pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
             throw DeviceSyncLocalLibraryError.invalidRegistry
         }
         try fileManager.removeItem(at: url)
@@ -205,7 +187,7 @@ actor DeviceSyncLocalLibraryStore {
             throw DeviceSyncLocalLibraryError.invalidTransition
         } else {
             let finalURL = try packageURL(for: remote.workID)
-            guard try pathStatus(finalURL) == nil else {
+            guard try registry.pathStatus(finalURL) == nil else {
                 throw DeviceSyncLocalLibraryError.invalidTransition
             }
             try writeRecord(
@@ -394,103 +376,23 @@ actor DeviceSyncLocalLibraryStore {
 
     private func readRecord(for workID: SyncWorkID) throws -> DeviceSyncLocalLibraryRecord? {
         try validateRoots()
-        let url = recordURL(for: workID)
-        guard let status = try pathStatus(url) else { return nil }
-        guard status.st_mode & S_IFMT == S_IFREG,
-              status.st_size >= 0,
-              status.st_size <= Self.maximumRecordBytes else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else { throw DeviceSyncLocalLibraryError.invalidRegistry }
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: Self.maximumRecordBytes + 1) ?? Data()
-        guard data.count <= Self.maximumRecordBytes else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let envelope = try decoder.decode(RecordEnvelope.self, from: data)
-        guard envelope.version == RecordEnvelope.currentVersion,
-              envelope.record.workID == workID else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        try envelope.record.validate()
+        let record = try registry.readRecord(for: workID)
         try validateRoots()
-        return envelope.record
+        return record
     }
 
     private func writeRecord(_ record: DeviceSyncLocalLibraryRecord) throws {
-        try record.validate()
-        let envelope = RecordEnvelope(version: RecordEnvelope.currentVersion, record: record)
-        let data = try encoder.encode(envelope)
-        guard data.count <= Self.maximumRecordBytes else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        let url = recordURL(for: record.workID)
-        if let status = try pathStatus(url), status.st_mode & S_IFMT != S_IFREG {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        try data.write(to: url, options: .atomic)
+        try registry.writeRecord(record)
         try validateRoots()
-        guard let status = try pathStatus(url), status.st_mode & S_IFMT == S_IFREG else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-    }
-
-    private func recordURL(for workID: SyncWorkID) -> URL {
-        registryRootURL.appendingPathComponent(
-            "\(workID.rawValue.uuidString).json",
-            isDirectory: false
-        )
-    }
-
-    private func canonicalWorkID(for url: URL) -> SyncWorkID? {
-        guard url.deletingLastPathComponent().standardizedFileURL == registryRootURL,
-              url.pathExtension == "json",
-              let uuid = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
-              url.lastPathComponent == "\(uuid.uuidString).json" else { return nil }
-        return SyncWorkID(rawValue: uuid)
-    }
-
-    private func packageWorkIDs() throws -> Set<SyncWorkID> {
-        let urls = try fileManager.contentsOfDirectory(
-            at: workingCopyRoot.url,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        guard urls.count <= Self.maximumRecords else {
-            throw DeviceSyncLocalLibraryError.invalidRegistry
-        }
-        return Set(urls.compactMap { url in
-            guard url.deletingLastPathComponent().standardizedFileURL == workingCopyRoot.url,
-                  url.pathExtension == "novelpkg",
-                  let uuid = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
-                  url.lastPathComponent == "\(uuid.uuidString).novelpkg" else { return nil }
-            return SyncWorkID(rawValue: uuid)
-        })
     }
 
     private func validateRoots() throws {
-        var status = stat()
-        guard lstat(registryRootURL.path, &status) == 0,
-              status.st_mode & S_IFMT == S_IFDIR,
-              FileDeviceSyncMergeRecoveryStore.RootIdentity(status) == registryRootIdentity else {
-            throw DeviceSyncLocalLibraryError.unsafeRoot
-        }
+        try registry.validateRoot()
         do {
             try workingCopyRoot.validateFixedRoot()
         } catch {
             throw DeviceSyncLocalLibraryError.unsafeRoot
         }
-    }
-
-    private func pathStatus(_ url: URL) throws -> stat? {
-        var status = stat()
-        if lstat(url.path, &status) == 0 {
-            return status
-        }
-        guard errno == ENOENT else { throw DeviceSyncLocalLibraryError.invalidRegistry }
-        return nil
     }
 }
 #endif
