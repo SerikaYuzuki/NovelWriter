@@ -15,9 +15,9 @@
 
 ## ステータス
 
-**Phase 5まで完了(PDFは未実装)**。macOS の執筆ワークベンチに加え、iOS / iPadOS の作品棚〜執筆（IOS-1〜5、D-058）も source として入っている。iCloud 作品棚(D-063)、メモ型 entity 同期(D-071)、明示同期(D-073)、編集後の作品全体自動スナップショット(D-074)も source 実装。**署名済み Mac＋iPhone の N4、Production schema、Package Validator、一般公開準備は未完了。**
+**Phase 5まで完了(PDFは未実装)**。macOS の執筆ワークベンチに加え、iOS / iPadOS の作品棚〜執筆（IOS-1〜5、D-058）も source として入っている。SQLite local canonical、Rust Snapshot Sync、Sign in with Apple (D-077〜D-079) が現行の保存・同期経路で、旧CloudKitアダプター・権限・ランタイムは廃止した。**署名済み Mac＋iPhone の N4、Production schema、Package Validator、一般公開準備は未完了。**
 
-章／話の階層管理、本文編集、話メモ、キャラクター、プロット／伏線、世界観、資料、話内検索、スナップショット、`.novelpkg` v3 自動保存、`Cmd+S`（結線済みなら明示同期）、TXT / Markdown / EPUB 3、校正／アドバイス用 prompt の clipboard copy が動く。
+章／話の階層管理、本文編集、話メモ、キャラクター、プロット／伏線、世界観、資料、話内検索、スナップショット、SQLite自動保存、`Cmd+S`（ローカル保存後にサーバー同期）、TXT / Markdown / EPUB 3、校正／アドバイス用 prompt の clipboard copy が動く。
 
 次の実装 Gate は Package Validator。詳細は [商業化基盤の実装状況](docs/COMMERCIALIZATION_IMPLEMENTATION.md)。エージェントは [AGENTS.md](AGENTS.md) と [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) を先に読む。
 
@@ -33,7 +33,6 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 | `NovelStorage` | `.novelpkg` の読み書き | `NovelCore` |
 | `NovelExport` | TXT / Markdown / EPUB 3の生成とアトミック書き出し | `NovelCore` |
 | `NovelSync` | Device Sync の OS 非依存 domain（live は Note entity） | `NovelCore` |
-| `NovelSyncCloudKit` | private CloudKit adapter | `NovelSync` / `NovelCore` |
 | `EditorKit` | 本文エディタ（macOS `NSTextView` / iOS `UITextView`、プラグイン） | `NovelCore` |
 | `NovelUI` | 再利用可能な SwiftUI 部品 | `NovelCore` |
 | `PreviewSupport` | SwiftUI Preview 用の固定データ | `NovelCore` |

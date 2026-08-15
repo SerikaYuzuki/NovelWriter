@@ -1,6 +1,6 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-077のSQLite local canonical／Snapshot Syncと、D-078の`serverReadableV1`／Sign in with Appleを次世代契約として設計採択した。Rust server、client、auth、SQLite移行、旧CloudKit migration、Production運用はすべて未実装でRelease NO-GO。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)と本書0章。通常Appの現在のproduction runtimeは引き続きD-071の`NoteSyncCoordinator`であり、本書0-current章はmigration完了まで現行コードの説明として読む。0-currentのCloudKit Apple Accountは移行元scopeで、新Rust serverのSign in with Apple sessionとは別の認証境界である。0-histと1〜15章はD-059〜D-061の履歴で、新しい同期コードへ分岐を足さない。旧package、journal、dirty、review、CloudKit recordをreset／削除しない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
+> **状態**: D-077〜D-079のSQLite local canonical／Rust Snapshot Sync／`serverReadableV1`／Sign in with Appleを現行契約とする。Rust server、client、auth、Production hardeningは継続中でRelease NO-GO。旧CloudKit adapter、entitlement、runtimeは削除済みで、新しい同期はCloudKitへ接続しない。旧CloudKit recordの削除やremote操作はこのアプリから行わない。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)と本書0章。0-histと1〜15章は履歴で、新しい同期コードへ分岐を足さない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >

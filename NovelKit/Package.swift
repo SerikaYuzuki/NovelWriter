@@ -18,7 +18,6 @@ let package = Package(
         .library(name: "NovelAuth", targets: ["NovelAuth"]),
         .library(name: "NovelAuthApple", targets: ["NovelAuthApple"]),
         .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
-        .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
@@ -37,7 +36,7 @@ let package = Package(
             dependencies: ["NovelCore"]
         ),
         // NovelSync: OS / transport 非依存のentity同期domain。
-        // CloudKitやUI、NovelStorageを依存へ追加しない。
+        // UIやNovelStorageを依存へ追加しない。
         // D-059／D-061の旧revision経路は履歴として残し、D-071のNoteSyncがlive domain。
         .target(
             name: "NovelSync",
@@ -50,8 +49,8 @@ let package = Package(
             name: "NovelSyncLegacy",
             dependencies: ["NovelSync", "NovelCore"]
         ),
-        // Shared local-library state and attestation models. Filesystem roots,
-        // CloudKit, and platform UI remain in the app adapters.
+        // Shared local-library state and attestation models. Filesystem roots
+        // and platform UI remain in the app adapters.
         .target(
             name: "NovelLibrary",
             dependencies: ["NovelCore", "NovelSync"]
@@ -80,11 +79,6 @@ let package = Package(
         .target(
             name: "NovelSyncTesting",
             dependencies: ["NovelSync", "NovelCore"]
-        ),
-        // Apple private CloudKit adapter。CloudKit型とchange tagをNovelSyncへ漏らさない。
-        .target(
-            name: "NovelSyncCloudKit",
-            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelCore"]
         ),
         .target(
             name: "EditorKit",
@@ -126,10 +120,6 @@ let package = Package(
         .testTarget(
             name: "NovelAuthTests",
             dependencies: ["NovelAuth", "NovelAuthApple"]
-        ),
-        .testTarget(
-            name: "NovelSyncCloudKitTests",
-            dependencies: ["NovelSyncCloudKit", "NovelSync", "NovelCore"]
         ),
         .testTarget(
             name: "EditorKitTests",

@@ -50,7 +50,7 @@ extension AppState {
             do {
                 let outcome = try await worker.sync(workID: workID)
                 guard let self else { return }
-                self.lastSnapshotSyncOutcome = outcome
+                lastSnapshotSyncOutcome = outcome
                 DeviceSyncLog.snapshot("finished \(String(describing: outcome))")
             } catch {
                 DeviceSyncLog.snapshot("failed \(Self.snapshotSyncErrorToken(error))")

@@ -977,3 +977,14 @@
 - **置き換える範囲**: D-077 item 11と「後続Decisionが必要」のProduction account／E2EE未決定部分を具体化する。D-063／D-064のaccount fence、automatic adopt禁止、offline編集、active editor非注入は維持する。現行CloudKit runtimeのApple Accountは移行元scopeであり、新Rust serverのSign in with Apple sessionへ読み替えない。
 - **詳細**: auth domain、wire、provider adapter、session、revocation、fixtureは[AUTH.md](AUTH.md)と`docs/auth/v1/`、同期側のcontent protection／account bindingは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と`docs/sync/v1/`を正とする。
 - **Release NO-GO**: Apple issuer／audience／signature／nonce／state／code replay、JWKS rotation、lost response、refresh rotation／reuse、同一identity再認証、別subject account switch、server notification、Keychain、account fence rotation、cross-tenant non-disclosure、auth停止中のlocal editing、operator／backup access、at-rest key／backup restoreに加え、アプリ内account deletion開始、Apple token revoke、remote data削除完了のread-backをfixtureとProduction相当環境で検証するまで公開認証完成としない。
+
+## D-079: CloudKit同期実装を廃止し、SQLite／Rust Snapshot Syncだけを現行経路にする
+
+- **日付**: 2026-08-16 / **状態**: 承認・実装着手
+- **内容**:
+  1. D-077／D-078のSQLite local canonical、Rust Snapshot Sync、Sign in with Appleを唯一の現行同期経路とする。macOS／iOS通常targetから`NovelSyncCloudKit` product、CloudKit adapter、CloudKit entitlement、CloudKit bootstrapを外し、CloudKitへ接続するコードを残さない。
+  2. 旧CloudKit recordはこのアプリから削除・上書き・自動移行しない。既存利用者の原稿はSQLite／Rust serverの保存物を正とし、旧CloudKitの復旧が必要な場合は別の明示的な外部移行ツール／バックアップ手順で扱う。アプリ内にCloudKitとのdual-read／dual-writeを戻さない。
+  3. `.novelpkg`はImport／Export専用、SQLite＋CASが端末内正本、Rust serverがオンライン正本であることをUI・ログ・設定名にも反映する。「iCloudと同期」「iCloudに保存」など旧経路を示す操作は提供しない。
+  4. 既存の競合／履歴／復元契約はSnapshot Syncの3択とserver historyを正とする。CloudKit由来のNote／Work reviewを新Snapshotへ暗黙変換せず、旧実装のテスト・schema・adapterは削除する。
+- **置き換える範囲**: D-077 item 12の「旧CloudKitをread-only migration sourceとして保持」、D-078の「現行CloudKit runtimeは移行元scope」を本Decisionで破棄する。D-005／D-006／D-036／D-041／D-063／D-064／D-077／D-078のSQLite、portable、editor、lifecycle、account、server-readable境界は維持する。
+- **完了条件**: `Package.swift`とXcodeGen target graphに`NovelSyncCloudKit`／CloudKit framework／iCloud entitlementが無く、CloudKit source／testが削除され、macOS build、iOS compile、NovelKit tests、Rust server tests、`git diff --check`が通ること。旧CloudKit recordへ破壊的操作を行わないこと。

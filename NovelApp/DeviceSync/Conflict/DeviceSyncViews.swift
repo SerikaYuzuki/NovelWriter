@@ -1,5 +1,5 @@
-import NovelSync
 import NovelLocalStore
+import NovelSync
 import SwiftUI
 
 struct SnapshotSyncStatusControl: View {
@@ -9,7 +9,9 @@ struct SnapshotSyncStatusControl: View {
     @State private var showsDetails = false
 
     private var title: String {
-        if saveState != .saved { return "この端末へ保存中" }
+        if saveState != .saved {
+            return "この端末へ保存中"
+        }
         switch outcome {
         case .uploaded: return "この端末とサーバーに同期済み"
         case .needsChoice: return "この端末に保存済み、確認が必要"
@@ -32,7 +34,9 @@ struct SnapshotSyncStatusControl: View {
     }
 
     private var systemImage: String {
-        if saveState != .saved { return "arrow.triangle.2.circlepath.icloud" }
+        if saveState != .saved {
+            return "arrow.triangle.2.circlepath.icloud"
+        }
         switch outcome {
         case .uploaded: return "checkmark.icloud"
         case .needsChoice: return "exclamationmark.icloud"
@@ -41,8 +45,12 @@ struct SnapshotSyncStatusControl: View {
     }
 
     private var isWarning: Bool {
-        if saveState != .saved { return false }
-        if case .needsChoice = outcome { return true }
+        if saveState != .saved {
+            return false
+        }
+        if case .needsChoice = outcome {
+            return true
+        }
         return false
     }
 

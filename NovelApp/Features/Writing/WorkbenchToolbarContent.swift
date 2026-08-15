@@ -19,26 +19,6 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let reviewDeviceSyncChanges: () -> Void
 
     var body: some CustomizableToolbarContent {
-        if appState.deviceSyncRuntime?.library != nil {
-            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
-                Button {
-                    let session = appState.documentSessionToken
-                    Task {
-                        _ = await appState.returnToStartupLibrary(
-                            expectedSession: session,
-                            localFirst: true
-                        )
-                    }
-                } label: {
-                    Label("作品を選ぶ", systemImage: "books.vertical")
-                }
-                .help("iCloudの作品一覧へ戻る")
-                .disabled(!appState.permitsReturnToCloudLibrary)
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
@@ -80,50 +60,18 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         }
 
         if showsWritingActions {
-            if appState.canPublishCurrentWorkToCloud {
-                ToolbarItem(id: WorkbenchToolbarItemID.cloudPublish) {
-                    Button {
-                        let session = appState.documentSessionToken
-                        Task {
-                            _ = await appState.publishCurrentLibraryWork(
-                                expectedSession: session
-                            )
-                        }
-                    } label: {
-                        Label("iCloudに保存", systemImage: "icloud.and.arrow.up")
-                    }
-                    .help("この作品をiCloudに保存します")
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("workbench.cloud.publish")
-                }
-                .customizationBehavior(.disabled)
-                .defaultCustomization(.visible)
-            }
-
             if appState.canExplicitlySyncCurrentWork {
-                ToolbarItem(id: WorkbenchToolbarItemID.cloudSync) {
+                ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
                     Button {
                         Task {
-                            if appState.usesSnapshotSyncRuntime {
-                                _ = await appState.saveAndSyncSnapshotNow()
-                            } else {
-                                _ = await appState.saveAndSyncNow()
-                            }
+                            _ = await appState.saveAndSyncSnapshotNow()
                         }
                     } label: {
-                        Label(
-                            appState.usesSnapshotSyncRuntime ? "サーバーと同期" : "iCloudと同期",
-                            systemImage: "arrow.clockwise.icloud"
-                        )
+                        Label("サーバーと同期", systemImage: "arrow.clockwise")
                     }
-                    .help(
-                        appState.usesSnapshotSyncRuntime
-                            ? "この端末の保存内容をサーバーと同期します"
-                            : "この端末の保存内容をiCloudと同期します"
-                    )
+                    .help("この端末の保存内容をサーバーと同期します")
                     .disabled(appState.isExplicitNoteSyncInFlight)
-                    .accessibilityIdentifier("workbench.cloud.sync")
+                    .accessibilityIdentifier("workbench.snapshot.sync")
                 }
                 .customizationBehavior(.disabled)
                 .defaultCustomization(.visible)
@@ -297,8 +245,7 @@ enum WorkbenchToolbarItemID {
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
     static let deviceSyncStatus = "workbench.device.sync.status"
-    static let cloudPublish = "workbench.cloud.publish"
-    static let cloudSync = "workbench.cloud.sync"
+    static let snapshotSync = "workbench.snapshot.sync"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"

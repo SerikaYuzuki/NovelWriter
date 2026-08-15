@@ -39,9 +39,6 @@ struct FuminiwaApp: App {
     @State private var exportPresenter: ExportPresenter
     @State private var editorSearchSession = EditorSearchSession()
     @State private var editorCommandSession: EditorCommandSession
-    #if canImport(NovelSyncCloudKit)
-    @State private var deviceSyncComposition: DeviceSyncProductionComposition?
-    #endif
 
     init() {
         let defaults = UserDefaults.standard
@@ -50,15 +47,6 @@ struct FuminiwaApp: App {
         }
 
         let editorCommandSession = EditorCommandSession()
-        #if canImport(NovelSyncCloudKit)
-        // D-078 cutover: CloudKit remains compiled for migration/tests, but
-        // the live app uses SQLite + the Rust Snapshot Sync server. Creating
-        // the legacy composition here would still start its preparation gate
-        // and surface a misleading iCloud retry state after a successful
-        // local commit.
-        let deviceSyncComposition: DeviceSyncProductionComposition? = nil
-        let deviceSyncRuntime = deviceSyncComposition?.runtime
-        #endif
         let syncServerURL = URL(
             string: defaults.string(forKey: "fuminiwa.syncServerURL")
                 ?? "http://192.168.11.5:18080"
@@ -78,7 +66,7 @@ struct FuminiwaApp: App {
                 userDefaults: defaults,
                 defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
                 editorCommandSession: editorCommandSession,
-                deviceSyncRuntime: deviceSyncRuntime,
+                deviceSyncRuntime: nil,
                 authSessionCoordinator: authSessionCoordinator,
                 appleSignInCoordinator: appleSignInCoordinator,
                 snapshotSyncTransport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL)
@@ -90,9 +78,6 @@ struct FuminiwaApp: App {
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
         _editorCommandSession = State(initialValue: editorCommandSession)
-        #if canImport(NovelSyncCloudKit)
-        _deviceSyncComposition = State(initialValue: deviceSyncComposition)
-        #endif
     }
 
     var body: some Scene {
@@ -109,26 +94,9 @@ struct FuminiwaApp: App {
                     applicationDelegate.attach(appState: appState)
                     let startupOpenURL = applicationDelegate.takeStartupOpenURL()
                     await appState.restoreFuminiwaSession()
-                    #if canImport(NovelSyncCloudKit)
-                    let deviceSyncBootstrap = deviceSyncComposition.map { composition in
-                        Task { await composition.bootstrap() }
-                    }
-                    #endif
                     await appState.bootstrap(opening: startupOpenURL, localFirst: true)
                     await appState.resumePendingSnapshotSync()
                     applicationDelegate.finishBootstrap()
-                    #if canImport(NovelSyncCloudKit)
-                    // local shelf／active editorの表示をCloudKit bootstrapや
-                    // remote catalogの完了へ結び付けない。必要なremote処理は
-                    // bootstrap完了後にsingle-flightのbackground laneへ渡す。
-                    if let deviceSyncBootstrap {
-                        Task { @MainActor in
-                            await deviceSyncBootstrap.value
-                            await appState.refreshStartupLibrary()
-                            await appState.refreshOrPrepareSelectedEpisodeDeviceSync()
-                        }
-                    }
-                    #endif
                 }
         }
         .commands {
@@ -167,13 +135,9 @@ struct FuminiwaApp: App {
 
             CommandGroup(replacing: .saveItem) {
                 if appState.canExplicitlySyncCurrentWork {
-                    Button(appState.usesSnapshotSyncRuntime ? "サーバーと同期" : "iCloudと同期") {
+                    Button("サーバーと同期") {
                         Task {
-                            if appState.usesSnapshotSyncRuntime {
-                                _ = await appState.saveAndSyncSnapshotNow()
-                            } else {
-                                _ = await appState.saveAndSyncNow()
-                            }
+                            _ = await appState.saveAndSyncSnapshotNow()
                         }
                     }
                     .keyboardShortcut("s", modifiers: .command)
@@ -192,31 +156,6 @@ struct FuminiwaApp: App {
             // app-private作業コピーを外へ見せず、portable `.novelpkg`は書き出しから
             // 明示的に作る。スナップショット保存は Cmd+Option+S を維持する。
             CommandGroup(after: .saveItem) {
-                if appState.deviceSyncRuntime?.library != nil {
-                    Button("作品を選ぶ") {
-                        let session = appState.documentSessionToken
-                        Task {
-                            _ = await appState.returnToStartupLibrary(
-                                expectedSession: session,
-                                localFirst: true
-                            )
-                        }
-                    }
-                    .disabled(!appState.permitsReturnToCloudLibrary)
-
-                    Button("iCloudに保存") {
-                        let session = appState.documentSessionToken
-                        Task {
-                            _ = await appState.publishCurrentLibraryWork(
-                                expectedSession: session
-                            )
-                        }
-                    }
-                    .disabled(!appState.canPublishCurrentWorkToCloud)
-
-                    Divider()
-                }
-
                 Button("書き出す…") {
                     exportPresenter.present()
                 }

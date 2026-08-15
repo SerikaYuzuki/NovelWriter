@@ -1,10 +1,6 @@
 import Foundation
 import os
 
-#if canImport(NovelSyncCloudKit)
-import NovelSyncCloudKit
-#endif
-
 enum DeviceSyncLog {
     private static let noteLogger = Logger(
         subsystem: "dev.serikayuzuki.fuminiwa",
@@ -37,11 +33,7 @@ enum DeviceSyncLog {
     }
 
     static func token(_ error: any Error) -> String {
-        #if canImport(NovelSyncCloudKit)
-        CloudKitSyncDiagnostic.token(for: error)
-        #else
         String(reflecting: type(of: error))
-        #endif
     }
 
     static func userFacingMessage(_ message: String, error: any Error) -> String {
@@ -65,11 +57,17 @@ enum DeviceSyncLog {
     }
 
     static func looksTemporarilyOffline(_ error: any Error) -> Bool {
-        #if canImport(NovelSyncCloudKit)
-        CloudKitSyncDiagnostic.looksTemporarilyOffline(error)
-        #else
-        false
-        #endif
+        if let urlError = error as? URLError {
+            return [
+                .cannotFindHost,
+                .cannotConnectToHost,
+                .networkConnectionLost,
+                .notConnectedToInternet,
+                .timedOut,
+                .dnsLookupFailed
+            ].contains(urlError.code)
+        }
+        return false
     }
 
     private static func emit(

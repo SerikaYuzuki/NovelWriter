@@ -14,7 +14,7 @@
 | [AUTH.md](AUTH.md) | provider-neutral AccountID、Apple adapter、FUMINIWA session、AccountFenceの実装前認証契約 |
 | [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) | 次世代local schema責務、wire、server、Conflict、履歴、実装順、Release Gate |
 | [SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md) | Lunaへ渡すR0成果物、module境界、state machine、PR完了条件 |
-| [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章／0-current章** | 0章はD-077概要、0-currentは移行前のlive Note実装 |
+| [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章／0-current章** | 0章はD-077〜D-079概要、0-currentは削除前の履歴 |
 | [IOS.md](IOS.md) 1〜2章、4.5a、4.6 | iOS の現行導線 |
 | [CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md) | 通常版 AI（clipboard のみ） |
 | [CROSS_PLATFORM.md](CROSS_PLATFORM.md) | `.novelpkg` と W0 |
@@ -33,7 +33,7 @@ D-071本文のitem 2（裏でsend／fetch）とitem 5（package保存直後のpe
 
 通常Mac / iOS Appの **移行前production runtime** は`NoteSyncCoordinator`を注入する（D-071）。自動保存はpackageとdirty setまで、iCloudへ出すのは明示同期だけ（D-073）。D-077のRust server／SQLite clientは未実装であり、設計文書追加をruntime切替済みと扱わない。
 
-D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP worker、Rust serverを別境界として追加する。現行CloudKitはread-only migration adapterへ段階的に縮小し、同じ作品をpackage／SQLiteへdual-writeしたりCloudKit／新serverへdual-publishしたりしない。
+D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP worker、Rust serverを別境界として追加する。D-079でCloudKit adapterとentitlementを削除し、CloudKit／新serverのdual-publishや旧CloudKit migrationをアプリの責務にしない。
 
 残っているが **通常起動の正ではない**もの:
 

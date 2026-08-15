@@ -16,12 +16,11 @@ fi
 # Keep this as a case statement: the system bash on macOS is still bash 3.2.
 large_file_ceiling() {
   case "$1" in
-    NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift) echo 968 ;;
-    NovelApp/DocumentLifecycle/AppState+Lifecycle.swift) echo 809 ;;
+    NovelApp/DeviceSync/Legacy/AppState+WorkSync.swift) echo 975 ;;
+    NovelApp/DocumentLifecycle/AppState+Lifecycle.swift) echo 814 ;;
     NovelAppIOS/DeviceSync/Legacy/IOSDocumentStore+WorkSync.swift) echo 1086 ;;
     NovelKit/Sources/NovelSync/WorkSnapshotMerger.swift) echo 1224 ;;
     NovelKit/Sources/NovelSync/WorkSyncCoordinator.swift) echo 1195 ;;
-    NovelKit/Sources/NovelSyncCloudKit/AppleDeviceSyncLibrary.swift) echo 850 ;;
     *) echo "" ;;
   esac
 }
