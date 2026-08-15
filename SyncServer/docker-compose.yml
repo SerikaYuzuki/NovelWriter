@@ -2,13 +2,15 @@ services:
   sync-server:
     build: .
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       FUMINIWA_BIND: 0.0.0.0:8080
       FUMINIWA_DEV_TOKEN: ${FUMINIWA_DEV_TOKEN:?set a development token}
       DATABASE_URL: postgres://fuminiwa:${POSTGRES_PASSWORD:?set a postgres password}@postgres:5432/fuminiwa
       RUST_LOG: info
     ports:
-      - "8080:8080"
+      - "${FUMINIWA_HOST_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,3 +37,4 @@ services:
 
 volumes:
   postgres-data:
+    name: fuminiwa-sync-dev-postgres-data
