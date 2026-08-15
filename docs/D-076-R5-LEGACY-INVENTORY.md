@@ -71,7 +71,9 @@ binding・package snapshot境界へ置き換える。その後に共有値型と
   入れる。
 - `NovelApp/DeviceSync/Runtime/` と `NovelAppIOS/DeviceSync/Runtime/` は現在
   liveとlegacyが交差している。production compositionはR5aでNote-onlyにしたが、
-  runtime value typeのlegacy fieldsはR5本体で分離する。
+  runtime value typeのlegacy fieldsはR5本体で分離する。R5cではproduction runtime
+  のWork transport実装と旧outbox再送だけを`DeviceSync/Legacy/`へ移し、次のtarget
+  除外へ使える物理境界を先に固定した。
 - `NovelApp/DeviceSync/Conflict/` と iOS Conflict adapterは履歴UIを保持する。
   通常targetから除外する前に、Note conflict viewとの共通presentation境界を確認する。
 

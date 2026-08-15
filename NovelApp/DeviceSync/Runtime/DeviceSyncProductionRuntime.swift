@@ -213,7 +213,7 @@ enum DeviceSyncInitialWorkPublicationError: Error, Equatable {
     case requiresActiveDocumentPreflight
 }
 
-actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport, WorkSyncTransport {
+actor DeviceSyncProductionRuntimeBox: EpisodeSyncTransport {
     let localBootstrap: AppleDeviceSyncLocalBootstrap
     let workingCopyRoot: DeviceSyncPrivateWorkingCopyRoot
     let localLibraryStore: DeviceSyncLocalLibraryStore
