@@ -35,12 +35,12 @@ struct SnapshotSyncStatusControl: View {
 
     private var systemImage: String {
         if saveState != .saved {
-            return "arrow.triangle.2.circlepath.icloud"
+            return "arrow.triangle.2.circlepath"
         }
         switch outcome {
-        case .uploaded: return "checkmark.icloud"
-        case .needsChoice: return "exclamationmark.icloud"
-        case .offline, .idle: return "icloud.slash"
+        case .uploaded: return "checkmark.circle"
+        case .needsChoice: return "exclamationmark.triangle"
+        case .offline, .idle: return "wifi.slash"
         }
     }
 
