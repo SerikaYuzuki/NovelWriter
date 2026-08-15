@@ -6,7 +6,7 @@
 
 - `NovelSync`: 156 / 156件（18 suites）。うちN4 in-memory paired／offline／process-kill／account分離を含む
 - `NovelSyncCloudKit`: 91 / 91件（25 suites）。`FUMINIWANote*V1` codec、catalog isolate、conflict inspector、engine pending filter、workID query fallbackを含む
-- macOS Device Sync: 90 / 90件（5 suites）。iOS Device Sync: 87 / 87件（4 suites）。hosted NoteSync 3択 Mac 2 / 2、iOS Simulator 2 / 2。`FUMINIWAExperimental` build
+- macOS Device Sync: 90 / 90件（5 suites）。iOS Device Sync: 87 / 87件（4 suites）。hosted NoteSync 3択 Mac 2 / 2、iOS Simulator 2 / 2。Experimental AI targetはD-075で削除済み
 - D-071 live経路のsource inventoryはlegacy 7 type＋Note 7 typeの14 type。Note typeの`workID`はQUERYABLE。inline JSONまたはentity `payloadAsset`＋`payloadByteCount`
 - 署名済みMac＋iPhone paired、Development schemaのDashboard目視照合、実CloudKit create／fetch／update／delete、Production schema deployは **未実施**
 - `./Scripts/check.sh`は`All checks passed`。N2〜N4 local成功をempty-catalog smoke、paired native、Release GOへ読み替えない
@@ -125,4 +125,3 @@ N4の署名済み検証はDevelopmentとNote 7 typeで行う。この章のProdu
 6. **account**: 別Apple Accountへ切り替える。今の作品が新accountの棚と混ざらない。旧accountへ自動送信しない。
 
 失敗したら、その番号、画面の文言、`note-sync`のConsole行、Dashboardでtype／`workID` indexが見えたかを返す。
-

@@ -4360,6 +4360,86 @@ struct DeviceSyncAppIntegrationTests {
     }
 }
 
+@MainActor
+@Suite("Note sync pending conflict restore")
+struct NoteSyncPendingConflictRestoreAppTests {
+    @Test("Note同期は未解決の衝突を開き直したあとも3択へ戻す")
+    func noteSyncRestoresPendingConflictOnPrepare() async throws {
+        let document = NovelDocument(
+            title: "fixture",
+            chapters: [Chapter(title: "chapter", episodes: [Episode(content: "本文")])]
+        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-DeviceSync-App-Tests", isDirectory: true)
+            .appendingPathComponent("restore-\(UUID().uuidString).novelpkg", isDirectory: true)
+        let repository = DeviceSyncAppRepository()
+        await repository.seed(document, at: url)
+        let workID = SyncWorkID()
+        let localWorkingCopyID = LocalWorkingCopyID()
+        let cloud = InMemoryNoteSyncCloud()
+        let dirtyStore = InMemoryNoteSyncStateStore()
+        try await dirtyStore.save(
+            NoteSyncState(
+                workID: workID,
+                dirty: .empty,
+                lastAckedDigests: [:],
+                pendingConflictKeys: [.work(workID)]
+            )
+        )
+        let resolution = try DeviceSyncBindingResolution(
+            binding: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            ),
+            descriptor: SyncWorkDescriptor(
+                workID: workID,
+                sourceDocumentID: document.id,
+                structureDigest: SyncWorkStructureDigest(chapters: document.chapters),
+                title: document.title
+            ),
+            journal: InMemoryEpisodeSyncJournal(),
+            workJournal: InMemoryWorkSyncJournal(),
+            allowedEpisodeIDs: Set(document.chapters.flatMap(\.episodes).map(\.id))
+        )
+        let runtime = DeviceSyncRuntime(
+            replicaID: SyncReplicaID(),
+            transport: InMemoryEpisodeSyncServer(),
+            workTransport: InMemoryWorkSyncServer(),
+            binding: { _, _ in resolution },
+            makeNoteSyncCoordinator: { coordinatorWorkID, _ in
+                NoteSyncCoordinator(
+                    workID: coordinatorWorkID,
+                    store: dirtyStore,
+                    cloud: cloud
+                )
+            }
+        )
+        let suiteName = "FUMINIWA.NoteSyncPendingConflictRestoreAppTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let state = AppState(
+            dependencies: AppDependencies(
+                repository: repository,
+                userDefaults: defaults,
+                fileManager: .default,
+                editorCommandSession: EditorCommandSession(),
+                deviceSyncRuntime: runtime
+            ),
+            initialStartupState: .ready
+        )
+
+        #expect(await state.openDocument(at: url))
+        let lookup = try #require(state.currentDeviceSyncLookupIdentity)
+        await state.prepareDeviceSync(for: lookup)
+
+        let conflict = try #require(state.noteSyncConflict)
+        #expect(conflict.workID == workID)
+        #expect(conflict.keys == [.work(workID)])
+        #expect(state.deviceSyncState == .needsReview)
+        #expect(state.hasPendingDeviceSyncReview)
+    }
+}
+
 private actor DeviceSyncAppRepository: DocumentRepository {
     private var documents: [String: NovelDocument] = [:]
     private var saveObserver: (@Sendable (NovelDocument) async -> Void)?

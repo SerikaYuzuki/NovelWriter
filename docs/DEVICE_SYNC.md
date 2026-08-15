@@ -62,7 +62,7 @@ portable種類は `work`、`chapter`、`episode`、`character`、`plotCard`、`f
 - iCloudの内容を使う
 - 両方を別作品として残す
 
-両方残すは、この端末の内容を新しい`SyncWorkID`として棚に残し、元のWorkIDはiCloud側を正とする。話の中へ衝突コピーを増やす方式はv1では採用しない。cloud衝突中もEditorとlocal保存を止めない。選択するまで衝突したremoteはpendingに保ち、入力中本文を巻き戻さない。
+両方残すは、この端末の内容を新しい`SyncWorkID`として棚に残し、元のWorkIDはiCloud側を正とする。話の中へ衝突コピーを増やす方式はv1では採用しない。cloud衝突中もEditorとlocal保存を止めない。選択するまで衝突したremoteはpendingに保ち、入力中本文を巻き戻さない。未解決のNote衝突は作品を開き直したときに Note dirty store の pending keys から3択へ戻す。旧 Work journal に残る leftover review は D-071 Note へ自動変換せず、専用の旧経路復旧で扱う。作品棚の「変更を確認」と通常画面の sheet から選べる。閉じても衝突は残る。
 
 ### 0.5 native editorへの反映境界
 

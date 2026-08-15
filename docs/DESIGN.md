@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.90
+# ふみにわ 設計書 v0.92
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -42,9 +42,9 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
 - **Apple Device Sync（D-071契約、N2 CloudKit send／fetchとN3 App 3択はsource＋unit。N4はin-memory simulationのみ。署名済みpaired／Production schemaは未実施。D-063 libraryはlocal automated GO、Release NO-GO継続）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。画面はapp-private `.novelpkg`を正とし、通信を待たない。live経路は作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観をentity recordとして送り、変わったrecordだけを転送する。自動保存はpackageとdirty setまでとし、send／fetchは明示同期だけが行う(D-073)。D-063のWorkID catalog／private working copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。attachment／snapshot履歴／unknown root／端末設定は同期しない。whole revision `CKAsset`、mutation receipt CAS、作品全体3-way merge、3面reviewは通常経路から外す。衝突は同じentityの`serverRecordChanged`だけで検出し、この端末／iCloud／両方を別作品として残す、を選ばせる。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する。D-063までのlocal証跡（`NovelSync` 142 / 142件、`NovelSyncCloudKit` 84 / 84件等）は旧経路の履歴であり、D-071実装済みへ流用しない(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059〜D-071)
 - **テスト**: swift-testing(`@Test`)を使用
-- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`、AIの純粋domainだけを持つNovelAIを独立targetとして扱う。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。domain / adapterのsource追加をCloudKit外部Gate完了、NovelAIの追加をprovider / sidecar / UI実装済みとは扱わない(D-043 / D-059〜D-071)
+- **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Mac／iOSで共有するlocal library状態・attestation・registry値型の`NovelLibrary`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`を扱う。`NovelLibrary`はNovelCore／NovelSync（必要な保存検証はNovelStorage API境界）だけを参照し、SwiftUI／AppKit／UIKit／CloudKitへ依存しない。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。AI provider targetはD-075で削除し、再開時は最新APIを別Decisionで再設計する
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
-- **AI支援構成**: provider統合の研究コードは`FUMINIWA_ENABLE_EXPERIMENTAL_AI`を定義する別app target／scheme `FUMINIWAExperimental`だけに`NovelAI`、fake provider、共通AI UIとして保持する。実providerとB4-E以降はD-054により最新stable SDKの明示再評価まで延期する。通常の`FUMINIWA` app targetはAI adapter、Node／CLI／sidecar resource、provider UIをtarget dependencyとcompile条件の段階で含めない。一方、provider／network／key／process／`NovelAI`へ依存しないAIチャット用clipboard prompt copyは通常版の実機能として扱う(D-046 / D-054)
+- **AI支援構成**: 現行の通常版はprovider／networkへ接続せず、校正／アドバイス用promptをsystem clipboardへ明示コピーするだけである。EditorKitは将来の外部提案にも使える選択transaction・IME・stale・one-shot置換境界を保持する。停止中のExperimental provider／fake UI／sidecarはD-075で削除し、再開時は旧実装を自動再利用しない
 
 ## 3. モジュール構成
 
@@ -59,11 +59,6 @@ FUMINIWA
 │   ├── iOS platform adapters
 │   └── adaptive navigation shell
 │
-├── NovelAppExperimental         (Experimental targetだけが追加compile)
-│   ├── AIProofreadingOperation.swift
-│   ├── AIProofreadingPanelView.swift
-│   └── ExperimentalFakeAIProvider.swift
-│
 └── NovelKit                     (ローカル Swift Package)
     ├── NovelCore
     │   └── Models.swift
@@ -73,10 +68,10 @@ FUMINIWA
     │   ├── NovelExporter.swift
     │   ├── TextRenderers.swift
     │   └── EPUBRenderer.swift
+    ├── NovelLibrary              (共有local library状態／attestation／registry値型)
     ├── NovelSync                  (source実装済みのOS・transport非依存domain)
     ├── NovelSyncCloudKit          (Apple private CloudKit adapter)
     ├── NovelSyncTesting           (test専用fake。製品targetへlinkしない)
-    ├── NovelAI                     (純粋domainのみ。provider / process / UI非依存)
     ├── EditorKit
     │   ├── EditorView.swift
     │   ├── Core
@@ -333,7 +328,7 @@ NovelUI は可能な限りプラットフォーム非依存にする。
 
 ### 4.9 NovelAI
 
-将来provider統合を再開する場合のprovider-neutralな純粋domainを担当する。B4-Dまでの実装とtestは保持するが、D-054により実provider、B4-E以降、結果適用UIへの実通信接続は延期中である。初期targetはFoundationのoutbound値型、protocol、draft → version付きinstruction ID、単一`applicationPrompt`、version付きexact response schemaを持つpreview → `AIApplicationPayload`を封印したconfirmed requestの状態遷移、raw structured outputのstrict decode、結果／型付きerror、決定論的fakeだけを持ち、NovelCore、NovelStorage、EditorKit、SwiftUI、AppKit、network、subprocess、Keychain、provider SDKへ依存しない。
+**D-075で実装・targetを削除済み。以下は旧provider-neutral domain案の履歴であり、現行APIや将来実装の保持契約ではない。** 将来provider統合を再開する場合は、最新の公式API／SDKと現在の要件から新しいdomainを設計する。EditorKitの選択transaction（surface／本文／選択revision、UTF-16 range、exact source、one-shot apply）はproviderから独立して残す。
 
 - 最初のtaskは利用者が明示選択した本文範囲の校正案だけとする
 - 固定指示のversionをinstruction IDで表し、`selected_text`を未信頼データとして扱い、その中の命令に従わず選択外の文脈／ファイルを参照しないことを固定する。instructionを変えるときはIDも更新して再確認する
@@ -347,11 +342,20 @@ NovelUI は可能な限りプラットフォーム非依存にする。
 - domain自身はretry、fallback、provider選択、永続化、本文適用を行わない
 - 初期のprompt、response、diffはmemory onlyで、`.novelpkg`やsnapshotを変更しない
 
-EditorKitはopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用を所有し、NovelAIから`NSTextView`へ触れない。App側はdocument session／episode／source digestをconfirmed outboundと別のmemory-only contextへ保持し、送信前／適用前のstale判定へ結合する。Codex Node sidecarとOpenRouterは別adapterとし、AppDependenciesが利用者の明示選択に基づいて一つだけを注入する。
+旧NovelAI案では、EditorKitがopaque selection transaction、surface／本文／選択revision、UTF-16 range／exact source、one-shot／1 Undo適用を所有し、providerから`NSTextView`へ触れない境界を定めていた。現在も残すのはこのEditorKitの安全境界だけで、provider／sidecar／adapterはD-075で削除済みである。
 
 provider統合を再開する場合、App側にはprovider-neutralな校正operation orchestratorを一つだけ置き、Codex SDK経路とAPI経路で同じ選択snapshot、exact preview、送信確認、進行／cancel、結果、diff、stale、Copy、明示Applyの状態機械とUIを使う。process／HTTP、credential、model設定、保持情報、typed error mappingだけをadapterごとに分離する。現在の通常版clipboard支援はこのdomain／orchestratorを使わず、prompt生成とsystem clipboard writeだけを独立して持つ。詳細は[AI_INTEGRATION.md](AI_INTEGRATION.md)と[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする(D-043 / D-046 / D-054)。
 
-### 4.10 NovelSync
+### 4.10 NovelLibrary
+
+Mac／iOSのapp-private作品棚で共有する値型の境界を担当する。`NovelCore`／`NovelSync`に依存できるが、SwiftUI、AppKit、UIKit、CloudKit、OS固有private root、filesystem actorへ依存しない。`.novelpkg`の内部ファイル名やURLを公開APIへ漏らさず、portable read／writeはAppが`NovelStorage`のAPIを通して行う。
+
+- `LibraryRecordState`、`LocalPackageAttestation`、`LibraryRecord`、`LibraryInventory`、registryのエラーといった、OS間で意味が同じ状態・値・検証だけを持つ
+- `accountQuarantined`／`legacyPreserved`を含む状態supersetを一つの実装で表し、Mac／iOSがenumやvalidationを複製しない
+- `Codable`／`Hashable`／`Sendable`を基本とし、保存・読込・actor所有のI/Oは各Appへ注入する
+- Mac／iOS固有のprivate root決定、filesystem actor、Files／Finder操作、CloudKit composition、legacy migration policyは各Appまたは`NovelSyncCloudKit`へ残す
+
+### 4.11 NovelSync
 
 D-071の現行Device Syncに必要なOS / transport非依存domainを担当する。`NovelCore`へ依存してよいが、NovelStorage、EditorKit、CloudKit、SwiftData、SwiftUI、AppKit、UIKitへ依存しない。
 
@@ -368,7 +372,7 @@ D-059／D-060のEpisode本文Device Sync domainと、D-061のWork snapshot／rev
 
 D-059／D-060 Episode trackとD-061 Work trackの保持契約は、DEVICE_SYNC.mdの履歴節を正とする。App側の論理順は **native editor → model → DocumentSaveCoordinatorによるpackage保存 → dirty set → remote pending** である。remote taskはEditor入力とlocal保存を待たせない。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
 
-### 4.11 NovelSyncCloudKit
+### 4.12 NovelSyncCloudKit
 
 Apple版Device Syncのplatform adapterを担当し、`NovelSync` / `NovelCore`とApple CloudKit frameworkにだけ依存する。private databaseの単一固定zone、`FUMINIWANote*V1` entity record、大きな話本文だけの`CKAsset`、server change tag、`CKSyncEngine`のsend／fetch、account fence、engine state recovery、package外binding metadataとdirty setを実装する。
 
@@ -391,7 +395,7 @@ source実装、署名なしbuild、Simulator、fake / codec testは、Developer 
 依存関係を組み立てる。例: `NovelpkgRepository`、将来のAIクライアント、設定ストア。
 App本体は具象クラスを直接作りすぎない。
 
-AI adapterを組み立てるPRでは、CodexとOpenRouterを別の具象依存として扱い、利用者が選んだ一つだけをprovider-neutral protocolへ注入する。失敗時に別providerを自動生成・自動選択しない。D-046の個人用Experimental Gateを通した実providerは別app target／scheme `FUMINIWAExperimental`へ登録できるが、D-043の全sidecar／配布Gateと公開Releaseの承認が未完了の間は通常の`FUMINIWA` app targetへprovider target／resource／UIを登録しない。
+AI adapterは現在組み立てない。再開時はCodex／OpenRouter等の候補を独立に評価し、利用者が選んだ一つだけをprovider-neutral boundaryへ注入する設計を新Decisionで定める。失敗時の自動fallback、通常targetへのprovider target／resource／UI登録は行わない。
 
 書き出しはAppStateの保存依存ではなく `ExportPresenter` の実行境界へ注入する。保存パネル確定後に `AppState.document` を値スナップショットとして一度だけ取得し、`NovelExporter` の生成／書込みをMainActor外で実行する。
 
@@ -453,7 +457,7 @@ ContentView
 
 主な操作: Project Sidebar のセクション選択 / Outline での章・話選択 / 章追加 / 章並べ替え / 本文編集 / 検索 / 明示保存 / 自動保存
 
-新UIの画面構成は D-021 / D-024 / D-032 / D-040 / D-061 / D-063 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。通常Releaseの下部status barは文字数・検索結果等の既存workspace情報に使えるが、Editorのlocal保存／同期状態はMac／iOSとも上部の小さな記号を正とし、下部と重複表示しない。provider処理のないAI panel、状態、送信導線を置かない。D-054のclipboard支援は実在する非通信機能なので、各章／話の操作と本文context menuに「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」を置いてよい。別app target／scheme `FUMINIWAExperimental`のprovider UIは研究コードとして保持するが、実provider接続は延期中である。本文執筆では content に章一覧、detail に本文を出す。
+新UIの画面構成は D-021 / D-024 / D-032 / D-040 / D-061 / D-063 と [UIDESIGN.md](UIDESIGN.md) / [TOOLBAR.md](TOOLBAR.md) / [UIREFRESH.md](UIREFRESH.md) が正である。Outlineを持つ執筆・プロット・登場人物・世界観・資料は、左から Project Sidebar、Outline(content)、Detail を `NavigationSplitView` で並べる。作品情報・設定はOutlineを置かず、Project SidebarとDetailだけの2列で表示する。通常Releaseの下部status barは文字数・検索結果等の既存workspace情報に使えるが、Editorのlocal保存／同期状態はMac／iOSとも上部の小さな記号を正とし、下部と重複表示しない。provider処理のないAI panel、状態、送信導線を置かない。D-075のclipboard支援は実在する非通信機能なので、各章／話の操作と本文context menuに「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」を置いてよい。本文執筆では content に章一覧、detail に本文を出す。
 
 macOSの通常起動は`loading`後に`documentSelection`へ入り、同じwindow内の1 paneに小さなアプリアイコン／名称、「作品を取り込む…」「新しい作品」、1つの「iCloudの作品」Listを表示する。Listはprivate CloudKitのWork catalogと検証済みapp-private registryをWorkIDでmergeし、local path／保存場所／Finder／recent detailを出さない。cached exact／local pendingはofflineでもlocal package attestation後に開き、remote-onlyはonline＋account確認後にexact headを再検査してからprivate stagingへdownloadする。Finder / Open Withも外部原本を直接開かず、Import→new WorkIDとする(D-063)。
 
@@ -563,9 +567,9 @@ AI支援は任意機能とし、アカウント、API key、ネットワーク�
 - FUMINIWAはAI chatを開かず、自動paste／送信を行わず、response、diff、Apply、Undo、cancel、retryを扱わない
 - system clipboardは他アプリ、clipboard manager、Universal Clipboardから読まれ得る共有境界であり、secure erase、履歴非保持、外部AIの保持／学習利用を保証しない
 - promptや本文をログ、UserDefaults、snapshot、`.novelpkg`へ保存せず、copy操作で本文、モデル、revision、Undoを変更しない
-- 通常版clipboard支援は`NovelAI`、Experimental AI source、Codex／OpenRouter、Node／CLI／sidecar、network、Keychain、subprocessへ依存しない
+- 通常版clipboard支援はprovider、Codex／OpenRouter、Node／CLI／sidecar、network、Keychain、subprocessへ依存しない
 
-`NovelAI`、Editor transaction、fake provider／共有UI、Codex sidecar B1〜B4-Dは研究成果として保持する。production catalogは空、production channel／factory／callsiteと実provider接続は0件である。B4-E以降とCodex／OpenRouter adapterは最新stable SDK／APIを利用者が明示的に再評価すると決めるまで延期し、0.147.0のcaptureやB4-Dのmock成功から自動再開しない。
+旧`NovelAI`、fake provider／共有UI、Codex sidecar B1〜B4-DはD-075で実装を削除した。安全要求と検討経緯はDecision／feasibility文書に残すが、production channel／factory／callsiteや将来APIの根拠にはしない。再開時は最新stable SDK／APIを新Decisionで再評価する。
 
 clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)、延期したSDK調査の結果は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。provider統合を再開する場合のrequest state、snapshot、sidecar Gate、保存範囲は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
 
@@ -656,16 +660,14 @@ clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_AS
 
 - **対象範囲**: 実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを扱う。価格、法務、販促、決済、事業運用は明示依頼がない限り対象外(D-042)
 - **実装済み**: ふみにわ / FUMINIWAへの改名と旧設定移行(D-038)、Safe Launch(D-039)、参照payloadのvalid UTF-8検査、明示的な`Cmd+S`、provider-backed AI placeholderの非表示、既定のシステム外観追従と明示的なLight／Dark選択(D-040 / D-044)、起動／作品ライフサイクルの競合防止(D-041)、横一行で行全体を開閉できる章Disclosure(D-045)、provider非依存のclipboard prompt支援(D-054)、D-063のcloud library／private copy／Import／identity不変のpackage Export。D-063はmacOS／iOS / iPadOSともsource complete／local automated GOである。remote update／delete、paired device／Production deployを含む公開Releaseは未完了である
-- **AIの現在地**: 通常版は校正／アドバイス×本文選択／話／章のpromptをsystem clipboardへ明示コピーするだけで、provider／network／key／process／`NovelAI`依存は0件。Experimental側は`NovelAI`、EditorKit selection transaction、fake provider／共有UI、Codex sidecar v1からB4-D abstract mock interactive sequencingまでを研究成果として保持する。B4-D 5 suitesは54/54、Experimental全体は205/205を通したが、production catalogは空、production channel／factory／callsite、実Node／SDK／CLI／network／key／実原稿は0件である。実provider、B4-E以降、Codex／OpenRouter adapterは最新stable SDK／APIの明示再評価まで延期する(D-043 / D-046〜D-054)
+- **AIの現在地**: 通常版は校正／アドバイス×本文選択／話／章のpromptをsystem clipboardへ明示コピーするだけで、provider／network／key／process依存は0件。Experimental provider／fake UI／sidecar実装はD-075で削除済み。EditorKitの選択transactionとclipboard境界は残す。実providerを再開する場合は最新stable SDK／APIの明示再評価と新Decisionから始める(D-075)
 - **公開Releaseの次**: Package Validator Gate。duplicate ID／不正参照、symlink、resource limit、孤児payloadの保全、修復コピー、保存前検証を一単位として扱う。外部変更／競合検出は続く独立Gateにする
 - **実装面で残るGate**: AppIcon、Developer ID署名・公証済み成果物、更新機構、実機／アクセシビリティQA。現段階を実装面の公開準備完了とは扱わない
 
 ### Phase 6: AI支援
 
-- **6-C（clipboard prompt支援、通常版）**: 校正／アドバイス×本文選択／話／章の6組合せを決定論的にplain textへ組み立て、利用者の明示操作でsystem clipboardへコピーする。provider、network、key、process、`NovelAI`、応答取込、Applyなし。scope外data、path、local identityを含めず、clipboard共有境界を明記する(D-054)
-- **6-P0〜P2（provider研究基盤、完了・保持）**: `NovelAI` pure domain、EditorKit／App local transaction、fake provider／共有Experimental UIを保持する。通常版clipboard支援から依存しない
-- **6-P3（Codex SDK feasibility、B4-Dで凍結）**: protocol／manifest、SDK 0.147.0合成capture、Darwin supervisor、B3、B4-A〜Dを保持する。production catalogは空で、具象runtime接続と実原稿送信は0件。結果と未達Gateは[実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする
-- **6-P4（実provider、延期）**: B4-E、Codex adapter、OpenRouter adapter、実network／credential／原稿送信は、利用者が最新stable SDK／APIの再評価を明示的に決めるまで着手しない。再開時は旧version／hash／architectureを採用値として引き継がず、新Decisionとthreat modelから始める
+- **6-C（clipboard prompt支援、通常版）**: 校正／アドバイス×本文選択／話／章の6組合せを決定論的にplain textへ組み立て、利用者の明示操作でsystem clipboardへコピーする。provider、network、key、process、応答取込、Applyなし。scope外data、path、local identityを含めず、clipboard共有境界を明記する(D-075)
+- **6-P（provider統合、停止）**: 旧`NovelAI`、fake UI、Codex sidecarの実装はD-075で削除した。将来再開時は最新stable SDK／APIを調査し、新Decisionとthreat modelから再設計する。旧feasibility reportは検討履歴としてのみ参照する
 - **6-R（公開Release、未判断）**: providerを再開した場合もPackage Validator、External Change / Conflict、runtime identity／隔離、arm64／x86_64、nested signing、公証、実機／アクセシビリティQA後に別Decisionで公開AIの有効化を判断する。それまでは通常Releaseへprovider target／resource／UIを含めない
 
 ### Phase 6.5: PDF出力
@@ -677,7 +679,7 @@ clipboard scope、UI、privacy、testは[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_AS
 
 IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機QAは **[IOS.md](IOS.md)** を正とする。
 
-- **IOS-1 Build Graph（実装済み）**: iOS / iPadOS 17 app / test targetを追加し、D-059以前のbase appは通常macOS版と同じ5つのNovelKit productだけをlinkする。現在はDevice Sync用の`NovelSync`と`NovelSyncCloudKit`だけを追加し、`NovelAI`、Experimental、AI provider／SDK／Node／CLI／sidecar／credentialはcompile／link／bundleしない
+- **IOS-1 Build Graph（実装済み）**: iOS / iPadOS 17 app / test targetを追加し、D-059以前のbase appは通常macOS版と同じ5つのNovelKit productだけをlinkする。現在はDevice Sync用の`NovelSync`と`NovelSyncCloudKit`だけを追加し、AI provider／SDK／Node／CLI／sidecar／credentialはcompile／link／bundleしない
 - **IOS-2 Shared App Boundary（実装済み）**: 作品／保存／session処理と、Files picker、scene lifecycle、first responder確定、clipboardを小さなiOS adapterへ分離する
 - **IOS-3 UITextView Adapter（実装済み）**: TextKit 2、text view所有権、`IMEGuardPlugin → IndentPlugin`、共有`IndentRules`、D-055のR1' / R3 / R4 / R5、Undo / Redo、末尾96pt表示余白とcaret revealを実`UITextView`で成立させる
 - **IOS-4 Document MVP / Adaptive Shell（実装済み）**: 外部原本を変更しないapp-private import / edit / export、Safe Launch / Recovery、iPadの適応的複数列、iPhoneの段階遷移を接続する
@@ -756,25 +758,16 @@ FUMINIWAIOS
 ├── NovelSync
 └── NovelSyncCloudKit
 
-FUMINIWAExperimental
-├── 通常NovelAppの共有source
-├── Experimental専用App／AI UI
-├── NovelAI
-├── 通常版baseと同じ5 product
-└── NovelSync（共有App sourceのcompile用。NovelSyncCloudKitはlinkしない）
-
 NovelStorage → NovelCore
 NovelExport  → NovelCore
 NovelUI     → NovelCore
 EditorKit   → NovelCore
 NovelSync   → NovelCore
 NovelSyncCloudKit → NovelSync / NovelCore / CloudKit
-NovelAI     → 依存なし
-
 NovelCore → 依存なし
 ```
 
-NovelCore は絶対にUIやStorageに依存しない。`NovelSync`はNovelStorage、EditorKit、CloudKit、SwiftData、SwiftUI、AppKit、UIKitへ依存せず、Apple固有のCloudKit / CKSyncEngine型は`NovelSyncCloudKit`へ閉じ込める。D-056の通常iOS target「5 productだけ」はD-059によりDevice Sync S1の`NovelSync` / `NovelSyncCloudKit`追加に限って置き換え、`NovelAI`、Experimental、AI provider / SDK / Node / CLI / sidecar / credentialの除外は維持する。Experimentalは共有App sourceをcompileするため`NovelSync`をlinkするが、CloudKit adapter、entitlement、production runtimeを持たない。
+NovelCore は絶対にUIやStorageに依存しない。`NovelSync`はNovelStorage、EditorKit、CloudKit、SwiftData、SwiftUI、AppKit、UIKitへ依存せず、Apple固有のCloudKit / CKSyncEngine型は`NovelSyncCloudKit`へ閉じ込める。D-056の通常iOS target「5 productだけ」はD-059によりDevice Sync S1の`NovelSync` / `NovelSyncCloudKit`追加に限って置き換える。AI provider / SDK / Node / CLI / sidecar / credentialは通常targetへ含めない。
 
 Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Export / Editor → Core`、`Core → 依存なし`という同じ意味の依存方向を C# project reference で強制する。Swift module と C# assembly の直接共有は前提にしない。
 
@@ -815,14 +808,14 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ### 9.6 AI統合
 
-- 通常版の現行AI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。校正／アドバイス用promptの生成とsystem clipboard writeだけを実装し、provider、network、Keychain、subprocess、`NovelAI`、Experimental sourceへ依存させない
+- 通常版の現行AI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。校正／アドバイス用promptの生成とsystem clipboard writeだけを実装し、provider、network、Keychain、subprocess、Experimental sourceへ依存させない
 - clipboardへ含める原稿scopeは明示選択、1話、1章に限定し、作品metadata、メモ、人物、プロット、伏線、世界観、資料、local identity、URL／pathを暗黙追加しない。copy操作で本文、Undo、revision、`.novelpkg`を変更しない
 - 章／話の操作はdocument sessionと対象ID、本文操作はEditorKitの生存中surface／valid selection／IME状態をactivation時に検査し、別作品や現在選択へ読み替えない
 - system clipboardは共有境界であり、履歴非保持、他deviceへの非同期、secure erase、外部AIの保持／学習利用を保証しない。自動送信、chat起動、response取込、Applyを追加しない
 
-以下はD-054により凍結中のprovider統合を将来再開する場合の契約である。
+以下はD-075後にprovider統合を将来再開する場合の設計条件であり、現在の実装ではない。
 
-- AIの純粋domainは`NovelAI`に置き、provider SDK、network、process、Keychain、SwiftUI、AppKit、EditorKitへ依存させない。初期domainはpreviewで封印したprompt／response schemaを含むconfirmed outboundだけをproviderへ渡し、local session／surface／range／pathを持たない
+- provider domainの配置・APIは未決定とし、provider SDK、network、process、Keychain、SwiftUI、AppKit、EditorKitとどのように境界を切るかを再設計時に決める。confirmed outboundへlocal session／surface／range／pathを持たせない要求は維持する
 - 選択snapshotの取得と本文適用はApp / EditorKit bridgeへ閉じ込め、D-005のテキスト所有権とD-041のsession tokenを迂回しない
 - 結果適用は同じdocument session、editor surface、episode、UTF-16範囲、exact sourceの一致を必要とし、staleな結果を現在選択へ再束縛しない
 - provider adapterはCodexとOpenRouterで分離し、失敗時の自動fallbackを実装しない
@@ -831,7 +824,7 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 - providerの不変descriptor照合とconfirmed requestのone-shot leaseはdomain executorで行い、adapter自身にstream生成や比較値の選択をさせない。adapterは外部副作用より先にcancellation handlerを登録する
 - providerはstreaming／cancellation／usage reportingを必須とし、domainがraw structured outputをexact schemaでstrict decodeする。domain budgetに加え、adapterは利用可能なupstream maximum output token parameterとwire event／process limitを設定・検証する。Codex SDKにupstream capがないExperimental実行では未保証とpreviewへ明示し、local limitで代替できたと扱わない
 - prompt、response、diff、provider設定で`.novelpkg` schemaを変更しない
-- Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章を正とする。ただしB4-E以降を現行taskにせず、再開には最新stable SDK／APIの明示再評価と新Decisionを必要とする。Experimental Gate未達なら個人用provider UIへ含めず、Public Gate未達なら通常Releaseへprovider target、resource、UIを含めない
+- 旧Codex sidecarの実装／配布条件は[AI_INTEGRATION.md](AI_INTEGRATION.md)6章とfeasibility reportに履歴として残るが、現行task・再利用契約ではない。再開には最新stable SDK／APIの明示再評価と新Decisionを必要とし、通常Releaseへprovider target、resource、UIを含めない
 
 ## 10. AIエージェント向け実装指示の基本方針
 
@@ -890,6 +883,24 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.92 (2026-08-14)
+
+太い App / iOS ファイルを責務ごとの extension へ分け、Note coordinator の組み立てを CloudKit adapter へ寄せた。
+
+- `AppState.swift` 本体は状態と `init`。chooser / lifecycle / outline / 人物・プロット / 資料 / 保存 / スナップショットは別ファイル
+- iOS CloudLibrary は models / refresh / open / mutations。Mac 執筆 UI は Outline と Editor pane を分離
+- `AppleDeviceSyncServices.makeNoteSyncCoordinator` を Mac / iOS production runtime が共有する。CloudKit 型は NovelCore へ出さない
+- 保存 coordinator と TextKit 2 は触っていない。N4 / Production schema / Package Validator は未実施のまま
+
+### v0.91 (2026-08-14)
+
+コードの簡素化として、Mac/iOS で同じ Device Sync ログを使い、AppState のスナップショット処理を extension へ分け、iOS のプロット／世界観／執筆一覧にも Editor と同じ保存・同期 chrome を付けた。
+
+- `DeviceSyncLog` は `NovelApp/DeviceSyncLog.swift` に1つだけ置き、iOS target からも同じファイルをコンパイルする。CloudKit 型は NovelCore へ出さない
+- スナップショットの作成・予約・復元は `AppState+Snapshots.swift`。保存 coordinator は触っていない
+- iOS のプロット／世界観の Outline／詳細と執筆 Outline の上部 toolbar から、保存記号・「iCloudと同期」・スナップショットへ到達できる。Editor と同じ部品を再利用する
+- N4 署名済み paired／Production schema／Package Validator は未実施のまま
 
 ### v0.90 (2026-08-14)
 
@@ -955,7 +966,7 @@ D-071 N2〜N4として、Note entityのCloudKit adapter、通常Appの短い3択
 - N3: Mac／iOSでpackage保存先行、dirty enqueue、この端末／iCloud／両方を別作品、の短い3択。統合案は出さない。production runtimeだけが`NoteSyncCoordinator`を注入し、既存D-061 App testは旧経路のまま
 - N4: in-memoryの2 client往復、offline再送、process-kill dirty復元、account分離。署名済みMac＋iPhone paired／実CloudKitは未実施
 - 完了報告は (a) source＋unit (b) Simulator／fake (c) 署名済み実CloudKit を分離する。N2〜N4 local成功を同期完成、出荷可能、N4完了へ読み替えない
-- 現行local証跡は`./Scripts/check.sh`の`All checks passed`、`NovelSync` 156 / 156件（18 suites）、`NovelSyncCloudKit` 91 / 91件（25 suites）、macOS Device Sync 90 / 90、iOS Device Sync 87 / 87、hosted NoteSync 3択 Mac 2 / 2・iOS 2 / 2、Experimental build
+- 現行local証跡は`./Scripts/check.sh`の`All checks passed`、`NovelSync` 156 / 156件（18 suites）、`NovelSyncCloudKit` 91 / 91件（25 suites）、macOS Device Sync 90 / 90、iOS Device Sync 87 / 87、hosted NoteSync 3択 Mac 2 / 2・iOS 2 / 2。停止中のExperimental buildはD-075で削除済みで、以後は通常macOS／iOS targetのbuildを検証する
 
 ### v0.83 (2026-08-13)
 
@@ -1114,7 +1125,7 @@ Phase 5完了後のPhase 7へ着手し、iOS / iPadOS 17のapp-private文書MVP�
 
 実provider統合を最新stable SDK／APIの明示再評価まで延期し、通常版のAI支援をAIチャット用clipboard prompt copyへ切り替えた(D-054、[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md))。
 
-- B1〜B4-DのExperimentalコード、fixture、test、Decisionを削除せず、production catalog空／production runtime接続0の研究成果として[日付固定レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)へ記録
+- 当時はB1〜B4-DのExperimentalコード、fixture、test、Decisionを削除せず、production catalog空／production runtime接続0の研究成果として[日付固定レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)へ記録。コード、fixture、testはD-075で削除し、文書と安全要求だけを履歴として残す
 - B4-E、Codex／OpenRouter adapter、network、credential、実原稿送信を現行ロードマップから外し、再開時は旧0.147.0の値を流用せず最新stable境界をゼロから再評価
 - 通常版で校正／アドバイス×本文選択／話／章のplain text promptを明示操作でsystem clipboardへコピーする非通信境界を追加
 - promptへscope外data、local identity、URL／pathを加えず、provider、network、key、process、`NovelAI`、response、diff、Applyへ依存しない

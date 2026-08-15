@@ -4,14 +4,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+echo "==> D-076 source structure"
+./Scripts/check-code-structure.sh
+
 echo "==> SwiftFormat (lint)"
-swiftformat --lint .
+swiftformat --lint --cache ignore .
 
 echo "==> SwiftLint"
-swiftlint --quiet
-
-echo "==> Codex sidecar protocol (Node)"
-./Scripts/check-codex-sidecar.sh
+swiftlint lint --quiet --no-cache --baseline .swiftlint.baseline.yml
 
 echo "==> swift test (NovelKit)"
 (cd NovelKit && swift test)
@@ -29,14 +29,6 @@ echo "==> FUMINIWA app test (macOS, XcodeGen)"
 xcodebuild test \
   -project FUMINIWA.xcodeproj \
   -scheme FUMINIWA \
-  -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO
-
-echo "==> FUMINIWAExperimental app test (macOS, XcodeGen)"
-xcodebuild test \
-  -project FUMINIWA.xcodeproj \
-  -scheme FUMINIWAExperimental \
   -destination 'platform=macOS' \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO

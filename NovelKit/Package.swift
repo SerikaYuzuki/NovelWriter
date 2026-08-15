@@ -12,10 +12,10 @@ let package = Package(
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "NovelSync", targets: ["NovelSync"]),
+        .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
         .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
         .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
-        .library(name: "NovelAI", targets: ["NovelAI"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
@@ -39,6 +39,12 @@ let package = Package(
             name: "NovelSync",
             dependencies: ["NovelCore"]
         ),
+        // Shared local-library state and attestation models. Filesystem roots,
+        // CloudKit, and platform UI remain in the app adapters.
+        .target(
+            name: "NovelLibrary",
+            dependencies: ["NovelCore", "NovelSync"]
+        ),
         // 決定論的fake transport。製品targetからはlinkせず、同期契約testで使う。
         .target(
             name: "NovelSyncTesting",
@@ -52,10 +58,6 @@ let package = Package(
         .target(
             name: "EditorKit",
             dependencies: ["NovelCore"]
-        ),
-        // NovelAI: provider-neutralな送受信契約のみ。原稿モデル・Storage・UIに依存しない。
-        .target(
-            name: "NovelAI"
         ),
         .target(
             name: "NovelUI",
@@ -83,16 +85,16 @@ let package = Package(
             resources: [.process("Fixtures")]
         ),
         .testTarget(
+            name: "NovelLibraryTests",
+            dependencies: ["NovelLibrary", "NovelCore", "NovelSync"]
+        ),
+        .testTarget(
             name: "NovelSyncCloudKitTests",
             dependencies: ["NovelSyncCloudKit", "NovelSync", "NovelCore"]
         ),
         .testTarget(
             name: "EditorKitTests",
             dependencies: ["EditorKit"]
-        ),
-        .testTarget(
-            name: "NovelAITests",
-            dependencies: ["NovelAI"]
         ),
         .testTarget(
             name: "NovelUITests",

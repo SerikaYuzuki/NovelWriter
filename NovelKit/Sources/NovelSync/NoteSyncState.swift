@@ -62,6 +62,10 @@ public struct NoteSyncState: Hashable, Sendable {
     public var lastAckedDigests: [NoteSyncEntityKey: SyncContentDigest]
     public var pendingConflictKeys: Set<NoteSyncEntityKey>
     public var forceSendKeys: Set<NoteSyncEntityKey>
+    /// Monotonic token for each locally dirty entity. A network acknowledgement
+    /// must carry the token it observed, otherwise a save that happened while
+    /// the request was in flight could be cleared by the older response.
+    public var dirtyGenerations: [NoteSyncEntityKey: Int]
 
     public static func empty(workID: SyncWorkID) -> NoteSyncState {
         NoteSyncState(
@@ -70,7 +74,8 @@ public struct NoteSyncState: Hashable, Sendable {
             dirty: .empty,
             lastAckedDigests: [:],
             pendingConflictKeys: [],
-            forceSendKeys: []
+            forceSendKeys: [],
+            dirtyGenerations: [:]
         )
     }
 
@@ -80,7 +85,8 @@ public struct NoteSyncState: Hashable, Sendable {
         dirty: NoteSyncDirtySet,
         lastAckedDigests: [NoteSyncEntityKey: SyncContentDigest],
         pendingConflictKeys: Set<NoteSyncEntityKey> = [],
-        forceSendKeys: Set<NoteSyncEntityKey> = []
+        forceSendKeys: Set<NoteSyncEntityKey> = [],
+        dirtyGenerations: [NoteSyncEntityKey: Int] = [:]
     ) {
         self.protocolVersion = protocolVersion
         self.workID = workID
@@ -88,6 +94,7 @@ public struct NoteSyncState: Hashable, Sendable {
         self.lastAckedDigests = lastAckedDigests
         self.pendingConflictKeys = pendingConflictKeys
         self.forceSendKeys = forceSendKeys
+        self.dirtyGenerations = dirtyGenerations
     }
 
     public func validate() throws {
@@ -100,6 +107,7 @@ public struct NoteSyncState: Hashable, Sendable {
             .union(lastAckedDigests.keys)
             .union(pendingConflictKeys)
             .union(forceSendKeys)
+            .union(dirtyGenerations.keys)
         guard allKeys.count <= WorkSnapshot.maximumTotalEntityCount else {
             throw NoteSyncStateError.tooManyEntities
         }
@@ -136,6 +144,7 @@ extension NoteSyncState: Codable {
         case lastAcked
         case pendingConflictKeys
         case forceSendKeys
+        case dirtyGenerations
     }
 
     private struct AckedEntry: Codable {
@@ -164,6 +173,10 @@ extension NoteSyncState: Codable {
         lastAckedDigests = lastAcked
         pendingConflictKeys = try Set(container.decode([NoteSyncEntityKey].self, forKey: .pendingConflictKeys))
         forceSendKeys = try Set(container.decode([NoteSyncEntityKey].self, forKey: .forceSendKeys))
+        dirtyGenerations = try container.decodeIfPresent(
+            [NoteSyncEntityKey: Int].self,
+            forKey: .dirtyGenerations
+        ) ?? [:]
         try validate()
     }
 
@@ -179,5 +192,31 @@ extension NoteSyncState: Codable {
         try container.encode(acked, forKey: .lastAcked)
         try container.encode(pendingConflictKeys.sorted(), forKey: .pendingConflictKeys)
         try container.encode(forceSendKeys.sorted(), forKey: .forceSendKeys)
+        try container.encode(dirtyGenerations, forKey: .dirtyGenerations)
+    }
+}
+
+public extension NoteSyncConflict {
+    /// Durable Note state after restart. Empty pending keys are not a conflict.
+    static func pending(in state: NoteSyncState) -> NoteSyncConflict? {
+        guard !state.pendingConflictKeys.isEmpty else { return nil }
+        return NoteSyncConflict(workID: state.workID, keys: state.pendingConflictKeys)
+    }
+
+    /// Entity keys that differ between two whole-work snapshots.
+    /// This is reserved for an explicit legacy-recovery flow; normal Note
+    /// preparation does not auto-migrate a leftover Work review.
+    static func leftover(
+        workID: SyncWorkID,
+        local: WorkSnapshot,
+        remote: WorkSnapshot
+    ) throws -> NoteSyncConflict? {
+        let delta = try NoteSyncProjection.changes(workID: workID, from: remote, to: local)
+        var keys = delta.saves.union(delta.deletes)
+        if keys.isEmpty {
+            keys = try Set(NoteSyncProjection.records(workID: workID, snapshot: local).map(\.key))
+        }
+        guard !keys.isEmpty else { return nil }
+        return NoteSyncConflict(workID: workID, keys: keys)
     }
 }

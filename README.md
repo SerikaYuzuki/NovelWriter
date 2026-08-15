@@ -36,7 +36,6 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 | `NovelSyncCloudKit` | private CloudKit adapter | `NovelSync` / `NovelCore` |
 | `EditorKit` | 本文エディタ（macOS `NSTextView` / iOS `UITextView`、プラグイン） | `NovelCore` |
 | `NovelUI` | 再利用可能な SwiftUI 部品 | `NovelCore` |
-| `NovelAI` | AI の純粋 outbound domain。通常 App は link しない | なし |
 | `PreviewSupport` | SwiftUI Preview 用の固定データ | `NovelCore` |
 
 依存方向・プラットフォーム依存の閉じ込め方など、実装上守るべきルールは [docs/DESIGN.md 9章「実装ルール」](docs/DESIGN.md) にまとめている。
@@ -46,13 +45,12 @@ Windows並行トラックはW0として、言語非依存schema・golden fixture
 検証はすべてローカルで行う(GitHub Actions などのクラウド CI は使わない → docs/DECISIONS.md D-014)。マージ前に必ず以下を実行する:
 
 ```bash
-(cd Sidecars/Codex && npm ci --ignore-scripts --no-audit --no-fund)
 ./Scripts/check.sh
 ```
 
-内容: SwiftFormat(lint) → SwiftLint → Codex sidecar の Node テスト → `swift test`(NovelKit) → iOS 向け NovelKit コンパイル → `FUMINIWA` / `FUMINIWAExperimental` の macOS テスト → iOS Simulator 上の EditorKit と `FUMINIWAIOS` テスト。Experimental 側の Darwin supervisor / B4 系は合成 helper と in-memory channel だけを使い、実 provider 通信はしない。
+内容: SwiftFormat(lint) → SwiftLint → `swift test`(NovelKit) → iOS 向け NovelKit コンパイル → `FUMINIWA` の macOS テスト → iOS Simulator 上の EditorKit と `FUMINIWAIOS` テスト。停止中のprovider／sidecar実装は通常の検証グラフへ含めない。
 
-必要なツール: Xcode、Node.js 18以降、`brew install swiftformat swiftlint xcodegen jq ripgrep`。Node依存はlockfileどおり`npm ci --ignore-scripts`で展開し、インストールスクリプトを実行させない。現在のSDKテストは合成fake CLIだけを使い、実provider通信、API key、実原稿を使わない。Node 18以降は開発時captureを走らせる条件であり、実provider runtimeのallowlistではない。個別に実行したい場合はスクリプト内のコマンドを参照。
+必要なツール: Xcode、`brew install swiftformat swiftlint xcodegen jq ripgrep`。provider／network／sidecarの再開は、最新の公式APIを対象に新しいDecisionを作ってから行う。
 
 ## アプリの生成と実行
 

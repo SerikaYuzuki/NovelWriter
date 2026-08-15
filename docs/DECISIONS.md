@@ -864,3 +864,61 @@
 - **置き換える範囲**: D-026の手動保存・復元前退避・一覧／復元手順は維持する。自動作成と自動分の間引きだけを追加する。
 - **理由**: 定期実行だと無編集でも増え、直近だけ固定件数だと数日前の状態へ戻れない。編集があった作品全体を、新しいほど細かく古いほど粗く残す。
 - **詳細**: 画面は[STYLE.md](STYLE.md)、iOS導線は[IOS.md](IOS.md) 4.5a、全体は[DESIGN.md](DESIGN.md) 6.4を参照する。
+
+## D-075: 停止中のExperimental AI実装を削除し、確定した編集安全境界だけを残す
+
+- **日付**: 2026-08-15 / **状態**: 承認・実装
+- **内容**:
+  1. `FUMINIWAExperimental` app／scheme、`NovelAppExperimental`、そのtest target、fake provider、AI校正UI、Codex sidecarのSwift実装・Node実装・fixturesを削除する。これらは現行製品でも将来の採用が確定したAPIでもなく、AI層を大きく再設計する際の負債になるためである。
+  2. `NovelAI` package targetとprovider protocol／request／streamの実装・testも削除する。provider-neutralという名前だけの現在APIを将来のAI層へ自動継承しない。`AI_INTEGRATION.md`、D-043、D-046〜D-054、Codex feasibility reportは、当時の検討履歴として残すが、現行実装・出荷可能性・再利用契約とは扱わない。
+  3. `EditorKit`の選択transaction／stale検査／IME境界／one-shot置換と、通常版の`AIClipboardPrompt`（system clipboardへ明示コピーするだけ）は残す。前者は将来のAIに限らず外部提案の安全な編集適用境界であり、後者は現在提供している実機能だからである。
+  4. providerを再開するときは、最新の公式API／SDK、payload、credential、transport、保持期間、cancel、配布境界を新しいDecisionで再評価し、削除したExperimentalコードを復活させる前提にしない。通常版のbuild graphにはprovider／network／sidecar／keyを追加しない。
+- **置き換える範囲**: D-054の「`NovelAI`、fake UI、sidecar protocol、manifest、supervisor、B3、B4-A〜Dを削除せず保持する」という保持方針を、本Decisionで置き換える。D-043 / D-046〜D-053に記録された安全上の要求（local identityを送らない、明示確認、stale拒否、one-shot apply、fail-closed）は設計上の検討記録として維持する。EditorKitのselection transactionとclipboard promptの契約は変更しない。
+- **理由**: 実providerを接続しないまま、別app target・provider domain・fake UI・sidecar・検証fixtureを持ち続けると、現在使える機能と将来再設計する実験を混同し、依存・テスト・公開判断の誤解を生む。確定度の高い編集安全境界と現行clipboard機能だけを残す方が、再開時の設計自由度と保守性を保てる。
+- **検証**: 生成projectにExperimental target／schemeがなく、macOS／iOS通常targetがprovider productをlinkしないこと、`swift test --package-path NovelKit`、通常macOS／iOS build・test、AI boundary auditが通ることを確認する。
+
+## D-076: Feature単位の構造とSwift 6の境界で大規模ファイルを段階的に分割する
+
+- **日付**: 2026-08-15 / **状態**: 承認・R1/R2/R3/R4実装済み（R5〜R6未実装。D-076全体の完了とは扱わない）
+- **内容**:
+  1. **目的と判断基準**: `NovelApp`／`NovelAppIOS`直下の平坦な配置、1,000行級のApp／同期ファイル、Mac／iOSの重複、Episode／Work／Noteの3世代同期が同時に見える状態を段階的に解消する。行数は分割の警告であって品質の代理値ではない。分割単位は「変更理由が一つ」「依存方向が一方向」「独立してtestできる」を優先し、短いだけのファイル、同じ共有可変状態を触る`extension`の乱造、画面ごとのPackage化は行わない。利用箇所での明瞭さを短さより優先するSwift API Design Guidelinesを命名と公開境界の基準にする。
+  2. **Feature-based App構造**: macOS／iOSのApp targetは、同じ製品概念を同じFeature名で探せるよう、次を基準に再配置する。ディレクトリは探索・所有権の単位であり、直ちにSwift moduleを増やす意味ではない。Assets、localized resources、entitlement、Info.plistは既存のtarget資源境界を維持する。
+
+     ```text
+     NovelApp/                       NovelAppIOS/
+     ├── Application/                ├── Application/
+     ├── DocumentLifecycle/          ├── DocumentLifecycle/
+     ├── Library/                    ├── Library/
+     ├── Features/                   ├── Features/
+     │   ├── Writing/                │   ├── Writing/
+     │   ├── Characters/             │   ├── Characters/
+     │   ├── Plot/                   │   ├── Plot/
+     │   ├── Worldbuilding/          │   ├── Worldbuilding/
+     │   ├── Attachments/            │   ├── Attachments/
+     │   ├── ProjectInfo/            │   ├── ProjectInfo/
+     │   └── Settings/               │   └── Settings/
+     ├── DeviceSync/                 ├── DeviceSync/
+     │   ├── Note/                   │   ├── Note/
+     │   ├── Runtime/                │   ├── Runtime/
+     │   ├── Conflict/               │   └── Conflict/
+     │   └── Legacy/                 └── Platform/iOS/
+     └── Platform/macOS/
+     ```
+
+  3. **AppState／IOSDocumentStore**: `AppState.swift`はstored stateと`init`を保つ。既存の`AppState+…`分割は第一段階として維持するが、`AppState+StartupLibrary.swift`や`AppState+Lifecycle.swift`をさらにextensionだけで細切れにしない。pureな棚projection、I/Oを行うloader、open/install transaction、document transitionを、それぞれ名前を持つ値型／coordinatorへ抽出し、AppStateは呼出し時のsession tokenを渡して結果をcommitするcomposition rootに寄せる。ファイルを跨ぐためだけに`private` setterや内部stateを`internal`へ広げない。document operation gate → `DocumentSaveCoordinator`のlock順、IME確定、遷移中のWorkbench停止はD-041のまま変更しない。
+  4. **共有作品棚境界**: Mac／iOSで重複するlocal library record、registry、package attestation、pending open、棚projectionは、実装段階でローカルSwift Package target `NovelLibrary`へ統合する。`NovelLibrary`は`NovelCore`／`NovelStorage`／`NovelSync`だけに依存し、SwiftUI、AppKit、UIKit、CloudKitへ依存しない。OS固有のprivate root決定、画面、File／Finder／Files操作、CloudKit compositionは各Appまたは`NovelSyncCloudKit`へ残す。`.novelpkg`内部を公開せず、保存・portable検証はNovelStorageのAPIを使う。Mac／iOSで意味が異なるlegacy migrationだけを注入policyとし、共通状態機械をcopyして分岐させない。
+  5. **live同期と履歴同期**: D-071のlive Note同期と、D-059〜D-061のEpisode／Work履歴を、最終的に別targetへ隔離する。通常の`FUMINIWA`／`FUMINIWAIOS`はliveの`NovelSync`／`NovelSyncCloudKit`だけをlinkし、旧test／互換検証だけが`NovelSyncLegacy`と必要なCloudKit legacy adapterへ依存する。履歴sourceとtestは本Decisionだけを根拠に削除しない。先に`Legacy/`ディレクトリとnormal-target dependency auditを導入し、target分離はcompile／fixture／旧testを保つ独立PRで行う。CloudKit型を`NovelSync`／`NovelLibrary`へ出さない。
+  6. **Swift API Design Guidelines**: 新規・変更APIは宣言だけでなく代表的なcall siteを読んで評価する。利用箇所で曖昧にならないargument labelを付け、型名を繰り返す不要語は省く。型／protocolは役割を表す名、side effectのある操作は動詞、Boolは肯定形のpredicateにする。`Manager`／`Helper`／`Utils`を新しい責務型の既定名にせず、`Loader`、`Repository`、`Coordinator`、`Projection`、`Policy`など実際の役割を使う。`ID`、`URL`、`UTF8`、`IME`等の確立した語以外の独自略語を増やさない。`public`／`package` API、protocol、非自明な並行性・計算量・失敗条件にはcall siteから理解できる要約documentationを付ける。
+  7. **可視性**: `private`を既定とし、同一moduleのFeature間契約だけを`internal`、NovelKit内のtarget間共有でAppへ公開しないものは適切な場合に`package`、製品targetへ必要な最小面だけを`public`とする。testのためだけにproduction APIを`public`へ上げず、`@testable import`または`NovelSyncTesting`等のtest supportを使う。1ファイル1 primary typeを目安とするが、小さな密接値型は同居を許す。
+  8. **Swift 6 Strict Concurrency**: 全targetでSwift 6 language modeとcomplete strict concurrencyを維持し、コンパイラのdata-race検査を並行性の正とする。UI状態とUI commandは型全体を`@MainActor`へ隔離し、file／registry／dirty set等の共有可変I/O stateはactorが所有し、projection／snapshot／command／resultは可能な限り値型かつ`Sendable`にする。isolation境界を越える公開値は`Sendable`を明示し、境界を越えて実行されるclosureは`@Sendable`を契約へ含める。actor内でも`await`をatomic境界とみなし、再開後はsession／generation／WorkID等の固定identityを再検査する。これはD-041の「対象を動的に読み直さない」を並行性境界にも適用するものである。
+  9. **unsafe escape hatch**: `@unchecked Sendable`、`nonisolated(unsafe)`、`@preconcurrency`、`MainActor.assumeIsolated`、無所有の`Task.detached`を、警告を消すための通常手段にしない。必要な場合は、なぜstatic isolationで表せないか、誰が同期とlifecycleを所有するか、終了／cancel／再入時のtestを同じ変更へ含め、専用allowlistで可視化する。`MainActor.run`の散在で本来の型isolationを隠さず、長期的な境界は型またはprotocolへ静的に表す。
+  10. **SwiftFormat／SwiftLintの役割**: SwiftFormatを機械的整形の唯一の正、SwiftLintをコードスメル・複雑度・構造上の警告にする。同じ表記を両方に競合して決めさせない。`.swiftformat`へSwift compiler versionだけでなくlanguage mode 6を明示し、minimum tool versionを固定する。tool更新と全体再整形は機能PRから分ける。SwiftLintは段階的に`NovelApp`、`NovelAppIOS`、各App testへ対象を広げ、生成物、`.build`、`.derivedData`、Xcode退避folderを除外する。opt-in ruleは一度に大量追加せず、意味、既存違反、formatterとの重複、false positiveを確認して一つずつ有効化する。`Scripts/check.sh`はSwiftFormat lint → SwiftLint → test／buildの順を維持する。
+  11. **サイズと複雑度のbudget**: production Swift fileは400行で責務レビュー、600行でwarning、800行で原則分割または理由付き例外とする。これは型／functionの凝集度を読むtriggerであり、空行削除や無意味な別ファイル化で通さない。既存超過はversion管理したdebt allowlistへ固定し、新規超過を追加せず、対象ファイルを変更するPRでは増加させない。function body、type body、cyclomatic complexity、nestingもSwiftLintの現実的な段階値で監視する。algorithmically cohesiveなparser／merger、fixture、生成物は理由とownerを記録して例外にできる。
+  12. **test構造**: 大規模testはproduction file名の鏡ではなく、IME／Undo／Lifecycle／Authority／Offline／Conflict／Recovery等の振る舞いscenarioで分割する。共通fixture builderはtest supportへ置き、1つの巨大test fileへ戻さない。移動・renameだけのPRでもtest discovery数を減らさず、Swift 6 isolation annotationを外して通さない。
+  13. **実装順**: 一つのPRへ混ぜず、(R1) tool設定・現状budget・dependency audit、(R2) App／iOSのFeature directory移動、(R3) StartupLibrary／Lifecycleの責務型抽出、(R4) `NovelLibrary`統合、(R5) legacy同期target隔離、(R6) algorithm／test file分割、の順に進める。rename／moveだけの段階では挙動を変えず、`git diff --check`、`./Scripts/check.sh`、target dependency auditを通す。R3以降は既存の原稿保全、offline、account fence、session token、IME、Undoのfocused regressionも通す。各段階で`.novelpkg` schema、CloudKit schema、UI文言、同期契機を変更しない。
+- **R3実装記録**: 棚の純粋な行変換を `StartupLibraryProjection`、端末inventory/package readbackを `StartupLibraryLoader`、document session／終了／遷移とURL重複判定を `DocumentLifecyclePermissionPolicy`／`DocumentURLPolicy` へ抽出した。`AppState+StartupLibrary` は refresh/merge、opening は open/install/recovery に分割し、`StartupLibraryProjectionTests` と `DocumentLifecyclePolicyTests` を追加した。既存のsession token、account fence、package検証、IME／Undo契約は変更していない。macOS targetのコンパイル、SwiftFormat、baseline付きSwiftLint、構造budget、AI target境界auditを確認済み。
+- **R4実装記録**: Mac／iOSに重複していたlocal libraryの状態、package attestation、record、inventoryを `NovelKit/Sources/NovelLibrary/LocalLibraryModels.swift` へ移し、`NovelLibrary` product（NovelCore／NovelSync依存）として両通常Appへ接続した。OS固有のprivate root、filesystem actor、CloudKit compositionは各Appに残し、公開モデルは`.novelpkg`内部構造を参照しない。旧Mac／iOS型は同一package型へのmodule内typealiasへ置き換え、状態superset（account quarantine／legacy preservation）を共通化した。Codable／validationの `NovelLibraryTests`、NovelKit全テスト、macOS build、汎用iOS build、AI target境界auditを確認済み。
+- **置き換える範囲**: [CODE_HEALTH.md](CODE_HEALTH.md) 3〜5章の簡素化候補を、実装可能な構造・API・並行性・tooling契約として具体化する。[DESIGN.md](DESIGN.md) 3章／9章の現行target graphと依存方向は、R4／R5を実装して同文書を更新するまでは現在の正を維持する。D-005／D-006のEditor所有権、D-036のportable境界、D-041のlifecycle直列化、D-071／D-073のlive Note／明示同期、D-075のprovider削除を変更しない。Package Validator Gate以下の製品ロードマップも入れ替えない。
+- **理由**: 現在の大規模ファイルは、AIが一つの変更に必要以上の文脈を読むだけでなく、人間にも変更理由、actor isolation、live／legacy経路を見分けにくくしている。一方、extension分割だけでは共有可変stateとアクセス範囲が残り、Packageの乱造はbuild graphと公開APIを増やす。Featureによる探索、役割型による可変stateの封じ込め、再利用が実在する箇所だけのmodule境界、Swift 6コンパイラとformatter／linterによる機械検査を組み合わせることで、原稿保全契約を変えずに保守性とAI開発時の文脈量を下げられる。
+- **参考基準**: [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)、[Swift 6 Concurrency Migration Guide](https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/)、[SwiftLint](https://github.com/realm/SwiftLint)、[SwiftFormat](https://github.com/nicklockwood/SwiftFormat)。
+- **完了条件**: R1〜R6を個別に検証し、通常Mac／iOS targetがlegacy同期をlinkせず、Mac／iOSのlocal library共通状態機械が1実装になり、AppState／IOSDocumentStoreからI/Oとpure projectionが分離され、既存budget超過が増えず、`./Scripts/check.sh`が`All checks passed`になること。文書追加だけ、ディレクトリ作成だけ、行数減少だけをD-076完了とは扱わない。

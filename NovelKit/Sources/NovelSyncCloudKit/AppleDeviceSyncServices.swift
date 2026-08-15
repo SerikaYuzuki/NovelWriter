@@ -404,6 +404,23 @@ public final class AppleDeviceSyncServices: @unchecked Sendable {
         try await journalFactory.noteStateStore(for: binding)
     }
 
+    public func makeNoteSyncCoordinator(
+        workID: SyncWorkID,
+        localWorkingCopyID: LocalWorkingCopyID
+    ) async throws -> NoteSyncCoordinator {
+        let store = try await noteStateStore(
+            for: SyncWorkingCopyBinding(
+                localWorkingCopyID: localWorkingCopyID,
+                workID: workID
+            )
+        )
+        return NoteSyncCoordinator(
+            workID: workID,
+            store: store,
+            cloud: noteCloud
+        )
+    }
+
     public func availability() async -> AppleDeviceSyncAvailability {
         await accountGate.availability()
     }

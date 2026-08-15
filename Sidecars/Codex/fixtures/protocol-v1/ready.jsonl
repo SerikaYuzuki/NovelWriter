@@ -1,1 +1,0 @@
-{"version":1,"type":"ready","request_id":"00000000-0000-0000-0000-000000000001","runtime":{"mode":"mock","sidecar_version":"protocol-v1-test","sidecar_bundle_sha256":null,"node_version":"0.0.0-test","node_sha256":null,"architecture":"arm64","sdk_version":null,"sdk_integrity":null,"cli_version":null,"cli_sha256":null}}

@@ -130,6 +130,34 @@ struct NoteSyncReconcilerTests {
         #expect(document.characters[0].name == "remote name")
     }
 
+    @Test("a remote deletion applied without conflict is acknowledged separately from local deletes")
+    func remoteDeletionIsTrackedAsApplied() throws {
+        let base = try WorkTestValues.snapshot()
+        let remote = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes.removeAll { $0.id == WorkTestValues.episode2 }
+        }
+        let remoteRecords = try NoteSyncFixtures.records(remote)
+        let lastAcked = try NoteSyncFixtures.lastAcked(base)
+        let result = try NoteSyncReconciler.reconcile(
+            workID: NoteSyncFixtures.workID,
+            local: base,
+            remote: NoteSyncRemoteDelta(
+                upserts: remoteRecords,
+                deletedKeys: [NoteSyncFixtures.episodeKey(WorkTestValues.episode2)]
+            ),
+            dirty: .empty,
+            lastAcked: lastAcked
+        )
+
+        #expect(result.conflict == nil)
+        #expect(result.keysToDelete.isEmpty)
+        #expect(result.appliedDeletedKeys == [NoteSyncFixtures.episodeKey(WorkTestValues.episode2)])
+        let appliedDocument = try result.appliedSnapshot.materializedDocument()
+        #expect(!appliedDocument.chapters
+            .flatMap(\.episodes)
+            .contains(where: { $0.id == WorkTestValues.episode2 }))
+    }
+
     @Test("the same episode dirty on both sides conflicts and does not merge text")
     func sameEpisodeConflictsWithoutMerge() throws {
         let base = try WorkTestValues.snapshot()
@@ -261,6 +289,38 @@ struct NoteSyncReconcilerTests {
 
 @Suite("Note sync session and dirty store")
 struct NoteSyncSessionTests {
+    @Test("an older network acknowledgement cannot clear a newer local save")
+    func staleAcknowledgementPreservesNewerDirtyGeneration() async throws {
+        let store = InMemoryNoteSyncStateStore()
+        let session = NoteSyncSession(workID: NoteSyncFixtures.workID, store: store)
+        let base = try WorkTestValues.snapshot()
+        _ = try await session.installFromRemote(NoteSyncFixtures.records(base))
+        let first = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "first"
+        }
+        let second = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes[0].content = "second"
+        }
+        _ = try await session.recordLocalSnapshot(first)
+        let firstRecord = try #require(
+            NoteSyncFixtures.records(first).first { $0.key == NoteSyncFixtures.episodeKey() }
+        )
+        let firstGeneration = try #require(
+            try await session.dirtyGenerations(for: [firstRecord.key])[firstRecord.key]
+        )
+        _ = try await session.recordLocalSnapshot(second)
+        try await session.acknowledge(
+            sent: [firstRecord],
+            expectedGenerations: [firstRecord.key: firstGeneration]
+        )
+        let state = try await session.state()
+        #expect(state.dirty.saves == Set([firstRecord.key]))
+        let baseRecord = try #require(
+            NoteSyncFixtures.records(base).first { $0.key == firstRecord.key }
+        )
+        #expect(state.lastAckedDigests[firstRecord.key] == baseRecord.digest)
+    }
+
     @Test("offline local save survives restart and is sent without treating missing fetch as a delete")
     func offlineSaveThenSend() async throws {
         let store = InMemoryNoteSyncStateStore()
@@ -368,6 +428,37 @@ struct NoteSyncCoordinatorPairingTests {
         #expect(pulled.conflict == nil)
         #expect(pulled.keysToDelete.isEmpty)
         #expect(try pulled.appliedSnapshot.materializedDocument().chapters[0].episodes[0].content == "offline then online")
+    }
+
+    @Test("pulling a remote delete updates the durable ack set after package apply")
+    func remoteDeleteUpdatesAcknowledgedState() async throws {
+        let cloud = InMemoryNoteSyncCloud()
+        let owner = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: InMemoryNoteSyncStateStore(),
+            cloud: cloud
+        )
+        let followerStore = InMemoryNoteSyncStateStore()
+        let follower = NoteSyncCoordinator(
+            workID: NoteSyncFixtures.workID,
+            store: followerStore,
+            cloud: cloud
+        )
+        let base = try WorkTestValues.snapshot()
+        _ = try await owner.publishLocal(base)
+        _ = try await follower.installFromRemote()
+
+        let remote = try WorkTestValues.snapshot { document in
+            document.chapters[0].episodes.removeAll { $0.id == WorkTestValues.episode2 }
+        }
+        _ = try await owner.publishLocal(remote)
+
+        let pulled = try await follower.pullRemote(onto: base)
+        #expect(pulled.conflict == nil)
+        #expect(pulled.appliedDeletedKeys == [NoteSyncFixtures.episodeKey(WorkTestValues.episode2)])
+        try await follower.acknowledgeReconcile(pulled)
+        let state = try await follower.state()
+        #expect(state.lastAckedDigests[NoteSyncFixtures.episodeKey(WorkTestValues.episode2)] == nil)
     }
 
     @Test("process-kill restores the dirty set from disk and resends without copying manuscript bytes")
@@ -496,5 +587,43 @@ struct NoteSyncCoordinatorPairingTests {
         )
         #expect(resolution.currentForceSendKeys == Set([NoteSyncFixtures.episodeKey()]))
         #expect(try resolution.currentWorkSnapshot.materializedDocument().chapters[0].episodes[0].content == "LOCAL ONLY")
+    }
+}
+
+@Suite("Note sync conflict restore")
+struct NoteSyncConflictRestoreTests {
+    @Test("pending keys become a 3-choice conflict")
+    func pendingKeysBecomeConflict() throws {
+        let state = NoteSyncState(
+            workID: NoteSyncFixtures.workID,
+            dirty: .empty,
+            lastAckedDigests: [:],
+            pendingConflictKeys: [NoteSyncFixtures.episodeKey()]
+        )
+        let conflict = try #require(NoteSyncConflict.pending(in: state))
+        #expect(conflict.workID == NoteSyncFixtures.workID)
+        #expect(conflict.keys == [NoteSyncFixtures.episodeKey()])
+        #expect(NoteSyncConflict.pending(in: .empty(workID: NoteSyncFixtures.workID)) == nil)
+    }
+
+    @Test("leftover whole-work snapshots become entity keys for the 3-choice")
+    func leftoverSnapshotsBecomeConflictKeys() throws {
+        let local = try WorkTestValues.snapshot { document in
+            document.title = "この端末"
+            document.chapters[0].episodes[0].content = "LOCAL"
+        }
+        let remote = try WorkTestValues.snapshot { document in
+            document.title = "iCloud"
+            document.chapters[0].episodes[0].content = "REMOTE"
+        }
+        let conflict = try #require(
+            try NoteSyncConflict.leftover(
+                workID: NoteSyncFixtures.workID,
+                local: local,
+                remote: remote
+            )
+        )
+        #expect(conflict.keys.contains(NoteSyncFixtures.workKey()))
+        #expect(conflict.keys.contains(NoteSyncFixtures.episodeKey()))
     }
 }

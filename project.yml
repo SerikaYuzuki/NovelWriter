@@ -33,13 +33,6 @@ schemes:
       targets:
         - name: NovelAppTests
         - name: NovelAppDeviceSyncTests
-  FUMINIWAExperimental:
-    build:
-      targets:
-        FUMINIWAExperimental: all
-    test:
-      targets:
-        - name: FUMINIWAExperimentalTests
   FUMINIWAIOS:
     build:
       targets:
@@ -69,6 +62,8 @@ targets:
         product: NovelExport
       - package: NovelKit
         product: NovelSync
+      - package: NovelKit
+        product: NovelLibrary
       - package: NovelKit
         product: NovelSyncCloudKit
     settings:
@@ -127,7 +122,7 @@ targets:
     sources:
       - path: NovelApp
         excludes:
-          - FuminiwaApp.swift
+          - Application/FuminiwaApp.swift
           - Info.plist
           - NovelApp.entitlements
           - Assets.xcassets
@@ -152,6 +147,8 @@ targets:
       - package: NovelKit
         product: NovelSync
       - package: NovelKit
+        product: NovelLibrary
+      - package: NovelKit
         product: NovelSyncCloudKit
       - package: NovelKit
         product: NovelSyncTesting
@@ -160,61 +157,8 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_UNHOSTED_DEVICE_SYNC_TESTS"
-  FUMINIWAExperimental:
-    type: application
-    platform: macOS
-    deploymentTarget: "14.0"
-    sources:
-      - path: NovelApp
-        excludes:
-          - Info.plist
-          - en.lproj/InfoPlist.strings
-          - ja.lproj/InfoPlist.strings
-      - path: NovelAppExperimental
-    dependencies:
-      - package: NovelKit
-        product: NovelCore
-      - package: NovelKit
-        product: NovelStorage
-      - package: NovelKit
-        product: EditorKit
-      - package: NovelKit
-        product: NovelUI
-      - package: NovelKit
-        product: NovelExport
-      - package: NovelKit
-        product: NovelAI
-      - package: NovelKit
-        product: NovelSync
-    settings:
-      base:
-        PRODUCT_NAME: FUMINIWAExperimental
-        PRODUCT_MODULE_NAME: FUMINIWAExperimental
-        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.experimental
-        SWIFT_VERSION: "6.0"
-        SWIFT_STRICT_CONCURRENCY: complete
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: NovelAppExperimental/Info.plist
-        CODE_SIGN_STYLE: Automatic
-        ENABLE_HARDENED_RUNTIME: YES
-  FUMINIWAExperimentalTests:
-    type: bundle.unit-test
-    platform: macOS
-    deploymentTarget: "14.0"
-    sources:
-      - path: NovelAppExperimentalTests
-    dependencies:
-      - target: FUMINIWAExperimental
-    settings:
-      base:
-        SWIFT_VERSION: "6.0"
-        SWIFT_STRICT_CONCURRENCY: complete
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_ENABLE_EXPERIMENTAL_AI"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWAExperimental.app/Contents/MacOS/FUMINIWAExperimental"
-        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
   FUMINIWAIOS:
     type: application
     platform: iOS
@@ -223,8 +167,9 @@ targets:
       - path: NovelAppIOS
         excludes:
           - Info.plist
-      - path: NovelApp/AIClipboardPrompt.swift
-      - path: NovelApp/DocumentOperationGate.swift
+      - path: NovelApp/Features/Writing/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
+      - path: NovelApp/DeviceSync/Note/DeviceSyncLog.swift
     dependencies:
       - package: NovelKit
         product: NovelCore
@@ -238,6 +183,8 @@ targets:
         product: NovelExport
       - package: NovelKit
         product: NovelSync
+      - package: NovelKit
+        product: NovelLibrary
       - package: NovelKit
         product: NovelSyncCloudKit
     settings:
@@ -290,11 +237,12 @@ targets:
     sources:
       - path: NovelAppIOS
         excludes:
-          - FuminiwaIOSApp.swift
+          - Application/FuminiwaIOSApp.swift
           - Info.plist
           - FUMINIWAIOS.entitlements
-      - path: NovelApp/AIClipboardPrompt.swift
-      - path: NovelApp/DocumentOperationGate.swift
+      - path: NovelApp/Features/Writing/AIClipboardPrompt.swift
+      - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
+      - path: NovelApp/DeviceSync/Note/DeviceSyncLog.swift
       - path: NovelAppIOSTests/IOSDeviceSyncIntegrationTests.swift
       - path: NovelAppIOSTests/IOSDeviceSyncPersistenceRootTests.swift
       - path: NovelAppIOSTests/IOSDeviceSyncEditIntentStoreTests.swift
@@ -313,6 +261,8 @@ targets:
       - package: NovelKit
         product: NovelSync
       - package: NovelKit
+        product: NovelLibrary
+      - package: NovelKit
         product: NovelSyncCloudKit
       - package: NovelKit
         product: NovelSyncTesting
@@ -321,3 +271,5 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""

@@ -23,6 +23,12 @@ struct StartupCloudLibraryViewTests {
                     title: "地下鉄の草稿",
                     updatedAt: nil,
                     availability: .localPending
+                ),
+                StartupLibraryWork(
+                    reference: .cloudWork(UUID()),
+                    title: "三国志のも",
+                    updatedAt: Date(timeIntervalSince1970: 2),
+                    availability: .needsReview
                 )
             ],
             connection: .available,

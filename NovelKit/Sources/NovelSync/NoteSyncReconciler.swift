@@ -8,6 +8,7 @@ public enum NoteSyncReconcileError: Error, Equatable, Sendable {
     case unassemblable
     case missingConflict
     case newWorkIDCollision
+    case remoteWriteConflict
 }
 
 public struct NoteSyncRemoteDelta: Equatable, Sendable {
@@ -36,17 +37,22 @@ public struct NoteSyncReconcileResult: Equatable, Sendable {
     public let appliedSnapshot: WorkSnapshot
     public let recordsToSend: [NoteSyncRecord]
     public let keysToDelete: [NoteSyncEntityKey]
+    /// Remote deletions included in `appliedSnapshot`. These are separate from
+    /// `keysToDelete`, which are local deletes still waiting to be sent.
+    public let appliedDeletedKeys: [NoteSyncEntityKey]
     public let conflict: NoteSyncConflict?
 
     public init(
         appliedSnapshot: WorkSnapshot,
         recordsToSend: [NoteSyncRecord],
         keysToDelete: [NoteSyncEntityKey],
+        appliedDeletedKeys: [NoteSyncEntityKey] = [],
         conflict: NoteSyncConflict?
     ) {
         self.appliedSnapshot = appliedSnapshot
         self.recordsToSend = recordsToSend
         self.keysToDelete = keysToDelete
+        self.appliedDeletedKeys = appliedDeletedKeys
         self.conflict = conflict
     }
 }
@@ -67,6 +73,10 @@ public struct NoteSyncResolution: Equatable, Sendable {
     public let forkedWorkID: SyncWorkID?
     public let forkedSnapshot: WorkSnapshot?
     public let forkedRecords: [NoteSyncRecord]
+    /// Keys covered by this choice. They are used by the durable commit step;
+    /// package installation must happen before those keys leave pending state.
+    public let resolvedKeys: Set<NoteSyncEntityKey>
+    public let expectedGenerations: [NoteSyncEntityKey: Int]
 
     public init(
         currentWorkSnapshot: WorkSnapshot,
@@ -77,7 +87,9 @@ public struct NoteSyncResolution: Equatable, Sendable {
         currentForceSendKeys: Set<NoteSyncEntityKey>,
         forkedWorkID: SyncWorkID?,
         forkedSnapshot: WorkSnapshot?,
-        forkedRecords: [NoteSyncRecord]
+        forkedRecords: [NoteSyncRecord],
+        resolvedKeys: Set<NoteSyncEntityKey> = [],
+        expectedGenerations: [NoteSyncEntityKey: Int] = [:]
     ) {
         self.currentWorkSnapshot = currentWorkSnapshot
         self.currentSend = currentSend
@@ -88,6 +100,8 @@ public struct NoteSyncResolution: Equatable, Sendable {
         self.forkedWorkID = forkedWorkID
         self.forkedSnapshot = forkedSnapshot
         self.forkedRecords = forkedRecords
+        self.resolvedKeys = resolvedKeys
+        self.expectedGenerations = expectedGenerations
     }
 }
 
@@ -159,6 +173,7 @@ public enum NoteSyncReconciler {
             appliedSnapshot: applied,
             recordsToSend: recordsToSend,
             keysToDelete: keysToDelete,
+            appliedDeletedKeys: remoteDeletes.subtracting(conflictKeys).sorted(),
             conflict: conflict
         )
     }

@@ -66,6 +66,9 @@ public actor NoteSyncCoordinator {
         let dirty = try await session.recordLocalSnapshot(snapshot)
         let records = try NoteSyncProjection.records(workID: workID, snapshot: snapshot)
         let state = try await session.state()
+        let expectedGenerations = try await session.dirtyGenerations(
+            for: dirty.saves.union(dirty.deletes)
+        )
         let saves = records.filter { dirty.saves.contains($0.key) }
         var result = try await cloud.save(
             saves,
@@ -84,7 +87,8 @@ public actor NoteSyncCoordinator {
         }
         try await session.acknowledge(
             sent: result.acceptedSaves,
-            deletedKeys: result.acceptedDeletes
+            deletedKeys: result.acceptedDeletes,
+            expectedGenerations: expectedGenerations
         )
         if result.hasConflicts {
             let delta = NoteSyncRemoteDelta(
@@ -113,7 +117,8 @@ public actor NoteSyncCoordinator {
             localByKey[remote.key]?.digest == remote.digest
         }
         guard !identical.isEmpty else { return result }
-        try await session.acknowledge(applied: identical)
+        let generations = try await session.dirtyGenerations(for: Set(identical.map(\.key)))
+        try await session.acknowledge(applied: identical, expectedGenerations: generations)
         let identicalKeys = Set(identical.map(\.key))
         var cleared = result
         cleared.acceptedSaves.append(contentsOf: identical)
@@ -139,14 +144,50 @@ public actor NoteSyncCoordinator {
     }
 
     public func acknowledgeReconcile(_ result: NoteSyncReconcileResult) async throws {
-        try await session.acknowledge(sent: result.recordsToSend, deletedKeys: result.keysToDelete)
+        guard result.conflict == nil else {
+            let keys = Set(result.recordsToSend.map(\.key)).union(result.keysToDelete)
+            let generations = try await session.dirtyGenerations(for: keys)
+            try await session.acknowledge(
+                sent: result.recordsToSend,
+                deletedKeys: result.keysToDelete,
+                expectedGenerations: generations
+            )
+            return
+        }
+        let state = try await session.state()
+        let localDirtyKeys = state.dirty.saves.union(state.dirty.deletes)
+        let applied = try NoteSyncProjection.records(
+            workID: workID,
+            snapshot: result.appliedSnapshot
+        ).filter { !localDirtyKeys.contains($0.key) }
+        let appliedDeletedKeys = result.appliedDeletedKeys.filter {
+            !localDirtyKeys.contains($0)
+        }
+        // Only locally-produced sends/deletes need generation guards. Remote
+        // records are safe to acknowledge here because local dirty keys were
+        // filtered above; otherwise a stale pull could acknowledge a newer
+        // local edit that was not actually uploaded.
+        let keys = Set(result.recordsToSend.map(\.key)).union(result.keysToDelete)
+        let generations = try await session.dirtyGenerations(for: keys)
+        try await session.acknowledge(
+            sent: result.recordsToSend,
+            deletedKeys: result.keysToDelete + appliedDeletedKeys,
+            applied: applied,
+            expectedGenerations: generations
+        )
     }
 
     public func acknowledgeApplied(
         _ records: [NoteSyncRecord],
         deletedKeys: [NoteSyncEntityKey] = []
     ) async throws {
-        try await session.acknowledge(deletedKeys: deletedKeys, applied: records)
+        let keys = Set(records.map(\.key)).union(deletedKeys)
+        let generations = try await session.dirtyGenerations(for: keys)
+        try await session.acknowledge(
+            deletedKeys: deletedKeys,
+            applied: records,
+            expectedGenerations: generations
+        )
     }
 
     public func resolve(
@@ -155,26 +196,43 @@ public actor NoteSyncCoordinator {
         newWorkID: SyncWorkID,
         expectedKeys: Set<NoteSyncEntityKey> = []
     ) async throws -> NoteSyncResolution {
+        let state = try await session.state()
         let remoteRecords = try await cloud.fetchAll(for: workID)
+        let remoteKeys = Set(remoteRecords.map(\.key))
+        let remoteDeletes = Set(state.lastAckedDigests.keys).subtracting(remoteKeys).sorted()
         let resolution = try await session.resolve(
             choice,
             local: local,
-            remote: NoteSyncRemoteDelta(upserts: remoteRecords),
+            remote: NoteSyncRemoteDelta(upserts: remoteRecords, deletedKeys: remoteDeletes),
             newWorkID: newWorkID,
             expectedKeys: expectedKeys
         )
         if choice == .keepLocal {
-            _ = try await cloud.save(
+            let saved = try await cloud.save(
                 resolution.currentSend,
                 expectedDigests: [:],
                 forceOverwrite: resolution.currentForceSendKeys
             )
-            try await session.acknowledge(
-                sent: resolution.currentSend,
-                deletedKeys: resolution.currentDeletes
+            let deleted = try await cloud.delete(
+                resolution.currentDeletes,
+                expectedDigests: [:],
+                forceOverwrite: resolution.currentForceSendKeys
             )
+            guard !saved.hasConflicts,
+                  !deleted.hasConflicts,
+                  Set(saved.acceptedSaves.map(\.key)) == Set(resolution.currentSend.map(\.key)),
+                  Set(deleted.acceptedDeletes) == Set(resolution.currentDeletes) else {
+                throw NoteSyncReconcileError.remoteWriteConflict
+            }
+            try await session.commitResolution(resolution)
         }
         return resolution
+    }
+
+    /// Commits the state half only after the app has installed and read back
+    /// the selected package/fork.
+    public func commitResolution(_ resolution: NoteSyncResolution) async throws {
+        try await session.commitResolution(resolution)
     }
 
     public func installFromRemote() async throws -> WorkSnapshot {

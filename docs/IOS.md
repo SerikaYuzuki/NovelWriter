@@ -37,7 +37,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - iPadはProject Sidebar / Outline / Editorの適応的な複数列、iPhoneは`NavigationStack`によるProject / Outline / Editorの段階遷移にする
 - 起点は作品棚とし、作品ホームで作品情報／執筆／書き出しを選ぶ。iPhoneは作品棚→作品ホーム→執筆Outline→Editor、iPadは同じ階層を適応的な複数列へ展開する
 - 作品ホームでプロット／伏線、登場人物、世界観、資料、設定を選び、既存packageデータを追加／編集／削除／並べ替えできる
-- 作品ホームとEditorのツールバーから、app-private `.novelpkg`の手動スナップショットを保存・一覧・確認付き復元できる。復元前に現在状態を別snapshotへ退避する。編集後約5分とアプリ退避時にも作品全体の自動スナップショットを残し、古い自動分は間引く(D-074)。snapshot履歴はiCloudへ送らない
+- 作品ホーム、執筆 Outline、プロット／世界観の Outline／詳細、Editor のツールバーから、app-private `.novelpkg`の手動スナップショットを保存・一覧・確認付き復元できる。復元前に現在状態を別snapshotへ退避する。編集後約5分とアプリ退避時にも作品全体の自動スナップショットを残し、古い自動分は間引く(D-074)。snapshot履歴はiCloudへ送らない
 - iOS chromeは初回Darkを既定とし、システム追従／Light／Darkへ変更できる。外観設定はpackageへ保存しない
 - 校正／アドバイス×本文選択／話／章の6種類のprompt copyを提供する
 - Dynamic Type、VoiceOver、ハードウェアキーボード、ソフトウェアキーボード、scene非アクティブ化を検証する
@@ -49,7 +49,7 @@ IOS-1〜5のコード実装は完了している。ただし、本書の完了�
 - `DocumentGroup` / `UIDocument`による、現在の`DocumentSaveCoordinator`と並立する別autosave所有者
 - 複数作品の同時編集、D-063を超えるattachment／snapshot履歴／非hidden未知root／端末設定のCloudKit同期、package全体mirror、共同編集
 - Files / iCloud Drive / 他社File Providerを横断して常時列挙する独自ライブラリ
-- Codex / OpenRouterその他のprovider、`NovelAI`、SDK、CLI、Node、sidecar、network、credential、model設定
+- Codex / OpenRouterその他のprovider、SDK、CLI、Node、sidecar、network、credential、model設定
 - AI chatの自動起動／送信、応答取込、diff、Apply、履歴管理、clipboard自動消去
 
 ## 3. ターゲットと依存境界
@@ -66,14 +66,12 @@ FUMINIWAIOS
 ├── NovelSync
 └── NovelSyncCloudKit      (CloudKit / CKSyncEngine platform adapter)
 
-FUMINIWAIOS ─X─ NovelAI
-FUMINIWAIOS ─X─ NovelAppExperimental
 FUMINIWAIOS ─X─ AI provider SDK / Node / CLI / sidecar / credential
 ```
 
 D-059以前のbase targetは通常macOS版と同じ5 productだけをlinkする。現在の通常macOS / iOS targetは、Device Sync用にOS / transport非依存の`NovelSync` productとApple adapterの`NovelSyncCloudKit`を追加している。これはD-056 item 8の5-product固定をこの目的に限って置き換える。
 
-`NovelKit`内に`NovelAI` targetやExperimental研究コードが残っていても、iOS app targetのdependency、compile source、resource、bundleへ含めない。CloudKit通信はDevice Sync adapterだけに許可し、AI provider用の`URLSession`、`Network.framework`等のcallsiteを追加しない。生成後のtarget graphとArchive内容をローカル検査で固定する。
+CloudKit通信はDevice Sync adapterだけに許可し、AI provider用の`URLSession`、`Network.framework`等のcallsiteを追加しない。生成後のtarget graphとArchive内容をローカル検査で固定する。
 
 ### 3.1 共有するもの
 
@@ -138,7 +136,7 @@ app-private MVPの完成をopen-in-place、iCloud Drive原本同期、File Provi
 
 ### 4.5a スナップショット
 
-手動スナップショットはMacと同じくapp-private `.novelpkg`内の端末内履歴であり、CloudKitへ載せない。作品ホームとEditorのツールバーから保存・一覧・確認付き復元へ到達する。復元は現在状態を先に別snapshotへ退避し、失敗時は表示中の作品を切り替えない。編集（本文だけでなく人物・プロット・伏線・世界観などを含む）があってから約5分後にも作品全体の自動スナップショットを残し、過去へ進むほど自動分の密度を下げる(D-074)。アプリ退避時に未退避の編集があれば待ち時間を待たない。
+手動スナップショットはMacと同じくapp-private `.novelpkg`内の端末内履歴であり、CloudKitへ載せない。作品ホーム、執筆 Outline、プロット／世界観の Outline／詳細、Editor のツールバーから保存・一覧・確認付き復元へ到達する。復元は現在状態を先に別snapshotへ退避し、失敗時は表示中の作品を切り替えない。編集（本文だけでなく人物・プロット・伏線・世界観などを含む）があってから約5分後にも作品全体の自動スナップショットを残し、過去へ進むほど自動分の密度を下げる(D-074)。アプリ退避時に未退避の編集があれば待ち時間を待たない。
 
 ### 4.6 D-071 Note Sync
 
@@ -263,7 +261,7 @@ plugin置換はdelegateの正規変更経路を通し、選択、typing attribut
 - 起動後はprivate CloudKit catalogと検証済みapp-private registryを1つの「iCloudの作品」として作品棚へ表示する。local／remoteの二重棚や内部package名は出さない
 - Files / iCloud Drive / 他社File Providerは「作品を取り込む…」から標準pickerを開き、外部原本を変更せずnew WorkIDの作業コピーだけを作品棚へ加える
 - remote-onlyはonline＋account確認後の明示tapでこの端末へ保存し、cached localはofflineでも開く。account未確認／mismatchではlocal packageのない旧scope row／titleを表示しない
-- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する。作品ホームとEditorのツールバーからスナップショット一覧／保存／確認付き復元へ到達できる
+- 作品を選ぶと作品ホームへ進み、実装済みの「作品情報」「執筆」「プロット」「登場人物」「世界観」「資料」「設定」「作品を書き出す」を提示する。作品ホーム、執筆 Outline、プロット／世界観、Editor のツールバーからスナップショット一覧／保存／確認付き復元へ到達できる
 - 「執筆」は章ごとに話を並べるOutlineへ進み、話を選んだときだけEditorを生成する。ほかの機能も一覧が必要ならOutlineから選択項目のDetailへ進む
 - 読み込めない作業コピーはその行だけを警告状態にし、他の作品の利用を止めない
 - 作品ホームへ出す項目は実際のdomain／Repository操作へ接続したものに限り、placeholderを出さない
@@ -327,7 +325,7 @@ D-063で作品棚／new-device bootstrapをMacだけの機能からApple版共�
 ### Build / Product Truth
 
 - iPhone / iPad simulatorとgeneric iOS device向けにappとtestがbuildできる
-- 通常iOS targetの`NovelAI`、Experimental source、AI provider SDK、Node / CLI / sidecar、AI provider用network / credential callsiteとresourceが0件である。Device Sync D-061のnetwork callsiteは`NovelSyncCloudKit`だけに閉じる
+- 通常iOS targetのAI provider SDK、Node / CLI / sidecar、AI provider用network / credential callsiteとresourceが0件である。Device Sync D-061のnetwork callsiteは`NovelSyncCloudKit`だけに閉じる
 - 画面上にprovider設定、送信、生成中、応答、Apply等の未実装UIがない
 
 ### Document safety

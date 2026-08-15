@@ -1,5 +1,9 @@
 # FUMINIWA Codex Sidecar Protocol v1
 
+> Historical design record. D-075 removed the Swift/Node sidecar implementation,
+> fixtures, and Experimental target. This document is not a current runtime or
+> reuse contract; a future provider integration requires a new Decision.
+
 This protocol is the private transport boundary between `FUMINIWAExperimental`
 and the Codex Node sidecar. It is not a provider prompt format and none of the
 transport-only fields may be appended to the application prompt or response

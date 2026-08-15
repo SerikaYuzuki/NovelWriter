@@ -1,16 +1,29 @@
 # FUMINIWA — SwiftLint 設定
 #
-# 方針: 控えめな設定にする(docs/DESIGN.md Phase 0)。
-# ローカル環境に swiftlint が未インストールで実行確認ができないため、
-# 初回 CI がルール過多で落ちるのを避ける。デフォルトルールをベースとし、
-# opt-in ルールの大量追加は行わない。
+# D-076 R1: 通常App／iOS／各test targetまで同じ入口で検査する。
+# 既存違反は .swiftlint.baseline.yml に固定し、新規違反だけをゲートする。
+# opt-in ruleの大量追加やSwiftFormatとの重複は避け、分割・責務抽出のPRで
+# baselineを小さくする。
+# baselineのlocationはcheckout間で再利用できるrepo-relative pathに保つ。
 
 included:
   - NovelKit/Sources
   - NovelKit/Tests
+  - NovelApp
+  - NovelAppIOS
+  - NovelAppTests
+  - NovelAppIOSTests
 
 excluded:
   - NovelKit/.build
   - NovelKit/.swiftpm
+  - .derivedData
+  - .build
+  - "NovelApp 20*"
+  - NovelApp/Assets.xcassets
+  - NovelApp/en.lproj
+  - NovelApp/ja.lproj
+  - NovelAppIOS/Info.plist
+  - NovelAppIOS/*.entitlements
 
 reporter: "xcode"
