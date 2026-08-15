@@ -3,6 +3,22 @@ import NovelCore
 import NovelLocalStore
 
 extension AppState {
+    private static func snapshotSyncErrorToken(_ error: Error) -> String {
+        guard let error = error as? SnapshotSyncError else {
+            return String(reflecting: type(of: error))
+        }
+        switch error {
+        case .invalidManifest:
+            return "invalidManifest"
+        case let .transport(message):
+            return "transport:\(message)"
+        case .unauthorized:
+            return "unauthorized"
+        case .conflict:
+            return "conflict"
+        }
+    }
+
     /// Existing `.novelpkg` documents predate the SQLite authority. Seed one
     /// canonical local snapshot when they are opened so an explicit sync can
     /// publish an unchanged work as well as a newly edited work.
@@ -37,7 +53,7 @@ extension AppState {
                 self.lastSnapshotSyncOutcome = outcome
                 DeviceSyncLog.snapshot("finished \(String(describing: outcome))")
             } catch {
-                DeviceSyncLog.snapshot("failed", error: error)
+                DeviceSyncLog.snapshot("failed \(Self.snapshotSyncErrorToken(error))")
                 self?.lastSnapshotSyncOutcome = .offline
             }
         }
@@ -68,7 +84,7 @@ extension AppState {
                 return false
             }
         } catch {
-            DeviceSyncLog.snapshot("explicit failed", error: error)
+            DeviceSyncLog.snapshot("explicit failed \(Self.snapshotSyncErrorToken(error))")
             lastSnapshotSyncOutcome = .offline
             return false
         }
