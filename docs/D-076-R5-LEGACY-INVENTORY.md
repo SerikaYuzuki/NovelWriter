@@ -89,4 +89,7 @@ binding・package snapshot境界へ置き換える。その後に共有値型と
 
 R5dで上記2つのfilesystem journalを`NovelSyncLegacy`へ移した。残りの候補は
 依存境界を切り分けるまで`NovelSync`／`NovelSyncCloudKit`側へ残している。
-このinventoryはR5全体の完了記録ではない。
+R5eで通常Xcode targetからの`NovelSyncLegacy`直接linkとlive domainからの逆importを
+`Scripts/check-sync-target-dependencies.sh`で監査する。`NovelSyncCloudKit`からの
+推移依存はCloudKit Episode／Work adapterを移すまでの過渡状態であり、監査上も
+明示している。このinventoryはR5全体の完了記録ではない。
