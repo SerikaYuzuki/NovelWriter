@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "intent-attempt-concurrent-edit-during-lost-ack",
   "description": "An old sealed publish commits and loses its response while the user creates a newer local generation. Receipt replay must acknowledge only the old source and preserve the newer Intent.",
   "initialState": {

@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "portable-name-path-policy",
   "description": "All clients and the server derive the same filename collision key and enforce the same original-path budgets without OS or locale behavior.",
   "policy": {

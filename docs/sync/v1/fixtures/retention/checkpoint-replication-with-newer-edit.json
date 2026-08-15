@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-checkpoint-replication-with-newer-edit",
   "description": "A pinned manual checkpoint S captured from base B is replicated as online history without moving the head, while a newer local edit T remains the only head-publish candidate; a lost checkpoint acknowledgement replays exactly and preserves both available Snapshots.",
   "identities": {

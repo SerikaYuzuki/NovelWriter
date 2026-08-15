@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "sealed-upload-command-replay",
   "description": "Upload create, byte transfer, and finalize survive lost acknowledgements and process exits without duplicate sessions or mutable commands.",
   "binding": {"serverInstanceId": "90000000-0000-0000-0000-000000000001", "protocolEpoch": 1, "accountId": "91000000-0000-0000-0000-000000000001"},

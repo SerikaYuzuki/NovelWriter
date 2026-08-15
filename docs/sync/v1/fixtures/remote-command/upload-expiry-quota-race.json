@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "remote-command-upload-expiry-quota-race",
   "description": "Upload expiry and finalize serialize on the same durable upload lifecycle row so exactly one terminal transition owns the quota reservation: expiry releases it once and schedules resumable cleanup, while finalize converts it to used quota and publishes presence once.",
   "binding": {

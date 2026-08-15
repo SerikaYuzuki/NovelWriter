@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "autosave-checkpoint-promotion",
   "description": "Lifecycle promotion reuses the current leaf SnapshotID so earlier dense siblings do not become ancestors and remain prunable.",
   "initialState": {

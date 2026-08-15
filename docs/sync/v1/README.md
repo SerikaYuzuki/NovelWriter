@@ -1,6 +1,6 @@
-# Snapshot Sync wire v1 — R0 design candidate
+# Snapshot Sync wire v1 — reviewed R0 design contract
 
-このdirectoryはFUMINIWA Snapshot Syncの **実装前契約候補** である。Rust server、SQLite client、CloudKit migration、Sign in with Apple、`192.168.11.5`への配置が存在することを示すものではない。D-078でcontent protectionとProduction external identityは確定したが、versioned sync＋auth contract／fixtureの最終監査とRelease Gateが終わるまでR0 freezeもProduction互換も宣言しない。
+このdirectoryは、最終設計監査を通過したFUMINIWA Snapshot Syncの **実装用設計契約** である。Rust server、SQLite client、CloudKit migration、Sign in with Apple、`192.168.11.5`への配置が存在することを示すものではない。D-078でcontent protectionとProduction external identityは確定しているが、Swift／Rust／将来C#の独立conformance runnerとRelease Gateが終わるまでR0実装合格やProduction互換を宣言しない。
 
 protocol v1は`contentProtectionProfile=serverReadableV1`、`e2ee=false`で確定している。TLSとserver管理の保存時暗号化を必須とするが、権限を持つserver運用者と復旧backupから原稿を読める。E2EEをv1のflagとして追加せず、必要になった場合は暗号化object identity、鍵envelope、server validation／reconciliation境界を別namespace／epochの非互換migrationとして置き換える。
 
@@ -20,13 +20,13 @@ Production同期Bearerは[`../../auth/v1/openapi.yaml`](../../auth/v1/openapi.ya
 
 `SnapshotManifest`と`PublishHeadCommand`は外部JSON Schemaが正で、OpenAPI内の自己完結copyは構造等価でなければならない。比較は両schemaの`$ref`を完全inlineし、inline後に参照不能となったroot `$defs`を除去し、annotationと`x-fuminiwa-*`だけを除いたnormalized JSONを再帰比較する。この順序を変えたり、他のvalidation keywordを落とした差があればR0失敗とする。R0 conformance runnerはnormalizerのexpected normalized JSON fixtureも固定する。semantic whole-work invariant、calendar-valid timestamp、portable projection limitはJSON Schemaだけで完了せず、OpenAPI、設計本文、fixtureを合わせて実装する。
 
-## Freeze条件
+## R0実装conformance条件
 
 1. D-078の`serverReadableV1`／E2EEなし、Sign in with Apple native、FUMINIWA opaque session、同一identity再認証をsync＋auth OpenAPI／fixtureで相互検証する。
 2. Swift／Rust／C#が全valid fixtureで同じJCS bytes、ObjectID、SnapshotID、command digestを返し、全invalid fixtureを同じ分類で拒否する。
 3. OpenAPI parse、全local `$ref`、operationId一意性、外部schema構造等価、JSON Schema meta-validationを機械検査する。
 4. save／Intent、lost ACK、upload expiry、cursor、account fence、safe materialization、3択、retention、backup、migrationのscenario fixtureを3実装で共有する。
-5. draft中に生成client／server codeを正にせず、契約変更時はschema、OpenAPI、fixture、Decisionを同じcommitで更新する。
+5. conformance実装中に生成client／server codeを正にせず、契約変更時はschema、OpenAPI、fixture、Decisionを同じcommitで更新して再監査する。
 
 最低限の静的検査例:
 

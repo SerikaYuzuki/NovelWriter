@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "intent-attempt-lost-ack-exact-retry",
   "description": "A server commit succeeds, its response is lost, and process restart replays exactly the sealed attempt.",
   "digestContract": {

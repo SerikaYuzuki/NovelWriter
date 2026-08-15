@@ -97,7 +97,7 @@ D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP wo
 - N4 署名済み Mac＋iPhone をコードだけで完了扱いすること
 - ローカル `main` への直接 push、GitHub `main` への force push
 
-次の実装は利用者が着手を指示した後、D-077／D-078のR0 Contract freeze（コードなし）から始める。D-078のProduct Decisionは確定済みだが、sync＋auth OpenAPI／fixtureの最終監査と明示freezeは未完了である。R1 Snapshot domain＋SQLite／CAS、R2 Import／Export、R3 networkなしlocal product、R4 Rust sync server＋Apple verifier／FUMINIWA session、R5 Swift Apple auth／Keychain＋HTTP worker、R6 Conflict／online history、R7 migration、R8 Production hardening＋versioned account lifecycleの順とする。account作成を公開する前に、後続Decisionでアプリ内削除開始、猶予／取消／retention、Apple token revoke、remote削除完了read-backを固定・実装する。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)。
+次の実装は利用者が着手を指示した後、最終設計監査を通過したD-077／D-078のR0契約に対する独立conformance harnessから始める。sync＋auth OpenAPI／fixtureは実装の設計authorityだが、Swift／Rust／将来C#のrunnerが同じbytes／hash／typed errorを実証するまではR0実装Gate通過やProduction互換を宣言しない。R1 Snapshot domain＋SQLite／CAS、R2 Import／Export、R3 networkなしlocal product、R4 Rust sync server＋Apple verifier／FUMINIWA session、R5 Swift Apple auth／Keychain＋HTTP worker、R6 Conflict／online history、R7 migration、R8 Production hardening＋versioned account lifecycleの順とする。account作成を公開する前に、後続Decisionでアプリ内削除開始、猶予／取消／retention、Apple token revoke、remote削除完了read-backを固定・実装する。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)。
 
 ## 7. GitHub へ載せる方針
 

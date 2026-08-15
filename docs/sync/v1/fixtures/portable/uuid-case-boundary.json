@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "portable-uuid-case-boundary",
   "description": "novelpkg uppercase UUID spelling and Snapshot lowercase spelling represent the same 128-bit logical identity without making platform-dependent ObjectIDs.",
   "packageInput": {

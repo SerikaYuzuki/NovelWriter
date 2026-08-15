@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "canonicalization": "RFC8785",
   "description": "The minimal materializable empty work: all nine required singleton/order EntityKeys and a zero-parent root Snapshot.",
   "entityObjects": [

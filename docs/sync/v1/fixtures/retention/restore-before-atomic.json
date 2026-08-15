@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-restore-before-atomic",
   "description": "An online restore protects the exact expected old head H as a pinned restoreBefore occurrence in the same PostgreSQL transaction that publishes restore candidate R, records history/change rows, and stores the receipt; stale expected heads apply no protection or head mutation.",
   "identities": {

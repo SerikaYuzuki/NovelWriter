@@ -936,7 +936,7 @@
 
 ## D-077: SQLiteをlocal canonicalとし、不変作品SnapshotをRust同期サーバーへ非同期複製する
 
-- **日付**: 2026-08-15 / **状態**: 承認・設計採択（設計のみ。E2EE／account判断はD-078で確定。`docs/sync/v1`と`docs/auth/v1`はR0最終監査前のdesign candidateで、Rust server、SQLite client、旧CloudKit移行、Production運用はすべて未実装）
+- **日付**: 2026-08-15 / **状態**: 承認・設計採択（設計のみ。E2EE／account判断はD-078で確定。`docs/sync/v1`と`docs/auth/v1`は最終設計監査済みの実装authorityだが、R0 cross-language conformance、Rust server、SQLite client、旧CloudKit移行、Production運用はすべて未実装）
 - **内容**:
   1. 通常編集の端末内正本を、app-private `.novelpkg`から **1 local profileにつき1 SQLite database** へ移す。native editorはIME変換中の本文を一時的に所有し、確定した作品状態、作品棚、Snapshot、SyncIntent、SealedAttempt、Inbox、Conflict、account fence、migration ledgerをSQLiteの短いtransaction境界で管理する。大きいattachmentはapp-private content-addressed storeへ置き、SQLiteがSHA-256、byte count、論理参照を所有する。DB writerは専用actorだけとし、transaction中にnetworkを待たない。
   2. `.novelpkg` v1〜v3は通常autosave先／同期working copyから外し、macOS／iOS／Windows間の **検証済みImport／Export専用portable artifact** とする。Importは外部原本を変更せずnew WorkIDとしてSQLite＋CASへ取り込み、Exportは1 committed Snapshotからpackageを生成してread-back後にatomic採用する。active work、session、WorkID、bindingを変えない。package schemaとgolden fixtureを捨てず、local SQLite schema、Intent／Attempt、account、server URLをpackageへ入れない。
@@ -960,7 +960,7 @@
 
 ## D-078: Snapshot Sync v1をserver-readableとし、Sign in with Appleを唯一の初期認証providerにする
 
-- **日付**: 2026-08-16 / **状態**: 承認・設計確定（設計のみ。auth／server／client／Productionは未実装。R0 freezeはversioned auth contractとfixtureの最終監査後）
+- **日付**: 2026-08-16 / **状態**: 承認・設計確定（設計のみ。versioned sync／auth contractとfixtureは最終設計監査済み。auth／server／client、R0 cross-language conformance、Productionは未実装）
 - **内容**:
   1. Snapshot Sync protocol v1のcontent protectionを`serverReadableV1`、`e2ee=false`に固定する。通信路はTLS、PostgreSQL／object store／backup／credential secretはserver管理の保存時暗号化を必須とするが、これはE2EEではなく、権限を持つserver運用者は原稿内容を読める。通常UIとprivacy説明でこの境界を隠さない。tenant authorization、最小権限のoperator access、監査、本文／title／pathを含めないlogをRelease Gateにする。
   2. E2EEをv1のflag、account設定、deployment差分として追加しない。将来採択する場合はprotocol namespace／epoch、ObjectID、manifest、server validation、key distribution、recovery、migrationを置き換える別Decisionと互換性のないv2 migrationを必要とする。v1に利用者用work keyやrecovery codeを作らない。

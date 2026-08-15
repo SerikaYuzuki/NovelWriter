@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "portable-import-export-preservation",
   "description": "Known content, attachments, unconsumed package items, empty directories, and raw legacy snapshots survive SQLite adoption, retry, restore, keep-both, and Export without becoming sync payload accidentally.",
   "initialPackage": {

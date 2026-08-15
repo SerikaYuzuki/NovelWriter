@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "entity-diff-disjoint-safe-union",
   "description": "Local changes the title while remote changes an episode body; no field- or text-level merge is performed.",
   "initialState": {

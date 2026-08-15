@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "saved-local-pending-remote-advance",
   "description": "A clean editor does not authorize remote fast-forward when a durable local Snapshot is still pending upload.",
   "initialState": {

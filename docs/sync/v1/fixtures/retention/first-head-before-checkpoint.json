@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-first-head-before-checkpoint",
   "description": "When a Work has no remote head, the worker publishes and reads back the newest local state T as the discoverable zero-parent root before recording older manual checkpoint S; a process kill after root commit cannot hide T or discard the durable checkpoint intent.",
   "identities": {

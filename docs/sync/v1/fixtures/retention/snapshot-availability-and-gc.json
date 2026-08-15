@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-snapshot-availability-and-gc",
   "description": "Time buckets select checkpoints while protected references remain payload roots; graph metadata survives payload pruning.",
   "policy": {

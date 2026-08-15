@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "canonicalization": "RFC8785",
   "description": "A calendar-valid leap-day work/document timestamp in the only accepted UTC whole-second lexical form.",
   "entityObject": {

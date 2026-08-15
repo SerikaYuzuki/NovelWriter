@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "backup-db-cas-generation-barrier",
   "description": "A physical backup derives its exact CAS inventory from the completed staging database while concurrent source saves remain allowed.",
   "backupPolicy": {

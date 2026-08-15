@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "baseFixture": "../canonical-valid/minimal-root.json",
   "cases": [
     {

@@ -33,6 +33,6 @@ independent harness.
 | `object-size-exceeded` | JSON Schema / object finalize | `byteCount` exceeds 250 MiB. |
 | `entity-payload-size-exceeded` | Snapshot registration in the structured-entry context | Canonical structured-entity bytes exceed 16 MiB; bytes-only object finalize cannot classify their use. |
 
-This matrix is deliberately a design candidate, not proof that R0 is frozen.
-The eventual harness must add raw input files and assert the typed error names
-from `errors.md` after the E2EE/account decision is recorded.
+This matrix is part of the reviewed design contract, not proof that any
+implementation passed the R0 conformance gate. Each independent harness must
+exercise the raw inputs and assert the typed error names from `errors.md`.

@@ -10,7 +10,7 @@
 - 現行sourceの自動保存は端末内`.novelpkg`とdirty setまで、送信は明示同期だけ。D-077実装後はSQLite＋dense Snapshot＋SyncIntentをlocal commitし、remote workerがSealedAttemptを作って自動再開する。二つを同時authorityにしない
 - 通常版 AI は校正／アドバイス用 prompt の clipboard copy だけ。provider / network は通常 target に無い(D-075)
 - 「商業化」は実装・品質・配布技術に限る(D-042)。価格・法務・販促は明示依頼が無い限り触らない
-- **次の実装**: 利用者が着手を指示した後、D-077／D-078 R0のversioned sync＋auth OpenAPI／canonical fixture／scenario fixtureを先にfreezeする。v1の外部identity providerはAppleだけで、未実装providerのadapter／UIを作らない。R1以降の順序とGateは[docs/SNAPSHOT_SYNC_HANDOFF.md](docs/SNAPSHOT_SYNC_HANDOFF.md)を正とする。WindowsはW0
+- **次の実装**: 利用者が着手を指示した後、監査済みのD-077／D-078 R0 sync＋auth設計契約に対する独立conformance harnessを先に作り、OpenAPI／canonical fixture／scenario fixtureをSwift／Rust／将来C#で検証する。設計契約の変更が必要ならDecision／schema／fixtureを同時更新して再監査する。v1の外部identity providerはAppleだけで、未実装providerのadapter／UIを作らない。R1以降の順序とGateは[docs/SNAPSHOT_SYNC_HANDOFF.md](docs/SNAPSHOT_SYNC_HANDOFF.md)を正とする。WindowsはW0
 - **GitHub**: `origin/main` には iOS / Device Sync / D-071〜074 がまだ無い。載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) 7章。利用者の明示が無い限り origin へ push しない
 
 ## リポジトリ構成

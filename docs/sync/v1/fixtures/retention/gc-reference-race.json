@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-gc-reference-race",
   "description": "Local save and server Snapshot registration serialize reference adoption with two-phase GC so no committed reference can point at deleted bytes; a GC-first server race is recovered through typed replanning and a fresh immutable incarnation.",
   "sharedObject": {

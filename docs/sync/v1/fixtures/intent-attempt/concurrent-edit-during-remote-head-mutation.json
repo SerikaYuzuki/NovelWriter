@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "intent-attempt-concurrent-edit-during-remote-head-mutation",
   "description": "Every local-origin head mutation seals its source local generation. A newer local autosave survives the response and is reconciled against the resulting remote head.",
   "mutationKinds": [

@@ -2,7 +2,8 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: FUMINIWA Auth API
-  version: 1.0.0-r0-draft
+  version: 1.0.0-r0-contract
+  x-fuminiwa-contract-status: reviewed-design-implementation-unverified
   summary: Provider-neutral FUMINIWA session issuance with Sign in with Apple native as the sole v1 provider.
   description: |
     R0 implementation contract. This document defines authentication wire behavior;

@@ -72,7 +72,7 @@ docs/auth/v1/
 
 R0完了条件は、仕様内の曖昧な`optional`、`implementation-defined`、自由文字列errorを0件にし、D-078の`serverReadableV1`／Sign in with Appleを`docs/sync/v1/`と`docs/auth/v1/`へ矛盾なく固定することである。
 
-Product DecisionはD-078で確定したが、現時点の`docs/sync/v1/`と`docs/auth/v1/`は最終横断監査前の`designCandidate`であり、R0 freeze済みではない。protocol epoch、content-protection fields、auth state、typed error、limits、全canonical hashを再監査し、承認commitを明示して初めてauthorityとする。
+Product DecisionはD-078で確定し、`docs/sync/v1/`と`docs/auth/v1/`はprotocol epoch、content-protection fields、auth state、typed error、limits、canonical fixtureを含む最終横断設計監査を通過した実装authorityである。ただし、これはSwift／Rust／将来C#の実装conformanceを証明しない。各独立runnerが同じbytes、hash、decode model、typed error、scenario遷移を実証して初めてR0実装Gate通過とする。契約変更が必要な場合はDecision、OpenAPI、schema、fixtureを同じchangeで更新し、再監査する。
 
 ## 3. Apple client module境界
 
@@ -313,6 +313,6 @@ S3 uploadは全bodyをmemoryへ載せない。proxy stream中にdigest／sizeを
 
 ## 11. Lunaへ依頼するときの最初の指示
 
-最初の依頼はR0最終化だけに限定する。design candidateは既にあるため、D-078で確定した`serverReadableV1`／Sign in with Appleと[AUTH.md](AUTH.md)のApple-only provider-neutral境界を反映し、fixtureを独立検証してfreezeするところから始める。認証の実装順はAUTH.md 10章を正とする。
+最初の依頼はR0 conformance harnessだけに限定する。設計契約は最終監査済みなので、D-078で確定した`serverReadableV1`／Sign in with Appleと[AUTH.md](AUTH.md)のApple-only provider-neutral境界を変更せず、fixtureを独立実装で検証するところから始める。契約上の真の不整合を見つけた場合だけ実装へ合わせず設計側へ報告し、Decision／schema／fixtureの再監査を先に行う。認証の実装順はAUTH.md 10章を正とする。
 
-> D-077／D-078、`docs/SNAPSHOT_SYNC.md`、`docs/AUTH.md`、本書、`docs/sync/v1/README.md`、`docs/auth/v1/README.md`を読み、確定済みの`serverReadableV1`／Sign in with Appleをdesign candidateへ反映してください。External provider→VerifiedExternalIdentity→immutable AccountID→FUMINIWA sessionの境界、Apple-only v1、account fence、revocation、local-edit継続をauth fixtureへ固定し、provider link／unlink API／UIやOIDC adapterは追加しないでください。OpenAPI、JSON Schema、canonical valid／invalid fixture、全scenario fixtureを独立に検証し、差分とhash変更を提示してください。実装コードは追加せず、R0のcross-language expected bytesとauth contractが承認されるまでRust serverとGRDB storeへ進まないでください。
+> D-077／D-078、`docs/SNAPSHOT_SYNC.md`、`docs/AUTH.md`、本書、`docs/sync/v1/README.md`、`docs/auth/v1/README.md`を読み、監査済み設計契約に対するR0 conformance harnessを独立実装してください。`serverReadableV1`、External provider→VerifiedExternalIdentity→immutable AccountID→FUMINIWA session、Apple-only v1、account fence、revocation、local-edit継続を変更せず、provider link／unlink API／UIやOIDC adapterは追加しないでください。OpenAPI、JSON Schema、canonical valid／invalid fixture、全scenario fixtureについてexpected bytes、hash、decode model、typed errorを検証し、結果を提示してください。契約上の不整合を見つけた場合はproduction codeへ都合よく書き換えず報告し、設計再監査が完了するまでRust serverとGRDB storeへ進まないでください。

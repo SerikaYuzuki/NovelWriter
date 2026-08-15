@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "remote-command-finalize-storage-db-crash",
   "description": "Object finalize verifies actual temporary bytes, read-backs one immutable planned incarnation, and only then atomically commits PostgreSQL availability, quota, scoped presence, and receipt; crashes on either side of that transaction recover without missing bytes, duplicate quota, or unsafe orphan adoption.",
   "binding": {

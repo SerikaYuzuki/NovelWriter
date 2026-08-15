@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "canonicalization": "RFC8785",
   "description": "A Japanese string with an embedded LF and a supplementary-plane character; no normalization or line-ending rewrite is allowed.",
   "entityObject": {

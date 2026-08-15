@@ -190,7 +190,7 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - local／online Snapshotに同じretention／restoreの意味を使い、restoreは過去内容を持つ新Snapshotを作る
 - protocol v1は`serverReadableV1`／E2EEなしとする。同期identityはprovider-neutralなopaque AccountIDであり、作品binding、Snapshot、`.novelpkg`へApple subject／email／issuerを入れない。同期BearerはFUMINIWA発行のopaque access tokenで、Apple tokenを各同期requestへ渡さない
 - Production v1の外部identity providerはSign in with Appleだけである。Apple clientはAuthenticationServicesのnative adapterを使う。将来Windows等でApple web flowまたは別providerを追加しても、provider adapterより上のAccountID／session／fence／sync contractを変えず、実装していないproviderのUIを出さない
-- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)、`docs/sync/v1/`と`docs/auth/v1/`のOpenAPI／schema／fixtureを正にする。D-078のProduct Decisionは確定済みだが、現時点のcontractはR0最終監査前の`designCandidate`である。server integration testは適合証拠であって仕様authorityではない
+- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)、`docs/sync/v1/`と`docs/auth/v1/`のOpenAPI／schema／fixtureを正にする。D-078のProduct Decisionと設計契約は最終監査済みであり、実装は独立conformance runnerでこのauthorityへの適合を証明する。server integration testは適合証拠であって仕様authorityではない
 
 ## 7-hist-a. D-071 Note Syncのクロスプラットフォーム契約（移行前の実装）
 

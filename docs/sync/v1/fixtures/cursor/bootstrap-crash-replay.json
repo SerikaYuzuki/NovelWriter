@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "cursor-bootstrap-crash-replay",
   "description": "Bootstrap uses a barrier; a crash before inbox+cursor commit causes harmless at-least-once page replay.",
   "cursorContract": {

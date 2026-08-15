@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "cursor-bootstrap-complete-state-race",
   "description": "Bootstrap stages every library and current-state page at barrier B, closes all post-barrier races through event replay plus affected-list refetch, and installs library, review state, history, and cursor in one SQLite transaction; crash replay is duplicate-free and cursor expiry restarts the entire bootstrap.",
   "cursorContract": {

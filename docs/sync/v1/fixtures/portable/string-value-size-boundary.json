@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "portable-string-value-size-boundary",
   "description": "Every string-value EntityKey, including work title, synopsis, chapter title, episode title/body/memo, uses the same raw UTF-8 one-MiB limit independent of JSON quote bytes.",
   "limit": {

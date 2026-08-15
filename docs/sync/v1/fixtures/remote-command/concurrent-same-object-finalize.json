@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "remote-command-concurrent-same-object-finalize",
   "description": "Two devices may reserve separate uploads after concurrently observing one tenant-scoped ObjectID as missing, but finalize serializes on the tenant/ObjectID lifecycle lock: one upload adopts the sole current incarnation, and every valid or invalid loser terminally releases only its own reservation with a receipt and fenced cleanup intent.",
   "binding": {

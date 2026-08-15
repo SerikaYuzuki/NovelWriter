@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "migration-non-destructive-cutover-retry",
   "description": "Legacy package and CloudKit candidates survive a crash and are cut over without dual authority or an implicit winner.",
   "initialState": {

@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "conflict-concurrent-edit-during-resolution",
   "description": "All three conflict choices seal their source local generation. An edit made after bytes are sent survives lost-ACK resolution and is reconciled on top of the resolved remote head without editor injection.",
   "sharedInitialState": {

@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "account-resource-presence-fence",
   "description": "One local CAS object may be shared by works, but verified remote presence is scoped to the exact server, protocol epoch, account tenant, and AccountAuthEpoch-derived fence. Normal access or refresh token rotation does not change this fence.",
   "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

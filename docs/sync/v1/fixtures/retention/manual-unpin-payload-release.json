@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "retention-manual-unpin-payload-release",
   "description": "A manual checkpoint defaults to ensurePinned=true, can only be unpinned by an explicit setSnapshotPin(false), and can release payload into an unavailable lineage stub only after every hard root is absent; receipts replay exactly and unreferenced object bytes recover quota after grace-period GC.",
   "policy": {

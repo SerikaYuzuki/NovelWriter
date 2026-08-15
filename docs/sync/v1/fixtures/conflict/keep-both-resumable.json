@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "conflict-keep-both-resumable",
   "description": "One EntityKey conflicts, disjoint edits are retained, and keep-both is one idempotent atomic server operation.",
   "initialState": {

@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "status": "designCandidate",
+  "status": "reviewedDesignContract",
   "scenarioId": "entity-diff-delete-vs-edit-dependency-closure",
   "description": "Local deletes one episode while remote edits its body. A raw per-key merge would orphan the remote body, so the episode presence dependency closure requires a choice.",
   "entityIds": {

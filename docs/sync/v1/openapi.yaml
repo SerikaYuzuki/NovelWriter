@@ -2,7 +2,8 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: FUMINIWA Snapshot Sync API
-  version: 1.0.0-r0-draft
+  version: 1.0.0-r0-contract
+  x-fuminiwa-contract-status: reviewed-design-implementation-unverified
   summary: Local-first immutable whole-work Snapshot replication protocol.
   x-fuminiwa-schema-equivalence:
     authority:
@@ -17,9 +18,9 @@ info:
       Any difference fails R0. This embedded copy exists only to keep openapi.yaml
       usable as one self-contained OpenAPI file.
   description: |
-    R0 design draft. This file is a wire-contract authority, not an implementation
-    report. Rust server, SQLite client, migration, and Production deployment remain
-    unimplemented until the corresponding gates pass.
+    Reviewed R0 design contract. This file is a wire-contract authority, not an
+    implementation report. Rust server, SQLite client, migration, and Production
+    deployment remain unimplemented until the corresponding gates pass.
 
     Protocol v1 is fixed to `contentProtectionProfile=serverReadableV1` and
     `e2ee=false`. TLS and server-managed encryption at rest are mandatory, but an
