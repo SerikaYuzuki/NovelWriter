@@ -1,16 +1,27 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-071のメモ型local-first／entity record同期は **N1 domain、N2 CloudKit adapter、N3 App 3択までsource＋unit／layout**。N4はin-memory simulationのみ。署名済みMac＋iPhone paired、実CloudKit send／fetch、Production schema deployは未実施。通常Appのproduction live経路は`NoteSyncCoordinator`（factory注入時）。**エージェントは本章（0章）だけを live 契約として読む。** 0-hist と 1〜15章は D-059〜D-061 の履歴であり、新しい同期コードの仕様ではない。既存D-061 App testはfactory未注入のため旧coordinatorのまま。D-063のiCloud作品棚、app-private working copy、account fence、Import／Exportはsource complete／local automated GOのまま維持する。D-061のwhole-work `CKAsset`、3-way merge、3面reviewは通常Appのlive経路から外す契約で、履歴として残す。Release NO-GO（paired native、Production schema、実account switch、process-kill、Package Validator、External Change / Conflict、production migration）は維持する。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
+> **状態**: D-077のSQLite local canonical／Snapshot Syncを次世代契約として採択し、Rust server MVPから実装する。client、SQLite移行、旧CloudKit migration、Production運用は未実装でRelease NO-GO。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と本書0章。通常Appの現在のproduction runtimeは引き続きD-071の`NoteSyncCoordinator`であり、本書0-current章はmigration完了まで現行コードの説明として読む。0-histと1〜15章はD-059〜D-061の履歴で、新しい同期コードへ分岐を足さない。旧package、journal、dirty、review、CloudKit recordをreset／削除しない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-059〜D-074、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-077、[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
-## 0. D-071の現行Notes型／cloud library契約
+## 0. D-077のSQLite／Snapshot Sync契約
+
+- 端末内のcommit済み正本は1 local profileのSQLite、byte payloadはapp-private content-addressed storeとする。`.novelpkg`はImport／Exportだけに使う
+- native editor確定後、current entity、whole-work Snapshot、durable Outboxを同じtransactionで保存する。autosave、画面遷移、background、close、quitはremoteを待たない
+- serverはRust HTTP API、PostgreSQL、S3互換object storeとし、operation ID retry、expected `{generation, snapshotID}` head CAS、cursor pullを提供する
+- 物理転送は変更entity／attachment objectだけだが、同期、競合、履歴、復元の利用者単位は1作品とする
+- 非重複EntityKeyは2-parent Snapshotへ決定的に統合し、同一keyだけをこの端末／オンライン／両方の3択にする。時計LWWと本文内部mergeを行わない
+- remoteはInboxへstageし、active editorへ注入せず、IME／Undo／sessionを確認したsafe boundaryだけでmaterializeする
+- local／online historyは同じSnapshotとTime Machine型retentionを使う。attachmentを含め、unknown portable resourceはlocal round-tripだけに保全する
+- 旧CloudKitはread-only migration sourceとし、新serverと二重authorityにしない。詳細、schema責務、API、migration、Release Gateは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする
+
+## 0-current. D-071の現行Notes型／cloud library実装（移行前）
 
 D-071以降、通常のMac／iOS Appが使うlive同期は、作品全体を1つのrevision資産として送ることではない。画面の正は各端末のapp-private `.novelpkg`、転送の正はAppleメモの1枚に相当するentity record、作品の正は棚の上の1 `SyncWorkID` である。D-063のcatalog／private copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。後続の0-hist章と1〜15章はD-059〜D-061の実装・検証履歴として残す。
 
-### 0.1 同期対象と非対象
+### 0-current.1 同期対象と非対象
 
 stable IDと表示順を分離して次を同期する。
 
@@ -30,7 +41,7 @@ stable IDと表示順を分離して次を同期する。
 - local path、bookmark、端末名、利用者名、CloudKit metadata
 - 複数人のリアルタイム共同編集
 
-### 0.2 local正本と明示同期
+### 0-current.2 local正本と明示同期
 
 利用者の確定変更は次の順に処理する。
 
@@ -42,7 +53,7 @@ stable IDと表示順を分離して次を同期する。
 
 dirty setは「まだ送っていないentity」だけを持ち、作品全体snapshotの複製ではない。通信失敗・終了・再起動後は同じdirty setを残し、次の明示同期で再送する。未送信原稿の正はpackageである。起動、アプリ切替で戻る、執筆画面に入る、はfetch／sendのきっかけにしない。通信完了を画面表示の条件にしない。CKQueryの12／2015をオフラインと表示しない。queryが使えないDevelopment schemaでは、work recordと順序付き子entityをrecord IDで取る。作品棚は同じ窓で`workID` field query（`!= ""` および hex prefix `BEGINSWITH`）、`modificationDate` query、`CKSyncEngine`が観測したNote WorkIDのrecord ID取得を試す。CKQueryが0件でも、queryで取れたWorkIDはremote-onlyとして棚に出す。fetch-by-idで補ったこの端末既知のWorkIDだけを根拠に、未発見の他端末作品を隠さない。未作成のNote typeへのqueryは空とする。衝突3択は内容digestが違う場合だけ出す。CloudKitのchange tag衝突でも内容が同じならackして3択にしない。keepLocalはsessionのpending keysが空でも、画面が出したkeysでforce overwriteする。keepLocalのCloudKit saveはengine ackなしを成功としない。Editor openのlocal preflightが付ける一時オフラインは通信待ちを避ける印であり、Note coordinatorが生きている結線済み作品の明示同期を止める根拠ではない。失敗はCloudKit error tokenで分類し、診断は`[FUMINIWA] note-sync`／`[FUMINIWA] cloud-library`にbegin／skip／send／ok／failだけを出す。Debugでは同じtokenを失敗ダイアログへ付ける。
 
-### 0.3 entity recordとCKSyncEngine
+### 0-current.3 entity recordとCKSyncEngine
 
 `NoteSyncWireProtocol.currentVersion = 1`は、D-059 Episode wire v1およびD-061 Work wire v1とは別namespaceである。
 
@@ -52,7 +63,7 @@ portable種類は `work`、`chapter`、`episode`、`character`、`plotCard`、`f
 
 衝突の検出はserver change tagである。時計、更新日時、push順によるwinner選択は禁止する。
 
-### 0.4 衝突と3択
+### 0-current.4 衝突と3択
 
 同じentityをこの端末がdirtyにしている間にserver側が変わった場合だけ衝突とする。片側だけ進んだentityは確認せず送信／取り込む。作品全体の3-way mergeと「統合案」は使わない。
 
@@ -64,17 +75,17 @@ portable種類は `work`、`chapter`、`episode`、`character`、`plotCard`、`f
 
 両方残すは、この端末の内容を新しい`SyncWorkID`として棚に残し、元のWorkIDはiCloud側を正とする。話の中へ衝突コピーを増やす方式はv1では採用しない。cloud衝突中もEditorとlocal保存を止めない。選択するまで衝突したremoteはpendingに保ち、入力中本文を巻き戻さない。未解決のNote衝突は作品を開き直したときに Note dirty store の pending keys から3択へ戻す。旧 Work journal に残る leftover review は D-071 Note へ自動変換せず、専用の旧経路復旧で扱う。作品棚の「変更を確認」と通常画面の sheet から選べる。閉じても衝突は残る。
 
-### 0.5 native editorへの反映境界
+### 0-current.5 native editorへの反映境界
 
 CloudKit fetch／push callbackからactiveな`NSTextView.string`／`UITextView.text`を置き換えない。remoteの非衝突entityと、利用者が選んだiCloud側は、作品／session／Editor surface、IME、selection、Undo／Redoを確認した安全な境界だけでpackageへ入れる。編集中の話と衝突しているremoteは、話を切り替えるか利用者が選ぶまで入れない。
 
-### 0.6 catalogとbootstrap
+### 0-current.6 catalogとbootstrap
 
 D-063の「iCloudの作品」はWorkIDだけでremote catalogとlocal registryをmergeする。catalogの正は当該WorkIDの`work` recordが存在することであり、whole revision ID／snapshot digestをdownloadの唯一条件にしない。remote-only openはonlineかつaccount確認後に、そのWorkIDのentity一式を取得してprivate packageへ組み立てる。タイトルと表示日時はhintであり、winner決定に使わない。
 
 account mismatch、unscoped local-only、原本を変えないImport、identity不変のExport、資料／snapshotを同期済みと表示しない契約はD-063どおり。
 
-### 0.7 cutover
+### 0-current.7 cutover
 
 D-071はdevelopment cutoverである。Work revision assetとEpisode lease recordをentityへ自動migrationしない。mixed clientを主張しない。N1 domain → N2 CloudKit send／fetch → N3 App 3択UI はsource＋unit／layoutまで完了。N4はin-memory 2 client往復／offline再送／process-kill dirty復元／account分離までで、署名済みpaired実機は未実施である。N1〜N3のlocal test成功をN4完了・実装済み同期完成としない。
 

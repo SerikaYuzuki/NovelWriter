@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.92
+# ふみにわ 設計書 v0.93
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -6,7 +6,7 @@
 ## 1. 目的
 
 **ふみにわ（FUMINIWA）**は、長編・中編小説の執筆を支援する **macOS ファーストのマルチプラットフォーム小説執筆アプリ** である。
-macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版と将来の Windows WinUI 版でも安全に開き、編集し、再保存できることを製品要件とする。Phase 7でiOS / iPadOS対応へ着手し、D-059〜D-063でapp-private作品とiCloud作品棚の基盤を実装した。D-071では通常Appのlive同期を、作品全体の1資産＋3-way mergeから、Appleメモ型のlocal-first／entity record同期へ切り替える。画面は `.novelpkg` を正として通信を待たず、変わった話・人物等だけをdirtyに残す。iCloudへの送信と取得は、自動保存ではなく明示の「iCloudと同期」／結線済み作品の`Cmd+S`で行う(D-073)。衝突したら合成せず、この端末／iCloud／両方を別作品として残す、の3択にする。D-063の「iCloudの作品」、見えないplatform別app-private working copy、原本を変えないImport、identity不変のExportは維持する。Windows、Android、PDF出力、校正、要約、差分管理なども独立した境界で追加できるようにする。
+macOS 版を先行実装としつつ、iOS / iPadOS版と将来のWindows WinUI版でも同じ作品を、通信を待たず安全に編集・復元できることを製品要件とする。D-077により、通常編集の端末内正本はapp-private SQLite、byte payloadはcontent-addressed store、`.novelpkg`は検証済みImport／Export用portable artifactとする。保存と同じtransactionで作品全体の不変Snapshotとdurable Outboxを確定し、Rust serverへ変更objectだけを非同期複製する。画面遷移／close／quitはremoteを待たず、通信復帰後に自動再開する。同じ論理entityが分岐した場合は、この端末／オンライン／両方を別作品として残す、の3択にし、時計で勝者を決めない。現行D-071〜D-074の`.novelpkg`＋CloudKit Note実装は非破壊移行が完了するまで残すが、新規同期設計の正はD-077と[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)である。
 
 初期段階では、以下を最優先する。
 
@@ -25,11 +25,11 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - Apple 向けライブラリ群は Swift の multiplatform library として作成し、Windows 版は同じ境界を .NET class library で再実装する
 - iOS / iPadOS はPhase 7として着手し、Swiftの共有domain／保存／editor ruleを再利用しつつ端末別の適応UIを実装する(D-056)
 - Windows 版は WinUI 3 + C# / .NET で別実装し、Swift ソースの直接共有ではなく schema・fixture・純粋ロジックの入出力仕様を共有する
-- Device Syncはapp-private `.novelpkg`を各端末の正本として維持する。現行通常Appのlive経路はD-071のentity recordとし、native editor→model→package保存→dirty setまでを自動保存とする。`CKSyncEngine` pendingへの登録とsend／fetchは、結線済み作品の明示同期（toolbar「iCloudと同期」／`Cmd+S`）のあとだけ行う(D-073)。全端末のlocal Editorはnetworkに依存せず編集できる。D-059〜D-061のEpisode／Work wireとwhole revision `CKAsset`、3-way mergeは実装履歴として残し、CloudKit等のtransportはplatform adapterへ閉じ込める(D-059〜D-073)
-- Apple版の通常起動は1つの「iCloudの作品」から始め、remote catalogと検証済みplatform別app-private copyをWorkIDでmergeする。Macは単一pane、iPhone／iPadは適応navigationを使う。local path／Finder／Files上の作業copyを見せず、Finder / Open With／Files pickerも外部原本を直接開かずImport→new WorkIDとする。cached copyはofflineで開き、remote-onlyはonline＋account確認後だけdownloadする。activation直後のlocal WorkSync preflight／recovery gateは維持する(D-063)
+- Device SyncはSQLiteのlocal commitを常に先に完了し、同じtransactionでimmutable whole-work Snapshotとdurable Outboxを作る。Rust serverへのobject upload、head CAS、cursor pullはdocument gate外で自動再開し、起動、編集、autosave、画面遷移、close、quitを待たせない。物理転送はentity／attachment単位のcontent addressingとし、利用者にとっての同期・競合・履歴単位は1作品のままにする(D-077)
+- 通常起動はSQLiteの単一作品棚から始め、WorkIDだけをidentityにする。local pathやDBを見せず、Finder / Open With／Files pickerは外部原本を直接編集せずImport→new WorkIDとする。local workはofflineで開き、remote-only workの初回取得だけonline＋account確認を必要とする。account未確認で作った作品を後から現れたaccountへautomatic adoptしない(D-063 / D-077)
 - AppKit / UIKit などのプラットフォーム依存処理は EditorKit 内に閉じ込める
 - NovelCore はプラットフォーム非依存の純粋なモデル層にする
-- 保存形式は将来拡張しやすい `.novelpkg` を採用する
+- 通常保存はSQLite＋local CAS、portable受け渡しは`.novelpkg` v1〜v3を採用する。SQLite database自体を端末間で共有しない
 - EditorView は肥大化させず、入力処理はプラグイン化する
 
 ### 2.2 技術スタック(決定事項)
@@ -40,7 +40,8 @@ macOS 版を先行実装としつつ、同じ `.novelpkg` を iOS / iPadOS 版�
 - **テキストエンジン**: macOSの`NSTextView`とiOSの`UITextView`をTextKit 2で明示使用する(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager`への誤アクセスによるTextKit 1フォールバックを防ぐ
 - **macOS配布**: GitHub Releases による直接配布。macOS App Sandbox は採用しない(→ D-011)。iOSの配布判断へこの非Sandbox決定を流用しない
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
-- **Apple Device Sync（D-071契約、N2 CloudKit send／fetchとN3 App 3択はsource＋unit。N4はin-memory simulationのみ。署名済みpaired／Production schemaは未実施。D-063 libraryはlocal automated GO、Release NO-GO継続）**: private CloudKit + `CKSyncEngine`を`NovelSyncCloudKit` adapterとして使う。画面はapp-private `.novelpkg`を正とし、通信を待たない。live経路は作品タイトル／あらすじ、章・話、本文／メモ、人物、プロット、伏線、世界観をentity recordとして送り、変わったrecordだけを転送する。自動保存はpackageとdirty setまでとし、send／fetchは明示同期だけが行う(D-073)。D-063のWorkID catalog／private working copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。attachment／snapshot履歴／unknown root／端末設定は同期しない。whole revision `CKAsset`、mutation receipt CAS、作品全体3-way merge、3面reviewは通常経路から外す。衝突は同じentityの`serverRecordChanged`だけで検出し、この端末／iCloud／両方を別作品として残す、を選ばせる。SwiftDataはcanonical storeにせず、自前serverも置かない。macOSの非Sandboxは維持する。D-063までのlocal証跡（`NovelSync` 142 / 142件、`NovelSyncCloudKit` 84 / 84件等）は旧経路の履歴であり、D-071実装済みへ流用しない(→ [DEVICE_SYNC.md](DEVICE_SYNC.md), D-059〜D-071)
+- **Snapshot Sync（D-077。設計採択／Rust MVP実装中、client未実装）**: 端末内はSQLite＋CAS、remoteはRust HTTP API＋PostgreSQL＋S3互換object storeとする。autosave／lifecycle checkpointはcurrent state、immutable Snapshot、Outboxをatomicにcommitし、network workerは後段で自動再開する。expected `{generation, snapshotID}`によるhead CAS、operation receipt、cursor pull、3択Conflict、online history、attachment transferを共通protocolにする。CloudKitと新serverを二重authorityにせず、旧CloudKitはread-only migration sourceへ移す。Production認証、E2EE範囲、公開endpoint、quotaは後続Decisionまで未確定で、Release NO-GOを維持する(→ [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md), D-077)
+- **現行CloudKit実装（移行前のruntime）**: D-071のNote entity＋D-073の明示同期がsource上のlive経路である。SQLite client cutover前に削除・resetせず、現行の実装状態と旧データの読み方は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0-current章を正とする。現行local testをD-077実装済みへ読み替えない
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Mac／iOSで共有するlocal library状態・attestation・registry値型の`NovelLibrary`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`を扱う。`NovelLibrary`はNovelCore／NovelSync（必要な保存検証はNovelStorage API境界）だけを参照し、SwiftUI／AppKit／UIKit／CloudKitへ依存しない。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。AI provider targetはD-075で削除し、再開時は最新APIを別Decisionで再設計する
 - **Xcodeプロジェクト生成**: XcodeGen(`project.yml` が正、`*.xcodeproj` はコミットしない → D-015)
@@ -152,9 +153,13 @@ public protocol DocumentRepository: Sendable {
 - `Chapter.order` は置かない。配列順と `order` の二重管理は必ずズレる
 - 「最近開いた作品」の追跡は Repository の責務ではなく App 層の責務(UserDefaults にファイルパスを保存すれば足りる。Sandbox 非採用のため → D-011)。Repository は URL に対する load / save に徹する
 
-### 4.2 NovelStorage
+### 4.2 NovelLocalStore / NovelStorage
 
-作品データの保存・読み込みを担当する。`.novelpkg` はフォルダ形式のパッケージであり、画像・資料などを追加しやすい。AIのprompt、response、diff、provider設定はD-043の初期契約ではpackageへ追加しない。
+D-077の通常保存は、新しい`NovelLocalStore`境界でSQLite databaseとapp-private CASを所有する。1 local profileの作品棚、current entity pointer、immutable Snapshot、Outbox、Inbox、Conflict、migrationを1 transactionへまとめ、専用actorを唯一のwriterにする。WAL、foreign key、transactional schema migration、起動時integrity check、SQLite Online Backup APIによる世代backupを使い、migration／integrity失敗を空の新規作品へfallbackしない。大きいattachmentはCASへstream copy、hash／byte count read-back、same-volume renameした後だけSQLiteから参照する。network I/O中にDB transactionを保持しない。公開APIはURLではなくWorkIDを受ける`LocalWorkStore`、`WorkHistoryStore`、`WorkResourceStore`とし、`DocumentSaveCoordinator`のrevision coalescingはWorkID commitへ差し替えて維持する。
+
+`NovelStorage`は`.novelpkg` v1〜v3のreader、Package Validator、Import／Export codec、golden fixtureを所有する。`.novelpkg` はフォルダ形式のportable packageであり、画像・資料などを追加しやすい。通常Appはこれをautosave先や同期working copyにせず、外部原本を変更しないImportと、committed Snapshotからのatomic Exportだけに使う。AIのprompt、response、diff、provider設定、SQLite schema、Outbox、account、server URLはpackageへ追加しない。
+
+現行`NovelpkgRepository`／URL-based `DocumentRepository`はSQLite client cutoverまでの実装である。先に`PackageBackedWorkStore` adapterでAppをWorkID APIへ移し、次にSQLite実装へ切り替える。1作品をpackageとSQLiteへ長期dual-writeしない。
 
 > **v3形式(D-028、UI-FIX-2a実装済み)**: 本文は `episodes/<EpisodeID>.md`、メモは `episode-notes/<EpisodeID>.md` に保存し、manifest の `chapters[].episodes[]` が話順を持つ。v1 / v2 は読み込み時に各旧章を「同じIDの章 + 本文1話」へ変換する。
 
@@ -348,7 +353,7 @@ provider統合を再開する場合、App側にはprovider-neutralな校正opera
 
 ### 4.10 NovelLibrary
 
-Mac／iOSのapp-private作品棚で共有する値型の境界を担当する。`NovelCore`／`NovelSync`に依存できるが、SwiftUI、AppKit、UIKit、CloudKit、OS固有private root、filesystem actorへ依存しない。`.novelpkg`の内部ファイル名やURLを公開APIへ漏らさず、portable read／writeはAppが`NovelStorage`のAPIを通して行う。
+D-077実装後はMac／iOSのSQLite作品棚で共有する値型とrepository protocolの境界を担当する。`NovelCore`／`NovelSync`に依存できるが、SwiftUI、AppKit、UIKit、CloudKit、HTTP、OS固有DB root、filesystem actorへ依存しない。SQLite table／row ID、`.novelpkg`の内部ファイル名やURLを公開APIへ漏らさず、local database I/Oは`NovelLocalStore`、portable read／writeは`NovelStorage`を通す。現行package attestation／JSON registry型は非破壊migrationが完了するまで互換境界として保持する。
 
 - `LibraryRecordState`、`LocalPackageAttestation`、`LibraryRecord`、`LibraryInventory`、registryのエラーといった、OS間で意味が同じ状態・値・検証だけを持つ
 - `accountQuarantined`／`legacyPreserved`を含む状態supersetを一つの実装で表し、Mac／iOSがenumやvalidationを複製しない
@@ -357,7 +362,16 @@ Mac／iOSのapp-private作品棚で共有する値型の境界を担当する。
 
 ### 4.11 NovelSync
 
-D-071の現行Device Syncに必要なOS / transport非依存domainを担当する。`NovelCore`へ依存してよいが、NovelStorage、EditorKit、CloudKit、SwiftData、SwiftUI、AppKit、UIKitへ依存しない。
+D-077のSnapshot、canonical manifest、Outbox command、head CAS、cursor、Conflict、retentionに必要なOS / transport非依存domainを担当する。`NovelCore`へ依存してよいが、NovelStorage、SQLite具象、EditorKit、CloudKit、HTTP client、SwiftUI、AppKit、UIKitへ依存しない。Swift／Rust／将来C#のcanonical bytes、hash、resource上限、CAS resultをgolden fixtureで一致させる。
+
+- 論理同期単位は1 WorkIDの作品全体、物理転送単位はcontent-addressed entity／attachment objectとする
+- local commitとOutbox durabilityをremote I/Oより先に完了し、同じoperation IDのretryを冪等にする
+- headは`{generation, snapshotID}`としてexpected head CASを行い、時計LWWを禁止する
+- 共通baseから変更EntityKeyが非重複なら2-parent Snapshotへ決定的に統合し、同一keyだけを3択Conflictにする。本文内部の自動mergeはしない
+- remoteはInboxへstageし、active editorへ注入せずD-041のsafe boundaryでmaterializeする
+- current head、未upload、未解決Conflict、manual／pinned Snapshotをretention／GCから保護する
+
+以下のNote entity記述はSQLite client cutover前の現行D-071実装とmigration inputであり、新しいprotocolへ分岐を足さない。
 
 - 同期対象は作品タイトル／あらすじ、章・話の構造／タイトル／配列順、本文／メモ、人物、プロット、伏線、世界観である。attachment／資料binary、snapshot履歴、端末設定、選択状態、path、cloud catalog／account／binding metadataを含めない
 - live単位はentity record（`work`／`chapter`／`episode`／`character`／`plotCard`／`flag`／`worldNote`）である。作品全体の1 snapshotをwireの転送単位にしない
@@ -376,7 +390,9 @@ D-059／D-060 Episode trackとD-061 Work trackの保持契約は、DEVICE_SYNC.m
 
 ### 4.12 NovelSyncCloudKit
 
-Apple版Device Syncのplatform adapterを担当し、`NovelSync` / `NovelCore`とApple CloudKit frameworkにだけ依存する。private databaseの単一固定zone、`FUMINIWANote*V1` entity record、大きな話本文だけの`CKAsset`、server change tag、`CKSyncEngine`のsend／fetch、account fence、engine state recovery、package外binding metadataとdirty setを実装する。
+現行Apple版Device Syncのplatform adapterであり、SQLite／Rust client cutover後は **read-only migration adapter** とする。private databaseのNote／legacy Work／Episode record、engine state、account fence、package外binding metadataとdirty setを正確に読み、local／remote／conflict候補を別Snapshotへ移す。D-077 clientからCloudKitへ新しいmutationを送らず、新serverと二重authorityにしない。旧sourceとdataはmigration、rollback、Export read-backが完了するまで削除しない。
+
+以下はcutover前の現行runtime契約である。
 
 D-071のlive経路では、`CKSyncEngine`にpending recordを登録し、batch providerからsave／deleteする。fetchしたmodification／deletionをdomainへ渡す。D-059のEpisode recordとD-061のWork control／revision asset／receiptを通常Appからwrite／decodeしない。CloudKit型、change tag、account token、asset、engine stateを`NovelSync`の公開API / wire / fixtureへ出さない。
 
@@ -401,7 +417,7 @@ AI adapterは現在組み立てない。再開時はCodex／OpenRouter等の候�
 
 書き出しはAppStateの保存依存ではなく `ExportPresenter` の実行境界へ注入する。保存パネル確定後に `AppState.document` を値スナップショットとして一度だけ取得し、`NovelExporter` の生成／書込みをMainActor外で実行する。
 
-Device Sync有効化時は、`NovelSync`のNote transport／dirty set／library protocolへ`NovelSyncCloudKit` composition、app-private dirty store、WorkIDから導出するplatform別private working-copy root、1 work 1 atomic recordのlocal library registryを注入する。macOSは`SyncWorkingCopies-v2`、iOS / iPadOSはiOS専用private rootを使い、絶対pathを共有契約にしない。AppState／`IOSDocumentStore`やEditorKitが`CKContainer` / `CKRecord`を直接生成せず、App層はlocal package save → dirty enqueueと、明示同期時のremote send／pull、catalog merge、private staging／install、document operation gate／Editor commandの順序だけを所有する。account / engine bootstrapやcatalog refreshに失敗しても、new／Importのlocal reserve→private package→registryをlocal-firstで完了できる。remote-only openはentity一式をpackageへ組み立てる。以前確認済みaccount scopeが一時offlineならsame-scope pendingだけを耐久化し、同じscopeでだけ自動再開する。`accountRequired`／unscoped／different account中に作ったunbound workはlocal-onlyに留め、後から現れたaccountへautomatic adopt／rebind／uploadしない。App層のdiagnostic logと利用者向けerrorへapp-private path／WorkIDを出さない。
+D-077のclient切替では、AppDependenciesが`LocalWorkStore`／`WorkHistoryStore`／`WorkResourceStore`、Snapshot domain、HTTP transport、background worker、portable package codecを組み立てる。AppState／`IOSDocumentStore`／EditorKitはSQLite handle、SQL、HTTP、PostgreSQL、S3型を直接扱わない。App層はnative capture、WorkID／session固定、local commit、safe materialization、短い3択だけを所有し、Outbox upload／pullをdocument gate外のworkerへ渡す。account／serverが不能でもnew／Import／edit／Snapshot／Exportをlocal-firstで完了する。`accountRequired`／unbound／different account中に作ったworkを後から現れたaccountへautomatic adoptせず、diagnostic logへ原稿、title、path、WorkIDを出さない。現行`NovelSyncCloudKit` compositionはmigration期間の旧runtimeとして別factoryへ隔離する。
 
 ### 5.2 AppState
 
@@ -479,14 +495,14 @@ D-063／D-071のDevice Syncもこのapp-private境界を使う。`.novelpkg`全�
 
 ### 6.1 作品管理
 
-- macOSの通常起動は`loading`の後に単一paneの`documentSelection`を表示し、「iCloudの作品」、明示的新規、明示的取込から利用者が1 workを選ぶまでactive documentを切り替えない
-- iCloud catalogと検証済みapp-private registryを`SyncWorkID`だけでmergeし、document ID／title／structure／package名でdeduplicateしない。作品棚からこの端末の作業コピーを削除でき、複製は新しいWorkIDのprivate copyを作る。CloudKit tombstoneは置かない(D-072)
-- cached exact／local pending workはpackage attestation後にofflineでも開ける。remote-onlyはonline＋account確認後に表示時headを再検査し、durable pending-open→private staging→read-back→no-overwrite install後だけ`ready`にする
-- Finder / Open Withと「作品を取り込む…」は外部原本を直接開かず、portable tree検証後にnew WorkIDのapp-private copyとしてinstallする。原本と旧visible packageを移動・削除・rekeyしない
-- 「新しい作品」とImportはaccount／networkに依存せずnew WorkIDをlocal reserveし、registry intent→same-root staging→read-back→no-overwrite installまで確定する。以前確認済みscopeが一時offlineならsame-scope intent／bindingを耐久化して復旧後に再開する。unscopedならlocal-onlyとして編集可能にし、後から現れたaccountへ自動binding／publishしない。signed-in（catalog available、またはNote type未作成によるcatalog失敗）のlocal-only／localPendingだけ、明示の「iCloudに保存」でそのaccountへ結び付けられる(D-072)
+- macOSの通常起動は`loading`の後にSQLiteから単一paneの`documentSelection`を即時表示し、作品、明示的新規、明示的Importから利用者が1 workを選ぶまでactive documentを切り替えない。remote catalog取得を棚表示の前提にしない
+- 作品棚はWorkIDだけをidentityにし、document ID／title／structure／package名でdeduplicateしない。複製は新しいWorkIDとroot Snapshotを作り、削除は30日trashへ移す
+- local workはSQLite integrityとSnapshot参照を確認してofflineでも開く。remote-onlyはonline＋account確認後に表示時headを再検査し、Inbox staging→hash／size read-back→safe materialization後だけ`ready`にする
+- Finder / Open Withと「作品を取り込む…」は外部原本を直接開かず、Package Validator後にnew WorkIDとしてSQLite＋CASへImportする。原本と旧visible packageを移動・削除・rekeyしない
+- 「新しい作品」とImportはaccount／networkに依存せずlocal transactionを完了する。unboundならlocal-onlyとして編集可能にし、後から現れたaccountへ自動binding／publishしない。明示account bindingはProduction認証Decisionで固定する
 - 読込／download／新規／取込に失敗しても新規作品へ自動fallbackせず、外部原本、既存private final、registry、current documentを変更しない。Recoveryに内部path／Finder入口を出さない
 - chooser／RecoveryのactivationはAppStateでlocal WorkSync preflightを待つ。曖昧なlocal recovery中は通常mutationをgateするが、root recovery choiceは操作可能に保つ
-- 保存は `.novelpkg` 形式で行う
+- 通常保存はSQLite＋local CASへ行う。`.novelpkg`はImport／Exportだけに使う
 - iOS / iPadOSはapp-private作品棚から1作品を選択して開ける。複数作品の同時編集は行わない
 
 ### 6.2 章／話管理
@@ -512,13 +528,12 @@ D-063／D-071のDevice Syncもこのapp-private境界を使う。`.novelpkg`全�
 
 ### 6.4 保存
 
-- `.novelpkg` に保存する
-- 話本文は `episodes/<EpisodeID>.md`、話メモは `episode-notes/<EpisodeID>.md` として保存する
-- 章順と章内の話順は `manifest.json` で管理する
-- 保存はアトミックに行い、データ破損を起こしにくくする
-- 自動保存はデバウンス(例: 入力停止2秒後 + 話切り替え時 + アプリ非アクティブ時)
-- 自動保存・話切替・終了前保存の`saveNow()`はapp-private working copyへだけ保存する。iCloudへ結んだ作品の`Cmd+S`と「iCloudと同期」は、同じlocal保存のあとNote send／pullを行う(D-073)。未結線の作品の`Cmd+S`はlocal保存だけ。`ready`でない間と、D-061／D-063の曖昧なlocal recoveryで通常mutationがgateされている間は利用者保存を開始しない
-- スナップショットの保存・一覧・復元を提供し、復元前に現在状態を別snapshotへ退避する。自動スナップショットは本文だけでなく人物・プロット・伏線・世界観・あらすじを含む作品全体を、編集があってから約5分後に残す。過去へ進むほど自動分の密度を下げ、手動分は消さない(D-074)。iCloudへは送らない
+- commit済み端末内正本はSQLite、attachment／大きいbyte payloadはlocal CASに保存する。SQLite databaseを同期／Exportしない
+- 章順／話順はdomain配列の意味を保ったSQLite relationとしてcurrent Snapshotと同じtransactionで更新し、モデルへ別の`order` fieldを追加しない
+- 自動保存は入力停止約2秒後にcurrent entity、Snapshot、Outboxを1 transactionでcommitする。SQLite commit成功だけを「この端末に保存済み」の根拠にする
+- 話切替、画面遷移、background／sleep、window close、quit、`Cmd+S`はIME／formを確定してlocal checkpointを強制する。remote upload完了を待たず、通信復帰／次回起動で同じOutboxを自動再開する
+- スナップショットの保存・一覧・復元をlocal／onlineで提供する。自動分は作品全体をTime Machine型で間引き、manual／pinned、current、未upload、Conflict、復元前を消さない。復元は過去内容を持つ新Snapshotを作り、現在headを直接巻き戻さない(D-074 / D-077)
+- `.novelpkg` Exportはcommitted Snapshotから生成し、既知data、attachment、local保全した未知resourceをread-back後にatomic採用する。Import／Exportでcurrent session／WorkID／bindingを変えない
 - 作品activation／新規／取込／remote bootstrap／package書出／復元／資料操作はFIFOに直列化する。現在作品に属する非同期操作は呼び出し時のsession tokenを保持し、待機中に作品・URL・世代が変わった場合は別作品へ適用せず中止する(D-041 / D-063)
 - 新規／取込／remote bootstrapのprivate installとsnapshot復元の退避・書き戻しは通常保存と同じ排他境界で確定する。lock順はdocument operation gate → revision保存直列化とし、逆順取得しない。既存finalを別内容で上書きしない
 - 作品切替・取込・remote bootstrap・復元・終了前は、フォームと表示中のIME変換を旧作品へ確定してモデルへ同期し、最終保存／installまでWorkbench全体の変更を停止する。同じ子IDを持つ別WorkIDも本文install世代でEditorを再読込する。package書出はcurrent sessionをflushするがactive URL／session／WorkID／binding／caret／Undoを変更しない。終了要求後は新しい作品操作を受け付けない(D-041 / D-063)
@@ -693,7 +708,21 @@ IOS-1〜5実装済み(D-056)。詳細な受け入れ条件と未完了の実機Q
 
 MVPではFiles / File Provider上の原本を直接編集せず、取り込んだapp-private作業コピーだけを既存のrevision保存経路で扱う。open-in-placeはPackage ValidatorとExternal Change / Conflictを完了し、file coordination、security-scoped bookmark、競合UI、保存所有者を別Decisionで固定した後に限る。Phase 7と公開Release Gateは安全に並行できるが、一方の進捗で他方を完了扱いにしない。
 
-### Device Sync: メモ型local-first／entity record同期＋cloud library（D-071契約、N2／N3 source＋unit、N4 in-memory simulation）
+### Snapshot Sync: SQLite local-first／Rust server（D-077、設計採択・client未実装）
+
+D-077により、新しい保存／同期／履歴を同じimmutable whole-work Snapshotへ統合する。UIはSQLiteのlocal projectionだけを読み、local commitとdurable Outboxをremote I/Oより先に完了する。Rust APIはPostgreSQLのhead／receipt／ConflictとS3互換object storeを所有し、expected head CASで作品を進める。
+
+- 同期対象は作品タイトル／あらすじ、章・話の構造／タイトル／順序、本文／メモ、人物、プロット、伏線、世界観、attachment metadata／bytes
+- 論理単位は作品全体、物理転送はcanonical entity payload／attachment object。変更hashだけを送る
+- autosave、遷移、close、quitはnetworkを待たず、workerが通信復帰後にOutboxを自動再開する
+- 非重複EntityKeyは2-parent Snapshotへ決定的に統合し、同一keyだけをこの端末／オンライン／両方の3択にする。本文内部の自動merge、時計LWWは行わない
+- remoteはInboxへstageし、active editorへ注入せずIME／Undo／sessionを確認したsafe boundaryだけでmaterializeする
+- local／online historyは同じretentionとrestore契約を使い、attachmentもonline復元対象にする。未知portable resourceはlocal round-tripだけに保全する
+- CloudKitと新serverを二重authorityにせず、旧CloudKitはread-only migration sourceとする
+
+client実装、Production認証／E2EE判断、署名済み実機、server backup、旧CloudKit migrationが完了するまでRelease NO-GOである。詳細は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする。
+
+### 現行CloudKit runtime: メモ型local-first／entity record同期（D-071、移行前の実装）
 
 D-071により現行通常Mac／iOS Appのlive同期を、作品全体1資産のWorkSnapshot経路からentity record経路へ切り替える。各変更はapp-private packageへ先に保存し、変わったentity IDだけを`CKSyncEngine`へpendingする。衝突は同じentityの`serverRecordChanged`だけで検出し、合成しない。選択肢はこの端末／iCloud／両方を別作品として残す、の3つである。
 
@@ -705,7 +734,7 @@ D-071により現行通常Mac／iOS Appのlive同期を、作品全体1資産の
 - D-063の作品棚、WorkID identity、account fence、Import／Exportは維持する
 - D-061／D-063のwhole-work local証跡は旧経路の履歴であり、D-071実装済みへ流用しない
 
-D-071は一般配布前のdevelopment cutoverである。development CloudKit zoneと旧sync metadataをresetし、全test端末を同じD-071 buildへ更新する。Work revision／Episode leaseからの自動migrationはしない。production upgradeには別Decisionによるmigrationまたはminimum client version fenceが必要で、それまでは出荷不可とする。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章を正とする。
+D-071 runtimeはD-077の非破壊migrationが完了するまで残す。CloudKit zone、旧sync metadata、package、reviewをreset／削除せず、新しい機能分岐をNote経路へ足さない。現行コードとmigration inputの詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0-current章を正とする。
 
 #### D-059／D-060 Episode本文track（履歴）
 
@@ -848,19 +877,20 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ## 11. 直近の次タスク
 
-Phase 0〜5（PDF除く）、Phase 7 の IOS-1〜5 と D-058 の機能接続、D-063 の iCloud 作品棚、D-071〜D-074 の Note 同期／明示同期／自動スナップショットは source として入っている。完了記録と当時の test 件数は変更履歴および各完了 MD を正とし、ここへ再掲しない。コードの live 経路と負債は [CODE_HEALTH.md](CODE_HEALTH.md)。
+Phase 0〜5（PDF除く）、Phase 7のIOS-1〜5、D-063のiCloud作品棚、D-071〜D-074のNote同期／明示同期／package snapshotは現行sourceとして入っている。D-077は次世代設計を採択し、Rust server MVPから着手した段階であり、SQLite clientや同期切替が完了したとは扱わない。コードの現行経路と移行負債は[CODE_HEALTH.md](CODE_HEALTH.md)、新設計は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする。
 
-依頼がない限り新機能は増やさない。着手順:
+D-077の着手順:
 
-1. **Package Validator Gate**（公開Releaseの次）。duplicate ID／不正参照、symlink 拒否、resource limit、孤児 payload の保全、元作品を直接直さない修復コピー、置換前検証。D-063 の portable tree 検証だけで完了としない。詳細は [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)
-2. **External Change / Conflict Gate**。Finder／Files の移動削除、同期サービス、別プロセス。open-in-place は両 Gate の前に宣言しない
-3. **N4 操作者検証**。コード待ちは無い。署名済み Mac＋iPhone の手順は [CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章。local test 成功を N4 完了・出荷可能へ読まない
-4. **Windows W0**。schema / golden fixture / portable filename。[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
-5. **IOS-6**。実機 IME、VoiceOver / Dynamic Type、scene／termination、macOS との round-trip。[IOS.md](IOS.md)。終わるまで Phase 7 MVP 完了としない
+1. **R0 Protocol / Rust server MVP**。canonical manifest、resource caps、OpenAPI相当のHTTP契約、PostgreSQL migration、S3互換object store、operation idempotency、head CAS、Conflict、Docker Composeを固定し、`192.168.11.5`をdevelopment／integration環境として検証する
+2. **R1 SQLite LocalStore / Package Validator**。WorkID API、SQLite＋CAS、transactional migration、autosave、local Snapshot、Online Backup、`.novelpkg` Import／Export。duplicate ID／不正参照、symlink、resource limit、未知resource保全、process-kill、DB corruption recoveryをGateにする
+3. **R2 Snapshot domain / client worker**。Swift／Rust fixture、Outbox／Inbox、cursor pull、自動再開、account fence、safe materialization。network永久停止でもopen／edit／transition／quitできることを先に証明する
+4. **R3 Conflict / online history**。非重複entity統合、同一keyの3択、stale head、attachment、retention、restore、quota、VoiceOver／Dynamic Type
+5. **R4 非破壊migration / Production hardening**。全旧package／journal／CloudKit inventory、work単位cutover、minimum-version fence、rollback／Export read-back、Production TLS／auth／off-host backup／monitoring、署名済みMac＋iPhone
+6. **Windows W0以降**。`.novelpkg`に加えSQLite論理schema、canonical Snapshot、HTTP fixtureをC#で独立再実装する。[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
-Release NO-GO のまま残るもの: Production schema deploy、production migration／minimum-version fence、AppIcon、Developer ID 署名・公証、更新機構。N4 と Package Validator が終わっても「公開準備完了」とは書かない。
+Release NO-GOのまま残るもの: D-077 client、Production account／E2EE判断、production endpoint、migration、minimum-version fence、server backup restore、AppIcon、Developer ID署名・公証、更新機構、IOS-6実機QA。server MVPやlocal testだけで「公開同期完成」と書かない。
 
-通常版 AI は clipboard copy だけ（[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)）。B4-E / 実 provider は明示再評価と新 Decision まで着手しない。Device Sync の live 契約は [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章**。GitHub へ載せる手順は CODE_HEALTH.md 7章。
+通常版 AI はclipboard copyだけ（[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)）。B4-E／実providerは明示再評価と新Decisionまで着手しない。次世代同期契約は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、移行前のCloudKit runtimeは[DEVICE_SYNC.md](DEVICE_SYNC.md) **0-current章**。GitHubへ載せる手順はCODE_HEALTH.md 7章。
 
 ## 12. 非目標
 
@@ -868,23 +898,28 @@ Release NO-GO のまま残るもの: Production schema deploy、production migra
 
 - 縦書き対応(執筆・出力とも非対応で確定 → D-012)
 - iOS / iPadOSでの外部原本のopen-in-place(Package Validator / External Change / Conflict後に別Decision → D-056)
-- D-063を超える資料／attachment、snapshot履歴、非hidden未知root item、端末表示設定のcloud同期と、package全体mirror／完全backupの表示
-- Work削除のCloudKit tombstone／複数端末retention UI（この端末のlocal removeと複製はD-072。remote削除は別Decision）
+- 未検証のunknown portable resource、端末表示設定、SQLite database自体のonline同期と、それらまで含む完全mirrorの表示
+- 30日trashを経ない通常UIからの即時hard delete
 - `accountRequired`／unscopedで作ったlocal-only workを、後から現れたiCloud accountへautomatic adopt／uploadすること（明示の「iCloudに保存」はD-072。automatic adoptは禁止のまま）
 - 複数作品同時編集、外部provider横断ライブラリ、外部原本とapp-privateコピーを混在させる一覧
 - AI本文自動書き換え
 - EPUB/PDFの高度な組版
 - リアルタイム共同編集
 - 独自レンダリングエンジン
-- 作品全体の自動3-way merge、Git風の履歴画面、同期処理の管理画面
-- 手動スナップショット履歴のcloud同期
+- 本文内部の自動3-way merge、Gitの内部用語を見せる履歴画面、同期処理の管理を利用者へ要求する画面
 - 編集時刻によるwinner選択
 
-Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-privateな最小執筆環境を完成させる。D-071 Device Syncはその作業コピーへentity recordをmaterializeし、D-063はApple版共通のcatalogを維持する。どちらも外部原本のopen-in-place、attachment／snapshot履歴／unknown root／端末設定同期へ拡張しない。
+Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-privateな最小執筆環境を完成させる。D-077はSQLiteのlocal libraryへ移行し、attachmentとretained Snapshotをonline復元対象へ広げるが、外部原本のopen-in-place、unknown portable resource／端末設定同期、リアルタイム共同編集へ拡張しない。
 
 ---
 
 ## 変更履歴
+
+### v0.93 (2026-08-15)
+
+- D-077を採択し、通常保存の正をSQLite＋local CAS、`.novelpkg`をImport／Export専用portable artifactへ変更
+- immutable whole-work Snapshot、durable Outbox、Rust API＋PostgreSQL＋S3互換object store、expected head CAS、非重複entity統合、3択Conflict、online historyを設計
+- 現行CloudKit Note runtimeを非破壊migration inputとして分離し、Rust server MVP→SQLite client→migration／Production hardeningの順へロードマップを更新
 
 ### v0.92 (2026-08-14)
 

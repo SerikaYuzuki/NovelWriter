@@ -10,8 +10,9 @@
 | --- | --- |
 | [AGENTS.md](../AGENTS.md) | 破ってはいけないルール、ワークフロー |
 | [DESIGN.md](DESIGN.md) 1〜6・9・11章 | 現行契約と次タスク |
-| [DECISIONS.md](DECISIONS.md) D-071〜D-076 | いまの同期・棚・明示同期・自動スナップショット・AI実装削除・構造整理境界 |
-| [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章だけ** | live の Note entity 契約 |
+| [DECISIONS.md](DECISIONS.md) D-077 | SQLite正本、Rust Snapshot Sync、非破壊migrationの次世代契約 |
+| [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) | 次世代local schema責務、wire、server、Conflict、履歴、実装順、Release Gate |
+| [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章／0-current章** | 0章はD-077概要、0-currentは移行前のlive Note実装 |
 | [IOS.md](IOS.md) 1〜2章、4.5a、4.6 | iOS の現行導線 |
 | [CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md) | 通常版 AI（clipboard のみ） |
 | [CROSS_PLATFORM.md](CROSS_PLATFORM.md) | `.novelpkg` と W0 |
@@ -24,11 +25,13 @@
 | [PHASE4.md](PHASE4.md) / [UIDESIGN.md](UIDESIGN.md) / [UIPOLISH.md](UIPOLISH.md) など UI 完了記録 | 完了証跡。次タスクではない |
 | DESIGN.md の変更履歴に残る test 件数 | 当時の証跡。再計測せずに更新しない |
 
-D-071 本文の item 2（裏で send／fetch）と item 5（package 保存直後の pending 登録）は **D-073 が破棄**している。新しい同期コードを足すときは D-073 と DEVICE_SYNC.md 0.2 を正とする。
+D-071本文のitem 2（裏でsend／fetch）とitem 5（package保存直後のpending登録）はD-073が破棄した。現行Note runtimeの修正はD-073とDEVICE_SYNC.md 0-currentを守る。新しい同期コードはD-077のSnapshot／HTTP境界へだけ足し、Note／Work／Episodeへ分岐を追加しない。
 
 ## 2. live 経路と履歴経路
 
-通常 Mac / iOS App の production runtime は `NoteSyncCoordinator` を注入する（D-071）。自動保存は package と dirty set まで、iCloud へ出すのは「iCloudと同期」と結線済みの `Cmd+S` だけ（D-073）。
+通常Mac / iOS Appの **移行前production runtime** は`NoteSyncCoordinator`を注入する（D-071）。自動保存はpackageとdirty setまで、iCloudへ出すのは明示同期だけ（D-073）。D-077のSQLite clientは未実装であり、Rust server MVPや文書追加をruntime切替済みと扱わない。
+
+D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP worker、Rust serverを別境界として追加する。現行CloudKitはread-only migration adapterへ段階的に縮小し、同じ作品をpackage／SQLiteへdual-writeしたりCloudKit／新serverへdual-publishしたりしない。
 
 残っているが **通常起動の正ではない**もの:
 
@@ -92,7 +95,7 @@ D-071 本文の item 2（裏で send／fetch）と item 5（package 保存直後
 - N4 署名済み Mac＋iPhone をコードだけで完了扱いすること
 - ローカル `main` への直接 push、GitHub `main` への force push
 
-次の **実装** タスク（依頼されたとき）は公開Releaseの **Package Validator Gate**、その次が **External Change / Conflict Gate**。Windows は **W0**。Device Sync のコード待ちは無く、残る N4 は [CLOUDKIT_PRODUCTION_SCHEMA.md](CLOUDKIT_PRODUCTION_SCHEMA.md) 5章の操作者検証。
+次の実装はD-077のR0 Rust server MVP、R1 SQLite LocalStore＋Package Validator、R2 client worker、R3 Conflict／online history、R4 migration／Production hardeningの順。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) 10章。
 
 ## 7. GitHub へ載せる方針
 

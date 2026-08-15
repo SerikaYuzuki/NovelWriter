@@ -1,17 +1,19 @@
 # クロスプラットフォーム設計契約
 
-**契約版: `.novelpkg` 1 / Work Sync wire 1・journal schema 1 / Episode Sync wire 1・journal schema 2（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
+**契約版: `.novelpkg` 1 / Snapshot Sync wire 1 / local SQLite logical schema 1 / Work・Note・Episode Sync（履歴） / 対象: macOS・iOS / iPadOS・Windows・将来Android**
 
-**状態: `.novelpkg`契約承認、W0未完了。D-063のApple Work catalog、platform別app-private work registry、remote WorkSnapshot bootstrap、Import／identity不変のExportを含む作品全体Work Syncは、macOS／iOS / iPadOSともsource complete／local automated GOである。現行fresh `./Scripts/check.sh`は`All checks passed`で、`NovelSync` 142 / 142件（14 suites）、root parent修正focused 28 / 28件を含む`NovelSyncCloudKit` 84 / 84件、macOS Device Sync 88 / 88 top-level（5 suites）、iOS Device Sync 86 / 86 top-level（4 suites）、hosted iOS App 79 / 79件、generic iOS build／build-for-testingを通過した。先行iOS xcresultのdynamic device casesは89 / 89件である。最終署名済みiOS generic Debug buildはstrict codesign validで、Development container／CloudKit／APNs `development`をread-backした。署名済み実Mac Appから既存1作品の初回publishも成功し、registry `synced`、journal outbox 0／`synchronized`、catalog cache 1件をread-backした。** D-059〜D-061とD-063 Mac-eraの既存件数は各段階の別履歴として維持し、iOS extensionの現行証跡へ流用しない。Work wire v1とEpisode wire v1は別namespaceで相互観測せず、mixed clientは非対応である。D-063開発検証はdevelopment CloudKit zone＋旧local sync metadata／journal／registryの保全付きresetと全test端末の同一buildを必須とし、production migration／minimum client version fenceまでは出荷不可とする。paired native Mac↔iPhone、remote update／delete、実account switch／offline、実OS kill、手動VoiceOver、Production deploy、C# / Kotlin再実装、Package Validator、External Change / Conflictは未完了である。
+**状態: D-077のSQLite local canonical／Snapshot Sync契約を採択、Rust server MVP実装中。Apple／Windows client、canonical cross-language fixture、旧CloudKit migration、Production運用は未実装でRelease NO-GO。`.novelpkg` v1〜v3の公開互換は維持するが、通常autosave先ではなくImport／Export artifactへ変更する。現行CloudKit Note／旧Work／Episodeのsourceと検証結果はmigration input／履歴であり、D-077実装済みの証拠へ流用しない。**
 
-本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。portable snapshotは`.novelpkg`、現行live syncは別namespaceの作品全体Work wire、端末内の未同期作品はpackage外Work journal、Apple版の作品列挙／初回取得はD-063 catalog／bootstrapとし、四者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、package決定は[DECISIONS.md](DECISIONS.md) D-036、sync決定はD-059〜D-063と[DEVICE_SYNC.md](DEVICE_SYNC.md)を正とする。
+本書は、macOS版、iOS / iPadOS版、将来のWindows / Android版が同じ作品を安全に扱うための言語・UI framework非依存の境界を定める。通常local storeは各OSがSQLite logical schemaを独立実装し、端末間へDB fileを渡さない。同期とonline履歴はcanonical whole-work Snapshot、利用者との受け渡しは`.novelpkg`、旧CloudKitはread-only migration sourceとし、三者を混同しない。アーキテクチャ全体は[DESIGN.md](DESIGN.md)、packageはD-036、次世代syncはD-077と[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする。
 
 ## 1. 共有するもの／OS ごとに実装するもの
 
 | 対象 | 共有方法 | 備考 |
 | --- | --- | --- |
-| `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | 最優先の互換境界。macOS が保存した作品を Windows で開き、その逆も成立させる |
-| Work Sync wire v1／journal schema v1／library projection | [DEVICE_SYNC.md](DEVICE_SYNC.md) 0章、portable JSON、whole snapshot / revision / journal / merge、library projection契約／focused test | 作品全体revision、expected head ID＋snapshot digest CAS、mutation receipt、stage／confirm、作品全体merge、WorkID＋exact headを持つcatalog／bootstrapの意味を共有。CloudKit型、account token、native editor状態は共有しない。C#／Kotlinの独立fixture実装は未完了 |
+| `.novelpkg` v1〜v3 の読み込み、v3 の保存仕様 | 本書、言語非依存 schema、golden fixture | Import／Exportの公開互換境界。macOSがExportした作品をWindowsでImportし、その逆も成立させる |
+| Snapshot Sync wire v1 | [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、canonical bytes／hash／CAS fixture | whole-work manifest、content-addressed entity／attachment、operation receipt、expected head CAS、cursor、Conflict、retentionを共有。SQLite／HTTP／UIの具象型は共有しない |
+| local SQLite logical schema v1 | table責務、migration fixture、transaction scenario | DB fileは共有しない。SwiftはGRDB等、C#はMicrosoft.Data.Sqlite等で独立実装し、WorkID／Snapshot／Outboxの意味とkill recovery結果を一致させる |
+| Note／Work／Episode Sync（履歴） | [DEVICE_SYNC.md](DEVICE_SYNC.md)と既存fixture | 旧CloudKit migration／rollback専用。D-077 clientからwriteせず、mixed authorityにしない |
 | Episode Sync wire v1／journal schema v2（履歴） | [DEVICE_SYNC.md](DEVICE_SYNC.md) 1〜15章、既存fixture | D-059／D-060の話本文revision／lease／detached branchの実装・検証履歴。Work wireと相互decode／mixed運用しない |
 | 作品→章→話、各 ID、配列順、空要素の意味 | 仕様と fixture | Swift の型を C# から直接参照せず、同じ意味のモデルを各言語で実装する |
 | 自動字下げ、ルビ・傍点、検索、文字数、モデル操作 | 入出力例と共通テストケース | 純粋ロジックとして移植する。UTF-16 範囲と grapheme の差を fixture で固定する |
@@ -30,7 +32,7 @@
 
 - `.novelpkg` は **単一ファイルではなくディレクトリ**である。macOS の package 表示は Finder の UI 上の扱いにすぎず、Windows では拡張子付きフォルダとして扱う
 - OS 間の受け渡しで利用する ZIP 等は transport にすぎず、`.novelpkg` の保存形式には含めない。転送手段がディレクトリを保てない場合だけ package 全体を圧縮し、利用前に展開する
-- D-063のApple版通常利用ではactive `.novelpkg`をplatform別app-private working copyとして隠し、利用者がportable packageを得るのは明示的なImport／Export境界だけとする。これは`.novelpkg`の公開互換性を下げる決定ではなく、作業中の保存場所と受け渡しartifactを分離するUI／lifecycle契約である
+- D-077の通常利用ではactive stateをplatform別app-private SQLite＋CASへ保存し、利用者がportable packageを扱うのは明示的なImport／Export境界だけとする。`.novelpkg`をDB dumpや同期containerにせず、公開互換の受け渡しartifactとして維持する
 - パッケージ内のパスは相対パスだけを使う。絶対パス、ドライブ文字、`\` 区切り、セキュリティスコープ付き bookmark、OS 固有 handle を保存しない
 - 既知のルート名と ID ベースのファイル名は ASCII とし、パス区切りを JSON 値へ埋め込まない
 - 読み込みは v1 / v2 / v3、保存は v3 とする。未対応メジャーは推測で開かず、明示的な非対応エラーにする
@@ -81,7 +83,10 @@ Windows 版は同じリポジトリの `Windows/` 配下に置く。ツールチ
 Windows/
 ├── Fuminiwa.Windows.sln
 ├── Fuminiwa.Core             (C#、OS/UI 非依存モデルと純粋ロジック)
-├── Fuminiwa.Storage.Novelpkg (.novelpkg の読み書き)
+├── Fuminiwa.Storage.Sqlite   (端末内canonical store、migration、CAS)
+├── Fuminiwa.Storage.Novelpkg (.novelpkg Import／Export codec)
+├── Fuminiwa.Sync.Protocol    (Snapshot／Outbox／Conflictの純粋domain)
+├── Fuminiwa.Sync.Http        (Rust API adapter、background worker)
 ├── Fuminiwa.Export           (Core のみに依存する出力)
 ├── Fuminiwa.Editor           (UI 非依存のEditor rules / actions)
 ├── Fuminiwa.Editor.WinUI     (IME、Undo、選択範囲、native adapter)
@@ -92,8 +97,11 @@ Windows/
 依存方向は macOS 版と同じ意味に揃える。
 
 ```text
-App.WinUI ──→ Core / Storage.Novelpkg / Export / Editor.WinUI
+App.WinUI ──→ Core / Storage.Sqlite / Storage.Novelpkg / Sync.Http / Export / Editor.WinUI
+Storage.Sqlite ──→ Core / Sync.Protocol
 Storage.Novelpkg ──→ Core
+Sync.Http ──→ Sync.Protocol
+Sync.Protocol ──→ Core
 Export ──→ Core
 Editor.WinUI ──→ Core / Editor
 Editor ──→ Core
@@ -101,7 +109,8 @@ Core ──→ 依存なし
 ```
 
 - WinUI 型を `Core`、保存 schema、Export の公開モデルへ出さない
-- 別名保存は`NovelDocument`だけで再構築しない。Windows Storageにも`SaveCopy(document, sourcePackage, destinationPackage)`相当、またはsource packageを保持する`DocumentSession`を設け、App層へpackage内部構造を漏らさず未知項目・添付・スナップショットを引き継ぐ
+- `.novelpkg` Exportはcommitted SQLite Snapshotから構築し、App層へpackage内部構造を漏らさず既知項目・添付・local保全した未知resourceを引き継ぐ。Importは毎回new WorkIDとし、document IDやtitleでdeduplicateしない
+- SQLite fileをmacOS／Windows間で受け渡さず、同じlogical schema、canonical Snapshot fixture、transaction／kill scenarioを各platformで再実装する
 - UI の選択状態、最近使った作品、ウィンドウ位置、toolbar のカスタマイズは `.novelpkg` に保存しない
 - Windows エディタでも「編集中テキストの正は native editor」「モデルからの全置換は話切り替え時だけ」「IME 変換中はモデル同期・自動介入をしない」を守る
 - `NSTextView` の挙動を表面的に模倣せず、WinUI の IME / Undo / accessibility で同じ利用者向け結果を実現する
@@ -117,6 +126,8 @@ Windows 実装着手前の W0 で、`CompatibilityFixtures/` に次を追加す�
 - Export の期待結果と、純粋な Editor rule の入出力 fixture
 - Windows予約名(多重拡張子・上付き数字を含む)、大小文字／正規化衝突、component / full path境界、短い一時名、symlink拒否のfixture。junction / reparse pointは拒否すべき宣言的test vectorをW0で定義し、実体を使う動的テストはW1で追加する
 - fixtureごとに期待論理モデルと相対パス + SHA-256 inventoryを持つ。JSONは意味比較、本文・添付・未知項目はbyte比較とし、ACL / xattr / ADS / ファイル時刻は互換対象外にする
+- Snapshot wire v1のcanonical manifest、object hash、expected head CAS、operation retry、Conflict、resource capをSwift／Rust／C#で同じexpected bytes／resultにする
+- SQLite migration、autosave transaction、CAS rename、Outbox sealの各checkpointでkillし、旧headまたは完全な新headへ戻るscenario fixtureを持つ
 
 ### 4.1 W0 の完了条件
 
@@ -146,11 +157,11 @@ macOS の `./Scripts/check.sh` と、W1で追加する `pwsh -File Windows/Scrip
 
 ## 5. 実装順
 
-1. **W0: 契約固定** — schema / fixture / ファイル名 portability test を macOS 側へ追加する
-2. **W1: Windows Core + Storage** — v1〜v3 読み込み、v3 保存、双方向 round-trip を先に成立させる
-3. **W2: 最小 WinUI 執筆環境** — 新規・開く・保存、章／話 Outline、日本語 IME、Undo / Redo、自動保存
-4. **W3: 執筆支援 parity** — メモ、人物、プロット、伏線、世界観、資料、検索、スナップショット
-5. **W4: Export / 配布** — Phase 5 の共通規則に合わせた出力と Windows 配布
+1. **W0: 契約固定** — `.novelpkg`、SQLite logical schema、Snapshot canonical bytes／hash／CAS、resource capのfixtureを固定する
+2. **W1: Windows Core + Storage** — SQLite＋CAS、v1〜v3 Import／v3 Export、Mac↔Windows round-trip、kill recoveryを成立させる
+3. **W2: 最小 WinUI 執筆環境** — 新規・開く・autosave、章／話Outline、日本語IME、Undo / Redo、local history
+4. **W3: Snapshot Sync** — HTTP worker、Outbox／Inbox、account fence、3択Conflict、online historyをRust fixtureに接続する
+5. **W4: 執筆支援 parity / 配布** — メモ、人物、プロット、伏線、世界観、資料、検索、Phase 5 ExportとWindows配布
 
 macOS の次タスクPackage Validator GateはW0の一部と重なるため、同じschema・fixture・失敗分類を使って進める。ただしPackage Validatorの一部を実装しただけでW0完了とはしない。Windows reader / writerが存在する前の `.novelpkg` schema変更は、本書・schema・fixture・macOS検証を同じPRで更新する。W1以降はWindows検証も完了条件へ加える。
 
@@ -165,17 +176,22 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - Windows 用 `AGENTS.md` はW0、ローカル検証スクリプトはW1の最初に追加し、本書、D-036、`.novelpkg` fixture を読む手順を必須化する
 - macOS 側の Codex は schema / fixture / Mac reader-writer、Windows 側の Codex は C# / WinUI と Windows 固有テストを担当し、互換 PR では双方の結果を照合する
 
-## 7. D-071 Note Syncのクロスプラットフォーム契約
+## 7. D-077 Snapshot Syncのクロスプラットフォーム契約
 
-現行通常Appのlive syncは、作品を棚の1項目として扱い、転送はentity record（`work`／`chapter`／`episode`／`character`／`plotCard`／`flag`／`worldNote`）とする。Windows／AndroidはCloudKit型を持たず、同じportable JSON／fixtureを再実装する。
+全platformは1 WorkIDの作品全体をimmutable Snapshotとして扱い、entity／attachment objectだけをcontent-addressedに転送する。Swift／Rust／C#は同じcanonical fixtureから、Snapshot ID、Object ID、expected head CAS、operation receipt、Conflict分類、resource rejectionを一致させる。
 
-- 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート
-- 含めない: attachment／資料binary、手動スナップショット履歴、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark
-- `.novelpkg` v3は各端末の正本のまま変更せず、CloudKit metadata、dirty set、engine stateをpackageへ保存しない
-- 衝突は同じentityのlocal dirtyとserver version不一致だけで検出する。3-way mergeと時計LWWはportable契約に含めない。選択肢はこの端末／remote／両方を別WorkIDとして残す
-- `NoteSyncWireProtocol.currentVersion = 1`はEpisode wire v1、Work wire v1とは別namespaceである
+- 含める: 作品タイトル／あらすじ、章・話のstable ID／所属／タイトル／配列順、本文／話メモ、人物、プロットカード、伏線、世界観ノート、通常attachment metadata／bytes
+- 含めない: unknown portable resource、外観／本文フォント等の端末設定、selection／navigation、local path／bookmark、credential
+- local SQLite schema／driverはplatform実装でありwireへ出さない。`.novelpkg`もserverへuploadせず、Import／Export artifactに限る
+- headは`{generation, snapshotID}`、retryはoperation IDで冪等化し、時計、filesystem timestamp、push順をwinner判断に使わない
+- 共通baseから変更EntityKeyが完全に非重複ならpayload内部をmergeせず2-parent Snapshotへ統合する。同じepisode本文／outline等の同一keyだけをこの端末／online／両方の3択へ送る
+- remote objectはhash／byte count／schema／accountを検査してInboxへstageし、active editorへ直接注入しない
+- local／online Snapshotに同じretention／restoreの意味を使い、restoreは過去内容を持つ新Snapshotを作る
+- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)とserver integration fixtureを正にする
 
-D-061の`WorkSnapshot`／whole revision／3-way merge契約は履歴であり、通常Appのlive経路ではない。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章と[DECISIONS.md](DECISIONS.md) D-071を正とする。
+## 7-hist-a. D-071 Note Syncのクロスプラットフォーム契約（移行前の実装）
+
+D-071のlive syncは、作品を棚の1項目として扱い、転送をentity record（`work`／`chapter`／`episode`／`character`／`plotCard`／`flag`／`worldNote`）としていた。attachment／online snapshotは対象外、`.novelpkg` v3が各端末の正本、CloudKit metadata／dirty setはpackage外だった。衝突は同じentityのlocal dirtyとserver version不一致だけで検出し、この端末／remote／両方を別WorkIDとして残す3択だった。`NoteSyncWireProtocol.currentVersion = 1`はEpisode／Work wire v1とは別namespaceである。D-077 clientはこのnamespaceへwriteせず、read-only migration inputとして扱う。詳細は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0-current章を正とする。
 
 ## 7-hist. D-061 Work Syncのクロスプラットフォーム契約（履歴）
 

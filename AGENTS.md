@@ -2,15 +2,15 @@
 
 **ふみにわ（FUMINIWA）**はmacOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** コードの live 経路・負債・GitHub の載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)。OS 間互換は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)。通常版 AI は [docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)（provider 統合の保管場所は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)）。次タスクは DESIGN.md の「11. 直近の次タスク」。Device Sync は [docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md) **0章だけ**（1〜15章と 0-hist は履歴）。UI 完了記録（UIPOLISH / UIREFRESH / UIREVISION / UIFIX / UIDESIGN / PHASE4）は次タスクではない。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** コードの live 経路・負債・GitHub の載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)。OS 間互換は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)。通常版 AI は [docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)（provider 統合の保管場所は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)）。次タスクは DESIGN.md の「11. 直近の次タスク」。次世代Device Syncは [docs/SNAPSHOT_SYNC.md](docs/SNAPSHOT_SYNC.md) と [docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md) **0章**、移行前の現行CloudKit実装は同 **0-current章**（0-histと1〜15章は履歴）。UI 完了記録（UIPOLISH / UIREFRESH / UIREVISION / UIFIX / UIDESIGN / PHASE4）は次タスクではない。
 
 ## 現在地(2026-08-15 時点)
 
-- 執筆・保存・書き出し・iOS 段階導線・iCloud 作品棚・メモ型 entity 同期(D-071)・明示同期(D-073)・編集後の作品全体自動スナップショット(D-074)まで **source としては動く**。N4 署名済み Mac＋iPhone、Production schema、Package Validator、出荷準備は未完了
-- 自動保存は端末内の `.novelpkg` と dirty set まで。iCloud へ出すのは結線済み作品の「iCloudと同期」と `Cmd+S` だけ(D-073)
+- 執筆・保存・書き出し・iOS 段階導線・iCloud作品棚・メモ型entity同期(D-071)・明示同期(D-073)・package自動snapshot(D-074)までは現行sourceとして動く。D-077でSQLite local canonical＋Rust Snapshot Syncを採択しserver MVPへ着手したが、client切替／migration／Productionは未実装
+- 現行sourceの自動保存は端末内`.novelpkg`とdirty setまで、送信は明示同期だけ。D-077実装後はSQLite＋Snapshot＋Outboxをlocal commitし、remote workerが自動再開する。二つを同時authorityにしない
 - 通常版 AI は校正／アドバイス用 prompt の clipboard copy だけ。provider / network は通常 target に無い(D-075)
 - 「商業化」は実装・品質・配布技術に限る(D-042)。価格・法務・販促は明示依頼が無い限り触らない
-- **次の実装**(依頼されたとき): 公開Releaseの Package Validator Gate → External Change / Conflict Gate。Windows は W0。Device Sync のコード待ちは無く、残る N4 は操作者検証（[docs/CLOUDKIT_PRODUCTION_SCHEMA.md](docs/CLOUDKIT_PRODUCTION_SCHEMA.md) 5章）
+- **次の実装**: D-077 R0 Rust server MVP → R1 SQLite LocalStore＋Package Validator → R2 client worker → R3 Conflict／online history → R4非破壊migration／Production hardening。WindowsはW0。順序とGateは[docs/SNAPSHOT_SYNC.md](docs/SNAPSHOT_SYNC.md) 10章
 - **GitHub**: `origin/main` には iOS / Device Sync / D-071〜074 がまだ無い。載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) 7章。利用者の明示が無い限り origin へ push しない
 
 ## リポジトリ構成
@@ -77,7 +77,7 @@ docs/                  DESIGN.md / DECISIONS.md / CODE_HEALTH.md ほか
 ## 既知の注意点
 
 - 保存要求は revision ベースで直列化している(D-017)。新しい保存契機は `AppState.saveNow()` / `saveAndSyncNow()` に寄せる。自動保存から iCloud send を始めない(D-073)
-- live 同期は `NoteSyncCoordinator`。`WorkSyncCoordinator` と Episode lease は履歴／旧 test 用。新しい分岐を旧経路へ足さない（[docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)）
+- 移行前のlive同期は`NoteSyncCoordinator`。D-077の新同期は別Snapshot／HTTP境界へ実装し、Note／Work／Episode経路へ新しい分岐を足さない。旧CloudKitはread-only migration sourceとして保持する（[docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)）
 - `AppState.swift` はプロパティと `init` だけにする。chooser・lifecycle・outline・保存・スナップショットは既存の `AppState+…` extension へ寄せ、新しい 200 行を本体へ足さない
 - `.derivedData/` と `NovelApp 20??-…` 退避フォルダはコミットしない
 - W0 と Package Validator Gate は未完了。invalid UTF-8 の部分補修だけで package 検証・Windows 互換・公開準備の完了を宣言しない
