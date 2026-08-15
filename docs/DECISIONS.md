@@ -879,7 +879,7 @@
 
 ## D-076: Feature単位の構造とSwift 6の境界で大規模ファイルを段階的に分割する
 
-- **日付**: 2026-08-15 / **状態**: 承認・R1/R2/R3/R4/R5a/R5b/R5c/R5d/R5e/R6a実装済み（R5 target分離・R6未完了。D-076全体の完了とは扱わない）
+- **日付**: 2026-08-15 / **状態**: 承認・R1/R2/R3/R4/R5a/R5b/R5c/R5d/R5e/R6a/R6b実装済み（R5 target分離・R6未完了。D-076全体の完了とは扱わない）
 - **内容**:
   1. **目的と判断基準**: `NovelApp`／`NovelAppIOS`直下の平坦な配置、1,000行級のApp／同期ファイル、Mac／iOSの重複、Episode／Work／Noteの3世代同期が同時に見える状態を段階的に解消する。行数は分割の警告であって品質の代理値ではない。分割単位は「変更理由が一つ」「依存方向が一方向」「独立してtestできる」を優先し、短いだけのファイル、同じ共有可変状態を触る`extension`の乱造、画面ごとのPackage化は行わない。利用箇所での明瞭さを短さより優先するSwift API Design Guidelinesを命名と公開境界の基準にする。
   2. **Feature-based App構造**: macOS／iOSのApp targetは、同じ製品概念を同じFeature名で探せるよう、次を基準に再配置する。ディレクトリは探索・所有権の単位であり、直ちにSwift moduleを増やす意味ではない。Assets、localized resources、entitlement、Info.plistは既存のtarget資源境界を維持する。
@@ -924,6 +924,7 @@
 - **R5d実装記録**: `FileEpisodeSyncJournal`／`FileWorkSyncJournal`を`NovelSyncLegacy` targetへ移し、`NovelSyncCloudKit`からはtarget間の公開journal契約だけを利用する構成へ変更した。既存のgolden fixture／journal testは`NovelSyncLegacy`を明示的にlinkする。これはfilesystem adapterのsource移動であり、CloudKitのEpisode／Work adapterとApp runtimeのlegacy value fieldはまだ分離途中である。
 - **R5e実装記録**: `Scripts/check-sync-target-dependencies.sh`を追加し、通常Xcode targetの`NovelSyncLegacy`直接link、`NovelSync`／`NovelSyncTesting`からの逆import、R5dで移したjournalのlive targetへの再混入を機械検査するようにした。現時点の`NovelSyncCloudKit`→`NovelSyncLegacy`推移依存は意図した過渡状態として明示的に検査し、CloudKit Episode／Work adapterの移行前に誤って外さない。これは依存監査の実装であり、R5 target分離完了ではない。
 - **R6a実装記録**: `WorkSnapshotMerger.swift`からportableな競合descriptor（`WorkEntityKind`／`WorkConflictReason`／`WorkFieldConflict`）を`WorkSnapshotMergeConflict.swift`へ分離した。mergerのalgorithm engineと、UI／journalが保持するbounded conflict値型の変更理由を別ファイルにし、公開API・wire形式・merge結果は変えない。`WorkSnapshotMergerTests`を含むtarget testを通し、R6全体のalgorithm／test分割は継続する。
+- **R6b実装記録**: mergerの安定ID順序グラフ、anchor挿入、決定的UUID順序を`WorkSnapshotMergeOrdering.swift`へ分離した。`WorkSnapshotMerger.swift`にはfield／entityの3-way判定とmaterialize処理を残し、順序アルゴリズムの入力・出力と循環時のfail-closed挙動は変更しない。`WorkSnapshotMergerTests`を再実行し、R6cのtest専用fixture／helper分割は継続する。
 - **置き換える範囲**: [CODE_HEALTH.md](CODE_HEALTH.md) 3〜5章の簡素化候補を、実装可能な構造・API・並行性・tooling契約として具体化する。[DESIGN.md](DESIGN.md) 3章／9章の現行target graphと依存方向は、R4／R5を実装して同文書を更新するまでは現在の正を維持する。D-005／D-006のEditor所有権、D-036のportable境界、D-041のlifecycle直列化、D-071／D-073のlive Note／明示同期、D-075のprovider削除を変更しない。Package Validator Gate以下の製品ロードマップも入れ替えない。
 - **理由**: 現在の大規模ファイルは、AIが一つの変更に必要以上の文脈を読むだけでなく、人間にも変更理由、actor isolation、live／legacy経路を見分けにくくしている。一方、extension分割だけでは共有可変stateとアクセス範囲が残り、Packageの乱造はbuild graphと公開APIを増やす。Featureによる探索、役割型による可変stateの封じ込め、再利用が実在する箇所だけのmodule境界、Swift 6コンパイラとformatter／linterによる機械検査を組み合わせることで、原稿保全契約を変えずに保守性とAI開発時の文脈量を下げられる。
 - **参考基準**: [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)、[Swift 6 Concurrency Migration Guide](https://www.swift.org/migration/documentation/swift-6-concurrency-migration-guide/)、[SwiftLint](https://github.com/realm/SwiftLint)、[SwiftFormat](https://github.com/nicklockwood/SwiftFormat)。
