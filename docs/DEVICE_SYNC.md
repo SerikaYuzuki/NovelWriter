@@ -1,10 +1,10 @@
 # FUMINIWA Device Sync 契約
 
-> **状態**: D-077のSQLite local canonical／Snapshot Syncを次世代契約として設計採択した。Rust server、client、SQLite移行、旧CloudKit migration、Production運用はすべて未実装でRelease NO-GO。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と本書0章。通常Appの現在のproduction runtimeは引き続きD-071の`NoteSyncCoordinator`であり、本書0-current章はmigration完了まで現行コードの説明として読む。0-histと1〜15章はD-059〜D-061の履歴で、新しい同期コードへ分岐を足さない。旧package、journal、dirty、review、CloudKit recordをreset／削除しない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
+> **状態**: D-077のSQLite local canonical／Snapshot Syncと、D-078の`serverReadableV1`／Sign in with Appleを次世代契約として設計採択した。Rust server、client、auth、SQLite移行、旧CloudKit migration、Production運用はすべて未実装でRelease NO-GO。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)と本書0章。通常Appの現在のproduction runtimeは引き続きD-071の`NoteSyncCoordinator`であり、本書0-current章はmigration完了まで現行コードの説明として読む。0-currentのCloudKit Apple Accountは移行元scopeで、新Rust serverのSign in with Apple sessionとは別の認証境界である。0-histと1〜15章はD-059〜D-061の履歴で、新しい同期コードへ分岐を足さない。旧package、journal、dirty、review、CloudKit recordをreset／削除しない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
 >
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-077、[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-077／D-078、[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
 ## 0. D-077のSQLite／Snapshot Sync契約
 
@@ -16,6 +16,7 @@
 - remoteはInboxへstageし、active editorへ注入せず、IME／Undo／sessionを確認したsafe boundaryだけでmaterializeする
 - local／online historyは同じSnapshotとTime Machine型retentionを使う。attachmentを含め、unknown portable resourceはlocal round-tripだけに保全する
 - 旧CloudKitはread-only migration sourceとし、新serverと二重authorityにしない。詳細、schema責務、API、migration、Release Gateは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする
+- protocol v1はserver-readable／E2EEなし、Productionの外部identity providerはSign in with Appleだけとする。同期APIはApple tokenでなくFUMINIWA発行sessionを使い、認証失効中もlocal編集を止めない。詳細は[AUTH.md](AUTH.md)を正とする
 
 ## 0-current. D-071の現行Notes型／cloud library実装（移行前）
 

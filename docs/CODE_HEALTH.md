@@ -10,7 +10,8 @@
 | --- | --- |
 | [AGENTS.md](../AGENTS.md) | 破ってはいけないルール、ワークフロー |
 | [DESIGN.md](DESIGN.md) 1〜6・9・11章 | 現行契約と次タスク |
-| [DECISIONS.md](DECISIONS.md) D-077 | SQLite正本、Rust Snapshot Sync、非破壊migrationの次世代契約 |
+| [DECISIONS.md](DECISIONS.md) D-077／D-078 | SQLite正本、Rust Snapshot Sync、server-readable v1、Sign in with Apple、非破壊migrationの次世代契約 |
+| [AUTH.md](AUTH.md) | provider-neutral AccountID、Apple adapter、FUMINIWA session、AccountFenceの実装前認証契約 |
 | [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) | 次世代local schema責務、wire、server、Conflict、履歴、実装順、Release Gate |
 | [SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md) | Lunaへ渡すR0成果物、module境界、state machine、PR完了条件 |
 | [DEVICE_SYNC.md](DEVICE_SYNC.md) **0章／0-current章** | 0章はD-077概要、0-currentは移行前のlive Note実装 |
@@ -96,7 +97,7 @@ D-077実装は、`NovelLocalStore`（SQLite＋CAS）、Snapshot domain、HTTP wo
 - N4 署名済み Mac＋iPhone をコードだけで完了扱いすること
 - ローカル `main` への直接 push、GitHub `main` への force push
 
-次の実装は利用者が着手を指示した後、D-077のR0 Contract freeze（コードなし）から始める。R1 Snapshot domain＋SQLite／CAS、R2 Import／Export、R3 networkなしlocal product、R4 Rust server、R5 HTTP worker、R6 Conflict／online history、R7 migration、R8 Production hardeningの順とする。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)。
+次の実装は利用者が着手を指示した後、D-077／D-078のR0 Contract freeze（コードなし）から始める。D-078のProduct Decisionは確定済みだが、sync＋auth OpenAPI／fixtureの最終監査と明示freezeは未完了である。R1 Snapshot domain＋SQLite／CAS、R2 Import／Export、R3 networkなしlocal product、R4 Rust sync server＋Apple verifier／FUMINIWA session、R5 Swift Apple auth／Keychain＋HTTP worker、R6 Conflict／online history、R7 migration、R8 Production hardening＋versioned account lifecycleの順とする。account作成を公開する前に、後続Decisionでアプリ内削除開始、猶予／取消／retention、Apple token revoke、remote削除完了read-backを固定・実装する。External Change / Conflict Gateはportable Import／Export境界へ残し、WindowsはW0。詳細は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)。
 
 ## 7. GitHub へ載せる方針
 

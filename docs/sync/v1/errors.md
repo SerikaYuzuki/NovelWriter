@@ -7,7 +7,7 @@ error code、field、HTTP responseの正は[`openapi.yaml`](openapi.yaml)であ�
 | 値 | client動作 |
 | --- | --- |
 | `afterBackoff` | `Retry-After`／`retryAfterSeconds`後に、同じbindingと同じsealed command bytesをretryする |
-| `afterAuthentication` | credentialを更新した後、account fenceを変えず同じrequestをretryする。別accountなら送らずquarantineする |
+| `afterAuthentication` | FUMINIWA Auth v1でaccess tokenをrefreshまたはApple native再認証する。Auth `/me`とauthenticated sync capabilitiesで同じAccountID／AccountAuthEpoch／AccountFenceをread-backできた場合だけ同じsealed requestをretryする。別accountまたは新fenceなら旧requestを送らずquarantine／bootstrapする |
 | `afterBootstrap` | local current／Intent／Conflictを保ったままcapabilitiesとfull bootstrapを取り直す。新しいfence／cursorでread stateを再構築し、古い一時URIやcursorを再利用しない |
 | `afterClientUpgrade` | local編集だけ継続して送信laneをparkする。対応clientへ更新後にprotocol bootstrapから再開する |
 | `afterUserAction` | そのcommandはterminal／receiptedである。同じoperationを変更してretryせず、利用者操作後に新しいoperation IDとcommandをsealする |
@@ -17,8 +17,9 @@ transport切断や応答消失はerror bodyが無いので、mutating requestで
 
 ## 代表的なtyped recovery
 
-- `authenticationRequired`／`tokenExpired`: credential更新。別principalへ切り替わった場合は同じwork／commandを送らない。
-- `accountFenceMismatch`／`protocolEpochMismatch`／`serverInstanceMismatch`: capabilities＋bootstrapからscopeを再確認する。旧scopeのobject presence、cursor、Intent／Attemptを新scopeへ流用しない。
+- `authenticationRequired`／`accessTokenExpired`: Apple tokenではなくFUMINIWA refresh tokenでAuth v1のsessionを更新する。同じAccountID／AccountAuthEpoch／fenceなら同じsealed sync requestをretryできる。refresh失敗時だけApple native再認証へ進む。
+- `sessionRevoked`: Apple native再認証でFUMINIWA sessionを再発行する。認証停止中もlocal open／edit／autosave／history／Exportと未送信Intentを保持する。同一Apple identityで同じAccountID／epoch／fenceへ戻ったことをread-backするまで送信しない。
+- `accountFenceMismatch`／`protocolEpochMismatch`／`serverInstanceMismatch`: capabilities＋bootstrapからscopeを再確認する。AccountFenceはtoken個体ではなくAccountID＋AccountAuthEpoch＋server instance／protocol epochの境界である。通常token rotationだけで旧scopeを捨てず、epoch／instance／protocolが変わった場合は旧scopeのobject presence、cursor、Intent／Attemptを新scopeへ流用しない。
 - `cursorExpired`／`bootstrapExpired`／`bootstrapPageTokenOutOfSequence`: full bootstrapをやり直す。local currentと未送信状態は保持する。
 - `clientVersionUnsupported`: online laneをparkし、minimum client versionを表示する。open／edit／local saveは止めない。
 - `rateLimited`／`temporarilyUnavailable`: server指定delayとbounded jitter後に同じreadまたはsame sealed commandをretryする。
@@ -38,3 +39,5 @@ CAS mismatchで返るDivergence、`needsChoice` Conflict、`stale` resolve／res
 ## UIへ出す状態
 
 通常UIは「この端末に保存済み」「オンラインにも保存済み」「送信待ち」「内容の確認が必要」「ログインが必要」を基本とする。backoff、cursor、operation ID、CAS、receiptは診断情報へ留める。quota、client upgrade、修復不能schema／integrity errorだけは利用者が行動できる説明を出すが、network復旧を作品openや画面遷移の前提にしない。
+
+同期UI／error logへApple authorization code、identity token、provider refresh token、subject、email、氏名、relay addressを出さない。Sync APIへ提示するcredentialはFUMINIWA opaque access tokenだけであり、Keychain外へ複製しない。v1は`serverReadableV1`／E2EEなしなので、認証はtenant access controlであってserver運用者から原稿を暗号学的に秘匿する仕組みではない。

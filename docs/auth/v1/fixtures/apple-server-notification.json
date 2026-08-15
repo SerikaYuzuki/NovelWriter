@@ -1,0 +1,223 @@
+{
+  "fixtureVersion": 1,
+  "name": "apple-server-notification-signature-idempotency-and-ordering",
+  "contract": "docs/auth/v1/apple-notification.md",
+  "testKey": {
+    "algorithm": "RS256",
+    "publicJwk": {
+      "e": "AQAB",
+      "kid": "fixture-apple-key-1",
+      "kty": "RSA",
+      "n": "sHiLvdB2gQTAAJUyNBc_Qg8-VJeZjtiPwGl6HTF4E74GzxftUzB9QZ7ZH7Jq9GVN58tFUxrQ4BvIeySobT9ZWqabgdM-tUpZ0E1WEF-8HwaFFSzesdtQXSWW6CazT8U7ZDx7k7x6VIpQEpPP1QpDYiZWKSy_wKX56aZUk6_nvBU7meBdpOScQKlHJT4H8vTEBYsMmYApNkQ-duXX3223bnvcftkHJxHG_jB73faNhpsemwwG08mRWjd0FCfQwgUbKrcAAyMqHfCBhb3IjXLg-kz8iEN_tlY5VAxRlsPwlcVy835GpwfeTtZmwAAqC2rvoxqI7EaNFL7pGIyJBhgaLQ"
+    },
+    "kid": "fixture-apple-key-1",
+    "productionKey": false
+  },
+  "initialState": {
+    "accountAuthEpoch": 1,
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "accounts": 1,
+    "activeProviderCredentialAudiences": [
+      "dev.serikayuzuki.fuminiwa",
+      "dev.serikayuzuki.fuminiwa.ios"
+    ],
+    "externalIdentityMappings": 1,
+    "sessions": 2
+  },
+  "scenarios": [
+    {
+      "id": "verified-consent-revoked",
+      "request": {
+        "body": {
+          "payload": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZpeHR1cmUtYXBwbGUta2V5LTEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FwcGxlaWQuYXBwbGUuY29tIiwiYXVkIjoiZGV2LnNlcmlrYXl1enVraS5mdW1pbml3YSIsImlhdCI6MTc4Njg0NTYwMCwianRpIjoiZml4dHVyZS1qdGktY29uc2VudC0xIiwiZXZlbnRzIjp7InR5cGUiOiJjb25zZW50LXJldm9rZWQiLCJzdWIiOiJmaXh0dXJlLWFwcGxlLXN1YmplY3QtYSIsImV2ZW50X3RpbWUiOjE3ODY4NDU2MDB9fQ.Uz2t1kOT1o6WvCpeX7vB-vKIYlZBm9zNfdPdyuW3CS8tlIFvGkYVey52IV5pjDE6UR7Z_poefRnZDVnZ_Pw6_LzxUDQ9EFNye5vMaGCIlx5OLTxfUI81NzCeeAn7VQdofq7e1gskS_yTsKYHKm7IqrsA8wurvwtHJyG_fLVwFUESokwwAMigJxod8B1DwkP_K6XlRUVdTk2F7nU3uuLEjZaloCZANv05EmSsavfjSDYu9fv3IXZq-TYb-oqmz0KDZ7RFas5dJWEU-lM5yB4ZM0Q7jTXeDeFVgYuqqrvdhMQ6fwF1OjD3B9GrBbZ_HeK34-e1cVKNB8KTMGU0dGPWLw"
+        },
+        "decodedVerifiedClaims": {
+          "aud": "dev.serikayuzuki.fuminiwa",
+          "events": {
+            "event_time": 1786845600,
+            "sub": "fixture-apple-subject-a",
+            "type": "consent-revoked"
+          },
+          "iat": 1786845600,
+          "iss": "https://appleid.apple.com",
+          "jti": "fixture-jti-consent-1"
+        }
+      },
+      "expect": {
+        "accountAuthEpoch": 2,
+        "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+        "allAudienceCredentials": "revokedOrValidationFailed",
+        "allSessions": "revoked",
+        "httpStatus": 204,
+        "notificationReceipts": 1,
+        "remotePayloadDeleted": false
+      }
+    },
+    {
+      "id": "duplicate-same-jti-and-jws",
+      "request": {
+        "sameRawJwsAsScenario": "verified-consent-revoked"
+      },
+      "expect": {
+        "additionalAuthEvents": 0,
+        "additionalFenceRotations": 0,
+        "additionalNotificationReceipts": 0,
+        "httpStatus": 204
+      }
+    },
+    {
+      "id": "same-jti-different-jws-rejected",
+      "request": {
+        "decodedJti": "fixture-jti-consent-1",
+        "differentRawJwsDigest": true
+      },
+      "expect": {
+        "accountExistenceDisclosure": false,
+        "additionalMutations": 0,
+        "httpStatus": 400,
+        "securityAlert": "notificationJtiDigestMismatch"
+      }
+    },
+    {
+      "id": "unknown-subject-does-not-create-account",
+      "layer": "postVerificationDomainEvent",
+      "input": {
+        "verifiedNotification": {
+          "aud": "dev.serikayuzuki.fuminiwa",
+          "events": {
+            "event_time": 1786845700,
+            "sub": "fixture-unknown-apple-subject",
+            "type": "account-deleted"
+          },
+          "iat": 1786845700,
+          "iss": "https://appleid.apple.com",
+          "jti": "fixture-jti-unknown-1",
+          "signatureVerifiedByWireFixture": "verified-consent-revoked"
+        }
+      },
+      "expect": {
+        "accountExistenceDisclosure": false,
+        "additionalAccounts": 0,
+        "httpStatus": 204,
+        "receiptOutcome": "unknownIdentity"
+      }
+    },
+    {
+      "id": "old-notification-after-newer-reauthentication",
+      "layer": "postVerificationDomainEvent",
+      "arrange": {
+        "accountAuthEpoch": 3,
+        "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+        "latestVerifiedAuthenticationAt": 1786846000
+      },
+      "input": {
+        "verifiedNotification": {
+          "aud": "dev.serikayuzuki.fuminiwa.ios",
+          "events": {
+            "event_time": 1786845800,
+            "sub": "fixture-apple-subject-a",
+            "type": "consent-revoked"
+          },
+          "iat": 1786845800,
+          "iss": "https://appleid.apple.com",
+          "jti": "fixture-jti-stale-1",
+          "signatureVerifiedByWireFixture": "verified-consent-revoked"
+        }
+      },
+      "expect": {
+        "accountAuthEpoch": 3,
+        "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+        "httpStatus": 204,
+        "newCredentialRevokedBeforeValidation": false,
+        "receiptOutcome": "staleAfterReauthentication",
+        "remoteLane": "providerValidationPending"
+      }
+    },
+    {
+      "id": "signature-or-claim-failure-is-generic",
+      "request": {
+        "invalidPayloads": {
+          "audienceMismatch": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZpeHR1cmUtYXBwbGUta2V5LTEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FwcGxlaWQuYXBwbGUuY29tIiwiYXVkIjoiZGV2LnNlcmlrYXl1enVraS5mdW1pbml3YS5pbnZhbGlkIiwiaWF0IjoxNzg2ODQ1NjAwLCJqdGkiOiJmaXh0dXJlLWp0aS13cm9uZy1hdWRpZW5jZSIsImV2ZW50cyI6eyJ0eXBlIjoiY29uc2VudC1yZXZva2VkIiwic3ViIjoiZml4dHVyZS1hcHBsZS1zdWJqZWN0LWEiLCJldmVudF90aW1lIjoxNzg2ODQ1NjAwfX0.CdlBSZ4602CWAEEOI5UzZdfrxjAspPs0aza-LZhELoW2p5SVAeJOBiDp9jri13RUsWbISRrj5iJmdwnX5ReLOdjUfwbQwoSt7P4LiZSyGzhJgsRj6uC20hY5jPH32IA8eq93_NofagHMail0EWwiTyy9AJGUUUujAzlMX0sPOBx1Y51Ypw3joR6b5O4-Kz8rXQmKH2ayByphne5d3ATMEswwzom70nuCPBBPKYCGgr55ylSYSsS-2-y1ZXKH7h5pyR98nKYkQKH4JEZ_s5XxeZ9w3tS6dUjbo-tdiXGpwKWulN0JDfbuqj_HA2tJSYRDPtuexRfOI2v7oOB-P7bPDg",
+          "issuerMismatch": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZpeHR1cmUtYXBwbGUta2V5LTEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2F0dGFja2VyLmludmFsaWQiLCJhdWQiOiJkZXYuc2VyaWtheXV6dWtpLmZ1bWluaXdhIiwiaWF0IjoxNzg2ODQ1NjAwLCJqdGkiOiJmaXh0dXJlLWp0aS13cm9uZy1pc3N1ZXIiLCJldmVudHMiOnsidHlwZSI6ImNvbnNlbnQtcmV2b2tlZCIsInN1YiI6ImZpeHR1cmUtYXBwbGUtc3ViamVjdC1hIiwiZXZlbnRfdGltZSI6MTc4Njg0NTYwMH19.BAX50QhUWneYT_QmTj2275aujyedmGpAJkW6gYQbsgxbP2FflhHIarXeRdxPyy6Qphpb7G9XeQbcQJZD4UmiViWI4ez4-GTuQWsf3XG4BoEfdAu_dbVkVRypxlYOwFs7Soe9L35KwlOHCfvqVWaJ_6HYyQj4FFLiTPQesIH8sWC_N1-kgAKyX29RKhmqRUBdNtK6qUrMTltNG2LIjDkURFCQ_ElXqoYF-JiXbR4ZTUy7OfDL2CjBk7kMtkUzo6wvfu3gtjJ30_WAWYhJaXQ_tjE-5F4RIUQKmAEKAecbkhCS3Vt0CpZ0MOKdLrOB1qEvCKj0iryTe5CBueCsMgKVkQ",
+          "signatureMismatch": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZpeHR1cmUtYXBwbGUta2V5LTEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FwcGxlaWQuYXBwbGUuY29tIiwiYXVkIjoiZGV2LnNlcmlrYXl1enVraS5mdW1pbml3YSIsImlhdCI6MTc4Njg0NTYwMCwianRpIjoiZml4dHVyZS1qdGktY29uc2VudC0xIiwiZXZlbnRzIjp7InR5cGUiOiJjb25zZW50LXJldm9rZWQiLCJzdWIiOiJmaXh0dXJlLWFwcGxlLXN1YmplY3QtYSIsImV2ZW50X3RpbWUiOjE3ODY4NDU2MDB9fQ.Uz2t1kOT1o6WvCpeX7vB-vKIYlZBm9zNfdPdyuW3CS8tlIFvGkYVey52IV5pjDE6UR7Z_poefRnZDVnZ_Pw6_LzxUDQ9EFNye5vMaGCIlx5OLTxfUI81NzCeeAn7VQdofq7e1gskS_yTsKYHKm7IqrsA8wurvwtHJyG_fLVwFUESokwwAMigJxod8B1DwkP_K6XlRUVdTk2F7nU3uuLEjZaloCZANv05EmSsavfjSDYu9fv3IXZq-TYb-oqmz0KDZ7RFas5dJWEU-lM5yB4ZM0Q7jTXeDeFVgYuqqrvdhMQ6fwF1OjD3B9GrBbZ_HeK34-e1cVKNB8KTMGU0dGPWLA",
+          "unknownAlgorithm": "eyJhbGciOiJSUzUxMiIsImtpZCI6ImZpeHR1cmUtYXBwbGUta2V5LTEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FwcGxlaWQuYXBwbGUuY29tIiwiYXVkIjoiZGV2LnNlcmlrYXl1enVraS5mdW1pbml3YSIsImlhdCI6MTc4Njg0NTYwMCwianRpIjoiZml4dHVyZS1qdGktdW5rbm93bi1hbGciLCJldmVudHMiOnsidHlwZSI6ImNvbnNlbnQtcmV2b2tlZCIsInN1YiI6ImZpeHR1cmUtYXBwbGUtc3ViamVjdC1hIiwiZXZlbnRfdGltZSI6MTc4Njg0NTYwMH19.GMGeI3MYez8odgL781C1FjYwUO64U3PIv0iYCK4LQ9-Sfjzta_F8E7SNPmeMip8AMMr71MYfKvPpxaHYSsccHBCjUO_MMkPoNhfgVhT2gNsiIWVOGn7hc8yxKhzPcq-5fu8g4LeKFEjp2vYpLQarqLnvHebFRmtMuxvnDl6lHDoSUOOB1XGVbyTb6LvFU1H8s8sf_rWr9NgLsJeRws9CCh09JPu1Kd9cEnRa7u4YU2a8Y5xuceqwsfUZNe2eJz8S-iTSSoZnM_1RDLYMMtGi77evabz8Li6rExBeFXUajbh9sVSgTkL28X-SYs1-tHKP_pQ0hxOnLcZ4zmXjltoDmA"
+        }
+      },
+      "expect": {
+        "accountExistenceDisclosure": false,
+        "additionalMutations": 0,
+        "notificationReceiptCreated": false,
+        "responseBody": null,
+        "statusClass": "400Or401"
+      }
+    },
+    {
+      "id": "stale-notification-validation-transient-failure",
+      "layer": "postVerificationDomainEvent",
+      "arrange": {
+        "receiptOutcome": "staleAfterReauthentication",
+        "remoteLane": "providerValidationPending"
+      },
+      "providerValidation": {
+        "outcome": "appleServiceUnavailable"
+      },
+      "expect": {
+        "accountAuthEpoch": 3,
+        "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+        "allSessionsRevoked": false,
+        "credentialState": "validationPending",
+        "durableRetry": true,
+        "fenceRotations": 0,
+        "remoteLane": "providerValidationPending"
+      }
+    },
+    {
+      "id": "stale-notification-validation-authoritative-invalid",
+      "layer": "postVerificationDomainEvent",
+      "arrange": {
+        "receiptOutcome": "staleAfterReauthentication",
+        "remoteLane": "providerValidationPending"
+      },
+      "providerValidation": {
+        "outcome": "invalid_grant"
+      },
+      "expect": {
+        "accountAuthEpoch": 4,
+        "allSessions": "revoked",
+        "credentialState": "revoked",
+        "fenceRotations": 1,
+        "remotePayloadDeleted": false
+      }
+    },
+    {
+      "id": "stale-notification-validation-valid",
+      "layer": "postVerificationDomainEvent",
+      "arrange": {
+        "receiptOutcome": "staleAfterReauthentication",
+        "remoteLane": "providerValidationPending"
+      },
+      "providerValidation": {
+        "outcome": "valid"
+      },
+      "expect": {
+        "accountAuthEpoch": 3,
+        "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+        "credentialState": "active",
+        "fenceRotations": 0,
+        "remoteLane": "ready"
+      }
+    },
+    {
+      "id": "commit-before-response-loss",
+      "arrange": {
+        "transactionCommitted": true,
+        "responseLost": true
+      },
+      "expectAfterAppleRetry": {
+        "additionalMutations": 0,
+        "httpStatus": 204,
+        "sameReceiptReused": true
+      }
+    }
+  ]
+}

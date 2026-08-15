@@ -1,0 +1,110 @@
+{
+  "fixtureVersion": 1,
+  "name": "external-identity-lookup-hmac-key-rotation",
+  "encoding": {
+    "digestAlgorithm": "HMAC-SHA-256",
+    "digestByteCount": 32,
+    "digestTruncation": false,
+    "domainAscii": "FUMINIWA-EXTERNAL-IDENTITY-LOOKUP-V1",
+    "fieldsInOrder": [
+      "providerConfigurationIdUtf8",
+      "exactIssuerUtf8",
+      "subjectUtf8"
+    ],
+    "fieldPrefix": "unsigned-32-bit-big-endian-byte-length",
+    "lookupKeyMinimumBits": 256,
+    "normalization": "none",
+    "storageEncoding": "postgres-bytea"
+  },
+  "initialState": {
+    "activeReadKeyVersions": [1],
+    "activeWriteKeyVersion": 1,
+    "encryptedCanonicalIdentityRows": 2,
+    "externalIdentityMappings": 2,
+    "lookupDigestsByVersion": {
+      "1": 2
+    }
+  },
+  "steps": [
+    {
+      "action": "beginLookupKeyRotation",
+      "id": "enable-dual-read-before-backfill",
+      "expect": {
+        "activeReadKeyVersions": [
+          1,
+          2
+        ],
+        "activeWriteKeyVersion": 1,
+        "oldKeyDestroyable": false
+      }
+    },
+    {
+      "action": "verifiedSignInDuringBackfill",
+      "id": "existing-subject-not-yet-backfilled-still-maps-to-old-account",
+      "input": {
+        "subjectHandle": "fixture-existing-subject-b",
+        "version2DigestPresentBeforeLookup": false
+      },
+      "expect": {
+        "accountId": "acct_BBBBBBBBBBBBBBBB",
+        "additionalAccounts": 0,
+        "mappingReadFromVersion": 1
+      }
+    },
+    {
+      "action": "backfillOneEncryptedIdentity",
+      "id": "decrypt-audited-and-add-new-digest",
+      "expect": {
+        "auditEventContainsPlaintext": false,
+        "lookupDigestsByVersion": {
+          "1": 2,
+          "2": 1
+        },
+        "mappingChanged": false
+      }
+    },
+    {
+      "action": "processKillAndResumeRotationLedger",
+      "id": "backfill-is-resumable",
+      "expect": {
+        "duplicateAccounts": 0,
+        "lookupDigestsByVersion": {
+          "1": 2,
+          "2": 2
+        },
+        "mappingsVerifiedEqualAcrossVersions": true
+      }
+    },
+    {
+      "action": "switchActiveWriteKey",
+      "id": "new-writes-use-v2-after-full-readback",
+      "expect": {
+        "activeReadKeyVersions": [
+          1,
+          2
+        ],
+        "activeWriteKeyVersion": 2,
+        "oldKeyDestroyable": false
+      }
+    },
+    {
+      "action": "finishRotationAfterRollbackWindow",
+      "id": "retire-old-read-key-last",
+      "expect": {
+        "activeReadKeyVersions": [
+          2
+        ],
+        "activeWriteKeyVersion": 2,
+        "encryptedCanonicalIdentityRows": 2,
+        "externalIdentityMappings": 2,
+        "oldKeyDestroyable": true
+      }
+    }
+  ],
+  "forbiddenOutcomes": [
+    "derive a new lookup digest from an old HMAC",
+    "destroy old key before every identity has a verified new digest",
+    "create a new AccountID when any active-read key finds the identity",
+    "write plaintext subject to a table, index, log, trace, or backup inventory"
+  ]
+}

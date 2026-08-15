@@ -1,0 +1,94 @@
+{
+  "fixtureVersion": 1,
+  "name": "apple-code-exchange-durable-phases-and-process-kill",
+  "durablePhases": [
+    "claimed",
+    "providerCallStarted",
+    "providerResultKnown",
+    "terminal"
+  ],
+  "invariants": [
+    "providerCallStarted is committed before the first provider network byte",
+    "providerCallStarted without providerResultKnown is never sent to Apple again",
+    "providerResultKnown is envelope encrypted before account and session commit",
+    "every terminal outcome has one exact-replay receipt"
+  ],
+  "scenarios": [
+    {
+      "id": "kill-after-claim-before-provider-call",
+      "arrange": {
+        "durablePhase": "claimed",
+        "providerCalls": 0,
+        "processKilled": true
+      },
+      "afterRestart": [
+        "acquireExpiredAttemptLease",
+        "revalidateCanonicalCommandAndChallenge",
+        "commitProviderCallStarted",
+        "sendAppleRequestOnce",
+        "commitEncryptedProviderResultKnown",
+        "commitAccountSessionAndTerminalReceipt"
+      ],
+      "expect": {
+        "accounts": 1,
+        "providerCalls": 1,
+        "sessions": 1,
+        "terminal": "success"
+      }
+    },
+    {
+      "id": "kill-after-provider-send-before-result-known",
+      "arrange": {
+        "durablePhase": "providerCallStarted",
+        "providerCalls": 1,
+        "processKilled": true,
+        "providerOutcomeKnownDurably": false
+      },
+      "afterRestart": [
+        "acquireExpiredAttemptLease",
+        "doNotResendSingleUseAuthorizationCode",
+        "commitProviderExchangeIndeterminateReceipt"
+      ],
+      "expect": {
+        "accounts": 0,
+        "additionalProviderCalls": 0,
+        "code": "providerExchangeIndeterminate",
+        "recoveryAction": "interactiveAppleSignIn",
+        "sessions": 0,
+        "terminal": "indeterminate"
+      }
+    },
+    {
+      "id": "exact-replay-after-indeterminate",
+      "arrange": {
+        "receiptFromScenario": "kill-after-provider-send-before-result-known"
+      },
+      "expect": {
+        "additionalMutations": 0,
+        "additionalProviderCalls": 0,
+        "sameCanonicalResponseAsScenario": "kill-after-provider-send-before-result-known"
+      }
+    },
+    {
+      "id": "kill-after-result-known-before-session-commit",
+      "arrange": {
+        "durablePhase": "providerResultKnown",
+        "encryptedProviderResultPresent": true,
+        "providerCalls": 1,
+        "processKilled": true
+      },
+      "afterRestart": [
+        "acquireExpiredAttemptLease",
+        "decryptAndValidateProviderResult",
+        "commitAccountCredentialSessionAndTerminalReceipt"
+      ],
+      "expect": {
+        "accounts": 1,
+        "additionalProviderCalls": 0,
+        "credentials": 1,
+        "sessions": 1,
+        "terminal": "success"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1396 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: FUMINIWA Auth API
+  version: 1.0.0-r0-draft
+  summary: Provider-neutral FUMINIWA session issuance with Sign in with Apple native as the sole v1 provider.
+  description: |
+    R0 implementation contract. This document defines authentication wire behavior;
+    it does not claim that the Rust server, Apple adapter, Keychain client, or
+    Production deployment exists.
+
+    Production auth v1 accepts exactly one external provider and flow: Sign in with
+    Apple through the native AuthenticationServices API on macOS, iOS, and iPadOS.
+    Provider-specific verification terminates inside the auth service. Snapshot Sync
+    never accepts an Apple authorization code, identity token, access token, refresh
+    token, subject, email, name, or relay address. It accepts only a short-lived,
+    opaque FUMINIWA access token issued by this API.
+
+    The provider-neutral account authority is an immutable opaque FUMINIWA AccountID
+    with one tenant. A verified `(provider configuration, exact issuer, subject)` maps
+    uniquely to that AccountID. Email, name, relay address, and unverified client
+    fields are never identity, account-link, deduplication, or recovery keys. v1 has
+    no identity link/unlink, account merge, account deletion, or provider selection API.
+
+    Snapshot content protection is fixed to `serverReadableV1`, `e2ee=false`.
+    TLS and server-managed encryption at rest are required, but authorized server
+    operators and recovery backups can read manuscript content. E2EE is not a v1
+    deployment flag; it requires a future incompatible protocol namespace/epoch and
+    migration. No user-managed work key or recovery code exists in v1.
+
+    Every JSON request and response uses
+    `application/vnd.fuminiwa.auth.v1+jcs` and MUST be the exact UTF-8 RFC 8785
+    JSON Canonicalization Scheme representation accepted by its closed schema.
+    The server rejects duplicate or unknown members, noncanonical JSON, invalid UTF-8,
+    unpaired surrogates, unsafe integers, and nonlowercase UUIDs. The server computes
+    SHA-256 over exact accepted canonical command bytes. No client-authoritative
+    request digest field or header exists.
+
+    Every mutation is receipt-idempotent. All auth `operationId` and `rotationId`
+    values share one server-instance-global identifier registry, so reuse at another
+    command kind fails closed even when the command-specific receipt scope differs.
+    Challenge create, Apple exchange, refresh
+    rotation, and current-session revoke each define their receipt scope and lookup
+    order. After TLS/media/body decoding and enough credential/challenge lookup to
+    identify a receipt scope, an existing receipt lookup precedes active/consumed
+    lifecycle checks and rate limiting. Exact replay returns the original status and exact canonical response bytes
+    without repeating provider calls, token issuance, account creation, rotation, or
+    revocation. Reusing an idempotency identifier for different canonical bytes or a
+    different command kind fails closed. Responses containing FUMINIWA tokens are
+    durably envelope-encrypted for the advertised replay window; normal persistence
+    stores only token hash/HMAC verifiers. Raw tokens, Authorization headers, Apple
+    credentials, state, nonce, subject, and decrypted receipts never enter logs,
+    traces, metrics, ordinary database columns, Snapshot data, or `.novelpkg`.
+
+    `AccountFence` is not bound to one access/refresh token. It is a persisted opaque
+    server value bound to server instance, Snapshot Sync protocol epoch, AccountID,
+    and monotonically increasing AccountAuthEpoch. Secret/KMS rotation does not change
+    an existing epoch's value. Ordinary token rotation, current-session revoke, and
+    reauthentication with the same Apple identity do not change it. Identity/security
+    scope change, all-session invalidation, or verified Apple consent revocation
+    increments AccountAuthEpoch and changes the fence. Clients quarantine all old-
+    fence cursor, object presence, Intent, and SealedAttempt state and bootstrap again.
+
+    Authentication failure never blocks local open, edit, autosave, navigation,
+    lifecycle flush, history, or Export. It parks only the remote lane. All endpoints
+    require HTTPS. A fixed development token is an out-of-band development-only test
+    harness and is not an auth provider or a valid Production capability.
+servers:
+  - url: https://sync.invalid
+    description: Placeholder HTTPS origin; a deployment supplies its own authenticated origin.
+security: []
+tags:
+  - name: Discovery
+  - name: Apple Native
+  - name: Session
+paths:
+  /v1/auth/capabilities:
+    get:
+      tags: [Discovery]
+      operationId: getAuthCapabilities
+      summary: Discover the public auth protocol without disclosing account existence.
+      description: |
+        Returns deployment configuration required before presenting native Sign in
+        with Apple. The response is identical for signed-in and signed-out callers and
+        contains no tenant, account, identity, session, or credential state. Production
+        v1 returns only provider `apple`, flow `native`, and empty requested scopes.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      responses:
+        '200':
+          description: Public auth capabilities.
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/AuthCapabilities'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/challenges:
+    post:
+      tags: [Apple Native]
+      operationId: createAuthChallenge
+      summary: Create a single-use native Sign in with Apple challenge.
+      description: |
+        This public operation is receipt-idempotent in the server-instance-global
+        identifier registry and createChallenge receipt scope. Receipt lookup and
+        command-digest comparison happen before rate limiting and random challenge
+        generation. Exact replay returns the same
+        challengeId, state, nonce, audience, expiry, and receipt without creating a
+        second challenge.
+
+        `state` and `nonce` are independently generated 256-bit values. They are not
+        derived from AccountID, device identity, one another, or client input. The
+        server retains only protected/verifier forms outside the encrypted exact-replay
+        receipt. The client passes both values unchanged to AuthenticationServices and
+        requests no name/email scopes. A replayed create response whose `expiresAt` is
+        already past is not revived; the client seals a new operation.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      requestBody:
+        required: true
+        content:
+          application/vnd.fuminiwa.auth.v1+jcs:
+            schema:
+              $ref: '#/components/schemas/CreateChallengeCommand'
+      responses:
+        '201':
+          description: Newly created or exactly replayed challenge.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Pragma:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/AuthChallenge'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/challenges/{challengeId}:exchange:
+    parameters:
+      - $ref: '#/components/parameters/ChallengeIdPath'
+      - $ref: '#/components/parameters/ClientVersion'
+    post:
+      tags: [Apple Native]
+      operationId: exchangeAppleNativeCredential
+      summary: Verify Apple native credentials and issue a FUMINIWA session.
+      description: |
+        The route and body challengeId MUST be byte-for-byte equal. Before checking
+        whether the challenge is consumed or expired, the server looks up the
+        challengeId + operationId + command-kind receipt and compares the digest of
+        the exact canonical command. Exact replay returns the original status and body,
+        including the same FUMINIWA token pair, and never calls Apple again.
+
+        A new attempt atomically claims an `issued` challenge. The durable attempt
+        state is `claimed -> providerCallStarted -> providerResultKnown -> terminal`.
+        Each transition stores the canonical request digest and is protected by a
+        database lease/row lock. `providerCallStarted` is committed before one byte is
+        sent to Apple. After restart, `claimed` may resume validation and perform the
+        first provider call; `providerCallStarted` without `providerResultKnown` is
+        treated as possibly consumed and converges to a receipted terminal
+        `providerExchangeIndeterminate` without calling Apple again. A successful
+        Apple response is envelope-encrypted as `providerResultKnown` before account,
+        credential, session, and final receipt commit; restart resumes that commit
+        without another provider call. The server verifies the
+        exact state, then the client-supplied Apple identity-token JWS using the Apple
+        JWKS key selected by matching `kid`, a server-side algorithm allowlist, exact
+        issuer `https://appleid.apple.com`, the audience fixed when the challenge was
+        created, expiration, issued-at with advertised bounded clock skew, exact nonce,
+        and nonempty subject. Unknown `kid` permits one bounded live JWKS refresh before
+        rejection; `none` and unknown algorithms are rejected.
+
+        The server then exchanges the single-use authorization code at Apple's token
+        endpoint using its own provider credential. It validates the returned identity
+        token's signature, issuer, audience, expiry, and subject, and requires its
+        verified issuer/subject/audience to equal the first token. If the returned token
+        contains nonce it MUST also match; the original client-supplied token always
+        requires nonce. Apple email/name claims are ignored and not persisted. A
+        provider refresh token is stored as an encrypted credential generation scoped
+        to the challenge's original audience/client_id; authentication from another
+        allowed audience may map to the same AccountID but MUST NOT overwrite that
+        grant. Provider revoke later uses each generation's original client_id.
+
+        Only after both verifications succeed does one database transaction uniquely
+        map the verified external identity, create or reuse AccountID/TenantID, create
+        a session, issue opaque FUMINIWA tokens, and save the encrypted exact response
+        receipt. Account existence and fence are not disclosed before this commit.
+
+        Any terminal state/nonce/provider validation failure consumes the claimed
+        challenge and is itself receipted. A different operation on that challenge
+        returns `challengeConsumed`. If the server may have sent the code to Apple but
+        cannot determine the outcome, it returns the receipted terminal
+        `providerExchangeIndeterminate`; because Apple codes are single-use, recovery
+        is a new interactive challenge rather than blind retry. A 429 or 503 is allowed
+        only before challenge claim and receipt creation, so the same exact command may
+        be retried as directed.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/vnd.fuminiwa.auth.v1+jcs:
+            schema:
+              $ref: '#/components/schemas/ExchangeAppleNativeCommand'
+      responses:
+        '200':
+          description: Authenticated FUMINIWA session; may be an exact receipt replay.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Pragma:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/ExchangeResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/ChallengeConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AppleCredentialRejected'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '502':
+          $ref: '#/components/responses/ProviderExchangeIndeterminate'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/tokens:refresh:
+    post:
+      tags: [Session]
+      operationId: rotateFuminiwaRefreshToken
+      summary: One-time rotate a FUMINIWA refresh token.
+      description: |
+        Authorization carries a FUMINIWA refresh token, never an Apple token. The
+        exact body contains only `rotationId`; no access/refresh token is copied into
+        JSON. Receipt scope is session family + presented token verifier + rotationId.
+        Receipt lookup happens before testing whether that refresh token is active or
+        consumed. Exact replay returns the same canonical token pair and has zero
+        additional token, quota, provider, epoch, or fence side effects.
+
+        First use atomically marks the presented refresh token consumed, creates its
+        successor, and saves an encrypted rotation receipt. The AccountID,
+        AccountAuthEpoch, and AccountFence remain unchanged. Reusing the consumed token
+        with another rotationId is a replay signal: the server atomically revokes the
+        session family and returns receipted `refreshTokenReused`. Interactive Apple
+        sign-in is then required. It is never treated as an ordinary retry. Every
+        token pair carries the monotonic `refreshGeneration` of its session family.
+        A client commits a refresh response to Keychain only with an atomic compare-
+        and-swap that still finds the presented refresh token and predecessor
+        generation; a delayed exact replay for an older generation is discarded and
+        never rolls Keychain back.
+
+        Routine FUMINIWA refresh does not exchange or rotate the Apple provider refresh
+        token. Server-side Apple credential-state validation is separately scheduled
+        no more frequently than Apple policy permits and never exposes that token.
+      security:
+        - refreshTokenAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      requestBody:
+        required: true
+        content:
+          application/vnd.fuminiwa.auth.v1+jcs:
+            schema:
+              $ref: '#/components/schemas/RefreshCommand'
+      responses:
+        '200':
+          description: Rotated FUMINIWA token pair; may be an exact rotation receipt replay.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Pragma:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/RefreshResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/RefreshUnauthorized'
+        '409':
+          $ref: '#/components/responses/RotationIdempotencyConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/session:revoke:
+    post:
+      tags: [Session]
+      operationId: revokeCurrentFuminiwaSession
+      summary: Revoke the current FUMINIWA session for sign-out.
+      description: |
+        This revokes only the session family authenticated by the FUMINIWA refresh
+        token. It is not Apple consent revocation, provider-token revocation, identity
+        unlink, account deletion, remote Work deletion, or local-data deletion.
+
+        Receipt scope is session family + operationId + command kind. The receipt is
+        checked before active-session validation, so response loss followed by exact
+        replay with the now-revoked token returns the same result. A different command
+        cannot use the revoked token. Current-session revoke does not increment
+        AccountAuthEpoch and does not change AccountFence, preserving other devices.
+        Client sign-out removes Keychain tokens but retains SQLite manuscripts,
+        Snapshots, pending Intent, and Export capability.
+      security:
+        - refreshTokenAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      requestBody:
+        required: true
+        content:
+          application/vnd.fuminiwa.auth.v1+jcs:
+            schema:
+              $ref: '#/components/schemas/RevokeSessionCommand'
+      responses:
+        '200':
+          description: Current session revoked or exact receipt replayed.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Pragma:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/RevokeSessionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/RefreshUnauthorized'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/me:
+    get:
+      tags: [Session]
+      operationId: getCurrentAuthSession
+      summary: Read the authenticated account/session binding without provider identity data.
+      description: |
+        Returns the FUMINIWA AccountID, session ID, AccountAuthEpoch, and AccountFence
+        bound to the presented access token. It returns no Apple subject, email, name,
+        relay address, provider token, or TenantID. This endpoint has no Snapshot Sync
+        fence headers so it remains usable while repairing a stale local binding.
+        The client still reads authenticated Snapshot Sync capabilities before sending
+        any old-fence work state.
+      security:
+        - accessTokenAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      responses:
+        '200':
+          description: Current FUMINIWA auth binding.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Pragma:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/vnd.fuminiwa.auth.v1+jcs:
+              schema:
+                $ref: '#/components/schemas/MeResult'
+        '401':
+          $ref: '#/components/responses/AccessUnauthorized'
+        '426':
+          $ref: '#/components/responses/UpgradeRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    accessTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: fuminiwa-opaque-access-token
+      description: |
+        Short-lived opaque FUMINIWA access token. It is not an Apple identity/access
+        token and clients MUST NOT parse it. Production clients store it only in
+        Keychain-backed credential storage and send it only over HTTPS.
+    refreshTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: fuminiwa-opaque-refresh-token
+      description: |
+        One-time rotating opaque FUMINIWA refresh token. It is not the server-held
+        Apple refresh token. It is accepted only by refresh and current-session revoke.
+
+  headers:
+    NoStore:
+      description: Token-bearing responses MUST NOT be stored by HTTP or URL loading caches.
+      schema:
+        type: string
+        const: no-store
+    NoCache:
+      description: Compatibility cache prohibition for token-bearing responses.
+      schema:
+        type: string
+        const: no-cache
+
+  parameters:
+    ClientVersion:
+      name: X-Fuminiwa-Client-Version
+      in: header
+      required: true
+      description: Shipping client semantic version without build metadata.
+      schema:
+        $ref: '#/components/schemas/SemanticVersion'
+    ChallengeIdPath:
+      name: challengeId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/LowercaseUuid'
+
+  schemas:
+    LowercaseUuid:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    OperationId:
+      allOf:
+        - $ref: '#/components/schemas/LowercaseUuid'
+      description: Client-generated random UUID used as an auth command idempotency key.
+    ServerTimestamp:
+      type: string
+      format: date-time
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$'
+      description: Calendar-valid UTC timestamp used for operations only, never identity.
+    SemanticVersion:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+      minLength: 5
+      maxLength: 64
+    SafeInteger:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+    PositiveSafeInteger:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    OpaqueToken:
+      type: string
+      minLength: 16
+      maxLength: 1024
+      pattern: '^[A-Za-z0-9_-]{16,1024}$'
+      description: Opaque base64url token without padding; clients never parse it.
+    AccountId:
+      allOf:
+        - $ref: '#/components/schemas/OpaqueToken'
+      description: Immutable provider-neutral FUMINIWA account identifier.
+    AccountFence:
+      allOf:
+        - $ref: '#/components/schemas/OpaqueToken'
+      description: |
+        Persisted noncredential opaque fence bound to server instance, Snapshot Sync
+        epoch, AccountID, and AccountAuthEpoch. It is stable across normal token and
+        server-secret rotation; only an AccountAuthEpoch transition creates a new value.
+    ServerInstanceId:
+      allOf:
+        - $ref: '#/components/schemas/LowercaseUuid'
+      description: Immutable identifier for one installed server authority.
+    SessionId:
+      allOf:
+        - $ref: '#/components/schemas/LowercaseUuid'
+      description: Opaque FUMINIWA session-family identifier, never a device identity.
+    AccountAuthEpoch:
+      allOf:
+        - $ref: '#/components/schemas/PositiveSafeInteger'
+      description: |
+        Monotonic security-scope epoch. Ordinary refresh/current-session revoke does
+        not change it; all-session/security/identity-scope invalidation does.
+    AuthProvider:
+      type: string
+      const: apple
+    AuthFlow:
+      type: string
+      const: native
+    ClientPlatform:
+      type: string
+      enum: [ios, ipados, macos]
+    Base64Url256:
+      type: string
+      minLength: 43
+      maxLength: 43
+      pattern: '^[A-Za-z0-9_-]{43}$'
+      description: Exactly 256 random bits encoded as unpadded base64url.
+    AppleAudience:
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: '^[A-Za-z0-9.-]+$'
+      description: Server-selected configured Apple client identifier; never client authority.
+    AppleAuthorizationCode:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      description: Opaque single-use Apple authorization code; never logged or persisted as plaintext.
+    AppleIdentityToken:
+      type: string
+      minLength: 5
+      maxLength: 32768
+      pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+      description: Opaque compact Apple JWS; never parsed or logged by the client.
+    FuminiwaAccessToken:
+      type: string
+      minLength: 48
+      maxLength: 256
+      pattern: '^fma1_[A-Za-z0-9_-]{43,251}$'
+      description: Opaque FUMINIWA access token, never an Apple token.
+    FuminiwaRefreshToken:
+      type: string
+      minLength: 48
+      maxLength: 256
+      pattern: '^fmr1_[A-Za-z0-9_-]{43,251}$'
+      description: Opaque one-time FUMINIWA refresh token, never the Apple refresh token.
+
+    ContentProtection:
+      type: object
+      additionalProperties: false
+      required:
+        - e2ee
+        - profile
+        - serverCanReadContent
+        - userManagedContentKey
+      properties:
+        e2ee:
+          type: boolean
+          const: false
+        profile:
+          type: string
+          const: serverReadableV1
+        serverCanReadContent:
+          type: boolean
+          const: true
+        userManagedContentKey:
+          type: boolean
+          const: false
+      description: Final v1 profile; TLS/server-at-rest encryption is required but this is not E2EE.
+
+    AppleNativeProviderCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - authorizationEndpoint
+        - clientPlatforms
+        - flow
+        - issuer
+        - jwksEndpoint
+        - nativeAudiences
+        - provider
+        - providerConfigurationId
+        - requestedScopes
+        - tokenEndpoint
+      properties:
+        authorizationEndpoint:
+          type: string
+          const: https://appleid.apple.com/auth/authorize
+        clientPlatforms:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          const: [ios, ipados, macos]
+          items:
+            $ref: '#/components/schemas/ClientPlatform'
+        flow:
+          $ref: '#/components/schemas/AuthFlow'
+        issuer:
+          type: string
+          const: https://appleid.apple.com
+        jwksEndpoint:
+          type: string
+          const: https://appleid.apple.com/auth/keys
+        nativeAudiences:
+          type: array
+          minItems: 3
+          maxItems: 3
+          const:
+            - audience: dev.serikayuzuki.fuminiwa
+              clientPlatform: macos
+            - audience: dev.serikayuzuki.fuminiwa.ios
+              clientPlatform: ios
+            - audience: dev.serikayuzuki.fuminiwa.ios
+              clientPlatform: ipados
+          items:
+            $ref: '#/components/schemas/AppleNativeAudience'
+          description: |
+            Closed allowlist for one Apple primary App ID grouping. macOS uses
+            `dev.serikayuzuki.fuminiwa`; iOS and iPadOS use
+            `dev.serikayuzuki.fuminiwa.ios`. No request may add an audience.
+        provider:
+          $ref: '#/components/schemas/AuthProvider'
+        providerConfigurationId:
+          type: string
+          const: apple-primary-fuminiwa-v1
+          description: Internal grouping key used in external-identity uniqueness; not an Apple subject.
+        requestedScopes:
+          type: array
+          maxItems: 0
+          items:
+            type: string
+          description: Empty by contract; FUMINIWA v1 requests neither name nor email.
+        tokenEndpoint:
+          type: string
+          const: https://appleid.apple.com/auth/token
+
+    AppleNativeAudience:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [audience, clientPlatform]
+          properties:
+            audience:
+              type: string
+              const: dev.serikayuzuki.fuminiwa
+            clientPlatform:
+              type: string
+              const: macos
+        - type: object
+          additionalProperties: false
+          required: [audience, clientPlatform]
+          properties:
+            audience:
+              type: string
+              const: dev.serikayuzuki.fuminiwa.ios
+            clientPlatform:
+              type: string
+              const: ios
+        - type: object
+          additionalProperties: false
+          required: [audience, clientPlatform]
+          properties:
+            audience:
+              type: string
+              const: dev.serikayuzuki.fuminiwa.ios
+            clientPlatform:
+              type: string
+              const: ipados
+
+    AuthLimits:
+      type: object
+      additionalProperties: false
+      required:
+        - accessTokenLifetimeSeconds
+        - authReceiptLifetimeSeconds
+        - challengeLifetimeSeconds
+        - maxCanonicalCommandBytes
+        - maxProviderClockSkewSeconds
+        - refreshTokenLifetimeSeconds
+      properties:
+        accessTokenLifetimeSeconds:
+          type: integer
+          minimum: 300
+          maximum: 3600
+        authReceiptLifetimeSeconds:
+          type: integer
+          minimum: 86400
+          maximum: 31536000
+          description: Encrypted exact-response receipt retention advertised by this deployment.
+        challengeLifetimeSeconds:
+          type: integer
+          const: 300
+        maxCanonicalCommandBytes:
+          type: integer
+          const: 65536
+        maxProviderClockSkewSeconds:
+          type: integer
+          minimum: 0
+          maximum: 300
+        refreshTokenLifetimeSeconds:
+          type: integer
+          minimum: 86400
+          maximum: 31536000
+
+    AuthCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - authProtocolEpoch
+        - authProtocolNamespace
+        - authProtocolVersion
+        - canonicalization
+        - contentProtection
+        - limits
+        - minimumClientVersion
+        - providers
+        - serverInstanceId
+        - syncProtocolEpoch
+        - syncProtocolNamespace
+      properties:
+        authProtocolEpoch:
+          type: integer
+          const: 1
+        authProtocolNamespace:
+          type: string
+          const: com.fuminiwa.auth
+        authProtocolVersion:
+          type: string
+          const: 1.0.0
+        canonicalization:
+          type: string
+          const: rfc8785-jcs
+        contentProtection:
+          $ref: '#/components/schemas/ContentProtection'
+        limits:
+          $ref: '#/components/schemas/AuthLimits'
+        minimumClientVersion:
+          $ref: '#/components/schemas/SemanticVersion'
+        providers:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/AppleNativeProviderCapabilities'
+        serverInstanceId:
+          $ref: '#/components/schemas/ServerInstanceId'
+        syncProtocolEpoch:
+          type: integer
+          const: 1
+        syncProtocolNamespace:
+          type: string
+          const: com.fuminiwa.snapshot-sync
+
+    CreateChallengeReceipt:
+      type: object
+      additionalProperties: false
+      required: [commandKind, operationId, replayUntil]
+      properties:
+        commandKind:
+          type: string
+          const: createChallenge
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        replayUntil:
+          $ref: '#/components/schemas/ServerTimestamp'
+    ExchangeCredentialReceipt:
+      type: object
+      additionalProperties: false
+      required: [commandKind, operationId, replayUntil]
+      properties:
+        commandKind:
+          type: string
+          const: exchangeAppleNativeCredential
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        replayUntil:
+          $ref: '#/components/schemas/ServerTimestamp'
+    RevokeSessionReceipt:
+      type: object
+      additionalProperties: false
+      required: [commandKind, operationId, replayUntil]
+      properties:
+        commandKind:
+          type: string
+          const: revokeCurrentSession
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        replayUntil:
+          $ref: '#/components/schemas/ServerTimestamp'
+    RefreshRotationReceipt:
+      type: object
+      additionalProperties: false
+      required: [commandKind, replayUntil, rotationId]
+      properties:
+        commandKind:
+          type: string
+          const: rotateRefreshToken
+        replayUntil:
+          $ref: '#/components/schemas/ServerTimestamp'
+        rotationId:
+          $ref: '#/components/schemas/OperationId'
+
+    CreateChallengeCommand:
+      type: object
+      additionalProperties: false
+      required: [clientPlatform, flow, operationId, provider]
+      properties:
+        clientPlatform:
+          $ref: '#/components/schemas/ClientPlatform'
+        flow:
+          $ref: '#/components/schemas/AuthFlow'
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        provider:
+          $ref: '#/components/schemas/AuthProvider'
+    AuthChallenge:
+      type: object
+      additionalProperties: false
+      required:
+        - audience
+        - challengeId
+        - expiresAt
+        - flow
+        - nonce
+        - provider
+        - providerConfigurationId
+        - receipt
+        - requestedScopes
+        - state
+      properties:
+        audience:
+          $ref: '#/components/schemas/AppleAudience'
+        challengeId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        expiresAt:
+          $ref: '#/components/schemas/ServerTimestamp'
+        flow:
+          $ref: '#/components/schemas/AuthFlow'
+        nonce:
+          $ref: '#/components/schemas/Base64Url256'
+        provider:
+          $ref: '#/components/schemas/AuthProvider'
+        providerConfigurationId:
+          type: string
+          const: apple-primary-fuminiwa-v1
+        receipt:
+          $ref: '#/components/schemas/CreateChallengeReceipt'
+        requestedScopes:
+          type: array
+          maxItems: 0
+          items:
+            type: string
+        state:
+          $ref: '#/components/schemas/Base64Url256'
+
+    ExchangeAppleNativeCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - authorizationCode
+        - challengeId
+        - identityToken
+        - operationId
+        - provider
+        - state
+      properties:
+        authorizationCode:
+          $ref: '#/components/schemas/AppleAuthorizationCode'
+        challengeId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        identityToken:
+          $ref: '#/components/schemas/AppleIdentityToken'
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        provider:
+          $ref: '#/components/schemas/AuthProvider'
+        state:
+          $ref: '#/components/schemas/Base64Url256'
+
+    SessionBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - accountAuthEpoch
+        - accountFence
+        - accountId
+        - serverInstanceId
+        - sessionId
+        - syncProtocolEpoch
+      properties:
+        accountAuthEpoch:
+          $ref: '#/components/schemas/AccountAuthEpoch'
+        accountFence:
+          $ref: '#/components/schemas/AccountFence'
+        accountId:
+          $ref: '#/components/schemas/AccountId'
+        serverInstanceId:
+          $ref: '#/components/schemas/ServerInstanceId'
+        sessionId:
+          $ref: '#/components/schemas/SessionId'
+        syncProtocolEpoch:
+          type: integer
+          const: 1
+      description: Provider-neutral sync/auth binding; contains no external identity claims.
+    SessionTokens:
+      type: object
+      additionalProperties: false
+      required:
+        - accessToken
+        - accessTokenExpiresAt
+        - refreshGeneration
+        - refreshToken
+        - refreshTokenExpiresAt
+        - tokenType
+      properties:
+        accessToken:
+          $ref: '#/components/schemas/FuminiwaAccessToken'
+        accessTokenExpiresAt:
+          $ref: '#/components/schemas/ServerTimestamp'
+        refreshGeneration:
+          $ref: '#/components/schemas/PositiveSafeInteger'
+        refreshToken:
+          $ref: '#/components/schemas/FuminiwaRefreshToken'
+        refreshTokenExpiresAt:
+          $ref: '#/components/schemas/ServerTimestamp'
+        tokenType:
+          type: string
+          const: Bearer
+      description: |
+        Store only in platform Keychain-backed credential storage. The client replaces
+        a stored pair only when the presented refresh token and predecessor generation
+        still match; older delayed responses are discarded.
+    ExchangeResult:
+      type: object
+      additionalProperties: false
+      required: [binding, receipt, tokens]
+      properties:
+        binding:
+          $ref: '#/components/schemas/SessionBinding'
+        receipt:
+          $ref: '#/components/schemas/ExchangeCredentialReceipt'
+        tokens:
+          $ref: '#/components/schemas/SessionTokens'
+
+    RefreshCommand:
+      type: object
+      additionalProperties: false
+      required: [rotationId]
+      properties:
+        rotationId:
+          $ref: '#/components/schemas/OperationId'
+    RefreshResult:
+      type: object
+      additionalProperties: false
+      required: [binding, receipt, tokens]
+      properties:
+        binding:
+          $ref: '#/components/schemas/SessionBinding'
+        receipt:
+          $ref: '#/components/schemas/RefreshRotationReceipt'
+        tokens:
+          $ref: '#/components/schemas/SessionTokens'
+
+    RevokeSessionCommand:
+      type: object
+      additionalProperties: false
+      required: [operationId, scope]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        scope:
+          type: string
+          const: currentSession
+    RevokeSessionResult:
+      type: object
+      additionalProperties: false
+      required:
+        - accountAuthEpoch
+        - accountFence
+        - fenceChanged
+        - receipt
+        - revokedAt
+        - scope
+      properties:
+        accountAuthEpoch:
+          $ref: '#/components/schemas/AccountAuthEpoch'
+        accountFence:
+          $ref: '#/components/schemas/AccountFence'
+        fenceChanged:
+          type: boolean
+          const: false
+        receipt:
+          $ref: '#/components/schemas/RevokeSessionReceipt'
+        revokedAt:
+          $ref: '#/components/schemas/ServerTimestamp'
+        scope:
+          type: string
+          const: currentSession
+
+    MeResult:
+      type: object
+      additionalProperties: false
+      required: [binding, contentProtection]
+      properties:
+        binding:
+          $ref: '#/components/schemas/SessionBinding'
+        contentProtection:
+          $ref: '#/components/schemas/ContentProtection'
+
+    Retryability:
+      type: string
+      enum:
+        - afterBackoff
+        - afterClientUpgrade
+        - afterInteractiveAuthentication
+        - afterTokenRefresh
+        - never
+      description: |
+        `afterBackoff` permits the same exact command after the server delay.
+        `afterTokenRefresh` permits retry of the protected read after a successful
+        FUMINIWA refresh. `afterInteractiveAuthentication` means the failed auth
+        command/challenge is terminal: run a new Apple interaction and seal a new
+        identifier, except that transport response loss may first replay the exact old
+        command solely to read its receipt. `never` forbids automatic retry.
+    RecoveryAction:
+      type: string
+      enum:
+        - correctRequest
+        - interactiveAppleSignIn
+        - none
+        - refreshFuminiwaSession
+        - retrySameRequestAfterBackoff
+        - updateClient
+    InvalidRequestError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          enum:
+            - invalidIdentifier
+            - invalidRequest
+            - nonCanonicalJson
+            - unsafeInteger
+            - unknownField
+            - unsupportedMediaType
+        recoveryAction:
+          type: string
+          const: correctRequest
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: never
+    OperationIdReusedError:
+      type: object
+      additionalProperties: false
+      required: [code, operationId, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          const: operationIdReused
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        recoveryAction:
+          type: string
+          const: none
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: never
+    RotationIdReusedError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryability, rotationId]
+      properties:
+        code:
+          type: string
+          const: rotationIdReused
+        recoveryAction:
+          type: string
+          const: none
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: never
+        rotationId:
+          $ref: '#/components/schemas/OperationId'
+    ChallengeStateError:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code, operationId, recoveryAction, requestId, retryability]
+      properties:
+        challengeId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        code:
+          type: string
+          enum: [challengeConsumed, challengeExpired, challengeInvalid]
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        recoveryAction:
+          type: string
+          const: interactiveAppleSignIn
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterInteractiveAuthentication
+    AppleCredentialError:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code, operationId, recoveryAction, requestId, retryability]
+      properties:
+        challengeId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        code:
+          type: string
+          enum:
+            - nonceMismatch
+            - providerAudienceMismatch
+            - providerCodeRejected
+            - providerIdentityInvalid
+            - providerIdentityMismatch
+            - providerIssuerMismatch
+            - stateMismatch
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        recoveryAction:
+          type: string
+          const: interactiveAppleSignIn
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterInteractiveAuthentication
+    ProviderExchangeIndeterminateError:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code, operationId, recoveryAction, requestId, retryability]
+      properties:
+        challengeId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        code:
+          type: string
+          const: providerExchangeIndeterminate
+        operationId:
+          $ref: '#/components/schemas/OperationId'
+        recoveryAction:
+          type: string
+          const: interactiveAppleSignIn
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterInteractiveAuthentication
+    AccessTokenError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          enum: [accessTokenExpired, authenticationRequired]
+        recoveryAction:
+          type: string
+          const: refreshFuminiwaSession
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterTokenRefresh
+    RefreshSessionError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          enum: [authenticationRequired, refreshTokenExpired, sessionRevoked]
+        recoveryAction:
+          type: string
+          const: interactiveAppleSignIn
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterInteractiveAuthentication
+    RefreshTokenReusedError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryability, rotationId]
+      properties:
+        code:
+          type: string
+          const: refreshTokenReused
+        recoveryAction:
+          type: string
+          const: interactiveAppleSignIn
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterInteractiveAuthentication
+        rotationId:
+          $ref: '#/components/schemas/OperationId'
+    ClientUpgradeError:
+      type: object
+      additionalProperties: false
+      required: [code, minimumClientVersion, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          const: clientVersionUnsupported
+        minimumClientVersion:
+          $ref: '#/components/schemas/SemanticVersion'
+        recoveryAction:
+          type: string
+          const: updateClient
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: afterClientUpgrade
+    PayloadTooLargeError:
+      type: object
+      additionalProperties: false
+      required: [code, maxCanonicalCommandBytes, recoveryAction, requestId, retryability]
+      properties:
+        code:
+          type: string
+          const: payloadTooLarge
+        maxCanonicalCommandBytes:
+          type: integer
+          const: 65536
+        recoveryAction:
+          type: string
+          const: correctRequest
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryability:
+          type: string
+          const: never
+    RateLimitedError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryAfterSeconds, retryability]
+      properties:
+        code:
+          type: string
+          const: rateLimited
+        recoveryAction:
+          type: string
+          const: retrySameRequestAfterBackoff
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        retryability:
+          type: string
+          const: afterBackoff
+    TemporarilyUnavailableError:
+      type: object
+      additionalProperties: false
+      required: [code, recoveryAction, requestId, retryAfterSeconds, retryability]
+      properties:
+        code:
+          type: string
+          const: temporarilyUnavailable
+        recoveryAction:
+          type: string
+          const: retrySameRequestAfterBackoff
+        requestId:
+          $ref: '#/components/schemas/LowercaseUuid'
+        retryAfterSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+        retryability:
+          type: string
+          const: afterBackoff
+
+  responses:
+    BadRequest:
+      description: Syntax, media type, closed schema, identifier, or exact-JCS validation failed.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/InvalidRequestError'
+    IdempotencyConflict:
+      description: Idempotency identifier was reused for another command or canonical body.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/OperationIdReusedError'
+    RotationIdempotencyConflict:
+      description: Rotation identifier was reused with another presented token or canonical body.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/RotationIdReusedError'
+    ChallengeConflict:
+      description: Challenge lifecycle or idempotency conflict; no account existence is disclosed.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/OperationIdReusedError'
+              - $ref: '#/components/schemas/ChallengeStateError'
+    AppleCredentialRejected:
+      description: Receipted terminal Apple credential validation failure; create a new challenge.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/AppleCredentialError'
+    ProviderExchangeIndeterminate:
+      description: Apple may have consumed the single-use code; never retry it blindly.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/ProviderExchangeIndeterminateError'
+    AccessUnauthorized:
+      description: Missing or unusable FUMINIWA access token; Apple tokens are never accepted.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+            const: 'Bearer realm="fuminiwa-auth", token_type="access"'
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/AccessTokenError'
+    RefreshUnauthorized:
+      description: Missing, expired, revoked, or replayed FUMINIWA refresh token.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+            const: 'Bearer realm="fuminiwa-auth", token_type="refresh"'
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/RefreshSessionError'
+              - $ref: '#/components/schemas/RefreshTokenReusedError'
+    PayloadTooLarge:
+      description: Canonical command exceeds the advertised auth request cap.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/PayloadTooLargeError'
+    UpgradeRequired:
+      description: Client version is below the deployment minimum; local editing remains available.
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/ClientUpgradeError'
+    TooManyRequests:
+      description: Rate limit for a new command after existing exact-replay receipt lookup but before receipt creation or challenge mutation.
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3600
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/RateLimitedError'
+    ServiceUnavailable:
+      description: Temporary failure for a new command after exact-replay lookup but before any new receipt or challenge mutation.
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3600
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            $ref: '#/components/schemas/TemporarilyUnavailableError'

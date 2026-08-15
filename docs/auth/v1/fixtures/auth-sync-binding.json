@@ -1,0 +1,152 @@
+{
+  "fixtureVersion": 1,
+  "name": "auth-me-and-sync-capabilities-binding-consistency",
+  "contractAuthorities": {
+    "authBinding": "docs/auth/v1/openapi.yaml#/components/schemas/SessionBinding",
+    "syncBinding": "docs/sync/v1/openapi.yaml#/components/schemas/Capabilities"
+  },
+  "symbols": {
+    "accountA": "acct_AAAAAAAAAAAAAAAA",
+    "accountB": "acct_BBBBBBBBBBBBBBBB",
+    "epoch1Fence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "epoch2Fence": "fence_BBBBBBBBBBBBBBBBBBBB",
+    "accountBFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+    "serverInstanceId": "00000000-0000-4000-8000-000000000001"
+  },
+  "bindingProjection": [
+    "serverInstanceId",
+    "syncProtocolEpoch",
+    "accountId",
+    "accountAuthEpoch",
+    "accountFence"
+  ],
+  "steps": [
+    {
+      "action": "compareAuthMeWithSyncCapabilities",
+      "id": "initial-binding-matches",
+      "input": {
+        "authMe": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1
+        },
+        "syncCapabilities": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "protocolEpoch": 1,
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      "expect": {
+        "allProjectedValuesEqual": true,
+        "bindingInstalled": true,
+        "remoteLane": "ready"
+      }
+    },
+    {
+      "action": "refreshFuminiwaSessionThenCompare",
+      "id": "ordinary-refresh-keeps-binding",
+      "input": {
+        "before": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1
+        },
+        "afterAuthRefresh": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1
+        }
+      },
+      "expect": {
+        "allProjectedValuesEqual": true,
+        "oldPresenceMayRemainHint": true,
+        "workerRebindRequired": false
+      }
+    },
+    {
+      "action": "rotateServerSecretsAndRestoreBackup",
+      "id": "secret-rotation-and-backup-restore-keep-current-fence",
+      "input": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "operations": [
+          "rotateServerKmsAndSessionSigningSecrets",
+          "restoreVerifiedBackupToReplacementProcess"
+        ]
+      },
+      "expect": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "newFenceGenerated": false,
+        "persistedFenceReadBack": true
+      }
+    },
+    {
+      "action": "rotateAccountAuthEpoch",
+      "id": "security-transition-changes-auth-and-sync-together",
+      "input": {
+        "reason": "allSessionsInvalidated"
+      },
+      "expect": {
+        "authMeAfterReauthentication": {
+          "accountAuthEpoch": 2,
+          "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1
+        },
+        "syncCapabilities": {
+          "accountAuthEpoch": 2,
+          "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "protocolEpoch": 1,
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001"
+        },
+        "allProjectedValuesEqual": true,
+        "oldFenceNetworkState": "quarantined",
+        "requiredBeforeResume": [
+          "fullBootstrap",
+          "objectPresenceReplan"
+        ]
+      }
+    },
+    {
+      "action": "signInWithDifferentVerifiedAppleSubject",
+      "id": "different-subject-is-separate-scope",
+      "expect": {
+        "authMe": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+          "accountId": "acct_BBBBBBBBBBBBBBBB",
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1
+        },
+        "syncCapabilities": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+          "accountId": "acct_BBBBBBBBBBBBBBBB",
+          "protocolEpoch": 1,
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001"
+        },
+        "allProjectedValuesEqual": true,
+        "automaticAccountMerge": false,
+        "automaticAdoptAccountAWorks": false,
+        "accountARemoteState": "parkedAndQuarantined"
+      }
+    }
+  ],
+  "forbiddenOutcomes": [
+    "auth and sync return different AccountID values for one bearer",
+    "token refresh rotates AccountAuthEpoch or AccountFence",
+    "auth epoch rotates without the sync capabilities fence changing atomically",
+    "different Apple subject adopts the old account's work bindings"
+  ]
+}

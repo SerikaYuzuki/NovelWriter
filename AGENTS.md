@@ -2,15 +2,15 @@
 
 **ふみにわ（FUMINIWA）**はmacOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** コードの live 経路・負債・GitHub の載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)。OS 間互換は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)。通常版 AI は [docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)（provider 統合の保管場所は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)）。次タスクは DESIGN.md の「11. 直近の次タスク」。次世代Device Syncは [docs/SNAPSHOT_SYNC.md](docs/SNAPSHOT_SYNC.md) と [docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md) **0章**、移行前の現行CloudKit実装は同 **0-current章**（0-histと1〜15章は履歴）。UI 完了記録（UIPOLISH / UIREFRESH / UIREVISION / UIFIX / UIDESIGN / PHASE4）は次タスクではない。
+**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** コードの live 経路・負債・GitHub の載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)。OS 間互換は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)。通常版 AI は [docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)（provider 統合の保管場所は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)）。次タスクは DESIGN.md の「11. 直近の次タスク」。次世代Device Syncは [docs/SNAPSHOT_SYNC.md](docs/SNAPSHOT_SYNC.md) と [docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md) **0章**、新server認証は [docs/AUTH.md](docs/AUTH.md)、移行前の現行CloudKit実装はDEVICE_SYNC同 **0-current章**（0-histと1〜15章は履歴）。UI 完了記録（UIPOLISH / UIREFRESH / UIREVISION / UIFIX / UIDESIGN / PHASE4）は次タスクではない。
 
-## 現在地(2026-08-15 時点)
+## 現在地(2026-08-16 時点)
 
-- 執筆・保存・書き出し・iOS 段階導線・iCloud作品棚・メモ型entity同期(D-071)・明示同期(D-073)・package自動snapshot(D-074)までは現行sourceとして動く。D-077でSQLite local canonical＋Rust Snapshot Syncの設計を採択したが、server／client切替／migration／Productionはすべて未実装
+- 執筆・保存・書き出し・iOS 段階導線・iCloud作品棚・メモ型entity同期(D-071)・明示同期(D-073)・package自動snapshot(D-074)までは現行sourceとして動く。D-077でSQLite local canonical＋Rust Snapshot Sync、D-078でserver-readable v1／Sign in with Appleを採択したが、server／client／auth切替／migration／Productionはすべて未実装
 - 現行sourceの自動保存は端末内`.novelpkg`とdirty setまで、送信は明示同期だけ。D-077実装後はSQLite＋dense Snapshot＋SyncIntentをlocal commitし、remote workerがSealedAttemptを作って自動再開する。二つを同時authorityにしない
 - 通常版 AI は校正／アドバイス用 prompt の clipboard copy だけ。provider / network は通常 target に無い(D-075)
 - 「商業化」は実装・品質・配布技術に限る(D-042)。価格・法務・販促は明示依頼が無い限り触らない
-- **次の実装**: 利用者が着手を指示した後、D-077 R0のversioned OpenAPI／canonical fixture／scenario fixtureを先にfreezeする。R1以降の順序とGateは[docs/SNAPSHOT_SYNC_HANDOFF.md](docs/SNAPSHOT_SYNC_HANDOFF.md)を正とする。WindowsはW0
+- **次の実装**: 利用者が着手を指示した後、D-077／D-078 R0のversioned sync＋auth OpenAPI／canonical fixture／scenario fixtureを先にfreezeする。v1の外部identity providerはAppleだけで、未実装providerのadapter／UIを作らない。R1以降の順序とGateは[docs/SNAPSHOT_SYNC_HANDOFF.md](docs/SNAPSHOT_SYNC_HANDOFF.md)を正とする。WindowsはW0
 - **GitHub**: `origin/main` には iOS / Device Sync / D-071〜074 がまだ無い。載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) 7章。利用者の明示が無い限り origin へ push しない
 
 ## リポジトリ構成

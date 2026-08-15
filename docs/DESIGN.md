@@ -1,4 +1,4 @@
-# ふみにわ 設計書 v0.93
+# ふみにわ 設計書 v0.94
 
 > v0.1 をレビューし、承認した設計。変更点は末尾の「変更履歴」を参照。
 > 個別の決定と未決事項は [DECISIONS.md](DECISIONS.md) に記録する。
@@ -40,7 +40,7 @@ macOS 版を先行実装としつつ、iOS / iPadOS版と将来のWindows WinUI�
 - **テキストエンジン**: macOSの`NSTextView`とiOSの`UITextView`をTextKit 2で明示使用する(縦書き非対応が確定したため再評価不要 → D-012)。`layoutManager`への誤アクセスによるTextKit 1フォールバックを防ぐ
 - **macOS配布**: GitHub Releases による直接配布。macOS App Sandbox は採用しない(→ D-011)。iOSの配布判断へこの非Sandbox決定を流用しない
 - **最低ターゲット**: macOS 14、iOS / iPadOS 17(`@Observable`の要件 → D-007 / D-056)
-- **Snapshot Sync（D-077。設計採択、server／client未実装）**: 端末内はSQLite＋CAS、remoteはRust HTTP API＋PostgreSQL＋S3互換object storeとする。autosave／lifecycle checkpointはcurrent state、immutable Snapshot、SyncIntentをatomicにcommitし、network workerが送信前にSealedAttemptを固定して自動再開する。expected `{generation, snapshotID}`によるhead CAS、operation receipt、cursor pull、3択Conflict、online history、attachment transferを共通protocolにする。CloudKitと新serverを二重authorityにせず、旧CloudKitはread-only migration sourceへ移す。Production認証とE2EE範囲はR0前のDecisionで、公開endpointとquotaは技術既定を置き、Release NO-GOを維持する(→ [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md), D-077)
+- **Snapshot Sync（D-077／D-078。設計採択、server／client未実装）**: 端末内はSQLite＋CAS、remoteはRust HTTP API＋PostgreSQL＋S3互換object storeとする。autosave／lifecycle checkpointはcurrent state、immutable Snapshot、SyncIntentをatomicにcommitし、network workerが送信前にSealedAttemptを固定して自動再開する。expected `{generation, snapshotID}`によるhead CAS、operation receipt、cursor pull、3択Conflict、online history、attachment transferを共通protocolにする。CloudKitと新serverを二重authorityにせず、旧CloudKitはread-only migration sourceへ移す。v1はserver-readableでE2EEなし、Production認証はprovider-neutralなAccountIDへSign in with Appleだけを接続し、別provider UI／adapterは実装しない。公開endpointとquotaは技術既定を置き、Release NO-GOを維持する(→ [SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md), [AUTH.md](AUTH.md), D-077 / D-078)
 - **現行CloudKit実装（移行前のruntime）**: D-071のNote entity＋D-073の明示同期がsource上のlive経路である。SQLite client cutover前に削除・resetせず、現行の実装状態と旧データの読み方は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0-current章を正とする。現行local testをD-077実装済みへ読み替えない
 - **テスト**: swift-testing(`@Test`)を使用
 - **プロジェクト構成**: Xcode アプリプロジェクト + ローカル Swift Package(`NovelKit`)。NovelCore / NovelStorage / NovelExport / EditorKit / NovelUI / PreviewSupportに加え、Device SyncのOS非依存domainを持つ`NovelSync`、Mac／iOSで共有するlocal library状態・attestation・registry値型の`NovelLibrary`、Apple adapterの`NovelSyncCloudKit`、test専用の`NovelSyncTesting`を扱う。`NovelLibrary`はNovelCore／NovelSync（必要な保存検証はNovelStorage API境界）だけを参照し、SwiftUI／AppKit／UIKit／CloudKitへ依存しない。`NovelSync`はD-071のNote entity protocolをliveとし、D-059／D-060のEpisode protocolとD-061のWork protocolを同じtransport非依存target内に履歴として分離する。AI provider targetはD-075で削除し、再開時は最新APIを別Decisionで再設計する
@@ -499,7 +499,7 @@ D-063／D-071のDevice Syncもこのapp-private境界を使う。`.novelpkg`全�
 - 作品棚はWorkIDだけをidentityにし、document ID／title／structure／package名でdeduplicateしない。複製は新しいWorkIDとroot Snapshotを作る。remote work trash／hard deleteはSnapshot wire v1に含めず、後続Decisionで30日trashとoffline edit conflictを設計する
 - local workはSQLite integrityとSnapshot参照を確認してofflineでも開く。remote-onlyはonline＋account確認後に表示時headを再検査し、Inbox staging→hash／size read-back→safe materialization後だけ`ready`にする
 - Finder / Open Withと「作品を取り込む…」は外部原本を直接開かず、Package Validator後にnew WorkIDとしてSQLite＋CASへImportする。原本と旧visible packageを移動・削除・rekeyしない
-- 「新しい作品」とImportはaccount／networkに依存せずlocal transactionを完了する。unboundならlocal-onlyとして編集可能にし、後から現れたaccountへ自動binding／publishしない。明示account bindingはProduction認証Decisionで固定する
+- 「新しい作品」とImportはaccount／networkに依存せずlocal transactionを完了する。unboundならlocal-onlyとして編集可能にし、後から現れたaccountへ自動binding／publishしない。明示account bindingはD-078のopaque AccountID＋AccountFenceだけへ行い、Apple subject／emailを作品へ保存しない
 - 読込／download／新規／取込に失敗しても新規作品へ自動fallbackせず、外部原本、既存private final、registry、current documentを変更しない。Recoveryに内部path／Finder入口を出さない
 - chooser／RecoveryのactivationはAppStateでlocal WorkSync preflightを待つ。曖昧なlocal recovery中は通常mutationをgateするが、root recovery choiceは操作可能に保つ
 - 通常保存はSQLite＋local CASへ行う。`.novelpkg`はImport／Exportだけに使う
@@ -720,7 +720,7 @@ D-077により、新しい保存／同期／履歴を同じimmutable whole-work 
 - local／online historyは同じretentionとrestore契約を使い、attachmentもonline復元対象にする。未知portable resourceはlocal round-tripだけに保全する
 - CloudKitと新serverを二重authorityにせず、旧CloudKitはread-only migration sourceとする
 
-client実装、Production認証／E2EE判断、署名済み実機、server backup、旧CloudKit migrationが完了するまでRelease NO-GOである。詳細は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする。
+client実装、Sign in with Apple認証、server-readable運用保護、署名済み実機、server backup、旧CloudKit migrationが完了するまでRelease NO-GOである。詳細は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と[AUTH.md](AUTH.md)を正とする。
 
 ### 現行CloudKit runtime: メモ型local-first／entity record同期（D-071、移行前の実装）
 
@@ -881,18 +881,18 @@ Phase 0〜5（PDF除く）、Phase 7のIOS-1〜5、D-063のiCloud作品棚、D-0
 
 D-077の着手順:
 
-1. **R0 Contract freeze（実装なし）**。E2EE／account Decision、versioned OpenAPI、JSON Schema、RFC 8785 canonical fixture、Intent／Attempt／cursor／Conflict scenarioを固定する
+1. **R0 Contract freeze（実装なし）**。D-078の`serverReadableV1`／Sign in with Apple、versioned sync＋auth OpenAPI、JSON Schema、RFC 8785 canonical fixture、Intent／Attempt／cursor／Conflict／auth scenarioを固定する
 2. **R1 Snapshot domain＋SQLite／CAS**。pure domain、GRDB、WorkID API、transactional migration、autosave、Online Backup、process-kill／DB corruption recovery
 3. **R2 Portable Import／Export**。Package Validator、`.novelpkg` v1〜v3 Import／v3 Export、unknown resource保全、read-back
 4. **R3 Networkなしlocal product**。作品棚、autosave、dense history、restore、Mac／iOS lifecycleをfeature flag内で完成させる
-5. **R4 Rust server**。Axum＋Tokio＋SQLx、PostgreSQL、S3互換object store、receipt、head CAS、cursor、Divergence、Docker Compose、`192.168.11.5` integration
-6. **R5 Swift HTTP worker**。SyncIntent／SealedAttempt、exact retry、Inbox、cursor、account fence、safe materialization
+5. **R4 Rust sync server＋Apple auth**。Axum＋Tokio＋SQLx、PostgreSQL、S3互換object store、receipt、head CAS、cursor、Divergence、provider-neutral auth table／FUMINIWA session／AccountAuthEpoch、Apple verifier、Docker Compose、`192.168.11.5` integration
+6. **R5 Swift Apple auth＋HTTP worker**。`NovelAuthApple`／HTTP／Keychain、FUMINIWA bearer、SyncIntent／SealedAttempt、exact retry、Inbox、cursor、account fence、safe materialization
 7. **R6 Conflict／online history**。dependency-safeなEntityKey統合、同一key／構造競合の3択、local／remote stale、attachment、retention、restore、quota、VoiceOver／Dynamic Type
 8. **R7 非破壊migration**。全旧package／journal／CloudKit inventory、work単位cutover、minimum-version／epoch fence、rollback／Export read-back
-9. **R8 Production hardening**。R0で選択しR1〜R6へ実装したauth／content protectionのauditとkey recovery、TLS、off-site backup／monitoring、署名済みMac＋iPhone
+9. **R8 Production hardening＋account lifecycle**。R1〜R6へ実装したSign in with Apple／FUMINIWA session／server-readable content protectionのaudit、server保存時暗号化keyとbackup recovery、TLS、off-site backup／monitoringに加え、後続Decisionで固定したアプリ内account deletion開始、猶予／取消／retention、Apple token revoke、remote削除完了read-back、署名済みMac＋iPhone
 10. **Windows W0以降**。`.novelpkg`に加えSQLite論理schema、canonical Snapshot、HTTP fixtureをC#で独立再実装する。[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
 
-Release NO-GOのまま残るもの: D-077 server／client、Production account／E2EE判断、production endpoint、migration、minimum-version fence、server backup restore、AppIcon、Developer ID署名・公証、更新機構、IOS-6実機QA。設計文書やlocal fixtureだけで「公開同期完成」と書かない。
+Release NO-GOのまま残るもの: D-077 server／client、D-078 Sign in with Apple／FUMINIWA session／server-readable運用保護、production endpoint、migration、minimum-version fence、server backup restore、versioned account-lifecycle contractとアプリ内削除／Apple revoke／remote完了read-back、AppIcon、Developer ID署名・公証、更新機構、IOS-6実機QA。設計文書やlocal fixtureだけで「公開同期完成」と書かない。
 
 通常版 AI はclipboard copyだけ（[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)）。B4-E／実providerは明示再評価と新Decisionまで着手しない。次世代同期契約は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、移行前のCloudKit runtimeは[DEVICE_SYNC.md](DEVICE_SYNC.md) **0-current章**。GitHubへ載せる手順はCODE_HEALTH.md 7章。
 
@@ -918,6 +918,12 @@ Phase 7では、macOS版の安全契約を崩さずiPhone / iPadでapp-private�
 ---
 
 ## 変更履歴
+
+### v0.94 (2026-08-16)
+
+- D-078でSnapshot Sync v1を`serverReadableV1`／E2EEなしに固定し、将来E2EEを非互換protocol migrationへ分離
+- Production v1の外部identity providerをSign in with Appleだけにし、opaque AccountID、FUMINIWA session、AccountAuthEpoch fenceをproviderから分離
+- 将来providerの明示link境界は設計するが、Apple以外のadapter／button／設定をv1へ出さない方針とauth contract／fixture Gateを追加
 
 ### v0.93 (2026-08-15)
 
@@ -1755,4 +1761,4 @@ v0.1 のレビュー結果を反映。アーキテクチャの骨格(モジュ�
 
 ## 未決事項
 
-現在なし。v0.1 レビュー時の未決事項3件(縦書き / 配布形態 / iOS時期)は v0.3 ですべて解決済み(→ [DECISIONS.md](DECISIONS.md) D-011〜D-013)。
+Snapshot Sync R0前のE2EE／Production identity方式はD-078で解決済みである。公開前にはremote work／account deletion、削除猶予と保持、Appleが唯一のidentityだった場合の回復範囲を後続Decisionで確定する必要があり、それまではProduction Release NO-GOとする。v0.1レビュー時の未決事項3件（縦書き／配布形態／iOS時期）はv0.3で解決済み（→ [DECISIONS.md](DECISIONS.md) D-011〜D-013）。

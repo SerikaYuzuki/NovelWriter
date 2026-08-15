@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:fuminiwa:sync:v1:snapshot",
   "title": "FUMINIWA Snapshot Manifest v1",
-  "description": "A complete, immutable EntityKey to ObjectID map for one work. This is a pre-freeze R0 design candidate until the E2EE decision is recorded.",
+  "description": "A complete, immutable EntityKey to ObjectID map for one work under the D-078 serverReadableV1 profile. This remains an R0 design candidate until the full sync and auth fixture audit is explicitly frozen.",
   "$comment": "The received UTF-8 JSON must already be RFC 8785 JCS bytes. parentSnapshotIds are sorted by lowercase digest and entries are sorted by entityKey UTF-8 bytes. Each of the nine mandatory work singleton/order EntityKeys is present exactly once; empty strings and arrays represent an empty work. Ordering, canonical bytes, globally unique EntityKeys, EntityKey/contentType compatibility, payload-ID/key agreement, referential integrity, parent lineage, and object byte read-back are semantic validation beyond JSON Schema. Structured entity objects are capped at 16777216 canonical bytes; attachment bytes are capped at 262144000 bytes.",
   "type": "object",
   "additionalProperties": false,

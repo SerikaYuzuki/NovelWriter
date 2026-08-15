@@ -1,0 +1,206 @@
+{
+  "fixtureVersion": 1,
+  "name": "session-revoke-local-continuity-and-account-auth-epoch-fence",
+  "symbols": {
+    "accountId": "acct_AAAAAAAAAAAAAAAA",
+    "differentAccountId": "acct_BBBBBBBBBBBBBBBB",
+    "differentAccountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+    "epoch1Fence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "epoch2Fence": "fence_BBBBBBBBBBBBBBBBBBBB",
+    "verifiedAppleSubjectHandle": "fixture-apple-subject-a"
+  },
+  "initialState": {
+    "accountAuthEpoch": 1,
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "accountId": "acct_AAAAAAAAAAAAAAAA",
+    "localStore": {
+      "committedSnapshots": 1,
+      "pendingIntents": 1,
+      "works": 1
+    },
+    "sessions": {
+      "40000000-0000-4000-8000-000000000001": "active",
+      "40000000-0000-4000-8000-000000000002": "active"
+    }
+  },
+  "steps": [
+    {
+      "id": "revoke-current-session",
+      "method": "POST",
+      "path": "/v1/auth/session:revoke",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "operationId": "60000000-0000-4000-8000-000000000001",
+          "scope": "currentSession"
+        },
+        "expectedCanonicalBodyByteCount": 79,
+        "expectedCanonicalBodySha256": "6bfd63f8f66aaaa28baccffe95c84028f5ad0b8d63206675fa74fc0a916d00e1",
+        "expectedCanonicalBodyUtf8": "{\"operationId\":\"60000000-0000-4000-8000-000000000001\",\"scope\":\"currentSession\"}"
+      },
+      "expect": {
+        "body": {
+          "accountAuthEpoch": 1,
+          "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+          "fenceChanged": false,
+          "receipt": {
+            "commandKind": "revokeCurrentSession",
+            "operationId": "60000000-0000-4000-8000-000000000001",
+            "replayUntil": "2026-11-14T00:00:00Z"
+          },
+          "revokedAt": "2026-08-16T00:00:00Z",
+          "scope": "currentSession"
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 200
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "localStore": {
+          "committedSnapshots": 1,
+          "pendingIntents": 1,
+          "works": 1
+        },
+        "sessions": {
+          "40000000-0000-4000-8000-000000000001": "revokedBySignOut",
+          "40000000-0000-4000-8000-000000000002": "active"
+        }
+      }
+    },
+    {
+      "id": "revoke-lost-ack-exact-replay",
+      "method": "POST",
+      "path": "/v1/auth/session:revoke",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "operationId": "60000000-0000-4000-8000-000000000001",
+          "scope": "currentSession"
+        }
+      },
+      "expect": {
+        "sameCanonicalResponseAsStep": "revoke-current-session",
+        "status": 200
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "revokeMutations": 1
+      }
+    },
+    {
+      "action": "localCommit",
+      "id": "edit-remains-available-after-sign-out",
+      "input": {
+        "newLocalGeneration": 2,
+        "workId": "70000000-0000-4000-8000-000000000001"
+      },
+      "expect": {
+        "networkCalls": 0,
+        "result": "committedOffline"
+      },
+      "expectState": {
+        "localStore": {
+          "committedSnapshots": 2,
+          "pendingIntents": 2,
+          "works": 1
+        },
+        "remoteLane": "authenticationRequired"
+      }
+    },
+    {
+      "action": "verifiedReauthentication",
+      "id": "same-identity-reauthentication",
+      "input": {
+        "issuer": "https://appleid.apple.com",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-apple-subject-a"
+      },
+      "expect": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "accountId": "acct_AAAAAAAAAAAAAAAA",
+        "newSessionId": "40000000-0000-4000-8000-000000000003"
+      },
+      "expectState": {
+        "accounts": 1,
+        "externalIdentityMappings": 1,
+        "oldFenceStateMayResumeAfterCapabilities": true
+      }
+    },
+    {
+      "action": "verifiedSecurityEvent",
+      "id": "all-session-security-invalidation",
+      "input": {
+        "kind": "allSessionsInvalidated"
+      },
+      "expect": {
+        "accountAuthEpoch": 2,
+        "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+        "allSessionsRevoked": true
+      },
+      "expectState": {
+        "localStore": {
+          "committedSnapshots": 2,
+          "pendingIntents": 2,
+          "works": 1
+        },
+        "oldFenceRemoteState": "quarantined",
+        "remoteLane": "interactiveAuthenticationRequired"
+      }
+    },
+    {
+      "action": "verifiedReauthentication",
+      "id": "same-identity-after-fence-rotation",
+      "input": {
+        "issuer": "https://appleid.apple.com",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-apple-subject-a"
+      },
+      "expect": {
+        "accountAuthEpoch": 2,
+        "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+        "accountId": "acct_AAAAAAAAAAAAAAAA",
+        "newSessionId": "40000000-0000-4000-8000-000000000004"
+      },
+      "expectState": {
+        "automaticAdoptToAnotherAccount": false,
+        "requiredBeforeSync": [
+          "authenticatedSyncCapabilities",
+          "fullBootstrap",
+          "objectPresenceReplan"
+        ],
+        "reuseOldFenceCursorIntentAttempt": false
+      }
+    },
+    {
+      "action": "verifiedDifferentIdentitySignIn",
+      "id": "different-apple-subject-creates-separate-account",
+      "input": {
+        "issuer": "https://appleid.apple.com",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-apple-subject-b"
+      },
+      "expect": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
+        "accountId": "acct_BBBBBBBBBBBBBBBB",
+        "newSessionId": "40000000-0000-4000-8000-000000000005"
+      },
+      "expectState": {
+        "accounts": 2,
+        "accountAWorkBindings": 1,
+        "accountBWorkBindings": 0,
+        "automaticAccountMerge": false,
+        "automaticAdoptToAnotherAccount": false,
+        "oldAccountPendingIntents": 2,
+        "oldAccountRemoteState": "parkedAndQuarantined",
+        "remoteLane": "awaitingExplicitAccountScope"
+      }
+    }
+  ]
+}

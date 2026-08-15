@@ -1,0 +1,72 @@
+{
+  "fixtureVersion": 1,
+  "name": "concurrent-first-login-same-apple-identity-one-account",
+  "arrange": {
+    "accountRows": 0,
+    "challenges": [
+      {
+        "audience": "dev.serikayuzuki.fuminiwa",
+        "challengeId": "21000000-0000-4000-8000-000000000001",
+        "operationId": "31000000-0000-4000-8000-000000000001"
+      },
+      {
+        "audience": "dev.serikayuzuki.fuminiwa",
+        "challengeId": "21000000-0000-4000-8000-000000000002",
+        "operationId": "31000000-0000-4000-8000-000000000002"
+      }
+    ],
+    "verifiedExternalIdentities": [
+      {
+        "exactIssuer": "https://appleid.apple.com",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-same-apple-subject"
+      },
+      {
+        "exactIssuer": "https://appleid.apple.com",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-same-apple-subject"
+      }
+    ]
+  },
+  "interleaving": [
+    "bothProviderResultsKnown",
+    "transactionAInsertsExternalIdentityAndAccount",
+    "transactionBConflictsOnActiveLookupHmacUniqueConstraint",
+    "transactionBReadsTheCommittedIdentityMappingAndReusesAccount",
+    "eachTransactionCommitsItsOwnSessionAndExactReplayReceipt"
+  ],
+  "expect": {
+    "accountIdsReturned": [
+      "acct_AAAAAAAAAAAAAAAA",
+      "acct_AAAAAAAAAAAAAAAA"
+    ],
+    "accounts": 1,
+    "activeCredentialGenerationsForMacAudience": 1,
+    "externalIdentityMappings": 1,
+    "providerCredentialGenerations": 2,
+    "providerCredentialStates": [
+      "superseded",
+      "active"
+    ],
+    "sessions": 2,
+    "tenantRows": 1
+  },
+  "replay": {
+    "operationIds": [
+      "31000000-0000-4000-8000-000000000001",
+      "31000000-0000-4000-8000-000000000002"
+    ],
+    "expect": {
+      "additionalAccounts": 0,
+      "additionalProviderCalls": 0,
+      "additionalSessions": 0,
+      "eachOperationReturnsItsOriginalCanonicalResponse": true
+    }
+  },
+  "forbiddenOutcomes": [
+    "two AccountID values for one verified external identity",
+    "email or relay address used to repair the race",
+    "one operation receiving the other operation's session tokens",
+    "two active Apple refresh-token generations for the same identity and audience"
+  ]
+}

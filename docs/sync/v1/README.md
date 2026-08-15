@@ -1,8 +1,10 @@
 # Snapshot Sync wire v1 — R0 design candidate
 
-このdirectoryはFUMINIWA Snapshot Syncの **実装前契約候補** である。Rust server、SQLite client、CloudKit migration、`192.168.11.5`への配置が存在することを示すものではない。E2EEとProduction account／鍵回復のProduct Decisionが確定するまでR0 freezeもProduction互換も宣言しない。
+このdirectoryはFUMINIWA Snapshot Syncの **実装前契約候補** である。Rust server、SQLite client、CloudKit migration、Sign in with Apple、`192.168.11.5`への配置が存在することを示すものではない。D-078でcontent protectionとProduction external identityは確定したが、versioned sync＋auth contract／fixtureの最終監査とRelease Gateが終わるまでR0 freezeもProduction互換も宣言しない。
 
-現在の候補は`contentProtectionProfile=serverReadableV1`である。E2EE v1を選ぶ場合は暗号化object identity、鍵envelope、server validation／reconciliation境界をprotocol epochごと置き換え、このdirectoryを互換toggleで流用しない。
+protocol v1は`contentProtectionProfile=serverReadableV1`、`e2ee=false`で確定している。TLSとserver管理の保存時暗号化を必須とするが、権限を持つserver運用者と復旧backupから原稿を読める。E2EEをv1のflagとして追加せず、必要になった場合は暗号化object identity、鍵envelope、server validation／reconciliation境界を別namespace／epochの非互換migrationとして置き換える。
+
+Production同期Bearerは[`../../auth/v1/openapi.yaml`](../../auth/v1/openapi.yaml)が発行する短命・opaqueなFUMINIWA access tokenだけである。Apple authorization code、identity／access／refresh token、subject、email、氏名、relay addressをSync APIへ渡さない。authenticated capabilitiesはopaque AccountID、AccountAuthEpochと、それらをserver instance／protocol epochへbindしたAccountFenceを返す。通常token rotationと同一Apple identityへの再認証ではfenceを変えず、security-scope epoch変更時は旧cursor／presence／Intent／Attemptをquarantineしてfull bootstrapする。
 
 ## 正の所在
 
@@ -12,6 +14,7 @@
 - [`entity-schemas/`](entity-schemas/): structured entity payloadのclosed schema
 - [`fixtures/`](fixtures/): canonical bytes／hash、state machine、migration、retention、backup、portable境界のcross-language acceptance
 - [`errors.md`](errors.md): OpenAPIのtyped errorをclient recoveryへ写像する規則
+- [`../../auth/v1/`](../../auth/v1/): Sign in with Apple native、FUMINIWA session、token rotation、AccountAuthEpochのversioned wire／fixture
 - [`../../SNAPSHOT_SYNC.md`](../../SNAPSHOT_SYNC.md): 製品不変条件、local SQLite／CAS、同期・競合・履歴・移行の全体設計
 - [`../../SNAPSHOT_SYNC_HANDOFF.md`](../../SNAPSHOT_SYNC_HANDOFF.md): Lunaへ渡す実装順と禁止事項
 
@@ -19,7 +22,7 @@
 
 ## Freeze条件
 
-1. E2EE v1またはserver-readable v1と、Production account／回復方式をDecisionへ固定する。
+1. D-078の`serverReadableV1`／E2EEなし、Sign in with Apple native、FUMINIWA opaque session、同一identity再認証をsync＋auth OpenAPI／fixtureで相互検証する。
 2. Swift／Rust／C#が全valid fixtureで同じJCS bytes、ObjectID、SnapshotID、command digestを返し、全invalid fixtureを同じ分類で拒否する。
 3. OpenAPI parse、全local `$ref`、operationId一意性、外部schema構造等価、JSON Schema meta-validationを機械検査する。
 4. save／Intent、lost ACK、upload expiry、cursor、account fence、safe materialization、3択、retention、backup、migrationのscenario fixtureを3実装で共有する。

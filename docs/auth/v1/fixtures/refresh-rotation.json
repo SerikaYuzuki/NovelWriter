@@ -1,0 +1,206 @@
+{
+  "fixtureVersion": 1,
+  "name": "one-time-refresh-rotation-exact-replay-and-reuse-revocation",
+  "symbols": {
+    "accountId": "acct_AAAAAAAAAAAAAAAA",
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "initialRefreshToken": "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+    "sessionId": "40000000-0000-4000-8000-000000000001",
+    "successorRefreshToken": "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+  },
+  "initialState": {
+    "accountAuthEpoch": 1,
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "appleProviderCalls": 0,
+    "sessionFamilyState": "active",
+    "tokenState": {
+      "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA": "active"
+    }
+  },
+  "steps": [
+    {
+      "id": "rotate-first-use",
+      "method": "POST",
+      "path": "/v1/auth/tokens:refresh",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "rotationId": "50000000-0000-4000-8000-000000000001"
+        },
+        "expectedCanonicalBodyByteCount": 53,
+        "expectedCanonicalBodySha256": "2940fdbc17870d157b88ae03f77975c4df643d5e5d14a6c5b6456085eb0aa865",
+        "expectedCanonicalBodyUtf8": "{\"rotationId\":\"50000000-0000-4000-8000-000000000001\"}"
+      },
+      "expect": {
+        "body": {
+          "binding": {
+            "accountAuthEpoch": 1,
+            "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+            "accountId": "acct_AAAAAAAAAAAAAAAA",
+            "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+            "sessionId": "40000000-0000-4000-8000-000000000001",
+            "syncProtocolEpoch": 1
+          },
+          "receipt": {
+            "commandKind": "rotateRefreshToken",
+            "replayUntil": "2026-11-14T00:00:00Z",
+            "rotationId": "50000000-0000-4000-8000-000000000001"
+          },
+          "tokens": {
+            "accessToken": "fma1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            "accessTokenExpiresAt": "2026-08-16T00:15:00Z",
+            "refreshGeneration": 2,
+            "refreshToken": "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            "refreshTokenExpiresAt": "2026-11-14T00:00:00Z",
+            "tokenType": "Bearer"
+          }
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 200
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "appleProviderCalls": 0,
+        "rotationReceipts": 1,
+        "sessionFamilyState": "active",
+        "tokenPairsIssued": 1,
+        "tokenState": {
+          "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA": "consumed",
+          "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC": "active"
+        }
+      }
+    },
+    {
+      "id": "rotate-lost-ack-exact-replay",
+      "method": "POST",
+      "path": "/v1/auth/tokens:refresh",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "rotationId": "50000000-0000-4000-8000-000000000001"
+        }
+      },
+      "expect": {
+        "sameCanonicalResponseAsStep": "rotate-first-use",
+        "status": 200
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "appleProviderCalls": 0,
+        "rotationReceipts": 1,
+        "sessionFamilyState": "active",
+        "tokenPairsIssued": 1
+      }
+    },
+    {
+      "id": "reuse-consumed-token-with-different-rotation",
+      "method": "POST",
+      "path": "/v1/auth/tokens:refresh",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "rotationId": "50000000-0000-4000-8000-000000000002"
+        }
+      },
+      "expect": {
+        "body": {
+          "code": "refreshTokenReused",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000021",
+          "retryability": "afterInteractiveAuthentication",
+          "rotationId": "50000000-0000-4000-8000-000000000002"
+        },
+        "status": 401
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "appleProviderCalls": 0,
+        "rotationReceipts": 2,
+        "sessionFamilyState": "revokedForRefreshReuse",
+        "tokenState": {
+          "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA": "consumed",
+          "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC": "revoked"
+        }
+      }
+    },
+    {
+      "id": "reuse-error-lost-ack-exact-replay",
+      "method": "POST",
+      "path": "/v1/auth/tokens:refresh",
+      "request": {
+        "authorization": "Bearer fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "body": {
+          "rotationId": "50000000-0000-4000-8000-000000000002"
+        }
+      },
+      "expect": {
+        "sameCanonicalResponseAsStep": "reuse-consumed-token-with-different-rotation",
+        "status": 401
+      },
+      "expectState": {
+        "appleProviderCalls": 0,
+        "rotationReceipts": 2,
+        "sessionFamilyState": "revokedForRefreshReuse",
+        "tokenPairsIssued": 1
+      }
+    },
+    {
+      "id": "successor-token-is-revoked",
+      "method": "POST",
+      "path": "/v1/auth/tokens:refresh",
+      "request": {
+        "authorization": "Bearer fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        "body": {
+          "rotationId": "50000000-0000-4000-8000-000000000003"
+        }
+      },
+      "expect": {
+        "body": {
+          "code": "sessionRevoked",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000022",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 401
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "sessionFamilyState": "revokedForRefreshReuse",
+        "tokenPairsIssued": 1
+      }
+    },
+    {
+      "action": "receiveDelayedRefreshSuccess",
+      "arrange": {
+        "isolatedKeychainState": {
+          "accountId": "acct_AAAAAAAAAAAAAAAA",
+          "refreshGeneration": 3,
+          "refreshToken": "fmr1_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+        },
+        "lateResponseFromGeneration": {
+          "presentedRefreshGeneration": 1,
+          "presentedRefreshToken": "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "responseRefreshGeneration": 2,
+          "responseRefreshToken": "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        }
+      },
+      "id": "late-old-success-cannot-roll-keychain-back",
+      "expect": {
+        "keychainCompareAndSwap": "rejectedPredecessorMismatch",
+        "networkRetry": false,
+        "responseTokensDiscardedFromMemory": true
+      },
+      "expectState": {
+        "keychainRefreshGeneration": 3,
+        "keychainRefreshToken": "fmr1_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+      }
+    }
+  ]
+}

@@ -1,0 +1,669 @@
+{
+  "fixtureVersion": 1,
+  "name": "apple-native-validation-mapping-and-exact-replay",
+  "symbols": {
+    "accountA": "acct_AAAAAAAAAAAAAAAA",
+    "accountFenceEpoch1": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "providerConfigurationId": "apple-primary-fuminiwa-v1",
+    "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+    "verifiedAppleSubjectHandle": "fixture-apple-subject-a"
+  },
+  "providerScript": [
+    {
+      "onStep": "exchange-wrong-issuer",
+      "outcome": {
+        "actualIssuer": "https://issuer.invalid",
+        "kind": "initialIdentityRejected",
+        "reason": "issuerMismatch"
+      }
+    },
+    {
+      "onStep": "exchange-wrong-audience",
+      "outcome": {
+        "actualAudience": "dev.serikayuzuki.fuminiwa.invalid",
+        "kind": "initialIdentityRejected",
+        "reason": "audienceMismatch"
+      }
+    },
+    {
+      "onStep": "exchange-wrong-nonce",
+      "outcome": {
+        "kind": "initialIdentityRejected",
+        "reason": "nonceMismatch"
+      }
+    },
+    {
+      "onStep": "exchange-success",
+      "outcome": {
+        "audience": "dev.serikayuzuki.fuminiwa",
+        "issuer": "https://appleid.apple.com",
+        "kind": "verified",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-apple-subject-a"
+      }
+    },
+    {
+      "onStep": "reauth-exchange-same-identity",
+      "outcome": {
+        "audience": "dev.serikayuzuki.fuminiwa.ios",
+        "issuer": "https://appleid.apple.com",
+        "kind": "verified",
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "subjectHandle": "fixture-apple-subject-a"
+      }
+    }
+  ],
+  "initialState": {
+    "accounts": 0,
+    "appleCodeExchangeCalls": 0,
+    "challenges": 0,
+    "sessions": 0
+  },
+  "steps": [
+    {
+      "id": "read-public-capabilities",
+      "method": "GET",
+      "path": "/v1/auth/capabilities",
+      "request": {},
+      "expect": {
+        "body": {
+          "authProtocolEpoch": 1,
+          "authProtocolNamespace": "com.fuminiwa.auth",
+          "authProtocolVersion": "1.0.0",
+          "canonicalization": "rfc8785-jcs",
+          "contentProtection": {
+            "e2ee": false,
+            "profile": "serverReadableV1",
+            "serverCanReadContent": true,
+            "userManagedContentKey": false
+          },
+          "limits": {
+            "accessTokenLifetimeSeconds": 900,
+            "authReceiptLifetimeSeconds": 7776000,
+            "challengeLifetimeSeconds": 300,
+            "maxCanonicalCommandBytes": 65536,
+            "maxProviderClockSkewSeconds": 300,
+            "refreshTokenLifetimeSeconds": 7776000
+          },
+          "minimumClientVersion": "0.1.0",
+          "providers": [
+            {
+              "authorizationEndpoint": "https://appleid.apple.com/auth/authorize",
+              "clientPlatforms": [
+                "ios",
+                "ipados",
+                "macos"
+              ],
+              "flow": "native",
+              "issuer": "https://appleid.apple.com",
+              "jwksEndpoint": "https://appleid.apple.com/auth/keys",
+              "nativeAudiences": [
+                {
+                  "audience": "dev.serikayuzuki.fuminiwa",
+                  "clientPlatform": "macos"
+                },
+                {
+                  "audience": "dev.serikayuzuki.fuminiwa.ios",
+                  "clientPlatform": "ios"
+                },
+                {
+                  "audience": "dev.serikayuzuki.fuminiwa.ios",
+                  "clientPlatform": "ipados"
+                }
+              ],
+              "provider": "apple",
+              "providerConfigurationId": "apple-primary-fuminiwa-v1",
+              "requestedScopes": [],
+              "tokenEndpoint": "https://appleid.apple.com/auth/token"
+            }
+          ],
+          "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+          "syncProtocolEpoch": 1,
+          "syncProtocolNamespace": "com.fuminiwa.snapshot-sync"
+        },
+        "forbiddenFields": [
+          "accountExists",
+          "accountId",
+          "email",
+          "subject",
+          "tenantId"
+        ],
+        "status": 200
+      },
+      "expectState": {
+        "mutations": 0
+      }
+    },
+    {
+      "id": "reject-unknown-provider",
+      "method": "POST",
+      "path": "/v1/auth/challenges",
+      "request": {
+        "body": {
+          "clientPlatform": "macos",
+          "flow": "native",
+          "operationId": "10000000-0000-4000-8000-000000000001",
+          "provider": "unknown-provider"
+        }
+      },
+      "expect": {
+        "body": {
+          "code": "invalidRequest",
+          "recoveryAction": "correctRequest",
+          "requestId": "90000000-0000-4000-8000-000000000001",
+          "retryability": "never"
+        },
+        "status": 400
+      },
+      "expectState": {
+        "accounts": 0,
+        "appleCodeExchangeCalls": 0,
+        "challenges": 0,
+        "receipts": 0,
+        "sessions": 0
+      }
+    },
+    {
+      "id": "create-success-challenge",
+      "method": "POST",
+      "path": "/v1/auth/challenges",
+      "request": {
+        "body": {
+          "clientPlatform": "macos",
+          "flow": "native",
+          "operationId": "10000000-0000-4000-8000-000000000002",
+          "provider": "apple"
+        },
+        "expectedCanonicalBodyByteCount": 114,
+        "expectedCanonicalBodySha256": "4f44d7abc543ae94b555744edecf0a67707a178460f017e59c511d0f1799ed53",
+        "expectedCanonicalBodyUtf8": "{\"clientPlatform\":\"macos\",\"flow\":\"native\",\"operationId\":\"10000000-0000-4000-8000-000000000002\",\"provider\":\"apple\"}"
+      },
+      "expect": {
+        "body": {
+          "audience": "dev.serikayuzuki.fuminiwa",
+          "challengeId": "20000000-0000-4000-8000-000000000001",
+          "expiresAt": "2026-08-16T00:05:00Z",
+          "flow": "native",
+          "nonce": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "provider": "apple",
+          "providerConfigurationId": "apple-primary-fuminiwa-v1",
+          "receipt": {
+            "commandKind": "createChallenge",
+            "operationId": "10000000-0000-4000-8000-000000000002",
+            "replayUntil": "2026-11-14T00:00:00Z"
+          },
+          "requestedScopes": [],
+          "state": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 201
+      },
+      "expectState": {
+        "accounts": 0,
+        "appleCodeExchangeCalls": 0,
+        "challenges": 1,
+        "receipts": 1,
+        "sessions": 0
+      }
+    },
+    {
+      "id": "create-success-challenge-lost-ack-replay",
+      "method": "POST",
+      "path": "/v1/auth/challenges",
+      "request": {
+        "body": {
+          "clientPlatform": "macos",
+          "flow": "native",
+          "operationId": "10000000-0000-4000-8000-000000000002",
+          "provider": "apple"
+        }
+      },
+      "expect": {
+        "sameCanonicalResponseAsStep": "create-success-challenge",
+        "status": 201
+      },
+      "expectState": {
+        "accounts": 0,
+        "appleCodeExchangeCalls": 0,
+        "challenges": 1,
+        "receipts": 1,
+        "sessions": 0
+      }
+    },
+    {
+      "id": "exchange-success",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000001:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-apple-code-success",
+          "challengeId": "20000000-0000-4000-8000-000000000001",
+          "identityToken": "fixtureHeader.fixturePayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000001",
+          "provider": "apple",
+          "state": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "expectedCanonicalBodyByteCount": 293,
+        "expectedCanonicalBodySha256": "75a40223cf4b218d38daf9793971e2c0d71eef47e4b2f5f96a1b7956f1d088e5",
+        "expectedCanonicalBodyUtf8": "{\"authorizationCode\":\"fixture-apple-code-success\",\"challengeId\":\"20000000-0000-4000-8000-000000000001\",\"identityToken\":\"fixtureHeader.fixturePayload.fixtureSignature\",\"operationId\":\"30000000-0000-4000-8000-000000000001\",\"provider\":\"apple\",\"state\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}"
+      },
+      "expect": {
+        "body": {
+          "binding": {
+            "accountAuthEpoch": 1,
+            "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+            "accountId": "acct_AAAAAAAAAAAAAAAA",
+            "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+            "sessionId": "40000000-0000-4000-8000-000000000001",
+            "syncProtocolEpoch": 1
+          },
+          "receipt": {
+            "commandKind": "exchangeAppleNativeCredential",
+            "operationId": "30000000-0000-4000-8000-000000000001",
+            "replayUntil": "2026-11-14T00:00:00Z"
+          },
+          "tokens": {
+            "accessToken": "fma1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "accessTokenExpiresAt": "2026-08-16T00:15:00Z",
+            "refreshGeneration": 1,
+            "refreshToken": "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "refreshTokenExpiresAt": "2026-11-14T00:00:00Z",
+            "tokenType": "Bearer"
+          }
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 200
+      },
+      "expectClient": {
+        "appleCredentialStateHandleCommittedAfterServerSuccess": true,
+        "credentialStateApiOnly": true,
+        "providerConfigurationId": "apple-primary-fuminiwa-v1",
+        "storage": "keychainOnly"
+      },
+      "expectState": {
+        "accounts": 1,
+        "appleCodeExchangeCalls": 1,
+        "challengesByState": {
+          "consumedSucceeded": 1
+        },
+        "externalIdentityMappings": 1,
+        "providerCredentials": {
+          "dev.serikayuzuki.fuminiwa": {
+            "activeGenerations": 1,
+            "originalClientId": "dev.serikayuzuki.fuminiwa"
+          }
+        },
+        "receipts": 2,
+        "sessions": 1
+      }
+    },
+    {
+      "id": "exchange-success-lost-ack-replay",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000001:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-apple-code-success",
+          "challengeId": "20000000-0000-4000-8000-000000000001",
+          "identityToken": "fixtureHeader.fixturePayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000001",
+          "provider": "apple",
+          "state": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "expect": {
+        "sameCanonicalResponseAsStep": "exchange-success",
+        "status": 200
+      },
+      "expectState": {
+        "accounts": 1,
+        "appleCodeExchangeCalls": 1,
+        "externalIdentityMappings": 1,
+        "receipts": 2,
+        "sessions": 1,
+        "tokenPairsIssued": 1
+      }
+    },
+    {
+      "id": "exchange-code-replay-with-different-operation",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000001:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-apple-code-success",
+          "challengeId": "20000000-0000-4000-8000-000000000001",
+          "identityToken": "fixtureHeader.fixturePayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000003",
+          "provider": "apple",
+          "state": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "expect": {
+        "body": {
+          "challengeId": "20000000-0000-4000-8000-000000000001",
+          "code": "challengeConsumed",
+          "operationId": "30000000-0000-4000-8000-000000000003",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000003",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 409
+      },
+      "expectState": {
+        "accounts": 1,
+        "appleCodeExchangeCalls": 1,
+        "sessions": 1,
+        "tokenPairsIssued": 1
+      }
+    },
+    {
+      "id": "reauth-create-ios-challenge",
+      "method": "POST",
+      "path": "/v1/auth/challenges",
+      "request": {
+        "body": {
+          "clientPlatform": "ios",
+          "flow": "native",
+          "operationId": "10000000-0000-4000-8000-000000000003",
+          "provider": "apple"
+        }
+      },
+      "expect": {
+        "body": {
+          "audience": "dev.serikayuzuki.fuminiwa.ios",
+          "challengeId": "20000000-0000-4000-8000-000000000002",
+          "expiresAt": "2026-08-16T01:05:00Z",
+          "flow": "native",
+          "nonce": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+          "provider": "apple",
+          "providerConfigurationId": "apple-primary-fuminiwa-v1",
+          "receipt": {
+            "commandKind": "createChallenge",
+            "operationId": "10000000-0000-4000-8000-000000000003",
+            "replayUntil": "2026-11-14T01:00:00Z"
+          },
+          "requestedScopes": [],
+          "state": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 201
+      }
+    },
+    {
+      "id": "reauth-exchange-same-identity",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000002:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-apple-code-reauth",
+          "challengeId": "20000000-0000-4000-8000-000000000002",
+          "identityToken": "fixtureHeader.fixturePayloadReauth.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000002",
+          "provider": "apple",
+          "state": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        }
+      },
+      "expect": {
+        "body": {
+          "binding": {
+            "accountAuthEpoch": 1,
+            "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+            "accountId": "acct_AAAAAAAAAAAAAAAA",
+            "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+            "sessionId": "40000000-0000-4000-8000-000000000002",
+            "syncProtocolEpoch": 1
+          },
+          "receipt": {
+            "commandKind": "exchangeAppleNativeCredential",
+            "operationId": "30000000-0000-4000-8000-000000000002",
+            "replayUntil": "2026-11-14T01:00:00Z"
+          },
+          "tokens": {
+            "accessToken": "fma1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "accessTokenExpiresAt": "2026-08-16T01:15:00Z",
+            "refreshGeneration": 1,
+            "refreshToken": "fmr1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "refreshTokenExpiresAt": "2026-11-14T01:00:00Z",
+            "tokenType": "Bearer"
+          }
+        },
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 200
+      },
+      "expectState": {
+        "accountAuthEpoch": 1,
+        "accounts": 1,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "appleCodeExchangeCalls": 2,
+        "externalIdentityMappings": 1,
+        "providerCredentials": {
+          "dev.serikayuzuki.fuminiwa": {
+            "activeGenerations": 1,
+            "originalClientId": "dev.serikayuzuki.fuminiwa",
+            "unchangedByIosReauthentication": true
+          },
+          "dev.serikayuzuki.fuminiwa.ios": {
+            "activeGenerations": 1,
+            "originalClientId": "dev.serikayuzuki.fuminiwa.ios"
+          }
+        },
+        "sessions": 2
+      }
+    },
+    {
+      "id": "read-me-provider-neutral",
+      "method": "GET",
+      "path": "/v1/auth/me",
+      "request": {
+        "authorization": "Bearer fma1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+      },
+      "expect": {
+        "body": {
+          "binding": {
+            "accountAuthEpoch": 1,
+            "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+            "accountId": "acct_AAAAAAAAAAAAAAAA",
+            "serverInstanceId": "00000000-0000-4000-8000-000000000001",
+            "sessionId": "40000000-0000-4000-8000-000000000002",
+            "syncProtocolEpoch": 1
+          },
+          "contentProtection": {
+            "e2ee": false,
+            "profile": "serverReadableV1",
+            "serverCanReadContent": true,
+            "userManagedContentKey": false
+          }
+        },
+        "forbiddenFields": [
+          "appleSubject",
+          "email",
+          "name",
+          "providerRefreshToken",
+          "relayAddress",
+          "tenantId"
+        ],
+        "headers": {
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache"
+        },
+        "status": 200
+      }
+    },
+    {
+      "arrange": {
+        "isolatedChallenge": {
+          "audience": "dev.serikayuzuki.fuminiwa",
+          "challengeId": "20000000-0000-4000-8000-000000000010",
+          "lifecycle": "issued",
+          "nonce": "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK",
+          "state": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+        }
+      },
+      "id": "exchange-wrong-state",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000010:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-code-wrong-state",
+          "challengeId": "20000000-0000-4000-8000-000000000010",
+          "identityToken": "fixtureHeader.otherPayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000010",
+          "provider": "apple",
+          "state": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+        }
+      },
+      "expect": {
+        "body": {
+          "challengeId": "20000000-0000-4000-8000-000000000010",
+          "code": "stateMismatch",
+          "operationId": "30000000-0000-4000-8000-000000000010",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000010",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 422
+      },
+      "expectState": {
+        "accountMutation": false,
+        "appleCodeExchangeCallsDelta": 0,
+        "challengeState": "consumedRejected",
+        "sessionMutation": false
+      }
+    },
+    {
+      "arrange": {
+        "isolatedChallenge": {
+          "audience": "dev.serikayuzuki.fuminiwa",
+          "challengeId": "20000000-0000-4000-8000-000000000011",
+          "lifecycle": "issued",
+          "nonce": "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+          "state": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+        }
+      },
+      "id": "exchange-wrong-issuer",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000011:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-code-wrong-issuer",
+          "challengeId": "20000000-0000-4000-8000-000000000011",
+          "identityToken": "fixtureHeader.wrongIssuerPayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000011",
+          "provider": "apple",
+          "state": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+        }
+      },
+      "expect": {
+        "body": {
+          "challengeId": "20000000-0000-4000-8000-000000000011",
+          "code": "providerIssuerMismatch",
+          "operationId": "30000000-0000-4000-8000-000000000011",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000011",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 422
+      },
+      "expectState": {
+        "accountMutation": false,
+        "appleCodeExchangeCallsDelta": 0,
+        "challengeState": "consumedRejected",
+        "sessionMutation": false
+      }
+    },
+    {
+      "arrange": {
+        "isolatedChallenge": {
+          "audience": "dev.serikayuzuki.fuminiwa",
+          "challengeId": "20000000-0000-4000-8000-000000000012",
+          "lifecycle": "issued",
+          "nonce": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+          "state": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      },
+      "id": "exchange-wrong-audience",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000012:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-code-wrong-audience",
+          "challengeId": "20000000-0000-4000-8000-000000000012",
+          "identityToken": "fixtureHeader.wrongAudiencePayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000012",
+          "provider": "apple",
+          "state": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      },
+      "expect": {
+        "body": {
+          "challengeId": "20000000-0000-4000-8000-000000000012",
+          "code": "providerAudienceMismatch",
+          "operationId": "30000000-0000-4000-8000-000000000012",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000012",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 422
+      },
+      "expectState": {
+        "accountMutation": false,
+        "appleCodeExchangeCallsDelta": 0,
+        "challengeState": "consumedRejected",
+        "sessionMutation": false
+      }
+    },
+    {
+      "arrange": {
+        "isolatedChallenge": {
+          "audience": "dev.serikayuzuki.fuminiwa",
+          "challengeId": "20000000-0000-4000-8000-000000000013",
+          "lifecycle": "issued",
+          "nonce": "JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ",
+          "state": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+        }
+      },
+      "id": "exchange-wrong-nonce",
+      "method": "POST",
+      "path": "/v1/auth/challenges/20000000-0000-4000-8000-000000000013:exchange",
+      "request": {
+        "body": {
+          "authorizationCode": "fixture-code-wrong-nonce",
+          "challengeId": "20000000-0000-4000-8000-000000000013",
+          "identityToken": "fixtureHeader.wrongNoncePayload.fixtureSignature",
+          "operationId": "30000000-0000-4000-8000-000000000013",
+          "provider": "apple",
+          "state": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+        }
+      },
+      "expect": {
+        "body": {
+          "challengeId": "20000000-0000-4000-8000-000000000013",
+          "code": "nonceMismatch",
+          "operationId": "30000000-0000-4000-8000-000000000013",
+          "recoveryAction": "interactiveAppleSignIn",
+          "requestId": "90000000-0000-4000-8000-000000000013",
+          "retryability": "afterInteractiveAuthentication"
+        },
+        "status": 422
+      },
+      "expectState": {
+        "accountMutation": false,
+        "appleCodeExchangeCallsDelta": 0,
+        "challengeState": "consumedRejected",
+        "sessionMutation": false
+      }
+    }
+  ]
+}

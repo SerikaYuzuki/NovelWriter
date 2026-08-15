@@ -1,0 +1,132 @@
+{
+  "fixtureVersion": 1,
+  "name": "apple-multi-audience-credential-revoke-retry",
+  "initialState": {
+    "accountAuthEpoch": 4,
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "accountState": "active",
+    "credentials": [
+      {
+        "audience": "dev.serikayuzuki.fuminiwa",
+        "credentialGeneration": 2,
+        "credentialId": "cred_mac_2",
+        "originalClientId": "dev.serikayuzuki.fuminiwa",
+        "state": "active"
+      },
+      {
+        "audience": "dev.serikayuzuki.fuminiwa.ios",
+        "credentialGeneration": 1,
+        "credentialId": "cred_ios_1",
+        "originalClientId": "dev.serikayuzuki.fuminiwa.ios",
+        "state": "active"
+      }
+    ],
+    "sessions": 3
+  },
+  "providerScript": [
+    {
+      "clientId": "dev.serikayuzuki.fuminiwa",
+      "credentialId": "cred_mac_2",
+      "operationId": "81000000-0000-4000-8000-000000000001",
+      "outcome": "revoked"
+    },
+    {
+      "clientId": "dev.serikayuzuki.fuminiwa.ios",
+      "credentialId": "cred_ios_1",
+      "operationId": "81000000-0000-4000-8000-000000000002",
+      "outcome": "appleServiceUnavailable"
+    },
+    {
+      "clientId": "dev.serikayuzuki.fuminiwa.ios",
+      "credentialId": "cred_ios_1",
+      "operationId": "81000000-0000-4000-8000-000000000002",
+      "outcome": "revoked"
+    }
+  ],
+  "steps": [
+    {
+      "action": "beginExplicitAccountDeletionSecurityTransition",
+      "id": "enumerate-every-original-client-id",
+      "expect": {
+        "accountAuthEpoch": 5,
+        "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
+        "accountState": "deletionPending",
+        "fenceRotations": 1,
+        "providerRevokeJobs": [
+          {
+            "clientId": "dev.serikayuzuki.fuminiwa",
+            "credentialId": "cred_mac_2",
+            "operationId": "81000000-0000-4000-8000-000000000001"
+          },
+          {
+            "clientId": "dev.serikayuzuki.fuminiwa.ios",
+            "credentialId": "cred_ios_1",
+            "operationId": "81000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "sessions": "revoked"
+      }
+    },
+    {
+      "action": "runProviderRevokeJobs",
+      "id": "one-success-one-transient-failure",
+      "expect": {
+        "credentials": {
+          "cred_ios_1": "revokeRetryPending",
+          "cred_mac_2": "revoked"
+        },
+        "fenceRotationsTotal": 1,
+        "providerRevokePhaseComplete": false,
+        "remoteAccountDeletionReportedComplete": false,
+        "retryOperationIdForIos": "81000000-0000-4000-8000-000000000002"
+      }
+    },
+    {
+      "action": "processKillRestartAndRetryPendingProviderRevoke",
+      "id": "retry-same-credential-client-id-and-operation",
+      "expect": {
+        "credentials": {
+          "cred_ios_1": "revoked",
+          "cred_mac_2": "revoked"
+        },
+        "fenceRotationsTotal": 1,
+        "macProviderCalls": 1,
+        "providerRevokePhaseComplete": true,
+        "remoteAccountDeletionReportedComplete": false
+      }
+    },
+    {
+      "action": "replayProviderRevokeAfterLostAck",
+      "id": "receipt-prevents-duplicate-apple-call",
+      "input": {
+        "operationId": "81000000-0000-4000-8000-000000000002"
+      },
+      "expect": {
+        "additionalFenceRotations": 0,
+        "additionalProviderCalls": 0,
+        "sameRevokeReceipt": true
+      }
+    },
+    {
+      "action": "attemptRevokeWithMismatchedClientId",
+      "id": "credential-client-id-fence",
+      "input": {
+        "clientId": "dev.serikayuzuki.fuminiwa.ios",
+        "credentialId": "cred_mac_2"
+      },
+      "expect": {
+        "providerCalls": 0,
+        "securityAlert": "credentialOriginalClientIdMismatch",
+        "stateChanged": false
+      }
+    }
+  ],
+  "accountLifecycleBoundary": "Provider revoke completion is necessary but not sufficient for remote account deletion completion; retention and hard-delete timing require the separate R8 account-lifecycle Decision.",
+  "forbiddenOutcomes": [
+    "revoke a credential with a different client_id than its original authorization",
+    "overwrite the Mac grant when iOS signs in",
+    "report account deletion complete while any provider revoke job is pending",
+    "rotate AccountAuthEpoch more than once for one deletion security transition",
+    "delete local SQLite manuscripts during provider revoke"
+  ]
+}

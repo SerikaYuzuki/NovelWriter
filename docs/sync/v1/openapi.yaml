@@ -21,13 +21,18 @@ info:
     report. Rust server, SQLite client, migration, and Production deployment remain
     unimplemented until the corresponding gates pass.
 
-    `contentProtectionProfile=serverReadableV1` is provisional and MUST NOT be
-    Production-frozen until the user makes the E2EE Product Decision. Selecting
-    E2EE v1 replaces this contract before implementation; it is not a compatible
-    capability toggle. This draft never describes itself as E2EE-ready.
-    The generic bearer scheme fixes only the HTTP boundary; Production OIDC provider,
-    account recovery, and credential UX also remain Product Decisions. A fixed bearer
-    token is development/integration-only and is never a Production account design.
+    Protocol v1 is fixed to `contentProtectionProfile=serverReadableV1` and
+    `e2ee=false`. TLS and server-managed encryption at rest are mandatory, but an
+    authorized server operator and recovery backup can read manuscript content.
+    E2EE is not a v1 capability toggle; adopting it requires a future incompatible
+    namespace/epoch and migration.
+
+    Production external identity v1 is Sign in with Apple native only, through the
+    separate versioned FUMINIWA Auth API. This Sync API never accepts an Apple
+    authorization code, identity/access/refresh token, subject, email, name, or relay
+    address. `bearerAuth` is exclusively the short-lived opaque FUMINIWA access token
+    issued by Auth v1. A fixed bearer token is a development-only out-of-band harness
+    and is never a Production provider or advertised capability.
 
     Every JSON request and response uses the media type
     `application/vnd.fuminiwa.sync.v1+jcs` and MUST be the exact UTF-8 RFC 8785
@@ -62,7 +67,8 @@ info:
     fence/version failure, 429, 503, and transport failure do not consume operationId;
     the same exact command may be retried only according to typed retryability.
 
-    The authenticated principal selects exactly one tenant. No request body accepts
+    The FUMINIWA access token resolves to `AuthenticatedPrincipal { AccountID,
+    TenantID, SessionID, AccountAuthEpoch }` and selects exactly one tenant. No request body accepts
     an owner, account, or tenant identifier. Except for capabilities, authenticated
     calls also carry server-instance, protocol-epoch, account-fence, and client-
     version headers. A mismatch is rejected before object existence is revealed.
@@ -172,8 +178,10 @@ paths:
       summary: Bind an authenticated client to the server instance, epoch, and account fence.
       description: |
         This is the only authenticated operation that does not require the three
-        fence headers. It is still authorized: the returned account fence is scoped
-        to the bearer principal and MUST NOT be used with another credential.
+        fence headers. It is still authorized by a FUMINIWA access token. The response
+        binds its AccountID and AccountAuthEpoch to an opaque account fence. Ordinary
+        access/refresh rotation and same-identity reauthentication keep this fence;
+        a security-scope epoch change requires quarantine and full bootstrap.
       parameters:
         - $ref: '#/components/parameters/ClientVersion'
       responses:
@@ -701,7 +709,7 @@ paths:
         WorkID. Every parent must already exist in the same tenant and WorkID; every
         entry object must already be finalized in the same tenant with exact byte size.
         Entry-declared content type is reference context, not CAS object identity. In
-        this provisional server-readable draft, each structured entry
+        serverReadableV1, each structured entry
         object must itself be exact JCS and pass the versioned schema selected by its
         EntityKey; attachment bytes remain opaque. Registration also validates the
         complete work dependency closure and whole-work invariants: order entities,
@@ -721,8 +729,8 @@ paths:
         second parsing; regex acceptance alone is insufficient.
         A malformed payload is `schemaViolation`; a changed lineage value is
         `lineageViolation`. Invalid candidates are stored neither as valid
-        Snapshots nor as heads. E2EE selection replaces this server-side validation
-        contract with a client-verifiable design before implementation. Same ID + same
+        Snapshots nor as heads. A future E2EE protocol must replace this validation
+        contract under another namespace/epoch; v1 never skips it. Same ID + same
         bytes with a fully available entry-reference set is an idempotent existing
         result. If only retained lineage metadata remains, the same immutable manifest
         may re-materialize its entry map and references atomically after all objects are
@@ -971,7 +979,7 @@ paths:
       description: |
         Reconciliation is defined by the three complete manifests. The server validates
         the supplied classification against base/local/remote EntityKey-to-ObjectID
-        maps. A `needsChoice` command contains no descriptor array: in provisional
+        maps. A `needsChoice` command contains no descriptor array: in
         serverReadableV1 the server deterministically computes, stores, sorts, and
         digests the complete immutable descriptor set, then returns only its count,
         digest, and bounded preview. Clients retrieve the complete set through the
@@ -1569,8 +1577,11 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: opaque-access-token
-      description: Server maps the token subject to one opaque account and tenant.
+      bearerFormat: fuminiwa-opaque-access-token
+      description: |
+        Short-lived opaque FUMINIWA access token issued by Auth v1. It is never an
+        Apple token and clients do not parse it. The server resolves it to exactly one
+        AccountID, TenantID, SessionID, and AccountAuthEpoch.
 
   parameters:
     ServerInstanceFence:
@@ -1592,7 +1603,10 @@ components:
       name: X-Fuminiwa-Account-Fence
       in: header
       required: true
-      description: Opaque account fence returned by capabilities for this bearer principal.
+      description: |
+        Exact opaque fence returned by capabilities for the FUMINIWA principal's
+        AccountID and AccountAuthEpoch. It is not tied to one token and is not itself
+        a bearer credential.
       schema:
         $ref: '#/components/schemas/AccountFence'
     ClientVersion:
@@ -1817,10 +1831,21 @@ components:
       allOf:
         - $ref: '#/components/schemas/OpaqueToken'
       description: Opaque server account identifier; not supplied in request bodies.
+    AccountAuthEpoch:
+      allOf:
+        - $ref: '#/components/schemas/PositiveSafeInteger'
+      description: |
+        Monotonic account security-scope epoch from Auth v1. Token rotation,
+        current-session revoke, and same-Apple-identity reauthentication do not change
+        it; all-session/security/identity-scope invalidation does.
     AccountFence:
       allOf:
         - $ref: '#/components/schemas/OpaqueToken'
-      description: Credential-bound fence; not a bearer credential by itself.
+      description: |
+        Persisted opaque server value bound to server instance, protocol epoch,
+        AccountID, and AccountAuthEpoch; stable across ordinary token and server-secret
+        rotation and not a credential. Only an AccountAuthEpoch transition creates a
+        new value.
     ChangeCursor:
       allOf:
         - $ref: '#/components/schemas/OpaqueToken'
@@ -2020,7 +2045,7 @@ components:
         contentProtectionProfile:
           type: string
           const: serverReadableV1
-          description: Provisional R0 draft value; this is not E2EE.
+          description: Final protocol-v1 profile; the server validates and can read content.
         e2ee:
           type: boolean
           const: false
@@ -2152,8 +2177,10 @@ components:
       type: object
       additionalProperties: false
       required:
+        - accountAuthEpoch
         - accountFence
         - accountId
+        - authentication
         - canonicalization
         - features
         - historyRetention
@@ -2165,10 +2192,14 @@ components:
         - protocolVersion
         - serverInstanceId
       properties:
+        accountAuthEpoch:
+          $ref: '#/components/schemas/AccountAuthEpoch'
         accountFence:
           $ref: '#/components/schemas/AccountFence'
         accountId:
           $ref: '#/components/schemas/AccountId'
+        authentication:
+          $ref: '#/components/schemas/SyncAuthenticationProfile'
         canonicalization:
           type: string
           const: rfc8785-jcs
@@ -2193,6 +2224,32 @@ components:
           const: v1
         serverInstanceId:
           $ref: '#/components/schemas/ServerInstanceId'
+
+    SyncAuthenticationProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - accessTokenKind
+        - appleCredentialsAcceptedBySync
+        - providerClaimsInWorkBinding
+        - sessionAuthority
+      properties:
+        accessTokenKind:
+          type: string
+          const: fuminiwaOpaqueAccessTokenV1
+        appleCredentialsAcceptedBySync:
+          type: boolean
+          const: false
+        providerClaimsInWorkBinding:
+          type: boolean
+          const: false
+        sessionAuthority:
+          type: string
+          const: fuminiwaAuthV1
+      description: |
+        Auth v1 terminates external-provider verification and issues the FUMINIWA
+        bearer. Enabled providers and flows are advertised only by Auth capabilities;
+        adding one never changes this Sync profile, AccountID, or Snapshot/Work identity.
 
     HistoryRetentionPolicy:
       type: object
@@ -3236,7 +3293,7 @@ components:
           $ref: '#/components/schemas/WorkId'
       description: |
         Bounded sealed command. It intentionally carries no ConflictDescriptor array;
-        provisional serverReadableV1 recomputes the complete immutable descriptor set
+        serverReadableV1 recomputes the complete immutable descriptor set
         from the Divergence sources and returns its digest/count/preview.
     ClassifyDivergenceCommand:
       oneOf:
@@ -4081,7 +4138,7 @@ components:
       properties:
         code:
           type: string
-          enum: [authenticationRequired, tokenExpired]
+          enum: [accessTokenExpired, authenticationRequired, sessionRevoked]
         requestId:
           $ref: '#/components/schemas/LowercaseUuid'
         retryability:
@@ -4598,13 +4655,13 @@ components:
               - $ref: '#/components/schemas/InvalidRequestError'
               - $ref: '#/components/schemas/LimitExceededError'
     Unauthorized:
-      description: Missing, expired, or otherwise unusable bearer credential.
+      description: Missing, expired, revoked, or otherwise unusable FUMINIWA access token; Apple tokens are rejected.
       headers:
         WWW-Authenticate:
           required: true
           schema:
             type: string
-            const: Bearer
+            const: 'Bearer realm="fuminiwa-sync", token_type="access"'
       content:
         application/vnd.fuminiwa.sync.v1+jcs:
           schema:

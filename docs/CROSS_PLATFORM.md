@@ -188,7 +188,9 @@ Windowsで`.novelpkg`を開くときはFolderPickerを使う。新規作成／�
 - 共通baseから変更EntityKeyが非重複でも、entity presence／order／参照のdependency closureと作品全体invariantがvalidな場合だけpayload内部をmergeせず2-parent Snapshotへ統合する。episode title／body／memo、chapter order等は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md) 4.2のkey粒度を使い、同一key、delete対依存変更、構造不整合をこの端末／online／両方の3択へ送る
 - remote objectはhash／byte count／schema／accountを検査してInboxへstageし、active editorへ直接注入しない
 - local／online Snapshotに同じretention／restoreの意味を使い、restoreは過去内容を持つ新Snapshotを作る
-- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)と`docs/sync/v1/`のOpenAPI／schema／fixtureを正にする。ただし現時点の`docs/sync/v1/`はE2EE／account Decision前の`designCandidate`でR0未freezeである。server integration testは適合証拠であって仕様authorityではない
+- protocol v1は`serverReadableV1`／E2EEなしとする。同期identityはprovider-neutralなopaque AccountIDであり、作品binding、Snapshot、`.novelpkg`へApple subject／email／issuerを入れない。同期BearerはFUMINIWA発行のopaque access tokenで、Apple tokenを各同期requestへ渡さない
+- Production v1の外部identity providerはSign in with Appleだけである。Apple clientはAuthenticationServicesのnative adapterを使う。将来Windows等でApple web flowまたは別providerを追加しても、provider adapterより上のAccountID／session／fence／sync contractを変えず、実装していないproviderのUIを出さない
+- HTTP pathやJSON fieldの具体、上限、canonical bytesは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)、`docs/sync/v1/`と`docs/auth/v1/`のOpenAPI／schema／fixtureを正にする。D-078のProduct Decisionは確定済みだが、現時点のcontractはR0最終監査前の`designCandidate`である。server integration testは適合証拠であって仕様authorityではない
 
 ## 7-hist-a. D-071 Note Syncのクロスプラットフォーム契約（移行前の実装）
 

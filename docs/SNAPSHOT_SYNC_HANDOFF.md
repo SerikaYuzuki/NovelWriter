@@ -1,6 +1,6 @@
 # Snapshot Sync 実装ハンドオフ
 
-> **状態**: D-077／[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を実装へ移すための境界と合格条件。現時点は設計のみで、server／SQLite clientは未実装。利用者から実装着手の指示があるまでコードを追加しない。
+> **状態**: D-077／[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を実装へ移すための境界と合格条件。Production認証境界は[AUTH.md](AUTH.md)を正とする。現時点は設計のみで、server／SQLite client／Production認証は未実装。利用者から実装着手の指示があるまでコードを追加しない。
 
 ## 1. 実装者へ渡す不変条件
 
@@ -14,6 +14,7 @@
 8. remote callbackからactive editorへ内容を注入しない。D-041のsession／IME／generationを満たすsafe boundaryだけでmaterializeする。
 9. CloudKitと新serverを二重authorityにしない。移行中のCloudKitはread-only sourceにする。
 10. 旧package、journal、dirty、review、CloudKit recordをreset／上書き／削除しない。
+11. 外部provider credentialを同期identityにせず、検証済み外部identityを不変opaque AccountIDへ写像してFUMINIWA独自sessionを発行する。認証不能でもlocal edit／autosaveを止めない。
 
 ## 2. 仕様authorityとR0成果物
 
@@ -50,15 +51,28 @@ docs/sync/v1/
     └── remote-command/
 ```
 
+認証contractは同期wireへApple credentialを混ぜず、別authorityとして同時にfreezeする。
+
+```text
+docs/auth/v1/
+├── README.md
+├── openapi.yaml
+└── fixtures/
+    ├── apple-native-exchange.json
+    ├── refresh-rotation.json
+    └── session-fence.json
+```
+
 - JSON canonicalizationは[IETF RFC 8785 JCS](https://datatracker.ietf.org/doc/html/rfc8785)を正にする。
 - valid fixtureは入力model、期待canonical bytes、SHA-256、期待decode modelを持つ。
 - invalid fixtureはduplicate key、unknown field、非canonical whitespace／escape／key順、float、unsafe integer、uppercase UUID／digest、不正UTF-8、unpaired surrogate、parent／entry順不正、size超過を含める。
 - scenario fixtureは初期state、command列、各stepのSQLite／server state、UI可否、期待errorを言語非依存JSONで表す。
 - Swift／Rust／将来C#のfixture harnessは別実装とし、共通実装をFFIで使って一致を見せかけない。
+- Production認証は[AUTH.md](AUTH.md)の4層境界、Apple-only v1、AccountID不変、session／fence state、失効、account-switch fixtureを同時にfreezeする。provider linkingはpolicyだけを固定し、v1 API／UIを追加しない。
 
-R0完了条件は、仕様内の曖昧な`optional`、`implementation-defined`、自由文字列errorを0件にし、E2EE／account Decisionを確定することである。
+R0完了条件は、仕様内の曖昧な`optional`、`implementation-defined`、自由文字列errorを0件にし、D-078の`serverReadableV1`／Sign in with Appleを`docs/sync/v1/`と`docs/auth/v1/`へ矛盾なく固定することである。
 
-現時点の`docs/sync/v1/`は`serverReadableV1`を仮置きした`designCandidate`であり、R0 freeze済みではない。E2EE／account Decision後にprotocol epoch、content-protection fields、error、limits、全canonical hashを再監査し、承認commitを明示して初めてauthorityとする。
+Product DecisionはD-078で確定したが、現時点の`docs/sync/v1/`と`docs/auth/v1/`は最終横断監査前の`designCandidate`であり、R0 freeze済みではない。protocol epoch、content-protection fields、auth state、typed error、limits、全canonical hashを再監査し、承認commitを明示して初めてauthorityとする。
 
 ## 3. Apple client module境界
 
@@ -77,6 +91,13 @@ GRDB + local CAS             URLSession transport only
 
 NovelStorage         .novelpkg validator / codec only
 NovelSyncCloudKit    read-only migration adapter after cutover begins
+
+NovelAuthDomain      provider-neutral auth state / AuthenticatedBinding
+    ↑          ↑          ↑
+NovelAuthApple  NovelAuthHTTP  NovelAuthKeychain
+    └──────── AuthFeature ────────┘
+                    ↓
+               SyncFeature
 ```
 
 - `NovelSnapshot`はFoundationの値型までに留め、SQLite、GRDB、URLSession、CloudKit、AppKit、UIKitへ依存しない。
@@ -84,7 +105,11 @@ NovelSyncCloudKit    read-only migration adapter after cutover begins
 - `LocalLibraryStore` actorだけがmutation APIを公開する。transaction内でnetworkやUI actorをawaitしない。
 - `NovelSyncHTTP`はrequest／responseとtransportだけを持ち、SQLiteへ直接触れない。
 - `SyncFeature`がlocal storeとHTTPをcompositionし、WorkIDごとのsingle-flight laneを所有する。
-- credentialと、E2EEを選んだ場合のwork keyはKeychainへ置き、SQLite／`.novelpkg`／logへ出さない。
+- `NovelAuthDomain`はprovider-neutral値型とprotocolだけを持ち、`NovelAuthApple`だけがAuthenticationServicesへ依存する。将来OIDC adapterを追加しても`SyncFeature`は`AuthenticatedBinding(server instance, protocol epoch, AccountID, account fence)`だけを見る。
+- `NovelAuthHTTP`はauth attempt／exchange、FUMINIWA session refresh、logout、capabilitiesだけを扱い、provider tokenを同期APIへ渡さない。
+- `NovelAuthKeychain` actorへFUMINIWA access／rotating refresh token、opaque session IDと、server検証済みexchangeに対応するApple credential-state専用opaque user handleだけを置く。handleはproviderConfig単位で`getCredentialState(forUserID:)`以外に使わず、AccountID／link keyへしない。v1独自のinstallation key／device PoP／hardware fingerprintは作らない。provider refresh tokenはserverだけ、Apple authorization code／identity tokenはexchange中memoryだけに置き、credential-state handleを含むprovider値をSQLite、`.novelpkg`、UserDefaults、logへ出さない。
+- v1に利用者用work key／recovery codeは存在しない。将来E2EEを採択する場合も別protocol／別Decisionとし、provider loginを原稿鍵回復へ読み替えない。
+- 詳細なstate、DB責務、Apple通知、link禁止境界は[AUTH.md](AUTH.md)に従う。
 
 ## 4. Local durability契約
 
@@ -106,7 +131,7 @@ NovelSyncCloudKit    read-only migration adapter after cutover begins
 4. 短いSQLite transactionから参照する。
 5. 3と4の間で落ちたorphanはgrace後のmark-and-sweepだけが削除する。
 
-symlink、junction／reparse point、hard-link依存、path traversal、special file、途中変更をrejectする。CAS pathへtitle、attachment name、WorkIDを含めない。CAS object rowはObjectID＋byte countだけをidentityとし、content typeはSnapshotEntry／logical reference側に置く。remote presenceはimmutable server instance ID＋protocol epoch＋opaque account ID＋credential-bound account fence＋ObjectIDの複合keyへ分離し、同じAccountIDでもfenceが変われば再利用せず、server missing照会とfinalize／read-backを最終正にする。
+symlink、junction／reparse point、hard-link依存、path traversal、special file、途中変更をrejectする。CAS pathへtitle、attachment name、WorkIDを含めない。CAS object rowはObjectID＋byte countだけをidentityとし、content typeはSnapshotEntry／logical reference側に置く。remote presenceはimmutable server instance ID＋protocol epoch＋opaque account ID＋AccountAuthEpoch由来のaccount fence＋ObjectIDの複合keyへ分離し、同じAccountIDでもfenceが変われば再利用せず、server missing照会とfinalize／read-backを最終正にする。通常のaccess／refresh token rotationではfenceを変えない。
 
 local reference採用とGC deleteはObjectIDごとの`CASMutationGate`で直列化する。sweepは`quarantined`後もdelete直前にLocalLibraryStore transactionで全rootを再検査し、deletion token付き`deleting`をcommitしてからgate内でexact fileだけをunlink／directory fsyncする。referenceが先ならquarantineをcancelし、deleteが先ならsaveはstaging bytesを削除後に再adoptしてからreferenceをcommitする。gate内でawaitせず1 objectごとに解放し、process-kill後はtoken／file／rootの3面を照合するfixtureを必須にする。
 
@@ -165,7 +190,8 @@ publishCAS
 - checkpoint laneはlocal entriesからcapture時baseをparentに持つremote-equivalent Snapshotをregisterし、`recordSnapshotCheckpoint`をsealed commandとして送り、head／generationを変えずmanual／lifecycle occurrenceとensure-pinnedを記録する。ensure-pinned=falseは既存pinを解除せず、unpinは明示`setSnapshotPin`だけが行う。receipt＋history＋effective pin＋Snapshot read-back後だけmapping／intentを完了する。latest-head attemptとcheckpoint attemptを1件ずつ交互に進め、Sをpin後Tへ編集してもSはhistory、Tだけがheadになる。初回headなしではlatest root publish＋library read-backまでcheckpointをblockし、serverも`workHeadRequired`でfail closedする。
 - remote fast-forwardは`current_local_snapshot_id == last_remote_equivalent_local_snapshot_id`、pending Intent／Attempt／transfer／Divergence／Conflictなし、未保存editor／form／IMEなし、session／surface一致を必要条件とし、materialize transaction内でexpected current＋local generation CASを再検査する。不成立時はInboxへ保持してreconcileし、clean editorだけを根拠にcurrentを進めない。
 - retryはbounded exponential backoff＋jitter。serverの`Retry-After`を上限内で尊重する。
-- auth、quota、version、permanent schema errorをnetwork retryへ畳み込まない。いずれもlocal editは継続する。
+- auth、quota、version、permanent schema errorをnetwork retryへ畳み込まない。401／provider失効／Keychain読込失敗ではaccountを空へfallbackせずworkerだけを`parkedAuth`へ移し、local edit、autosave、遷移、close、quitを継続する。
+- capabilities read-backで同一AccountID＋新fenceなら旧presence／cursor／Intent／Attemptをquarantineしてbootstrap／missing照会から再計画する。別AccountIDなら旧scopeのworkをparkし、loginだけでautomatic adopt／rebindしない。
 
 ## 6. Reconciliation fixture
 
@@ -181,13 +207,13 @@ publishCAS
 | entity groupのdelete | 同group edit／参照追加 | dependency closure全体がneedsChoice |
 | baseなし／schema不明 | 任意 | needsChoice |
 
-raw key diffの後、entityの全payload key、所属order、参照元／参照先をdependency closureへ展開する。同一IDの異なる追加、delete対同group edit、削除entityへの他方の新規参照は、keyが直接重ならなくてもneedsChoiceである。safe unionはEntityKey順にcanonical manifestを作り、local branch＋remote headのparentもdigest辞書順にした後、作品全体invariantを再検証する。`serverReadableV1` serverもbase／local／remoteからdescriptor closureとinvariantを独立再計算してclient候補を検証するが、payload内部をmerge／生成しない。E2EE採択時はこのserver validation境界をprotocol epochで置換する。invalidまたは違反を一意なclosureへ帰属できない候補は自動publishしない。本文string内部、order array内部はmergeしない。
+raw key diffの後、entityの全payload key、所属order、参照元／参照先をdependency closureへ展開する。同一IDの異なる追加、delete対同group edit、削除entityへの他方の新規参照は、keyが直接重ならなくてもneedsChoiceである。safe unionはEntityKey順にcanonical manifestを作り、local branch＋remote headのparentもdigest辞書順にした後、作品全体invariantを再検証する。v1の`serverReadableV1` serverもbase／local／remoteからdescriptor closureとinvariantを独立再計算してclient候補を検証するが、payload内部をmerge／生成しない。invalidまたは違反を一意なclosureへ帰属できない候補は自動publishしない。本文string内部、order array内部はmergeしない。
 
 3択は競合dependency closureだけlocal／remoteを選び、closure外の安全なdeltaを両方保持する。選択後もinvalidになる交差参照では、validになるまで保守的に変更集合全体のlocal／remote選択へ広げる。どの選択も元WorkIDへ2-parent resolutionをpublishする。全選択で送信前flush時のsource local generation／Snapshot、選択、resolution Snapshot、sealed commandを`pending_conflict_resolutions`へ耐久化する。送信後の追加入力は新しいcurrent／Intentへ残し、ACKはsource以下だけを解決済みにする。currentが進んでいれば解決後headを新baseに再reconcileし、use-onlineでもactive editorへ注入しない。
 
 「両方」はnew WorkID／0-parent rootを1つの`pendingKeepBoth`へ予約し、そのcloneの通常publish laneをblockする。cloneへの追加入力はroot後のIntentに積む。専用resolve commandが元Work head、新Work root、Conflict、receipt、change eventを1 PostgreSQL transactionでall-or-nothingに確定し、lost ack read-back後だけlaneを解放する。local／remote staleでは同じ予約を再利用し、再提示ごとにcloneを増やさない。new WorkIDが別operation所有だったtyped collisionだけは両head未変更をread-backし、同じpending行で予約WorkID／root／operationを1組だけ差し替える。local clone state自体を複製しない。表示後にlocal generationまたはremote headが進んだらstaleにして再計算する。
 
-manifest validatorはJSON Schemaだけで完了しない。空作品でも`work/document`、`work/title`、`work/synopsis`、6つの`work/*-order`を各1件必須とし、`work/document`のportable document IDとcalendar-validなUTC秒精度の`documentCreatedAt`を検証する。未使用WorkIDの最初のrootがWork anchorを確立し、以後の全Snapshotはparentless migration candidateも同じObjectIDを使う。さらにchapter orderとchapter key集合、各episodeの唯一の所属とtitle／body／memo、各metadata orderとentity集合、payload IDとEntityKey、attachment metadata／bytes、portable filename衝突、全参照先を作品全体でexact照合する。server-readableではclient／server、E2EEではencrypt前／decrypt後のclientで同じfixtureを通す。
+manifest validatorはJSON Schemaだけで完了しない。空作品でも`work/document`、`work/title`、`work/synopsis`、6つの`work/*-order`を各1件必須とし、`work/document`のportable document IDとcalendar-validなUTC秒精度の`documentCreatedAt`を検証する。未使用WorkIDの最初のrootがWork anchorを確立し、以後の全Snapshotはparentless migration candidateも同じObjectIDを使う。さらにchapter orderとchapter key集合、各episodeの唯一の所属とtitle／body／memo、各metadata orderとentity集合、payload IDとEntityKey、attachment metadata／bytes、portable filename衝突、全参照先を作品全体でexact照合する。v1ではclientとserverが同じfixtureを独立に通す。
 
 local-only履歴の復元はlocal graph内でcurrent＋selectedの2-parent Snapshotを作るが、その未登録parent鎖をserverへuploadしない。復元後entriesは通常Intentからremote head直下のbranch candidateにする。専用online restore commandは、選択元Snapshotがserver上で`available=true`の場合だけcurrent remote＋selected onlineの2-parent publishに使う。server transactionはexpected old headへの`restoreBefore` occurrence＋pin、new head、change、receiptをatomicにし、resultのprotected Snapshot ID／effective pinとhistory availabilityをread-backする。staleでは全変更0、lost ACKはsame command receipt replayとする。
 
@@ -202,9 +228,13 @@ sync-domain       typed IDs, limits, manifest validation, command results
 sync-api          Axum routes, auth, body limits, typed errors
 sync-postgres     transaction, receipt, head, cursor, Conflict, quota
 sync-object       streaming/finalize S3 adapter
-sync-auth         dev token / Production OIDC adapter
+sync-auth         provider-neutral Account / identity / session / fence domain
+sync-auth-apple   Apple code exchange / JWT-JWKS / notification / revoke adapter
+sync-auth-dev     development-only fixed-token adapter; Productionから除外
 sync-testkit      fake clock禁止のdeterministic scenario runner
 ```
+
+認証実装は[AUTH.md](AUTH.md)に従い、`sync-auth-apple`の成功値を`VerifiedExternalIdentity(providerConfigID, exact issuer, subject)`へ閉じる。`sync-api`はFUMINIWA bearerを`AuthenticatedPrincipal(AccountID, TenantID, SessionID, fence generation)`へ変換し、以後のroute／PostgreSQL／S3はprovider tableやApple claimへ触れない。v1はAppleだけを有効化し、将来OIDC adapter、link／unlink API、account mergeをR4へ先回りして追加しない。
 
 OpenAPIで少なくとも次をfreezeする。
 
@@ -242,22 +272,22 @@ S3 uploadは全bodyをmemoryへ載せない。proxy stream中にdigest／sizeを
 - 2026-08-15のread-only確認ではTCP 8080が使用中だったため、固定portを前提にしない。配置時に再確認する。
 - PostgreSQL／MinIOはloopbackまたはinternal Docker networkだけへbindする。公開するAPIもLAN／VPN＋HTTPSに限定する。
 - secretは`.env`へcommitせず、画面／test logへ出さない。配置後はpassword SSHではなく公開鍵へ切り替える。
-- Compose起動、health、authorized capabilities、object→Snapshot→CAS→lost-ack replay→Divergence→3択resolve→cursorのsmokeを自動化する。
+- Compose起動、health、development authenticatorでのauthorized capabilities、auth失敗時の存在非開示、object→Snapshot→CAS→lost-ack replay→Divergence→3択resolve→cursorのsmokeを自動化する。固定token合格をApple Production認証の証拠にしない。
 - host外へPostgreSQL＋object storeの整合backupを作り、空の別環境へrestoreするまで運用合格にしない。
 
 ## 9. PR列と完了条件
 
 | PR | scope | 完了条件 |
 | --- | --- | --- |
-| R0 | OpenAPI／schema／fixture／Decisionだけ | ambiguity 0、cross-language expected bytes確定 |
+| R0 | OpenAPI／schema／fixture／Decision／Auth contractだけ | ambiguity 0、cross-language expected bytes、Apple-only auth state／fence／revocation fixture確定 |
 | R1 | `NovelSnapshot`＋GRDB／CAS | kill、disk full、corruption、backup focused PASS |
 | R2 | Import／Export codec | v1〜v3＋unknown resource round-trip PASS |
 | R3 | local棚／autosave／履歴／復元 | networkなしMac／iOS lifecycle PASS |
-| R4 | Rust server＋Compose | domain／Postgres／S3 integrationと192.168.11.5 smoke PASS |
-| R5 | Swift HTTP worker | lost ack、cursor、account fence、safe materialization PASS |
+| R4 | Rust server＋Apple auth boundary＋Compose | domain／Postgres／S3、auth table／session／fence、Apple verifier fixtureと192.168.11.5 dev smoke PASS |
+| R5 | Swift auth＋HTTP worker | Keychain、revocation、account switch、lost ack、cursor、account fence、safe materialization PASS |
 | R6 | auto-union／3択／online history | 2〜3端末、再起動、stale、全選択 PASS |
 | R7 | legacy inventory／migration／cutover | checkpoint kill、2回実行、rollback、read-back PASS |
-| R8 | Production hardening | 選択済みauth／content protectionのauditとkey recovery、TLS、quota、monitoring、off-site restore、signed devices PASS |
+| R8 | Production hardening＋account lifecycle | Apple Production通知、secret／lookup-key rotation、server保存時暗号化key／backup recovery、TLS、quota、monitoring、off-site restoreに加え、後続Decisionのversioned account-lifecycle contract（アプリ内削除開始、猶予／取消／retention、唯一のApple identity、Apple token revoke、remote削除完了read-back）とsigned devicesがPASS |
 
 各PRで`./Scripts/check.sh`を通す。通常App compositionの切替、旧CloudKit write停止、旧source削除はそれぞれ別PR／Decisionとし、R0〜R6へ混ぜない。
 
@@ -271,6 +301,11 @@ S3 uploadは全bodyをmemoryへ載せない。proxy stream中にdigest／sizeを
 - `String`内部の自動3-way merge、CRDT、order fieldの追加
 - operation IDをretryごとに再生成
 - account未確認workのautomatic adopt
+- Apple／将来OIDC tokenを同期API bearerとして受理すること
+- email、氏名、private relay address、同じ端末／IPによるautomatic account link／merge
+- v1へprovider link／unlink API、link UI、OIDC adapterを実在機能として出すこと
+- credentialをSQLite、`.novelpkg`、UserDefaults、log、crash reportへ保存すること
+- auth／Keychain失敗をlocal editor、autosave、遷移、close、quitの失敗へ広げること
 - 1作品のcorruptionを棚全体の空DB fallbackへ変換
 - migration成功前の旧bytes／journal／review／CloudKit record削除
 - fixed dev token／HTTP構成のInternet公開
@@ -278,6 +313,6 @@ S3 uploadは全bodyをmemoryへ載せない。proxy stream中にdigest／sizeを
 
 ## 11. Lunaへ依頼するときの最初の指示
 
-最初の依頼はR0最終化だけに限定する。design candidateは既にあるため、利用者のE2EE／account Decisionを反映し、fixtureを独立検証してfreezeするところから始める。
+最初の依頼はR0最終化だけに限定する。design candidateは既にあるため、D-078で確定した`serverReadableV1`／Sign in with Appleと[AUTH.md](AUTH.md)のApple-only provider-neutral境界を反映し、fixtureを独立検証してfreezeするところから始める。認証の実装順はAUTH.md 10章を正とする。
 
-> D-077、`docs/SNAPSHOT_SYNC.md`、本書、`docs/sync/v1/README.md`を読み、利用者が決定したcontent protection／account方式をdesign candidateへ反映してください。OpenAPI、JSON Schema、canonical valid／invalid fixture、全scenario fixtureを独立に検証し、差分とhash変更を提示してください。実装コードは追加せず、R0のcross-language expected bytesが承認されるまでRust serverとGRDB storeへ進まないでください。
+> D-077／D-078、`docs/SNAPSHOT_SYNC.md`、`docs/AUTH.md`、本書、`docs/sync/v1/README.md`、`docs/auth/v1/README.md`を読み、確定済みの`serverReadableV1`／Sign in with Appleをdesign candidateへ反映してください。External provider→VerifiedExternalIdentity→immutable AccountID→FUMINIWA sessionの境界、Apple-only v1、account fence、revocation、local-edit継続をauth fixtureへ固定し、provider link／unlink API／UIやOIDC adapterは追加しないでください。OpenAPI、JSON Schema、canonical valid／invalid fixture、全scenario fixtureを独立に検証し、差分とhash変更を提示してください。実装コードは追加せず、R0のcross-language expected bytesとauth contractが承認されるまでRust serverとGRDB storeへ進まないでください。

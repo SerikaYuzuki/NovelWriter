@@ -1,6 +1,6 @@
 # FUMINIWA Snapshot Sync 設計
 
-> **状態**: D-077で採択した次世代の保存・同期契約。現時点は設計のみで、Rust server、SQLite client、migrationは未実装。現行Appの保存先はまだ`.novelpkg`であり、本書を追加しただけでSQLite移行済み・出荷可能とは扱わない。
+> **状態**: D-077／D-078で採択した次世代の保存・同期契約。protocol v1は`serverReadableV1`／E2EEなし、Productionの外部identity providerはSign in with Appleだけに確定した。現時点は設計のみで、Rust server、SQLite client、auth、migrationは未実装。現行Appの保存先はまだ`.novelpkg`であり、本書を追加しただけでSQLite移行済み・出荷可能とは扱わない。
 >
 > **対象**: macOS 14以降、iOS / iPadOS 17以降、将来のWindows。通常利用はlocal-first、同期とオンライン履歴は同じ不変Snapshotを扱う。
 
@@ -76,7 +76,7 @@ Apple clientのSQLite adapterにはGRDBを採用し、`DatabasePool`を`LocalLib
 | `chapters` / `episodes` | stable ID、親ID、配列順、現在payload hash |
 | `characters` / `plot_cards` / `flags` / `world_notes` | stable ID、配列順、現在payload hash |
 | `resources` | ObjectID、byte count、local availability、`available／quarantined／deleting` GC state、sweep generation／deletion token。CAS identityはbytesだけで、media type／remote状態を所有しない |
-| `resource_remote_presence` | immutable server instance＋protocol epoch＋opaque account ID＋credential-bound account fence＋ObjectIDごとのverified remote presence。別scopeへ流用しない |
+| `resource_remote_presence` | immutable server instance＋protocol epoch＋opaque account ID＋AccountAuthEpoch由来のaccount fence＋ObjectIDごとのverified remote presence。通常token rotationでfenceは変えず、別scopeへ流用しない |
 | `work_resources` | 作品とattachment／opaque resourceの論理path component、kind、元の綴り、ObjectID対応。active行はlocal GC root |
 | `snapshots` | immutable Snapshot ID、WorkID、canonical manifest、retention／availability |
 | `snapshot_occurrences` | 同じSnapshot IDに対するautosave／manual／lifecycle／online acknowledged等の端末内発生記録、capture時刻、pin。Snapshot identity外で複数可 |
@@ -171,7 +171,7 @@ v1のEntityKey粒度を次に固定する。同じkeyの異なる変更だけが
 
 structured entity payloadもversion付きJSON Schema＋JCSとし、binaryだけraw bytesをhashする。削除はbaseに存在したkeyが完全manifestから消えた状態で表し、tombstone objectを作らない。order配列の同時変更はv1では同じkeyのConflictとし、配列CRDTを導入しない。未知portable resourceはこのkey空間へ入れずlocal-only preservationへ置く。
 
-Snapshotを有効とするにはschema適合だけでなく、次の作品全体invariantを満たす必要がある。server-readable profileではclientとserverの両方、E2EE profileでは暗号文を送る前と復号後のclientが同じpure validatorを通す。
+Snapshotを有効とするにはschema適合だけでなく、次の作品全体invariantを満たす必要がある。v1の`serverReadableV1`ではclientとserverの両方が同じpure validatorを通す。serverはclient候補を独立検証するが、別内容を生成して勝者を決めない。
 
 - `work/document`、`work/title`、`work/synopsis`と6つの`work/*-order`は空の作品でも各1件必須とし、空文字／空配列で空状態を表す。欠落を暗黙の既定値へ変換しない
 - 未使用WorkIDの最初のrootだけが`work/document` ObjectIDをWork anchorとして確立し、その後に登録する全Snapshotはparentless migration candidateを含めanchorと完全一致する。portable document ID／`documentCreatedAt`を書き換えるregister／publishをclientとserverが拒否し、schema epoch migrationだけを将来の専用操作にする。keep-bothのnew Work rootは元のObjectIDを再利用してnew WorkIDのanchorを確立できる
@@ -264,11 +264,11 @@ remote fast-forwardはstagingへ取得し、次を **すべて同時に満たす
 
 ## 6. Divergence、決定的自動統合、Conflictの3択
 
-CAS不一致は同期失敗ではなく、両方の保存に成功した`Divergence`である。base、local branch candidate、現在remoteを不変Snapshotとしてserverとlocalの両方に残す。clientのpure domainが候補とdescriptorを計算する。`serverReadableV1` serverは同じfixtureでbase／local／remote、dependency closure、作品全体invariant、descriptor digestを独立再計算して候補を検証するが、payload内部をmergeしたり別内容を生成したりしない。E2EEを選ぶ場合はserverがplaintext semantic validationを行えないため、暗号化identityとともにこの検証境界をprotocol epochで置き換える。
+CAS不一致は同期失敗ではなく、両方の保存に成功した`Divergence`である。base、local branch candidate、現在remoteを不変Snapshotとしてserverとlocalの両方に残す。clientのpure domainが候補とdescriptorを計算する。`serverReadableV1` serverは同じfixtureでbase／local／remote、dependency closure、作品全体invariant、descriptor digestを独立再計算して候補を検証するが、payload内部をmergeしたり別内容を生成したりしない。
 
 base／local／remoteの完全manifestをEntityKey→ObjectID mapとして比較する。片側だけが変えたkey、両側が同じObjectIDへ変えたkeyをまず安全候補とするが、key集合の非重複だけで自動統合を決めない。episode等のentity presenceは、そのentityの全payload key、所属order、参照関係を1 dependency groupとして扱う。片側のdeleteと他方の同group edit／参照追加、同じIDの異なる追加、chapter削除とそのchapterへの新規参照などは、直接同じkeyへ触れていなくてもdependency closure全体をConflict候補にする。
 
-候補unionを作った後に4.2の作品全体invariantを必ず再検証する。完全にvalidで、dependency closureにも片側delete対他方changeがない場合だけ、local branchとremote headをparentに持つ決定的な2-parent Snapshotを自動CASする。invariant違反を最小のdependency groupへ帰属できなければ、勝者を推測せずDivergence全体を`needsChoice`へ送る。両clientは同じclosure／validation fixtureから同じSnapshot IDへ収束する。payload内部、本文内部、order配列内部はmergeしない。E2EE v1を選び、同じplaintextがrandomized encryptionで異なるObjectIDになり得る場合は、clientが復号後のcanonical値一致を確認し、fixtureで定めたObjectID辞書順の片方へcollapseする。
+候補unionを作った後に4.2の作品全体invariantを必ず再検証する。完全にvalidで、dependency closureにも片側delete対他方changeがない場合だけ、local branchとremote headをparentに持つ決定的な2-parent Snapshotを自動CASする。invariant違反を最小のdependency groupへ帰属できなければ、勝者を推測せずDivergence全体を`needsChoice`へ送る。両clientは同じclosure／validation fixtureから同じSnapshot IDへ収束する。payload内部、本文内部、order配列内部はmergeしない。
 
 同じkeyが異なるObjectIDへ変わった場合、dependency group内のdelete対edit／参照競合、共通base不明、schema／resource上限違反を`Conflict.needsChoice`へ昇格する。3択を表示する際も、競合closure外の安全な変更は両側から保持する。各選択後にinvariantを再検証し、closureを選んでもvalidにならない複雑な交差参照では、変更集合全体をlocal側またはremote側から採る保守的fallbackへ広げて同じ3択を保つ。暗黙winner、timestamp LWW、到着順winnerを行わない。
 
@@ -336,9 +336,10 @@ S3とPostgreSQLを跨ぐfinalizeは欠損を成功公開しない順序へ固定
 
 ## 8. 認証・暗号・tenant fence
 
-- 全APIはTLS必須。`192.168.11.5`の固定dev tokenも信頼済みLAN上の平文HTTPへ流さず、TLS reverse proxyまたはVPN内HTTPSを使う。固定tokenはproduction非対応である
-- 個人向けv1は1 Account＝1 Tenantとする。serverはOIDC subjectをopaque AccountIDへ写像し、request bodyのowner IDを信用しない
-- local bindingをimmutable server instance ID、protocol namespace／epoch、OIDC issuer、opaque AccountID、credential-bound account fence、WorkIDへbindする。同じIPへ別serverを再設置した場合や同じAccountIDでもfenceが変わった場合は旧presence／Intent／Attempt／cursorを送らない
+- v1のcontent protectionは`serverReadableV1`、`e2ee=false`である。全APIはTLS必須、PostgreSQL／object store／backup／provider credentialはserver管理の保存時暗号化を必須とする。これはE2EEではなく、権限を持つserver運用者と復旧backupから原稿を読める。利用者へこの境界を明示し、operator最小権限／監査、本文／title／pathを含めないlog、off-site backup保護をRelease Gateにする
+- `192.168.11.5`の固定dev tokenも信頼済みLAN上の平文HTTPへ流さず、TLS reverse proxyまたはVPN内HTTPSを使う。固定tokenはdevelopment build／deploymentだけのtest harnessで、Production identity providerではない
+- 個人向けv1は1 Account＝1 Tenantとする。serverはSign in with Appleで検証した外部identityをprovider-neutralなopaque AccountIDへ写像し、request bodyのowner ID、Apple subject、email、氏名、private relay addressを信用しない。同期APIはApple tokenではなくFUMINIWA発行の短命access tokenだけを受ける
+- local bindingをimmutable server instance ID、protocol namespace／epoch、opaque AccountID、AccountAuthEpoch由来のaccount fence、WorkIDへbindする。provider issuerはauth session／auditにだけ保持し、作品bindingへ入れない。同じIPへ別serverを再設置した場合や同じAccountIDでもfenceが変わった場合は旧presence／Intent／Attempt／cursorを送らない
 - WorkID、SnapshotID、ObjectID、missing照会、S3 object keyはtenant prefixを持つ。cross-tenant dedupと存在漏えいを行わない
 - 別account／tenantへIntent／Attemptを送らない。account scope変更時は旧scopeをquarantineする
 - operation、conflict、audit logに原稿本文、title、local pathを出さない
@@ -350,12 +351,9 @@ S3とPostgreSQLを跨ぐfinalizeは欠損を成功公開しない順序へ固定
 
 account未設定、scope不明、別account検出中に作られたworkは`unbound`のままlocal保存し、後からloginしただけで自動uploadしない。利用者が対象accountを確認して「オンラインにも保存」を選んだときだけbindする。account switch時は旧binding／Intent／Attemptをquarantineし、同じWorkIDを新accountへrebindしない。新accountへ移したい場合は明示Export／Importまたはnew WorkID cloneを使う。
 
-E2EEは「あとでpayloadを暗号化してhashするだけ」では追加できない。random nonce、cipher suite、key version、wrapped work key、鍵回復、複数端末追加、rotation、manifestに見せるEntityKey／size、semantic reconciliationがwireへ影響する。したがってR0開始前に次のどちらかを別Decisionで選ぶ。
+通常access／refresh token rotationと同一Apple identityへの再認証ではaccount fenceを変えない。identity／security scopeの変更、全session失効、Apple consent revoke等でAccountAuthEpochを進める。認証失効とsign-outはremote laneだけを止め、SQLiteのopen／edit／autosave／history／Exportと未送信Intentを削除しない。Apple identityを失ってもemailやsupport判断だけで別subjectへAccountIDを移譲しない。正確なSign in with Apple flow、将来providerを追加する抽象境界、session／revocation契約は[AUTH.md](AUTH.md)と`docs/auth/v1/`を正とする。
 
-- **E2EE v1**: workごとのrandom key、client-side AEAD、blinded EntityKey、client reconciliation、recovery keyをwire v1へ入れる。serverにはgraph／size／timing leakageが残ることを明示する
-- **server-readable v1**: TLS＋at-rest encryptionで開始し、server operatorが原稿を読めることを明示する。将来E2EEは互換性のないprotocol epoch／v2 migrationとする
-
-公開クラウドとして第三者の原稿を預かるならE2EE v1を推奨する。個人用self-hostの先行検証はserver-readableでもよいが、そのfixtureをProduction v1としてfreezeしない。
+E2EEはv1へ後付けしない。random nonce、cipher suite、key version、wrapped work key、鍵回復、複数端末追加、rotation、manifestに見せるEntityKey／size、semantic reconciliationがwireへ影響するため、将来必要なら別Decision、別protocol epoch／namespace、非互換v2 migrationで設計し直す。v1のaccount recoveryは同じApple identityへの再認証であり、利用者用work key／recovery codeは存在しない。
 
 ## 9. 旧保存／CloudKitからの非破壊移行
 
@@ -380,8 +378,8 @@ verifiedな旧CloudKit remoteがある作品では、その版だけを「以前
 
 ### R0: Contract freeze（実装なし）
 
-- E2EE／account Decision、versioned OpenAPI、JSON Schema、EntityKey、limits、typed error
-- canonical valid／invalid bytes・hash fixture、Intent／Attempt／cursor／Conflict scenario fixture
+- D-078の`serverReadableV1`／Sign in with Apple、versioned sync＋auth OpenAPI、JSON Schema、EntityKey、limits、typed error
+- canonical valid／invalid bytes・hash fixture、Intent／Attempt／cursor／Conflict／auth scenario fixture
 - Swift／Rust／C# independent fixture harnessの入出力契約
 
 ### R1: Snapshot domain＋SQLite／CAS foundation
@@ -399,14 +397,15 @@ verifiedな旧CloudKit remoteがある作品では、その版だけを「以前
 - local作品棚、autosave、dense history、restore、lifecycle flush、feature flag
 - Mac／iOSでnetwork永久停止、IME、Undo、close／quitを受け入れ
 
-### R4: Rust server
+### R4: Rust sync server＋Apple auth
 
 - Axum＋Tokio＋SQLx、PostgreSQL migration、tenant-prefix S3／MinIO、Docker Compose
 - object finalize、canonical manifest、head CAS、receipt、cursor、Divergence、quotaのintegration test
+- provider-neutral auth table／session／AccountAuthEpoch／Fence、Apple issuer／audience／JWS／JWKS／nonce／code verifier、FUMINIWA token rotationを実装し、sync routeは`AuthenticatedPrincipal`だけを受ける
 
-### R5: Swift HTTP worker
+### R5: Swift Apple auth＋HTTP worker
 
-- SyncIntent／SealedAttempt、upload／exact retry、cursor、account fence、background scheduling
+- `NovelAuthDomain`／`NovelAuthApple`／`NovelAuthHTTP`／`NovelAuthKeychain`を接続し、SyncIntent／SealedAttempt、FUMINIWA bearer、upload／exact retry、cursor、account fence、background schedulingを実装する
 - Inbox staging、active editor非注入、remote fast-forward、Mac↔iPhone往復
 
 ### R6: Reconciliation／3択／online history
@@ -421,7 +420,8 @@ verifiedな旧CloudKit remoteがある作品では、その版だけを「以前
 
 ### R8: Production hardening
 
-- R0で選択しR1〜R6へ実装したcontent-protection／account方式のsecurity auditとkey recovery drill、TLS、rate／resource limit、監視、off-site backup／restore
+- R1〜R6へ実装したSign in with Apple、FUMINIWA session、server-readable content protectionのsecurity audit、server保存時暗号化key／backup recovery drill、TLS、rate／resource limit、監視、off-site backup／restore
+- 後続Decisionでversioned account-lifecycle contractを固定し、アプリ内account deletion開始、削除猶予／取消／retention、唯一のApple identity、Apple `/auth/revoke`、remote削除完了read-backを実装・検証する
 - signed Mac＋iPhone、実offline、account switch、process kill、VoiceOver、Dynamic Type
 
 各Rは独立PRに分け、前段GateがPASSするまで次段を通常App compositionへ接続しない。Lunaへ渡す具体的な成果物、禁止事項、PR完了条件は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)を正とする。
@@ -438,17 +438,19 @@ verifiedな旧CloudKit remoteがある作品では、その版だけを「以前
 - 別accountの作品、Intent／Attempt、objectを混ぜない
 - migration前後の原文bytesとExport結果を照合できる
 - server backupからDBとobjectを整合した時点へ復旧できる
+- アプリ内からaccount削除を開始でき、固定した猶予／取消／retention、Apple token revoke、remote削除完了を同じAccountIDでread-backできる
 
-## 11. Product decisionが必要な点
+## 11. 確定したProduct Decisionと後続範囲
 
-R0をfreezeする前に利用者の判断が必要なのは次の2点である。
+D-078によりR0前のcontent protection／Production identity判断は解決した。
 
-1. **E2EE v1かserver-readable v1か**: 公開クラウドとして第三者の原稿を預かるならE2EE v1を推奨する。個人self-hostを優先してserver-readableで始める場合、将来E2EEはprotocol v2 migrationになることを受け入れる必要がある。
-2. **Production account／鍵回復**: protocol identityはOIDC-neutralなopaque AccountID、最初のproviderはSign in with Appleを推奨する。E2EEを選ぶ場合はprovider loginだけでは原稿鍵を回復できないため、recovery code／追加端末承認のUXも同時に決める。
+1. protocol v1は`serverReadableV1`、E2EEなし。将来E2EEは互換toggleでなくv2／別epoch migrationにする。
+2. Production v1の外部identity providerはSign in with Appleだけ。opaque AccountIDとFUMINIWA sessionをproviderから分離し、他providerの追加点は設計するがadapter／API／UIは実装しない。
+3. account回復は同じApple identityへの再認証。利用者用原稿鍵はなく、Apple identity喪失時にemail／support判断でAccountIDを自動移譲しない。
 
 次は技術既定として進め、変更希望がある場合だけ後続Decisionにする。
 
 - `192.168.11.5`はLAN／VPN限定のdevelopment／integration機。Internetへ直接公開しない
 - server stackはRust Axum＋Tokio＋SQLx、PostgreSQL、tenant-prefix付きS3互換object store
 - online quota仮値はaccount合計5 GiB、attachment単体250 MiB、解決済みConflict 90日。quota超過でもlocal保存は継続
-- remote work trash／hard deleteはwire v1 scope外。後続Decisionで30日trashとoffline edit conflictを追加する
+- remote work trash／hard delete、server account deletion、Apple唯一identityを失った場合のremote retentionはwire v1 scope外。後続Decisionで30日trash、offline edit conflict、provider token revokeを含む削除ceremonyを追加する
