@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 echo "==> D-076 source structure"
 ./Scripts/check-code-structure.sh
+./Scripts/check-sync-legacy-inventory.sh
 
 echo "==> SwiftFormat (lint)"
 swiftformat --lint --cache ignore .
