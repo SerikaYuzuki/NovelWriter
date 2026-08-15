@@ -87,14 +87,17 @@ extension AppState {
             // Keep writing the portable package for the import/export bridge
             // until that bridge is fully detached from the live document URL.
             if usesSnapshotSyncRuntime {
+                DeviceSyncLog.snapshot("local-save begin")
                 try await repository.save(document, to: url)
                 noteDeviceSyncPackageSaved(document)
                 guard await recordLocalLibraryPackageSave(document, at: url) else {
+                    DeviceSyncLog.snapshot("local-save sqlite-failed")
                     deviceSyncLocalDurabilityState = .savedSyncPreparationFailed
                     return
                 }
                 deviceSyncLocalDurabilityState = .saved
                 deviceSyncTransferState = .notApplicable
+                DeviceSyncLog.snapshot("local-save committed")
                 return
             }
 

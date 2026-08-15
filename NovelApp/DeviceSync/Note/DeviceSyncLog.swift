@@ -14,6 +14,10 @@ enum DeviceSyncLog {
         subsystem: "dev.serikayuzuki.fuminiwa",
         category: "cloud-library"
     )
+    private static let snapshotLogger = Logger(
+        subsystem: "dev.serikayuzuki.fuminiwa",
+        category: "snapshot-sync"
+    )
 
     /// Debug ビルドは既定オン。Scheme の環境変数 `FUMINIWA_NOTE_SYNC_DEBUG=0/1` で上書きできる。
     static var isDebugEnabled: Bool {
@@ -48,6 +52,13 @@ enum DeviceSyncLog {
 
     static func note(_ name: String, error: (any Error)? = nil) {
         emit(prefix: "note-sync", name: name, error: error, logger: noteLogger)
+    }
+
+    /// Post-cutover SQLite/Rust sync diagnostics. This deliberately records
+    /// only event names and typed error tokens; access tokens, document text,
+    /// URLs, and request bodies are never written to the log.
+    static func snapshot(_ name: String, error: (any Error)? = nil) {
+        emit(prefix: "snapshot-sync", name: name, error: error, logger: snapshotLogger)
     }
 
     static func looksTemporarilyOffline(_ error: any Error) -> Bool {

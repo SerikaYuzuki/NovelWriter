@@ -84,11 +84,6 @@ struct FuminiwaApp: App {
                 snapshotSyncTransport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL)
             )
         )
-        #if canImport(NovelSyncCloudKit)
-        if deviceSyncComposition == nil {
-            appState.failStartupForDeviceSyncSafety()
-        }
-        #endif
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
