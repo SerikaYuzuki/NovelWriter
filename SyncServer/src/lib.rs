@@ -70,7 +70,11 @@ impl AppleConfig {
             client_ids,
             team_id: std::env::var("APPLE_TEAM_ID").ok(),
             key_id: std::env::var("APPLE_KEY_ID").ok(),
-            private_key_pem: std::env::var("APPLE_PRIVATE_KEY_PEM").ok(),
+            // Compose/.env transports multiline secrets as literal `\\n`.
+            // Restore PEM line breaks before jsonwebtoken parses the key.
+            private_key_pem: std::env::var("APPLE_PRIVATE_KEY_PEM")
+                .ok()
+                .map(|value| value.replace("\\n", "\n")),
             jwks_url: std::env::var("APPLE_JWKS_URL")
                 .unwrap_or_else(|_| "https://appleid.apple.com/auth/keys".to_owned()),
             token_url: std::env::var("APPLE_TOKEN_URL")
