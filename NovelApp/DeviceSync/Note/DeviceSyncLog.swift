@@ -18,6 +18,9 @@ enum DeviceSyncLog {
         subsystem: "dev.serikayuzuki.fuminiwa",
         category: "snapshot-sync"
     )
+    private static let fileQueue = DispatchQueue(
+        label: "dev.serikayuzuki.fuminiwa.snapshot-sync-log"
+    )
 
     /// Debug ビルドは既定オン。Scheme の環境変数 `FUMINIWA_NOTE_SYNC_DEBUG=0/1` で上書きできる。
     static var isDebugEnabled: Bool {
@@ -85,6 +88,38 @@ enum DeviceSyncLog {
             logger.error("\(line, privacy: .public)")
         } else if isDebugEnabled {
             logger.info("\(line, privacy: .public)")
+        }
+        appendToDebugFile(line)
+    }
+
+    private static func appendToDebugFile(_ line: String) {
+        guard isDebugEnabled else { return }
+        fileQueue.async {
+            do {
+                let directory = FileManager.default.urls(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask
+                )[0].appendingPathComponent("FUMINIWA", isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+                let url = directory.appendingPathComponent(
+                    "snapshot-sync-debug.log",
+                    isDirectory: false
+                )
+                let data = Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    let handle = try FileHandle(forWritingTo: url)
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                } else {
+                    try data.write(to: url, options: .atomic)
+                }
+            } catch {
+                // Logging must never affect editing or local durability.
+            }
         }
     }
 }
