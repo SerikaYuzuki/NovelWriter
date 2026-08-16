@@ -240,6 +240,94 @@ fn replay_lost_ack_fixture(value: &Value, source: &Path) -> usize {
     1
 }
 
+fn replay_conflict_resolution_fixture(value: &Value, source: &Path) -> usize {
+    let Value::Object(object) = value else {
+        return 0;
+    };
+    if object.get("scenarioId")
+        != Some(&Value::String(
+            "conflict-concurrent-edit-during-resolution".to_owned(),
+        ))
+    {
+        return 0;
+    }
+    assert_eq!(
+        object.get("choices"),
+        Some(&Value::Array(
+            ["useThisDevice", "useOnline", "keepBoth"]
+                .into_iter()
+                .map(Value::from)
+                .collect(),
+        ))
+    );
+    assert_eq!(
+        object.get("commandSequence"),
+        Some(&Value::Array(
+            [
+                "flushAndSealPendingResolutionAtGeneration52",
+                "sendAtLeastOneByte",
+                "autosaveEditAsGeneration53",
+                "serverCommitResolutionAndLoseResponse",
+                "restartAndReplayExactCommand",
+                "readBackAndConditionallyAcknowledge",
+            ]
+            .into_iter()
+            .map(Value::from)
+            .collect(),
+        ))
+    );
+    let initial = object
+        .get("sharedInitialState")
+        .and_then(Value::as_object)
+        .expect("conflict shared initial state is required");
+    assert_eq!(initial.get("sourceLocalGeneration"), Some(&Value::from(52)));
+    assert_eq!(initial.get("newerLocalGeneration"), Some(&Value::from(53)));
+    let expected = object
+        .get("expectedForEveryChoice")
+        .and_then(Value::as_object)
+        .expect("conflict expected state is required");
+    assert_eq!(
+        expected.get("resolvedRemoteHeadGeneration"),
+        Some(&Value::from(10))
+    );
+    assert_eq!(
+        expected.get("acknowledgedThroughLocalGeneration"),
+        Some(&Value::from(52))
+    );
+    assert_eq!(
+        expected.get("activeEditorInjectionCount"),
+        Some(&Value::from(0))
+    );
+    assert_eq!(
+        expected.get("exactCommandReplayCountAfterLostAck"),
+        Some(&Value::from(1))
+    );
+    let local = expected
+        .get("localCurrentAfterAcknowledge")
+        .and_then(Value::as_object)
+        .expect("conflict local state is required");
+    let intent = expected
+        .get("syncIntentAfterAcknowledge")
+        .and_then(Value::as_object)
+        .expect("conflict intent state is required");
+    assert_eq!(local.get("localGeneration"), Some(&Value::from(53)));
+    assert_eq!(intent.get("localGeneration"), Some(&Value::from(53)));
+    let keep_both = object
+        .get("keepBothAdditionalExpectation")
+        .and_then(Value::as_object)
+        .expect("keep-both expectation is required");
+    assert_eq!(
+        keep_both.get("cloneRootPublishedExactlyOnce"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        keep_both.get("partialOriginalOrCloneCommitAllowed"),
+        Some(&Value::Bool(false))
+    );
+    let _ = source;
+    1
+}
+
 #[test]
 fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -265,6 +353,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
         if file.to_string_lossy().contains("/docs/sync/v1/fixtures/") {
             scenarios += verify_scenarios(&value, file, "&", &mut scenario_ids);
             replays += replay_lost_ack_fixture(&value, file);
+            replays += replay_conflict_resolution_fixture(&value, file);
         }
     }
     assert!(
@@ -276,7 +365,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
         "reviewed fixtures must contain scenario records"
     );
     assert_eq!(
-        replays, 1,
-        "one executable lost-ack replay fixture is required"
+        replays, 2,
+        "lost-ack and conflict-resolution replay fixtures are required"
     );
 }

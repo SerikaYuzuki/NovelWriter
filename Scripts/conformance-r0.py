@@ -173,7 +173,43 @@ def replay_lost_ack_fixture(node: Any, source: Path) -> int:
     return 1
 
 
-def check_file(path: Path) -> tuple[int, int, int]:
+def replay_conflict_resolution_fixture(node: Any, source: Path) -> int:
+    if not isinstance(node, dict) or node.get("scenarioId") != "conflict-concurrent-edit-during-resolution":
+        return 0
+    if node.get("choices") != ["useThisDevice", "useOnline", "keepBoth"]:
+        raise AssertionError(f"{source}: conflict resolution must expose all three choices")
+    sequence = node.get("commandSequence")
+    expected_sequence = [
+        "flushAndSealPendingResolutionAtGeneration52",
+        "sendAtLeastOneByte",
+        "autosaveEditAsGeneration53",
+        "serverCommitResolutionAndLoseResponse",
+        "restartAndReplayExactCommand",
+        "readBackAndConditionallyAcknowledge",
+    ]
+    if sequence != expected_sequence:
+        raise AssertionError(f"{source}: conflict resolution sequence changed")
+    initial = node.get("sharedInitialState", {})
+    expected = node.get("expectedForEveryChoice", {})
+    if (initial.get("sourceLocalGeneration"), initial.get("newerLocalGeneration")) != (52, 53):
+        raise AssertionError(f"{source}: conflict source/newer generation fence changed")
+    if expected.get("resolvedRemoteHeadGeneration") != 10:
+        raise AssertionError(f"{source}: conflict resolution must advance remote head once")
+    local = expected.get("localCurrentAfterAcknowledge", {})
+    intent = expected.get("syncIntentAfterAcknowledge", {})
+    if local.get("localGeneration") != 53 or intent.get("localGeneration") != 53:
+        raise AssertionError(f"{source}: newer local generation was not preserved")
+    if expected.get("acknowledgedThroughLocalGeneration") != 52:
+        raise AssertionError(f"{source}: acknowledgement crossed the newer local generation")
+    if expected.get("activeEditorInjectionCount") != 0 or expected.get("exactCommandReplayCountAfterLostAck") != 1:
+        raise AssertionError(f"{source}: resolution replay/editor safety invariant changed")
+    clone = node.get("keepBothAdditionalExpectation", {})
+    if clone.get("cloneRootPublishedExactlyOnce") is not True or clone.get("partialOriginalOrCloneCommitAllowed") is not False:
+        raise AssertionError(f"{source}: keep-both atomicity invariant changed")
+    return 1
+
+
+def check_file(path: Path) -> tuple[int, int, int, int]:
     try:
         text = path.read_bytes().decode("utf-8")
         value = json.loads(
@@ -188,7 +224,7 @@ def check_file(path: Path) -> tuple[int, int, int]:
         1,
         canonical_assertions(value, path, "$") ,
         scenario_assertions(value, path),
-        replay_lost_ack_fixture(value, path),
+        replay_lost_ack_fixture(value, path) + replay_conflict_resolution_fixture(value, path),
     )
 
 

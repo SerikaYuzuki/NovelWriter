@@ -23,7 +23,10 @@ The current slice verifies:
 - the `intent-attempt-lost-ack-exact-retry` scenario is replayed far enough to
   prove that the sealed canonical command digest is stable, the server head
   advances once, exact retry does not advance it again, and local Intent/
-  SealedAttempt are cleared only after read-back.
+  SealedAttempt are cleared only after read-back;
+- the three-choice resolution scenario is replayed far enough to prove that
+  `useThisDevice`, `useOnline`, and `keepBoth` all preserve a newer local
+  generation, avoid active-editor injection, and keep-both remains atomic.
 
 This is a required early gate, not a claim that the entire R0 state-machine
 contract has passed. This is the first executable scenario replay; the full

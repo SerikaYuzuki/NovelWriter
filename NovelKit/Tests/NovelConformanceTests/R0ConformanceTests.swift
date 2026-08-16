@@ -72,6 +72,41 @@ struct R0ConformanceTests {
         #expect(finalSQLite["sealedAttempt"] is NSNull)
     }
 
+    @Test("conflict resolution preserves a newer edit for every choice")
+    func conflictResolutionReplayAgrees() throws {
+        let file = try #require(
+            fixtureFiles().first { $0.lastPathComponent == "concurrent-edit-during-resolution.json" }
+        )
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(root["scenarioId"] as? String == "conflict-concurrent-edit-during-resolution")
+        #expect(root["choices"] as? [String] == ["useThisDevice", "useOnline", "keepBoth"])
+        #expect(
+            root["commandSequence"] as? [String] == [
+                "flushAndSealPendingResolutionAtGeneration52",
+                "sendAtLeastOneByte",
+                "autosaveEditAsGeneration53",
+                "serverCommitResolutionAndLoseResponse",
+                "restartAndReplayExactCommand",
+                "readBackAndConditionallyAcknowledge"
+            ]
+        )
+        let initial = try #require(root["sharedInitialState"] as? [String: Any])
+        #expect(initial["sourceLocalGeneration"] as? Int == 52)
+        #expect(initial["newerLocalGeneration"] as? Int == 53)
+        let expected = try #require(root["expectedForEveryChoice"] as? [String: Any])
+        #expect(expected["resolvedRemoteHeadGeneration"] as? Int == 10)
+        #expect(expected["acknowledgedThroughLocalGeneration"] as? Int == 52)
+        #expect(expected["activeEditorInjectionCount"] as? Int == 0)
+        #expect(expected["exactCommandReplayCountAfterLostAck"] as? Int == 1)
+        let local = try #require(expected["localCurrentAfterAcknowledge"] as? [String: Any])
+        let intent = try #require(expected["syncIntentAfterAcknowledge"] as? [String: Any])
+        #expect(local["localGeneration"] as? Int == 53)
+        #expect(intent["localGeneration"] as? Int == 53)
+        let keepBoth = try #require(root["keepBothAdditionalExpectation"] as? [String: Any])
+        #expect(keepBoth["cloneRootPublishedExactlyOnce"] as? Bool == true)
+        #expect(keepBoth["partialOriginalOrCloneCommitAllowed"] as? Bool == false)
+    }
+
     private func fixtureFiles() -> [URL] {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
