@@ -352,7 +352,8 @@ final class AppState {
         appleSignInCoordinator = dependencies.appleSignInCoordinator
         let localStoreURL = Self.localCanonicalStoreURL(
             fileManager: dependencies.fileManager,
-            directoryName: dependencies.defaultDocumentDirectoryName
+            directoryName: dependencies.defaultDocumentDirectoryName,
+            isTestProcess: FuminiwaRuntimeEnvironment.isTestProcess()
         )
         localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
         if let localCanonicalStore,
@@ -423,10 +424,18 @@ final class AppState {
 
     private static func localCanonicalStoreURL(
         fileManager: FileManager,
-        directoryName: String
+        directoryName: String,
+        isTestProcess: Bool
     ) -> URL {
-        let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
+        let root = if isTestProcess {
+            fileManager.temporaryDirectory.appendingPathComponent(
+                "FUMINIWA-AppState-TestHost-\(ProcessInfo.processInfo.processIdentifier)",
+                isDirectory: true
+            )
+        } else {
+            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? fileManager.temporaryDirectory
+        }
         return root
             .appendingPathComponent(directoryName, isDirectory: true)
             .appendingPathComponent("Library", isDirectory: true)

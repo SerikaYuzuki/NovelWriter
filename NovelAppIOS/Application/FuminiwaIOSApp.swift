@@ -1,4 +1,5 @@
 import Foundation
+import NovelAuth
 import SwiftUI
 
 @main
@@ -9,8 +10,22 @@ struct FuminiwaIOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
-        let store = IOSDocumentStore(privateWorkingCopyLocation: privateWorkingCopyLocation)
+        let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
+        if FuminiwaRuntimeEnvironment.isTestProcess() {
+            let testRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "FUMINIWA-iOS-TestHost-\(ProcessInfo.processInfo.processIdentifier)",
+                    isDirectory: true
+                )
+            privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation
+                .prepareInjectedLibraryRoot(testRoot)
+        } else {
+            privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
+        }
+        let store = IOSDocumentStore(
+            userDefaults: FuminiwaRuntimeEnvironment.applicationUserDefaults(),
+            privateWorkingCopyLocation: privateWorkingCopyLocation
+        )
         if privateWorkingCopyLocation == nil {
             store.failStartupForDeviceSyncSafety()
         }

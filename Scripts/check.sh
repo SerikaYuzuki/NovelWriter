@@ -27,6 +27,7 @@ echo "==> iOS compile check (NovelKit)"
 
 echo "==> FUMINIWA app test (macOS, XcodeGen)"
 ./Scripts/generate-project.sh
+./Scripts/check-test-network-boundary.sh
 ./Scripts/check-ai-target-separation.sh
 ./Scripts/check-sync-production-boundary.sh
 xcodebuild test \

@@ -230,16 +230,17 @@ final class IOSDocumentStore {
         self.deviceSyncRuntime = deviceSyncRuntime
         self.backgroundTaskController = backgroundTaskController
 
-        let syncServerURL = URL(
-            string: userDefaults.string(forKey: "fuminiwa.syncServerURL")
-                ?? "http://192.168.11.5:18080"
-        ) ?? URL(string: "http://192.168.11.5:18080")!
-        let authTransport = FuminiwaHTTPAuthTransport(baseURL: syncServerURL)
+        let runtimeEnvironment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
         #if canImport(Security)
-        let authSessionCoordinator = AuthSessionCoordinator(
-            transport: authTransport,
-            vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync.ios")
-        )
+        let authSessionCoordinator: AuthSessionCoordinator? = if runtimeEnvironment.allowsNetwork,
+                                                                 let syncServerURL = runtimeEnvironment.syncServerURL {
+            AuthSessionCoordinator(
+                transport: FuminiwaHTTPAuthTransport(baseURL: syncServerURL),
+                vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync.ios")
+            )
+        } else {
+            nil
+        }
         #else
         let authSessionCoordinator: AuthSessionCoordinator? = nil
         #endif
@@ -262,7 +263,7 @@ final class IOSDocumentStore {
             ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
         #if canImport(Security)
-        authUIState = .signedOut
+        authUIState = authSessionCoordinator == nil ? .unavailable : .signedOut
         #else
         authUIState = .unavailable
         #endif
@@ -278,7 +279,10 @@ final class IOSDocumentStore {
             localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
         }
         let workerAuthCoordinator: AuthSessionCoordinator? = authSessionCoordinator
-        if let localCanonicalStore, let workerAuthCoordinator {
+        if runtimeEnvironment.allowsNetwork,
+           let localCanonicalStore,
+           let workerAuthCoordinator,
+           let syncServerURL = runtimeEnvironment.syncServerURL {
             localSnapshotSyncWorker = LocalSnapshotSyncWorker(
                 store: localCanonicalStore,
                 transport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL),

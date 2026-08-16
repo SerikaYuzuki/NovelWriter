@@ -41,43 +41,59 @@ struct FuminiwaApp: App {
     @State private var editorCommandSession: EditorCommandSession
 
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = FuminiwaRuntimeEnvironment.applicationUserDefaults()
         if AppBuildFlavor.migratesLegacyPreferences {
             LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
         }
 
         let editorCommandSession = EditorCommandSession()
-        let syncServerURL = URL(
-            string: defaults.string(forKey: "fuminiwa.syncServerURL")
-                ?? "http://192.168.11.5:18080"
-        ) ?? URL(string: "http://192.168.11.5:18080")!
-        let authTransport = FuminiwaHTTPAuthTransport(baseURL: syncServerURL)
-        #if canImport(Security)
-        let authSessionCoordinator = AuthSessionCoordinator(
-            transport: authTransport,
-            vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync")
+        let dependencies = Self.makeDependencies(
+            userDefaults: defaults,
+            editorCommandSession: editorCommandSession
         )
-        #else
-        let authSessionCoordinator: AuthSessionCoordinator? = nil
-        #endif
-        let appleSignInCoordinator = AppleSignInCoordinator()
-        let appState = AppState(
-            dependencies: AppDependencies(
-                userDefaults: defaults,
-                defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
-                editorCommandSession: editorCommandSession,
-                deviceSyncRuntime: nil,
-                authSessionCoordinator: authSessionCoordinator,
-                appleSignInCoordinator: appleSignInCoordinator,
-                snapshotSyncTransport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL)
-            )
-        )
+        let appState = AppState(dependencies: dependencies)
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
         _editorCommandSession = State(initialValue: editorCommandSession)
+    }
+
+    static func makeDependencies(
+        userDefaults: UserDefaults,
+        editorCommandSession: EditorCommandSession = EditorCommandSession()
+    ) -> AppDependencies {
+        let runtimeEnvironment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
+        #if canImport(Security)
+        let authSessionCoordinator: AuthSessionCoordinator? = if runtimeEnvironment.allowsNetwork,
+                                                                 let syncServerURL = runtimeEnvironment.syncServerURL {
+            AuthSessionCoordinator(
+                transport: FuminiwaHTTPAuthTransport(baseURL: syncServerURL),
+                vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync")
+            )
+        } else {
+            nil
+        }
+        #else
+        let authSessionCoordinator: AuthSessionCoordinator? = nil
+        #endif
+        let appleSignInCoordinator = AppleSignInCoordinator()
+        return AppDependencies(
+            userDefaults: userDefaults,
+            defaultDocumentDirectoryName: runtimeEnvironment.isTestProcess
+                ? "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost"
+                : AppBuildFlavor.defaultDocumentDirectoryName,
+            editorCommandSession: editorCommandSession,
+            deviceSyncRuntime: nil,
+            authSessionCoordinator: authSessionCoordinator,
+            appleSignInCoordinator: appleSignInCoordinator,
+            snapshotSyncTransport: runtimeEnvironment.allowsNetwork
+                ? runtimeEnvironment.syncServerURL.map {
+                    FuminiwaHTTPSnapshotSyncTransport(baseURL: $0)
+                }
+                : nil
+        )
     }
 
     var body: some Scene {

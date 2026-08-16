@@ -4,6 +4,55 @@ import Testing
 
 @Suite("Provider-neutral auth")
 struct AuthDomainTests {
+    @Test("test host composition disables the server lane before reading UserDefaults")
+    func hostCompositionIsOffline() throws {
+        let defaults = try #require(
+            UserDefaults(suiteName: "NovelAuthTests.runtime.\(UUID().uuidString)")
+        )
+        defaults.set("http://192.168.11.5:18080", forKey: FuminiwaRuntimeEnvironment.syncServerURLKey)
+
+        let runtime = FuminiwaRuntimeEnvironment(
+            userDefaults: defaults,
+            environment: [FuminiwaRuntimeEnvironment.testNetworkDisabledKey: "1"]
+        )
+
+        #expect(runtime.networkPolicy == .disabled)
+        #expect(runtime.syncServerURL == nil)
+        #expect(!runtime.allowsNetwork)
+    }
+
+    @Test("production composition uses only the configured endpoint")
+    func productionCompositionUsesConfiguredEndpoint() throws {
+        let defaults = try #require(
+            UserDefaults(suiteName: "NovelAuthTests.runtime.\(UUID().uuidString)")
+        )
+        defaults.set("http://127.0.0.1:18080", forKey: FuminiwaRuntimeEnvironment.syncServerURLKey)
+
+        let runtime = FuminiwaRuntimeEnvironment(userDefaults: defaults, environment: [:])
+
+        #expect(runtime.networkPolicy == .enabled)
+        #expect(runtime.syncServerURL == URL(string: "http://127.0.0.1:18080"))
+        #expect(runtime.allowsNetwork)
+    }
+
+    @Test("offline network mode keeps the production local identity")
+    func offlineModeIsNotTestComposition() throws {
+        let defaults = try #require(
+            UserDefaults(suiteName: "NovelAuthTests.runtime.\(UUID().uuidString)")
+        )
+        defaults.set("http://127.0.0.1:18080", forKey: FuminiwaRuntimeEnvironment.syncServerURLKey)
+
+        let runtime = FuminiwaRuntimeEnvironment(
+            userDefaults: defaults,
+            environment: [FuminiwaRuntimeEnvironment.networkModeKey: "disabled"]
+        )
+
+        #expect(runtime.networkPolicy == .disabled)
+        #expect(runtime.syncServerURL == nil)
+        #expect(!runtime.allowsNetwork)
+        #expect(!runtime.isTestProcess)
+    }
+
     @Test("refresh rejects a stale generation and keeps the vault unchanged")
     func staleRefresh() async throws {
         let session = FuminiwaSession(

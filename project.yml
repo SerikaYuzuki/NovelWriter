@@ -32,6 +32,8 @@ schemes:
     test:
       targets:
         - name: NovelAppTests
+      environmentVariables:
+        FUMINIWA_TEST_NETWORK_DISABLED: "1"
   FUMINIWAIOS:
     build:
       targets:
@@ -39,6 +41,8 @@ schemes:
     test:
       targets:
         - name: FUMINIWAIOSTests
+      environmentVariables:
+        FUMINIWA_TEST_NETWORK_DISABLED: "1"
 
 targets:
   NovelApp:
