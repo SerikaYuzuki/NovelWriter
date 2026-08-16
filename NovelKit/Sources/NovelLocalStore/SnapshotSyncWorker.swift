@@ -322,34 +322,24 @@ public actor LocalSnapshotSyncWorker {
             throw SnapshotSyncError.transport("missing remote head for conflict resolution")
         }
 
-        // The server may have retained more than one durable conflict record
-        // for a work (for example, after retries from an older client). Once
-        // the user chooses the online branch, all records that point at the
-        // currently visible head represent the same decision. Resolve them
-        // in one operation so the UI does not walk the user through stale
-        // duplicates one by one.
-        let conflicts = try await transport.conflicts(
-            workID: conflict.workID,
-            accessToken: session.accessToken
-        )
-        let candidates = conflicts.contains(where: { $0.conflictID == conflict.conflictID })
-            ? conflicts
-            : [conflict]
-        for candidate in candidates {
-            do {
-                try await transport.resolveConflict(
-                    workID: conflict.workID,
-                    conflictID: candidate.conflictID,
-                    choice: keepBoth ? .keepBoth : .useServer,
-                    expectedRemoteSnapshotID: head.snapshotID,
-                    accessToken: session.accessToken
-                )
-            } catch let SnapshotSyncError.transport(message)
-                where message.contains("conflict already resolved") {
-                // Another retry may have completed this exact record between
-                // listing and resolving. It is safe to continue to the next.
-                continue
-            }
+        // The server resolves every needsChoice record for this work that
+        // points at the validated current head in one atomic operation. Keep
+        // one durable request ID (the selected conflict ID) so a lost
+        // response can be replayed without creating a second resolution.
+        do {
+            try await transport.resolveConflict(
+                workID: conflict.workID,
+                conflictID: conflict.conflictID,
+                choice: keepBoth ? .keepBoth : .useServer,
+                expectedRemoteSnapshotID: head.snapshotID,
+                accessToken: session.accessToken
+            )
+        } catch let SnapshotSyncError.transport(message)
+            where message.contains("conflict already resolved") {
+            // Another retry may have completed this exact record between
+            // reading the head and sending the resolution. It is safe to
+            // treat that response as success because the operation is
+            // idempotent on the server.
         }
     }
 
@@ -537,7 +527,10 @@ public struct FuminiwaHTTPSnapshotSyncTransport: SnapshotSyncTransport, Sendable
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(
             ResolveConflictBody(
-                operationID: UUID(),
+                // Conflict IDs are durable server-side handles. Reusing this
+                // ID makes a retry after a lost response replay the exact
+                // resolution instead of creating a new operation each time.
+                operationID: conflictID,
                 choice: choice.rawValue,
                 expectedRemoteSnapshotID: expectedRemoteSnapshotID
             )
