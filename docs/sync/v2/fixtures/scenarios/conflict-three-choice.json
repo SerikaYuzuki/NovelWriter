@@ -3,9 +3,9 @@
   "name": "single-active-conflict-and-three-choices",
   "initial": {"work": "00000000-0000-4000-8000-000000000002", "state": "bound", "headGeneration": 7},
   "events": [
-    {"type": "publish", "expectedHeadGeneration": 7, "result": "headConflict"},
-    {"type": "publish", "expectedHeadGeneration": 7, "result": "activeConflictUpdated"}
+    {"type": "publish", "expectedHeadGeneration": 7, "result": "headConflict", "activeConflictRevision": 1},
+    {"type": "publish", "expectedHeadGeneration": 7, "result": "activeConflictUpdated", "activeConflictRevision": 2, "appendOnlyCandidate": true}
   ],
   "choices": ["useDevice", "useServer", "keepBoth"],
-  "expect": {"activeConflictCount": 1, "candidatePreserved": true, "implicitWinner": false}
+  "expect": {"activeConflictCount": 1, "candidatePreserved": true, "implicitWinner": false, "revision": 2, "preAdoptionPin": true}
 }

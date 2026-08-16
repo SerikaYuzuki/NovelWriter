@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "verified-only-migration-marker",
+  "events": [
+    {"type": "stage", "marker": null},
+    {"type": "processKill"},
+    {"type": "restart"}
+  ],
+  "expect": {"state": "staged", "sourceModified": false, "v2WorkCreated": false, "emptyDatabaseFallback": false},
+  "commitRequires": ["sourceDigest", "objectReadBack", "schemaVerified", "accountScopeVerified", "transactionCommitted", "markerFsync"]
+}

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "name": "runtime-mode-physical-isolation",
+  "cases": [
+    {"mode": "production", "canConstruct": ["ProductionDependencies"], "cannotConstruct": ["TestRoot", "FakeTransport", "TestKeychain"]},
+    {"mode": "test", "canConstruct": ["TestRoot", "FakeTransport", "TestKeychain"], "cannotConstruct": ["ProductionURL", "ProductionRoot", "ProductionKeychain"]},
+    {"mode": "preview", "canConstruct": [], "networkBytes": 0, "sqliteWrites": 0},
+    {"mode": "archive", "liveRuntimeEnumCase": false}
+  ]
+}

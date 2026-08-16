@@ -167,3 +167,85 @@ fixture set in `docs/sync/v2/fixtures/` is the minimum shared corpus.
 See [`docs/sync/v2/README.md`](sync/v2/README.md) for the versioned wire and
 fixture files. Existing `docs/sync/v1/` remains historical and is not edited by
 this decision.
+
+## 8. Closed canonical validation
+
+The v2 schemas are closed at every object boundary. In particular, command
+`payload` is a discriminated closed schema; the allowed fields for `publish`,
+`registerSnapshot`, `finalizeObject`, `resolveDevice`, `resolveServer`,
+`cloneWork`, and `restore` are fixed in
+[`docs/sync/v2/command.schema.json`](sync/v2/command.schema.json). An unknown
+field, missing field, duplicate JSON member, or command-kind/payload mismatch
+is rejected before a receipt is created.
+
+Before schema validation, the parser must reject invalid UTF-8, BOMs, duplicate
+members, unpaired surrogates, NaN/Infinity, negative zero, numbers outside
+I-JSON's safe integer range (`±9007199254740991`), and non-JCS whitespace,
+escape, key ordering, or number spelling. Strings are not Unicode-normalized.
+Manifest entries are sorted by UTF-8 `entityKey` bytes, have unique keys, and
+must contain the nine mandatory work singleton/order keys. Parents are unique,
+sorted digests, at most two, belong to the same WorkID, cannot self-reference,
+and are checked for cycles. The server also validates the `work/document`
+anchor, entity payload schema, object digest and byte count, parent lineage,
+and lossless `.novelpkg` projection.
+
+The v2 hard caps are: 16 MiB manifest, 16 MiB structured entity, 250 MiB
+attachment/object, 100,000 entries, and 100,000 objects in one bounded graph
+traversal. Exceeding a cap preserves local bytes but returns a typed
+`sizeLimitExceeded`; it never creates a partial Snapshot.
+
+## 9. Conflict and restore transactions
+
+`useDevice` does not overwrite the remote branch. It seals a decision Snapshot
+whose two parents are the observed remote head and the local candidate parent,
+then publishes it with expected-head CAS. The decision Snapshot and its
+receipt are retained even when CAS reports another divergence.
+
+`useServer` first pins the current local Snapshot as a pre-adoption history
+occurrence. The server resolves the exact active conflict revision. The client
+stages and verifies the remote manifest/object closure, then installs it only
+if both `currentSnapshotId` and `localGeneration` still match the sealed
+command. A concurrent new edit therefore remains current and is never replaced;
+the selected remote bytes do not create a new local Intent. A later ordinary
+edit creates the next Intent against the installed state.
+
+`keepBoth` is one PostgreSQL transaction: preserve the original Work and head,
+create a new WorkID with a root Snapshot and head, record both history roots,
+mark the active conflict resolved, and insert the receipt. The transaction
+must either complete all of those writes or none of them.
+
+`active_conflicts.work_id` is unique. Repeated divergence appends an immutable
+candidate row and increments `revision`; it never mutates an earlier candidate
+or creates a second active UI item. The UI includes the revision in its sealed
+choice command.
+
+## 10. Runtime, migration, and auth boundaries
+
+The closed RuntimeMode contract is in
+[`docs/sync/v2/runtime-mode.md`](sync/v2/runtime-mode.md). Test dependencies
+use distinct root/transport/keychain types, so a production URL, root, or
+Keychain cannot be constructed by the test composition. Preview has no I/O.
+The archive reader is a separate migration executable and is not a live mode.
+
+The concrete local and server schemas are
+[`sqlite.sql`](sync/v2/sqlite.sql) and
+[`postgres.sql`](sync/v2/postgres.sql). `migration_ledger` and its evidence
+marker follow [`migration.md`](sync/v2/migration.md); only verified staged
+bytes can be committed, and crash recovery never treats an uncommitted marker
+as success.
+
+v2 reuses Auth v1 only at the protocol boundary: the bearer session and
+capabilities response provide the opaque `AccountID`, server instance,
+protocol epoch, and AccountFence. v2 does not reuse the Auth database tables,
+Apple subject, email, refresh token, or provider credential. The server auth
+schema/role authorizes the request; `sync_v2` stores only opaque account scope
+and checks it on every resource query and command. The same AccountID and
+unchanged Fence can continue after token refresh. A different account or
+Fence is rejected before object existence is disclosed.
+
+## 11. Shared UI result contract
+
+macOS and iOS use the projection and Japanese labels in
+[`ui-state.md`](sync/v2/ui-state.md). In particular, an explicit sync with no
+pending work returns successful `noChanges`/`同期済み`; it is never rendered as
+同期失敗. Local durability and remote progress remain separate indicators.

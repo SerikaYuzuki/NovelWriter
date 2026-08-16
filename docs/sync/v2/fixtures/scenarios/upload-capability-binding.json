@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "upload-capability-is-account-and-fence-bound",
+  "initial": {"account": "account-a", "fence": "fence-a", "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "events": [
+    {"type": "prepare", "uploadId": "00000000-0000-4000-8000-000000000020"},
+    {"type": "fenceChange", "fence": "fence-b"},
+    {"type": "finalizeOldUpload"}
+  ],
+  "expect": {"error": "accountFenceMismatch", "objectAdopted": false, "foreignObjectExistenceDisclosed": false}
+}

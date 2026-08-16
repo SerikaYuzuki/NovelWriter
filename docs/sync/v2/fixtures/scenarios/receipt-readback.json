@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 2,
+  "name": "receipt-lock-and-readback",
+  "event": {"type": "retry", "commandId": "00000000-0000-4000-8000-000000000010", "sameCanonicalBytes": true},
+  "expect": {"sameResponse": true, "receiptCount": 1, "readBack": {"digest": true, "account": true, "head": true, "state": true}}
+}

@@ -1,0 +1,126 @@
+openapi: 3.1.0
+info:
+  title: FUMINIWA Snapshot Sync v2
+  version: 2.0.0-design
+  description: Closed v2 server-readable local-first Snapshot API.
+servers:
+  - url: https://sync.invalid
+security:
+  - bearerAuth: []
+paths:
+  /v2/capabilities:
+    get:
+      operationId: v2Capabilities
+      responses:
+        '200': { description: Authenticated account binding and limits }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+  /v2/works:
+    get:
+      operationId: v2ListWorks
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200': { description: Account-scoped catalog page }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/works/{workId}/head:
+    get:
+      operationId: v2GetHead
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+      responses:
+        '200': { description: Head or null }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/works/{workId}/history:
+    get:
+      operationId: v2ListHistory
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200': { description: Immutable history occurrence page }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/snapshots/{snapshotId}/manifest:
+    get:
+      operationId: v2GetManifest
+      parameters:
+        - { $ref: '#/components/parameters/SnapshotId' }
+      responses:
+        '200': { description: Exact JCS manifest bytes }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/objects/{objectId}:
+    get:
+      operationId: v2DownloadObject
+      parameters:
+        - { $ref: '#/components/parameters/ObjectId' }
+      responses:
+        '200': { description: Raw object bytes and digest header }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/objects/prepare:
+    post:
+      operationId: v2PrepareObject
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '201': { description: Upload capability bound to command, account, and fence }
+        '409': { $ref: '#/components/responses/TypedError' }
+  /v2/objects/finalize:
+    post:
+      operationId: v2FinalizeObject
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '200': { description: Receipt-idempotent result }
+        '409': { $ref: '#/components/responses/TypedError' }
+  /v2/snapshots/register:
+    post:
+      operationId: v2RegisterSnapshot
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '200': { description: Immutable snapshot read-back receipt }
+        '422': { $ref: '#/components/responses/TypedError' }
+  /v2/works/{workId}/publish:
+    post:
+      operationId: v2Publish
+      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '200': { description: Applied or noChanges result }
+        '409': { description: Preserved head conflict and active conflict revision }
+  /v2/works/{workId}/conflict:
+    get:
+      operationId: v2GetConflict
+      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
+      responses:
+        '200': { description: One active conflict or null }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+  /v2/works/{workId}/conflict/resolve:
+    post:
+      operationId: v2ResolveConflict
+      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '200': { description: Atomic resolution receipt and read-back predicate }
+        '409': { $ref: '#/components/responses/TypedError' }
+  /v2/works/{workId}/restore:
+    post:
+      operationId: v2Restore
+      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      responses:
+        '200': { description: New two-parent restore Snapshot and receipt }
+        '409': { $ref: '#/components/responses/TypedError' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Cursor: { name: cursor, in: query, required: false, schema: { type: string } }
+    WorkId: { name: workId, in: path, required: true, schema: { type: string, format: uuid } }
+    SnapshotId: { name: snapshotId, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+    ObjectId: { name: objectId, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+  schemas:
+    SealedCommand: { $ref: './command.schema.json' }
+  responses:
+    Unauthorized: { description: Typed unauthorized error }
+    ProtocolMismatch: { description: Typed protocol mismatch error }
+    NotFoundInAccount: { description: Absent and foreign resources are indistinguishable }
+    TypedError: { description: Typed error with result status and retryability }

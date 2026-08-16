@@ -2,15 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:fuminiwa:sync:v2:command",
   "title": "FUMINIWA sealed command v2",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schemaVersion", "commandId", "commandKind", "binding", "payload"],
-  "properties": {
-    "schemaVersion": { "type": "integer", "const": 2 },
-    "commandId": { "$ref": "#/$defs/uuid" },
-    "commandKind": {
+  "description": "Every mutating request is one closed command variant. payload is never an open JSON object.",
+  "oneOf": [
+    { "$ref": "#/$defs/publish" },
+    { "$ref": "#/$defs/registerSnapshot" },
+    { "$ref": "#/$defs/finalizeObject" },
+    { "$ref": "#/$defs/resolveDevice" },
+    { "$ref": "#/$defs/resolveServer" },
+    { "$ref": "#/$defs/cloneWork" },
+    { "$ref": "#/$defs/restore" }
+  ],
+  "$defs": {
+    "uuid": {
       "type": "string",
-      "enum": ["publish", "resolveDevice", "resolveServer", "cloneWork", "restore", "registerSnapshot", "finalizeObject"]
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "head": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["generation", "snapshotId"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "snapshotId": { "$ref": "#/$defs/digest" }
+      }
     },
     "binding": {
       "type": "object",
@@ -23,12 +38,117 @@
         "serverInstanceId": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     },
-    "payload": { "type": "object" }
-  },
-  "$defs": {
-    "uuid": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "commandId", "commandKind", "binding", "payload"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 2 },
+        "commandId": { "$ref": "#/$defs/uuid" },
+        "commandKind": { "type": "string" },
+        "binding": { "$ref": "#/$defs/binding" },
+        "payload": { "type": "object" }
+      }
+    },
+    "publish": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "publish" }, "payload": { "$ref": "#/$defs/publishPayload" } } }
+      ]
+    },
+    "publishPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateSnapshotId", "expectedHead", "sourceGeneration", "sourceSnapshotId", "workId"],
+      "properties": {
+        "candidateSnapshotId": { "$ref": "#/$defs/digest" }, "expectedHead": { "$ref": "#/$defs/head" },
+        "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "sourceSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "registerSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "registerSnapshot" }, "payload": { "$ref": "#/$defs/registerSnapshotPayload" } } }
+      ]
+    },
+    "registerSnapshotPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifestBytesDigest", "parentSnapshotIds", "snapshotId", "workId"],
+      "properties": {
+        "manifestBytesDigest": { "$ref": "#/$defs/digest" },
+        "parentSnapshotIds": { "type": "array", "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/digest" } },
+        "snapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "finalizeObject": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "finalizeObject" }, "payload": { "$ref": "#/$defs/finalizeObjectPayload" } } }
+      ]
+    },
+    "finalizeObjectPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["byteCount", "objectId", "uploadId"],
+      "properties": {
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
+        "objectId": { "$ref": "#/$defs/digest" }, "uploadId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "resolveDevice": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "resolveDevice" }, "payload": { "$ref": "#/$defs/resolveDevicePayload" } } }
+      ]
+    },
+    "resolveDevicePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "localSnapshotId", "remoteSnapshotId", "workId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "localSnapshotId": { "$ref": "#/$defs/digest" },
+        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "resolveServer": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "resolveServer" }, "payload": { "$ref": "#/$defs/resolveServerPayload" } } }
+      ]
+    },
+    "resolveServerPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "preAdoptionSnapshotId", "remoteSnapshotId", "workId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "preAdoptionSnapshotId": { "$ref": "#/$defs/digest" },
+        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "cloneWork": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "cloneWork" }, "payload": { "$ref": "#/$defs/cloneWorkPayload" } } }
+      ]
+    },
+    "cloneWorkPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "newWorkId", "remoteSnapshotId", "sourceWorkId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "newWorkId": { "$ref": "#/$defs/uuid" },
+        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "sourceWorkId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "restore": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "restore" }, "payload": { "$ref": "#/$defs/restorePayload" } } }
+      ]
+    },
+    "restorePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["currentSnapshotId", "newSnapshotId", "selectedSnapshotId", "workId"],
+      "properties": {
+        "currentSnapshotId": { "$ref": "#/$defs/digest" }, "newSnapshotId": { "$ref": "#/$defs/digest" },
+        "selectedSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
     }
   }
 }

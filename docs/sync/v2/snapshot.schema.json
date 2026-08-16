@@ -17,11 +17,32 @@
     },
     "entries": {
       "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/entry" }
+      "minItems": 9,
+      "maxItems": 100000,
+      "items": { "$ref": "#/$defs/entry" },
+      "allOf": [
+        { "$ref": "#/$defs/hasWorkDocument" },
+        { "$ref": "#/$defs/hasWorkTitle" },
+        { "$ref": "#/$defs/hasWorkSynopsis" },
+        { "$ref": "#/$defs/hasChapterOrder" },
+        { "$ref": "#/$defs/hasCharacterOrder" },
+        { "$ref": "#/$defs/hasPlotCardOrder" },
+        { "$ref": "#/$defs/hasFlagOrder" },
+        { "$ref": "#/$defs/hasWorldNoteOrder" },
+        { "$ref": "#/$defs/hasAttachmentOrder" }
+      ]
     }
   },
   "$defs": {
+    "hasWorkDocument": { "contains": { "properties": { "entityKey": { "const": "work/document" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasWorkTitle": { "contains": { "properties": { "entityKey": { "const": "work/title" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasWorkSynopsis": { "contains": { "properties": { "entityKey": { "const": "work/synopsis" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasChapterOrder": { "contains": { "properties": { "entityKey": { "const": "work/chapter-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasCharacterOrder": { "contains": { "properties": { "entityKey": { "const": "work/character-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasPlotCardOrder": { "contains": { "properties": { "entityKey": { "const": "work/plot-card-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasFlagOrder": { "contains": { "properties": { "entityKey": { "const": "work/flag-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasWorldNoteOrder": { "contains": { "properties": { "entityKey": { "const": "work/world-note-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
+    "hasAttachmentOrder": { "contains": { "properties": { "entityKey": { "const": "work/attachment-order" } }, "required": ["entityKey"] }, "minContains": 1, "maxContains": 1 },
     "uuid": {
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"

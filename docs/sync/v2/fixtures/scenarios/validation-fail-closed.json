@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "name": "canonical-validation-fail-closed",
+  "cases": [
+    {"input": "duplicate-member", "error": "invalidCanonicalBytes"},
+    {"input": "entry-duplicate-key", "error": "schemaViolation"},
+    {"input": "entry-unsorted", "error": "schemaViolation"},
+    {"input": "self-parent", "error": "lineageViolation"},
+    {"input": "parent-other-work", "error": "lineageViolation"},
+    {"input": "parent-cycle", "error": "lineageViolation"},
+    {"input": "object-digest-mismatch", "error": "objectDigestMismatch"},
+    {"input": "manifest-digest-mismatch", "error": "snapshotDigestMismatch"},
+    {"input": "unsafe-integer", "error": "invalidCanonicalBytes"},
+    {"input": "size-over-cap", "error": "sizeLimitExceeded"}
+  ],
+  "expect": {"receiptCreated": false, "headChanged": false, "partialSnapshot": false}
+}

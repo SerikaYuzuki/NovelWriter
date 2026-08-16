@@ -10,6 +10,12 @@ format, not a live compatibility mode.
 - `command.schema.json`: common sealed-command envelope.
 - `wire.md`: endpoint, header, receipt, and error rules.
 - `state-machine.md`: local/server transitions and invariants.
+- `runtime-mode.md`: physical production/test/preview composition boundary.
+- `migration.md`: verified-only archive import and crash marker contract.
+- `ui-state.md`: identical macOS/iOS result projection and Japanese labels.
+- `sqlite.sql` / `postgres.sql`: concrete v2 local/server DDL and lock order.
+- `openapi.yaml`: v2 resource, cursor, receipt, and typed-result surface.
+- `entity-schemas/`: materializable work/document, value, and order payloads.
 - `fixtures/canonical/snapshot.json`: smallest valid canonical manifest.
 - `fixtures/canonical/snapshot.sha256`: SHA-256 of the exact canonical bytes.
 - `fixtures/scenarios/*.json`: language-neutral state-machine acceptance cases.

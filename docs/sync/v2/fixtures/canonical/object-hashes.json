@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "objects": [
+    {"file": "attachment-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "chapter-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "character-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "flag-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "plot-card-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "world-note-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
+    {"file": "work-document.json", "byteCount": 96, "objectId": "1ada402c66c29866fb31c52ab76eccfe2c624eaea94e7a88074d9ebc191e1b5d"},
+    {"file": "work-synopsis.json", "byteCount": 42, "objectId": "1b480863422b62bbe354c950dec8f130c2cc85072cb797f391a4806221fdd381"},
+    {"file": "work-title.json", "byteCount": 27, "objectId": "16dc45cdbf32d3158bcd5e2c52ddafee992004fd8bdfb5f44900e684896a81f0"}
+  ]
+}
