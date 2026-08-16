@@ -102,7 +102,7 @@ impl AppleConfig {
 pub struct ServerState {
     pub works: HashMap<Uuid, WorkRecord>,
     pub objects: HashMap<String, ObjectRecord>,
-    pub snapshots: HashMap<String, SnapshotManifest>,
+    pub snapshots: HashMap<String, StoredSnapshot>,
     pub operations: HashMap<Uuid, OperationReceipt>,
     pub conflicts: HashMap<Uuid, ConflictRecord>,
     pub auth_challenges: HashMap<Uuid, AuthChallenge>,
@@ -160,16 +160,28 @@ impl ServerState {
                 },
             );
         }
-        for row in sqlx::query("SELECT snapshot_id, manifest FROM snapshots")
+        for row in sqlx::query("SELECT snapshot_id, manifest, manifest_bytes FROM snapshots")
             .fetch_all(&pool)
             .await?
         {
             let snapshot_id: String = row.try_get("snapshot_id")?;
             let value: serde_json::Value = row.try_get("manifest")?;
+            let manifest: SnapshotManifest = serde_json::from_value(value)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
+            let stored_bytes: Option<Vec<u8>> = row.try_get("manifest_bytes")?;
+            let canonical_bytes = stored_bytes
+                .filter(|bytes| digest(bytes) == snapshot_id)
+                .or_else(|| {
+                    let bytes = swift_canonical_manifest_bytes(&manifest).ok()?;
+                    (digest(&bytes) == snapshot_id).then_some(bytes)
+                })
+                .map(Bytes::from);
             state.snapshots.insert(
                 snapshot_id,
-                serde_json::from_value(value)
-                    .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+                StoredSnapshot {
+                    manifest,
+                    canonical_bytes,
+                },
             );
         }
         for row in sqlx::query(
@@ -359,6 +371,16 @@ pub struct ObjectRecord {
     pub object_id: String,
     pub byte_count: usize,
     pub bytes: Bytes,
+}
+
+/// The decoded manifest is used for validation and catalog projections. The
+/// original JSON bytes are retained separately because snapshot IDs hash the
+/// wire representation, and JSONB does not preserve member order or UUID
+/// casing.
+#[derive(Clone, Debug)]
+pub struct StoredSnapshot {
+    pub manifest: SnapshotManifest,
+    pub canonical_bytes: Option<Bytes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1036,16 +1058,9 @@ async fn register_snapshot(
     if manifest.work_id != work_id {
         return Err(ApiError::InvalidRequest("workId path/body mismatch".into()));
     }
-    // Snapshot IDs are hashes of the exact canonical JSON bytes emitted by
-    // the clients.  JSONB persistence and serde re-serialization must not
-    // silently create a different byte representation for the same ID.
-    let canonical = canonical_manifest_bytes(&manifest)?;
-    if body.as_ref() != canonical.as_slice() {
-        return Err(ApiError::InvalidRequest(
-            "manifest must use canonical JSON encoding".into(),
-        ));
-    }
-    let expected_id = digest(&canonical);
+    // Snapshot IDs are hashes of the exact bytes emitted by the client. Keep
+    // those bytes; JSONB is only the decoded validation/index projection.
+    let expected_id = digest(&body);
     if expected_id != snapshot_id {
         return Err(ApiError::InvalidRequest(
             "snapshotId must be SHA-256(canonical manifest bytes)".into(),
@@ -1057,7 +1072,7 @@ async fn register_snapshot(
         // Compare the decoded canonical model, not re-serialized bytes. A
         // retry from another language may use a different JSON member order
         // while representing the exact same manifest.
-        if existing.work_id != work_id || existing != &manifest {
+        if existing.manifest.work_id != work_id || existing.manifest != manifest {
             return Err(ApiError::Conflict(
                 "snapshotId already contains different bytes".into(),
             ));
@@ -1066,7 +1081,13 @@ async fn register_snapshot(
             serde_json::json!({"snapshotId":snapshot_id,"alreadyRegistered":true}),
         ));
     }
-    locked.snapshots.insert(snapshot_id.clone(), manifest);
+    locked.snapshots.insert(
+        snapshot_id.clone(),
+        StoredSnapshot {
+            manifest,
+            canonical_bytes: Some(body),
+        },
+    );
     locked.works.entry(work_id).or_insert_with(|| WorkRecord {
         work_id,
         head: None,
@@ -1083,17 +1104,19 @@ async fn get_snapshot(
     Path((work_id, snapshot_id)): Path<(Uuid, String)>,
 ) -> Result<Response, ApiError> {
     let _principal = authenticate_bearer(&state, &headers, &config).await?;
-    let manifest = state
+    let snapshot = state
         .read()
         .await
         .snapshots
         .get(&snapshot_id)
         .cloned()
         .ok_or_else(|| ApiError::NotFound("snapshot".into()))?;
-    if manifest.work_id != work_id {
+    if snapshot.manifest.work_id != work_id {
         return Err(ApiError::NotFound("snapshot".into()));
     }
-    let bytes = canonical_manifest_bytes(&manifest)?;
+    let bytes = snapshot
+        .canonical_bytes
+        .ok_or_else(|| ApiError::NotFound("snapshot unavailable".into()))?;
     let content_length = bytes.len();
     let mut response = Response::new(axum::body::Body::from(bytes));
     response.headers_mut().insert(
@@ -1121,8 +1144,10 @@ async fn list_works(
         .values()
         .filter_map(|work| {
             let head = work.head.as_ref()?;
-            let manifest = locked.snapshots.get(&head.snapshot_id)?;
-            let title = materializable_work_title(work.work_id, manifest, &locked.objects)?;
+            let snapshot = locked.snapshots.get(&head.snapshot_id)?;
+            snapshot.canonical_bytes.as_ref()?;
+            let title =
+                materializable_work_title(work.work_id, &snapshot.manifest, &locked.objects)?;
             Some(WorkCatalogEntry {
                 work_id: work.work_id,
                 title,
@@ -1180,7 +1205,7 @@ async fn publish_head(
         .snapshots
         .get(&command.candidate_snapshot_id)
         .ok_or_else(|| ApiError::NotFound("candidate snapshot".into()))?;
-    if candidate.work_id != work_id {
+    if candidate.manifest.work_id != work_id {
         return Err(ApiError::InvalidRequest(
             "candidate belongs to another work".into(),
         ));
@@ -1464,11 +1489,16 @@ fn parse_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
     serde_json::from_slice(body).map_err(|error| ApiError::InvalidRequest(error.to_string()))
 }
 
-/// Returns the wire representation used for snapshot IDs. `serde_json` uses
-/// a sorted map by default, so converting through `Value` recursively sorts
-/// object keys while preserving array order and scalar formatting.
-fn canonical_manifest_bytes(manifest: &SnapshotManifest) -> Result<Vec<u8>, ApiError> {
-    let value = serde_json::to_value(manifest).map_err(|_| ApiError::Internal)?;
+/// Reconstructs the Swift canonical representation for legacy rows that were
+/// persisted before `manifest_bytes` existed. UUID is intentionally upper
+/// case: that is the representation emitted by Swift's JSONEncoder.
+fn swift_canonical_manifest_bytes(manifest: &SnapshotManifest) -> Result<Vec<u8>, ApiError> {
+    let value = serde_json::json!({
+        "entries": manifest.entries,
+        "parentSnapshotIds": manifest.parent_snapshot_ids,
+        "schemaVersion": manifest.schema_version,
+        "workId": manifest.work_id.hyphenated().to_string().to_uppercase(),
+    });
     serde_json::to_vec(&value).map_err(|_| ApiError::Internal)
 }
 
@@ -1509,12 +1539,13 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
             .await
             .map_err(|_| ApiError::Internal)?;
     }
-    for (snapshot_id, manifest) in &state.snapshots {
-        let value = serde_json::to_value(manifest).map_err(|_| ApiError::Internal)?;
-        sqlx::query("INSERT INTO snapshots(snapshot_id, work_id, manifest) VALUES ($1, $2, $3)")
+    for (snapshot_id, snapshot) in &state.snapshots {
+        let value = serde_json::to_value(&snapshot.manifest).map_err(|_| ApiError::Internal)?;
+        sqlx::query("INSERT INTO snapshots(snapshot_id, work_id, manifest, manifest_bytes) VALUES ($1, $2, $3, $4)")
             .bind(snapshot_id)
-            .bind(manifest.work_id)
+            .bind(snapshot.manifest.work_id)
             .bind(value)
+            .bind(snapshot.canonical_bytes.as_ref().map(Bytes::as_ref))
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::Internal)?;
@@ -2054,7 +2085,9 @@ mod tests {
         // struct serialization order.
         let manifest = format!(
             "{{\"entries\":[{{\"byteCount\":{},\"contentType\":\"application/octet-stream\",\"entityKey\":\"work/document\",\"objectId\":\"{}\"}}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"{}\"}}",
-            object.len(), object_id, work_id
+            object.len(),
+            object_id,
+            work_id.hyphenated().to_string().to_uppercase()
         );
         let snapshot_id = digest(manifest.as_bytes());
         let register = || {
@@ -2379,6 +2412,26 @@ mod tests {
         assert_eq!(entries[0].work_id, work_id);
         assert_eq!(entries[0].title, "名称未設定の作品");
         assert_eq!(entries[0].head.as_ref().unwrap().snapshot_id, snapshot_id);
+    }
+
+    #[test]
+    fn legacy_manifest_backfill_uses_uppercase_swift_uuid_and_digest_gate() {
+        let work_id = Uuid::parse_str("f3c76815-d183-4071-bb35-733422e2e305").unwrap();
+        let manifest = SnapshotManifest {
+            entries: vec![SnapshotEntry {
+                entity_key: "work/document".into(),
+                object_id: "a".repeat(64),
+                byte_count: 1,
+                content_type: "application/json".into(),
+            }],
+            parent_snapshot_ids: Vec::new(),
+            schema_version: 1,
+            work_id,
+        };
+        let bytes = swift_canonical_manifest_bytes(&manifest).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.contains("\"workId\":\"F3C76815-D183-4071-BB35-733422E2E305\""));
+        assert_ne!(digest(&bytes), digest(text.to_lowercase().as_bytes()));
     }
 
     #[test]
