@@ -128,6 +128,9 @@ let package = Package(
         .testTarget(
             name: "NovelUITests",
             dependencies: ["NovelUI"]
+        ),
+        .testTarget(
+            name: "NovelConformanceTests"
         )
     ]
 )
