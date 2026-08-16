@@ -90,18 +90,21 @@ extension AppState {
                 return value
             }()
             let expectedState = try await store.workState(for: workID)
-            _ = try await store.installRemoteSnapshot(
-                workID: workID,
-                documentID: document.id,
-                documentCreatedAt: createdAt,
-                snapshotID: payload.snapshotID,
-                parentSnapshotIDs: payload.parentSnapshotIDs,
-                manifest: payload.manifest,
-                objects: payload.objects,
-                remoteGeneration: head.generation,
-                expectedLocalSnapshotID: expectedState?.currentLocalSnapshotID,
-                expectedLocalGeneration: expectedState?.localGeneration
+            let request = RemoteSnapshotInstallRequest(
+                identity: .init(workID: workID, documentID: document.id, documentCreatedAt: createdAt),
+                payload: .init(
+                    snapshotID: payload.snapshotID,
+                    parentSnapshotIDs: payload.parentSnapshotIDs,
+                    manifest: payload.manifest,
+                    objects: payload.objects
+                ),
+                expectations: .init(
+                    remoteGeneration: head.generation,
+                    expectedLocalSnapshotID: expectedState?.currentLocalSnapshotID,
+                    expectedLocalGeneration: expectedState?.localGeneration
+                )
             )
+            _ = try await store.installRemoteSnapshot(request)
             guard documentSessionToken == expectedSession else { return false }
             installDocument(readBack, at: destinationURL, attachments: [])
             userDefaults.set(

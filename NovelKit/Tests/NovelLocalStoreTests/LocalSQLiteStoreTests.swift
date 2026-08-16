@@ -91,16 +91,24 @@ struct LocalSQLiteStoreTests {
         let manifest = Data(#"{"schemaVersion":1}"#.utf8)
 
         let record = try await store.installRemoteSnapshot(
-            workID: workID,
-            documentID: documentID,
-            documentCreatedAt: "2026-08-16T00:00:00Z",
-            snapshotID: snapshotID,
-            parentSnapshotIDs: [],
-            manifest: manifest,
-            objects: [LocalObject(objectID: objectID, bytes: Data("remote".utf8))],
-            remoteGeneration: 7,
-            expectedLocalSnapshotID: nil,
-            expectedLocalGeneration: nil
+            RemoteSnapshotInstallRequest(
+                identity: .init(
+                    workID: workID,
+                    documentID: documentID,
+                    documentCreatedAt: "2026-08-16T00:00:00Z"
+                ),
+                payload: .init(
+                    snapshotID: snapshotID,
+                    parentSnapshotIDs: [],
+                    manifest: manifest,
+                    objects: [LocalObject(objectID: objectID, bytes: Data("remote".utf8))]
+                ),
+                expectations: .init(
+                    remoteGeneration: 7,
+                    expectedLocalSnapshotID: nil,
+                    expectedLocalGeneration: nil
+                )
+            )
         )
 
         #expect(record.id == snapshotID)
@@ -138,16 +146,24 @@ struct LocalSQLiteStoreTests {
         )
 
         let repaired = try await store.installRemoteSnapshot(
-            workID: workID,
-            documentID: documentID,
-            documentCreatedAt: "2026-08-16T00:00:00Z",
-            snapshotID: snapshotID,
-            parentSnapshotIDs: [],
-            manifest: canonicalManifest,
-            objects: [],
-            remoteGeneration: 2,
-            expectedLocalSnapshotID: snapshotID,
-            expectedLocalGeneration: 1
+            RemoteSnapshotInstallRequest(
+                identity: .init(
+                    workID: workID,
+                    documentID: documentID,
+                    documentCreatedAt: "2026-08-16T00:00:00Z"
+                ),
+                payload: .init(
+                    snapshotID: snapshotID,
+                    parentSnapshotIDs: [],
+                    manifest: canonicalManifest,
+                    objects: []
+                ),
+                expectations: .init(
+                    remoteGeneration: 2,
+                    expectedLocalSnapshotID: snapshotID,
+                    expectedLocalGeneration: 1
+                )
+            )
         )
 
         #expect(repaired.manifest == canonicalManifest)
@@ -180,16 +196,24 @@ struct LocalSQLiteStoreTests {
 
         await #expect(throws: LocalStoreError.invalidSnapshot) {
             try await store.installRemoteSnapshot(
-                workID: workID,
-                documentID: documentID,
-                documentCreatedAt: "2026-08-16T00:00:00Z",
-                snapshotID: snapshotID,
-                parentSnapshotIDs: [],
-                manifest: secondManifest,
-                objects: [],
-                remoteGeneration: 2,
-                expectedLocalSnapshotID: snapshotID,
-                expectedLocalGeneration: 1
+                RemoteSnapshotInstallRequest(
+                    identity: .init(
+                        workID: workID,
+                        documentID: documentID,
+                        documentCreatedAt: "2026-08-16T00:00:00Z"
+                    ),
+                    payload: .init(
+                        snapshotID: snapshotID,
+                        parentSnapshotIDs: [],
+                        manifest: secondManifest,
+                        objects: []
+                    ),
+                    expectations: .init(
+                        remoteGeneration: 2,
+                        expectedLocalSnapshotID: snapshotID,
+                        expectedLocalGeneration: 1
+                    )
+                )
             )
         }
         #expect(try await store.snapshot(id: snapshotID)?.manifest == firstManifest)

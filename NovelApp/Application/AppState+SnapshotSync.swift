@@ -138,16 +138,24 @@ extension AppState {
                 let installed: LocalSnapshotRecord
                 do {
                     installed = try await store.installRemoteSnapshot(
-                        workID: conflict.workID,
-                        documentID: remoteDocument.id,
-                        documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
-                        snapshotID: payload.snapshotID,
-                        parentSnapshotIDs: payload.parentSnapshotIDs,
-                        manifest: payload.manifest,
-                        objects: payload.objects,
-                        remoteGeneration: head.generation,
-                        expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                        expectedLocalGeneration: state?.localGeneration
+                        RemoteSnapshotInstallRequest(
+                            identity: .init(
+                                workID: conflict.workID,
+                                documentID: remoteDocument.id,
+                                documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
+                            ),
+                            payload: .init(
+                                snapshotID: payload.snapshotID,
+                                parentSnapshotIDs: payload.parentSnapshotIDs,
+                                manifest: payload.manifest,
+                                objects: payload.objects
+                            ),
+                            expectations: .init(
+                                remoteGeneration: head.generation,
+                                expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                                expectedLocalGeneration: state?.localGeneration
+                            )
+                        )
                     )
                 } catch LocalStoreError.statementFailed("local snapshot changed") {
                     // saveNow schedules the remote worker after its local
@@ -158,16 +166,24 @@ extension AppState {
                     guard documentSessionToken == expectedSession else { return false }
                     state = try await store.workState(for: conflict.workID)
                     installed = try await store.installRemoteSnapshot(
-                        workID: conflict.workID,
-                        documentID: remoteDocument.id,
-                        documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
-                        snapshotID: payload.snapshotID,
-                        parentSnapshotIDs: payload.parentSnapshotIDs,
-                        manifest: payload.manifest,
-                        objects: payload.objects,
-                        remoteGeneration: head.generation,
-                        expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                        expectedLocalGeneration: state?.localGeneration
+                        RemoteSnapshotInstallRequest(
+                            identity: .init(
+                                workID: conflict.workID,
+                                documentID: remoteDocument.id,
+                                documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
+                            ),
+                            payload: .init(
+                                snapshotID: payload.snapshotID,
+                                parentSnapshotIDs: payload.parentSnapshotIDs,
+                                manifest: payload.manifest,
+                                objects: payload.objects
+                            ),
+                            expectations: .init(
+                                remoteGeneration: head.generation,
+                                expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                                expectedLocalGeneration: state?.localGeneration
+                            )
+                        )
                     )
                 }
                 guard documentSessionToken == expectedSession else { return false }

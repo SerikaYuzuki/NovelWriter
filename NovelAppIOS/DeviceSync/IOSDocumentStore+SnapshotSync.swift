@@ -186,16 +186,24 @@ extension IOSDocumentStore {
                 let state = try await store.workState(for: conflict.workID)
                 try await repository.save(remoteDocument, to: documentURL)
                 _ = try await store.installRemoteSnapshot(
-                    workID: conflict.workID,
-                    documentID: remoteDocument.id,
-                    documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
-                    snapshotID: payload.snapshotID,
-                    parentSnapshotIDs: payload.parentSnapshotIDs,
-                    manifest: payload.manifest,
-                    objects: payload.objects,
-                    remoteGeneration: head.generation,
-                    expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                    expectedLocalGeneration: state?.localGeneration
+                    RemoteSnapshotInstallRequest(
+                        identity: .init(
+                            workID: conflict.workID,
+                            documentID: remoteDocument.id,
+                            documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
+                        ),
+                        payload: .init(
+                            snapshotID: payload.snapshotID,
+                            parentSnapshotIDs: payload.parentSnapshotIDs,
+                            manifest: payload.manifest,
+                            objects: payload.objects
+                        ),
+                        expectations: .init(
+                            remoteGeneration: head.generation,
+                            expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                            expectedLocalGeneration: state?.localGeneration
+                        )
+                    )
                 )
                 guard install(remoteDocument, at: documentURL, attachments: []) else {
                     return false
