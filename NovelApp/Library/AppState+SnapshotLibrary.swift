@@ -62,21 +62,19 @@ extension AppState {
         for state in localStates {
             let localTitle = await snapshotLocalTitle(state, store: store)
             let remote = remoteByID[state.workID]
-            let hasConflict: Bool
-            if remote != nil {
-                hasConflict = (try? await worker.conflicts(workID: state.workID))?.isEmpty == false
+            let hasConflict: Bool = if remote != nil {
+                await (try? worker.conflicts(workID: state.workID))?.isEmpty == false
             } else {
-                hasConflict = false
+                false
             }
-            let availability: StartupLibraryWorkAvailability
-            if hasConflict {
-                availability = .needsReview
+            let availability: StartupLibraryWorkAvailability = if hasConflict {
+                .needsReview
             } else if let remote, state.acknowledgedHeadSnapshotID == remote.head?.snapshotID {
-                availability = .cachedRemote
+                .cachedRemote
             } else if remote != nil {
-                availability = .localPending
+                .localPending
             } else {
-                availability = .localPending
+                .localPending
             }
             rows.append(
                 StartupLibraryWork(
@@ -123,11 +121,11 @@ extension AppState {
             return ("名称未設定の作品", nil)
         }
         guard
-              let manifestObject = try? JSONSerialization.jsonObject(with: snapshot.manifest) as? [String: Any],
-              let entries = manifestObject["entries"] as? [[String: Any]],
-              let objectID = entries.first(where: { $0["entityKey"] as? String == "work/document" })?["objectId"] as? String,
-              let bytes = try? await store.object(id: objectID),
-              let document = try? JSONDecoder().decode(WorkSnapshot.self, from: bytes) else {
+            let manifestObject = try? JSONSerialization.jsonObject(with: snapshot.manifest) as? [String: Any],
+            let entries = manifestObject["entries"] as? [[String: Any]],
+            let objectID = entries.first(where: { $0["entityKey"] as? String == "work/document" })?["objectId"] as? String,
+            let bytes = try? await store.object(id: objectID),
+            let document = try? JSONDecoder().decode(WorkSnapshot.self, from: bytes) else {
             return ("名称未設定の作品", snapshot.createdAt)
         }
         return (document.title, snapshot.createdAt)

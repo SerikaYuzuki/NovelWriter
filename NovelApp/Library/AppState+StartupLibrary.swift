@@ -86,7 +86,7 @@ extension AppState {
     }
 
     func scheduleStartupLibraryRemoteRefreshIfNeeded() {
-        guard (deviceSyncRuntime?.library != nil || usesSnapshotSyncRuntime),
+        guard deviceSyncRuntime?.library != nil || usesSnapshotSyncRuntime,
               case let .documentSelection(context) = startupState,
               context.presentation == .cloudLibrary,
               startupLibraryRefreshTask == nil else { return }

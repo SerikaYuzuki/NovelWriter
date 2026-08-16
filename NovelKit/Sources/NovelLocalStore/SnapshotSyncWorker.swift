@@ -23,7 +23,9 @@ public struct SnapshotSyncLibraryEntry: Codable, Equatable, Sendable, Identifiab
     public let title: String
     public let head: RemoteSnapshotHead?
 
-    public var id: UUID { workID }
+    public var id: UUID {
+        workID
+    }
 
     private enum CodingKeys: String, CodingKey {
         case workID = "workId"
@@ -60,8 +62,7 @@ public struct RemoteSnapshotPayload: Equatable, Sendable {
         guard
             let root = try? JSONSerialization.jsonObject(with: manifest) as? [String: Any],
             let entries = root["entries"] as? [[String: Any]],
-            let objectID = entries.first(where: { $0["entityKey"] as? String == entityKey })?["objectId"] as? String
-        else {
+            let objectID = entries.first(where: { $0["entityKey"] as? String == entityKey })?["objectId"] as? String else {
             return nil
         }
         return objects.first { $0.objectID == objectID }
@@ -343,7 +344,7 @@ public actor LocalSnapshotSyncWorker {
                     expectedRemoteSnapshotID: head.snapshotID,
                     accessToken: session.accessToken
                 )
-            } catch SnapshotSyncError.transport(let message)
+            } catch let SnapshotSyncError.transport(message)
                 where message.contains("conflict already resolved") {
                 // Another retry may have completed this exact record between
                 // listing and resolving. It is safe to continue to the next.

@@ -214,11 +214,11 @@ private struct IOSWorkChromeModifier: ViewModifier {
             .toolbar {
                 IOSWorkChromeToolbarContent(
                     store: store,
-                accessibilityPrefix: accessibilityPrefix,
-                isNoteSyncConflictPresented: isNoteSyncConflictPresented,
-                isSnapshotPresented: $isSnapshotPresented,
-                isSnapshotConflictPresented: $isSnapshotConflictPresented,
-                isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
+                    accessibilityPrefix: accessibilityPrefix,
+                    isNoteSyncConflictPresented: isNoteSyncConflictPresented,
+                    isSnapshotPresented: $isSnapshotPresented,
+                    isSnapshotConflictPresented: $isSnapshotConflictPresented,
+                    isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
                 )
             }
             .iosSnapshotSheet(store: store, isPresented: $isSnapshotPresented)

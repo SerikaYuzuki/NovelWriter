@@ -34,7 +34,7 @@ extension AppState {
            FileManager.default.fileExists(atPath: localURL.path),
            row.availability != .remoteOnly,
            let loaded = try? await repository.load(from: localURL) {
-            let attachments = (try? await loadAttachmentsThrowing(for: localURL)) ?? []
+            let attachments = await (try? loadAttachmentsThrowing(for: localURL)) ?? []
             installDocument(loaded, at: localURL, attachments: attachments)
             await loadSnapshotConflict(for: workID, worker: worker)
             return startupState.isReady
@@ -124,7 +124,7 @@ extension AppState {
         if let localURL = snapshotLocalURL(for: workID),
            FileManager.default.fileExists(atPath: localURL.path),
            let loaded = try? await repository.load(from: localURL) {
-            let attachments = (try? await loadAttachmentsThrowing(for: localURL)) ?? []
+            let attachments = await (try? loadAttachmentsThrowing(for: localURL)) ?? []
             installDocument(loaded, at: localURL, attachments: attachments)
             await loadSnapshotConflict(for: workID, worker: worker)
             return startupState.isReady

@@ -37,7 +37,9 @@ struct SnapshotSyncConflictResolutionView: View {
                 .foregroundStyle(.secondary)
             HStack {
                 Spacer()
-                if isApplying { ProgressView().controlSize(.small) }
+                if isApplying {
+                    ProgressView().controlSize(.small)
+                }
                 Button("あとで") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .disabled(isApplying)
