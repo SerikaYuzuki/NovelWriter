@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 use axum::{
@@ -1070,7 +1073,7 @@ async fn list_conflicts(
     Path(work_id): Path<Uuid>,
 ) -> Result<Json<Vec<ConflictRecord>>, ApiError> {
     let _principal = authenticate_bearer(&state, &headers, &config).await?;
-    let conflicts = state
+    let mut conflicts: Vec<ConflictRecord> = state
         .read()
         .await
         .conflicts
@@ -1078,6 +1081,19 @@ async fn list_conflicts(
         .filter(|conflict| conflict.work_id == work_id && conflict.state == "needsChoice")
         .cloned()
         .collect();
+    conflicts.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.conflict_id.cmp(&right.conflict_id))
+    });
+    let mut seen = HashSet::new();
+    conflicts.retain(|conflict| {
+        seen.insert((
+            conflict.base_snapshot_id.clone(),
+            conflict.local_snapshot_id.clone(),
+            conflict.remote_snapshot_id.clone(),
+        ))
+    });
     Ok(Json(conflicts))
 }
 
