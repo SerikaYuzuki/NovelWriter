@@ -386,10 +386,10 @@ pub struct StoredSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotManifest {
-    // Keep the serialized order identical to Swift JSONEncoder.sortedKeys.
-    // Snapshot IDs are the SHA-256 of these canonical bytes. The database
-    // stores JSONB, so this order also matters when an existing snapshot is
-    // read back after a restart.
+    // This is the decoded validation/index projection. Snapshot IDs are the
+    // SHA-256 of the original wire bytes, which are retained by
+    // StoredSnapshot::canonical_bytes rather than regenerated from this
+    // JSONB-shaped value.
     pub entries: Vec<SnapshotEntry>,
     #[serde(rename = "parentSnapshotIds")]
     pub parent_snapshot_ids: Vec<String>,
@@ -1068,15 +1068,33 @@ async fn register_snapshot(
     }
     validate_manifest(&manifest, &state).await?;
     let mut locked = state.write().await;
-    if let Some(existing) = locked.snapshots.get(&snapshot_id) {
-        // Compare the decoded canonical model, not re-serialized bytes. A
-        // retry from another language may use a different JSON member order
-        // while representing the exact same manifest.
+    let needs_raw_byte_repair = if let Some(existing) = locked.snapshots.get(&snapshot_id) {
+        // Compare the decoded projection only to identify a legacy row that
+        // can be repaired. The request digest and retained raw bytes remain
+        // authoritative for the snapshot identity.
         if existing.manifest.work_id != work_id || existing.manifest != manifest {
             return Err(ApiError::Conflict(
                 "snapshotId already contains different bytes".into(),
             ));
         }
+        existing.canonical_bytes.is_none()
+    } else {
+        false
+    };
+    if needs_raw_byte_repair {
+        if let Some(existing) = locked.snapshots.get_mut(&snapshot_id) {
+            // The request digest was checked above, so this is an exact and
+            // safe repair of a legacy row that had no byte column yet.
+            existing.canonical_bytes = Some(body);
+        }
+        persist_state(&locked).await?;
+        return Ok(Json(serde_json::json!({
+            "snapshotId": snapshot_id,
+            "alreadyRegistered": true,
+            "repaired": true
+        })));
+    }
+    if locked.snapshots.contains_key(&snapshot_id) {
         return Ok(Json(
             serde_json::json!({"snapshotId":snapshot_id,"alreadyRegistered":true}),
         ));
@@ -1205,6 +1223,9 @@ async fn publish_head(
         .snapshots
         .get(&command.candidate_snapshot_id)
         .ok_or_else(|| ApiError::NotFound("candidate snapshot".into()))?;
+    if candidate.canonical_bytes.is_none() {
+        return Err(ApiError::NotFound("candidate snapshot unavailable".into()));
+    }
     if candidate.manifest.work_id != work_id {
         return Err(ApiError::InvalidRequest(
             "candidate belongs to another work".into(),
@@ -2080,9 +2101,8 @@ mod tests {
         assert_eq!(object_response.status(), StatusCode::OK);
 
         let work_id = Uuid::new_v4();
-        // This is the Swift canonical member order. The server stores a
-        // decoded manifest, so a retry must not compare against Rust's own
-        // struct serialization order.
+        // This is the Swift canonical member order. The server must retain
+        // these exact bytes because JSONB does not preserve their order.
         let manifest = format!(
             "{{\"entries\":[{{\"byteCount\":{},\"contentType\":\"application/octet-stream\",\"entityKey\":\"work/document\",\"objectId\":\"{}\"}}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"{}\"}}",
             object.len(),
@@ -2126,6 +2146,124 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fetched_bytes.as_ref(), manifest.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn exact_reregister_repairs_a_legacy_snapshot_without_raw_bytes() {
+        let work_id = Uuid::new_v4();
+        let object = Bytes::from_static(b"snapshot-object");
+        let object_id = digest(&object);
+        let manifest = format!(
+            "{{\"entries\":[{{\"byteCount\":{},\"contentType\":\"application/octet-stream\",\"entityKey\":\"work/document\",\"objectId\":\"{}\"}}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"{}\"}}",
+            object.len(),
+            object_id,
+            work_id.hyphenated().to_string().to_uppercase()
+        );
+        let snapshot_id = digest(manifest.as_bytes());
+        let parsed: SnapshotManifest = serde_json::from_str(&manifest).unwrap();
+        let state = Arc::new(RwLock::new(ServerState::default()));
+        {
+            let mut locked = state.write().await;
+            locked.objects.insert(
+                object_id.clone(),
+                ObjectRecord {
+                    object_id,
+                    byte_count: object.len(),
+                    bytes: object,
+                },
+            );
+            locked.snapshots.insert(
+                snapshot_id.clone(),
+                StoredSnapshot {
+                    manifest: parsed,
+                    canonical_bytes: None,
+                },
+            );
+        }
+        let app = router(
+            state.clone(),
+            AppConfig {
+                dev_token: Some("test-token".into()),
+                ..AppConfig::default()
+            },
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/works/{work_id}/snapshots/{snapshot_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(manifest.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let repaired = state
+            .read()
+            .await
+            .snapshots
+            .get(&snapshot_id)
+            .and_then(|snapshot| snapshot.canonical_bytes.clone())
+            .unwrap();
+        assert_eq!(repaired.as_ref(), manifest.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn publishing_a_snapshot_without_raw_bytes_fails_closed() {
+        let work_id = Uuid::new_v4();
+        let snapshot_id = "a".repeat(64);
+        let state = Arc::new(RwLock::new(ServerState::default()));
+        {
+            let mut locked = state.write().await;
+            locked.works.insert(
+                work_id,
+                WorkRecord {
+                    work_id,
+                    head: None,
+                },
+            );
+            locked.snapshots.insert(
+                snapshot_id.clone(),
+                StoredSnapshot {
+                    manifest: SnapshotManifest {
+                        entries: Vec::new(),
+                        parent_snapshot_ids: Vec::new(),
+                        schema_version: 1,
+                        work_id,
+                    },
+                    canonical_bytes: None,
+                },
+            );
+        }
+        let response = router(
+            state,
+            AppConfig {
+                dev_token: Some("test-token".into()),
+                ..AppConfig::default()
+            },
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/works/{work_id}/head"))
+                .header("authorization", "Bearer test-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "operationId": Uuid::new_v4(),
+                        "workId": work_id,
+                        "expectedHead": null,
+                        "candidateSnapshotId": snapshot_id
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
