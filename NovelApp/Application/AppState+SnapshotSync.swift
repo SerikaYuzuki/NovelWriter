@@ -120,29 +120,58 @@ extension AppState {
                     workID: conflict.workID,
                     snapshotID: head.snapshotID
                 )
-                guard let object = payload.objects.first else { return false }
+                guard let object = payload.object(forEntityKey: "work/document") else {
+                    DeviceSyncLog.snapshot("conflict server choice failed: missing work/document")
+                    return false
+                }
                 let remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
                 let remoteDocument = try remoteSnapshot.materializedDocument()
                 guard remoteDocument.id == document.id else { return false }
+                let expectedSession = documentSessionToken
                 guard await saveNow() else { return false }
-                let state = try await store.workState(for: conflict.workID)
+                guard documentSessionToken == expectedSession else { return false }
+                var state = try await store.workState(for: conflict.workID)
                 try await repository.save(remoteDocument, to: documentURL)
-                _ = try await store.installRemoteSnapshot(
-                    workID: conflict.workID,
-                    documentID: remoteDocument.id,
-                    documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
-                    snapshotID: payload.snapshotID,
-                    parentSnapshotIDs: payload.parentSnapshotIDs,
-                    manifest: payload.manifest,
-                    objects: payload.objects,
-                    remoteGeneration: head.generation,
-                    expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                    expectedLocalGeneration: state?.localGeneration
-                )
+                let installed: LocalSnapshotRecord
+                do {
+                    installed = try await store.installRemoteSnapshot(
+                        workID: conflict.workID,
+                        documentID: remoteDocument.id,
+                        documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
+                        snapshotID: payload.snapshotID,
+                        parentSnapshotIDs: payload.parentSnapshotIDs,
+                        manifest: payload.manifest,
+                        objects: payload.objects,
+                        remoteGeneration: head.generation,
+                        expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                        expectedLocalGeneration: state?.localGeneration
+                    )
+                } catch LocalStoreError.statementFailed("local snapshot changed") {
+                    // saveNow schedules the remote worker after its local
+                    // commit. If that worker acknowledges or coalesces the
+                    // just-saved state before this install transaction, retry
+                    // against the latest local pointer instead of surfacing a
+                    // false storage failure to the user.
+                    guard documentSessionToken == expectedSession else { return false }
+                    state = try await store.workState(for: conflict.workID)
+                    installed = try await store.installRemoteSnapshot(
+                        workID: conflict.workID,
+                        documentID: remoteDocument.id,
+                        documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
+                        snapshotID: payload.snapshotID,
+                        parentSnapshotIDs: payload.parentSnapshotIDs,
+                        manifest: payload.manifest,
+                        objects: payload.objects,
+                        remoteGeneration: head.generation,
+                        expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                        expectedLocalGeneration: state?.localGeneration
+                    )
+                }
+                guard documentSessionToken == expectedSession else { return false }
                 installDocument(remoteDocument, at: documentURL, attachments: [])
                 try await worker.resolveUsingServer(conflict)
                 lastSnapshotSyncOutcome = .uploaded(
-                    snapshotID: payload.snapshotID,
+                    snapshotID: installed.id,
                     generation: head.generation
                 )
                 snapshotSyncConflict = nil

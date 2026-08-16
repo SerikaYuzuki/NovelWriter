@@ -28,6 +28,8 @@ extension AppState {
             )
         }
 
+        DeviceSyncLog.snapshot("library open requested work=\(workID.uuidString.lowercased()) availability=\(String(describing: row.availability))")
+
         if let localURL = snapshotLocalURL(for: workID),
            FileManager.default.fileExists(atPath: localURL.path),
            row.availability != .remoteOnly,
@@ -38,16 +40,31 @@ extension AppState {
             return startupState.isReady
         }
 
-        guard let remote = snapshotRemoteLibraryEntries[workID],
-              let head = remote.head else { return false }
+        guard let remote = snapshotRemoteLibraryEntries[workID] else {
+            DeviceSyncLog.snapshot("remote library open failed: catalog entry missing")
+            return false
+        }
+        guard let head = remote.head else {
+            DeviceSyncLog.snapshot("remote library open failed: head missing")
+            return false
+        }
         do {
             let payload = try await worker.remoteSnapshot(
                 workID: workID,
                 snapshotID: head.snapshotID
             )
-            guard let object = payload.objects.first,
-                  let snapshot = try? JSONDecoder().decode(WorkSnapshot.self, from: object.bytes),
-                  snapshot.documentID.rawValue == workID else { return false }
+            guard let object = payload.object(forEntityKey: "work/document") else {
+                DeviceSyncLog.snapshot("remote library open failed: missing work/document")
+                return false
+            }
+            guard let snapshot = try? JSONDecoder().decode(WorkSnapshot.self, from: object.bytes) else {
+                DeviceSyncLog.snapshot("remote library open failed: invalid work/document")
+                return false
+            }
+            guard snapshot.documentID.rawValue == workID else {
+                DeviceSyncLog.snapshot("remote library open failed: document identity mismatch")
+                return false
+            }
             let document = try snapshot.materializedDocument()
             let destinationURL = Self.availableSaveURL(
                 forTitle: document.title,

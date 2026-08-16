@@ -52,6 +52,20 @@ public struct RemoteSnapshotPayload: Equatable, Sendable {
         self.manifest = manifest
         self.objects = objects
     }
+
+    /// Returns the object referenced by a manifest entry. The server does not
+    /// promise JSON entry order, so callers must select by the stable entity
+    /// key rather than assuming `objects.first` is the document.
+    public func object(forEntityKey entityKey: String) -> LocalObject? {
+        guard
+            let root = try? JSONSerialization.jsonObject(with: manifest) as? [String: Any],
+            let entries = root["entries"] as? [[String: Any]],
+            let objectID = entries.first(where: { $0["entityKey"] as? String == entityKey })?["objectId"] as? String
+        else {
+            return nil
+        }
+        return objects.first { $0.objectID == objectID }
+    }
 }
 
 /// A server-persisted divergence that requires an explicit user choice.
@@ -265,10 +279,23 @@ public actor LocalSnapshotSyncWorker {
         guard let snapshot = try await store.snapshot(id: conflict.localSnapshotID) else {
             throw SnapshotSyncError.transport("missing local conflict snapshot")
         }
+        // A conflict can be selected before the original outbox attempt has
+        // completed. Re-send the complete immutable chain first; publishing
+        // an unregistered leaf would otherwise fail even though the local
+        // snapshot itself is valid.
+        _ = try await ensureSnapshotChain(
+            snapshot,
+            workID: conflict.workID,
+            accessToken: session.accessToken,
+            visited: []
+        )
         let expectedHead = try await transport.head(workID: conflict.workID, accessToken: session.accessToken)
         let head = try await transport.publish(
             workID: conflict.workID,
-            operationID: UUID(),
+            // The conflict ID is the durable operation identity for this
+            // explicit choice. A lost response can therefore be replayed
+            // without advancing the head twice.
+            operationID: conflict.conflictID,
             expectedHead: expectedHead,
             candidateSnapshotID: snapshot.id,
             accessToken: session.accessToken

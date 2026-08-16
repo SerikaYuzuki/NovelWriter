@@ -1,4 +1,5 @@
 import Foundation
+import NovelLocalStore
 import os
 
 enum DeviceSyncLog {
@@ -33,7 +34,35 @@ enum DeviceSyncLog {
     }
 
     static func token(_ error: any Error) -> String {
-        String(reflecting: type(of: error))
+        errorToken(error)
+    }
+
+    /// Keeps sync diagnostics actionable without logging request bodies,
+    /// credentials, document text, or filesystem URLs.
+    static func errorToken(_ error: any Error) -> String {
+        switch error {
+        case let error as LocalStoreError:
+            switch error {
+            case let .openFailed(message): "LocalStoreError.openFailed(\(message))"
+            case let .migrationFailed(message): "LocalStoreError.migrationFailed(\(message))"
+            case let .statementFailed(message): "LocalStoreError.statementFailed(\(message))"
+            case .invalidIdentity: "LocalStoreError.invalidIdentity"
+            case .invalidSnapshot: "LocalStoreError.invalidSnapshot"
+            case .objectMismatch: "LocalStoreError.objectMismatch"
+            case .missingWork: "LocalStoreError.missingWork"
+            case .missingSnapshot: "LocalStoreError.missingSnapshot"
+            }
+        case let error as SnapshotSyncError:
+            switch error {
+            case .invalidManifest: "SnapshotSyncError.invalidManifest"
+            case let .transport(message): "SnapshotSyncError.transport(\(message.prefix(240)))"
+            case .offline: "SnapshotSyncError.offline"
+            case .unauthorized: "SnapshotSyncError.unauthorized"
+            case .conflict: "SnapshotSyncError.conflict"
+            }
+        default:
+            String(reflecting: type(of: error))
+        }
     }
 
     static func userFacingMessage(_ message: String, error: any Error) -> String {
