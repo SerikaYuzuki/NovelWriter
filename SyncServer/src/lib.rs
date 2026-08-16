@@ -418,7 +418,10 @@ fn materializable_work_title(
         return None;
     }
     let document_id = object.get("documentID")?.as_str()?;
-    if Uuid::parse_str(document_id).ok()? != work_id {
+    let parsed_document_id = Uuid::parse_str(document_id).ok()?;
+    if parsed_document_id != work_id
+        || parsed_document_id.hyphenated().to_string().to_uppercase() != document_id
+    {
         return None;
     }
     let title = object.get("title")?.as_str()?;
@@ -2221,8 +2224,8 @@ mod tests {
         let work_id = Uuid::new_v4();
         let document = serde_json::json!({
             "snapshotVersion": 1,
-            "documentID": work_id,
-            "title": "実作品",
+            "documentID": work_id.hyphenated().to_string().to_uppercase(),
+            "title": "",
             "synopsis": "",
             "chapterOrder": [],
             "chapters": [],
@@ -2320,7 +2323,52 @@ mod tests {
         let entries: Vec<WorkCatalogEntry> = serde_json::from_slice(&body).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].work_id, work_id);
-        assert_eq!(entries[0].title, "実作品");
+        assert_eq!(entries[0].title, "名称未設定の作品");
         assert_eq!(entries[0].head.as_ref().unwrap().snapshot_id, snapshot_id);
+    }
+
+    #[test]
+    fn catalog_rejects_lowercase_document_id_as_non_materializable() {
+        let work_id = Uuid::new_v4();
+        let document = serde_json::json!({
+            "snapshotVersion": 1,
+            "documentID": work_id.hyphenated().to_string(),
+            "title": "作品",
+            "synopsis": "",
+            "chapterOrder": [],
+            "chapters": [],
+            "episodes": [],
+            "characterOrder": [],
+            "characters": [],
+            "plotCardOrder": [],
+            "plotCards": [],
+            "flagOrder": [],
+            "flags": [],
+            "worldNoteOrder": [],
+            "worldNotes": []
+        });
+        let bytes = Bytes::from(serde_json::to_vec(&document).unwrap());
+        let object_id = digest(&bytes);
+        let mut objects = HashMap::new();
+        objects.insert(
+            object_id.clone(),
+            ObjectRecord {
+                object_id: object_id.clone(),
+                byte_count: bytes.len(),
+                bytes,
+            },
+        );
+        let manifest = SnapshotManifest {
+            schema_version: 1,
+            work_id,
+            parent_snapshot_ids: Vec::new(),
+            entries: vec![SnapshotEntry {
+                entity_key: "work/document".into(),
+                object_id,
+                byte_count: objects.values().next().unwrap().byte_count,
+                content_type: "application/json".into(),
+            }],
+        };
+        assert!(materializable_work_title(work_id, &manifest, &objects).is_none());
     }
 }
