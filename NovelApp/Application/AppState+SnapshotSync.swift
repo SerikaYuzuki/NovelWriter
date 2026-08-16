@@ -111,33 +111,8 @@ extension AppState {
     func resolveSnapshotConflict(
         using choice: SnapshotSyncConflictChoice
     ) async -> Bool {
-        DeviceSyncLog.snapshot(
-            "conflict resolution requested choice=\(choice.rawValue)"
-        )
-        guard usesSnapshotSyncRuntime else {
-            DeviceSyncLog.snapshot("conflict resolution blocked(runtime-unavailable)")
-            return false
-        }
-        guard let conflict = snapshotSyncConflict else {
-            DeviceSyncLog.snapshot("conflict resolution blocked(conflict-missing)")
-            return false
-        }
-        guard let worker = localSnapshotSyncWorker else {
-            DeviceSyncLog.snapshot("conflict resolution blocked(worker-missing)")
-            return false
-        }
-        guard let store = localCanonicalStore else {
-            DeviceSyncLog.snapshot("conflict resolution blocked(store-missing)")
-            return false
-        }
-        guard permitsDocumentInteraction else {
-            DeviceSyncLog.snapshot(
-                "conflict resolution blocked(document-not-permitted) "
-                    + "ready=\(startupState.isReady) transition=\(isDocumentTransitionInProgress) "
-                    + "termination=\(isTerminationPending)"
-            )
-            return false
-        }
+        guard let context = snapshotConflictResolutionContext(for: choice) else { return false }
+        let conflict = context.conflict
         DeviceSyncLog.snapshot(
             "conflict resolution begin choice=\(choice.rawValue) "
                 + "conflict=\(conflict.conflictID.uuidString.lowercased())"
@@ -145,134 +120,209 @@ extension AppState {
         isSnapshotSyncInFlight = true
         defer { isSnapshotSyncInFlight = false }
         do {
+            let outcome: SnapshotSyncOutcome?
             switch choice {
             case .useThisDevice:
-                let outcome = try await worker.resolveUsingLocal(conflict)
-                lastSnapshotSyncOutcome = outcome
-                await refreshSnapshotConflict(for: conflict.workID, outcome: outcome)
-                return true
+                outcome = try await context.worker.resolveUsingLocal(conflict)
             case .useServer:
-                guard let head = try await worker.remoteHead(workID: conflict.workID) else {
-                    DeviceSyncLog.snapshot("conflict server choice blocked(remote-head-missing)")
-                    return false
-                }
-                guard head.snapshotID == conflict.remoteSnapshotID else {
-                    DeviceSyncLog.snapshot(
-                        "conflict server choice blocked(remote-head-changed) "
-                            + "expected=\(conflict.remoteSnapshotID) actual=\(head.snapshotID)"
-                    )
-                    return false
-                }
-                let payload = try await worker.remoteSnapshot(
-                    workID: conflict.workID,
-                    snapshotID: head.snapshotID
+                outcome = try await resolveSnapshotConflictUsingServer(
+                    conflict,
+                    worker: context.worker,
+                    store: context.store
                 )
-                guard let object = payload.object(forEntityKey: "work/document") else {
-                    DeviceSyncLog.snapshot("conflict server choice failed: missing work/document")
-                    return false
-                }
-                let remoteSnapshot: WorkSnapshot
-                do {
-                    remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
-                } catch {
-                    DeviceSyncLog.snapshot(
-                        "conflict server choice failed: invalid work/document",
-                        error: error
-                    )
-                    return false
-                }
-                let remoteDocument = try remoteSnapshot.materializedDocument()
-                guard remoteDocument.id == document.id else {
-                    DeviceSyncLog.snapshot("conflict server choice blocked(document-identity-mismatch)")
-                    return false
-                }
-                let expectedSession = documentSessionToken
-                guard await saveNow() else {
-                    DeviceSyncLog.snapshot("conflict server choice failed(local-save)")
-                    return false
-                }
-                guard documentSessionToken == expectedSession else {
-                    DeviceSyncLog.snapshot("conflict server choice blocked(session-changed-before-install)")
-                    return false
-                }
-                var state = try await store.workState(for: conflict.workID)
-                try await repository.save(remoteDocument, to: documentURL)
-                let installed: LocalSnapshotRecord
-                do {
-                    installed = try await store.installRemoteSnapshot(
-                        RemoteSnapshotInstallRequest(
-                            identity: .init(
-                                workID: conflict.workID,
-                                documentID: remoteDocument.id,
-                                documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
-                            ),
-                            payload: .init(
-                                snapshotID: payload.snapshotID,
-                                parentSnapshotIDs: payload.parentSnapshotIDs,
-                                manifest: payload.manifest,
-                                objects: payload.objects
-                            ),
-                            expectations: .init(
-                                remoteGeneration: head.generation,
-                                expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                                expectedLocalGeneration: state?.localGeneration
-                            )
-                        )
-                    )
-                } catch LocalStoreError.statementFailed("local snapshot changed") {
-                    // saveNow schedules the remote worker after its local
-                    // commit. If that worker acknowledges or coalesces the
-                    // just-saved state before this install transaction, retry
-                    // against the latest local pointer instead of surfacing a
-                    // false storage failure to the user.
-                    guard documentSessionToken == expectedSession else { return false }
-                    state = try await store.workState(for: conflict.workID)
-                    installed = try await store.installRemoteSnapshot(
-                        RemoteSnapshotInstallRequest(
-                            identity: .init(
-                                workID: conflict.workID,
-                                documentID: remoteDocument.id,
-                                documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
-                            ),
-                            payload: .init(
-                                snapshotID: payload.snapshotID,
-                                parentSnapshotIDs: payload.parentSnapshotIDs,
-                                manifest: payload.manifest,
-                                objects: payload.objects
-                            ),
-                            expectations: .init(
-                                remoteGeneration: head.generation,
-                                expectedLocalSnapshotID: state?.currentLocalSnapshotID,
-                                expectedLocalGeneration: state?.localGeneration
-                            )
-                        )
-                    )
-                }
-                guard documentSessionToken == expectedSession else {
-                    DeviceSyncLog.snapshot("conflict server choice blocked(session-changed-after-install)")
-                    return false
-                }
-                installDocument(remoteDocument, at: documentURL, attachments: [])
-                try await worker.resolveUsingServer(conflict)
-                lastSnapshotSyncOutcome = .uploaded(
-                    snapshotID: installed.id,
-                    generation: head.generation
-                )
-                await refreshSnapshotConflict(
-                    for: conflict.workID,
-                    outcome: lastSnapshotSyncOutcome
-                )
-                return true
             case .keepBoth:
                 // Keep-both requires the clone WorkID/root transaction from the
                 // versioned server contract. The UI exposes it only after that
                 // transaction is available; never silently choose a winner.
                 return false
             }
+            guard let outcome else { return false }
+            lastSnapshotSyncOutcome = outcome
+            await refreshSnapshotConflict(for: conflict.workID, outcome: outcome)
+            return true
         } catch {
             DeviceSyncLog.snapshot("conflict resolution failed", error: error)
             return false
         }
+    }
+
+    private struct SnapshotConflictResolutionContext {
+        let conflict: SnapshotSyncConflict
+        let worker: LocalSnapshotSyncWorker
+        let store: LocalSQLiteStore
+    }
+
+    private func snapshotConflictResolutionContext(
+        for choice: SnapshotSyncConflictChoice
+    ) -> SnapshotConflictResolutionContext? {
+        DeviceSyncLog.snapshot(
+            "conflict resolution requested choice=\(choice.rawValue)"
+        )
+        guard usesSnapshotSyncRuntime else {
+            DeviceSyncLog.snapshot("conflict resolution blocked(runtime-unavailable)")
+            return nil
+        }
+        guard let conflict = snapshotSyncConflict else {
+            DeviceSyncLog.snapshot("conflict resolution blocked(conflict-missing)")
+            return nil
+        }
+        guard let worker = localSnapshotSyncWorker else {
+            DeviceSyncLog.snapshot("conflict resolution blocked(worker-missing)")
+            return nil
+        }
+        guard let store = localCanonicalStore else {
+            DeviceSyncLog.snapshot("conflict resolution blocked(store-missing)")
+            return nil
+        }
+        guard permitsDocumentInteraction else {
+            DeviceSyncLog.snapshot(
+                "conflict resolution blocked(document-not-permitted) "
+                    + "ready=\(startupState.isReady) transition=\(isDocumentTransitionInProgress) "
+                    + "termination=\(isTerminationPending)"
+            )
+            return nil
+        }
+        return SnapshotConflictResolutionContext(conflict: conflict, worker: worker, store: store)
+    }
+
+    private func resolveSnapshotConflictUsingServer(
+        _ conflict: SnapshotSyncConflict,
+        worker: LocalSnapshotSyncWorker,
+        store: LocalSQLiteStore
+    ) async throws -> SnapshotSyncOutcome? {
+        guard let prepared = try await prepareRemoteSnapshotForConflict(conflict, worker: worker) else {
+            return nil
+        }
+        guard let installed = try await adoptRemoteSnapshotForConflict(
+            conflict,
+            prepared: prepared,
+            store: store
+        ) else {
+            return nil
+        }
+        try await worker.resolveUsingServer(conflict)
+        return .uploaded(snapshotID: installed.id, generation: prepared.head.generation)
+    }
+
+    private struct PreparedRemoteSnapshot {
+        let head: RemoteSnapshotHead
+        let payload: RemoteSnapshotPayload
+        let document: NovelDocument
+    }
+
+    private func prepareRemoteSnapshotForConflict(
+        _ conflict: SnapshotSyncConflict,
+        worker: LocalSnapshotSyncWorker
+    ) async throws -> PreparedRemoteSnapshot? {
+        guard let head = try await worker.remoteHead(workID: conflict.workID) else {
+            DeviceSyncLog.snapshot("conflict server choice blocked(remote-head-missing)")
+            return nil
+        }
+        guard head.snapshotID == conflict.remoteSnapshotID else {
+            DeviceSyncLog.snapshot(
+                "conflict server choice blocked(remote-head-changed) "
+                    + "expected=\(conflict.remoteSnapshotID) actual=\(head.snapshotID)"
+            )
+            return nil
+        }
+        let payload = try await worker.remoteSnapshot(
+            workID: conflict.workID,
+            snapshotID: head.snapshotID
+        )
+        guard let object = payload.object(forEntityKey: "work/document") else {
+            DeviceSyncLog.snapshot("conflict server choice failed: missing work/document")
+            return nil
+        }
+        let remoteSnapshot: WorkSnapshot
+        do {
+            remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
+        } catch {
+            DeviceSyncLog.snapshot(
+                "conflict server choice failed: invalid work/document",
+                error: error
+            )
+            return nil
+        }
+        let remoteDocument = try remoteSnapshot.materializedDocument()
+        guard remoteDocument.id == document.id else {
+            DeviceSyncLog.snapshot("conflict server choice blocked(document-identity-mismatch)")
+            return nil
+        }
+        return PreparedRemoteSnapshot(head: head, payload: payload, document: remoteDocument)
+    }
+
+    private func adoptRemoteSnapshotForConflict(
+        _ conflict: SnapshotSyncConflict,
+        prepared: PreparedRemoteSnapshot,
+        store: LocalSQLiteStore
+    ) async throws -> LocalSnapshotRecord? {
+        let expectedSession = documentSessionToken
+        guard await saveNow() else {
+            DeviceSyncLog.snapshot("conflict server choice failed(local-save)")
+            return nil
+        }
+        guard documentSessionToken == expectedSession else {
+            DeviceSyncLog.snapshot("conflict server choice blocked(session-changed-before-install)")
+            return nil
+        }
+        var state = try await store.workState(for: conflict.workID)
+        try await repository.save(prepared.document, to: documentURL)
+        let installed: LocalSnapshotRecord
+        do {
+            installed = try await installRemoteSnapshotForConflict(
+                conflict,
+                prepared: prepared,
+                state: state,
+                store: store
+            )
+        } catch LocalStoreError.statementFailed("local snapshot changed") {
+            // saveNow schedules the remote worker after its local commit. If
+            // that worker advances the local pointer before this transaction,
+            // retry against the latest pointer instead of reporting a false
+            // storage failure.
+            guard documentSessionToken == expectedSession else { return nil }
+            state = try await store.workState(for: conflict.workID)
+            installed = try await installRemoteSnapshotForConflict(
+                conflict,
+                prepared: prepared,
+                state: state,
+                store: store
+            )
+        }
+        guard documentSessionToken == expectedSession else {
+            DeviceSyncLog.snapshot("conflict server choice blocked(session-changed-after-install)")
+            return nil
+        }
+        installDocument(prepared.document, at: documentURL, attachments: [])
+        return installed
+    }
+
+    private func installRemoteSnapshotForConflict(
+        _ conflict: SnapshotSyncConflict,
+        prepared: PreparedRemoteSnapshot,
+        state: LocalWorkState?,
+        store: LocalSQLiteStore
+    ) async throws -> LocalSnapshotRecord {
+        try await store.installRemoteSnapshot(
+            RemoteSnapshotInstallRequest(
+                identity: .init(
+                    workID: conflict.workID,
+                    documentID: prepared.document.id,
+                    documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format()
+                ),
+                payload: .init(
+                    snapshotID: prepared.payload.snapshotID,
+                    parentSnapshotIDs: prepared.payload.parentSnapshotIDs,
+                    manifest: prepared.payload.manifest,
+                    objects: prepared.payload.objects
+                ),
+                expectations: .init(
+                    remoteGeneration: prepared.head.generation,
+                    expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                    expectedLocalGeneration: state?.localGeneration
+                )
+            )
+        )
     }
 
     private func refreshSnapshotConflict(
