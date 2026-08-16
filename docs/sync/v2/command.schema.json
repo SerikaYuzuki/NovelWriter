@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:command",
+  "title": "FUMINIWA sealed command v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "commandKind", "binding", "payload"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 2 },
+    "commandId": { "$ref": "#/$defs/uuid" },
+    "commandKind": {
+      "type": "string",
+      "enum": ["publish", "resolveDevice", "resolveServer", "cloneWork", "restore", "registerSnapshot", "finalizeObject"]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountFence", "accountId", "protocolEpoch", "serverInstanceId"],
+      "properties": {
+        "accountFence": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "protocolEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "serverInstanceId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "payload": { "type": "object" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

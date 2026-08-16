@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 2,
+  "name": "restore-never-rewinds-head",
+  "initial": {"work": "00000000-0000-4000-8000-000000000002", "currentSnapshot": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "selectedHistory": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "event": {"type": "restore", "selectedSnapshot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "expect": {"preRestoreCheckpoint": true, "newSnapshotParentCount": 2, "headSnapshotIsNew": true, "historyHeadRewound": false}
+}

@@ -988,3 +988,18 @@
   4. 既存の競合／履歴／復元契約はSnapshot Syncの3択とserver historyを正とする。CloudKit由来のNote／Work reviewを新Snapshotへ暗黙変換せず、旧実装のテスト・schema・adapterは削除する。
 - **置き換える範囲**: D-077 item 12の「旧CloudKitをread-only migration sourceとして保持」、D-078の「現行CloudKit runtimeは移行元scope」を本Decisionで破棄する。D-005／D-006／D-036／D-041／D-063／D-064／D-077／D-078のSQLite、portable、editor、lifecycle、account、server-readable境界は維持する。
 - **完了条件**: `Package.swift`とXcodeGen target graphに`NovelSyncCloudKit`／CloudKit framework／iCloud entitlementが無く、CloudKit source／testが削除され、macOS build、iOS compile、NovelKit tests、Rust server tests、`git diff --check`が通ること。旧CloudKit recordへ破壊的操作を行わないこと。
+
+## D-080: Snapshot Sync v2を新namespace・新DB・新Docker volumeの唯一live経路にする
+
+- **日付**: 2026-08-17 / **状態**: 設計採択・実装前
+- **内容**:
+  1. v2はD-077〜D-079のlocal-first、server-readable、Sign in with Apple、AccountID／AccountFence境界を引き継ぐが、v1のlive runtime、schema、wire、dual-read／dual-writeを置き換える非互換namespaceとする。v1はread-only archiveであり、live appはv1へfallbackしない。
+  2. clientは`Library/SnapshotSyncV2/`の新SQLite＋CASだけを開き、serverは`/v2` API、新PostgreSQL schema、新object-store／Docker volume（development既定名は`fuminiwa_sync_v2_pgdata`／`fuminiwa_sync_v2_objects`）だけを使う。旧DB／server rows／CloudKit／package snapshotは明示migration/importの入力に限り、削除・上書き・暗黙adoptしない。
+  3. SQLiteをlocal canonicalの唯一authorityとし、current pointer、immutable Snapshot、object reference、account binding、sealed commandをatomic checkpoint transactionへ含める。networkをtransactionへ持ち込まず、`.novelpkg`はImport／Export専用とする。macOS／iOSは同じv2 kernelを共有し、filesystem／UI adapterだけを分ける。
+  4. Snapshot IDとcommand digestは受信したRFC 8785 JCSのexact UTF-8 bytesのSHA-256とする。Rust serverはcanonical manifest／commandをPostgreSQL `BYTEA`へ保存し、JSONB再serializeでraw bytesを失わない。accepted bytes、digest、schemaVersion、account scopeをread-backできない状態を成功扱いにしない。
+  5. account switchはautomatic adopt／送信を禁止する。同一AccountID＋同一Fenceのtoken refreshだけ再開し、Fence変更はpresence／command／attemptをquarantineしてcapabilities／bootstrap／replanへ送る。別AccountIDはWorkIDを再bindせず、local editを継続し、明示Export／Importまたはnew WorkID cloneだけで移動する。
+  6. workごとにactive conflictを1件だけ持ち、解決は`useDevice`／`useServer`／`keepBoth`の3択に閉じる。未選択時にwinnerを決めず、useServerは事前checkpointを残し、keepBothは新WorkIDを作る。restoreは事前checkpoint後に新しい2-parent Snapshotを作り、headを過去へ巻き戻さない。
+  7. state-changing requestはnetwork byte以前にsealed commandとしてSQLiteへdurable化し、first-send後はexact retryする。物理RuntimeModeはv2 live、v1 archive read-only、v2 testを分離し、production URL／rootをtestへ注入できない。
+- **置き換える範囲**: D-077／D-078のv1 wire／schema／runtimeをv2 contractへ置き換える。D-077〜D-079のoffline editing、原稿保全、SQLite authority、`.novelpkg` portable境界、D-041のsession／IME／operation gate、D-078のApple-only／server-readable／AccountID／Fenceは維持する。`docs/sync/v1/`は編集・削除せず履歴として残す。
+- **詳細**: [SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)と`docs/sync/v2/`を正とする。schema、wire、state machine、canonical hash、account switch、conflict、restore fixtureは同一versioned contractとして変更する。
+- **完了条件**: Swift／Rustの独立conformance harnessがv2 fixtureのJCS bytes、hash、schema failure、sealed command、account isolation、single conflict、3択、restore、restartを一致検証し、v2 DB／server namespace／Docker volumeの新規構成、macOS／iOS共有kernel、旧archiveの非破壊read-only境界を確認するまでv2 live cutoverを宣言しない。
