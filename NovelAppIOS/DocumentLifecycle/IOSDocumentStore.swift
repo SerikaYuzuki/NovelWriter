@@ -76,6 +76,7 @@ final class IOSDocumentStore {
     var saveState: IOSSaveState = .saved
     var authUIState: IOSAuthUIState = .unavailable
     var snapshotSyncOutcome: SnapshotSyncOutcome = .notStarted
+    var snapshotSyncConflict: SnapshotSyncConflict?
     var isSnapshotSyncInFlight = false
     var isDocumentTransitionInProgress = false
     /// 執筆画面から一覧へ戻る間は、端末保存を待つが全画面の準備表示は出さない。

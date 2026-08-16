@@ -108,6 +108,7 @@ extension IOSDocumentStore {
                 let outcome = try await worker.sync(workID: workID)
                 guard let self else { return }
                 snapshotSyncOutcome = outcome
+                await refreshSnapshotConflict(for: workID, outcome: outcome)
                 DeviceSyncLog.snapshot("ios finished \(String(describing: outcome))")
             } catch {
                 guard let self else { return }
@@ -128,6 +129,7 @@ extension IOSDocumentStore {
         do {
             let outcome = try await worker.sync(workID: document.id)
             snapshotSyncOutcome = outcome
+            await refreshSnapshotConflict(for: document.id, outcome: outcome)
             DeviceSyncLog.snapshot("ios explicit finished \(String(describing: outcome))")
             switch outcome {
             case .uploaded, .idle:
@@ -139,6 +141,24 @@ extension IOSDocumentStore {
             snapshotSyncOutcome = .offline
             DeviceSyncLog.snapshot("ios explicit failed", error: error)
             return false
+        }
+    }
+
+    private func refreshSnapshotConflict(for workID: UUID, outcome: SnapshotSyncOutcome) async {
+        guard case .needsChoice = outcome else {
+            snapshotSyncConflict = nil
+            return
+        }
+        guard let worker = localSnapshotSyncWorker else { return }
+        do {
+            snapshotSyncConflict = try await worker.conflicts(workID: workID).first
+            if let conflict = snapshotSyncConflict {
+                DeviceSyncLog.snapshot(
+                    "ios conflict loaded id=\(conflict.conflictID.uuidString.lowercased())"
+                )
+            }
+        } catch {
+            DeviceSyncLog.snapshot("ios conflict load failed", error: error)
         }
     }
 

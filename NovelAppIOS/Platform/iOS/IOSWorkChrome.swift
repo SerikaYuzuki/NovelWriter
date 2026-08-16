@@ -12,7 +12,8 @@ struct IOSWorkSaveStatusButton: View {
             if store.usesSnapshotSyncRuntime {
                 IOSSnapshotSyncStatusControl(
                     saveState: store.saveState,
-                    outcome: store.snapshotSyncOutcome
+                    outcome: store.snapshotSyncOutcome,
+                    conflict: store.snapshotSyncConflict
                 )
             } else {
                 IOSDeviceSyncStatusControl(
@@ -48,6 +49,7 @@ struct IOSWorkSaveStatusButton: View {
 private struct IOSSnapshotSyncStatusControl: View {
     let saveState: IOSSaveState
     let outcome: SnapshotSyncOutcome
+    let conflict: SnapshotSyncConflict?
     @State private var showsDetails = false
 
     private var title: String {
@@ -77,6 +79,9 @@ private struct IOSSnapshotSyncStatusControl: View {
         case .offline:
             return "変更内容はこの端末に保存されています。接続が戻ると自動で同期します。"
         case .needsChoice:
+            if let conflict {
+                return "端末の版とサーバーの版が競合しています（\(conflict.conflictID.uuidString.prefix(8))）。両方を保持しているため、残す版を選ぶ必要があります。"
+            }
             return "この端末の版は保持されています。サーバーの版と比較して、残す版を選ぶ必要があります。"
         }
     }
@@ -115,6 +120,23 @@ private struct IOSSnapshotSyncStatusControl: View {
                 Text(detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if case .needsChoice = outcome, let conflict {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("端末の版")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(conflict.localSnapshotID)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                        Text("サーバーの版")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(conflict.remoteSnapshotID.isEmpty ? "まだサーバー側の版はありません" : conflict.remoteSnapshotID)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
             }
             .padding()
             .frame(width: 300, alignment: .leading)

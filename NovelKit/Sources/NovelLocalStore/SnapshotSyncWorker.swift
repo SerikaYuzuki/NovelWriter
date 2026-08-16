@@ -16,6 +16,33 @@ public struct RemoteSnapshotHead: Codable, Equatable, Sendable {
     }
 }
 
+/// A server-persisted divergence that requires an explicit user choice.
+/// Snapshot IDs are retained so the eventual resolver can compare immutable
+/// branches without guessing which side should win.
+public struct SnapshotSyncConflict: Codable, Equatable, Sendable, Identifiable {
+    public let conflictID: UUID
+    public let workID: UUID
+    public let baseSnapshotID: String?
+    public let localSnapshotID: String
+    public let remoteSnapshotID: String
+    public let state: String
+    public let createdAt: String
+
+    public var id: UUID {
+        conflictID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conflictID = "conflict_id"
+        case workID = "work_id"
+        case baseSnapshotID = "base_snapshot_id"
+        case localSnapshotID = "local_snapshot_id"
+        case remoteSnapshotID = "remote_snapshot_id"
+        case state
+        case createdAt = "created_at"
+    }
+}
+
 public enum SnapshotSyncOutcome: Equatable, Sendable {
     case notStarted
     case offline
@@ -42,6 +69,7 @@ public protocol SnapshotSyncTransport: Sendable {
         candidateSnapshotID: String,
         accessToken: String
     ) async throws -> RemoteSnapshotHead
+    func conflicts(workID: UUID, accessToken: String) async throws -> [SnapshotSyncConflict]
 }
 
 /// Replays durable intents after connectivity returns. Local commit never
@@ -119,6 +147,17 @@ public actor LocalSnapshotSyncWorker {
             }
         }
         return latestOutcome
+    }
+
+    public func conflicts(workID: UUID) async throws -> [SnapshotSyncConflict] {
+        let maybeSession: FuminiwaSession?
+        do {
+            maybeSession = try await sessionProvider()
+        } catch {
+            return []
+        }
+        guard let session = maybeSession else { return [] }
+        return try await transport.conflicts(workID: workID, accessToken: session.accessToken)
     }
 
     private func ensureSnapshotChain(
@@ -233,6 +272,19 @@ public struct FuminiwaHTTPSnapshotSyncTransport: SnapshotSyncTransport, Sendable
         }
         try validate(response, status: 200 ..< 300, data: data)
         return try JSONDecoder().decode(PublishResponse.self, from: data).head
+    }
+
+    public func conflicts(workID: UUID, accessToken: String) async throws -> [SnapshotSyncConflict] {
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent(
+                "v1/works/\(workID.uuidString.lowercased())/conflicts"
+            )
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validate(response, status: 200 ..< 300, data: data)
+        return try JSONDecoder().decode([SnapshotSyncConflict].self, from: data)
     }
 
     private func send(_ request: URLRequest, expected: Range<Int>) async throws {
