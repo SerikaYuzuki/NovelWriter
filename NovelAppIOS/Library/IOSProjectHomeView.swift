@@ -98,7 +98,13 @@ struct IOSProjectHomeView: View {
         } else if store.canExplicitlySyncCurrentWork {
             Section {
                 Button {
-                    Task { await store.saveAndSyncNow() }
+                    Task {
+                        if store.usesSnapshotSyncRuntime {
+                            _ = await store.saveAndSyncSnapshotNow()
+                        } else {
+                            _ = await store.saveAndSyncNow()
+                        }
+                    }
                 } label: {
                     Label("サーバーと同期", systemImage: "arrow.clockwise")
                 }
