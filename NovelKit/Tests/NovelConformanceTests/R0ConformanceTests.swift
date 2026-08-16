@@ -107,6 +107,27 @@ struct R0ConformanceTests {
         #expect(keepBoth["partialOriginalOrCloneCommitAllowed"] as? Bool == false)
     }
 
+    @Test("durable local Intent blocks remote fast-forward")
+    func remoteAdvanceReplayAgrees() throws {
+        let file = try #require(
+            fixtureFiles().first { $0.lastPathComponent == "saved-local-pending-remote-advance.json" }
+        )
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(root["scenarioId"] as? String == "saved-local-pending-remote-advance")
+        let initial = try #require(root["initialState"] as? [String: Any])
+        let expected = try #require(root["expected"] as? [String: Any])
+        let command = try #require(root["command"] as? [String: Any])
+        #expect(command["type"] as? String == "stageRemoteAndEvaluateFastForward")
+        #expect(initial["editorHasUnsavedChanges"] as? Bool == false)
+        #expect(initial["pendingSyncIntent"] is [String: Any])
+        #expect(expected["remoteStoredInInbox"] as? Bool == true)
+        #expect(expected["fastForwardApplied"] as? Bool == false)
+        #expect(expected["currentLocalSnapshotId"] as? String == initial["currentLocalSnapshotId"] as? String)
+        #expect(expected["pendingSyncIntentPreserved"] as? Bool == true)
+        #expect(expected["remoteCallbackInjectedIntoActiveEditor"] as? Bool == false)
+        #expect(expected["nextAction"] as? String == "reconcile")
+    }
+
     private func fixtureFiles() -> [URL] {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

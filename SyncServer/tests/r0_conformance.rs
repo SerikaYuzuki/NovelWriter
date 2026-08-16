@@ -328,6 +328,70 @@ fn replay_conflict_resolution_fixture(value: &Value, source: &Path) -> usize {
     1
 }
 
+fn replay_remote_advance_fixture(value: &Value, source: &Path) -> usize {
+    let Value::Object(object) = value else {
+        return 0;
+    };
+    if object.get("scenarioId")
+        != Some(&Value::String(
+            "saved-local-pending-remote-advance".to_owned(),
+        ))
+    {
+        return 0;
+    }
+    let initial = object
+        .get("initialState")
+        .and_then(Value::as_object)
+        .expect("remote advance initial state is required");
+    let expected = object
+        .get("expected")
+        .and_then(Value::as_object)
+        .expect("remote advance expected state is required");
+    let command = object
+        .get("command")
+        .and_then(Value::as_object)
+        .expect("remote advance command is required");
+    assert_eq!(
+        command.get("type"),
+        Some(&Value::String(
+            "stageRemoteAndEvaluateFastForward".to_owned()
+        ))
+    );
+    assert_eq!(
+        initial.get("editorHasUnsavedChanges"),
+        Some(&Value::Bool(false))
+    );
+    assert!(initial
+        .get("pendingSyncIntent")
+        .is_some_and(Value::is_object));
+    assert_eq!(
+        expected.get("remoteStoredInInbox"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        expected.get("fastForwardApplied"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        expected.get("currentLocalSnapshotId"),
+        initial.get("currentLocalSnapshotId")
+    );
+    assert_eq!(
+        expected.get("pendingSyncIntentPreserved"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        expected.get("remoteCallbackInjectedIntoActiveEditor"),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        expected.get("nextAction"),
+        Some(&Value::String("reconcile".to_owned()))
+    );
+    let _ = source;
+    1
+}
+
 #[test]
 fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -354,6 +418,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
             scenarios += verify_scenarios(&value, file, "&", &mut scenario_ids);
             replays += replay_lost_ack_fixture(&value, file);
             replays += replay_conflict_resolution_fixture(&value, file);
+            replays += replay_remote_advance_fixture(&value, file);
         }
     }
     assert!(
@@ -365,7 +430,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
         "reviewed fixtures must contain scenario records"
     );
     assert_eq!(
-        replays, 2,
-        "lost-ack and conflict-resolution replay fixtures are required"
+        replays, 3,
+        "lost-ack, conflict-resolution, and remote-advance replay fixtures are required"
     );
 }

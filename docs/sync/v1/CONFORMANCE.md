@@ -27,6 +27,9 @@ The current slice verifies:
 - the three-choice resolution scenario is replayed far enough to prove that
   `useThisDevice`, `useOnline`, and `keepBoth` all preserve a newer local
   generation, avoid active-editor injection, and keep-both remains atomic.
+- the clean-editor/pending-Intent remote-advance scenario proves that a
+  durable local save is staged for reconciliation instead of being silently
+  replaced by a newer remote head.
 
 This is a required early gate, not a claim that the entire R0 state-machine
 contract has passed. This is the first executable scenario replay; the full

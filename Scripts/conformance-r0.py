@@ -209,6 +209,27 @@ def replay_conflict_resolution_fixture(node: Any, source: Path) -> int:
     return 1
 
 
+def replay_remote_advance_fixture(node: Any, source: Path) -> int:
+    if not isinstance(node, dict) or node.get("scenarioId") != "saved-local-pending-remote-advance":
+        return 0
+    initial = node.get("initialState", {})
+    expected = node.get("expected", {})
+    command = node.get("command", {})
+    if command.get("type") != "stageRemoteAndEvaluateFastForward":
+        raise AssertionError(f"{source}: remote-advance command changed")
+    if initial.get("editorHasUnsavedChanges") is not False or initial.get("pendingSyncIntent") is None:
+        raise AssertionError(f"{source}: fixture must model a clean editor with a durable Intent")
+    if expected.get("remoteStoredInInbox") is not True or expected.get("fastForwardApplied") is not False:
+        raise AssertionError(f"{source}: pending local work must block fast-forward")
+    if expected.get("currentLocalSnapshotId") != initial.get("currentLocalSnapshotId"):
+        raise AssertionError(f"{source}: remote staging replaced the current local snapshot")
+    if expected.get("pendingSyncIntentPreserved") is not True or expected.get("remoteCallbackInjectedIntoActiveEditor") is not False:
+        raise AssertionError(f"{source}: remote advance bypassed local reconciliation")
+    if expected.get("nextAction") != "reconcile":
+        raise AssertionError(f"{source}: pending local work must schedule reconciliation")
+    return 1
+
+
 def check_file(path: Path) -> tuple[int, int, int, int]:
     try:
         text = path.read_bytes().decode("utf-8")
@@ -224,7 +245,9 @@ def check_file(path: Path) -> tuple[int, int, int, int]:
         1,
         canonical_assertions(value, path, "$") ,
         scenario_assertions(value, path),
-        replay_lost_ack_fixture(value, path) + replay_conflict_resolution_fixture(value, path),
+        replay_lost_ack_fixture(value, path)
+        + replay_conflict_resolution_fixture(value, path)
+        + replay_remote_advance_fixture(value, path),
     )
 
 
@@ -247,7 +270,7 @@ def main() -> int:
         replay_count += replays
     print(
         f"R0 fixture integrity: {json_count} JSON files, {vector_count} canonical vectors, "
-        f"{scenario_count} scenario records, {replay_count} executable replay"
+        f"{scenario_count} scenario records, {replay_count} executable replays"
     )
     return 0
 
