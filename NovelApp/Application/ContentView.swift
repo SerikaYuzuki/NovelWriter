@@ -122,6 +122,10 @@ struct ContentView: View {
         .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
             isSnapshotConflictPresented = conflict != nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
+            guard appState.snapshotSyncConflict != nil else { return }
+            isSnapshotConflictPresented = true
+        }
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: 8) {
                 if appState.startupState.isReady,
@@ -180,6 +184,7 @@ extension Notification.Name {
     static let presentChapterTitleEditor = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterTitleEditor")
     static let presentChapterMemo = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterMemo")
     static let presentAttachmentImporter = Notification.Name("dev.serikayuzuki.fuminiwa.presentAttachmentImporter")
+    static let presentSnapshotSyncConflict = Notification.Name("dev.serikayuzuki.fuminiwa.presentSnapshotSyncConflict")
 }
 
 #Preview {

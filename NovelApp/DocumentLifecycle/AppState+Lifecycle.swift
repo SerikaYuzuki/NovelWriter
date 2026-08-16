@@ -61,7 +61,10 @@ extension AppState {
     }
 
     var permitsReturnToCloudLibrary: Bool {
-        deviceSyncRuntime?.library != nil && permitsDocumentInteraction
+        // The SQLite/Snapshot lane has its own shelf and does not populate the
+        // retired DeviceSync runtime. Keep the toolbar action available for
+        // both live runtimes while retaining the normal document gate.
+        (deviceSyncRuntime?.library != nil || usesSnapshotSyncRuntime) && permitsDocumentInteraction
     }
 
     /// Workbenchの作品を端末へ確定してから、同じwindowでcloud shelfへ戻る。
@@ -71,7 +74,7 @@ extension AppState {
         expectedSession: DocumentSessionToken? = nil,
         localFirst: Bool = false
     ) async -> Bool {
-        guard deviceSyncRuntime?.library != nil else { return false }
+        guard permitsReturnToCloudLibrary else { return false }
         let returned = await performForCurrentDocument(
             expectedSession: expectedSession,
             ifStale: false
@@ -100,11 +103,17 @@ extension AppState {
             return true
         }
         if returned {
-            _ = await refreshLocalStartupLibrary()
-            if localFirst {
-                scheduleStartupLibraryRemoteRefreshIfNeeded()
-            } else {
+            if usesSnapshotSyncRuntime {
+                // Snapshot shelf owns its catalog and local SQLite projection;
+                // the legacy package library refresh is intentionally bypassed.
                 await refreshStartupLibrary()
+            } else {
+                _ = await refreshLocalStartupLibrary()
+                if localFirst {
+                    scheduleStartupLibraryRemoteRefreshIfNeeded()
+                } else {
+                    await refreshStartupLibrary()
+                }
             }
         }
         return returned

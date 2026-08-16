@@ -19,6 +19,24 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let reviewDeviceSyncChanges: () -> Void
 
     var body: some CustomizableToolbarContent {
+        if appState.startupState.isReady {
+            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
+                Button {
+                    let session = appState.documentSessionToken
+                    Task {
+                        _ = await appState.returnToStartupLibrary(expectedSession: session)
+                    }
+                } label: {
+                    Label("作品一覧", systemImage: "books.vertical")
+                }
+                .help("作品一覧へ戻る")
+                .disabled(!appState.permitsReturnToCloudLibrary)
+                .accessibilityIdentifier("workbench.library")
+            }
+            .customizationBehavior(.disabled)
+            .defaultCustomization(.visible)
+        }
+
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
@@ -40,7 +58,15 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 if appState.usesSnapshotSyncRuntime {
                     SnapshotSyncStatusControl(
                         saveState: appState.saveState,
-                        outcome: appState.lastSnapshotSyncOutcome
+                        outcome: appState.lastSnapshotSyncOutcome,
+                        isSyncInFlight: appState.isSnapshotSyncInFlight,
+                        canReviewConflict: appState.snapshotSyncConflict != nil,
+                        reviewConflict: {
+                            NotificationCenter.default.post(
+                                name: .presentSnapshotSyncConflict,
+                                object: nil
+                            )
+                        }
                     )
                 } else {
                     DeviceSyncStatusControl(

@@ -5,10 +5,16 @@ import SwiftUI
 struct SnapshotSyncStatusControl: View {
     let saveState: DocumentSaveState
     let outcome: SnapshotSyncOutcome
+    let isSyncInFlight: Bool
+    let canReviewConflict: Bool
+    let reviewConflict: () -> Void
 
     @State private var showsDetails = false
 
     private var title: String {
+        if isSyncInFlight {
+            return "サーバーと同期中"
+        }
         if saveState != .saved {
             return "この端末へ保存中"
         }
@@ -22,6 +28,9 @@ struct SnapshotSyncStatusControl: View {
     }
 
     private var detail: String {
+        if isSyncInFlight {
+            return "保存済みの変更をサーバーへ送っています。執筆はそのまま続けられます。"
+        }
         if saveState != .saved {
             return "変更内容をこの端末へ保存しています。入力はそのまま続けられます。"
         }
@@ -40,6 +49,9 @@ struct SnapshotSyncStatusControl: View {
     }
 
     private var systemImage: String {
+        if isSyncInFlight {
+            return "arrow.triangle.2.circlepath"
+        }
         if saveState != .saved {
             return "arrow.triangle.2.circlepath"
         }
@@ -63,8 +75,19 @@ struct SnapshotSyncStatusControl: View {
     }
 
     var body: some View {
-        Button { showsDetails.toggle() } label: {
-            Image(systemName: systemImage)
+        Button {
+            if case .needsChoice = outcome, canReviewConflict {
+                reviewConflict()
+            } else {
+                showsDetails.toggle()
+            }
+        } label: {
+            if isSyncInFlight {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: systemImage)
+            }
         }
         .buttonStyle(.plain)
         .foregroundStyle(isWarning ? .orange : .secondary)
@@ -72,7 +95,7 @@ struct SnapshotSyncStatusControl: View {
         .contentShape(Rectangle())
         .help(title)
         .accessibilityLabel(title)
-        .accessibilityHint("保存と同期の詳細を表示します")
+        .accessibilityHint(canReviewConflict ? "同期の競合内容を確認します" : "保存と同期の詳細を表示します")
         .accessibilityIdentifier("snapshotSync.status")
         .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
@@ -81,6 +104,14 @@ struct SnapshotSyncStatusControl: View {
                 Text(detail)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if case .needsChoice = outcome, canReviewConflict {
+                    Button("変更を確認") {
+                        showsDetails = false
+                        reviewConflict()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
             .padding(12)
             .frame(width: 300, alignment: .leading)
