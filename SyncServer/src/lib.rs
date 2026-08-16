@@ -364,13 +364,17 @@ pub struct ObjectRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotManifest {
+    // Keep the serialized order identical to Swift JSONEncoder.sortedKeys.
+    // Snapshot IDs are the SHA-256 of these canonical bytes. The database
+    // stores JSONB, so this order also matters when an existing snapshot is
+    // read back after a restart.
+    pub entries: Vec<SnapshotEntry>,
+    #[serde(rename = "parentSnapshotIds")]
+    pub parent_snapshot_ids: Vec<String>,
     #[serde(rename = "schemaVersion")]
     pub schema_version: u64,
     #[serde(rename = "workId")]
     pub work_id: Uuid,
-    #[serde(rename = "parentSnapshotIds")]
-    pub parent_snapshot_ids: Vec<String>,
-    pub entries: Vec<SnapshotEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1032,7 +1036,16 @@ async fn register_snapshot(
     if manifest.work_id != work_id {
         return Err(ApiError::InvalidRequest("workId path/body mismatch".into()));
     }
-    let expected_id = digest(&body);
+    // Snapshot IDs are hashes of the exact canonical JSON bytes emitted by
+    // the clients.  JSONB persistence and serde re-serialization must not
+    // silently create a different byte representation for the same ID.
+    let canonical = canonical_manifest_bytes(&manifest)?;
+    if body.as_ref() != canonical.as_slice() {
+        return Err(ApiError::InvalidRequest(
+            "manifest must use canonical JSON encoding".into(),
+        ));
+    }
+    let expected_id = digest(&canonical);
     if expected_id != snapshot_id {
         return Err(ApiError::InvalidRequest(
             "snapshotId must be SHA-256(canonical manifest bytes)".into(),
@@ -1068,7 +1081,7 @@ async fn get_snapshot(
     State((state, config)): State<HandlerState>,
     headers: HeaderMap,
     Path((work_id, snapshot_id)): Path<(Uuid, String)>,
-) -> Result<Json<SnapshotManifest>, ApiError> {
+) -> Result<Response, ApiError> {
     let _principal = authenticate_bearer(&state, &headers, &config).await?;
     let manifest = state
         .read()
@@ -1080,7 +1093,21 @@ async fn get_snapshot(
     if manifest.work_id != work_id {
         return Err(ApiError::NotFound("snapshot".into()));
     }
-    Ok(Json(manifest))
+    let bytes = canonical_manifest_bytes(&manifest)?;
+    let content_length = bytes.len();
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/json".parse().expect("static content type"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        content_length
+            .to_string()
+            .parse()
+            .expect("content length is numeric"),
+    );
+    Ok(response)
 }
 
 async fn list_works(
@@ -1435,6 +1462,14 @@ async fn authenticate_bearer(
 
 fn parse_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
     serde_json::from_slice(body).map_err(|error| ApiError::InvalidRequest(error.to_string()))
+}
+
+/// Returns the wire representation used for snapshot IDs. `serde_json` uses
+/// a sorted map by default, so converting through `Value` recursively sorts
+/// object keys while preserving array order and scalar formatting.
+fn canonical_manifest_bytes(manifest: &SnapshotManifest) -> Result<Vec<u8>, ApiError> {
+    let value = serde_json::to_value(manifest).map_err(|_| ApiError::Internal)?;
+    serde_json::to_vec(&value).map_err(|_| ApiError::Internal)
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -2039,6 +2074,25 @@ mod tests {
         assert_eq!(retry.status(), StatusCode::OK);
         let retry_body = axum::body::to_bytes(retry.into_body(), 4096).await.unwrap();
         assert!(String::from_utf8_lossy(&retry_body).contains("alreadyRegistered"));
+
+        // A snapshot ID is the digest of the Swift canonical bytes. The
+        // server persists manifests as JSONB, so GET must reproduce those
+        // bytes exactly after the parse/re-serialize round trip.
+        let fetched = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/works/{work_id}/snapshots/{snapshot_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fetched.status(), StatusCode::OK);
+        let fetched_bytes = axum::body::to_bytes(fetched.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(fetched_bytes.as_ref(), manifest.as_bytes());
     }
 
     #[tokio::test]
