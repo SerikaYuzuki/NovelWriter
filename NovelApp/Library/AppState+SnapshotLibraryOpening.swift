@@ -15,13 +15,17 @@ extension AppState {
               let worker = localSnapshotSyncWorker,
               let store = localCanonicalStore else { return false }
 
-        if row.availability == .needsReview,
-           let localURL = snapshotLocalURL(for: workID),
-           let loaded = try? await repository.load(from: localURL) {
-            let attachments = (try? await loadAttachmentsThrowing(for: localURL)) ?? []
-            installDocument(loaded, at: localURL, attachments: attachments)
-            await loadSnapshotConflict(for: workID, worker: worker)
-            return startupState.isReady
+        if row.availability == .needsReview {
+            // Older local works may have been committed before the URL
+            // preference was introduced. Reconstructing from SQLite keeps
+            // the conflict review reachable instead of silently failing the
+            // button when the package path is missing or stale.
+            return await openLocalSnapshotCopy(
+                workID: workID,
+                worker: worker,
+                store: store,
+                expectedSession: expectedSession
+            )
         }
 
         if let localURL = snapshotLocalURL(for: workID),
@@ -89,6 +93,67 @@ extension AppState {
             DeviceSyncLog.snapshot("remote library open failed", error: error)
             return false
         }
+    }
+
+    private func openLocalSnapshotCopy(
+        workID: UUID,
+        worker: LocalSnapshotSyncWorker,
+        store: LocalSQLiteStore,
+        expectedSession: DocumentSessionToken
+    ) async -> Bool {
+        if let localURL = snapshotLocalURL(for: workID),
+           FileManager.default.fileExists(atPath: localURL.path),
+           let loaded = try? await repository.load(from: localURL) {
+            let attachments = (try? await loadAttachmentsThrowing(for: localURL)) ?? []
+            installDocument(loaded, at: localURL, attachments: attachments)
+            await loadSnapshotConflict(for: workID, worker: worker)
+            return startupState.isReady
+        }
+
+        do {
+            guard let state = try await store.workState(for: workID),
+                  let snapshotID = state.currentLocalSnapshotID,
+                  let snapshot = try await store.snapshot(id: snapshotID),
+                  let objectID = Self.manifestObjectID(snapshot.manifest),
+                  let objectBytes = try await store.object(id: objectID) else {
+                DeviceSyncLog.snapshot("local snapshot open failed: missing local state")
+                return false
+            }
+            let workSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: objectBytes)
+            guard workSnapshot.documentID.rawValue == workID else {
+                DeviceSyncLog.snapshot("local snapshot open failed: document identity mismatch")
+                return false
+            }
+            let document = try workSnapshot.materializedDocument()
+            let destinationURL = Self.availableSaveURL(
+                forTitle: document.title,
+                fileManager: fileManager,
+                directoryName: defaultDocumentDirectoryName
+            )
+            try await repository.save(document, to: destinationURL)
+            let readBack = try await repository.load(from: destinationURL)
+            guard readBack == document, documentSessionToken == expectedSession else {
+                DeviceSyncLog.snapshot("local snapshot open failed: readback or session changed")
+                return false
+            }
+            installDocument(readBack, at: destinationURL, attachments: [])
+            userDefaults.set(
+                destinationURL.standardizedFileURL.path,
+                forKey: "fuminiwa.snapshot.documentURL.\(workID.uuidString.lowercased())"
+            )
+            await loadSnapshotConflict(for: workID, worker: worker)
+            DeviceSyncLog.snapshot("local snapshot materialized for conflict review")
+            return startupState.isReady
+        } catch {
+            DeviceSyncLog.snapshot("local snapshot open failed", error: error)
+            return false
+        }
+    }
+
+    private static func manifestObjectID(_ manifest: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: manifest) as? [String: Any],
+              let entries = root["entries"] as? [[String: Any]] else { return nil }
+        return entries.first(where: { $0["entityKey"] as? String == "work/document" })?["objectId"] as? String
     }
 
     private func snapshotLocalURL(for workID: UUID) -> URL? {
