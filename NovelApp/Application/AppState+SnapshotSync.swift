@@ -4,6 +4,15 @@ import NovelLocalStore
 import NovelSync
 
 extension AppState {
+    /// Projects the server's authoritative pending-conflict list into the
+    /// single conflict shown by the macOS sheet. An empty successful response
+    /// is a resolved state, including after choosing the server's version.
+    static func snapshotConflictProjection(
+        _ conflicts: [SnapshotSyncConflict]
+    ) -> SnapshotSyncConflict? {
+        conflicts.last
+    }
+
     private static func snapshotSyncErrorToken(_ error: Error) -> String {
         if error is LocalStoreError {
             return DeviceSyncLog.errorToken(error)
@@ -268,19 +277,19 @@ extension AppState {
 
     private func refreshSnapshotConflict(
         for workID: UUID,
-        outcome: SnapshotSyncOutcome
+        outcome _: SnapshotSyncOutcome
     ) async {
         guard let worker = localSnapshotSyncWorker else { return }
         do {
             let conflicts = try await worker.conflicts(workID: workID)
-            if let conflict = conflicts.last {
-                snapshotSyncConflict = conflict
-                if conflicts.count > 1 {
-                    DeviceSyncLog.snapshot("conflicts loaded count=\(conflicts.count)")
-                }
-            } else if case .needsChoice = outcome {
-                snapshotSyncConflict = nil
+            snapshotSyncConflict = Self.snapshotConflictProjection(conflicts)
+            if conflicts.count > 1 {
+                DeviceSyncLog.snapshot("conflicts loaded count=\(conflicts.count)")
             }
+            // A successful explicit resolution reports `.uploaded` (the
+            // installed remote branch is now the local canonical head), not
+            // `.needsChoice`. The empty projection above therefore dismisses
+            // a resolved conflict instead of leaving a stale sheet visible.
         } catch {
             // Keep an already-loaded conflict visible when a status refresh
             // is temporarily offline. A failed refresh must not hide the
