@@ -57,8 +57,11 @@ extension AppState {
                 DeviceSyncLog.snapshot("remote library open failed: missing work/document")
                 return false
             }
-            guard let snapshot = try? JSONDecoder().decode(WorkSnapshot.self, from: object.bytes) else {
-                DeviceSyncLog.snapshot("remote library open failed: invalid work/document")
+            let snapshot: WorkSnapshot
+            do {
+                snapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
+            } catch {
+                DeviceSyncLog.snapshot("remote library open failed: invalid work/document", error: error)
                 return false
             }
             guard snapshot.documentID.rawValue == workID else {

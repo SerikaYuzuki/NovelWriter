@@ -5,6 +5,9 @@ import NovelSync
 
 extension AppState {
     private static func snapshotSyncErrorToken(_ error: Error) -> String {
+        if error is LocalStoreError {
+            return DeviceSyncLog.errorToken(error)
+        }
         guard let error = error as? SnapshotSyncError else {
             return String(reflecting: type(of: error))
         }
@@ -111,7 +114,7 @@ extension AppState {
             case .useThisDevice:
                 let outcome = try await worker.resolveUsingLocal(conflict)
                 lastSnapshotSyncOutcome = outcome
-                snapshotSyncConflict = nil
+                await refreshSnapshotConflict(for: conflict.workID, outcome: outcome)
                 return true
             case .useServer:
                 guard let head = try await worker.remoteHead(workID: conflict.workID),
@@ -174,7 +177,10 @@ extension AppState {
                     snapshotID: installed.id,
                     generation: head.generation
                 )
-                snapshotSyncConflict = nil
+                await refreshSnapshotConflict(
+                    for: conflict.workID,
+                    outcome: lastSnapshotSyncOutcome
+                )
                 return true
             case .keepBoth:
                 // Keep-both requires the clone WorkID/root transaction from the
@@ -195,8 +201,11 @@ extension AppState {
         guard let worker = localSnapshotSyncWorker else { return }
         do {
             let conflicts = try await worker.conflicts(workID: workID)
-            if let conflict = conflicts.first {
+            if let conflict = conflicts.last {
                 snapshotSyncConflict = conflict
+                if conflicts.count > 1 {
+                    DeviceSyncLog.snapshot("conflicts loaded count=\(conflicts.count)")
+                }
             } else if case .needsChoice = outcome {
                 snapshotSyncConflict = nil
             }

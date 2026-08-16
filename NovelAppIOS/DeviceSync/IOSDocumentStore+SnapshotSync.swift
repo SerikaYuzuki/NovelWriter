@@ -160,7 +160,7 @@ extension IOSDocumentStore {
             case .useThisDevice:
                 let outcome = try await worker.resolveUsingLocal(conflict)
                 snapshotSyncOutcome = outcome
-                snapshotSyncConflict = nil
+                await refreshSnapshotConflict(for: conflict.workID, outcome: outcome)
                 return true
             case .useServer:
                 guard let head = try await worker.remoteHead(workID: conflict.workID),
@@ -169,8 +169,17 @@ extension IOSDocumentStore {
                     workID: conflict.workID,
                     snapshotID: head.snapshotID
                 )
-                guard let object = payload.objects.first else { return false }
-                let remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
+                guard let object = payload.object(forEntityKey: "work/document") else {
+                    DeviceSyncLog.snapshot("ios conflict server choice failed: missing work/document")
+                    return false
+                }
+                let remoteSnapshot: WorkSnapshot
+                do {
+                    remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
+                } catch {
+                    DeviceSyncLog.snapshot("ios conflict server choice failed: invalid work/document", error: error)
+                    return false
+                }
                 let remoteDocument = try remoteSnapshot.materializedDocument()
                 guard remoteDocument.id == document.id else { return false }
                 guard await saveNow() else { return false }
@@ -196,7 +205,10 @@ extension IOSDocumentStore {
                     snapshotID: payload.snapshotID,
                     generation: head.generation
                 )
-                snapshotSyncConflict = nil
+                await refreshSnapshotConflict(
+                    for: conflict.workID,
+                    outcome: snapshotSyncOutcome
+                )
                 return true
             case .keepBoth:
                 return false
@@ -211,10 +223,13 @@ extension IOSDocumentStore {
         guard let worker = localSnapshotSyncWorker else { return }
         do {
             let conflicts = try await worker.conflicts(workID: workID)
-            if let conflict = conflicts.first {
+            if let conflict = conflicts.last {
                 snapshotSyncConflict = conflict
             } else if case .needsChoice = outcome {
                 snapshotSyncConflict = nil
+            }
+            if conflicts.count > 1 {
+                DeviceSyncLog.snapshot("ios conflicts loaded count=\(conflicts.count)")
             }
             if let conflict = snapshotSyncConflict {
                 DeviceSyncLog.snapshot(

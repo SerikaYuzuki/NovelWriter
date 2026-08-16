@@ -316,13 +316,40 @@ public actor LocalSnapshotSyncWorker {
         keepBoth: Bool = false
     ) async throws {
         guard let session = try await sessionProvider() else { throw SnapshotSyncError.offline }
-        try await transport.resolveConflict(
+        let head = try await transport.head(workID: conflict.workID, accessToken: session.accessToken)
+        guard let head else {
+            throw SnapshotSyncError.transport("missing remote head for conflict resolution")
+        }
+
+        // The server may have retained more than one durable conflict record
+        // for a work (for example, after retries from an older client). Once
+        // the user chooses the online branch, all records that point at the
+        // currently visible head represent the same decision. Resolve them
+        // in one operation so the UI does not walk the user through stale
+        // duplicates one by one.
+        let conflicts = try await transport.conflicts(
             workID: conflict.workID,
-            conflictID: conflict.conflictID,
-            choice: keepBoth ? .keepBoth : .useServer,
-            expectedRemoteSnapshotID: conflict.remoteSnapshotID,
             accessToken: session.accessToken
         )
+        let candidates = conflicts.contains(where: { $0.conflictID == conflict.conflictID })
+            ? conflicts
+            : [conflict]
+        for candidate in candidates {
+            do {
+                try await transport.resolveConflict(
+                    workID: conflict.workID,
+                    conflictID: candidate.conflictID,
+                    choice: keepBoth ? .keepBoth : .useServer,
+                    expectedRemoteSnapshotID: head.snapshotID,
+                    accessToken: session.accessToken
+                )
+            } catch SnapshotSyncError.transport(let message)
+                where message.contains("conflict already resolved") {
+                // Another retry may have completed this exact record between
+                // listing and resolving. It is safe to continue to the next.
+                continue
+            }
+        }
     }
 
     private func ensureSnapshotChain(
