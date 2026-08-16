@@ -65,8 +65,10 @@ if ! rg -F -q 'LocalSnapshotSyncWorker' "${mac_composition[1]}"; then
   echo "error: macOS AppState does not install LocalSnapshotSyncWorker" >&2
   exit 1
 fi
-if ! rg -F -q 'snapshotSyncTransport: FuminiwaHTTPSnapshotSyncTransport' \
-  "${mac_composition[0]}"; then
+if ! rg -F -q 'snapshotSyncTransport: runtimeEnvironment.allowsNetwork' \
+  "${mac_composition[0]}" \
+  || ! rg -F -q 'FuminiwaHTTPSnapshotSyncTransport(baseURL:' \
+    "${mac_composition[0]}"; then
   echo "error: macOS composition does not provide the HTTP Snapshot Sync transport" >&2
   exit 1
 fi

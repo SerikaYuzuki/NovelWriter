@@ -34,7 +34,6 @@ pub struct AppConfig {
     pub protocol_epoch: u64,
     pub apple: AppleConfig,
 }
-
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -100,11 +99,21 @@ impl AppleConfig {
 
 #[derive(Default)]
 pub struct ServerState {
+    /// Legacy unscoped projections are retained for in-process compatibility
+    /// with the development fixture tests.  All authenticated data paths use
+    /// the account-scoped maps below; the legacy maps are only consulted for
+    /// the fixed dev account and are never loaded from PostgreSQL.
     pub works: HashMap<Uuid, WorkRecord>,
     pub objects: HashMap<String, ObjectRecord>,
     pub snapshots: HashMap<String, StoredSnapshot>,
     pub operations: HashMap<Uuid, OperationReceipt>,
     pub conflicts: HashMap<Uuid, ConflictRecord>,
+    pub account_works: HashMap<(String, Uuid), WorkRecord>,
+    pub account_objects: HashMap<(String, String), ObjectRecord>,
+    pub account_snapshots: HashMap<(String, String), StoredSnapshot>,
+    pub account_operations: HashMap<(String, Uuid), OperationReceipt>,
+    pub account_conflicts: HashMap<(String, Uuid), ConflictRecord>,
+    pub auth_operations: HashMap<Uuid, OperationReceipt>,
     pub auth_challenges: HashMap<Uuid, AuthChallenge>,
     pub accounts: HashMap<String, AccountRecord>,
     pub provider_credentials: HashMap<(String, String), ProviderCredential>,
@@ -124,15 +133,17 @@ impl ServerState {
             database: Some(pool.clone()),
             ..Self::default()
         };
-        for row in sqlx::query("SELECT work_id, head_generation, head_snapshot_id FROM works")
-            .fetch_all(&pool)
-            .await?
+        for row in
+            sqlx::query("SELECT account_id, work_id, head_generation, head_snapshot_id FROM works")
+                .fetch_all(&pool)
+                .await?
         {
+            let account_id: String = row.try_get("account_id")?;
             let work_id: Uuid = row.try_get("work_id")?;
             let head_generation: Option<i64> = row.try_get("head_generation")?;
             let head_snapshot_id: Option<String> = row.try_get("head_snapshot_id")?;
-            state.works.insert(
-                work_id,
+            state.account_works.insert(
+                (account_id, work_id),
                 WorkRecord {
                     work_id,
                     head: head_generation
@@ -160,10 +171,24 @@ impl ServerState {
                 },
             );
         }
-        for row in sqlx::query("SELECT snapshot_id, manifest, manifest_bytes FROM snapshots")
+        for row in sqlx::query("SELECT account_id, object_id FROM object_access")
             .fetch_all(&pool)
             .await?
         {
+            let account_id: String = row.try_get("account_id")?;
+            let object_id: String = row.try_get("object_id")?;
+            if let Some(object) = state.objects.get(&object_id).cloned() {
+                state
+                    .account_objects
+                    .insert((account_id, object_id), object);
+            }
+        }
+        for row in
+            sqlx::query("SELECT account_id, snapshot_id, manifest, manifest_bytes FROM snapshots")
+                .fetch_all(&pool)
+                .await?
+        {
+            let account_id: String = row.try_get("account_id")?;
             let snapshot_id: String = row.try_get("snapshot_id")?;
             let value: serde_json::Value = row.try_get("manifest")?;
             let manifest: SnapshotManifest = serde_json::from_value(value)
@@ -176,8 +201,8 @@ impl ServerState {
                     (digest(&bytes) == snapshot_id).then_some(bytes)
                 })
                 .map(Bytes::from);
-            state.snapshots.insert(
-                snapshot_id,
+            state.account_snapshots.insert(
+                (account_id, snapshot_id),
                 StoredSnapshot {
                     manifest,
                     canonical_bytes,
@@ -185,13 +210,30 @@ impl ServerState {
             );
         }
         for row in sqlx::query(
-            "SELECT operation_id, kind, request_sha256, result, created_at FROM operations",
+            "SELECT account_id, operation_id, kind, request_sha256, result, created_at FROM operations",
         )
         .fetch_all(&pool)
         .await?
         {
             let operation_id: Uuid = row.try_get("operation_id")?;
-            state.operations.insert(
+            let receipt = OperationReceipt {
+                    operation_id,
+                    kind: row.try_get("kind")?,
+                    request_sha256: row.try_get("request_sha256")?,
+                    result: row.try_get("result")?,
+                    created_at: row.try_get("created_at")?,
+                };
+            let account_id: String = row.try_get("account_id")?;
+            state.account_operations.insert((account_id, operation_id), receipt);
+        }
+        for row in sqlx::query(
+            "SELECT operation_id, kind, request_sha256, result, created_at FROM auth_operations",
+        )
+        .fetch_all(&pool)
+        .await?
+        {
+            let operation_id: Uuid = row.try_get("operation_id")?;
+            state.auth_operations.insert(
                 operation_id,
                 OperationReceipt {
                     operation_id,
@@ -202,12 +244,13 @@ impl ServerState {
                 },
             );
         }
-        for row in sqlx::query("SELECT conflict_id, work_id, base_snapshot_id, local_snapshot_id, remote_snapshot_id, state, created_at FROM conflicts")
+        for row in sqlx::query("SELECT account_id, conflict_id, work_id, base_snapshot_id, local_snapshot_id, remote_snapshot_id, state, created_at FROM conflicts")
             .fetch_all(&pool)
             .await?
         {
+            let account_id: String = row.try_get("account_id")?;
             let conflict_id: Uuid = row.try_get("conflict_id")?;
-            state.conflicts.insert(conflict_id, ConflictRecord {
+            state.account_conflicts.insert((account_id, conflict_id), ConflictRecord {
                 conflict_id,
                 work_id: row.try_get("work_id")?,
                 base_snapshot_id: row.try_get("base_snapshot_id")?,
@@ -341,6 +384,83 @@ pub struct AuthenticatedPrincipal {
     pub account_id: String,
     pub auth_epoch: u64,
     pub fence: String,
+}
+
+const DEV_ACCOUNT_ID: &str = "dev-account";
+
+fn scoped_work<'a>(
+    state: &'a ServerState,
+    account_id: &str,
+    work_id: &Uuid,
+) -> Option<&'a WorkRecord> {
+    state
+        .account_works
+        .get(&(account_id.to_owned(), *work_id))
+        .or_else(|| {
+            (account_id == DEV_ACCOUNT_ID)
+                .then(|| state.works.get(work_id))
+                .flatten()
+        })
+}
+
+fn scoped_object<'a>(
+    state: &'a ServerState,
+    account_id: &str,
+    object_id: &str,
+) -> Option<&'a ObjectRecord> {
+    state
+        .account_objects
+        .get(&(account_id.to_owned(), object_id.to_owned()))
+        .or_else(|| {
+            (account_id == DEV_ACCOUNT_ID)
+                .then(|| state.objects.get(object_id))
+                .flatten()
+        })
+}
+
+fn scoped_snapshot<'a>(
+    state: &'a ServerState,
+    account_id: &str,
+    snapshot_id: &str,
+) -> Option<&'a StoredSnapshot> {
+    state
+        .account_snapshots
+        .get(&(account_id.to_owned(), snapshot_id.to_owned()))
+        .or_else(|| {
+            (account_id == DEV_ACCOUNT_ID)
+                .then(|| state.snapshots.get(snapshot_id))
+                .flatten()
+        })
+}
+
+fn scoped_operation<'a>(
+    state: &'a ServerState,
+    account_id: &str,
+    operation_id: &Uuid,
+) -> Option<&'a OperationReceipt> {
+    state
+        .account_operations
+        .get(&(account_id.to_owned(), *operation_id))
+        .or_else(|| {
+            (account_id == DEV_ACCOUNT_ID)
+                .then(|| state.operations.get(operation_id))
+                .flatten()
+        })
+}
+
+fn scoped_conflict<'a>(
+    state: &'a ServerState,
+    account_id: &str,
+    conflict_id: &Uuid,
+) -> Option<&'a ConflictRecord> {
+    state
+        .account_conflicts
+        .get(&(account_id.to_owned(), *conflict_id))
+        .or_else(|| {
+            (account_id == DEV_ACCOUNT_ID)
+                .then(|| state.conflicts.get(conflict_id))
+                .flatten()
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -761,7 +881,9 @@ async fn exchange_apple(
     let request_hash = digest(&serde_json::to_vec(&request).map_err(|_| ApiError::Internal)?);
     {
         let locked = state.read().await;
-        if let Some(receipt) = locked.operations.get(&request.operation_id) {
+        // Apple exchange happens before an account is known. Its idempotency
+        // receipt belongs to the authentication namespace, not a sync tenant.
+        if let Some(receipt) = locked.auth_operations.get(&request.operation_id) {
             if receipt.kind != "appleExchange" || receipt.request_sha256 != request_hash {
                 return Err(ApiError::Conflict(
                     "operationId was reused with a different request".into(),
@@ -832,7 +954,7 @@ async fn exchange_apple(
         account_fence,
     );
     let body = serde_json::to_value(&response).map_err(|_| ApiError::Internal)?;
-    locked.operations.insert(
+    locked.auth_operations.insert(
         request.operation_id,
         OperationReceipt {
             operation_id: request.operation_id,
@@ -978,7 +1100,7 @@ async fn upload_object(
     Path(object_id): Path<String>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     if body.len() > MAX_OBJECT_BYTES {
         return Err(ApiError::PayloadTooLarge);
     }
@@ -988,7 +1110,7 @@ async fn upload_object(
         ));
     }
     let mut locked = state.write().await;
-    if let Some(existing) = locked.objects.get(&object_id) {
+    if let Some(existing) = scoped_object(&locked, &principal.account_id, &object_id) {
         if existing.byte_count != body.len() || existing.bytes != body {
             return Err(ApiError::Conflict(
                 "object bytes differ for existing objectId".into(),
@@ -998,8 +1120,8 @@ async fn upload_object(
             serde_json::json!({"objectId":object_id,"byteCount":body.len(),"alreadyAvailable":true}),
         ));
     }
-    locked.objects.insert(
-        object_id.clone(),
+    locked.account_objects.insert(
+        (principal.account_id.clone(), object_id.clone()),
         ObjectRecord {
             object_id: object_id.clone(),
             byte_count: body.len(),
@@ -1017,12 +1139,9 @@ async fn download_object(
     headers: HeaderMap,
     Path(object_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
-    let object = state
-        .read()
-        .await
-        .objects
-        .get(&object_id)
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
+    let locked = state.read().await;
+    let object = scoped_object(&locked, &principal.account_id, &object_id)
         .cloned()
         .ok_or_else(|| ApiError::NotFound("object".into()))?;
     let mut response = Response::new(object.bytes.into_response().into_body());
@@ -1050,7 +1169,7 @@ async fn register_snapshot(
     Path((work_id, snapshot_id)): Path<(Uuid, String)>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     if body.len() > MAX_MANIFEST_BYTES {
         return Err(ApiError::PayloadTooLarge);
     }
@@ -1066,26 +1185,34 @@ async fn register_snapshot(
             "snapshotId must be SHA-256(canonical manifest bytes)".into(),
         ));
     }
-    validate_manifest(&manifest, &state).await?;
+    validate_manifest(&manifest, &state, &principal.account_id).await?;
     let mut locked = state.write().await;
-    let needs_raw_byte_repair = if let Some(existing) = locked.snapshots.get(&snapshot_id) {
-        // Compare the decoded projection only to identify a legacy row that
-        // can be repaired. The request digest and retained raw bytes remain
-        // authoritative for the snapshot identity.
-        if existing.manifest.work_id != work_id || existing.manifest != manifest {
-            return Err(ApiError::Conflict(
-                "snapshotId already contains different bytes".into(),
-            ));
-        }
-        existing.canonical_bytes.is_none()
-    } else {
-        false
-    };
+    let needs_raw_byte_repair =
+        if let Some(existing) = scoped_snapshot(&locked, &principal.account_id, &snapshot_id) {
+            // Compare the decoded projection only to identify a legacy row that
+            // can be repaired. The request digest and retained raw bytes remain
+            // authoritative for the snapshot identity.
+            if existing.manifest.work_id != work_id || existing.manifest != manifest {
+                return Err(ApiError::Conflict(
+                    "snapshotId already contains different bytes".into(),
+                ));
+            }
+            existing.canonical_bytes.is_none()
+        } else {
+            false
+        };
     if needs_raw_byte_repair {
-        if let Some(existing) = locked.snapshots.get_mut(&snapshot_id) {
+        if let Some(existing) = locked
+            .account_snapshots
+            .get_mut(&(principal.account_id.clone(), snapshot_id.clone()))
+        {
             // The request digest was checked above, so this is an exact and
             // safe repair of a legacy row that had no byte column yet.
-            existing.canonical_bytes = Some(body);
+            existing.canonical_bytes = Some(body.clone());
+        } else if principal.account_id == DEV_ACCOUNT_ID {
+            if let Some(existing) = locked.snapshots.get_mut(&snapshot_id) {
+                existing.canonical_bytes = Some(body.clone());
+            }
         }
         persist_state(&locked).await?;
         return Ok(Json(serde_json::json!({
@@ -1094,22 +1221,25 @@ async fn register_snapshot(
             "repaired": true
         })));
     }
-    if locked.snapshots.contains_key(&snapshot_id) {
+    if scoped_snapshot(&locked, &principal.account_id, &snapshot_id).is_some() {
         return Ok(Json(
             serde_json::json!({"snapshotId":snapshot_id,"alreadyRegistered":true}),
         ));
     }
-    locked.snapshots.insert(
-        snapshot_id.clone(),
+    locked.account_snapshots.insert(
+        (principal.account_id.clone(), snapshot_id.clone()),
         StoredSnapshot {
             manifest,
             canonical_bytes: Some(body),
         },
     );
-    locked.works.entry(work_id).or_insert_with(|| WorkRecord {
-        work_id,
-        head: None,
-    });
+    locked
+        .account_works
+        .entry((principal.account_id.clone(), work_id))
+        .or_insert_with(|| WorkRecord {
+            work_id,
+            head: None,
+        });
     persist_state(&locked).await?;
     Ok(Json(
         serde_json::json!({"snapshotId":snapshot_id,"alreadyRegistered":false}),
@@ -1121,12 +1251,9 @@ async fn get_snapshot(
     headers: HeaderMap,
     Path((work_id, snapshot_id)): Path<(Uuid, String)>,
 ) -> Result<Response, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
-    let snapshot = state
-        .read()
-        .await
-        .snapshots
-        .get(&snapshot_id)
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
+    let locked = state.read().await;
+    let snapshot = scoped_snapshot(&locked, &principal.account_id, &snapshot_id)
         .cloned()
         .ok_or_else(|| ApiError::NotFound("snapshot".into()))?;
     if snapshot.manifest.work_id != work_id {
@@ -1155,17 +1282,27 @@ async fn list_works(
     State((state, config)): State<HandlerState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<WorkCatalogEntry>>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     let locked = state.read().await;
     let mut entries = locked
-        .works
-        .values()
-        .filter_map(|work| {
+        .account_works
+        .iter()
+        .filter(|((account, _), _)| account == &principal.account_id)
+        .filter_map(|((_, _), work)| {
             let head = work.head.as_ref()?;
-            let snapshot = locked.snapshots.get(&head.snapshot_id)?;
+            let snapshot = scoped_snapshot(&locked, &principal.account_id, &head.snapshot_id)?;
             snapshot.canonical_bytes.as_ref()?;
-            let title =
-                materializable_work_title(work.work_id, &snapshot.manifest, &locked.objects)?;
+            let title = {
+                let objects = locked
+                    .account_objects
+                    .iter()
+                    .filter_map(|((account, _), object)| {
+                        (account == &principal.account_id).then_some(object.clone())
+                    })
+                    .map(|object| (object.object_id.clone(), object))
+                    .collect::<HashMap<_, _>>();
+                materializable_work_title(work.work_id, &snapshot.manifest, &objects)?
+            };
             Some(WorkCatalogEntry {
                 work_id: work.work_id,
                 title,
@@ -1182,14 +1319,10 @@ async fn get_head(
     headers: HeaderMap,
     Path(work_id): Path<Uuid>,
 ) -> Result<Json<Option<Head>>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
+    let locked = state.read().await;
     Ok(Json(
-        state
-            .read()
-            .await
-            .works
-            .get(&work_id)
-            .and_then(|work| work.head.clone()),
+        scoped_work(&locked, &principal.account_id, &work_id).and_then(|work| work.head.clone()),
     ))
 }
 
@@ -1199,14 +1332,14 @@ async fn publish_head(
     Path(work_id): Path<Uuid>,
     Json(command): Json<PublishCommand>,
 ) -> Result<Json<PublishResult>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     if command.work_id != work_id {
         return Err(ApiError::InvalidRequest("workId path/body mismatch".into()));
     }
     let request_bytes = serde_json::to_vec(&command).map_err(|_| ApiError::Internal)?;
     let request_hash = digest(&request_bytes);
     let mut locked = state.write().await;
-    if let Some(receipt) = locked.operations.get(&command.operation_id) {
+    if let Some(receipt) = scoped_operation(&locked, &principal.account_id, &command.operation_id) {
         if receipt.request_sha256 != request_hash || receipt.kind != "publishHead" {
             return Err(ApiError::Conflict(
                 "operationId was reused with a different request".into(),
@@ -1220,8 +1353,11 @@ async fn publish_head(
         }));
     }
     let candidate = locked
-        .snapshots
-        .get(&command.candidate_snapshot_id)
+        .account_snapshots
+        .get(&(
+            principal.account_id.clone(),
+            command.candidate_snapshot_id.clone(),
+        ))
         .ok_or_else(|| ApiError::NotFound("candidate snapshot".into()))?;
     if candidate.canonical_bytes.is_none() {
         return Err(ApiError::NotFound("candidate snapshot unavailable".into()));
@@ -1232,37 +1368,42 @@ async fn publish_head(
         ));
     }
     let current = locked
-        .works
-        .get(&work_id)
+        .account_works
+        .get(&(principal.account_id.clone(), work_id))
         .and_then(|work| work.head.clone());
     if current != command.expected_head {
         // A client may retry the same blocked intent many times while the
         // user has not chosen a branch yet. Keep one durable ConflictRecord
         // for the same divergence instead of creating a new record on every
         // retry; the conflict ID is the stable UI handle.
-        if let Some(existing) = locked.conflicts.values().find(|conflict| {
-            conflict.work_id == work_id
-                && conflict.state == "needsChoice"
-                && conflict.base_snapshot_id
-                    == command
-                        .expected_head
-                        .as_ref()
-                        .map(|head| head.snapshot_id.clone())
-                && conflict.local_snapshot_id == command.candidate_snapshot_id
-                && conflict.remote_snapshot_id
-                    == current
-                        .as_ref()
-                        .map(|head| head.snapshot_id.clone())
-                        .unwrap_or_default()
-        }) {
+        if let Some(existing) = locked
+            .account_conflicts
+            .iter()
+            .find(|((account, _), conflict)| {
+                account == &principal.account_id
+                    && conflict.work_id == work_id
+                    && conflict.state == "needsChoice"
+                    && conflict.base_snapshot_id
+                        == command
+                            .expected_head
+                            .as_ref()
+                            .map(|head| head.snapshot_id.clone())
+                    && conflict.local_snapshot_id == command.candidate_snapshot_id
+                    && conflict.remote_snapshot_id
+                        == current
+                            .as_ref()
+                            .map(|head| head.snapshot_id.clone())
+                            .unwrap_or_default()
+            })
+        {
             return Err(ApiError::Conflict(format!(
                 "head advanced; conflictId={}",
-                existing.conflict_id
+                existing.1.conflict_id
             )));
         }
         let conflict_id = Uuid::new_v4();
-        locked.conflicts.insert(
-            conflict_id,
+        locked.account_conflicts.insert(
+            (principal.account_id.clone(), conflict_id),
             ConflictRecord {
                 conflict_id,
                 work_id,
@@ -1284,17 +1425,23 @@ async fn publish_head(
             "head advanced; conflictId={conflict_id}"
         )));
     }
-    let work = locked.works.entry(work_id).or_insert_with(|| WorkRecord {
-        work_id,
-        head: None,
-    });
+    let work = locked
+        .account_works
+        .entry((principal.account_id.clone(), work_id))
+        .or_insert_with(|| WorkRecord {
+            work_id,
+            head: None,
+        });
     let next_generation = work.head.as_ref().map_or(1, |head| head.generation + 1);
     let head = Head {
         generation: next_generation,
         snapshot_id: command.candidate_snapshot_id.clone(),
     };
     work.head = Some(head.clone());
-    for conflict in locked.conflicts.values_mut() {
+    for ((account, _), conflict) in locked.account_conflicts.iter_mut() {
+        if account != &principal.account_id {
+            continue;
+        }
         if conflict.work_id == work_id
             && conflict.state == "needsChoice"
             && conflict.local_snapshot_id == command.candidate_snapshot_id
@@ -1318,7 +1465,13 @@ async fn publish_head(
         result: result_value.clone(),
         ..result.receipt.clone()
     };
-    locked.operations.insert(command.operation_id, receipt);
+    locked.account_operations.insert(
+        (principal.account_id.clone(), command.operation_id),
+        receipt.clone(),
+    );
+    if principal.account_id == DEV_ACCOUNT_ID {
+        locked.operations.insert(command.operation_id, receipt);
+    }
     persist_state(&locked).await?;
     Ok(Json(result))
 }
@@ -1328,13 +1481,18 @@ async fn list_conflicts(
     headers: HeaderMap,
     Path(work_id): Path<Uuid>,
 ) -> Result<Json<Vec<ConflictRecord>>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     let mut conflicts: Vec<ConflictRecord> = state
         .read()
         .await
-        .conflicts
-        .values()
-        .filter(|conflict| conflict.work_id == work_id && conflict.state == "needsChoice")
+        .account_conflicts
+        .iter()
+        .filter(|((account, _), conflict)| {
+            account == &principal.account_id
+                && conflict.work_id == work_id
+                && conflict.state == "needsChoice"
+        })
+        .map(|(_, conflict)| conflict)
         .cloned()
         .collect();
     conflicts.sort_by(|left, right| {
@@ -1359,7 +1517,7 @@ async fn resolve_conflict(
     Path((work_id, conflict_id)): Path<(Uuid, Uuid)>,
     Json(command): Json<ResolveConflictCommand>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let principal = authenticate_bearer(&state, &headers, &config).await?;
     if command.choice != "useOnline" && command.choice != "keepBothAsSeparateWorks" {
         return Err(ApiError::InvalidRequest(
             "unsupported conflict choice".into(),
@@ -1368,7 +1526,7 @@ async fn resolve_conflict(
     let request_bytes = serde_json::to_vec(&command).map_err(|_| ApiError::Internal)?;
     let request_hash = digest(&request_bytes);
     let mut locked = state.write().await;
-    if let Some(receipt) = locked.operations.get(&command.operation_id) {
+    if let Some(receipt) = scoped_operation(&locked, &principal.account_id, &command.operation_id) {
         if receipt.request_sha256 != request_hash || receipt.kind != "resolveConflict" {
             return Err(ApiError::Conflict(
                 "operationId was reused with a different request".into(),
@@ -1376,52 +1534,94 @@ async fn resolve_conflict(
         }
         return Ok(Json(receipt.result.clone()));
     }
-    let conflict_work_id = locked
-        .conflicts
-        .get(&conflict_id)
+    let conflict_work_id = scoped_conflict(&locked, &principal.account_id, &conflict_id)
         .map(|conflict| conflict.work_id)
         .ok_or_else(|| ApiError::NotFound("conflict".into()))?;
     if conflict_work_id != work_id {
         return Err(ApiError::NotFound("conflict".into()));
     }
-    if locked
-        .conflicts
-        .get(&conflict_id)
+    if scoped_conflict(&locked, &principal.account_id, &conflict_id)
         .map(|conflict| conflict.state.as_str())
         != Some("needsChoice")
     {
         return Err(ApiError::Conflict("conflict already resolved".into()));
     }
-    let current_head = locked
-        .works
-        .get(&work_id)
+    let current_head = scoped_work(&locked, &principal.account_id, &work_id)
         .and_then(|work| work.head.clone())
         .ok_or_else(|| ApiError::NotFound("work head".into()))?;
     if current_head.snapshot_id != command.expected_remote_snapshot_id {
         return Err(ApiError::Conflict("remote head moved".into()));
     }
-    locked
-        .conflicts
-        .get_mut(&conflict_id)
-        .ok_or_else(|| ApiError::NotFound("conflict".into()))?
-        .state = "resolved".into();
+    // A retrying client may have caused several durable records for the same
+    // divergence before the original conflict was observed. The list API
+    // intentionally collapses those records, so resolving only the selected
+    // ID would make the same conflict reappear on the next refresh. Resolve
+    // every pending record for this work that points at the head we just
+    // validated, in this same write transaction. Records for another remote
+    // head remain visible and require a new, explicit choice.
+    let resolved_conflict_ids: Vec<Uuid> = if command.choice == "useOnline" {
+        let mut ids = locked
+            .account_conflicts
+            .iter()
+            .filter(|((account, _), conflict)| {
+                account == &principal.account_id
+                    && conflict.work_id == work_id
+                    && conflict.state == "needsChoice"
+                    && conflict.remote_snapshot_id == current_head.snapshot_id
+            })
+            .map(|(_, conflict)| conflict.conflict_id)
+            .collect::<Vec<_>>();
+        if principal.account_id == DEV_ACCOUNT_ID {
+            ids.extend(
+                locked
+                    .conflicts
+                    .values()
+                    .filter(|conflict| {
+                        conflict.work_id == work_id
+                            && conflict.state == "needsChoice"
+                            && conflict.remote_snapshot_id == current_head.snapshot_id
+                    })
+                    .map(|conflict| conflict.conflict_id),
+            );
+        }
+        ids
+    } else {
+        vec![conflict_id]
+    };
+    for resolved_conflict_id in &resolved_conflict_ids {
+        if let Some(conflict) = locked
+            .account_conflicts
+            .get_mut(&(principal.account_id.clone(), *resolved_conflict_id))
+        {
+            conflict.state = "resolved".into();
+        } else if principal.account_id == DEV_ACCOUNT_ID {
+            if let Some(conflict) = locked.conflicts.get_mut(resolved_conflict_id) {
+                conflict.state = "resolved".into();
+            }
+        }
+    }
     let result = serde_json::json!({
         "outcome": "resolved",
         "choice": command.choice,
         "conflictId": conflict_id,
+        "resolvedConflictIds": resolved_conflict_ids,
         "head": current_head,
         "operationId": command.operation_id,
     });
-    locked.operations.insert(
-        command.operation_id,
-        OperationReceipt {
-            operation_id: command.operation_id,
-            kind: "resolveConflict".into(),
-            request_sha256: request_hash,
-            result: result.clone(),
-            created_at: Utc::now(),
-        },
+    let receipt = OperationReceipt {
+        operation_id: command.operation_id,
+        kind: "resolveConflict".into(),
+        request_sha256: request_hash,
+        result: result.clone(),
+        created_at: Utc::now(),
+    };
+    locked.account_operations.insert(
+        (principal.account_id.clone(), command.operation_id),
+        receipt.clone(),
     );
+    if principal.account_id == DEV_ACCOUNT_ID {
+        locked.operations.insert(command.operation_id, receipt);
+    }
     persist_state(&locked).await?;
     Ok(Json(result))
 }
@@ -1429,6 +1629,7 @@ async fn resolve_conflict(
 async fn validate_manifest(
     manifest: &SnapshotManifest,
     state: &SharedState,
+    account_id: &str,
 ) -> Result<(), ApiError> {
     if manifest.schema_version != 1 || manifest.entries.is_empty() {
         return Err(ApiError::InvalidRequest(
@@ -1450,7 +1651,7 @@ async fn validate_manifest(
     }
     let locked = state.read().await;
     for entry in &manifest.entries {
-        let object = locked.objects.get(&entry.object_id).ok_or_else(|| {
+        let object = scoped_object(&locked, account_id, &entry.object_id).ok_or_else(|| {
             ApiError::InvalidRequest(format!("missing object {}", entry.object_id))
         })?;
         if object.byte_count != entry.byte_count {
@@ -1460,7 +1661,7 @@ async fn validate_manifest(
         }
     }
     for parent in &manifest.parent_snapshot_ids {
-        if !locked.snapshots.contains_key(parent) {
+        if scoped_snapshot(&locked, account_id, parent).is_none() {
             return Err(ApiError::InvalidRequest(format!(
                 "missing parent snapshot {parent}"
             )));
@@ -1535,15 +1736,48 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
     };
     let mut transaction = pool.begin().await.map_err(|_| ApiError::Internal)?;
     sqlx::query(
-        "TRUNCATE provider_credentials, auth_sessions, refresh_token_families, accounts, auth_challenges, conflicts, operations, snapshots, objects, works",
+        "TRUNCATE provider_credentials, auth_sessions, refresh_token_families, accounts, auth_challenges, conflicts, operations, auth_operations, object_access, snapshots, objects, works",
     )
     .execute(&mut *transaction)
     .await
     .map_err(|_| ApiError::Internal)?;
-    for work in state.works.values() {
+    let has_dev_data = state
+        .account_works
+        .keys()
+        .any(|(account, _)| account == DEV_ACCOUNT_ID)
+        || state
+            .account_objects
+            .keys()
+            .any(|(account, _)| account == DEV_ACCOUNT_ID)
+        || state
+            .account_snapshots
+            .keys()
+            .any(|(account, _)| account == DEV_ACCOUNT_ID)
+        || state
+            .account_operations
+            .keys()
+            .any(|(account, _)| account == DEV_ACCOUNT_ID)
+        || state
+            .account_conflicts
+            .keys()
+            .any(|(account, _)| account == DEV_ACCOUNT_ID);
+    if has_dev_data && !state.accounts.contains_key(DEV_ACCOUNT_ID) {
+        sqlx::query("INSERT INTO accounts(account_id, issuer, subject_hash, auth_epoch, fence) VALUES ($1, $2, $3, $4, $5)")
+            .bind(DEV_ACCOUNT_ID).bind("development").bind("development")
+            .bind(1_i64).bind("dev-fence")
+            .execute(&mut *transaction).await.map_err(|_| ApiError::Internal)?;
+    }
+    for account in state.accounts.values() {
+        sqlx::query("INSERT INTO accounts(account_id, issuer, subject_hash, auth_epoch, fence) VALUES ($1, $2, $3, $4, $5)")
+            .bind(&account.account_id).bind(&account.issuer).bind(&account.subject_hash)
+            .bind(account.auth_epoch as i64).bind(&account.fence)
+            .execute(&mut *transaction).await.map_err(|_| ApiError::Internal)?;
+    }
+    for ((account_id, _), work) in &state.account_works {
         sqlx::query(
-            "INSERT INTO works(work_id, head_generation, head_snapshot_id) VALUES ($1, $2, $3)",
+            "INSERT INTO works(account_id, work_id, head_generation, head_snapshot_id) VALUES ($1, $2, $3, $4)",
         )
+        .bind(account_id)
         .bind(work.work_id)
         .bind(work.head.as_ref().map(|head| head.generation as i64))
         .bind(work.head.as_ref().map(|head| &head.snapshot_id))
@@ -1551,18 +1785,26 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
         .await
         .map_err(|_| ApiError::Internal)?;
     }
-    for object in state.objects.values() {
-        sqlx::query("INSERT INTO objects(object_id, byte_count, bytes) VALUES ($1, $2, $3)")
-            .bind(&object.object_id)
+    for ((account_id, object_id), object) in &state.account_objects {
+        sqlx::query("INSERT INTO objects(object_id, byte_count, bytes) VALUES ($1, $2, $3) ON CONFLICT (object_id) DO NOTHING")
+            .bind(object_id)
             .bind(object.byte_count as i64)
             .bind(object.bytes.as_ref())
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::Internal)?;
+        sqlx::query("INSERT INTO object_access(account_id, object_id) VALUES ($1, $2)")
+            .bind(account_id)
+            .bind(object_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::Internal)?;
     }
-    for (snapshot_id, snapshot) in &state.snapshots {
+    /* Legacy in-memory fixtures are intentionally not persisted. */
+    for ((account_id, snapshot_id), snapshot) in &state.account_snapshots {
         let value = serde_json::to_value(&snapshot.manifest).map_err(|_| ApiError::Internal)?;
-        sqlx::query("INSERT INTO snapshots(snapshot_id, work_id, manifest, manifest_bytes) VALUES ($1, $2, $3, $4)")
+        sqlx::query("INSERT INTO snapshots(account_id, snapshot_id, work_id, manifest, manifest_bytes) VALUES ($1, $2, $3, $4, $5)")
+            .bind(account_id)
             .bind(snapshot_id)
             .bind(snapshot.manifest.work_id)
             .bind(value)
@@ -1571,8 +1813,20 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
             .await
             .map_err(|_| ApiError::Internal)?;
     }
-    for receipt in state.operations.values() {
-        sqlx::query("INSERT INTO operations(operation_id, kind, request_sha256, result, created_at) VALUES ($1, $2, $3, $4, $5)")
+    for ((account_id, operation_id), receipt) in &state.account_operations {
+        sqlx::query("INSERT INTO operations(account_id, operation_id, kind, request_sha256, result, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(account_id)
+            .bind(operation_id)
+            .bind(&receipt.kind)
+            .bind(&receipt.request_sha256)
+            .bind(&receipt.result)
+            .bind(receipt.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::Internal)?;
+    }
+    for receipt in state.auth_operations.values() {
+        sqlx::query("INSERT INTO auth_operations(operation_id, kind, request_sha256, result, created_at) VALUES ($1, $2, $3, $4, $5)")
             .bind(receipt.operation_id)
             .bind(&receipt.kind)
             .bind(&receipt.request_sha256)
@@ -1582,9 +1836,10 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
             .await
             .map_err(|_| ApiError::Internal)?;
     }
-    for conflict in state.conflicts.values() {
-        sqlx::query("INSERT INTO conflicts(conflict_id, work_id, base_snapshot_id, local_snapshot_id, remote_snapshot_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(conflict.conflict_id)
+    for ((account_id, conflict_id), conflict) in &state.account_conflicts {
+        sqlx::query("INSERT INTO conflicts(account_id, conflict_id, work_id, base_snapshot_id, local_snapshot_id, remote_snapshot_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
+            .bind(account_id)
+            .bind(conflict_id)
             .bind(conflict.work_id)
             .bind(&conflict.base_snapshot_id)
             .bind(&conflict.local_snapshot_id)
@@ -1602,17 +1857,6 @@ async fn persist_state(state: &ServerState) -> Result<(), ApiError> {
             .bind(&challenge.nonce)
             .bind(challenge.expires_at)
             .bind(challenge.consumed)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| ApiError::Internal)?;
-    }
-    for account in state.accounts.values() {
-        sqlx::query("INSERT INTO accounts(account_id, issuer, subject_hash, auth_epoch, fence) VALUES ($1, $2, $3, $4, $5)")
-            .bind(&account.account_id)
-            .bind(&account.issuer)
-            .bind(&account.subject_hash)
-            .bind(account.auth_epoch as i64)
-            .bind(&account.fence)
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::Internal)?;
@@ -2444,6 +2688,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolving_online_branch_clears_duplicate_same_head_conflicts_idempotently() {
+        let work_id = Uuid::new_v4();
+        let current_head = "remote-head".to_owned();
+        let state = Arc::new(RwLock::new(ServerState::default()));
+        let duplicate_ids: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();
+        {
+            let mut locked = state.write().await;
+            locked.works.insert(
+                work_id,
+                WorkRecord {
+                    work_id,
+                    head: Some(Head {
+                        generation: 4,
+                        snapshot_id: current_head.clone(),
+                    }),
+                },
+            );
+            for conflict_id in &duplicate_ids {
+                locked.conflicts.insert(
+                    *conflict_id,
+                    ConflictRecord {
+                        conflict_id: *conflict_id,
+                        work_id,
+                        base_snapshot_id: Some("base".into()),
+                        local_snapshot_id: "local".into(),
+                        remote_snapshot_id: current_head.clone(),
+                        state: "needsChoice".into(),
+                        created_at: Utc::now(),
+                    },
+                );
+            }
+            // A different remote branch must remain pending for a later
+            // explicit choice; bulk resolution is scoped to current head.
+            let older_conflict_id = Uuid::new_v4();
+            locked.conflicts.insert(
+                older_conflict_id,
+                ConflictRecord {
+                    conflict_id: older_conflict_id,
+                    work_id,
+                    base_snapshot_id: Some("base".into()),
+                    local_snapshot_id: "local-old".into(),
+                    remote_snapshot_id: "older-head".into(),
+                    state: "needsChoice".into(),
+                    created_at: Utc::now(),
+                },
+            );
+        }
+        let app = router(
+            state.clone(),
+            AppConfig {
+                dev_token: Some("test-token".into()),
+                ..AppConfig::default()
+            },
+        );
+        let operation_id = Uuid::new_v4();
+        let body = serde_json::json!({
+            "operationId": operation_id,
+            "choice": "useOnline",
+            "expectedRemoteSnapshotId": current_head,
+        })
+        .to_string();
+        let resolve = || {
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/works/{work_id}/conflicts/{}/resolve",
+                        duplicate_ids[0]
+                    ))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(resolve().await.unwrap().status(), StatusCode::OK);
+        // Simulate a lost response: the same durable operation is replayed.
+        assert_eq!(resolve().await.unwrap().status(), StatusCode::OK);
+
+        let locked = state.read().await;
+        assert!(duplicate_ids.iter().all(|id| {
+            locked
+                .conflicts
+                .get(id)
+                .is_some_and(|conflict| conflict.state == "resolved")
+        }));
+        assert_eq!(locked.operations.len(), 1);
+        assert_eq!(
+            locked
+                .conflicts
+                .values()
+                .filter(|conflict| conflict.state == "needsChoice")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn catalog_lists_a_materializable_work_snapshot() {
         let app = test_app();
         let work_id = Uuid::new_v4();
@@ -2615,5 +2957,225 @@ mod tests {
             }],
         };
         assert!(materializable_work_title(work_id, &manifest, &objects).is_none());
+    }
+
+    #[tokio::test]
+    async fn sync_data_isolated_for_two_accounts_even_when_ids_are_equal() {
+        let state = Arc::new(RwLock::new(ServerState::default()));
+        let (token_a, token_b) = {
+            let mut locked = state.write().await;
+            for account_id in ["account-a", "account-b"] {
+                locked.accounts.insert(
+                    account_id.into(),
+                    AccountRecord {
+                        account_id: account_id.into(),
+                        issuer: "test".into(),
+                        subject_hash: account_id.into(),
+                        auth_epoch: 1,
+                        fence: format!("fence-{account_id}"),
+                    },
+                );
+            }
+            let a = issue_session(&mut locked, "account-a".into(), 1, "fence-account-a".into());
+            let b = issue_session(&mut locked, "account-b".into(), 1, "fence-account-b".into());
+            (a.access_token, b.access_token)
+        };
+        let app = router(
+            state.clone(),
+            AppConfig {
+                dev_token: None,
+                ..AppConfig::default()
+            },
+        );
+        let work_id = Uuid::new_v4();
+        let document = serde_json::json!({
+            "snapshotVersion": 1, "documentID": work_id.hyphenated().to_string().to_uppercase(),
+            "title": "共有ID作品", "synopsis": "", "chapterOrder": [], "chapters": [], "episodes": [],
+            "characterOrder": [], "characters": [], "plotCardOrder": [], "plotCards": [],
+            "flagOrder": [], "flags": [], "worldNoteOrder": [], "worldNotes": []
+        });
+        let object = Bytes::from(serde_json::to_vec(&document).unwrap());
+        let object_id = digest(&object);
+        let request = |method: http::Method, uri: String, token: &str, body: Body| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::PUT,
+                    format!("/v1/objects/{object_id}"),
+                    &token_a,
+                    Body::from(object.clone())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::GET,
+                    format!("/v1/objects/{object_id}"),
+                    &token_b,
+                    Body::empty()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::PUT,
+                    format!("/v1/objects/{object_id}"),
+                    &token_b,
+                    Body::from(object.clone())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let manifest = serde_json::json!({"schemaVersion":1,"workId":work_id,"parentSnapshotIds":[],"entries":[{"entityKey":"work/document","objectId":object_id,"byteCount":object.len(),"contentType":"application/json"}]});
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let snapshot_id = digest(&manifest_bytes);
+        for token in [&token_a, &token_b] {
+            assert_eq!(
+                app.clone()
+                    .oneshot(request(
+                        http::Method::PUT,
+                        format!("/v1/works/{work_id}/snapshots/{snapshot_id}"),
+                        token,
+                        Body::from(manifest_bytes.clone())
+                    ))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        let operation_id = Uuid::new_v4();
+        for token in [&token_a, &token_b] {
+            let publish = serde_json::json!({"operationId":operation_id,"workId":work_id,"expectedHead":null,"candidateSnapshotId":snapshot_id});
+            assert_eq!(
+                app.clone()
+                    .oneshot(request(
+                        http::Method::POST,
+                        format!("/v1/works/{work_id}/head"),
+                        token,
+                        Body::from(publish.to_string())
+                    ))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::GET,
+                    format!("/v1/works/{work_id}/head"),
+                    &token_a,
+                    Body::empty()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::GET,
+                    format!("/v1/works/{work_id}/head"),
+                    &token_b,
+                    Body::empty()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let conflict_id = Uuid::new_v4();
+        {
+            let mut locked = state.write().await;
+            for account in ["account-a", "account-b"] {
+                locked.account_conflicts.insert(
+                    (account.into(), conflict_id),
+                    ConflictRecord {
+                        conflict_id,
+                        work_id,
+                        base_snapshot_id: None,
+                        local_snapshot_id: "local".into(),
+                        remote_snapshot_id: snapshot_id.clone(),
+                        state: "needsChoice".into(),
+                        created_at: Utc::now(),
+                    },
+                );
+            }
+        }
+        for token in [&token_a, &token_b] {
+            let response = app
+                .clone()
+                .oneshot(request(
+                    http::Method::GET,
+                    format!("/v1/works/{work_id}/conflicts"),
+                    token,
+                    Body::empty(),
+                ))
+                .await
+                .unwrap();
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Vec<ConflictRecord>>(&body)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let resolve = serde_json::json!({"operationId":Uuid::new_v4(),"choice":"useOnline","expectedRemoteSnapshotId":snapshot_id});
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    http::Method::POST,
+                    format!("/v1/works/{work_id}/conflicts/{conflict_id}/resolve"),
+                    &token_a,
+                    Body::from(resolve.to_string())
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let remaining = app
+            .clone()
+            .oneshot(request(
+                http::Method::GET,
+                format!("/v1/works/{work_id}/conflicts"),
+                &token_b,
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(remaining.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Vec<ConflictRecord>>(&body)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

@@ -32,6 +32,20 @@ curl -fsS http://127.0.0.1:8080/v1/auth/capabilities
 - Apple credential exchange は server 側で検証し、クライアントへ Apple refresh token を返しません。
   クライアントには短命 access token と rotation 付き FUMINIWA refresh token だけを返します。
 
+### アカウント境界と既存DBの移行
+
+同期データ（work、snapshot、objectのpresence、head、conflict、operation receipt）は
+すべて AccountID の複合スコープです。同じIDのデータを別アカウントが持てます。
+object本体はSHA-256で物理的に重複排除できますが、`object_access` の所有者行がない
+限り読み書きできません。
+
+`0004_account_scoped_sync.sql` は、旧スキーマに残る作品・snapshot・objectを、DBに
+実在アカウントがちょうど1件ある場合だけそのアカウントへ移します。アカウントが0件
+または2件以上で所有者を決められない場合は migration 全体を fail closed で中断し、
+推測による割当を行いません。Apple exchange のようにAccount確定前のreceiptは専用の
+`auth_operations`へ分離されます。開発bearerを有効にしたDBでは、必要な場合だけ
+`dev-account`という明示的なsynthetic accountを作成して外部キーを満たします。
+
 ## リモート開発機
 
 192.168.11.5 には、既存サービスと衝突しない専用 Docker network/container/volume を作ります。
