@@ -66,7 +66,9 @@ struct IOSProjectHomeView: View {
 
     @ViewBuilder
     private var cloudSection: some View {
-        if store.canPublishCurrentWorkToCloud {
+        if store.usesSnapshotSyncRuntime {
+            snapshotSyncSection
+        } else if store.canPublishCurrentWorkToCloud {
             Section {
                 Button {
                     Task {
@@ -114,6 +116,117 @@ struct IOSProjectHomeView: View {
             } footer: {
                 Text("この端末への保存は自動です。サーバーへ送るときだけ、この操作またはCommand-Sを使います。")
             }
+        }
+    }
+
+    private var snapshotSyncSection: some View {
+        Section {
+            switch store.authUIState {
+            case .signedOut, .failed:
+                Label(
+                    "この端末への保存は自動です。サーバーへ送るにはAppleでサインインしてください。",
+                    systemImage: "person.crop.circle.badge.plus"
+                )
+                .foregroundStyle(.secondary)
+
+                Button("Appleでサインイン") {
+                    Task { await store.signInWithApple() }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("ios.project.snapshot.signInWithApple")
+            case .signingIn:
+                Label("Appleでサインインしています…", systemImage: "person.crop.circle")
+                ProgressView()
+            case .signedIn:
+                Label(snapshotSyncTitle, systemImage: snapshotSyncIcon)
+                    .foregroundStyle(snapshotSyncIsWarning ? .orange : .secondary)
+
+                if snapshotSyncIsWarning {
+                    Text(snapshotSyncDescription)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    if case .offline = store.snapshotSyncOutcome {
+                        Button {
+                            Task { _ = await store.saveAndSyncSnapshotNow() }
+                        } label: {
+                            Label("接続を確認して再試行", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!store.canExplicitlySyncCurrentWork)
+                        .accessibilityIdentifier("ios.project.snapshot.retry")
+                    }
+
+                    if let conflict = store.snapshotSyncConflict {
+                        Text("競合ID: \(conflict.conflictID.uuidString.prefix(8))")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                } else {
+                    Button {
+                        Task { _ = await store.saveAndSyncSnapshotNow() }
+                    } label: {
+                        Label("今すぐサーバーへ送る", systemImage: "arrow.up.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!store.canExplicitlySyncCurrentWork)
+                    .accessibilityIdentifier("ios.project.snapshot.syncNow")
+                }
+            case .unavailable:
+                Label("サーバー同期を利用できません。", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("サーバー同期")
+        } footer: {
+            Text("原稿は先にこの端末へ保存されます。通信できないときも編集を続けられ、接続が戻ると送信を再開します。")
+        }
+    }
+
+    private var snapshotSyncTitle: String {
+        switch store.snapshotSyncOutcome {
+        case .notStarted:
+            "サーバー同期の準備ができています"
+        case .uploaded:
+            "この端末とサーバーに保存済み"
+        case .idle:
+            "変更はありません。同期済みです"
+        case .offline:
+            "この端末に保存済み。通信待ちです"
+        case .needsChoice:
+            "競合の確認が必要です"
+        }
+    }
+
+    private var snapshotSyncDescription: String {
+        switch store.snapshotSyncOutcome {
+        case .notStarted:
+            "「今すぐサーバーへ送る」を押すと、この作品を初めてサーバーへ保存します。"
+        case .uploaded, .idle:
+            "編集内容はこの端末とサーバーの両方に保存されています。"
+        case .offline:
+            "編集内容はこの端末に保存されています。接続が戻ると自動で送信します。"
+        case .needsChoice:
+            "端末の版とサーバーの版を両方保持しています。勝手に上書きせず、選択が必要です。"
+        }
+    }
+
+    private var snapshotSyncIcon: String {
+        switch store.snapshotSyncOutcome {
+        case .notStarted: "arrow.up.circle"
+        case .uploaded, .idle: "checkmark.circle"
+        case .offline: "wifi.slash"
+        case .needsChoice: "exclamationmark.triangle"
+        }
+    }
+
+    private var snapshotSyncIsWarning: Bool {
+        switch store.snapshotSyncOutcome {
+        case .offline, .needsChoice:
+            true
+        case .notStarted, .uploaded, .idle:
+            false
         }
     }
 

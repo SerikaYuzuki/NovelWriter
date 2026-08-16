@@ -158,7 +158,7 @@ struct IOSWorkExplicitSyncButton: View {
                 }
             }
         } label: {
-            Label("サーバーと同期", systemImage: "arrow.clockwise")
+            Label("今すぐサーバーへ送る", systemImage: "arrow.up.circle")
         }
         .disabled(store.isExplicitNoteSyncInFlight)
         .accessibilityIdentifier(accessibilityIdentifier)

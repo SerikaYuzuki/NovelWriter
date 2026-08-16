@@ -116,7 +116,7 @@ extension IOSDocumentStore {
 
     var canExplicitlySyncCurrentWork: Bool {
         if usesSnapshotSyncRuntime {
-            return startupState == .ready && !isSnapshotSyncInFlight
+            return startupState == .ready && authSession != nil && !isSnapshotSyncInFlight
         }
         return startupState == .ready &&
             usesNoteSyncRuntime &&

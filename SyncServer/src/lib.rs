@@ -980,12 +980,35 @@ async fn publish_head(
             "candidate belongs to another work".into(),
         ));
     }
-    let work = locked.works.entry(work_id).or_insert_with(|| WorkRecord {
-        work_id,
-        head: None,
-    });
-    if work.head != command.expected_head {
-        let current = work.head.clone();
+    let current = locked
+        .works
+        .get(&work_id)
+        .and_then(|work| work.head.clone());
+    if current != command.expected_head {
+        // A client may retry the same blocked intent many times while the
+        // user has not chosen a branch yet. Keep one durable ConflictRecord
+        // for the same divergence instead of creating a new record on every
+        // retry; the conflict ID is the stable UI handle.
+        if let Some(existing) = locked.conflicts.values().find(|conflict| {
+            conflict.work_id == work_id
+                && conflict.state == "needsChoice"
+                && conflict.base_snapshot_id
+                    == command
+                        .expected_head
+                        .as_ref()
+                        .map(|head| head.snapshot_id.clone())
+                && conflict.local_snapshot_id == command.candidate_snapshot_id
+                && conflict.remote_snapshot_id
+                    == current
+                        .as_ref()
+                        .map(|head| head.snapshot_id.clone())
+                        .unwrap_or_default()
+        }) {
+            return Err(ApiError::Conflict(format!(
+                "head advanced; conflictId={}",
+                existing.conflict_id
+            )));
+        }
         let conflict_id = Uuid::new_v4();
         locked.conflicts.insert(
             conflict_id,
@@ -1010,6 +1033,10 @@ async fn publish_head(
             "head advanced; conflictId={conflict_id}"
         )));
     }
+    let work = locked.works.entry(work_id).or_insert_with(|| WorkRecord {
+        work_id,
+        head: None,
+    });
     let next_generation = work.head.as_ref().map_or(1, |head| head.generation + 1);
     let head = Head {
         generation: next_generation,
@@ -1740,5 +1767,119 @@ mod tests {
         assert_eq!(retry.status(), StatusCode::OK);
         let retry_body = axum::body::to_bytes(retry.into_body(), 4096).await.unwrap();
         assert!(String::from_utf8_lossy(&retry_body).contains("alreadyRegistered"));
+    }
+
+    #[tokio::test]
+    async fn retrying_the_same_head_conflict_reuses_one_conflict_record() {
+        let app = test_app();
+        let work_id = Uuid::new_v4();
+
+        async fn register_candidate(app: &Router, work_id: Uuid, value: &'static [u8]) -> String {
+            let object = Bytes::from_static(value);
+            let object_id = digest(&object);
+            let object_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri(format!("/v1/objects/{object_id}"))
+                        .header("authorization", "Bearer test-token")
+                        .body(Body::from(object))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(object_response.status(), StatusCode::OK);
+
+            let manifest = format!(
+                "{{\"entries\":[{{\"byteCount\":{},\"contentType\":\"application/octet-stream\",\"entityKey\":\"work/document\",\"objectId\":\"{}\"}}],\"parentSnapshotIds\":[],\"schemaVersion\":1,\"workId\":\"{}\"}}",
+                value.len(), object_id, work_id
+            );
+            let snapshot_id = digest(manifest.as_bytes());
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri(format!("/v1/works/{work_id}/snapshots/{snapshot_id}"))
+                        .header("authorization", "Bearer test-token")
+                        .header("content-type", "application/json")
+                        .body(Body::from(manifest))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            snapshot_id
+        }
+
+        let remote_snapshot_id = register_candidate(&app, work_id, b"remote").await;
+        let local_snapshot_id = register_candidate(&app, work_id, b"local").await;
+        let publish_remote = serde_json::json!({
+            "operationId": Uuid::new_v4(),
+            "workId": work_id,
+            "expectedHead": null,
+            "candidateSnapshotId": remote_snapshot_id,
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/works/{work_id}/head"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(publish_remote.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let operation_id = Uuid::new_v4();
+        let publish_local = serde_json::json!({
+            "operationId": operation_id,
+            "workId": work_id,
+            "expectedHead": null,
+            "candidateSnapshotId": local_snapshot_id,
+        });
+        let publish_conflict = || {
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/works/{work_id}/head"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(publish_local.to_string()))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(
+            publish_conflict().await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            publish_conflict().await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+
+        let conflicts = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/works/{work_id}/conflicts"))
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflicts.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(conflicts.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let records: Vec<ConflictRecord> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].local_snapshot_id, local_snapshot_id);
+        assert_eq!(records[0].remote_snapshot_id, remote_snapshot_id);
     }
 }
