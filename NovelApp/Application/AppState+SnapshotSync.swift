@@ -80,7 +80,7 @@ extension AppState {
             switch outcome {
             case .uploaded, .idle:
                 return true
-            case .offline, .needsChoice:
+            case .notStarted, .offline, .needsChoice:
                 return false
             }
         } catch {

@@ -131,7 +131,7 @@ final class AppState {
     var startupState: AppStartupState
     /// account identityを確認できた時だけnew/importをcloud workとして開始する。
     var permitsCloudLibraryMutation = false
-    /// 直近の作品棚connection。Workbenchの「iCloudに保存」はchooserを離れたあともこれを見る。
+    /// 直近の作品棚connection。作品棚のサーバー操作状態を保持する。
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
     /// 現在作品がこのaccountへbind済みなら明示保存は出さない。
     var isCurrentWorkBoundToCloud = false
@@ -139,14 +139,14 @@ final class AppState {
     /// AuthSessionCoordinatorのKeychain vaultだけが永続化する。
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState
-    var lastSnapshotSyncOutcome: SnapshotSyncOutcome = .idle
+    var lastSnapshotSyncOutcome: SnapshotSyncOutcome = .notStarted
     var isSnapshotSyncInFlight = false
     /// production syncのlocal metadataを確立できなかったprocessは、
     /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
     var deviceSyncStartupFailedSafely = false
     /// Finderからの作品オープンに失敗したときだけ使う安全な利用者向け文言。
     var externalDocumentOpenErrorMessage: String?
-    /// 作品棚の明示操作（iCloudへ保存／複製／削除）のpath-free結果。
+    /// 作品棚の明示操作（サーバーへ保存／複製／削除）のpath-free結果。
     var cloudLibraryActionMessage: String?
     /// clipboardへ送った本文を保持せず、直近のcopy結果だけを表示する一時通知。
     var aiClipboardPromptCopyNotice: AIClipboardPromptCopyNotice?

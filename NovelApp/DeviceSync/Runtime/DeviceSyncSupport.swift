@@ -372,17 +372,17 @@ enum DeviceSyncEditorStatusKind: Hashable {
     var systemImage: String {
         switch self {
         case .savingLocally, .syncing:
-            "arrow.triangle.2.circlepath.icloud"
+            "arrow.triangle.2.circlepath"
         case .savedLocally:
             "checkmark.circle"
         case .synced:
-            "checkmark.icloud"
+            "checkmark.circle"
         case .offline:
-            "icloud.slash"
+            "wifi.slash"
         case .needsReview:
-            "exclamationmark.icloud"
+            "exclamationmark.triangle"
         case .configurationError, .syncPreparationError:
-            "exclamationmark.icloud"
+            "exclamationmark.triangle"
         case .localSaveError:
             "exclamationmark.triangle.fill"
         }
@@ -395,9 +395,9 @@ enum DeviceSyncEditorStatusKind: Hashable {
         case .savedLocally:
             "この端末に保存済み"
         case .syncing:
-            "この端末に保存済み、iCloudへ同期中"
+            "この端末に保存済み、サーバーへ同期中"
         case .synced:
-            "作品データをこの端末とiCloudに同期済み"
+            "作品データをこの端末とサーバーに同期済み"
         case .offline:
             "この端末に保存済み、オフライン"
         case .needsReview:
@@ -416,17 +416,17 @@ enum DeviceSyncEditorStatusKind: Hashable {
         case .savingLocally:
             "変更内容をこの端末へ保存しています。入力はそのまま続けられます。"
         case .savedLocally:
-            "変更内容はこの端末に保存されています。iCloudへ送るには「iCloudと同期」またはCommand-Sを使います。"
+            "変更内容はこの端末に保存されています。サーバーへ送るには「サーバーと同期」またはCommand-Sを使います。"
         case .syncing:
-            "変更内容はこの端末に保存されています。iCloudへの反映を続けています。"
+            "変更内容はこの端末に保存されています。サーバーへの反映を続けています。"
         case .synced:
-            "作品データはこの端末とiCloudに保存されています。資料、スナップショット履歴、端末設定はこの端末だけに保存されます。"
+            "作品データはこの端末とサーバーに保存されています。資料、スナップショット履歴、端末設定はこの端末だけに保存されます。"
         case .offline:
-            "変更内容はこの端末に保存されています。接続が戻ったら「iCloudと同期」で送れます。"
+            "変更内容はこの端末に保存されています。接続が戻ったら「サーバーと同期」で送れます。"
         case .needsReview:
             "両方の版を保ったまま保存しています。内容を確認して統合できます。"
         case .configurationError:
-            "変更内容はこの端末に保存されています。iCloudアカウントまたは同期設定を確認してください。"
+            "変更内容はこの端末に保存されています。アカウントまたは同期設定を確認してください。"
         case .syncPreparationError:
             "変更内容はこの端末に保存されています。同期準備を次の保存時に再試行します。"
         case .localSaveError:

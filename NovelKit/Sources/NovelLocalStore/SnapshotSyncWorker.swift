@@ -17,6 +17,7 @@ public struct RemoteSnapshotHead: Codable, Equatable, Sendable {
 }
 
 public enum SnapshotSyncOutcome: Equatable, Sendable {
+    case notStarted
     case offline
     case idle
     case uploaded(snapshotID: String, generation: UInt64)

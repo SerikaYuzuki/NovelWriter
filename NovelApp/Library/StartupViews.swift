@@ -154,7 +154,7 @@ struct StartupDocumentSelectionView: View {
     private var library: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(context.presentation == .cloudLibrary ? "iCloudの作品" : "最近使った作品")
+                Text(context.presentation == .cloudLibrary ? "サーバーの作品" : "最近使った作品")
                     .font(.headline)
 
                 Spacer()
@@ -162,7 +162,7 @@ struct StartupDocumentSelectionView: View {
                 if context.isLoading, !context.works.isEmpty {
                     ProgressView()
                         .controlSize(.small)
-                        .accessibilityLabel("iCloudの作品を更新中")
+                        .accessibilityLabel("サーバーの作品を更新中")
                 }
 
                 connectionStatus
@@ -170,7 +170,7 @@ struct StartupDocumentSelectionView: View {
 
             Group {
                 if context.isLoading, context.works.isEmpty {
-                    ProgressView("iCloudの作品を確認しています")
+                    ProgressView("サーバーの作品を確認しています")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if context.works.isEmpty {
                     ContentUnavailableView(
@@ -228,19 +228,19 @@ struct StartupDocumentSelectionView: View {
         case .available:
             EmptyView()
         case .offline:
-            Label("オフライン", systemImage: "icloud.slash")
+            Label("オフライン", systemImage: "wifi.slash")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .accountRequired:
-            Label("iCloudの設定を確認", systemImage: "exclamationmark.icloud")
+            Label("サーバー接続を確認", systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .differentAccount:
-            Label("iCloudアカウントが異なります", systemImage: "person.crop.circle.badge.exclamationmark")
+            Label("アカウントが異なります", systemImage: "person.crop.circle.badge.exclamationmark")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .unavailable:
-            Label("読み込めませんでした", systemImage: "exclamationmark.icloud")
+            Label("読み込めませんでした", systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -258,12 +258,6 @@ struct StartupDocumentSelectionView: View {
                 openSelectedWork(work)
             }
         }
-        if work.availability.canPublishToCloud(connection: context.connection) {
-            Button("iCloudに保存") {
-                publishWork(work)
-            }
-            .disabled(!appState.permitsCloudLibraryMutation)
-        }
         if work.availability.canDuplicateLocalCopy {
             Button("複製") {
                 duplicateWork(work)
@@ -275,16 +269,6 @@ struct StartupDocumentSelectionView: View {
                 pendingLocalRemoval = work
             }
             .disabled(!appState.permitsCloudLibraryMutation)
-        }
-    }
-
-    private func publishWork(_ work: StartupLibraryWork) {
-        let session = appState.documentSessionToken
-        Task {
-            _ = await appState.publishStartupLibraryWork(
-                work.reference,
-                expectedSession: session
-            )
         }
     }
 
@@ -305,7 +289,7 @@ struct StartupDocumentSelectionView: View {
     private var deletionMessage: String {
         switch pendingLocalRemoval?.availability {
         case .cachedRemote, .needsReview, .cloudUnavailable:
-            "このMacの作業コピーを削除します。iCloud上の作品は消えません。"
+            "このMacの作業コピーを削除します。サーバー上の作品は消えません。"
         default:
             "このMacの作品を削除します。元に戻せません。"
         }
@@ -328,9 +312,9 @@ struct StartupDocumentSelectionView: View {
     private var emptyTitle: String {
         switch context.connection {
         case .accountRequired:
-            "iCloudを利用できません"
+            "サーバーを利用できません"
         case .differentAccount:
-            "別のiCloudアカウントです"
+            "別のアカウントです"
         case .unavailable:
             "作品を読み込めませんでした"
         case .available, .offline:
@@ -341,7 +325,7 @@ struct StartupDocumentSelectionView: View {
     private var emptySystemImage: String {
         switch context.connection {
         case .accountRequired, .differentAccount, .unavailable:
-            "exclamationmark.icloud"
+            "exclamationmark.triangle"
         case .available, .offline:
             "books.vertical"
         }
@@ -352,9 +336,9 @@ struct StartupDocumentSelectionView: View {
         case .available:
             "新しい作品を作るか、作品パッケージを取り込めます。"
         case .offline:
-            "接続後にiCloudの作品を確認できます。"
+            "接続後にサーバーの作品を確認できます。"
         case .accountRequired:
-            "システム設定でiCloud Driveを確認してください。"
+            "サーバーへの接続設定を確認してください。"
         case .differentAccount:
             "このMacにある作品は開けますが、このアカウントへ自動では送信しません。"
         case let .unavailable(message):
@@ -454,32 +438,12 @@ private struct StartupLibraryWorkRow: View {
                 .controlSize(.small)
                 .disabled(appState.isStartupLibraryOperationInProgress)
                 .accessibilityIdentifier("startup.documentSelection.review")
-            } else if work.availability.canPublishToCloud(connection: connection) {
-                Button("iCloudに保存") {
-                    let session = appState.documentSessionToken
-                    Task {
-                        _ = await appState.publishStartupLibraryWork(
-                            work.reference,
-                            expectedSession: session
-                        )
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(
-                    !appState.permitsCloudLibraryMutation
-                        || appState.isStartupLibraryOperationInProgress
-                )
-                .accessibilityIdentifier("startup.documentSelection.publish")
             }
         }
         .padding(.vertical, 4)
         .opacity(isUnavailable ? 0.6 : 1)
         .accessibilityElement(
-            children: work.availability == .needsReview
-                || work.availability.canPublishToCloud(connection: connection)
-                ? .contain
-                : .ignore
+            children: work.availability == .needsReview ? .contain : .ignore
         )
         .accessibilityLabel(work.displayTitle)
         .accessibilityValue(availabilityLabel)
@@ -490,33 +454,33 @@ private struct StartupLibraryWorkRow: View {
     private var availabilityLabel: String {
         switch work.availability {
         case .cachedRemote where connection == .available:
-            "作品データをiCloudと同期済み"
+            "作品データをサーバーと同期済み"
         case .cachedRemote where connection == .offline:
             "このMacに保存済み、オフラインでも開けます"
         case .cachedRemote where connection == .differentAccount:
-            "このMacに保存済み、iCloudアカウントが異なります"
+            "このMacに保存済み、アカウントが異なります"
         case .cachedRemote:
-            "このMacに保存済み、iCloud設定を確認"
+            "このMacに保存済み、サーバー設定を確認"
         case .localPending where connection == .available:
-            "このMacに保存済み、iCloudへ保存中"
+            "このMacに保存済み、サーバーへ保存中"
         case .localPending where connection == .accountRequired:
-            "このMacに保存済み、iCloud設定を確認"
+            "このMacに保存済み、サーバー設定を確認"
         case .localPending where connection == .differentAccount:
-            "このMacに保存済み、iCloudアカウントが異なります"
+            "このMacに保存済み、アカウントが異なります"
         case .localPending where connection == .offline:
             "このMacに保存済み、接続後に同期"
         case .localPending:
-            "このMacに保存済み、iCloudへ再送できます"
+            "このMacに保存済み、サーバーへ再送できます"
         case .localOnly:
             "このMacにのみ保存済み"
         case .needsReview:
             "このMacに保存済み、変更の確認が必要"
         case .cloudUnavailable:
-            "このMacに保存済み、iCloud上の状態を確認できません"
+            "このMacに保存済み、サーバー上の状態を確認できません"
         case .remotePending:
             "このMacへの保存を再開"
         case .remoteOnly where connection == .available:
-            "iCloudからダウンロード"
+            "サーバーからダウンロード"
         case .remoteOnly:
             "ダウンロードには接続が必要"
         case .unavailable:
@@ -527,25 +491,25 @@ private struct StartupLibraryWorkRow: View {
     private var availabilitySystemImage: String {
         switch work.availability {
         case .cachedRemote where connection == .available:
-            "checkmark.icloud"
+            "checkmark.circle"
         case .cachedRemote:
-            "icloud.slash"
+            "wifi.slash"
         case .localPending where connection == .available:
-            "arrow.triangle.2.circlepath.icloud"
+            "arrow.triangle.2.circlepath"
         case .localPending:
-            "icloud.slash"
+            "wifi.slash"
         case .localOnly:
             "externaldrive"
         case .needsReview:
             "exclamationmark.triangle"
         case .cloudUnavailable:
-            "exclamationmark.icloud"
+            "exclamationmark.triangle"
         case .remotePending:
-            "arrow.clockwise.icloud"
+            "arrow.clockwise"
         case .remoteOnly where connection == .available:
-            "icloud.and.arrow.down"
+            "arrow.down.circle"
         case .remoteOnly:
-            "icloud.slash"
+            "wifi.slash"
         case .unavailable:
             "exclamationmark.triangle"
         }
@@ -556,13 +520,13 @@ private struct StartupLibraryWorkRow: View {
         case .remoteOnly where connection != .available:
             return "接続後にReturnキーまたはダブルクリックで開けます。"
         case .cloudUnavailable:
-            return "iCloud上の状態を確認できるまで、この作品は開きません。端末内のコピーは変更していません。"
+            return "サーバー上の状態を確認できるまで、この作品は開きません。端末内のコピーは変更していません。"
         case .unavailable:
-            return "この作品は安全に開けません。iCloud設定または作品パッケージを確認してください。"
+            return "この作品は安全に開けません。サーバー設定または作品パッケージを確認してください。"
         case .localOnly:
-            return "iCloudとは関連付けられていません。iCloudに保存、複製、削除はメニューから選べます。Returnキーまたはダブルクリックで開きます。"
+            return "サーバーとは未接続です。複製、削除はメニューから選べます。Returnキーまたはダブルクリックで開きます。"
         case .needsReview:
-            return "この端末とiCloudの内容が違います。「変更を確認」から残す側を選べます。"
+            return "この端末とサーバーの内容が違います。「変更を確認」から残す側を選べます。"
         case .cachedRemote, .localPending, .remoteOnly, .remotePending:
             let action = "Returnキーまたはダブルクリックで開きます。"
             return work.isTitleTruncated ? "作品名は省略表示されています。" + action : action
@@ -691,7 +655,7 @@ struct StartupRecoveryView: View {
         case .protectedLocationInDebugBuild:
             "実原稿への誤保存を防ぐためです。内容を確認したうえで「別の作品を開く…」から明示的に選んでください。"
         case .deviceSyncSafetyUnavailable:
-            "以前同期した作品を誤って編集しないよう停止しました。アプリを再起動しても直らない場合は、端末の空き容量とiCloud設定を確認してください。"
+            "以前同期した作品を誤って編集しないよう停止しました。アプリを再起動しても直らない場合は、端末の空き容量とサーバー接続を確認してください。"
         }
     }
 }

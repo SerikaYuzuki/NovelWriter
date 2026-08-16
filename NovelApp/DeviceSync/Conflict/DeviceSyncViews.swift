@@ -13,9 +13,11 @@ struct SnapshotSyncStatusControl: View {
             return "この端末へ保存中"
         }
         switch outcome {
+        case .notStarted: return "同期状態を未確認"
         case .uploaded: return "この端末とサーバーに同期済み"
-        case .needsChoice: return "この端末に保存済み、確認が必要"
-        case .offline, .idle: return "この端末に保存済み、同期待ち"
+        case .needsChoice: return "同期を停止しました、確認が必要"
+        case .idle: return "変更なし、同期済み"
+        case .offline: return "この端末に保存済み、同期待ち"
         }
     }
 
@@ -24,11 +26,15 @@ struct SnapshotSyncStatusControl: View {
             return "変更内容をこの端末へ保存しています。入力はそのまま続けられます。"
         }
         switch outcome {
+        case .notStarted:
+            return "変更内容はこの端末に保存されています。サーバーとの状態はまだ確認していません。"
         case .uploaded:
             return "変更内容はこの端末とサーバーに保存されています。"
         case .needsChoice:
-            return "変更内容はこの端末に保存されています。もう一方の版とどちらを残すか確認してください。"
-        case .offline, .idle:
+            return "この端末の版は保持されています。サーバーの版と比較して、残す版を選ぶ必要があります。"
+        case .idle:
+            return "変更はありません。現在の内容はこの端末とサーバーで一致しています。"
+        case .offline:
             return "変更内容はこの端末に保存されています。接続が戻ると自動で同期します。"
         }
     }
@@ -38,9 +44,11 @@ struct SnapshotSyncStatusControl: View {
             return "arrow.triangle.2.circlepath"
         }
         switch outcome {
+        case .notStarted: return "questionmark.circle"
         case .uploaded: return "checkmark.circle"
         case .needsChoice: return "exclamationmark.triangle"
-        case .offline, .idle: return "wifi.slash"
+        case .idle: return "checkmark.circle"
+        case .offline: return "wifi.slash"
         }
     }
 
@@ -321,18 +329,18 @@ struct DeviceSyncSettingsView: View {
     var body: some View {
         if appState.deviceSyncRuntime?.setup != nil {
             VStack(alignment: .leading, spacing: 12) {
-                Label(syncHeading, systemImage: "icloud")
+                Label(syncHeading, systemImage: "arrow.triangle.2.circlepath")
                     .font(.headline)
                 Text(syncScopeDescription)
                     .foregroundStyle(.secondary)
-                Text("開始時点の作品タイトルは、同期作品の表示名としてiCloudに保存されます。")
+                Text("開始時点の作品タイトルは、同期作品の表示名としてサーバーに保存されます。")
                     .foregroundStyle(.secondary)
                 Text("外部ファイルを開いている場合は、同期を始める前に作品全体をこのMac内の専用作業コピーへ複製し、そちらへ切り替えます。元ファイルは変更しません。")
                     .foregroundStyle(.secondary)
 
                 switch appState.deviceSyncSetupState {
                 case .configured:
-                    Label(configuredDescription, systemImage: "checkmark.icloud")
+                    Label(configuredDescription, systemImage: "checkmark.circle")
                 case .idle, .candidates:
                     Button(startButtonTitle) {
                         let session = appState.documentSessionToken
@@ -351,7 +359,7 @@ struct DeviceSyncSettingsView: View {
                 case .loading:
                     ProgressView(setupProgressTitle)
                 case let .unavailable(message):
-                    Label(message, systemImage: "exclamationmark.icloud")
+                    Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
             }
@@ -368,7 +376,7 @@ struct DeviceSyncSettingsView: View {
     }
 
     private var syncHeading: String {
-        usesWholeWorkSync ? "iCloud 作品同期" : "iCloud 本文同期"
+        usesWholeWorkSync ? "サーバー作品同期" : "サーバー本文同期"
     }
 
     private var syncScopeDescription: String {

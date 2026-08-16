@@ -213,7 +213,7 @@ extension AppState {
             permitsCloudLibraryMutation = true
             mayAttemptInitialCloudPublish = false
             lastStartupLibraryConnection = .unavailable(
-                message: "iCloudの作品を更新できませんでした。"
+                message: "サーバーの作品を更新できませんでした。"
             )
             startupState = .documentSelection(
                 StartupDocumentSelectionContext(
