@@ -6,6 +6,7 @@
 
 import CSQLite
 import Foundation
+import NovelSync
 
 /// The only durable authority used by the post-cutover local-first runtime.
 /// `.novelpkg` is intentionally not referenced here; it is an import/export
@@ -326,8 +327,29 @@ public actor LocalSQLiteStore {
                 }
             }
             if let existing = try querySnapshot(database, snapshotID: snapshotID) {
-                guard existing.workID == workID, existing.manifest == manifest else {
+                guard existing.workID == workID else {
                     throw LocalStoreError.invalidSnapshot
+                }
+                if existing.manifest != manifest {
+                    // A previous server version returned JSONB manifests in
+                    // a different member order. Recover only that known
+                    // cache-corruption case: the incoming bytes must hash to
+                    // the immutable snapshot ID while the stored bytes must
+                    // not. Any two valid-but-different payloads still fail
+                    // closed.
+                    guard Self.matchesDigest(manifest, snapshotID: snapshotID),
+                          !Self.matchesDigest(existing.manifest, snapshotID: snapshotID) else {
+                        throw LocalStoreError.invalidSnapshot
+                    }
+                    for object in objects {
+                        try upsertObject(database, object: object)
+                    }
+                    try replaceSnapshotPayload(
+                        database,
+                        snapshotID: snapshotID,
+                        parentSnapshotIDs: parentSnapshotIDs,
+                        manifest: manifest
+                    )
                 }
             } else {
                 for object in objects {
@@ -655,6 +677,30 @@ public actor LocalSQLiteStore {
             try Self.bindInt(statement, index: 7, value: pin ? 1 : 0)
             try Self.bindText(statement, index: 8, value: createdAt)
         }
+    }
+
+    private func replaceSnapshotPayload(
+        _ database: OpaquePointer,
+        snapshotID: String,
+        parentSnapshotIDs: [String],
+        manifest: Data
+    ) throws {
+        let parentsData = try JSONEncoder().encode(parentSnapshotIDs)
+        try Self.exec(
+            database,
+            "UPDATE snapshots SET parent_snapshot_ids = ?, manifest = ? WHERE snapshot_id = ?"
+        ) { statement in
+            try Self.bindText(statement, index: 1, value: String(decoding: parentsData, as: UTF8.self))
+            try Self.bindData(statement, index: 2, value: manifest)
+            try Self.bindText(statement, index: 3, value: snapshotID)
+        }
+    }
+
+    private static func matchesDigest(_ data: Data, snapshotID: String) -> Bool {
+        guard String(data: data, encoding: .utf8) != nil,
+              (try? JSONSerialization.jsonObject(with: data)) != nil else { return false }
+        guard let text = String(data: data, encoding: .utf8) else { return false }
+        return SyncContentDigest(content: text).rawValue == snapshotID
     }
 
     private func upsertWork(

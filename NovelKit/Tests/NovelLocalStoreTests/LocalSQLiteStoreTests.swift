@@ -1,5 +1,6 @@
 import Foundation
 import NovelLocalStore
+import NovelSync
 import Testing
 
 @Suite("SQLite local canonical store")
@@ -110,5 +111,87 @@ struct LocalSQLiteStoreTests {
         #expect(state.acknowledgedHeadSnapshotID == snapshotID)
         #expect(state.acknowledgedHeadGeneration == 7)
         #expect(try await store.pendingIntents(for: workID).isEmpty)
+    }
+
+    @Test("remote install repairs only a stale non-digest manifest cache")
+    func installRemoteSnapshotRepairsStaleManifest() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-local-store-\(UUID().uuidString)", isDirectory: true)
+        let store = try LocalSQLiteStore(url: directory.appendingPathComponent("library.sqlite"))
+        let workID = UUID()
+        let documentID = UUID()
+        let staleManifest = Data(#"{"b":2,"a":1}"#.utf8)
+        let canonicalManifest = Data(#"{"a":1,"b":2}"#.utf8)
+        let snapshotID = SyncContentDigest(
+            content: String(decoding: canonicalManifest, as: UTF8.self)
+        ).rawValue
+
+        _ = try await store.commitSnapshot(
+            workID: workID,
+            documentID: documentID,
+            documentCreatedAt: "2026-08-16T00:00:00Z",
+            snapshotID: snapshotID,
+            parentSnapshotIDs: [],
+            manifest: staleManifest,
+            objects: [],
+            reason: .autosave
+        )
+
+        let repaired = try await store.installRemoteSnapshot(
+            workID: workID,
+            documentID: documentID,
+            documentCreatedAt: "2026-08-16T00:00:00Z",
+            snapshotID: snapshotID,
+            parentSnapshotIDs: [],
+            manifest: canonicalManifest,
+            objects: [],
+            remoteGeneration: 2,
+            expectedLocalSnapshotID: snapshotID,
+            expectedLocalGeneration: 1
+        )
+
+        #expect(repaired.manifest == canonicalManifest)
+        #expect(try await store.snapshot(id: snapshotID)?.manifest == canonicalManifest)
+    }
+
+    @Test("remote install rejects two different valid manifests for one digest")
+    func installRemoteSnapshotRejectsValidManifestMismatch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-local-store-\(UUID().uuidString)", isDirectory: true)
+        let store = try LocalSQLiteStore(url: directory.appendingPathComponent("library.sqlite"))
+        let workID = UUID()
+        let documentID = UUID()
+        let firstManifest = Data(#"{"a":1}"#.utf8)
+        let secondManifest = Data(#"{"a":2}"#.utf8)
+        let snapshotID = SyncContentDigest(
+            content: String(decoding: firstManifest, as: UTF8.self)
+        ).rawValue
+
+        _ = try await store.commitSnapshot(
+            workID: workID,
+            documentID: documentID,
+            documentCreatedAt: "2026-08-16T00:00:00Z",
+            snapshotID: snapshotID,
+            parentSnapshotIDs: [],
+            manifest: firstManifest,
+            objects: [],
+            reason: .autosave
+        )
+
+        await #expect(throws: LocalStoreError.invalidSnapshot) {
+            try await store.installRemoteSnapshot(
+                workID: workID,
+                documentID: documentID,
+                documentCreatedAt: "2026-08-16T00:00:00Z",
+                snapshotID: snapshotID,
+                parentSnapshotIDs: [],
+                manifest: secondManifest,
+                objects: [],
+                remoteGeneration: 2,
+                expectedLocalSnapshotID: snapshotID,
+                expectedLocalGeneration: 1
+            )
+        }
+        #expect(try await store.snapshot(id: snapshotID)?.manifest == firstManifest)
     }
 }
