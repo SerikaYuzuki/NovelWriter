@@ -311,6 +311,20 @@ public actor LocalSQLiteStore {
         }
         try exec(database, "BEGIN IMMEDIATE")
         do {
+            // A remote-only work has no local `works` row yet. Create the
+            // placeholder before inserting its snapshot because snapshots
+            // reference works with a foreign key. The transaction below
+            // still publishes the final acknowledged head atomically.
+            if existingWork == nil {
+                try exec(
+                    database,
+                    "INSERT INTO works(work_id, document_id, document_created_at, current_local_snapshot_id, acknowledged_head_snapshot_id, acknowledged_head_generation, local_generation) VALUES (?, ?, ?, NULL, NULL, NULL, 0)"
+                ) { statement in
+                    try Self.bindText(statement, index: 1, value: workID.uuidString.lowercased())
+                    try Self.bindText(statement, index: 2, value: documentID.uuidString.lowercased())
+                    try Self.bindText(statement, index: 3, value: documentCreatedAt)
+                }
+            }
             if let existing = try querySnapshot(database, snapshotID: snapshotID) {
                 guard existing.workID == workID, existing.manifest == manifest else {
                     throw LocalStoreError.invalidSnapshot

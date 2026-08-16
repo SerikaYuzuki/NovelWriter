@@ -77,4 +77,38 @@ struct LocalSQLiteStoreTests {
         let pending = try await store.pendingIntents(for: workID)
         #expect(pending.contains(where: { $0.localSnapshotID == String(repeating: "e", count: 64) }))
     }
+
+    @Test("remote snapshot install creates a missing local work atomically")
+    func installRemoteSnapshotForRemoteOnlyWork() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-local-store-\(UUID().uuidString)", isDirectory: true)
+        let store = try LocalSQLiteStore(url: directory.appendingPathComponent("library.sqlite"))
+        let workID = UUID()
+        let documentID = UUID()
+        let objectID = String(repeating: "1", count: 64)
+        let snapshotID = String(repeating: "2", count: 64)
+        let manifest = Data(#"{"schemaVersion":1}"#.utf8)
+
+        let record = try await store.installRemoteSnapshot(
+            workID: workID,
+            documentID: documentID,
+            documentCreatedAt: "2026-08-16T00:00:00Z",
+            snapshotID: snapshotID,
+            parentSnapshotIDs: [],
+            manifest: manifest,
+            objects: [LocalObject(objectID: objectID, bytes: Data("remote".utf8))],
+            remoteGeneration: 7,
+            expectedLocalSnapshotID: nil,
+            expectedLocalGeneration: nil
+        )
+
+        #expect(record.id == snapshotID)
+        #expect(try await store.snapshot(id: snapshotID)?.manifest == manifest)
+        let state = try #require(try await store.workState(for: workID))
+        #expect(state.documentID == documentID)
+        #expect(state.currentLocalSnapshotID == snapshotID)
+        #expect(state.acknowledgedHeadSnapshotID == snapshotID)
+        #expect(state.acknowledgedHeadGeneration == 7)
+        #expect(try await store.pendingIntents(for: workID).isEmpty)
+    }
 }
