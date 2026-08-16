@@ -386,6 +386,75 @@ pub struct SnapshotEntry {
     pub content_type: String,
 }
 
+/// The server does not materialize a Swift `WorkSnapshot`, but the catalog
+/// must not advertise arbitrary test/fixture objects as downloadable works.
+/// Keep this check deliberately limited to the stable envelope and scalar
+/// identity fields; the Swift client remains the canonical full validator.
+fn materializable_work_title(
+    work_id: Uuid,
+    manifest: &SnapshotManifest,
+    objects: &HashMap<String, ObjectRecord>,
+) -> Option<String> {
+    if manifest.work_id != work_id || manifest.schema_version != 1 {
+        return None;
+    }
+    let mut document_entries = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.entity_key == "work/document");
+    let entry = document_entries.next()?;
+    if document_entries.next().is_some() || entry.content_type != "application/json" {
+        return None;
+    }
+    let object = objects.get(&entry.object_id)?;
+    if object.byte_count != entry.byte_count {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&object.bytes).ok()?;
+    let object = value.as_object()?;
+
+    let snapshot_version = object.get("snapshotVersion")?.as_u64()?;
+    if snapshot_version != 1 {
+        return None;
+    }
+    let document_id = object.get("documentID")?.as_str()?;
+    if Uuid::parse_str(document_id).ok()? != work_id {
+        return None;
+    }
+    let title = object.get("title")?.as_str()?;
+    object.get("synopsis")?.as_str()?;
+
+    // These arrays are the complete v1 WorkSnapshot envelope. Requiring them
+    // prevents the old `{fixture,value}` objects from becoming normal rows,
+    // while leaving detailed entity/reference validation to the client.
+    const REQUIRED_ARRAY_KEYS: [&str; 11] = [
+        "chapterOrder",
+        "chapters",
+        "episodes",
+        "characterOrder",
+        "characters",
+        "plotCardOrder",
+        "plotCards",
+        "flagOrder",
+        "flags",
+        "worldNoteOrder",
+        "worldNotes",
+    ];
+    // `synopsis` is checked above as a string; keep the array check explicit
+    // for all collection/order fields instead of accepting a shape
+    // that only happens to contain a title and document ID.
+    for key in REQUIRED_ARRAY_KEYS {
+        if !object.get(key)?.is_array() {
+            return None;
+        }
+    }
+    Some(if title.trim().is_empty() {
+        "名称未設定の作品".to_owned()
+    } else {
+        title.to_owned()
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublishCommand {
     #[serde(rename = "operationId")]
@@ -1020,29 +1089,15 @@ async fn list_works(
     let mut entries = locked
         .works
         .values()
-        .map(|work| WorkCatalogEntry {
-            work_id: work.work_id,
-            title: work
-                .head
-                .as_ref()
-                .and_then(|head| locked.snapshots.get(&head.snapshot_id))
-                .and_then(|manifest| {
-                    manifest
-                        .entries
-                        .iter()
-                        .find(|entry| entry.entity_key == "work/document")
-                })
-                .and_then(|entry| locked.objects.get(&entry.object_id))
-                .and_then(|object| serde_json::from_slice::<serde_json::Value>(&object.bytes).ok())
-                .and_then(|value| {
-                    value
-                        .get("title")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToOwned::to_owned)
-                })
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| "名称未設定の作品".to_owned()),
-            head: work.head.clone(),
+        .filter_map(|work| {
+            let head = work.head.as_ref()?;
+            let manifest = locked.snapshots.get(&head.snapshot_id)?;
+            let title = materializable_work_title(work.work_id, manifest, &locked.objects)?;
+            Some(WorkCatalogEntry {
+                work_id: work.work_id,
+                title,
+                head: Some(head.clone()),
+            })
         })
         .collect::<Vec<_>>();
     entries.sort_by(|left, right| left.work_id.cmp(&right.work_id));
@@ -2113,12 +2168,10 @@ mod tests {
             .await
             .unwrap();
         let catalog_entries: Vec<WorkCatalogEntry> = serde_json::from_slice(&catalog_body).unwrap();
-        assert_eq!(catalog_entries.len(), 1);
-        assert_eq!(catalog_entries[0].work_id, work_id);
-        assert_eq!(
-            catalog_entries[0].head.as_ref().unwrap().snapshot_id,
-            remote_snapshot_id
-        );
+        // The conflict fixture intentionally stores arbitrary bytes under
+        // work/document. It remains in server state for conflict testing but
+        // must not appear as a downloadable work in the normal catalog.
+        assert!(catalog_entries.is_empty());
 
         let resolve = app
             .clone()
@@ -2160,5 +2213,114 @@ mod tests {
         let remaining_records: Vec<ConflictRecord> =
             serde_json::from_slice(&remaining_body).unwrap();
         assert!(remaining_records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn catalog_lists_a_materializable_work_snapshot() {
+        let app = test_app();
+        let work_id = Uuid::new_v4();
+        let document = serde_json::json!({
+            "snapshotVersion": 1,
+            "documentID": work_id,
+            "title": "実作品",
+            "synopsis": "",
+            "chapterOrder": [],
+            "chapters": [],
+            "episodes": [],
+            "characterOrder": [],
+            "characters": [],
+            "plotCardOrder": [],
+            "plotCards": [],
+            "flagOrder": [],
+            "flags": [],
+            "worldNoteOrder": [],
+            "worldNotes": []
+        });
+        let object = Bytes::from(serde_json::to_vec(&document).unwrap());
+        let object_id = digest(&object);
+        let uploaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/objects/{object_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::from(object.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(uploaded.status(), StatusCode::OK);
+
+        let manifest = serde_json::json!({
+            "schemaVersion": 1,
+            "workId": work_id,
+            "parentSnapshotIds": [],
+            "entries": [{
+                "entityKey": "work/document",
+                "objectId": object_id,
+                "byteCount": object.len(),
+                "contentType": "application/json"
+            }]
+        });
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let snapshot_id = digest(&manifest_bytes);
+        let registered = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/v1/works/{work_id}/snapshots/{snapshot_id}"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(manifest_bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(registered.status(), StatusCode::OK);
+
+        let published = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/works/{work_id}/head"))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "operationId": Uuid::new_v4(),
+                            "workId": work_id,
+                            "expectedHead": null,
+                            "candidateSnapshotId": snapshot_id
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(published.status(), StatusCode::OK);
+
+        let catalog = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/works")
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(catalog.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let entries: Vec<WorkCatalogEntry> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].work_id, work_id);
+        assert_eq!(entries[0].title, "実作品");
+        assert_eq!(entries[0].head.as_ref().unwrap().snapshot_id, snapshot_id);
     }
 }
