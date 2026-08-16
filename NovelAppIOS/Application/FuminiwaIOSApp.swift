@@ -25,7 +25,9 @@ struct FuminiwaIOSApp: App {
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )
                 .task {
+                    await store.restoreFuminiwaSession()
                     await store.bootstrap(localFirst: true)
+                    await store.resumePendingSnapshotSync()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task {

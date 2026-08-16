@@ -115,14 +115,20 @@ extension IOSDocumentStore {
     }
 
     var canExplicitlySyncCurrentWork: Bool {
-        startupState == .ready &&
+        if usesSnapshotSyncRuntime {
+            return startupState == .ready && !isSnapshotSyncInFlight
+        }
+        return startupState == .ready &&
             usesNoteSyncRuntime &&
             noteSyncClient != nil &&
             noteSyncConflict == nil
     }
 
     var isExplicitNoteSyncInFlight: Bool {
-        noteSyncClient != nil && workSyncNetworkTask != nil
+        if usesSnapshotSyncRuntime {
+            return isSnapshotSyncInFlight
+        }
+        return noteSyncClient != nil && workSyncNetworkTask != nil
     }
 
     var presentedDeviceSyncTransferState: IOSDeviceSyncTransferState {

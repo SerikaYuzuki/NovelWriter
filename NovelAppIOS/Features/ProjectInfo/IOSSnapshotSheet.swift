@@ -52,7 +52,7 @@ struct IOSSnapshotSheet: View {
             ContentUnavailableView {
                 Label("スナップショットがありません", systemImage: "clock.arrow.circlepath")
             } description: {
-                Text("保存ボタンから、または編集のあと約5分で現在の状態を記録できます。iCloudには送られません。")
+                Text("保存ボタンから、または編集のあと約5分で現在の状態を記録できます。スナップショットは原稿の同期とは別に復元できます。")
             } actions: {
                 Button("保存") {
                     Task { await saveSnapshot() }

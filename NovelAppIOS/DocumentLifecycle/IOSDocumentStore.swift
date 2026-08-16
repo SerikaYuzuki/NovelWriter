@@ -1,6 +1,9 @@
 import EditorKit
 import Foundation
+import NovelAuth
+import NovelAuthApple
 import NovelCore
+import NovelLocalStore
 import NovelStorage
 import NovelSync
 import Observation
@@ -17,6 +20,29 @@ enum IOSSaveState: Equatable {
     case dirty
     case saving
     case failed
+}
+
+enum IOSAuthUIState: Equatable {
+    case unavailable
+    case signedOut
+    case signingIn
+    case signedIn(accountID: String)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .unavailable:
+            "アカウント同期は未設定"
+        case .signedOut:
+            "未サインイン"
+        case .signingIn:
+            "サインイン中…"
+        case let .signedIn(accountID):
+            "サインイン済み（\(accountID)）"
+        case let .failed(message):
+            message
+        }
+    }
 }
 
 /// `UITextView` callbackを、表示時の作品・話・remote install世代へ固定する。
@@ -48,6 +74,9 @@ final class IOSDocumentStore {
     var selectedEpisodeID: EpisodeID?
     var startupState: IOSStartupState = .loading
     var saveState: IOSSaveState = .saved
+    var authUIState: IOSAuthUIState = .unavailable
+    var snapshotSyncOutcome: SnapshotSyncOutcome = .notStarted
+    var isSnapshotSyncInFlight = false
     var isDocumentTransitionInProgress = false
     /// 執筆画面から一覧へ戻る間は、端末保存を待つが全画面の準備表示は出さない。
     /// NavigationStackの戻る操作自体は保存完了まで保留して安全性を維持する。
@@ -82,7 +111,7 @@ final class IOSDocumentStore {
     func failStartupForDeviceSyncSafety() {
         deviceSyncStartupFailedSafely = true
         startupState = .recovery(
-            message: "本文同期の安全情報を確認できないため停止しました。アプリを再起動しても直らない場合は、端末の空き容量とiCloud設定を確認してください。"
+            message: "本文同期の安全情報を確認できないため停止しました。アプリを再起動しても直らない場合は、端末の空き容量とネットワーク設定を確認してください。"
         )
     }
 
@@ -97,6 +126,11 @@ final class IOSDocumentStore {
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored private let clipboardWriter: any IOSPlainTextClipboardWriting
     @ObservationIgnored let deviceSyncRuntime: IOSDeviceSyncRuntime?
+    @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
+    @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
+    @ObservationIgnored var authSession: FuminiwaSession?
+    @ObservationIgnored var localCanonicalStore: LocalSQLiteStore?
+    @ObservationIgnored var localSnapshotSyncWorker: LocalSnapshotSyncWorker?
     @ObservationIgnored var deviceSyncClients: [IOSDeviceSyncClientKey: IOSDeviceSyncClient] = [:]
     @ObservationIgnored var activeDeviceSyncIdentity: IOSDeviceSyncEpisodeIdentity?
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: IOSDeviceSyncLookupIdentity?
@@ -195,6 +229,22 @@ final class IOSDocumentStore {
         self.deviceSyncRuntime = deviceSyncRuntime
         self.backgroundTaskController = backgroundTaskController
 
+        let syncServerURL = URL(
+            string: userDefaults.string(forKey: "fuminiwa.syncServerURL")
+                ?? "http://192.168.11.5:18080"
+        ) ?? URL(string: "http://192.168.11.5:18080")!
+        let authTransport = FuminiwaHTTPAuthTransport(baseURL: syncServerURL)
+        #if canImport(Security)
+        let authSessionCoordinator = AuthSessionCoordinator(
+            transport: authTransport,
+            vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync.ios")
+        )
+        #else
+        let authSessionCoordinator: AuthSessionCoordinator? = nil
+        #endif
+        self.authSessionCoordinator = authSessionCoordinator
+        appleSignInCoordinator = AppleSignInCoordinator()
+
         let preparedLocation: IOSPrivateWorkingCopyLocation? = if let privateWorkingCopyLocation {
             privateWorkingCopyLocation
         } else if let libraryRoot {
@@ -210,6 +260,25 @@ final class IOSDocumentStore {
             ?? libraryRoot?.standardizedFileURL
             ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
+        #if canImport(Security)
+        authUIState = .signedOut
+        #else
+        authUIState = .unavailable
+        #endif
+        let localStoreURL = root
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("library.sqlite")
+        localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
+        let workerAuthCoordinator: AuthSessionCoordinator? = authSessionCoordinator
+        if let localCanonicalStore, let workerAuthCoordinator {
+            localSnapshotSyncWorker = LocalSnapshotSyncWorker(
+                store: localCanonicalStore,
+                transport: FuminiwaHTTPSnapshotSyncTransport(baseURL: syncServerURL),
+                sessionProvider: {
+                    try await workerAuthCoordinator.currentSession()
+                }
+            )
+        }
         let placeholder = NovelDocument.newDocument()
         document = placeholder
         documentURL = root.appendingPathComponent("\(placeholder.id.uuidString).novelpkg", isDirectory: true)

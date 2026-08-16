@@ -11,20 +11,20 @@ struct IOSLibraryView: View {
 
     var body: some View {
         Group {
-            if store.usesCloudLibrary {
+            if store.usesCloudLibrary, !store.usesSnapshotSyncRuntime {
                 cloudLibrary
             } else if store.libraryItems.isEmpty {
                 ContentUnavailableView {
                     Label("作品がありません", systemImage: "books.vertical")
                 } description: {
-                    Text("新しい作品を作るか、Files／iCloud Driveから取り込めます。")
+                    Text("新しい作品を作るか、Filesから取り込めます。")
                 } actions: {
                     Button("新規作品") {
                         makeNewDocument()
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button("Files／iCloud Driveから取り込む…") {
+                    Button("Filesから取り込む…") {
                         store.isImporterPresented = true
                     }
                     .buttonStyle(.bordered)
@@ -35,6 +35,11 @@ struct IOSLibraryView: View {
         }
         .navigationTitle("作品")
         .navigationBarTitleDisplayMode(.large)
+        .safeAreaInset(edge: .top) {
+            IOSAccountStatusView(store: store)
+                .padding(.horizontal)
+                .padding(.top, 8)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 IOSAppearanceMenu()
@@ -46,7 +51,7 @@ struct IOSLibraryView: View {
                         makeNewDocument()
                     }
                     .disabled(store.usesCloudLibrary && !store.permitsCloudLibraryMutation)
-                    Button("Files／iCloud Driveから取り込む…", systemImage: "folder.badge.plus") {
+                    Button("Filesから取り込む…", systemImage: "folder.badge.plus") {
                         store.isImporterPresented = true
                     }
                     .disabled(store.usesCloudLibrary && !store.permitsCloudLibraryMutation)
@@ -102,10 +107,7 @@ struct IOSLibraryView: View {
                         IOSCloudLibraryRow(
                             item: item,
                             isCurrent: item.id == store.activeCloudWorkID,
-                            connection: store.cloudLibraryConnection,
-                            onPublish: item.availability.canPublishToCloud(
-                                connection: store.cloudLibraryConnection
-                            ) ? { publishWork(item) } : nil
+                            connection: store.cloudLibraryConnection
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -122,16 +124,16 @@ struct IOSLibraryView: View {
                         .accessibilityAddTraits(canOpen(item) ? .isButton : [])
                     }
                 } header: {
-                    Text("iCloudの作品")
+                    Text("サーバーの作品")
                 } footer: {
-                    Text("作品はiCloudから選びます。この端末の作業コピーはアプリ内で安全に管理され、Filesには表示されません。")
+                    Text("作品はサーバーから選びます。この端末の作業コピーはアプリ内で安全に管理され、Filesには表示されません。")
                 }
             }
             .overlay {
                 // cached/local rowsがある場合はCloudKit更新中も操作を止めない。
                 // 初回で棚が空のときだけ確認中表示を出す。
                 if store.cloudLibraryIsLoading, store.cloudLibraryItems.isEmpty {
-                    ProgressView("iCloudの作品を確認中…")
+                    ProgressView("サーバーの作品を確認中…")
                         .padding()
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
@@ -185,7 +187,7 @@ struct IOSLibraryView: View {
             } header: {
                 Text("このデバイスの作品")
             } footer: {
-                Text("ここには、ふみにわ内の作業コピーが表示されます。FilesやiCloud Driveの原本は変更しません。")
+                Text("ここには、ふみにわ内の作業コピーが表示されます。Filesの原本は変更しません。")
             }
         }
         .refreshable {
@@ -232,22 +234,10 @@ struct IOSLibraryView: View {
             }
             .disabled(!store.permitsCloudLibraryMutation)
         }
-        if item.availability.canPublishToCloud(connection: store.cloudLibraryConnection) {
-            Button("iCloudに保存") {
-                publishWork(item)
-            }
-            .disabled(!store.permitsCloudLibraryMutation)
-        }
     }
 
     @ViewBuilder
     private func cloudLibraryContextMenu(for item: IOSCloudLibraryItem) -> some View {
-        if item.availability.canPublishToCloud(connection: store.cloudLibraryConnection) {
-            Button("iCloudに保存") {
-                publishWork(item)
-            }
-            .disabled(!store.permitsCloudLibraryMutation)
-        }
         if item.availability.canDuplicateLocalCopy {
             Button("複製") {
                 duplicateWork(item)
@@ -277,7 +267,7 @@ struct IOSLibraryView: View {
     private var deletionMessage: String {
         switch pendingLocalRemoval?.availability {
         case .cachedRemote, .needsReview, .cloudUnavailable:
-            "この端末の作業コピーを削除します。iCloud上の作品は消えません。"
+            "この端末の作業コピーを削除します。サーバー上の作品は消えません。"
         default:
             "この端末の作品を削除します。元に戻せません。"
         }
@@ -290,9 +280,9 @@ struct IOSLibraryView: View {
     private var cloudEmptyTitle: String {
         switch store.cloudLibraryConnection {
         case .checking:
-            "iCloudを確認中"
+            "サーバーを確認中"
         case .accountRequired, .differentAccount:
-            "iCloudを確認してください"
+            "サーバー接続を確認してください"
         case .available, .offline, .unavailable:
             "作品がありません"
         }
@@ -301,15 +291,15 @@ struct IOSLibraryView: View {
     private var cloudEmptyDescription: String {
         switch store.cloudLibraryConnection {
         case .checking:
-            "確認が終わるとiCloudの作品を表示します。"
+            "確認が終わるとサーバーの作品を表示します。"
         case .accountRequired:
-            "設定でiCloudへサインインし、iCloud Driveを有効にしてください。"
+            "ネットワーク設定を確認してください。"
         case .differentAccount:
-            "同期に使うiCloudアカウントを確認してください。"
+            "サインイン中のアカウントを確認してください。"
         case .offline:
-            "接続が戻るとiCloudの作品を表示します。"
+            "接続が戻るとサーバーの作品を表示します。"
         case .unavailable:
-            "iCloudへ接続できませんでした。下に引いて再読み込みしてください。"
+            "サーバーへ接続できませんでした。下に引いて再読み込みしてください。"
         case .available:
             "新しい作品を作るか、.novelpkgを取り込めます。"
         }
@@ -318,9 +308,63 @@ struct IOSLibraryView: View {
     private var cloudEmptySystemImage: String {
         switch store.cloudLibraryConnection {
         case .checking, .accountRequired, .differentAccount, .unavailable:
-            "exclamationmark.icloud"
+            "exclamationmark.triangle"
         case .available, .offline:
             "books.vertical"
+        }
+    }
+}
+
+private struct IOSAccountStatusView: View {
+    let store: IOSDocumentStore
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(store.authUIState.label, systemImage: iconName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            switch store.authUIState {
+            case .signedOut, .failed:
+                Button("Appleでサインイン") {
+                    Task { await store.signInWithApple() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("ios.auth.signInWithApple")
+            case .signingIn:
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Appleでサインイン中")
+            case .signedIn:
+                Button("サインアウト") {
+                    Task { await store.signOutFromFuminiwa() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("ios.auth.signOut")
+            case .unavailable:
+                EmptyView()
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ios.auth.status")
+    }
+
+    private var iconName: String {
+        switch store.authUIState {
+        case .signedIn:
+            "person.crop.circle.fill"
+        case .signingIn:
+            "arrow.triangle.2.circlepath.circle"
+        case .failed:
+            "exclamationmark.triangle"
+        case .signedOut, .unavailable:
+            "person.crop.circle"
         }
     }
 }
@@ -329,17 +373,17 @@ enum IOSCloudLibraryPresentation {
     static func connectionNotice(_ connection: IOSCloudLibraryConnection) -> String? {
         switch connection {
         case .checking:
-            "iCloudの状態を確認しています。"
+            "サーバーの状態を確認しています。"
         case .available:
             nil
         case .offline:
             "オフラインです。端末に保存済みの作品は開けます。"
         case .accountRequired:
-            "iCloudアカウントとiCloud Driveの設定を確認してください。"
+            "サインインとネットワーク設定を確認してください。"
         case .differentAccount:
-            "前回と異なるiCloudアカウントです。この端末に保存済みの作品だけを表示し、自動では送信しません。"
+            "前回と異なるアカウントです。この端末に保存済みの作品だけを表示し、自動では送信しません。"
         case .unavailable:
-            "iCloudの作品を更新できませんでした。端末に保存済みの作品は開けます。"
+            "サーバーの作品を更新できませんでした。端末に保存済みの作品は開けます。"
         }
     }
 }
@@ -348,7 +392,6 @@ private struct IOSCloudLibraryRow: View {
     let item: IOSCloudLibraryItem
     let isCurrent: Bool
     let connection: IOSCloudLibraryConnection
-    let onPublish: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -377,14 +420,7 @@ private struct IOSCloudLibraryRow: View {
             }
 
             Spacer(minLength: 8)
-            if let onPublish {
-                Button("iCloudに保存") {
-                    onPublish()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityIdentifier("ios.cloudLibrary.publish")
-            } else if showsChevron {
+            if showsChevron {
                 Image(systemName: "chevron.forward")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -392,7 +428,7 @@ private struct IOSCloudLibraryRow: View {
             }
         }
         .contentShape(Rectangle())
-        .accessibilityElement(children: onPublish == nil ? .combine : .contain)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(item.displayTitle)
         .accessibilityValue(isCurrent ? "選択中、\(statusText)" : statusText)
     }
@@ -400,15 +436,15 @@ private struct IOSCloudLibraryRow: View {
     private var systemImage: String {
         switch item.availability {
         case .cachedRemote where connection == .available:
-            "checkmark.icloud"
+            "checkmark.circle"
         case .cachedRemote:
-            "icloud.slash"
+            "wifi.slash"
         case .remoteOnly, .remotePending:
-            "icloud.and.arrow.down"
+            "arrow.down.circle"
         case .localPending where connection == .available:
-            "arrow.triangle.2.circlepath.icloud"
+            "arrow.triangle.2.circlepath"
         case .localPending:
-            "icloud.slash"
+            "wifi.slash"
         case .localOnly:
             "iphone"
         case .accountQuarantined:
@@ -451,27 +487,27 @@ extension IOSCloudLibraryPresentation {
     ) -> String {
         switch availability {
         case .cachedRemote where connection == .available:
-            "iCloudと同期済み"
+            "サーバーと同期済み"
         case .cachedRemote where connection == .offline:
             "この端末に保存済み・オフラインでも開けます"
         case .cachedRemote where connection == .checking:
-            "この端末に保存済み・iCloud状態を確認中"
+            "この端末に保存済み・サーバー状態を確認中"
         case .cachedRemote where connection == .differentAccount:
-            "この端末に保存済み・iCloudアカウントが異なります"
+            "この端末に保存済み・アカウントが異なります"
         case .cachedRemote:
-            "この端末に保存済み・iCloud状態を確認できません"
+            "この端末に保存済み・サーバー状態を確認できません"
         case .localPending where connection == .available:
-            "この端末に保存済み・iCloudへ反映中"
+            "この端末に保存済み・サーバーへ反映中"
         case .localPending where connection == .offline:
-            "この端末に保存済み・接続後にiCloudへ同期"
+            "この端末に保存済み・接続後にサーバーへ同期"
         case .localPending:
-            "この端末に保存済み・iCloudへは未送信"
+            "この端末に保存済み・サーバーへは未送信"
         case .localOnly:
             "この端末にのみ保存済み"
         case .accountQuarantined where connection == .differentAccount:
-            "この端末に保存済み・iCloudアカウントが異なります"
+            "この端末に保存済み・アカウントが異なります"
         case .accountQuarantined:
-            "この端末に保存済み・iCloud設定を確認"
+            "この端末に保存済み・サーバー設定を確認"
         case .legacyLocal:
             "タップして新しい作品として取り込む"
         case .remoteOnly where connection == .available:
@@ -479,17 +515,17 @@ extension IOSCloudLibraryPresentation {
         case .remoteOnly where connection == .offline:
             "接続後にこの端末へダウンロード"
         case .remoteOnly:
-            "iCloud状態の確認後にダウンロード"
+            "サーバー状態の確認後にダウンロード"
         case .remotePending where connection == .available:
             "タップしてダウンロードを再開"
         case .remotePending where connection == .offline:
             "タップしてこの端末への保存を再開"
         case .remotePending:
-            "iCloud状態の確認後にダウンロードを再開"
+            "サーバー状態の確認後にダウンロードを再開"
         case .needsReview:
             "この端末に保存済み・内容の確認が必要"
         case .cloudUnavailable:
-            "iCloud上の状態を確認できません"
+            "サーバー上の状態を確認できません"
         case .unavailable:
             "安全に開けません"
         }

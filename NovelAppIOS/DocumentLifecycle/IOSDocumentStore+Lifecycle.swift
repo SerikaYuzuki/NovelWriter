@@ -201,7 +201,7 @@ extension IOSDocumentStore {
             return true
         } catch {
             operationErrorMessage = if usesCloudLibrary {
-                "作品を準備できませんでした。元の作品は変更していません。通信状態とiCloud設定を確認して、もう一度お試しください。"
+                "作品を準備できませんでした。元の作品は変更していません。通信状態とサインイン状態を確認して、もう一度お試しください。"
             } else {
                 "作品を開けませんでした。元の作品は変更していません。\n\(error.localizedDescription)"
             }
@@ -333,6 +333,11 @@ extension IOSDocumentStore {
         lastAutomaticSnapshotRevision = saveCoordinator.lastSavedRevision
         if rememberRecent {
             userDefaults.set(url.lastPathComponent, forKey: Self.lastDocumentNameKey)
+        }
+        if usesSnapshotSyncRuntime {
+            Task { @MainActor [weak self] in
+                await self?.ensureLocalSnapshotSeeded(for: document)
+            }
         }
         return true
     }

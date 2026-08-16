@@ -74,14 +74,14 @@ struct IOSProjectHomeView: View {
                         _ = await store.publishCloudLibraryWork(workID)
                     }
                 } label: {
-                    Label("iCloudに保存", systemImage: "icloud.and.arrow.up")
+                    Label("サーバーに保存", systemImage: "arrow.up.circle")
                 }
                 .disabled(
                     !store.permitsCloudLibraryMutation || store.cloudLibraryOperationInProgress
                 )
                 .accessibilityIdentifier("ios.project.publish")
             } footer: {
-                Text("この端末だけの作品です。iCloudへ送るまで、ほかの端末には出ません。")
+                Text("この端末だけの作品です。サーバーへ送るまで、ほかの端末には出ません。")
             }
         } else if store.noteSyncConflict != nil {
             Section {
@@ -93,20 +93,20 @@ struct IOSProjectHomeView: View {
                 .tint(.orange)
                 .accessibilityIdentifier("ios.project.noteSync.review")
             } footer: {
-                Text("この端末とiCloudの両方で内容が変わっています。残す側を選べます。")
+                Text("この端末とサーバーの両方で内容が変わっています。残す側を選べます。")
             }
         } else if store.canExplicitlySyncCurrentWork {
             Section {
                 Button {
                     Task { await store.saveAndSyncNow() }
                 } label: {
-                    Label("iCloudと同期", systemImage: "arrow.clockwise.icloud")
+                    Label("サーバーと同期", systemImage: "arrow.clockwise")
                 }
                 .disabled(store.isExplicitNoteSyncInFlight)
                 .keyboardShortcut("s", modifiers: .command)
                 .accessibilityIdentifier("ios.project.sync")
             } footer: {
-                Text("この端末への保存は自動です。iCloudへ送るときだけ、この操作またはCommand-Sを使います。")
+                Text("この端末への保存は自動です。サーバーへ送るときだけ、この操作またはCommand-Sを使います。")
             }
         }
     }

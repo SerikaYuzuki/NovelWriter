@@ -24,6 +24,18 @@ extension IOSDocumentStore {
         _ document: NovelDocument,
         to url: URL
     ) async throws {
+        if usesSnapshotSyncRuntime {
+            try await repository.save(document, to: url)
+            noteDeviceSyncPackageSaved(document)
+            guard await commitLocalCanonicalSnapshot(document) else {
+                deviceSyncLocalDurabilityState = .failed
+                return
+            }
+            deviceSyncLocalDurabilityState = .saved
+            deviceSyncTransferState = .notApplicable
+            scheduleSnapshotSync(for: document.id)
+            return
+        }
         if usesWholeWorkDeviceSync {
             try await performCoordinatedWorkDocumentSave(document, to: url)
             return
