@@ -41,12 +41,16 @@ extension AppState {
         case .signedIn:
             do {
                 remoteEntries = try await worker.library()
+                DeviceSyncLog.snapshot("library loaded count=\(remoteEntries.count)")
             } catch SnapshotSyncError.offline {
                 connection = .offline
+                DeviceSyncLog.snapshot("library offline")
             } catch SnapshotSyncError.unauthorized {
                 connection = .accountRequired
+                DeviceSyncLog.snapshot("library unauthorized")
             } catch {
                 connection = .unavailable(message: "サーバーの作品を更新できませんでした。")
+                DeviceSyncLog.snapshot("library failed", error: error)
             }
         }
 
