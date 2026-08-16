@@ -17,6 +17,19 @@ struct R0ConformanceTests {
         #expect(vectorCount > 0)
     }
 
+    @Test("reviewed v1 scenario fixtures retain their safety invariants")
+    func scenarioContractsAgree() throws {
+        let files = fixtureFiles().filter { $0.path.contains("/docs/sync/v1/fixtures/") }
+        var scenarioCount = 0
+        var scenarioIDs = Set<String>()
+        for file in files {
+            let data = try Data(contentsOf: file)
+            let value = try JSONSerialization.jsonObject(with: data)
+            try verifyScenarios(value, source: file, location: "$", ids: &scenarioIDs, count: &scenarioCount)
+        }
+        #expect(scenarioCount > 0)
+    }
+
     private func fixtureFiles() -> [URL] {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -80,5 +93,61 @@ struct R0ConformanceTests {
             }
         }
         return count
+    }
+
+    private func verifyScenarios(
+        _ value: Any,
+        source: URL,
+        location: String,
+        ids: inout Set<String>,
+        count: inout Int
+    ) throws {
+        if let object = value as? [String: Any] {
+            if let scenarioID = object["scenarioId"] as? String {
+                #expect(!scenarioID.isEmpty, "\(source.path):\(location): empty scenarioId")
+                #expect(ids.insert(scenarioID).inserted, "duplicate scenarioId: \(scenarioID)")
+                #expect(object["fixtureVersion"] as? Int == 1)
+                #expect(object["status"] as? String == "reviewedDesignContract")
+                #expect((object["description"] as? String)?.isEmpty == false)
+                if let forbidden = object["forbiddenOutcomes"] as? [Any] {
+                    #expect(!forbidden.isEmpty)
+                }
+                if let choices = object["choices"] as? [String] {
+                    #expect(choices.contains("useThisDevice"))
+                    #expect(choices.contains("useOnline"))
+                    #expect(choices.contains { $0.contains("keepBoth") })
+                }
+                if let digest = object["digestContract"] as? [String: Any] {
+                    #expect(digest["publishWireContainsRequestDigest"] as? Bool == false)
+                    #expect(
+                        digest["publishWireFields"] as? [String] == [
+                            "candidateSnapshotId",
+                            "expectedHead",
+                            "operationId",
+                            "workId"
+                        ]
+                    )
+                }
+                if let primaryKey = object["remotePresencePrimaryKey"] as? [String] {
+                    #expect(
+                        primaryKey == [
+                            "serverInstanceId",
+                            "protocolEpoch",
+                            "accountId",
+                            "accountFence",
+                            "objectId"
+                        ]
+                    )
+                }
+                count += 1
+            }
+            for (key, child) in object {
+                try verifyScenarios(child, source: source, location: "\(location).\(key)", ids: &ids, count: &count)
+            }
+        } else if let array = value as? [Any] {
+            for (index, child) in array.enumerated() {
+                try verifyScenarios(child, source: source, location: "\(location)[\(index)]", ids: &ids, count: &count)
+            }
+        }
     }
 }
