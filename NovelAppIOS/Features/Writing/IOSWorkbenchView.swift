@@ -252,7 +252,8 @@ private struct IOSEditorEditingSurface: View {
                         isApplying: store.isSnapshotSyncInFlight,
                         choose: { choice in
                             Task {
-                                if await store.resolveSnapshotConflict(using: choice) {
+                                if await store.resolveSnapshotConflict(using: choice),
+                                   store.snapshotSyncConflict == nil {
                                     isSnapshotConflictPresented = false
                                 }
                             }

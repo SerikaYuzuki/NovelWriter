@@ -106,7 +106,8 @@ struct ContentView: View {
                     isApplying: appState.isSnapshotSyncInFlight,
                     choose: { choice in
                         Task {
-                            if await appState.resolveSnapshotConflict(using: choice) {
+                            if await appState.resolveSnapshotConflict(using: choice),
+                               appState.snapshotSyncConflict == nil {
                                 isSnapshotConflictPresented = false
                             }
                         }
