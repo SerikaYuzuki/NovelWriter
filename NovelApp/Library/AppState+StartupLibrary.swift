@@ -65,6 +65,10 @@ extension AppState {
     /// cached rowsを先に残し、remote refreshは同じ棚へmergeする。標準runtimeで
     /// recent path fallbackを一瞬でも表示しない。
     func refreshStartupLibrary() async {
+        if usesSnapshotSyncRuntime {
+            await refreshSnapshotLibrary()
+            return
+        }
         if let startupLibraryRefreshTask {
             await startupLibraryRefreshTask.value
         }
@@ -82,7 +86,7 @@ extension AppState {
     }
 
     func scheduleStartupLibraryRemoteRefreshIfNeeded() {
-        guard deviceSyncRuntime?.library != nil,
+        guard (deviceSyncRuntime?.library != nil || usesSnapshotSyncRuntime),
               case let .documentSelection(context) = startupState,
               context.presentation == .cloudLibrary,
               startupLibraryRefreshTask == nil else { return }

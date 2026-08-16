@@ -12,6 +12,7 @@ struct IOSProjectHomeView: View {
     let openSettings: () -> Void
     @Environment(\.iosNoteSyncConflictPresented) private var isNoteSyncConflictPresented
     @State private var isSnapshotPresented = false
+    @State private var isSnapshotConflictPresented = false
 
     var body: some View {
         List {
@@ -32,6 +33,22 @@ struct IOSProjectHomeView: View {
             }
         }
         .iosSnapshotSheet(store: store, isPresented: $isSnapshotPresented)
+        .sheet(isPresented: $isSnapshotConflictPresented) {
+            if let conflict = store.snapshotSyncConflict {
+                IOSSnapshotSyncConflictResolutionView(
+                    conflict: conflict,
+                    isApplying: store.isSnapshotSyncInFlight,
+                    choose: { choice in
+                        Task {
+                            if await store.resolveSnapshotConflict(using: choice) {
+                                isSnapshotConflictPresented = false
+                            }
+                        }
+                    },
+                    dismiss: { isSnapshotConflictPresented = false }
+                )
+            }
+        }
     }
 
     private var headerSection: some View {
@@ -162,6 +179,13 @@ struct IOSProjectHomeView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        Button {
+                            isSnapshotConflictPresented = true
+                        } label: {
+                            Label("変更を確認", systemImage: "arrow.left.arrow.right")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("ios.project.snapshot.reviewConflict")
                     }
                 } else {
                     Button {

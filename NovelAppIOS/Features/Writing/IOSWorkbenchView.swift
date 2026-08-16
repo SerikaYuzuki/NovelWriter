@@ -236,6 +236,7 @@ private struct IOSEditorEditingSurface: View {
     @State private var mountedChapterID: ChapterID?
     @State private var mountedEpisodeID: EpisodeID?
     @State private var isDeviceSyncConflictPresented = false
+    @State private var isSnapshotConflictPresented = false
 
     var body: some View {
         snapshotHost
@@ -244,6 +245,22 @@ private struct IOSEditorEditingSurface: View {
     private var snapshotHost: some View {
         legacySyncHost
             .iosSnapshotSheet(store: store, isPresented: $isSnapshotPresented)
+            .sheet(isPresented: $isSnapshotConflictPresented) {
+                if let conflict = store.snapshotSyncConflict {
+                    IOSSnapshotSyncConflictResolutionView(
+                        conflict: conflict,
+                        isApplying: store.isSnapshotSyncInFlight,
+                        choose: { choice in
+                            Task {
+                                if await store.resolveSnapshotConflict(using: choice) {
+                                    isSnapshotConflictPresented = false
+                                }
+                            }
+                        },
+                        dismiss: { isSnapshotConflictPresented = false }
+                    )
+                }
+            }
     }
 
     private var legacySyncHost: some View {
@@ -272,6 +289,7 @@ private struct IOSEditorEditingSurface: View {
                     chapter: identity.chapter,
                     episode: identity.episode,
                     isNoteSyncConflictPresented: isNoteSyncConflictPresented,
+                    isSnapshotConflictPresented: $isSnapshotConflictPresented,
                     isMemoPresented: $isMemoPresented,
                     isSnapshotPresented: $isSnapshotPresented,
                     isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented,
@@ -442,6 +460,7 @@ private struct IOSEditorToolbarContent: ToolbarContent {
     let chapter: Chapter
     let episode: Episode
     var isNoteSyncConflictPresented: Binding<Bool>
+    @Binding var isSnapshotConflictPresented: Bool
     @Binding var isMemoPresented: Bool
     @Binding var isSnapshotPresented: Bool
     @Binding var isDeviceSyncConflictPresented: Bool
@@ -455,6 +474,7 @@ private struct IOSEditorToolbarContent: ToolbarContent {
                 store: store,
                 accessibilityIdentifier: "ios.editor.saveState",
                 isNoteSyncConflictPresented: isNoteSyncConflictPresented,
+                isSnapshotConflictPresented: $isSnapshotConflictPresented,
                 isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
             )
             if store.canExplicitlySyncCurrentWork {

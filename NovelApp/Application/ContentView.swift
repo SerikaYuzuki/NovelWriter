@@ -1,4 +1,5 @@
 import EditorKit
+import NovelLocalStore
 import SwiftUI
 
 struct ContentView: View {
@@ -6,6 +7,7 @@ struct ContentView: View {
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
     @State private var isStartupWorkRecoveryPresented = false
+    @State private var isSnapshotConflictPresented = false
 
     var body: some View {
         Group {
@@ -97,8 +99,28 @@ struct ContentView: View {
                 .id("startup-local-recovery:\(review.materializedRevision.revisionID)")
             }
         }
+        .sheet(isPresented: $isSnapshotConflictPresented) {
+            if let conflict = appState.snapshotSyncConflict {
+                SnapshotSyncConflictResolutionView(
+                    conflict: conflict,
+                    isApplying: appState.isSnapshotSyncInFlight,
+                    choose: { choice in
+                        Task {
+                            if await appState.resolveSnapshotConflict(using: choice) {
+                                isSnapshotConflictPresented = false
+                            }
+                        }
+                    },
+                    dismiss: { isSnapshotConflictPresented = false }
+                )
+                .id("snapshot-conflict:\(conflict.conflictID.uuidString)")
+            }
+        }
         .onChange(of: appState.workSyncLocalRecoveryReview, initial: true) { _, review in
             isStartupWorkRecoveryPresented = review != nil
+        }
+        .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
+            isSnapshotConflictPresented = conflict != nil
         }
         .overlay(alignment: .bottomTrailing) {
             VStack(alignment: .trailing, spacing: 8) {

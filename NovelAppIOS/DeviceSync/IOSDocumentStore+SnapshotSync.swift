@@ -144,14 +144,78 @@ extension IOSDocumentStore {
         }
     }
 
-    private func refreshSnapshotConflict(for workID: UUID, outcome: SnapshotSyncOutcome) async {
-        guard case .needsChoice = outcome else {
-            snapshotSyncConflict = nil
-            return
+    @discardableResult
+    func resolveSnapshotConflict(
+        using choice: SnapshotSyncConflictChoice
+    ) async -> Bool {
+        guard usesSnapshotSyncRuntime,
+              let conflict = snapshotSyncConflict,
+              let worker = localSnapshotSyncWorker,
+              let store = localCanonicalStore,
+              startupState == .ready else { return false }
+        isSnapshotSyncInFlight = true
+        defer { isSnapshotSyncInFlight = false }
+        do {
+            switch choice {
+            case .useThisDevice:
+                let outcome = try await worker.resolveUsingLocal(conflict)
+                snapshotSyncOutcome = outcome
+                snapshotSyncConflict = nil
+                return true
+            case .useServer:
+                guard let head = try await worker.remoteHead(workID: conflict.workID),
+                      head.snapshotID == conflict.remoteSnapshotID else { return false }
+                let payload = try await worker.remoteSnapshot(
+                    workID: conflict.workID,
+                    snapshotID: head.snapshotID
+                )
+                guard let object = payload.objects.first else { return false }
+                let remoteSnapshot = try JSONDecoder().decode(WorkSnapshot.self, from: object.bytes)
+                let remoteDocument = try remoteSnapshot.materializedDocument()
+                guard remoteDocument.id == document.id else { return false }
+                guard await saveNow() else { return false }
+                let state = try await store.workState(for: conflict.workID)
+                try await repository.save(remoteDocument, to: documentURL)
+                _ = try await store.installRemoteSnapshot(
+                    workID: conflict.workID,
+                    documentID: remoteDocument.id,
+                    documentCreatedAt: state?.documentCreatedAt ?? Date().ISO8601Format(),
+                    snapshotID: payload.snapshotID,
+                    parentSnapshotIDs: payload.parentSnapshotIDs,
+                    manifest: payload.manifest,
+                    objects: payload.objects,
+                    remoteGeneration: head.generation,
+                    expectedLocalSnapshotID: state?.currentLocalSnapshotID,
+                    expectedLocalGeneration: state?.localGeneration
+                )
+                guard install(remoteDocument, at: documentURL, attachments: []) else {
+                    return false
+                }
+                try await worker.resolveUsingServer(conflict)
+                snapshotSyncOutcome = .uploaded(
+                    snapshotID: payload.snapshotID,
+                    generation: head.generation
+                )
+                snapshotSyncConflict = nil
+                return true
+            case .keepBoth:
+                return false
+            }
+        } catch {
+            DeviceSyncLog.snapshot("ios conflict resolution failed", error: error)
+            return false
         }
+    }
+
+    private func refreshSnapshotConflict(for workID: UUID, outcome: SnapshotSyncOutcome) async {
         guard let worker = localSnapshotSyncWorker else { return }
         do {
-            snapshotSyncConflict = try await worker.conflicts(workID: workID).first
+            let conflicts = try await worker.conflicts(workID: workID)
+            if let conflict = conflicts.first {
+                snapshotSyncConflict = conflict
+            } else if case .needsChoice = outcome {
+                snapshotSyncConflict = nil
+            }
             if let conflict = snapshotSyncConflict {
                 DeviceSyncLog.snapshot(
                     "ios conflict loaded id=\(conflict.conflictID.uuidString.lowercased())"

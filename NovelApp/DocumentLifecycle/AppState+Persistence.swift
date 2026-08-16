@@ -69,6 +69,10 @@ extension AppState {
                 objects: [LocalObject(objectID: objectID, bytes: objectBytes)],
                 reason: .autosave
             )
+            userDefaults.set(
+                documentURL.standardizedFileURL.path,
+                forKey: "fuminiwa.snapshot.documentURL.\(workID.uuidString.lowercased())"
+            )
             return true
         } catch {
             print("[FUMINIWA] SQLite正本への保存に失敗しました(\(Self.errorCategory(error)))")

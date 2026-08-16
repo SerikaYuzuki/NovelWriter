@@ -55,6 +55,20 @@ extension AppState {
     }
 
     private func establishInitialStartupState(opening requestedURL: URL?, localFirst: Bool) async {
+        if usesSnapshotSyncRuntime {
+            startupState = .documentSelection(
+                StartupDocumentSelectionContext(
+                    works: [],
+                    connection: .offline,
+                    isLoading: true
+                )
+            )
+            await refreshSnapshotLibrary()
+            if let requestedURL {
+                _ = await importExternalDocument(at: requestedURL, expectedSession: documentSessionToken)
+            }
+            return
+        }
         if deviceSyncRuntime?.library != nil {
             startupState = .documentSelection(
                 StartupDocumentSelectionContext(
@@ -218,6 +232,13 @@ extension AppState {
               !isStartupLibraryOperationInProgress else { return false }
         isStartupLibraryOperationInProgress = true
         defer { isStartupLibraryOperationInProgress = false }
+        if usesSnapshotSyncRuntime {
+            return await openSnapshotLibraryWork(
+                reference,
+                context: context,
+                expectedSession: expectedSession
+            )
+        }
         switch reference {
         case let .recentDocument(url):
             return await openDocument(

@@ -16,6 +16,44 @@ public struct RemoteSnapshotHead: Codable, Equatable, Sendable {
     }
 }
 
+/// Remote catalog data used only to discover works that are not yet present
+/// in this device's SQLite store. The head remains the only sync authority.
+public struct SnapshotSyncLibraryEntry: Codable, Equatable, Sendable, Identifiable {
+    public let workID: UUID
+    public let title: String
+    public let head: RemoteSnapshotHead?
+
+    public var id: UUID { workID }
+
+    private enum CodingKeys: String, CodingKey {
+        case workID = "workId"
+        case title
+        case head
+    }
+}
+
+public struct RemoteSnapshotPayload: Equatable, Sendable {
+    public let workID: UUID
+    public let snapshotID: String
+    public let parentSnapshotIDs: [String]
+    public let manifest: Data
+    public let objects: [LocalObject]
+
+    public init(
+        workID: UUID,
+        snapshotID: String,
+        parentSnapshotIDs: [String],
+        manifest: Data,
+        objects: [LocalObject]
+    ) {
+        self.workID = workID
+        self.snapshotID = snapshotID
+        self.parentSnapshotIDs = parentSnapshotIDs
+        self.manifest = manifest
+        self.objects = objects
+    }
+}
+
 /// A server-persisted divergence that requires an explicit user choice.
 /// Snapshot IDs are retained so the eventual resolver can compare immutable
 /// branches without guessing which side should win.
@@ -43,6 +81,12 @@ public struct SnapshotSyncConflict: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+public enum SnapshotSyncConflictChoice: String, Codable, Sendable {
+    case useThisDevice
+    case useServer = "useOnline"
+    case keepBoth = "keepBothAsSeparateWorks"
+}
+
 public enum SnapshotSyncOutcome: Equatable, Sendable {
     case notStarted
     case offline
@@ -54,11 +98,15 @@ public enum SnapshotSyncOutcome: Equatable, Sendable {
 public enum SnapshotSyncError: Error, Equatable, Sendable {
     case invalidManifest
     case transport(String)
+    case offline
     case unauthorized
     case conflict
 }
 
 public protocol SnapshotSyncTransport: Sendable {
+    func library(accessToken: String) async throws -> [SnapshotSyncLibraryEntry]
+    func snapshotManifest(workID: UUID, snapshotID: String, accessToken: String) async throws -> Data
+    func downloadObject(objectID: String, accessToken: String) async throws -> Data
     func uploadObject(objectID: String, bytes: Data, accessToken: String) async throws
     func registerSnapshot(workID: UUID, snapshotID: String, manifest: Data, accessToken: String) async throws
     func head(workID: UUID, accessToken: String) async throws -> RemoteSnapshotHead?
@@ -70,6 +118,13 @@ public protocol SnapshotSyncTransport: Sendable {
         accessToken: String
     ) async throws -> RemoteSnapshotHead
     func conflicts(workID: UUID, accessToken: String) async throws -> [SnapshotSyncConflict]
+    func resolveConflict(
+        workID: UUID,
+        conflictID: UUID,
+        choice: SnapshotSyncConflictChoice,
+        expectedRemoteSnapshotID: String,
+        accessToken: String
+    ) async throws
 }
 
 /// Replays durable intents after connectivity returns. Local commit never
@@ -154,10 +209,93 @@ public actor LocalSnapshotSyncWorker {
         do {
             maybeSession = try await sessionProvider()
         } catch {
-            return []
+            throw SnapshotSyncError.offline
         }
-        guard let session = maybeSession else { return [] }
+        guard let session = maybeSession else { throw SnapshotSyncError.offline }
         return try await transport.conflicts(workID: workID, accessToken: session.accessToken)
+    }
+
+    public func library() async throws -> [SnapshotSyncLibraryEntry] {
+        guard let session = try await sessionProvider() else { throw SnapshotSyncError.offline }
+        return try await transport.library(accessToken: session.accessToken)
+    }
+
+    public func remoteHead(workID: UUID) async throws -> RemoteSnapshotHead? {
+        guard let session = try await sessionProvider() else { throw SnapshotSyncError.offline }
+        return try await transport.head(workID: workID, accessToken: session.accessToken)
+    }
+
+    public func remoteSnapshot(
+        workID: UUID,
+        snapshotID: String
+    ) async throws -> RemoteSnapshotPayload {
+        guard let session = try await sessionProvider() else {
+            throw SnapshotSyncError.offline
+        }
+        let manifest = try await transport.snapshotManifest(
+            workID: workID,
+            snapshotID: snapshotID,
+            accessToken: session.accessToken
+        )
+        let objectIDs = try Self.objectIDs(in: manifest)
+        var objects: [LocalObject] = []
+        objects.reserveCapacity(objectIDs.count)
+        for objectID in objectIDs {
+            let bytes = try await transport.downloadObject(
+                objectID: objectID,
+                accessToken: session.accessToken
+            )
+            objects.append(LocalObject(objectID: objectID, bytes: bytes))
+        }
+        let parentIDs = try Self.parentIDs(in: manifest)
+        return RemoteSnapshotPayload(
+            workID: workID,
+            snapshotID: snapshotID,
+            parentSnapshotIDs: parentIDs,
+            manifest: manifest,
+            objects: objects
+        )
+    }
+
+    /// Publishes the already durable local branch against the server head
+    /// observed by the conflict record. A newer local edit remains pending
+    /// because `acknowledge` is generation-aware.
+    public func resolveUsingLocal(_ conflict: SnapshotSyncConflict) async throws -> SnapshotSyncOutcome {
+        guard let session = try await sessionProvider() else { throw SnapshotSyncError.offline }
+        guard let snapshot = try await store.snapshot(id: conflict.localSnapshotID) else {
+            throw SnapshotSyncError.transport("missing local conflict snapshot")
+        }
+        let expectedHead = try await transport.head(workID: conflict.workID, accessToken: session.accessToken)
+        let head = try await transport.publish(
+            workID: conflict.workID,
+            operationID: UUID(),
+            expectedHead: expectedHead,
+            candidateSnapshotID: snapshot.id,
+            accessToken: session.accessToken
+        )
+        for intent in try await store.pendingIntents(for: conflict.workID)
+            where intent.localSnapshotID == conflict.localSnapshotID {
+            _ = try await store.acknowledge(
+                intentID: intent.id,
+                remoteSnapshotID: head.snapshotID,
+                remoteGeneration: head.generation
+            )
+        }
+        return .uploaded(snapshotID: snapshot.id, generation: head.generation)
+    }
+
+    public func resolveUsingServer(
+        _ conflict: SnapshotSyncConflict,
+        keepBoth: Bool = false
+    ) async throws {
+        guard let session = try await sessionProvider() else { throw SnapshotSyncError.offline }
+        try await transport.resolveConflict(
+            workID: conflict.workID,
+            conflictID: conflict.conflictID,
+            choice: keepBoth ? .keepBoth : .useServer,
+            expectedRemoteSnapshotID: conflict.remoteSnapshotID,
+            accessToken: session.accessToken
+        )
     }
 
     private func ensureSnapshotChain(
@@ -210,6 +348,13 @@ public actor LocalSnapshotSyncWorker {
         guard ids.count == entries.count else { throw SnapshotSyncError.invalidManifest }
         return Array(Set(ids)).sorted()
     }
+
+    private static func parentIDs(in manifest: Data) throws -> [String] {
+        guard let object = try JSONSerialization.jsonObject(with: manifest) as? [String: Any] else {
+            throw SnapshotSyncError.invalidManifest
+        }
+        return object["parentSnapshotIds"] as? [String] ?? []
+    }
 }
 
 public struct FuminiwaHTTPSnapshotSyncTransport: SnapshotSyncTransport, Sendable {
@@ -219,6 +364,41 @@ public struct FuminiwaHTTPSnapshotSyncTransport: SnapshotSyncTransport, Sendable
     public init(baseURL: URL, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
+    }
+
+    public func library(accessToken: String) async throws -> [SnapshotSyncLibraryEntry] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/works"))
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validate(response, status: 200 ..< 300, data: data)
+        return try JSONDecoder().decode([SnapshotSyncLibraryEntry].self, from: data)
+    }
+
+    public func snapshotManifest(
+        workID: UUID,
+        snapshotID: String,
+        accessToken: String
+    ) async throws -> Data {
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent(
+                "v1/works/\(workID.uuidString.lowercased())/snapshots/\(snapshotID)"
+            )
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validate(response, status: 200 ..< 300, data: data)
+        return data
+    }
+
+    public func downloadObject(objectID: String, accessToken: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/objects/\(objectID)"))
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try validate(response, status: 200 ..< 300, data: data)
+        return data
     }
 
     public func uploadObject(objectID: String, bytes: Data, accessToken: String) async throws {
@@ -287,6 +467,32 @@ public struct FuminiwaHTTPSnapshotSyncTransport: SnapshotSyncTransport, Sendable
         return try JSONDecoder().decode([SnapshotSyncConflict].self, from: data)
     }
 
+    public func resolveConflict(
+        workID: UUID,
+        conflictID: UUID,
+        choice: SnapshotSyncConflictChoice,
+        expectedRemoteSnapshotID: String,
+        accessToken: String
+    ) async throws {
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent(
+                "v1/works/\(workID.uuidString.lowercased())/conflicts/\(conflictID.uuidString.lowercased())/resolve"
+            )
+        )
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(
+            ResolveConflictBody(
+                operationID: UUID(),
+                choice: choice.rawValue,
+                expectedRemoteSnapshotID: expectedRemoteSnapshotID
+            )
+        )
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.data(for: request)
+        try validate(response, status: 200 ..< 300, data: data)
+    }
+
     private func send(_ request: URLRequest, expected: Range<Int>) async throws {
         let (data, response) = try await session.data(for: request)
         try validate(response, status: expected, data: data)
@@ -321,4 +527,16 @@ private struct PublishBody: Encodable {
 
 private struct PublishResponse: Decodable {
     let head: RemoteSnapshotHead
+}
+
+private struct ResolveConflictBody: Encodable {
+    let operationID: UUID
+    let choice: String
+    let expectedRemoteSnapshotID: String
+
+    enum CodingKeys: String, CodingKey {
+        case operationID = "operationId"
+        case choice
+        case expectedRemoteSnapshotID = "expectedRemoteSnapshotId"
+    }
 }

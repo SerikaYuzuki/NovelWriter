@@ -47,6 +47,14 @@ extension AppState {
             authSession = session
             authUIState = .signedIn(accountID: session.accountID)
             await resumePendingSnapshotSync()
+            // A user may have signed in from the empty startup shelf. Refresh
+            // the snapshot catalog immediately so remote-only works become
+            // discoverable without restarting the app.
+            if usesSnapshotSyncRuntime,
+               case let .documentSelection(context) = startupState,
+               context.presentation == .cloudLibrary {
+                await refreshSnapshotLibrary()
+            }
         } catch is CancellationError {
             authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         } catch {

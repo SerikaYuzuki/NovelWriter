@@ -7,9 +7,9 @@ use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 use axum::{
     body::Bytes,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -337,6 +337,17 @@ pub struct Head {
     pub snapshot_id: String,
 }
 
+/// Lightweight server catalog projection used by the startup shelf. The
+/// immutable snapshot manifest remains the source of the title; this row is
+/// only a discoverability hint and is never used for conflict decisions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkCatalogEntry {
+    #[serde(rename = "workId")]
+    pub work_id: Uuid,
+    pub title: String,
+    pub head: Option<Head>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkRecord {
     pub work_id: Uuid,
@@ -413,6 +424,15 @@ pub struct ConflictRecord {
     pub remote_snapshot_id: String,
     pub state: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResolveConflictCommand {
+    #[serde(rename = "operationId")]
+    pub operation_id: Uuid,
+    pub choice: String,
+    #[serde(rename = "expectedRemoteSnapshotId")]
+    pub expected_remote_snapshot_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -556,13 +576,21 @@ pub fn router(state: SharedState, config: AppConfig) -> Router {
         .route("/v1/auth/tokens:refresh", post(refresh_session))
         .route("/v1/auth/session:revoke", post(revoke_session))
         .route("/v1/capabilities", get(capabilities))
-        .route("/v1/objects/{object_id}", put(upload_object))
+        .route("/v1/works", get(list_works))
+        .route(
+            "/v1/objects/{object_id}",
+            get(download_object).put(upload_object),
+        )
         .route(
             "/v1/works/{work_id}/snapshots/{snapshot_id}",
-            put(register_snapshot),
+            get(get_snapshot).put(register_snapshot),
         )
         .route("/v1/works/{work_id}/head", get(get_head).post(publish_head))
         .route("/v1/works/{work_id}/conflicts", get(list_conflicts))
+        .route(
+            "/v1/works/{work_id}/conflicts/{conflict_id}/resolve",
+            post(resolve_conflict),
+        )
         .with_state((state, Arc::new(config)))
 }
 
@@ -886,6 +914,38 @@ async fn upload_object(
     ))
 }
 
+async fn download_object(
+    State((state, config)): State<HandlerState>,
+    headers: HeaderMap,
+    Path(object_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let object = state
+        .read()
+        .await
+        .objects
+        .get(&object_id)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound("object".into()))?;
+    let mut response = Response::new(object.bytes.into_response().into_body());
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream"
+            .parse()
+            .expect("static content type"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        object
+            .byte_count
+            .to_string()
+            .parse()
+            .expect("content length is numeric"),
+    );
+    Ok(response)
+}
+
 async fn register_snapshot(
     State((state, config)): State<HandlerState>,
     headers: HeaderMap,
@@ -930,6 +990,63 @@ async fn register_snapshot(
     Ok(Json(
         serde_json::json!({"snapshotId":snapshot_id,"alreadyRegistered":false}),
     ))
+}
+
+async fn get_snapshot(
+    State((state, config)): State<HandlerState>,
+    headers: HeaderMap,
+    Path((work_id, snapshot_id)): Path<(Uuid, String)>,
+) -> Result<Json<SnapshotManifest>, ApiError> {
+    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let manifest = state
+        .read()
+        .await
+        .snapshots
+        .get(&snapshot_id)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound("snapshot".into()))?;
+    if manifest.work_id != work_id {
+        return Err(ApiError::NotFound("snapshot".into()));
+    }
+    Ok(Json(manifest))
+}
+
+async fn list_works(
+    State((state, config)): State<HandlerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<WorkCatalogEntry>>, ApiError> {
+    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    let locked = state.read().await;
+    let mut entries = locked
+        .works
+        .values()
+        .map(|work| WorkCatalogEntry {
+            work_id: work.work_id,
+            title: work
+                .head
+                .as_ref()
+                .and_then(|head| locked.snapshots.get(&head.snapshot_id))
+                .and_then(|manifest| {
+                    manifest
+                        .entries
+                        .iter()
+                        .find(|entry| entry.entity_key == "work/document")
+                })
+                .and_then(|entry| locked.objects.get(&entry.object_id))
+                .and_then(|object| serde_json::from_slice::<serde_json::Value>(&object.bytes).ok())
+                .and_then(|value| {
+                    value
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned)
+                })
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| "名称未設定の作品".to_owned()),
+            head: work.head.clone(),
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.work_id.cmp(&right.work_id));
+    Ok(Json(entries))
 }
 
 async fn get_head(
@@ -1046,6 +1163,14 @@ async fn publish_head(
         snapshot_id: command.candidate_snapshot_id.clone(),
     };
     work.head = Some(head.clone());
+    for conflict in locked.conflicts.values_mut() {
+        if conflict.work_id == work_id
+            && conflict.state == "needsChoice"
+            && conflict.local_snapshot_id == command.candidate_snapshot_id
+        {
+            conflict.state = "resolved".into();
+        }
+    }
     let result = PublishResult {
         receipt: OperationReceipt {
             operation_id: command.operation_id,
@@ -1095,6 +1220,79 @@ async fn list_conflicts(
         ))
     });
     Ok(Json(conflicts))
+}
+
+async fn resolve_conflict(
+    State((state, config)): State<HandlerState>,
+    headers: HeaderMap,
+    Path((work_id, conflict_id)): Path<(Uuid, Uuid)>,
+    Json(command): Json<ResolveConflictCommand>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _principal = authenticate_bearer(&state, &headers, &config).await?;
+    if command.choice != "useOnline" && command.choice != "keepBothAsSeparateWorks" {
+        return Err(ApiError::InvalidRequest(
+            "unsupported conflict choice".into(),
+        ));
+    }
+    let request_bytes = serde_json::to_vec(&command).map_err(|_| ApiError::Internal)?;
+    let request_hash = digest(&request_bytes);
+    let mut locked = state.write().await;
+    if let Some(receipt) = locked.operations.get(&command.operation_id) {
+        if receipt.request_sha256 != request_hash || receipt.kind != "resolveConflict" {
+            return Err(ApiError::Conflict(
+                "operationId was reused with a different request".into(),
+            ));
+        }
+        return Ok(Json(receipt.result.clone()));
+    }
+    let conflict_work_id = locked
+        .conflicts
+        .get(&conflict_id)
+        .map(|conflict| conflict.work_id)
+        .ok_or_else(|| ApiError::NotFound("conflict".into()))?;
+    if conflict_work_id != work_id {
+        return Err(ApiError::NotFound("conflict".into()));
+    }
+    if locked
+        .conflicts
+        .get(&conflict_id)
+        .map(|conflict| conflict.state.as_str())
+        != Some("needsChoice")
+    {
+        return Err(ApiError::Conflict("conflict already resolved".into()));
+    }
+    let current_head = locked
+        .works
+        .get(&work_id)
+        .and_then(|work| work.head.clone())
+        .ok_or_else(|| ApiError::NotFound("work head".into()))?;
+    if current_head.snapshot_id != command.expected_remote_snapshot_id {
+        return Err(ApiError::Conflict("remote head moved".into()));
+    }
+    locked
+        .conflicts
+        .get_mut(&conflict_id)
+        .ok_or_else(|| ApiError::NotFound("conflict".into()))?
+        .state = "resolved".into();
+    let result = serde_json::json!({
+        "outcome": "resolved",
+        "choice": command.choice,
+        "conflictId": conflict_id,
+        "head": current_head,
+        "operationId": command.operation_id,
+    });
+    locked.operations.insert(
+        command.operation_id,
+        OperationReceipt {
+            operation_id: command.operation_id,
+            kind: "resolveConflict".into(),
+            request_sha256: request_hash,
+            result: result.clone(),
+            created_at: Utc::now(),
+        },
+    );
+    persist_state(&locked).await?;
+    Ok(Json(result))
 }
 
 async fn validate_manifest(
@@ -1880,6 +2078,7 @@ mod tests {
         );
 
         let conflicts = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri(format!("/v1/works/{work_id}/conflicts"))
@@ -1897,5 +2096,69 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].local_snapshot_id, local_snapshot_id);
         assert_eq!(records[0].remote_snapshot_id, remote_snapshot_id);
+
+        let catalog = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/works")
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog_body = axum::body::to_bytes(catalog.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let catalog_entries: Vec<WorkCatalogEntry> = serde_json::from_slice(&catalog_body).unwrap();
+        assert_eq!(catalog_entries.len(), 1);
+        assert_eq!(catalog_entries[0].work_id, work_id);
+        assert_eq!(
+            catalog_entries[0].head.as_ref().unwrap().snapshot_id,
+            remote_snapshot_id
+        );
+
+        let resolve = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/v1/works/{work_id}/conflicts/{}/resolve",
+                        records[0].conflict_id
+                    ))
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "operationId": Uuid::new_v4(),
+                            "choice": "useOnline",
+                            "expectedRemoteSnapshotId": remote_snapshot_id,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resolve.status(), StatusCode::OK);
+        let remaining = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/works/{work_id}/conflicts"))
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let remaining_body = axum::body::to_bytes(remaining.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let remaining_records: Vec<ConflictRecord> =
+            serde_json::from_slice(&remaining_body).unwrap();
+        assert!(remaining_records.is_empty());
     }
 }

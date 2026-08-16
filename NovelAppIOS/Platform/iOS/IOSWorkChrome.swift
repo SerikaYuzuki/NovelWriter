@@ -5,6 +5,7 @@ struct IOSWorkSaveStatusButton: View {
     let store: IOSDocumentStore
     let accessibilityIdentifier: String
     var isNoteSyncConflictPresented: Binding<Bool>
+    @Binding var isSnapshotConflictPresented: Bool
     @Binding var isDeviceSyncConflictPresented: Bool
 
     var body: some View {
@@ -13,7 +14,8 @@ struct IOSWorkSaveStatusButton: View {
                 IOSSnapshotSyncStatusControl(
                     saveState: store.saveState,
                     outcome: store.snapshotSyncOutcome,
-                    conflict: store.snapshotSyncConflict
+                    conflict: store.snapshotSyncConflict,
+                    onResolve: { isSnapshotConflictPresented = true }
                 )
             } else {
                 IOSDeviceSyncStatusControl(
@@ -50,6 +52,7 @@ private struct IOSSnapshotSyncStatusControl: View {
     let saveState: IOSSaveState
     let outcome: SnapshotSyncOutcome
     let conflict: SnapshotSyncConflict?
+    let onResolve: () -> Void
     @State private var showsDetails = false
 
     private var title: String {
@@ -136,6 +139,8 @@ private struct IOSSnapshotSyncStatusControl: View {
                             .font(.caption2.monospaced())
                             .textSelection(.enabled)
                     }
+                    Button("変更を確認") { onResolve() }
+                        .buttonStyle(.borderedProminent)
                 }
             }
             .padding()
@@ -170,6 +175,7 @@ struct IOSWorkChromeToolbarContent: ToolbarContent {
     let accessibilityPrefix: String
     var isNoteSyncConflictPresented: Binding<Bool>
     @Binding var isSnapshotPresented: Bool
+    @Binding var isSnapshotConflictPresented: Bool
     @Binding var isDeviceSyncConflictPresented: Bool
 
     var body: some ToolbarContent {
@@ -178,6 +184,7 @@ struct IOSWorkChromeToolbarContent: ToolbarContent {
                 store: store,
                 accessibilityIdentifier: "\(accessibilityPrefix).saveState",
                 isNoteSyncConflictPresented: isNoteSyncConflictPresented,
+                isSnapshotConflictPresented: $isSnapshotConflictPresented,
                 isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
             )
             if store.canExplicitlySyncCurrentWork {
@@ -199,6 +206,7 @@ private struct IOSWorkChromeModifier: ViewModifier {
     let accessibilityPrefix: String
     @Environment(\.iosNoteSyncConflictPresented) private var isNoteSyncConflictPresented
     @State private var isSnapshotPresented = false
+    @State private var isSnapshotConflictPresented = false
     @State private var isDeviceSyncConflictPresented = false
 
     func body(content: Content) -> some View {
@@ -206,13 +214,30 @@ private struct IOSWorkChromeModifier: ViewModifier {
             .toolbar {
                 IOSWorkChromeToolbarContent(
                     store: store,
-                    accessibilityPrefix: accessibilityPrefix,
-                    isNoteSyncConflictPresented: isNoteSyncConflictPresented,
-                    isSnapshotPresented: $isSnapshotPresented,
-                    isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
+                accessibilityPrefix: accessibilityPrefix,
+                isNoteSyncConflictPresented: isNoteSyncConflictPresented,
+                isSnapshotPresented: $isSnapshotPresented,
+                isSnapshotConflictPresented: $isSnapshotConflictPresented,
+                isDeviceSyncConflictPresented: $isDeviceSyncConflictPresented
                 )
             }
             .iosSnapshotSheet(store: store, isPresented: $isSnapshotPresented)
+            .sheet(isPresented: $isSnapshotConflictPresented) {
+                if let conflict = store.snapshotSyncConflict {
+                    IOSSnapshotSyncConflictResolutionView(
+                        conflict: conflict,
+                        isApplying: store.isSnapshotSyncInFlight,
+                        choose: { choice in
+                            Task {
+                                if await store.resolveSnapshotConflict(using: choice) {
+                                    isSnapshotConflictPresented = false
+                                }
+                            }
+                        },
+                        dismiss: { isSnapshotConflictPresented = false }
+                    )
+                }
+            }
             .iosEditorLegacySyncSheets(store: store, isPresented: $isDeviceSyncConflictPresented)
     }
 }

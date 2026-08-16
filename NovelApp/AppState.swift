@@ -140,6 +140,7 @@ final class AppState {
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState
     var lastSnapshotSyncOutcome: SnapshotSyncOutcome = .notStarted
+    var snapshotSyncConflict: SnapshotSyncConflict?
     var isSnapshotSyncInFlight = false
     /// production syncのlocal metadataを確立できなかったprocessは、
     /// Finder Openや新規作成でruntime-nil writerへ復帰させない。
@@ -222,6 +223,7 @@ final class AppState {
     @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
     @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
     @ObservationIgnored let localSnapshotSyncWorker: LocalSnapshotSyncWorker?
+    @ObservationIgnored var snapshotRemoteLibraryEntries: [UUID: SnapshotSyncLibraryEntry] = [:]
     @ObservationIgnored var deviceSyncClients: [DeviceSyncClientKey: DeviceSyncClient] = [:]
     @ObservationIgnored var activeDeviceSyncIdentity: DeviceSyncEpisodeIdentity?
     @ObservationIgnored var resolvedDeviceSyncLookupIdentity: DeviceSyncLookupIdentity?
