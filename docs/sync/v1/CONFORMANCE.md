@@ -30,6 +30,14 @@ The current slice verifies:
 - the clean-editor/pending-Intent remote-advance scenario proves that a
   durable local save is staged for reconciliation instead of being silently
   replaced by a newer remote head.
+- the auth refresh-rotation fixture proves that the first refresh succeeds,
+  exact replay returns the stored response, reuse of a consumed token is a
+  typed interactive-auth failure, and a delayed older response cannot roll
+  the Keychain generation backwards.
+- the Apple native exchange fixture proves that challenge/exchange receipts
+  replay exactly, same-identity macOS/iOS authentication retains one
+  AccountID and fence, and issuer/audience/nonce/state failures do not mutate
+  account or session state.
 
 This is a required early gate, not a claim that the entire R0 state-machine
 contract has passed. This is the first executable scenario replay; the full

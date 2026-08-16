@@ -36,26 +36,28 @@ def reject_constant(value: str) -> None:
 def canonical_assertions(node: Any, source: Path, location: str) -> int:
     checked = 0
     if isinstance(node, dict):
-        if "expectedCanonicalUtf8" in node:
-            canonical = node["expectedCanonicalUtf8"]
+        for utf8_key, canonical in node.items():
+            if not (utf8_key.startswith("expectedCanonical") and utf8_key.endswith("Utf8")):
+                continue
             if not isinstance(canonical, str):
-                raise AssertionError(f"{source}:{location}: expectedCanonicalUtf8 is not a string")
+                raise AssertionError(f"{source}:{location}: {utf8_key} is not a string")
             data = canonical.encode("utf-8")
-            expected_count = node.get("expectedByteCount")
+            prefix = utf8_key[: -len("Utf8")]
+            expected_count = node.get(f"{prefix}ByteCount")
             if expected_count is not None and expected_count != len(data):
                 raise AssertionError(
-                    f"{source}:{location}: byte count {len(data)} != {expected_count}"
+                    f"{source}:{location}: {utf8_key} byte count {len(data)} != {expected_count}"
                 )
-            expected_sha = node.get("expectedSha256")
+            expected_sha = node.get(f"{prefix}Sha256")
             actual_sha = hashlib.sha256(data).hexdigest()
             if expected_sha is not None and expected_sha != actual_sha:
                 raise AssertionError(
-                    f"{source}:{location}: sha256 {actual_sha} != {expected_sha}"
+                    f"{source}:{location}: {utf8_key} sha256 {actual_sha} != {expected_sha}"
                 )
-            expected_hex = node.get("expectedCanonicalUtf8Hex")
+            expected_hex = node.get("expectedCanonicalUtf8Hex") if utf8_key == "expectedCanonicalUtf8" else None
             if expected_hex is not None and expected_hex != data.hex():
                 raise AssertionError(
-                    f"{source}:{location}: UTF-8 hex does not match expectedCanonicalUtf8Hex"
+                    f"{source}:{location}: {utf8_key} UTF-8 hex does not match expectedCanonicalUtf8Hex"
                 )
             checked += 1
         for key, value in node.items():
@@ -230,6 +232,73 @@ def replay_remote_advance_fixture(node: Any, source: Path) -> int:
     return 1
 
 
+def replay_refresh_rotation_fixture(node: Any, source: Path) -> int:
+    if not isinstance(node, dict) or node.get("name") != "one-time-refresh-rotation-exact-replay-and-reuse-revocation":
+        return 0
+    steps = node.get("steps")
+    if not isinstance(steps, list) or len(steps) < 6:
+        raise AssertionError(f"{source}: refresh rotation fixture is incomplete")
+    first = steps[0]
+    replay = steps[1]
+    reuse = steps[2]
+    if first.get("path") != "/v1/auth/tokens:refresh" or first.get("expect", {}).get("status") != 200:
+        raise AssertionError(f"{source}: first refresh rotation must succeed")
+    if replay.get("expect", {}).get("sameCanonicalResponseAsStep") != "rotate-first-use":
+        raise AssertionError(f"{source}: refresh exact replay is not tied to the first receipt")
+    reuse_expect = reuse.get("expect", {})
+    if reuse_expect.get("status") != 401 or reuse_expect.get("body", {}).get("code") != "refreshTokenReused":
+        raise AssertionError(f"{source}: consumed refresh token reuse must be typed 401")
+    if reuse_expect.get("body", {}).get("recoveryAction") != "interactiveAppleSignIn":
+        raise AssertionError(f"{source}: refresh reuse recovery action changed")
+    first_state = first.get("expectState", {})
+    reuse_state = reuse.get("expectState", {})
+    if first_state.get("accountAuthEpoch") != reuse_state.get("accountAuthEpoch"):
+        raise AssertionError(f"{source}: ordinary refresh/reuse changed account auth epoch")
+    if first_state.get("appleProviderCalls") != 0 or reuse_state.get("appleProviderCalls") != 0:
+        raise AssertionError(f"{source}: refresh rotation unexpectedly called Apple")
+    delayed = steps[-1]
+    delayed_expect = delayed.get("expect", {})
+    if delayed_expect.get("keychainCompareAndSwap") != "rejectedPredecessorMismatch":
+        raise AssertionError(f"{source}: late refresh response can roll Keychain backwards")
+    return 1
+
+
+def replay_apple_exchange_fixture(node: Any, source: Path) -> int:
+    if not isinstance(node, dict) or node.get("name") != "apple-native-validation-mapping-and-exact-replay":
+        return 0
+    steps = node.get("steps")
+    if not isinstance(steps, list):
+        raise AssertionError(f"{source}: Apple exchange steps are missing")
+    by_id = {step.get("id"): step for step in steps if isinstance(step, dict) and step.get("id")}
+    for step_id, status in {
+        "read-public-capabilities": 200,
+        "create-success-challenge": 201,
+        "exchange-success": 200,
+        "reauth-exchange-same-identity": 200,
+    }.items():
+        if by_id.get(step_id, {}).get("expect", {}).get("status") != status:
+            raise AssertionError(f"{source}: Apple exchange step {step_id} changed")
+    if by_id["create-success-challenge"]["expect"].get("body", {}).get("provider") != "apple":
+        raise AssertionError(f"{source}: challenge provider is not Apple")
+    if by_id["create-success-challenge"]["expect"].get("body", {}).get("receipt") is None:
+        raise AssertionError(f"{source}: challenge must be receipt-idempotent")
+    if by_id["create-success-challenge-lost-ack-replay"]["expect"].get("sameCanonicalResponseAsStep") != "create-success-challenge":
+        raise AssertionError(f"{source}: challenge replay is not exact")
+    if by_id["exchange-success-lost-ack-replay"]["expect"].get("sameCanonicalResponseAsStep") != "exchange-success":
+        raise AssertionError(f"{source}: Apple exchange replay is not exact")
+    success_binding = by_id["exchange-success"]["expect"]["body"]["binding"]
+    reauth_binding = by_id["reauth-exchange-same-identity"]["expect"]["body"]["binding"]
+    if success_binding.get("accountId") != reauth_binding.get("accountId") or success_binding.get("accountFence") != reauth_binding.get("accountFence"):
+        raise AssertionError(f"{source}: same Apple identity created a new account or fence")
+    if by_id["reauth-exchange-same-identity"]["expectState"].get("externalIdentityMappings") != 1:
+        raise AssertionError(f"{source}: same Apple identity duplicated its mapping")
+    for step_id in ("exchange-wrong-state", "exchange-wrong-issuer", "exchange-wrong-audience", "exchange-wrong-nonce"):
+        step = by_id.get(step_id, {})
+        if step.get("expect", {}).get("status") != 422 or step.get("expectState", {}).get("accountMutation") is not False:
+            raise AssertionError(f"{source}: invalid Apple claim {step_id} mutated account state")
+    return 1
+
+
 def check_file(path: Path) -> tuple[int, int, int, int]:
     try:
         text = path.read_bytes().decode("utf-8")
@@ -247,7 +316,9 @@ def check_file(path: Path) -> tuple[int, int, int, int]:
         scenario_assertions(value, path),
         replay_lost_ack_fixture(value, path)
         + replay_conflict_resolution_fixture(value, path)
-        + replay_remote_advance_fixture(value, path),
+        + replay_remote_advance_fixture(value, path)
+        + replay_refresh_rotation_fixture(value, path)
+        + replay_apple_exchange_fixture(value, path),
     )
 
 
