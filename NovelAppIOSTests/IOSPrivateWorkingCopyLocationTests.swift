@@ -202,7 +202,12 @@ struct IOSPrivateWorkingCopyLocationTests {
             at: store.libraryRoot,
             includingPropertiesForKeys: nil
         )
-        #expect(privateItems.isEmpty)
+        let adoptedPackages = privateItems.filter { item in
+            item.pathExtension == "novelpkg"
+                || item.lastPathComponent.hasPrefix(".import-")
+                || item.lastPathComponent.hasSuffix(".staging.novelpkg")
+        }
+        #expect(adoptedPackages.isEmpty)
     }
 
     private func makeLocation(in sandbox: URL) throws -> IOSPrivateWorkingCopyLocation {

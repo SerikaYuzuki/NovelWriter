@@ -266,10 +266,17 @@ final class IOSDocumentStore {
         #else
         authUIState = .unavailable
         #endif
-        let localStoreURL = root
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("library.sqlite")
-        localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
+        if preparedLocation == nil {
+            // An untrusted injected root must not be used for SQLite either.
+            // Keep the store in safe-startup mode without creating anything
+            // through a symlink or another rejected path.
+            localCanonicalStore = nil
+        } else {
+            let localStoreURL = root
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("library.sqlite")
+            localCanonicalStore = try? LocalSQLiteStore(url: localStoreURL)
+        }
         let workerAuthCoordinator: AuthSessionCoordinator? = authSessionCoordinator
         if let localCanonicalStore, let workerAuthCoordinator {
             localSnapshotSyncWorker = LocalSnapshotSyncWorker(
