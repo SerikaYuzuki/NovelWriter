@@ -20,13 +20,17 @@ The current slice verifies:
 - scenario records carry the reviewed-contract marker, unique scenario IDs,
   non-empty safety descriptions, the three conflict choices, the four publish
   wire fields, and the account-fenced remote-presence key where applicable.
+- the `intent-attempt-lost-ack-exact-retry` scenario is replayed far enough to
+  prove that the sealed canonical command digest is stable, the server head
+  advances once, exact retry does not advance it again, and local Intent/
+  SealedAttempt are cleared only after read-back.
 
 This is a required early gate, not a claim that the entire R0 state-machine
-contract has passed. These scenario checks validate the fixture contract and
-invariants; they do not yet execute a full client/server state-machine replay.
-The remaining Apple authentication vectors and executable state-machine
-scenarios are subsequent conformance slices. Shared fixtures remain the
-authority; generated code is never used to produce expected values.
+contract has passed. This is the first executable scenario replay; the full
+client/server state-machine matrix, including all three conflict choices and
+Apple authentication vectors, is a subsequent conformance slice. Shared
+fixtures remain the authority; generated code is never used to produce
+expected values.
 
 Run from the repository root:
 

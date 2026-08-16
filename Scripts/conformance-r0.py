@@ -138,6 +138,41 @@ def scenario_assertions(node: Any, source: Path, location: str = "$") -> int:
     return checked
 
 
+def replay_lost_ack_fixture(node: Any, source: Path) -> int:
+    if not isinstance(node, dict) or node.get("scenarioId") != "intent-attempt-lost-ack-exact-retry":
+        return 0
+    commands = [command.get("type") for command in node.get("commands", [])]
+    expected_commands = [
+        "observeRemote",
+        "sealAttempt",
+        "publish",
+        "restartClientProcess",
+        "retrySealedAttempt",
+        "readBackAndAcknowledge",
+    ]
+    if commands != expected_commands:
+        raise AssertionError(f"{source}: lost-ack command sequence changed")
+    steps = node.get("steps")
+    if not isinstance(steps, list) or len(steps) != 6:
+        raise AssertionError(f"{source}: lost-ack replay must have six steps")
+    step_two = steps[1]
+    canonical = step_two.get("expectedSqlite", {}).get("publishDigestInputCanonicalUtf8")
+    digest = step_two.get("expectedSqlite", {}).get("sealedAttempt", {}).get("requestDigest")
+    if not isinstance(canonical, str) or not isinstance(digest, str):
+        raise AssertionError(f"{source}: lost-ack digest vector is incomplete")
+    if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != digest:
+        raise AssertionError(f"{source}: lost-ack request digest does not match canonical bytes")
+    expected_head = steps[2].get("expectedServer", {}).get("head", {}).get("generation")
+    replay_head = steps[4].get("expectedServerHeadGeneration")
+    final_head = steps[5].get("expectedServerHeadGeneration")
+    if not (expected_head == replay_head == final_head == 8):
+        raise AssertionError(f"{source}: lost-ack replay must not increment the committed head")
+    final_sqlite = steps[5].get("expectedSqlite", {})
+    if final_sqlite.get("syncIntent") is not None or final_sqlite.get("sealedAttempt") is not None:
+        raise AssertionError(f"{source}: lost-ack final state must clear only after read-back")
+    return 1
+
+
 def check_file(path: Path) -> tuple[int, int, int]:
     try:
         text = path.read_bytes().decode("utf-8")
@@ -149,7 +184,12 @@ def check_file(path: Path) -> tuple[int, int, int]:
     except Exception as error:  # noqa: BLE001 - convert to a useful fixture error
         raise AssertionError(f"{path}: invalid UTF-8/JSON: {error}") from error
     assert_fixture_ids(value, path)
-    return 1, canonical_assertions(value, path, "$") , scenario_assertions(value, path)
+    return (
+        1,
+        canonical_assertions(value, path, "$") ,
+        scenario_assertions(value, path),
+        replay_lost_ack_fixture(value, path),
+    )
 
 
 def main() -> int:
@@ -162,14 +202,16 @@ def main() -> int:
     json_count = 0
     vector_count = 0
     scenario_count = 0
+    replay_count = 0
     for path in files:
-        parsed, checked, scenarios = check_file(path)
+        parsed, checked, scenarios, replays = check_file(path)
         json_count += parsed
         vector_count += checked
         scenario_count += scenarios
+        replay_count += replays
     print(
         f"R0 fixture integrity: {json_count} JSON files, {vector_count} canonical vectors, "
-        f"{scenario_count} scenario records"
+        f"{scenario_count} scenario records, {replay_count} executable replay"
     )
     return 0
 

@@ -157,6 +157,89 @@ fn verify_scenarios(
     }
 }
 
+fn replay_lost_ack_fixture(value: &Value, source: &Path) -> usize {
+    let Value::Object(object) = value else {
+        return 0;
+    };
+    if object.get("scenarioId")
+        != Some(&Value::String(
+            "intent-attempt-lost-ack-exact-retry".to_owned(),
+        ))
+    {
+        return 0;
+    }
+    let commands = object
+        .get("commands")
+        .and_then(Value::as_array)
+        .expect("lost-ack commands must be an array")
+        .iter()
+        .map(|command| {
+            command
+                .get("type")
+                .and_then(Value::as_str)
+                .expect("lost-ack command type must be a string")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        vec![
+            "observeRemote",
+            "sealAttempt",
+            "publish",
+            "restartClientProcess",
+            "retrySealedAttempt",
+            "readBackAndAcknowledge",
+        ],
+        "{source:?}: lost-ack command sequence changed"
+    );
+    let steps = object
+        .get("steps")
+        .and_then(Value::as_array)
+        .expect("lost-ack steps must be an array");
+    assert_eq!(
+        steps.len(),
+        6,
+        "{source:?}: lost-ack replay must have six steps"
+    );
+    let step_two_sqlite = steps[1]
+        .get("expectedSqlite")
+        .and_then(Value::as_object)
+        .expect("lost-ack step two sqlite state is required");
+    let canonical = step_two_sqlite
+        .get("publishDigestInputCanonicalUtf8")
+        .and_then(Value::as_str)
+        .expect("lost-ack canonical command bytes are required");
+    let digest = step_two_sqlite
+        .get("sealedAttempt")
+        .and_then(Value::as_object)
+        .and_then(|attempt| attempt.get("requestDigest"))
+        .and_then(Value::as_str)
+        .expect("lost-ack request digest is required");
+    assert_eq!(hex::encode(Sha256::digest(canonical.as_bytes())), digest);
+
+    let committed_generation = steps[2]
+        .get("expectedServer")
+        .and_then(|server| server.get("head"))
+        .and_then(|head| head.get("generation"))
+        .and_then(Value::as_u64);
+    let replay_generation = steps[4]
+        .get("expectedServerHeadGeneration")
+        .and_then(Value::as_u64);
+    let final_generation = steps[5]
+        .get("expectedServerHeadGeneration")
+        .and_then(Value::as_u64);
+    assert_eq!(committed_generation, Some(8));
+    assert_eq!(replay_generation, Some(8));
+    assert_eq!(final_generation, Some(8));
+    let final_sqlite = steps[5]
+        .get("expectedSqlite")
+        .and_then(Value::as_object)
+        .expect("lost-ack final sqlite state is required");
+    assert_eq!(final_sqlite.get("syncIntent"), Some(&Value::Null));
+    assert_eq!(final_sqlite.get("sealedAttempt"), Some(&Value::Null));
+    1
+}
+
 #[test]
 fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -173,6 +256,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
 
     let mut vectors = 0;
     let mut scenarios = 0;
+    let mut replays = 0;
     let mut scenario_ids = HashSet::new();
     for file in &files {
         let bytes = fs::read(file).expect("fixture must be readable");
@@ -180,6 +264,7 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
         vectors += verify(&value, file, "$");
         if file.to_string_lossy().contains("/docs/sync/v1/fixtures/") {
             scenarios += verify_scenarios(&value, file, "&", &mut scenario_ids);
+            replays += replay_lost_ack_fixture(&value, file);
         }
     }
     assert!(
@@ -189,5 +274,9 @@ fn reviewed_v1_fixtures_preserve_canonical_bytes_and_digests() {
     assert!(
         scenarios > 0,
         "reviewed fixtures must contain scenario records"
+    );
+    assert_eq!(
+        replays, 1,
+        "one executable lost-ack replay fixture is required"
     );
 }

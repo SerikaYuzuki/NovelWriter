@@ -30,6 +30,48 @@ struct R0ConformanceTests {
         #expect(scenarioCount > 0)
     }
 
+    @Test("lost ACK replay preserves the sealed command and head generation")
+    func lostAckReplayAgrees() throws {
+        let file = try #require(
+            fixtureFiles().first { $0.lastPathComponent == "lost-ack-exact-retry.json" }
+        )
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(root["scenarioId"] as? String == "intent-attempt-lost-ack-exact-retry")
+        let commandTypes = try #require(root["commands"] as? [[String: Any]])
+            .compactMap { $0["type"] as? String }
+        #expect(
+            commandTypes == [
+                "observeRemote",
+                "sealAttempt",
+                "publish",
+                "restartClientProcess",
+                "retrySealedAttempt",
+                "readBackAndAcknowledge"
+            ]
+        )
+        let steps = try #require(root["steps"] as? [[String: Any]])
+        try #require(steps.count == 6)
+        let stepTwoSQLite = try #require(steps[1]["expectedSqlite"] as? [String: Any])
+        let sealedAttempt = try #require(stepTwoSQLite["sealedAttempt"] as? [String: Any])
+        let canonical = try #require(stepTwoSQLite["publishDigestInputCanonicalUtf8"] as? String)
+        let expectedDigest = try #require(sealedAttempt["requestDigest"] as? String)
+        let actualDigest = SHA256.hash(data: Data(canonical.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        #expect(actualDigest == expectedDigest)
+
+        let stepThreeServer = try #require(steps[2]["expectedServer"] as? [String: Any])
+        let stepThreeHead = try #require(stepThreeServer["head"] as? [String: Any])
+        let replayGeneration = try #require(steps[4]["expectedServerHeadGeneration"] as? Int)
+        let finalGeneration = try #require(steps[5]["expectedServerHeadGeneration"] as? Int)
+        #expect(stepThreeHead["generation"] as? Int == 8)
+        #expect(replayGeneration == 8)
+        #expect(finalGeneration == 8)
+        let finalSQLite = try #require(steps[5]["expectedSqlite"] as? [String: Any])
+        #expect(finalSQLite["syncIntent"] is NSNull)
+        #expect(finalSQLite["sealedAttempt"] is NSNull)
+    }
+
     private func fixtureFiles() -> [URL] {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
