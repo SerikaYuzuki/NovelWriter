@@ -13,6 +13,10 @@ The current slice verifies:
 - fixture `cases`/`steps` identifiers are unique within their list;
 - every `expectedCanonicalUtf8` vector agrees on UTF-8 byte count, optional
   hexadecimal bytes, and SHA-256 digest in all three runners.
+- the OpenAPI document has resolvable local references and unique operation
+  IDs, and its embedded `SnapshotManifest`/`PublishHeadCommand` schemas are
+  structurally equivalent to the external JSON Schema authorities after the
+  contract's prescribed inlining and annotation removal.
 
 This is a required early gate, not a claim that the entire R0 state-machine
 contract has passed. Semantic schema equivalence, command/state-machine

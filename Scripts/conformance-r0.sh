@@ -6,6 +6,9 @@ cd "$(dirname "$0")/.."
 echo "==> R0 shared fixture integrity (Python)"
 python3 Scripts/conformance-r0.py
 
+echo "==> R0 OpenAPI and external schema equivalence"
+ruby Scripts/check-r0-schema-equivalence.rb
+
 echo "==> R0 shared fixture integrity (Swift)"
 (cd NovelKit && mkdir -p .build/r0-clang-cache && CLANG_MODULE_CACHE_PATH="$PWD/.build/r0-clang-cache" swift test --disable-sandbox --cache-path .build/r0-cache --manifest-cache local --filter R0ConformanceTests)
 
