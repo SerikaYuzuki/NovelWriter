@@ -976,27 +976,60 @@ async fn receipt(Path(id): Path<String>, headers: HeaderMap, state: State<AppSta
         Err(e) => return e,
     };
     match state.repo.receipt(&p, id).await {
-        Ok((kind, work_id, request_digest, bytes, _status)) => {
+        Ok((kind_text, work_id, request_digest, bytes, status)) => {
             if request_digest.len() != 32 {
                 return error_response(SyncError::Retryable);
             }
+            let kind = match CommandKind::parse(&kind_text) {
+                Some(value) => value,
+                None => return error_response(SyncError::Retryable),
+            };
+            // Parse only the stored envelope metadata for the closed receipt
+            // wrapper; `bytes` itself is never reserialized and is encoded
+            // byte-for-byte below for exact lost-ACK replay.
             let original = match strict_json(&bytes) {
                 Ok(value) => value,
                 Err(_) => return error_response(SyncError::Retryable),
             };
-            let recanonical = match canonical_json(&original) {
-                Ok(value) => value,
-                Err(_) => return error_response(SyncError::Retryable),
-            };
-            if recanonical != bytes {
+            if canonical_json(&original).as_deref() != Ok(bytes.as_slice())
+                || original
+                    .get("commandId")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(id.to_string().as_str())
+                || original
+                    .get("commandKind")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(kind.as_str())
+            {
                 return error_response(SyncError::Retryable);
             }
             let result = match original.get("result").and_then(serde_json::Value::as_str) {
-                Some(
-                    value @ ("noChanges" | "applied" | "conflictPending" | "parked" | "retryable"),
-                ) => serde_json::Value::String(value.into()),
+                Some(value @ ("noChanges" | "applied" | "conflictPending")) => {
+                    serde_json::Value::String(value.into())
+                }
                 _ => return error_response(SyncError::Retryable),
             };
+            let result_text = match result.as_str() {
+                Some(value) => value,
+                None => return error_response(SyncError::Retryable),
+            };
+            let valid_status = match (kind, result_text) {
+                (CommandKind::CreateWork, "applied") => status == 201,
+                (CommandKind::PrepareObject, "noChanges") => status == 200,
+                (CommandKind::PrepareObject, "applied") => status == 201,
+                (CommandKind::FinalizeObject, "applied")
+                | (CommandKind::RegisterSnapshot, "noChanges" | "applied")
+                | (CommandKind::ResolveDevice, "applied")
+                | (CommandKind::ResolveServer, "applied")
+                | (CommandKind::CloneWork, "applied")
+                | (CommandKind::Restore, "applied") => status == 200,
+                (CommandKind::Publish, "noChanges" | "applied") => status == 200,
+                (CommandKind::Publish, "conflictPending") => status == 409,
+                _ => false,
+            };
+            if !valid_status {
+                return error_response(SyncError::Retryable);
+            }
             let embedded_receipt = match original.get("receipt") {
                 Some(value) => value,
                 None => return error_response(SyncError::Retryable),
@@ -1041,7 +1074,7 @@ async fn receipt(Path(id): Path<String>, headers: HeaderMap, state: State<AppSta
             };
             canonical_response(
                 StatusCode::OK,
-                serde_json::json!({"commandId":id,"commandKind":kind,"workId":work_id,"requestDigest":hex::encode(request_digest),"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"originalResult":result,"readBack":read_back,"result":"noChanges"}),
+                serde_json::json!({"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"commandId":id,"commandKind":kind,"originalResponseStatus":status,"originalResult":result,"readBack":read_back,"requestDigest":hex::encode(request_digest),"result":"noChanges","workId":work_id}),
             )
         }
         Err(e) => error_response(e),

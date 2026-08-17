@@ -6,7 +6,10 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use serde_json::Value;
-use sqlx::{postgres::{PgConnectOptions, PgPoolOptions}, PgPool, Postgres, Row, Transaction};
+use sqlx::{
+    postgres::{PgConnectOptions, PgPoolOptions},
+    PgPool, Postgres, Row, Transaction,
+};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -36,9 +39,7 @@ pub struct Repository {
     pub protocol_epoch: i64,
 }
 impl Repository {
-    pub async fn connect_from_environment(
-        server_instance_id: String,
-    ) -> Result<Self, sqlx::Error> {
+    pub async fn connect_from_environment(server_instance_id: String) -> Result<Self, sqlx::Error> {
         let host = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_HOST")
             .unwrap_or_else(|_| "postgres".to_string());
         let port = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PORT")
@@ -49,8 +50,10 @@ impl Repository {
             .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
         let username = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_USER")
             .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
-        let password_file = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE")
-            .map_err(|_| sqlx::Error::Configuration("PostgreSQL password file is required".into()))?;
+        let password_file =
+            std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE").map_err(|_| {
+                sqlx::Error::Configuration("PostgreSQL password file is required".into())
+            })?;
         let password = std::fs::read_to_string(password_file)
             .map_err(|error| sqlx::Error::Configuration(error.to_string().into()))?
             .trim_end_matches(['\r', '\n'])
@@ -237,7 +240,7 @@ impl Repository {
         if receipt.len() != 5
             || read_back.len() != 5
             || receipt.get("commandId").and_then(Value::as_str)
-            != Some(cmd.command_id.to_string().as_str())
+                != Some(cmd.command_id.to_string().as_str())
             || receipt.get("commandKind").and_then(Value::as_str) != Some(cmd.kind.as_str())
             || receipt.get("workId").and_then(Value::as_str)
                 != Some(cmd.work_id.to_string().as_str())
