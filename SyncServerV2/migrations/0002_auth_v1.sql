@@ -61,16 +61,23 @@ CREATE TABLE auth_v1.auth_operations (
     request_digest BYTEA NOT NULL CHECK (octet_length(request_digest)=32),
     state TEXT NOT NULL CHECK (state IN ('reserved','completed','failed')),
     response_status INTEGER,
+    response_digest BYTEA CHECK(response_digest IS NULL OR octet_length(response_digest)=32),
     response_ciphertext BYTEA,
     response_key_version INTEGER,
     response_purpose TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
-    UNIQUE(operation_id, command_kind, request_digest)
+    UNIQUE(operation_id, command_kind, request_digest),
+    CHECK (
+        (state='reserved' AND response_status IS NULL AND response_digest IS NULL AND response_ciphertext IS NULL AND response_key_version IS NULL AND response_purpose IS NULL AND completed_at IS NULL)
+        OR
+        (state IN ('completed','failed') AND response_status IS NOT NULL AND octet_length(response_digest)=32 AND response_ciphertext IS NOT NULL AND response_key_version > 0 AND response_purpose IS NOT NULL AND completed_at IS NOT NULL)
+    )
 );
 CREATE TABLE auth_v1.auth_challenges (
     challenge_id UUID PRIMARY KEY,
     operation_id UUID NOT NULL REFERENCES auth_v1.auth_operations(operation_id),
+    exchange_operation_id UUID REFERENCES auth_v1.auth_operations(operation_id),
     provider_config_id TEXT NOT NULL REFERENCES auth_v1.provider_configs(provider_config_id),
     audience TEXT NOT NULL,
     client_platform TEXT NOT NULL CHECK (client_platform IN ('macos','ios','ipados')),
@@ -82,7 +89,12 @@ CREATE TABLE auth_v1.auth_challenges (
     provider_result_ciphertext BYTEA,
     provider_result_key_version INTEGER,
     provider_result_purpose TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        (phase IN ('claimed','providerCallStarted','terminal') AND provider_result_ciphertext IS NULL AND provider_result_key_version IS NULL AND provider_result_purpose IS NULL)
+        OR
+        (phase='providerResultKnown' AND provider_result_ciphertext IS NOT NULL AND provider_result_key_version > 0 AND provider_result_purpose='verified_external_identity_v1')
+    )
 );
 CREATE TABLE auth_v1.auth_sessions (
     session_id UUID PRIMARY KEY,
@@ -90,10 +102,12 @@ CREATE TABLE auth_v1.auth_sessions (
     identity_id UUID NOT NULL REFERENCES auth_v1.external_identities(identity_id),
     family_id UUID NOT NULL,
     auth_epoch BIGINT NOT NULL,
+    account_fence BYTEA NOT NULL CHECK(octet_length(account_fence)=32),
     state TEXT NOT NULL CHECK (state IN ('active','reauthRequired','revoked','expired')),
     client_platform TEXT NOT NULL CHECK (client_platform IN ('macos','ios','ipados')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(family_id)
 );
 CREATE TABLE auth_v1.refresh_families (
     family_id UUID PRIMARY KEY,
@@ -103,30 +117,39 @@ CREATE TABLE auth_v1.refresh_families (
     current_generation BIGINT NOT NULL CHECK (current_generation > 0),
     expires_at TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE auth_v1.auth_sessions
+    ADD CONSTRAINT auth_sessions_family_fk
+    FOREIGN KEY(family_id) REFERENCES auth_v1.refresh_families(family_id)
+    DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE auth_v1.refresh_tokens (
     family_id UUID NOT NULL REFERENCES auth_v1.refresh_families(family_id),
     generation BIGINT NOT NULL CHECK (generation > 0),
     token_hmac BYTEA NOT NULL CHECK (octet_length(token_hmac)=32),
+    token_hmac_key_version INTEGER NOT NULL CHECK(token_hmac_key_version > 0),
     state TEXT NOT NULL CHECK (state IN ('active','consumed','revoked')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(family_id,generation),
-    UNIQUE(family_id,token_hmac)
+    UNIQUE(family_id,token_hmac),
+    UNIQUE(token_hmac_key_version,token_hmac)
 );
 CREATE TABLE auth_v1.access_tokens (
     token_id UUID PRIMARY KEY,
     session_id UUID NOT NULL REFERENCES auth_v1.auth_sessions(session_id),
     account_id TEXT NOT NULL REFERENCES auth_v1.accounts(account_id),
     token_hmac BYTEA NOT NULL CHECK(octet_length(token_hmac)=32) UNIQUE,
+    token_hmac_key_version INTEGER NOT NULL CHECK(token_hmac_key_version > 0),
     auth_epoch BIGINT NOT NULL CHECK(auth_epoch > 0),
     fence BYTEA NOT NULL CHECK(octet_length(fence)=32),
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ
 );
 CREATE TABLE auth_v1.session_refresh_receipts (
-    operation_id UUID PRIMARY KEY,
+    operation_id UUID PRIMARY KEY REFERENCES auth_v1.auth_operations(operation_id),
     family_id UUID NOT NULL REFERENCES auth_v1.refresh_families(family_id),
     presented_token_hmac BYTEA NOT NULL CHECK (octet_length(presented_token_hmac)=32),
+    presented_generation BIGINT NOT NULL CHECK(presented_generation > 0),
     request_digest BYTEA NOT NULL CHECK (octet_length(request_digest)=32),
+    response_digest BYTEA NOT NULL CHECK(octet_length(response_digest)=32),
     response_ciphertext BYTEA NOT NULL,
     response_key_version INTEGER NOT NULL,
     response_purpose TEXT NOT NULL,
@@ -135,11 +158,16 @@ CREATE TABLE auth_v1.session_refresh_receipts (
     expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE TABLE auth_v1.provider_notification_receipts (
-    provider TEXT NOT NULL CHECK(provider='apple'),
-    event_key BYTEA NOT NULL CHECK(octet_length(event_key)=32),
+    provider_config_id TEXT NOT NULL REFERENCES auth_v1.provider_configs(provider_config_id),
+    event_key_version INTEGER NOT NULL CHECK(event_key_version > 0),
+    event_key_hmac BYTEA NOT NULL CHECK(octet_length(event_key_hmac)=32),
+    request_digest BYTEA NOT NULL CHECK(octet_length(request_digest)=32),
     event_kind TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('applied','emailStateOnly','unknownIdentity','staleAfterReauthentication','transientIndeterminate','rejectedDigestMismatch')),
+    account_id TEXT REFERENCES auth_v1.accounts(account_id),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY(provider,event_key)
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY(provider_config_id,event_key_version,event_key_hmac)
 );
 CREATE TABLE auth_v1.auth_events (
     event_id BIGSERIAL PRIMARY KEY,

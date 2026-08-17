@@ -8,6 +8,37 @@ fn apple_identity_is_provider_closed_and_account_opaque() {
     assert!(identity.validate_apple().is_ok());
     assert!(AccountId::new("apple-subject").is_ok());
     assert_ne!(identity.subject, "apple-subject");
+    assert!(!format!("{identity:?}").contains("fixture-subject"));
+}
+
+#[test]
+fn auth_debug_views_redact_tokens_and_receipt_bytes() {
+    let grant = SessionGrant {
+        principal: AuthenticatedPrincipal {
+            account_id: AccountId::new("acct_AAAAAAAAAAAAAAAA").unwrap(),
+            tenant_id: TenantId::new("tenant_AAAAAAAAAAAAAA").unwrap(),
+            session_id: SessionId::new("40000000-0000-4000-8000-000000000001").unwrap(),
+            account_auth_epoch: 1,
+            account_fence: vec![0x11; 32],
+        },
+        access_token: "fma1_access-secret".into(),
+        refresh_token: "fmr1_refresh-secret".into(),
+        refresh_generation: 1,
+        access_expires_at_unix: 2,
+        refresh_expires_at_unix: 3,
+    };
+    let receipt = AuthReceipt {
+        operation_id: OperationId::new("30000000-0000-4000-8000-000000000001").unwrap(),
+        command_kind: EXCHANGE_APPLE_COMMAND.into(),
+        request_digest: [0x22; 32],
+        response_bytes: b"response-containing-token".to_vec(),
+        status: 200,
+        session_grant: Some(grant),
+    };
+    let debug = format!("{receipt:?}");
+    assert!(!debug.contains("access-secret"));
+    assert!(!debug.contains("refresh-secret"));
+    assert!(!debug.contains("response-containing-token"));
 }
 
 #[test]
@@ -64,4 +95,10 @@ fn auth_schema_has_no_plaintext_provider_secret_columns() {
     assert!(!sql.contains("refresh_token TEXT"));
     assert!(sql.contains("subject_lookup_hmac BYTEA"));
     assert!(sql.contains("response_ciphertext BYTEA"));
+    assert!(sql.contains("response_digest BYTEA"));
+    assert!(sql.contains("octet_length(response_digest)=32"));
+    assert!(sql.contains("event_key_hmac BYTEA"));
+    assert!(sql.contains("request_digest BYTEA"));
+    assert!(!sql.contains("raw_jws"));
+    assert!(!sql.contains("subject_jti"));
 }

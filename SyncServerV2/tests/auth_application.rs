@@ -1,14 +1,25 @@
 use async_trait::async_trait;
+use base64::Engine;
 use fuminiwa_sync_server_v2::auth_application::*;
 use fuminiwa_sync_server_v2::auth_domain::*;
+use fuminiwa_sync_server_v2::auth_wire::{parse_auth_command, ParsedAuthCommand};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 type SealedTrace = Vec<(String, String, Vec<u8>)>;
+
+fn fixture_hasher() -> HmacSecretHasher {
+    HmacSecretHasher::new([0x11; 32], [0x22; 32])
+}
 
 #[derive(Clone, Default)]
 struct FakeVault {
     sealed: Arc<Mutex<SealedTrace>>,
+    values: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    next: Arc<AtomicUsize>,
 }
 #[async_trait]
 impl CredentialVault for FakeVault {
@@ -22,9 +33,18 @@ impl CredentialVault for FakeVault {
             .lock()
             .unwrap()
             .push((purpose.into(), row_id.into(), plaintext.to_vec()));
+        let ciphertext = format!(
+            "fixture-ciphertext-{}",
+            self.next.fetch_add(1, Ordering::SeqCst)
+        )
+        .into_bytes();
+        self.values
+            .lock()
+            .unwrap()
+            .insert(ciphertext.clone(), plaintext.to_vec());
         Ok(SealedSecret {
             key_version: 7,
-            ciphertext: format!("sealed:{purpose}:{row_id}").into_bytes(),
+            ciphertext,
         })
     }
     async fn open(
@@ -33,7 +53,12 @@ impl CredentialVault for FakeVault {
         _row_id: &str,
         secret: &SealedSecret,
     ) -> Result<Vec<u8>, AuthError> {
-        Ok(secret.ciphertext.clone())
+        self.values
+            .lock()
+            .unwrap()
+            .get(&secret.ciphertext)
+            .cloned()
+            .ok_or(AuthError::Vault)
     }
 }
 
@@ -41,6 +66,7 @@ impl CredentialVault for FakeVault {
 struct FakeProvider {
     indeterminate: bool,
     subject: String,
+    calls: Arc<AtomicUsize>,
 }
 #[async_trait]
 impl AppleProvider for FakeProvider {
@@ -50,6 +76,7 @@ impl AppleProvider for FakeProvider {
         _code: &[u8],
         _token: &[u8],
     ) -> Result<VerifiedExternalIdentity, AuthError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         if self.indeterminate {
             return Err(AuthError::ProviderExchangeIndeterminate);
         }
@@ -72,9 +99,13 @@ struct FakeState {
     phase: Option<ChallengePhase>,
     account: Option<(AccountId, TenantId, Vec<u8>, i64)>,
     consumed_refresh: HashSet<String>,
-    refresh_receipts: HashMap<String, (String, RefreshOutcome)>,
+    refresh_receipts: HashMap<String, (String, [u8; 32], RefreshOutcome)>,
+    operations: HashMap<String, (String, [u8; 32])>,
     sessions_revoked: HashSet<String>,
     access_valid: bool,
+    provider_result: Option<SealedSecret>,
+    exchange_operation: Option<String>,
+    fail_finish_once: bool,
 }
 #[derive(Clone, Default)]
 struct FakeRepo(Arc<Mutex<FakeState>>);
@@ -101,15 +132,13 @@ impl FakeRepo {
 #[async_trait]
 impl AuthRepository for FakeRepo {
     async fn token_verifier(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
-        FixtureHasher::default()
-            .token_verifier(purpose, token)
-            .await
+        fixture_hasher().token_verifier(purpose, token).await
     }
     async fn authenticate_access(
         &self,
         verifier: Vec<u8>,
     ) -> Result<AuthenticatedPrincipal, AuthError> {
-        let expected = FixtureHasher::default()
+        let expected = fixture_hasher()
             .token_verifier("access", "access_fake")
             .await?;
         if verifier == expected && self.0.lock().unwrap().access_valid {
@@ -133,13 +162,35 @@ impl AuthRepository for FakeRepo {
             None => Ok(None),
         }
     }
+    async fn reserve_operation(
+        &self,
+        operation_id: &OperationId,
+        kind: &str,
+        digest: &[u8; 32],
+    ) -> Result<(), AuthError> {
+        let mut state = self.0.lock().unwrap();
+        match state.operations.get(operation_id.as_str()) {
+            Some((existing_kind, existing_digest))
+                if existing_kind == kind && existing_digest == digest =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(AuthError::OperationIdReused),
+            None => {
+                state
+                    .operations
+                    .insert(operation_id.to_string(), (kind.to_owned(), *digest));
+                Ok(())
+            }
+        }
+    }
     async fn create_challenge(
         &self,
         request: &NewChallenge,
         state_hash: Vec<u8>,
         nonce_hash: Vec<u8>,
     ) -> Result<ChallengeResult, AuthError> {
-        let id = ChallengeId::new("challenge_fake")?;
+        let id = ChallengeId::new("20000000-0000-4000-8000-000000000001")?;
         let claim = ChallengeClaim {
             id: id.clone(),
             operation_id: request.operation_id.clone(),
@@ -155,7 +206,11 @@ impl AuthRepository for FakeRepo {
         let mut state = self.0.lock().unwrap();
         state.phase = Some(ChallengePhase::Claimed);
         state.challenge = Some(claim);
-        Ok(ChallengeResult {
+        state.operations.insert(
+            request.operation_id.to_string(),
+            (CREATE_CHALLENGE_COMMAND.into(), request.request_digest),
+        );
+        let result = ChallengeResult {
             challenge_id: id,
             operation_id: request.operation_id.clone(),
             provider_config_id: ProviderConfigId::new(APPLE_PROVIDER_CONFIG)?,
@@ -163,46 +218,110 @@ impl AuthRepository for FakeRepo {
             state: request.state.clone(),
             nonce: request.nonce.clone(),
             expires_at_unix: request.expires_at_unix,
-        })
+        };
+        state.receipts.insert(
+            request.operation_id.to_string(),
+            AuthReceipt {
+                operation_id: request.operation_id.clone(),
+                command_kind: CREATE_CHALLENGE_COMMAND.into(),
+                request_digest: request.request_digest,
+                response_bytes: fuminiwa_sync_server_v2::auth_wire::encode_challenge_response(
+                    &result,
+                    request.expires_at_unix + REFRESH_TOKEN_LIFETIME_SECONDS,
+                )
+                .unwrap(),
+                status: 201,
+                session_grant: None,
+            },
+        );
+        Ok(result)
     }
-    async fn load_challenge_for_update(
+    async fn claim_challenge_for_exchange(
         &self,
         _id: &ChallengeId,
-    ) -> Result<ChallengeClaim, AuthError> {
-        self.0
-            .lock()
-            .unwrap()
-            .challenge
-            .clone()
-            .ok_or(AuthError::NotFound)
-    }
-    async fn mark_provider_call_started(&self, _id: &ChallengeId) -> Result<(), AuthError> {
+        operation_id: &OperationId,
+        state_hash: &[u8],
+        now_unix: i64,
+    ) -> Result<ChallengeClaimResult, AuthError> {
         let mut s = self.0.lock().unwrap();
-        if s.phase != Some(ChallengePhase::Claimed) {
-            return Err(AuthError::InvalidChallengePhase);
+        let mut challenge = s.challenge.clone().ok_or(AuthError::NotFound)?;
+        if challenge.state_hash != state_hash {
+            return Err(AuthError::InvalidRequest);
         }
-        s.phase = Some(ChallengePhase::ProviderCallStarted);
-        s.challenge.as_mut().unwrap().phase = ChallengePhase::ProviderCallStarted;
-        Ok(())
+        match challenge.phase {
+            ChallengePhase::Claimed => {
+                if challenge.expires_at_unix <= now_unix {
+                    return Err(AuthError::ChallengeExpired);
+                }
+                challenge.phase = ChallengePhase::ProviderCallStarted;
+                challenge.lease_until_unix = now_unix + 300;
+                s.phase = Some(ChallengePhase::ProviderCallStarted);
+                s.exchange_operation = Some(operation_id.to_string());
+                s.challenge = Some(challenge.clone());
+                Ok(ChallengeClaimResult::ProviderCallRequired(challenge))
+            }
+            ChallengePhase::ProviderCallStarted => {
+                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
+                    return Err(AuthError::ChallengeConsumed);
+                }
+                if challenge.lease_until_unix > now_unix {
+                    return Err(AuthError::InvalidChallengePhase);
+                }
+                s.phase = Some(ChallengePhase::Terminal);
+                s.challenge.as_mut().unwrap().phase = ChallengePhase::Terminal;
+                Ok(ChallengeClaimResult::ProviderExchangeIndeterminate)
+            }
+            ChallengePhase::ProviderResultKnown => {
+                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
+                    return Err(AuthError::ChallengeConsumed);
+                }
+                Ok(ChallengeClaimResult::ProviderResultKnown(
+                    challenge,
+                    s.provider_result.clone().ok_or(AuthError::Vault)?,
+                ))
+            }
+            ChallengePhase::Terminal => {
+                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
+                    Err(AuthError::ChallengeConsumed)
+                } else {
+                    Ok(ChallengeClaimResult::ProviderExchangeIndeterminate)
+                }
+            }
+        }
     }
     async fn mark_provider_exchange_indeterminate(
         &self,
         _id: &ChallengeId,
+        operation_id: &OperationId,
+        digest: [u8; 32],
     ) -> Result<(), AuthError> {
         let mut s = self.0.lock().unwrap();
         s.phase = Some(ChallengePhase::Terminal);
         s.challenge.as_mut().unwrap().phase = ChallengePhase::Terminal;
+        s.receipts.insert(
+            operation_id.to_string(),
+            AuthReceipt {
+                operation_id: operation_id.clone(),
+                command_kind: EXCHANGE_APPLE_COMMAND.into(),
+                request_digest: digest,
+                response_bytes: b"{\"code\":\"providerExchangeIndeterminate\"}".to_vec(),
+                status: 502,
+                session_grant: None,
+            },
+        );
         Ok(())
     }
     async fn mark_provider_result_known(
         &self,
         _id: &ChallengeId,
+        _operation_id: &OperationId,
         _identity: &VerifiedExternalIdentity,
-        _secret: SealedSecret,
+        secret: SealedSecret,
     ) -> Result<(), AuthError> {
         let mut s = self.0.lock().unwrap();
         s.phase = Some(ChallengePhase::ProviderResultKnown);
         s.challenge.as_mut().unwrap().phase = ChallengePhase::ProviderResultKnown;
+        s.provider_result = Some(secret);
         Ok(())
     }
     async fn finish_exchange(
@@ -213,9 +332,15 @@ impl AuthRepository for FakeRepo {
         _lookup: Vec<u8>,
         _secret: SealedSecret,
         _audience: &str,
+        _platform: &str,
+        _now_unix: i64,
         digest: [u8; 32],
     ) -> Result<(SessionGrant, AuthReceipt), AuthError> {
         let mut state = self.0.lock().unwrap();
+        if state.fail_finish_once {
+            state.fail_finish_once = false;
+            return Err(AuthError::Database("fixture crash".into()));
+        }
         let (account, tenant, fence, epoch) = state.account.clone().unwrap_or_else(|| {
             (
                 AccountId::new("acct_fake").unwrap(),
@@ -246,10 +371,19 @@ impl AuthRepository for FakeRepo {
             request_digest: digest,
             response_bytes: serde_json::to_vec(&grant).unwrap(),
             status: 200,
+            session_grant: Some(grant.clone()),
         };
         state
             .receipts
             .insert(operation_id.to_string(), receipt.clone());
+        state.operations.insert(
+            operation_id.to_string(),
+            (EXCHANGE_APPLE_COMMAND.into(), digest),
+        );
+        state.phase = Some(ChallengePhase::Terminal);
+        if let Some(challenge) = state.challenge.as_mut() {
+            challenge.phase = ChallengePhase::Terminal;
+        }
         Ok((grant, receipt))
     }
     async fn refresh(
@@ -258,15 +392,37 @@ impl AuthRepository for FakeRepo {
         _verifier: Vec<u8>,
     ) -> Result<RefreshOutcome, AuthError> {
         let mut s = self.0.lock().unwrap();
-        if let Some((token, outcome)) = s.refresh_receipts.get(request.operation_id.as_str()) {
-            if token == &request.refresh_token {
+        if let Some((token, digest, outcome)) =
+            s.refresh_receipts.get(request.operation_id.as_str())
+        {
+            if token == &request.refresh_token && digest == &request.request_digest {
                 return Ok(outcome.clone());
             }
             return Err(AuthError::OperationIdReused);
         }
         if s.consumed_refresh.contains(&request.refresh_token) {
             s.sessions_revoked.insert("session_fake".into());
-            return Err(AuthError::RefreshTokenReused);
+            let outcome = RefreshOutcome {
+                grant: None,
+                receipt: Some(AuthReceipt {
+                    operation_id: request.operation_id.clone(),
+                    command_kind: ROTATE_REFRESH_COMMAND.into(),
+                    request_digest: request.request_digest,
+                    response_bytes: b"{\"code\":\"refreshTokenReused\"}".to_vec(),
+                    status: 401,
+                    session_grant: None,
+                }),
+                reused: true,
+            };
+            s.refresh_receipts.insert(
+                request.operation_id.to_string(),
+                (
+                    request.refresh_token.clone(),
+                    request.request_digest,
+                    outcome.clone(),
+                ),
+            );
+            return Ok(outcome);
         }
         s.consumed_refresh.insert(request.refresh_token.clone());
         let (account_id, tenant_id, fence, epoch) = s.account.clone().unwrap();
@@ -287,13 +443,24 @@ impl AuthRepository for FakeRepo {
             refresh_expires_at_unix: 9000,
         };
         let outcome = RefreshOutcome {
-            grant: Some(grant),
-            receipt: None,
+            grant: Some(grant.clone()),
+            receipt: Some(AuthReceipt {
+                operation_id: request.operation_id.clone(),
+                command_kind: ROTATE_REFRESH_COMMAND.into(),
+                request_digest: request.request_digest,
+                response_bytes: b"{\"refreshGeneration\":2}".to_vec(),
+                status: 200,
+                session_grant: Some(grant.clone()),
+            }),
             reused: false,
         };
         s.refresh_receipts.insert(
             request.operation_id.to_string(),
-            (request.refresh_token.clone(), outcome.clone()),
+            (
+                request.refresh_token.clone(),
+                request.request_digest,
+                outcome.clone(),
+            ),
         );
         Ok(outcome)
     }
@@ -305,7 +472,7 @@ impl AuthRepository for FakeRepo {
     ) -> Result<AuthReceipt, AuthError> {
         let mut s = self.0.lock().unwrap();
         if let Some(r) = s.receipts.get(operation_id.as_str()) {
-            if r.request_digest != digest {
+            if r.request_digest != digest || r.command_kind != REVOKE_SESSION_COMMAND {
                 return Err(AuthError::OperationIdReused);
             }
             return Ok(r.clone());
@@ -317,12 +484,19 @@ impl AuthRepository for FakeRepo {
             request_digest: digest,
             response_bytes: b"{\"fenceChanged\":false}".to_vec(),
             status: 200,
+            session_grant: None,
         };
         s.receipts.insert(operation_id.to_string(), r.clone());
+        s.operations.insert(
+            operation_id.to_string(),
+            (REVOKE_SESSION_COMMAND.into(), digest),
+        );
         Ok(r)
     }
     async fn rotate_account_fence(
         &self,
+        operation_id: &OperationId,
+        digest: [u8; 32],
         account_id: &AccountId,
     ) -> Result<SecurityTransition, AuthError> {
         let mut s = self.0.lock().unwrap();
@@ -330,7 +504,7 @@ impl AuthRepository for FakeRepo {
         let transition = SecurityTransition {
             account_auth_epoch: epoch + 1,
             account_fence: vec![2; 32],
-            sessions_revoked: true,
+            sessions_reauth_required: true,
         };
         s.account = Some((
             account_id.clone(),
@@ -338,21 +512,27 @@ impl AuthRepository for FakeRepo {
             vec![2; 32],
             epoch + 1,
         ));
+        s.operations.insert(
+            operation_id.to_string(),
+            (ROTATE_ACCOUNT_FENCE_COMMAND.into(), digest),
+        );
         Ok(transition)
     }
 }
 
 fn request(operation: &str, challenge: &str) -> (NewChallenge, ExchangeRequest) {
     let operation_id = OperationId::new(operation).unwrap();
+    let create_operation_id = OperationId::new(format!("{operation}_create")).unwrap();
     let challenge_id = ChallengeId::new(challenge).unwrap();
     let request = NewChallenge {
-        operation_id: operation_id.clone(),
+        operation_id: create_operation_id,
         provider: "apple".into(),
         platform: "ios".into(),
         audience: "dev.serikayuzuki.fuminiwa.ios".into(),
-        state: b"state".to_vec(),
-        nonce: b"nonce".to_vec(),
+        state: "state".into(),
+        nonce: "nonce".into(),
         expires_at_unix: 2_000,
+        request_digest: digest_request(b"create"),
     };
     let exchange = ExchangeRequest {
         challenge_id,
@@ -365,26 +545,59 @@ fn request(operation: &str, challenge: &str) -> (NewChallenge, ExchangeRequest) 
     (request, exchange)
 }
 
+fn create_wire(operation_id: &str, platform: &str) -> ParsedAuthCommand {
+    let raw = format!(
+        "{{\"clientPlatform\":\"{platform}\",\"flow\":\"native\",\"operationId\":\"{operation_id}\",\"provider\":\"apple\"}}"
+    );
+    parse_auth_command(CREATE_CHALLENGE_COMMAND, raw.as_bytes()).unwrap()
+}
+
+fn exchange_wire(operation_id: &str, challenge_id: &ChallengeId, state: &str) -> ParsedAuthCommand {
+    let raw = format!(
+        "{{\"authorizationCode\":\"fixture-code\",\"challengeId\":\"{}\",\"identityToken\":\"fixture.token.signature\",\"operationId\":\"{operation_id}\",\"provider\":\"apple\",\"state\":\"{state}\"}}",
+        challenge_id.as_str()
+    );
+    parse_auth_command(EXCHANGE_APPLE_COMMAND, raw.as_bytes()).unwrap()
+}
+
+fn refresh_wire(operation_id: &str) -> ParsedAuthCommand {
+    let raw = format!("{{\"rotationId\":\"{operation_id}\"}}");
+    parse_auth_command(ROTATE_REFRESH_COMMAND, raw.as_bytes()).unwrap()
+}
+
+fn revoke_wire(operation_id: &str) -> ParsedAuthCommand {
+    let raw = format!("{{\"operationId\":\"{operation_id}\",\"scope\":\"currentSession\"}}");
+    parse_auth_command(REVOKE_SESSION_COMMAND, raw.as_bytes()).unwrap()
+}
+
 #[tokio::test]
 async fn same_identity_reuses_account_and_hmac_is_shared() {
     let repo = FakeRepo::default();
     let app = AuthApplication::new(repo.clone());
-    let (challenge, exchange) = request("op_1", "challenge_fake");
-    let result = app.create_challenge(challenge).await.unwrap();
-    assert_eq!(result.challenge_id.as_str(), "challenge_fake");
+    let result = app
+        .create_challenge_from_wire(
+            &create_wire("10000000-0000-4000-8000-000000000011", "ios"),
+            1_000,
+        )
+        .await
+        .unwrap();
+    let exchange = exchange_wire(
+        "30000000-0000-4000-8000-000000000011",
+        &result.challenge_id,
+        &result.state,
+    );
+    assert_eq!(
+        result.challenge_id.as_str(),
+        "20000000-0000-4000-8000-000000000001"
+    );
     let provider = FakeProvider {
         indeterminate: false,
         subject: "same".into(),
+        calls: Arc::new(AtomicUsize::new(0)),
     };
     let vault = FakeVault::default();
     let first = app
-        .exchange_apple(
-            exchange.clone(),
-            &provider,
-            &FixtureHasher::default(),
-            &vault,
-            1_000,
-        )
+        .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
         .await
         .unwrap();
     assert_eq!(
@@ -407,7 +620,7 @@ async fn same_identity_reuses_account_and_hmac_is_shared() {
         repo.token_verifier("refresh", &first.refresh_token)
             .await
             .unwrap(),
-        FixtureHasher::default()
+        fixture_hasher()
             .token_verifier("refresh", &first.refresh_token)
             .await
             .unwrap()
@@ -432,6 +645,8 @@ async fn concurrent_same_subject_finishes_to_one_account() {
                 ciphertext: vec![1]
             },
             "dev.serikayuzuki.fuminiwa",
+            "macos",
+            1_000,
             digest_request(b"a")
         ),
         repo.finish_exchange(
@@ -444,6 +659,8 @@ async fn concurrent_same_subject_finishes_to_one_account() {
                 ciphertext: vec![1]
             },
             "dev.serikayuzuki.fuminiwa",
+            "macos",
+            1_000,
             digest_request(b"b")
         ),
     );
@@ -461,37 +678,40 @@ async fn concurrent_same_subject_finishes_to_one_account() {
 async fn refresh_lost_ack_replay_and_reuse_revoke_are_distinct() {
     let repo = FakeRepo::default();
     let app = AuthApplication::new(repo.clone());
-    let (challenge, exchange) = request("op_2", "challenge_fake");
-    app.create_challenge(challenge).await.unwrap();
-    let provider = FakeProvider {
-        indeterminate: false,
-        subject: "same".into(),
-    };
-    let vault = FakeVault::default();
-    let grant = app
-        .exchange_apple(
-            exchange,
-            &provider,
-            &FixtureHasher::default(),
-            &vault,
+    let challenge = app
+        .create_challenge_from_wire(
+            &create_wire("10000000-0000-4000-8000-000000000012", "ios"),
             1_000,
         )
         .await
         .unwrap();
+    let exchange = exchange_wire(
+        "30000000-0000-4000-8000-000000000012",
+        &challenge.challenge_id,
+        &challenge.state,
+    );
+    let provider = FakeProvider {
+        indeterminate: false,
+        subject: "same".into(),
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let vault = FakeVault::default();
+    let grant = app
+        .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+        .await
+        .unwrap();
     let first = app
-        .refresh(RefreshRequest {
-            operation_id: OperationId::new("refresh_op_1").unwrap(),
-            refresh_token: grant.refresh_token.clone(),
-            request_digest: digest_request(b"r"),
-        })
+        .refresh_from_wire(
+            &refresh_wire("50000000-0000-4000-8000-000000000011"),
+            grant.refresh_token.clone(),
+        )
         .await
         .unwrap();
     let replay = app
-        .refresh(RefreshRequest {
-            operation_id: OperationId::new("refresh_op_1").unwrap(),
-            refresh_token: grant.refresh_token.clone(),
-            request_digest: digest_request(b"r"),
-        })
+        .refresh_from_wire(
+            &refresh_wire("50000000-0000-4000-8000-000000000011"),
+            grant.refresh_token.clone(),
+        )
         .await
         .unwrap();
     assert_eq!(first, replay);
@@ -506,13 +726,14 @@ async fn refresh_lost_ack_replay_and_reuse_revoke_are_distinct() {
         grant.principal.account_fence
     );
     let reused = app
-        .refresh(RefreshRequest {
-            operation_id: OperationId::new("refresh_op_2").unwrap(),
-            refresh_token: grant.refresh_token,
-            request_digest: digest_request(b"r2"),
-        })
+        .refresh_from_wire(
+            &refresh_wire("50000000-0000-4000-8000-000000000012"),
+            grant.refresh_token,
+        )
         .await;
-    assert_eq!(reused.unwrap_err(), AuthError::RefreshTokenReused);
+    let reused = reused.unwrap();
+    assert!(reused.reused);
+    assert_eq!(reused.receipt.as_ref().unwrap().status, 401);
     assert!(repo
         .0
         .lock()
@@ -525,35 +746,221 @@ async fn refresh_lost_ack_replay_and_reuse_revoke_are_distinct() {
 async fn provider_call_indeterminate_is_terminal_and_revoke_is_idempotent() {
     let repo = FakeRepo::default();
     let app = AuthApplication::new(repo.clone());
-    let (challenge, exchange) = request("op_3", "challenge_fake");
-    app.create_challenge(challenge).await.unwrap();
+    let challenge = app
+        .create_challenge_from_wire(
+            &create_wire("10000000-0000-4000-8000-000000000013", "ios"),
+            1_000,
+        )
+        .await
+        .unwrap();
+    let exchange = exchange_wire(
+        "30000000-0000-4000-8000-000000000013",
+        &challenge.challenge_id,
+        &challenge.state,
+    );
     let provider = FakeProvider {
         indeterminate: true,
         subject: "same".into(),
+        calls: Arc::new(AtomicUsize::new(0)),
     };
     let vault = FakeVault::default();
     assert_eq!(
-        app.exchange_apple(
-            exchange,
-            &provider,
-            &FixtureHasher::default(),
-            &vault,
-            1_000
-        )
-        .await
-        .unwrap_err(),
+        app.exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+            .await
+            .unwrap_err(),
         AuthError::ProviderExchangeIndeterminate
     );
     assert_eq!(repo.0.lock().unwrap().phase, Some(ChallengePhase::Terminal));
-    let op = OperationId::new("revoke").unwrap();
-    let digest = digest_request(b"revoke");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        app.exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+            .await
+            .unwrap_err(),
+        AuthError::ProviderExchangeIndeterminate
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     let first = app
-        .revoke_current_session(op.clone(), digest, SessionId::new("session_fake").unwrap())
+        .revoke_current_session_from_wire(
+            &revoke_wire("60000000-0000-4000-8000-000000000011"),
+            SessionId::new("session_fake").unwrap(),
+        )
         .await
         .unwrap();
     let replay = app
-        .revoke_current_session(op, digest, SessionId::new("session_fake").unwrap())
+        .revoke_current_session_from_wire(
+            &revoke_wire("60000000-0000-4000-8000-000000000011"),
+            SessionId::new("session_fake").unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(first, replay);
+}
+
+#[tokio::test]
+async fn challenge_material_is_server_generated_256_bit_and_platform_scoped() {
+    let repo = FakeRepo::default();
+    let app = AuthApplication::new(repo.clone());
+    let raw = br#"{"clientPlatform":"macos","flow":"native","operationId":"10000000-0000-4000-8000-000000000001","provider":"apple"}"#;
+    let parsed = parse_auth_command(CREATE_CHALLENGE_COMMAND, raw).unwrap();
+    let result = app
+        .create_challenge_from_wire(&parsed, 1_000)
+        .await
+        .unwrap();
+    let exact_replay = app
+        .create_challenge_from_wire(&parsed, 1_000)
+        .await
+        .unwrap();
+    assert_eq!(result, exact_replay);
+    let state = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&result.state)
+        .unwrap();
+    let nonce = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&result.nonce)
+        .unwrap();
+    assert_eq!(state.len(), 32);
+    assert_eq!(nonce.len(), 32);
+    assert_ne!(state, nonce);
+    assert_eq!(result.audience, "dev.serikayuzuki.fuminiwa");
+    let challenge = repo.0.lock().unwrap().challenge.clone().unwrap();
+    assert_eq!(challenge.platform, "macos");
+    assert_eq!(challenge.audience, "dev.serikayuzuki.fuminiwa");
+
+    let second_raw = br#"{"clientPlatform":"macos","flow":"native","operationId":"10000000-0000-4000-8000-000000000002","provider":"apple"}"#;
+    let second = app
+        .create_challenge_from_wire(
+            &parse_auth_command(CREATE_CHALLENGE_COMMAND, second_raw).unwrap(),
+            1_000,
+        )
+        .await
+        .unwrap();
+    assert_ne!(result.state, second.state);
+    assert_ne!(result.nonce, second.nonce);
+}
+
+#[tokio::test]
+async fn provider_result_known_resumes_without_calling_apple_again() {
+    let repo = FakeRepo::default();
+    let app = AuthApplication::new(repo.clone());
+    let challenge = app
+        .create_challenge_from_wire(
+            &create_wire("10000000-0000-4000-8000-000000000014", "ios"),
+            1_000,
+        )
+        .await
+        .unwrap();
+    let exchange = exchange_wire(
+        "30000000-0000-4000-8000-000000000014",
+        &challenge.challenge_id,
+        &challenge.state,
+    );
+    repo.0.lock().unwrap().fail_finish_once = true;
+    let provider = FakeProvider {
+        indeterminate: false,
+        subject: "crash-resume-subject".into(),
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let vault = FakeVault::default();
+    assert!(matches!(
+        app.exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+            .await,
+        Err(AuthError::Database(_))
+    ));
+    assert_eq!(
+        repo.0.lock().unwrap().phase,
+        Some(ChallengePhase::ProviderResultKnown)
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+
+    let grant = app
+        .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+        .await
+        .unwrap();
+    assert_eq!(grant.principal.account_id.as_str(), "acct_fake");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn challenge_expiry_and_provider_call_lease_fail_closed() {
+    let repo = FakeRepo::default();
+    let (challenge, exchange) = request("op_lease", "challenge_fake");
+    repo.create_challenge(
+        &challenge,
+        digest_request(challenge.state.as_bytes()).to_vec(),
+        digest_request(challenge.nonce.as_bytes()).to_vec(),
+    )
+    .await
+    .unwrap();
+    repo.reserve_operation(
+        &exchange.operation_id,
+        EXCHANGE_APPLE_COMMAND,
+        &exchange.request_digest,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        repo.claim_challenge_for_exchange(
+            &exchange.challenge_id,
+            &exchange.operation_id,
+            &digest_request(&exchange.state),
+            1_000,
+        )
+        .await
+        .unwrap(),
+        ChallengeClaimResult::ProviderCallRequired(_)
+    ));
+    assert_eq!(
+        repo.claim_challenge_for_exchange(
+            &exchange.challenge_id,
+            &exchange.operation_id,
+            &digest_request(&exchange.state),
+            1_001,
+        )
+        .await
+        .unwrap_err(),
+        AuthError::InvalidChallengePhase
+    );
+    assert_eq!(
+        repo.claim_challenge_for_exchange(
+            &exchange.challenge_id,
+            &exchange.operation_id,
+            &digest_request(&exchange.state),
+            1_300,
+        )
+        .await
+        .unwrap(),
+        ChallengeClaimResult::ProviderExchangeIndeterminate
+    );
+    assert_eq!(
+        repo.claim_challenge_for_exchange(
+            &exchange.challenge_id,
+            &exchange.operation_id,
+            &digest_request(&exchange.state),
+            1_301,
+        )
+        .await
+        .unwrap(),
+        ChallengeClaimResult::ProviderExchangeIndeterminate
+    );
+
+    let expired_repo = FakeRepo::default();
+    expired_repo
+        .create_challenge(
+            &challenge,
+            digest_request(challenge.state.as_bytes()).to_vec(),
+            digest_request(challenge.nonce.as_bytes()).to_vec(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        expired_repo
+            .claim_challenge_for_exchange(
+                &exchange.challenge_id,
+                &exchange.operation_id,
+                &digest_request(&exchange.state),
+                challenge.expires_at_unix,
+            )
+            .await
+            .unwrap_err(),
+        AuthError::ChallengeExpired
+    );
 }

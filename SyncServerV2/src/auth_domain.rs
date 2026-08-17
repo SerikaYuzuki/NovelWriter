@@ -20,6 +20,11 @@ pub const REFRESH_TOKEN_LIFETIME_SECONDS: i64 = 7_776_000;
 pub const CHALLENGE_LIFETIME_SECONDS: i64 = 300;
 pub const TOKEN_HMAC_KEY_VERSION: i32 = 1;
 pub const SUBJECT_LOOKUP_KEY_VERSION: i32 = 1;
+pub const CREATE_CHALLENGE_COMMAND: &str = "createChallenge";
+pub const EXCHANGE_APPLE_COMMAND: &str = "exchangeAppleNativeCredential";
+pub const ROTATE_REFRESH_COMMAND: &str = "rotateRefreshToken";
+pub const REVOKE_SESSION_COMMAND: &str = "revokeCurrentSession";
+pub const ROTATE_ACCOUNT_FENCE_COMMAND: &str = "rotateAccountFence";
 type HmacSha256 = Hmac<Sha256>;
 
 macro_rules! opaque_id {
@@ -68,7 +73,7 @@ opaque_id!(OperationId);
 opaque_id!(ProviderConfigId);
 opaque_id!(CredentialId);
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountFence {
     pub epoch: i64,
     pub value: Vec<u8>,
@@ -82,7 +87,8 @@ impl AccountFence {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VerifiedExternalIdentity {
     pub provider_config_id: ProviderConfigId,
     pub exact_issuer: String,
@@ -96,10 +102,75 @@ pub struct VerifiedExternalIdentity {
     #[serde(skip)]
     pub provider_credential: Option<VerifiedProviderCredential>,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl fmt::Debug for VerifiedExternalIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedExternalIdentity")
+            .field("provider_config_id", &self.provider_config_id)
+            .field("exact_issuer", &self.exact_issuer)
+            .field("subject", &"<redacted>")
+            .field("authenticated_at_unix", &self.authenticated_at_unix)
+            .field("provider_credential", &self.provider_credential.is_some())
+            .finish()
+    }
+}
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerifiedProviderCredential {
     pub audience: String,
     pub encrypted_refresh_token: SealedSecret,
+}
+impl fmt::Debug for VerifiedProviderCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedProviderCredential")
+            .field("audience", &self.audience)
+            .field("encrypted_refresh_token", &"<redacted>")
+            .finish()
+    }
+}
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DurableVerifiedIdentity {
+    pub provider_config_id: ProviderConfigId,
+    pub exact_issuer: String,
+    pub subject: String,
+    pub authenticated_at_unix: i64,
+    pub provider_credential: Option<VerifiedProviderCredential>,
+}
+impl fmt::Debug for DurableVerifiedIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DurableVerifiedIdentity")
+            .field("provider_config_id", &self.provider_config_id)
+            .field("exact_issuer", &self.exact_issuer)
+            .field("subject", &"<redacted>")
+            .field("authenticated_at_unix", &self.authenticated_at_unix)
+            .field("provider_credential", &self.provider_credential.is_some())
+            .finish()
+    }
+}
+impl From<&VerifiedExternalIdentity> for DurableVerifiedIdentity {
+    fn from(value: &VerifiedExternalIdentity) -> Self {
+        Self {
+            provider_config_id: value.provider_config_id.clone(),
+            exact_issuer: value.exact_issuer.clone(),
+            subject: value.subject.clone(),
+            authenticated_at_unix: value.authenticated_at_unix,
+            provider_credential: value.provider_credential.clone(),
+        }
+    }
+}
+impl From<DurableVerifiedIdentity> for VerifiedExternalIdentity {
+    fn from(value: DurableVerifiedIdentity) -> Self {
+        Self {
+            provider_config_id: value.provider_config_id,
+            exact_issuer: value.exact_issuer,
+            subject: value.subject,
+            authenticated_at_unix: value.authenticated_at_unix,
+            provider_credential: value.provider_credential,
+        }
+    }
 }
 impl VerifiedExternalIdentity {
     pub fn apple(
@@ -131,14 +202,26 @@ impl VerifiedExternalIdentity {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthenticatedPrincipal {
     pub account_id: AccountId,
     pub tenant_id: TenantId,
     pub session_id: SessionId,
     pub account_auth_epoch: i64,
     pub account_fence: Vec<u8>,
+}
+impl fmt::Debug for AuthenticatedPrincipal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedPrincipal")
+            .field("account_id", &self.account_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("session_id", &self.session_id)
+            .field("account_auth_epoch", &self.account_auth_epoch)
+            .field("account_fence", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -239,9 +322,15 @@ pub struct ChallengeClaim {
     pub lease_until_unix: i64,
     pub expires_at_unix: i64,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChallengeClaimResult {
+    ProviderCallRequired(ChallengeClaim),
+    ProviderResultKnown(ChallengeClaim, SealedSecret),
+    ProviderExchangeIndeterminate,
+}
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionGrant {
     pub principal: AuthenticatedPrincipal,
     pub access_token: String,
@@ -250,27 +339,77 @@ pub struct SessionGrant {
     pub access_expires_at_unix: i64,
     pub refresh_expires_at_unix: i64,
 }
+impl fmt::Debug for SessionGrant {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionGrant")
+            .field("principal", &self.principal)
+            .field("access_token", &"<redacted>")
+            .field("refresh_token", &"<redacted>")
+            .field("refresh_generation", &self.refresh_generation)
+            .field("access_expires_at_unix", &self.access_expires_at_unix)
+            .field("refresh_expires_at_unix", &self.refresh_expires_at_unix)
+            .finish()
+    }
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct RefreshRequest {
     pub operation_id: OperationId,
     pub refresh_token: String,
     pub request_digest: [u8; 32],
 }
+impl fmt::Debug for RefreshRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RefreshRequest")
+            .field("operation_id", &self.operation_id)
+            .field("refresh_token", &"<redacted>")
+            .field("request_digest", &"<redacted>")
+            .finish()
+    }
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct AuthReceipt {
     pub operation_id: OperationId,
     pub command_kind: String,
     pub request_digest: [u8; 32],
     pub response_bytes: Vec<u8>,
     pub status: u16,
+    /// Hydrated only inside the auth repository. Exact wire bytes never expose
+    /// the internal TenantID, but application replay still needs the same
+    /// domain grant without issuing a second session.
+    pub session_grant: Option<SessionGrant>,
+}
+impl fmt::Debug for AuthReceipt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthReceipt")
+            .field("operation_id", &self.operation_id)
+            .field("command_kind", &self.command_kind)
+            .field("request_digest", &"<redacted>")
+            .field("response_bytes", &"<redacted>")
+            .field("status", &self.status)
+            .field("session_grant", &self.session_grant)
+            .finish()
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SealedSecret {
     pub key_version: i32,
     pub ciphertext: Vec<u8>,
+}
+impl fmt::Debug for SealedSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SealedSecret")
+            .field("key_version", &self.key_version)
+            .field("ciphertext", &"<redacted>")
+            .finish()
+    }
 }
 
 #[async_trait]
