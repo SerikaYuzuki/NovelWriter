@@ -142,6 +142,283 @@ impl Repository {
             .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
         Ok(())
     }
+    async fn verify_read_back<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response_bytes: &[u8],
+    ) -> SyncResult<()> {
+        let response = strict_json(response_bytes)?;
+        if canonical_json(&response).map_err(|_| SyncError::Retryable)? != response_bytes {
+            return Err(SyncError::Retryable);
+        }
+        let receipt = response
+            .get("receipt")
+            .and_then(Value::as_object)
+            .ok_or(SyncError::Retryable)?;
+        let read_back = receipt
+            .get("readBack")
+            .and_then(Value::as_object)
+            .ok_or(SyncError::Retryable)?;
+        if receipt.get("commandId").and_then(Value::as_str)
+            != Some(cmd.command_id.to_string().as_str())
+            || receipt.get("commandKind").and_then(Value::as_str) != Some(cmd.kind.as_str())
+            || receipt.get("workId").and_then(Value::as_str)
+                != Some(cmd.work_id.to_string().as_str())
+            || receipt.get("requestDigest").and_then(Value::as_str)
+                != Some(hex::encode(cmd.request_digest).as_str())
+            || [
+                "accountMatched",
+                "commandDigestMatched",
+                "headMatched",
+                "resourceMatched",
+                "stateMatched",
+            ]
+            .iter()
+            .any(|key| read_back.get(*key).and_then(Value::as_bool) != Some(true))
+        {
+            return Err(SyncError::Retryable);
+        }
+        let envelope_matches: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.account_scopes a JOIN sync_v2.sealed_commands s ON s.account_id=a.account_id JOIN sync_v2.receipts r ON r.account_id=s.account_id AND r.command_id=s.command_id WHERE a.account_id=$1 AND a.server_instance_id=$2 AND a.protocol_epoch=$3 AND a.account_fence=$4 AND s.command_id=$5 AND s.work_id=$6 AND s.account_fence=$4 AND s.command_kind=$7 AND s.request_digest=$8 AND s.canonical_request=$9 AND s.state='sending' AND r.work_id=$6 AND r.command_kind=$7 AND r.request_digest=$8 AND r.canonical_request=$9 AND r.state='reserved')",
+        )
+        .bind(&p.account_id)
+        .bind(&p.server_instance_id)
+        .bind(p.protocol_epoch)
+        .bind(&p.account_fence)
+        .bind(cmd.command_id)
+        .bind(cmd.work_id)
+        .bind(cmd.kind.as_str())
+        .bind(cmd.request_digest.as_slice())
+        .bind(&cmd.canonical_bytes)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !envelope_matches {
+            return Err(SyncError::Retryable);
+        }
+        self.verify_response_head(tx, p, cmd, &response).await?;
+        self.verify_command_resource(tx, p, cmd, &response).await
+    }
+    async fn verify_response_head<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let Some(expected) = response.get("head") else {
+            return Ok(());
+        };
+        let work_id = if cmd.kind == CommandKind::CloneWork {
+            response
+                .get("newWorkId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or(SyncError::Retryable)?
+        } else {
+            cmd.work_id
+        };
+        let row = sqlx::query(
+            "SELECT head_snapshot_id,head_generation FROM sync_v2.works WHERE account_id=$1 AND work_id=$2",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(SyncError::Retryable)?;
+        let snapshot: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
+        let generation: Option<i64> = row.try_get("head_generation")?;
+        if expected.is_null() {
+            if snapshot.is_some() || generation.is_some() {
+                return Err(SyncError::Retryable);
+            }
+            return Ok(());
+        }
+        let expected_snapshot =
+            digest_field(expected, "snapshotId").map_err(|_| SyncError::Retryable)?;
+        let expected_generation = expected
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        if snapshot.as_deref() != Some(expected_snapshot.as_slice())
+            || generation != Some(expected_generation)
+        {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn verify_command_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let payload = &cmd.value["payload"];
+        let result = response
+            .get("result")
+            .and_then(Value::as_str)
+            .ok_or(SyncError::Retryable)?;
+        let matches = match cmd.kind {
+            CommandKind::CreateWork => {
+                let document = uuid(payload, "documentId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND document_id=$3 AND state='bound')")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(document).fetch_one(&mut **tx).await?
+            }
+            CommandKind::PrepareObject => {
+                let object = digest_field(payload, "objectId").map_err(|_| SyncError::Retryable)?;
+                if result == "noChanges" {
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available')")
+                        .bind(&p.account_id).bind(object.as_slice()).fetch_one(&mut **tx).await?
+                } else {
+                    let upload = response
+                        .get("uploadId")
+                        .and_then(Value::as_str)
+                        .and_then(|value| Uuid::parse_str(value).ok())
+                        .ok_or(SyncError::Retryable)?;
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 AND command_id=$3 AND work_id=$4 AND account_fence=$5 AND object_id=$6 AND byte_count=$7 AND state='prepared' AND expires_at>now())")
+                        .bind(&p.account_id).bind(upload).bind(cmd.command_id).bind(cmd.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(payload.get("byteCount").and_then(Value::as_i64).ok_or(SyncError::Retryable)?).fetch_one(&mut **tx).await?
+                }
+            }
+            CommandKind::FinalizeObject => {
+                let object = digest_field(payload, "objectId").map_err(|_| SyncError::Retryable)?;
+                let upload = uuid(payload, "uploadId").map_err(|_| SyncError::Retryable)?;
+                let count = payload
+                    .get("byteCount")
+                    .and_then(Value::as_i64)
+                    .ok_or(SyncError::Retryable)?;
+                let row = sqlx::query("SELECT b.byte_count,b.raw_bytes FROM sync_v2.upload_capabilities u JOIN sync_v2.account_objects a ON a.account_id=u.account_id AND a.object_id=u.object_id JOIN sync_v2.global_blobs b ON b.object_id=u.object_id WHERE u.account_id=$1 AND u.upload_id=$2 AND u.work_id=$3 AND u.object_id=$4 AND u.byte_count=$5 AND u.state='finalized' AND a.state='available'")
+                    .bind(&p.account_id).bind(upload).bind(cmd.work_id).bind(object.as_slice()).bind(count).fetch_optional(&mut **tx).await?;
+                if let Some(row) = row {
+                    let raw: Vec<u8> = row.try_get("raw_bytes")?;
+                    row.try_get::<i64, _>("byte_count")? == count
+                        && raw.len() as i64 == count
+                        && sha256(&raw) == object
+                } else {
+                    false
+                }
+            }
+            CommandKind::RegisterSnapshot => {
+                let snapshot =
+                    digest_field(payload, "snapshotId").map_err(|_| SyncError::Retryable)?;
+                let manifest = URL_SAFE_NO_PAD
+                    .decode(
+                        payload
+                            .get("manifestBase64URL")
+                            .and_then(Value::as_str)
+                            .ok_or(SyncError::Retryable)?,
+                    )
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3 AND manifest_digest=$3 AND manifest_bytes=$4)")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(snapshot.as_slice()).bind(manifest).fetch_one(&mut **tx).await?
+            }
+            CommandKind::Publish => self.verify_publish_resource(tx, p, cmd, response).await?,
+            CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
+                self.verify_resolution_resource(tx, p, cmd).await?
+            }
+            CommandKind::Restore => {
+                let selected = digest_field(payload, "selectedSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                let before = digest_field(&payload["expectedRemoteHead"], "snapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                let result_snapshot =
+                    digest_field(payload, "newSnapshotId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.restore_receipts rr JOIN sync_v2.head_events h ON h.account_id=rr.account_id AND h.command_id=rr.command_id AND h.work_id=rr.work_id WHERE rr.account_id=$1 AND rr.command_id=$2 AND rr.work_id=$3 AND rr.selected_snapshot_id=$4 AND rr.pre_restore_snapshot_id=$5 AND rr.result_snapshot_id=$6 AND h.snapshot_id=$6)")
+                    .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(selected.as_slice()).bind(before.as_slice()).bind(result_snapshot.as_slice()).fetch_one(&mut **tx).await?
+            }
+        };
+        if !matches {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn verify_publish_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<bool> {
+        if response.get("result").and_then(Value::as_str) == Some("conflictPending") {
+            let conflict = response
+                .get("conflictId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or(SyncError::Retryable)?;
+            let revision = response
+                .get("conflictRevision")
+                .and_then(Value::as_i64)
+                .ok_or(SyncError::Retryable)?;
+            let candidate = digest_field(&cmd.value["payload"], "candidateSnapshotId")
+                .map_err(|_| SyncError::Retryable)?;
+            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision WHERE a.account_id=$1 AND a.work_id=$2 AND a.conflict_id=$3 AND a.current_revision=$4 AND a.source_generation=$5 AND a.state='active' AND c.local_snapshot_id=$6 AND c.source_generation=$5)")
+                .bind(&p.account_id).bind(cmd.work_id).bind(conflict).bind(revision).bind(cmd.source_generation).bind(candidate.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database);
+        }
+        let head = response.get("head").ok_or(SyncError::Retryable)?;
+        let snapshot = digest_field(head, "snapshotId").map_err(|_| SyncError::Retryable)?;
+        let generation = head
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.head_events h JOIN sync_v2.history hi ON hi.account_id=h.account_id AND hi.work_id=h.work_id AND hi.snapshot_id=h.snapshot_id JOIN sync_v2.catalog_events c ON c.account_id=h.account_id AND c.work_id=h.work_id AND c.head_generation=h.generation AND c.head_snapshot_id=h.snapshot_id WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$3 AND h.generation=$4 AND h.snapshot_id=$5 AND h.command_kind='publish' AND hi.reason='publish' AND c.event_kind='upsert' AND c.tombstoned=false)")
+            .bind(&p.account_id).bind(cmd.work_id).bind(cmd.command_id).bind(generation).bind(snapshot.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+    }
+    async fn verify_resolution_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<bool> {
+        let payload = &cmd.value["payload"];
+        let conflict = uuid(payload, "conflictId").map_err(|_| SyncError::Retryable)?;
+        let revision = payload
+            .get("conflictRevision")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        let resolved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_events e ON e.account_id=a.account_id AND e.conflict_id=a.conflict_id AND e.revision=$4 AND e.event_kind='resolved' WHERE a.account_id=$1 AND a.work_id=$2 AND a.conflict_id=$3 AND a.current_revision=$4 AND a.state='resolved')")
+            .bind(&p.account_id).bind(cmd.work_id).bind(conflict).bind(revision).fetch_one(&mut **tx).await?;
+        if !resolved {
+            return Ok(false);
+        }
+        match cmd.kind {
+            CommandKind::ResolveDevice => {
+                let chosen = digest_field(payload, "decisionSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.head_events h JOIN sync_v2.history hi ON hi.account_id=h.account_id AND hi.work_id=h.work_id AND hi.snapshot_id=h.snapshot_id WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$3 AND h.snapshot_id=$4 AND h.command_kind='resolveDevice' AND hi.reason='conflictResolution')")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(cmd.command_id).bind(chosen.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            CommandKind::ResolveServer => {
+                let local = digest_field(payload, "preAdoptionSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3 AND reason='preAdoptionLocal' AND pinned=true)")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(local.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            CommandKind::CloneWork => {
+                let new_work = uuid(payload, "newWorkId").map_err(|_| SyncError::Retryable)?;
+                let root =
+                    digest_field(payload, "newRootSnapshotId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.works w JOIN sync_v2.head_events h ON h.account_id=w.account_id AND h.work_id=w.work_id AND h.snapshot_id=w.head_snapshot_id JOIN sync_v2.history hi ON hi.account_id=w.account_id AND hi.work_id=w.work_id AND hi.snapshot_id=w.head_snapshot_id WHERE w.account_id=$1 AND w.work_id=$2 AND w.head_snapshot_id=$3 AND w.head_generation=1 AND h.command_id=$4 AND h.command_scope='cloneNewWork' AND hi.reason='keepBothCloneRoot')")
+                    .bind(&p.account_id).bind(new_work).bind(root.as_slice()).bind(cmd.command_id).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn verify_completed_receipt<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        status: i32,
+        response: &[u8],
+    ) -> SyncResult<()> {
+        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.sealed_commands s JOIN sync_v2.receipts r ON r.account_id=s.account_id AND r.command_id=s.command_id WHERE s.account_id=$1 AND s.command_id=$2 AND s.work_id=$3 AND s.command_kind=$4 AND s.request_digest=$5 AND s.canonical_request=$6 AND s.state='completed' AND r.work_id=$3 AND r.command_kind=$4 AND r.request_digest=$5 AND r.canonical_request=$6 AND r.response_status=$7 AND r.canonical_response=$8 AND r.completed_at IS NOT NULL AND r.state='completed')")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).bind(status).bind(response).fetch_one(&mut **tx).await?;
+        if !matches {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
     async fn complete<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -150,9 +427,13 @@ impl Repository {
         status: i32,
         bytes: &[u8],
     ) -> SyncResult<()> {
-        sqlx::query("UPDATE sync_v2.receipts SET response_status=$3,canonical_response=$4,completed_at=$5,state='completed' WHERE account_id=$1 AND command_id=$2")
-            .bind(&p.account_id).bind(cmd.command_id).bind(status).bind(bytes).bind(Utc::now()).execute(&mut **tx).await?;
-        sqlx::query("UPDATE sync_v2.sealed_commands SET state='completed' WHERE account_id=$1 AND command_id=$2").bind(&p.account_id).bind(cmd.command_id).execute(&mut **tx).await?;
+        let receipt = sqlx::query("UPDATE sync_v2.receipts SET response_status=$3,canonical_response=$4,completed_at=$5,state='completed' WHERE account_id=$1 AND command_id=$2 AND work_id=$6 AND command_kind=$7 AND request_digest=$8 AND canonical_request=$9 AND state='reserved'")
+            .bind(&p.account_id).bind(cmd.command_id).bind(status).bind(bytes).bind(Utc::now()).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        let sealed = sqlx::query("UPDATE sync_v2.sealed_commands SET state='completed' WHERE account_id=$1 AND command_id=$2 AND work_id=$3 AND command_kind=$4 AND request_digest=$5 AND canonical_request=$6 AND state='sending'")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        if receipt.rows_affected() != 1 || sealed.rows_affected() != 1 {
+            return Err(SyncError::Retryable);
+        }
         Ok(())
     }
     fn response(cmd: &SealedCommand, result: &str, extra: Vec<(String, Value)>) -> Vec<u8> {
@@ -205,6 +486,27 @@ impl Repository {
             ("snapshotId".into(), Value::String(hex::encode(snapshot_id))),
         ])
     }
+    async fn current_head_value<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+    ) -> SyncResult<Value> {
+        let row = sqlx::query(
+            "SELECT head_snapshot_id,head_generation FROM sync_v2.works WHERE account_id=$1 AND work_id=$2",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let snapshot: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
+        let generation: Option<i64> = row.try_get("head_generation")?;
+        match (snapshot, generation) {
+            (None, None) => Ok(Value::Null),
+            (Some(snapshot), Some(generation)) => Ok(Self::head_value(&snapshot, generation)),
+            _ => Err(SyncError::Retryable),
+        }
+    }
     pub async fn command(
         &self,
         p: &AuthenticatedPrincipal,
@@ -241,7 +543,10 @@ impl Repository {
             }
             CommandKind::Restore => self.restore(&mut tx, p, cmd).await?,
         };
+        self.verify_read_back(&mut tx, p, cmd, &response).await?;
         self.complete(&mut tx, p, cmd, status, &response).await?;
+        self.verify_completed_receipt(&mut tx, p, cmd, status, &response)
+            .await?;
         tx.commit().await?;
         Ok((status, response))
     }
@@ -381,6 +686,7 @@ impl Repository {
         }
         sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT(account_id,object_id) DO UPDATE SET state='available'").bind(&p.account_id).bind(object.as_slice()).execute(&mut **tx).await?;
         sqlx::query("UPDATE sync_v2.upload_capabilities SET state='finalized' WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload).execute(&mut **tx).await?;
+        let head = self.current_head_value(tx, p, c.work_id).await?;
         Ok((
             200,
             Self::response(
@@ -389,7 +695,7 @@ impl Repository {
                 vec![
                     ("objectId".into(), Value::String(hex::encode(object))),
                     ("byteCount".into(), Value::from(count)),
-                    ("head".into(), Value::Null),
+                    ("head".into(), head),
                 ],
             ),
         ))
@@ -576,12 +882,13 @@ impl Repository {
         if document_id != work_document {
             return Err(SyncError::LineageViolation);
         }
+        let head = self.current_head_value(tx, p, c.work_id).await?;
         if let Some(existing) = sqlx::query("SELECT work_id,manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND snapshot_id=$2 FOR UPDATE")
             .bind(&p.account_id).bind(id.as_slice()).fetch_optional(&mut **tx).await? {
             let work: Uuid = existing.try_get("work_id")?;
             let old: Vec<u8> = existing.try_get("manifest_bytes")?;
             if work != c.work_id || old != bytes { return Err(SyncError::SnapshotDigestMismatch); }
-            return Ok((200, Self::response(c, "noChanges", vec![("snapshotId".into(), Value::String(hex::encode(id)))])));
+            return Ok((200, Self::response(c, "noChanges", vec![("snapshotId".into(), Value::String(hex::encode(id))), ("head".into(), head)])));
         }
         sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())")
             .bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
@@ -615,7 +922,7 @@ impl Repository {
                 "applied",
                 vec![
                     ("snapshotId".into(), Value::String(hex::encode(id))),
-                    ("head".into(), Value::Null),
+                    ("head".into(), head),
                 ],
             ),
         ))
