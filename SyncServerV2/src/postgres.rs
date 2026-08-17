@@ -145,6 +145,12 @@ impl Repository {
         }
         canonical_json(&Value::Object(map)).expect("response is canonical")
     }
+    fn head_value(snapshot_id: &[u8], generation: i64) -> Value {
+        object([
+            ("generation".into(), Value::from(generation)),
+            ("snapshotId".into(), Value::String(hex::encode(snapshot_id))),
+        ])
+    }
     pub async fn command(
         &self,
         p: &AuthenticatedPrincipal,
@@ -216,6 +222,7 @@ impl Repository {
                 vec![
                     ("workId".into(), Value::String(c.work_id.to_string())),
                     ("documentId".into(), Value::String(document.to_string())),
+                    ("head".into(), Value::Null),
                 ],
             ),
         ))
@@ -328,6 +335,7 @@ impl Repository {
                 vec![
                     ("objectId".into(), Value::String(hex::encode(object))),
                     ("byteCount".into(), Value::from(count)),
+                    ("head".into(), Value::Null),
                 ],
             ),
         ))
@@ -551,7 +559,10 @@ impl Repository {
             Self::response(
                 c,
                 "applied",
-                vec![("snapshotId".into(), Value::String(hex::encode(id)))],
+                vec![
+                    ("snapshotId".into(), Value::String(hex::encode(id))),
+                    ("head".into(), Value::Null),
+                ],
             ),
         ))
     }
@@ -623,6 +634,10 @@ impl Repository {
                         ("conflictId".into(), Value::String(conflict.to_string())),
                         ("conflictRevision".into(), Value::from(revision)),
                         ("sourceGeneration".into(), Value::from(c.source_generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(&remote, generation.unwrap_or(1)),
+                        ),
                     ],
                 ),
             ));
@@ -649,6 +664,7 @@ impl Repository {
                 vec![
                     ("generation".into(), Value::from(next)),
                     ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                    ("head".into(), Self::head_value(candidate.as_slice(), next)),
                 ],
             ),
         ))
@@ -770,9 +786,13 @@ impl Repository {
                         ("conflictRevision".into(), Value::from(revision)),
                         (
                             "remoteSnapshotId".into(),
-                            Value::String(hex::encode(conflict_remote)),
+                            Value::String(hex::encode(&conflict_remote)),
                         ),
                         ("remoteGeneration".into(), Value::from(generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(&conflict_remote, generation),
+                        ),
                     ],
                 ),
             ));
@@ -837,6 +857,7 @@ impl Repository {
                     ("conflictRevision".into(), Value::from(revision)),
                     ("generation".into(), Value::from(next)),
                     ("snapshotId".into(), Value::String(hex::encode(chosen))),
+                    ("head".into(), Self::head_value(chosen.as_slice(), next)),
                 ],
             ),
         ))
@@ -968,6 +989,7 @@ impl Repository {
                         "newRootSnapshotId".into(),
                         Value::String(hex::encode(root_id)),
                     ),
+                    ("head".into(), Self::head_value(root_id.as_slice(), 1)),
                 ],
             ),
         ))
@@ -1048,6 +1070,7 @@ impl Repository {
                         "protectedRestoreBeforeSnapshotId".into(),
                         Value::String(hex::encode(current)),
                     ),
+                    ("head".into(), Self::head_value(new_id.as_slice(), next)),
                 ],
             ),
         ))
