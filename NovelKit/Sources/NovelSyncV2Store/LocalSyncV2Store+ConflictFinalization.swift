@@ -3,6 +3,55 @@ import NovelCore
 import NovelSyncV2
 
 extension LocalSyncV2Store {
+    func reopenNewerCheckpointIntents(
+        workID: WorkID,
+        afterGeneration: Int64,
+        binding: V2AccountBinding
+    ) throws {
+        try exec(
+            """
+            UPDATE sync_intents SET status='pending'
+            WHERE work_id=? AND kind='checkpoint' AND status='sealed'
+              AND source_generation>? AND server_instance_id=?
+              AND protocol_epoch=? AND account_id=? AND account_fence=?
+              AND NOT EXISTS (
+                SELECT 1 FROM sealed_commands c
+                WHERE c.intent_id=sync_intents.intent_id
+                  AND c.status IN ('sealed','sending','completed','conflictPending')
+              )
+            """,
+            [.text(workID.description), .int(afterGeneration)] + binding.values
+        )
+    }
+
+    /// A conflict-producing publish remains immutable receipt evidence, but
+    /// its original checkpoint intent must never re-enter the outbox after the
+    /// conflict has been resolved. Resolution intents are separate rows and
+    /// are intentionally not touched here.
+    func parkBlockedPublishIntent(
+        workID: WorkID,
+        binding: V2AccountBinding
+    ) throws {
+        try exec(
+            """
+            UPDATE sync_intents SET status='parked'
+            WHERE work_id=? AND status IN ('pending','sealed')
+              AND intent_id IN (
+                SELECT intent_id FROM sealed_commands
+                WHERE work_id=? AND intent_id IS NOT NULL
+                  AND command_kind='publish' AND status='conflictPending'
+                  AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+              )
+              AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
+            """,
+            [
+                .text(workID.description), .text(workID.description)
+            ] + binding.values + binding.values
+        )
+    }
+
     func activeConflictRow(
         workID: WorkID,
         binding: V2AccountBinding
@@ -79,8 +128,7 @@ extension LocalSyncV2Store {
             workID: request.workID,
             scope: .bound(binding)
         ),
-            current[2].int64 == request.sourceGeneration,
-            current[3].blob == request.localSnapshotID.bytes else {
+            (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
     }
@@ -103,8 +151,7 @@ extension LocalSyncV2Store {
                   workID: request.workID,
                   scope: .bound(binding)
               ),
-              current[2].int64 == request.sourceGeneration,
-              current[3].blob == request.localSnapshotID.bytes else {
+              (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
     }
@@ -150,6 +197,12 @@ extension LocalSyncV2Store {
             try finalizeConflictRemoteGraphTransaction(
                 graph,
                 request: request,
+                binding: record.binding
+            )
+            try parkBlockedPublishIntent(workID: record.workID, binding: record.binding)
+            try reopenNewerCheckpointIntents(
+                workID: record.workID,
+                afterGeneration: generation,
                 binding: record.binding
             )
         }
@@ -203,6 +256,12 @@ extension LocalSyncV2Store {
         guard try changes() == 1 else {
             throw SyncV2StoreError.staleConflictAction
         }
+        try parkBlockedPublishIntent(workID: record.workID, binding: record.binding)
+        try reopenNewerCheckpointIntents(
+            workID: record.workID,
+            afterGeneration: active.sourceGeneration,
+            binding: record.binding
+        )
     }
 
     func finalizeKeepBothAcknowledgement(
@@ -262,6 +321,11 @@ extension LocalSyncV2Store {
         try finalizeConflictRemoteGraphTransaction(
             graph,
             request: request,
+            binding: record.binding
+        )
+        try reopenNewerCheckpointIntents(
+            workID: record.workID,
+            afterGeneration: active.sourceGeneration,
             binding: record.binding
         )
         try exec(

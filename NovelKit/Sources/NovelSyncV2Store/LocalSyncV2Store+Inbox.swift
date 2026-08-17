@@ -624,6 +624,7 @@ extension LocalSyncV2Store {
             guard try changes() == 1 else {
                 throw SyncV2StoreError.staleConflictAction
             }
+            try parkBlockedPublishIntent(workID: graph.workID, binding: binding)
         }
         try exec(
             "UPDATE inbox_batches SET state='adopted' WHERE inbox_id=? AND state='verified'",
@@ -745,6 +746,7 @@ extension LocalSyncV2Store {
         guard try changes() == 1 else {
             throw SyncV2StoreError.staleConflictAction
         }
+        try parkBlockedPublishIntent(workID: request.workID, binding: binding)
         try exec(
             "UPDATE inbox_batches SET state='adopted' WHERE inbox_id=? AND state='verified'",
             [.text(graph.inboxID.uuidString.lowercased())]

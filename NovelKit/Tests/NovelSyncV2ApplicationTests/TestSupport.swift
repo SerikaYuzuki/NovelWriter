@@ -76,7 +76,7 @@ actor ApplicationTestRemote: SyncV2RemoteClient {
     enum Reply: Sendable {
         case applied(inbox: SyncV2RemoteInbox? = nil)
         case noChanges(inbox: SyncV2RemoteInbox? = nil)
-        case conflict(SyncV2ConflictProjection)
+        case conflict(SyncV2ConflictProjection, inbox: SyncV2RemoteInbox? = nil)
         case failure(SyncV2Failure)
         case suspendThenFailure(SyncV2Failure)
     }
@@ -104,11 +104,11 @@ actor ApplicationTestRemote: SyncV2RemoteClient {
             return try execution(operation, result: .applied, inbox: inbox)
         case let .noChanges(inbox):
             return try execution(operation, result: .noChanges, inbox: inbox)
-        case let .conflict(conflict):
+        case let .conflict(conflict, inbox):
             return try execution(
                 operation,
                 result: .conflictPending,
-                inbox: nil,
+                inbox: inbox,
                 conflict: conflict
             )
         }
@@ -147,7 +147,8 @@ actor ApplicationTestRemote: SyncV2RemoteClient {
                     ),
                     result: result,
                     verifiedInboxID: inbox?.inboxID,
-                    conflict: conflict
+                    conflict: conflict,
+                    remoteHead: inbox?.expectedRemoteHead
                 ),
                 remoteInbox: inbox
             )

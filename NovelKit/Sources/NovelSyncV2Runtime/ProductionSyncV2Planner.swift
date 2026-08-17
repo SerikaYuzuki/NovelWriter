@@ -20,139 +20,263 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         return try await store.pendingWorkIDs(scope: .bound(binding))
     }
 
+    /// The planner is a single ordered state machine; keep its branch ordering
+    /// explicit so sealed command replay cannot be reordered by helpers.
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan {
         let localScope = try await scope.existingScope(workID: workID)
         guard case .bound = localScope else {
-            let pending = try await store.pendingIntents(
-                scope: localScope,
-                workID: workID
-            )
+            let pending = try await store.pendingIntents(scope: localScope, workID: workID)
             return pending.isEmpty ? .idle : .blocked(.authenticationRequired)
         }
-        if let record = try await store.pendingSealedCommands(
-            scope: localScope,
-            workID: workID
-        ).first {
+        if let record = try await store.pendingSealedCommands(scope: localScope, workID: workID).first {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
         }
-        let pending = try await store.pendingIntents(
-            scope: localScope,
-            workID: workID
-        )
-        guard pending.isEmpty else {
-            guard let view = try await store.immutableTransferView(
+        let pending = try await store.pendingIntents(scope: localScope, workID: workID)
+        guard !pending.isEmpty else { return .idle }
+        return try await planPending(workID: workID, scope: localScope, pending: pending)
+    }
+
+    private func planPending(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        pending: [V2PendingIntent]
+    ) async throws -> SyncV2CommandPlan {
+        guard let view = try await store.immutableTransferView(workID: workID, scope: localScope) else {
+            return .blocked(.fatal(.invalidLocalState))
+        }
+        let records = try await store.allSealedCommands(scope: localScope, workID: workID)
+        let activeConflict = try await store.activeConflict(workID: workID, scope: localScope)
+        if let intent = pending.first(where: {
+            $0.kind == "conflictResolution" &&
+                activeConflict?.conflictID != nil
+        }),
+            let active = activeConflict,
+            intent.sourceSnapshotID == active.localSnapshotID,
+            intent.sourceGeneration == active.sourceGeneration {
+            return try await planInitialResolution(
                 workID: workID,
-                scope: localScope
-            ) else { return .blocked(.fatal(.invalidLocalState)) }
-            let records = try await store.allSealedCommands(scope: localScope, workID: workID)
-            if let pendingIntent = pending.first,
-               pendingIntent.kind == "conflictResolution",
-               let active = try await store.activeConflict(workID: workID, scope: localScope),
-               pendingIntent.sourceSnapshotID == active.localSnapshotID,
-               pendingIntent.sourceGeneration == active.sourceGeneration {
-                let command: SealedCommand
-                if let reservation = try await store.latestKeepBothReservation(
-                    sourceWorkID: workID,
-                    conflictID: active.conflictID,
-                    scope: localScope
-                ) {
-                    let remoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
-                    command = try makeClone(view, conflict: active, reservation: reservation, remoteHead: remoteHead)
-                } else {
-                    command = try makeResolveServer(view, conflict: active)
-                }
-                try await store.seal(command, intentID: pendingIntent.intentID, scope: localScope)
-                return .command(command)
-            }
-            let currentRecords = records.filter {
-                $0.lifecycle == .completed &&
-                    $0.sourceSnapshotID == view.snapshot.snapshotId &&
-                    $0.sourceGeneration == view.pendingIntent.sourceGeneration
-            }
-            let completedKinds = Set(records.filter { $0.lifecycle == .completed }.map(\.commandKind))
-            var preparedObjects = Set<ObjectID>()
-            var finalizedObjects = Set<ObjectID>()
-            for record in currentRecords {
-                if record.commandKind == "prepareObject" {
-                    let objectID = try objectID(record)
-                    if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope),
-                       transfer.lifecycle == "prepared", transfer.expiresAt <= Date() {
-                        continue
-                    }
-                    preparedObjects.insert(objectID)
-                    if let receipt = try await store.receiptReadback(commandID: record.commandID, scope: localScope),
-                       receipt.result == .noChanges {
-                        remoteReady[workID, default: []].insert(objectID)
-                    }
-                } else if record.commandKind == "finalizeObject" {
-                    try finalizedObjects.insert(objectID(record))
-                }
-            }
-            if !completedKinds.contains("createWork") {
-                let command = try makeCreateWork(view)
-                try await store.seal(command, scope: localScope)
-                return .command(command)
-            }
-            let nextObject = view.snapshot.manifest.entries.map(\.objectId).first { !preparedObjects.contains($0) }
-            if let nextObject {
-                let command = try makeObjectCommand(kind: "prepareObject", objectID: nextObject, view: view)
-                try await store.seal(command, scope: localScope)
-                return .command(command)
-            }
-            let uploadObjects = view.snapshot.manifest.entries.map(\ .objectId).filter {
-                preparedObjects.contains($0) && !finalizedObjects.contains($0) &&
-                    !uploaded[workID, default: []].contains($0) &&
-                    !remoteReady[workID, default: []].contains($0)
-            }
-            if let objectID = uploadObjects.first,
-               let transfer = transfers[workID]?[objectID] {
-                if !uploaded[workID, default: []].contains(objectID) {
-                    return .upload(transfer)
-                }
-            }
-            if let targetObjectID = uploadObjects.first {
-                var prepare: V2SealedCommandRecord?
-                for record in currentRecords.reversed() where record.commandKind == "prepareObject" {
-                    if try objectID(record) == targetObjectID {
-                        prepare = record
-                        break
-                    }
-                }
-                if let prepare, let transfer = try await makeTransfer(from: prepare, view: view) {
-                    transfers[workID, default: [:]][targetObjectID] = transfer
-                    if !uploaded[workID, default: []].contains(targetObjectID) {
-                        return .upload(transfer)
-                    }
-                }
-            }
-            let readyObjects = finalizedObjects.union(remoteReady[workID, default: []])
-            if readyObjects.count < preparedObjects.count {
-                guard let objectID = preparedObjects.subtracting(readyObjects).first else { return .blocked(.fatal(.invalidLocalState)) }
-                let command = try makeObjectCommand(kind: "finalizeObject", objectID: objectID, view: view, uploadID: transfers[workID]?[objectID]?.uploadID)
-                try await store.seal(command, scope: localScope)
-                return .command(command)
-            }
-            var registeredCurrentSnapshot = false
-            for record in currentRecords where record.commandKind == "registerSnapshot" {
-                if try commandSnapshotID(record) == view.snapshot.snapshotId {
-                    registeredCurrentSnapshot = true
-                    break
-                }
-            }
-            if !registeredCurrentSnapshot {
-                let command = try makeRegister(view)
-                try await store.seal(command, scope: localScope)
-                return .command(command)
-            }
-            let command = try makePublish(view)
-            try await store.seal(
-                command,
-                intentID: view.pendingIntent.intentID,
-                scope: localScope
+                scope: localScope,
+                view: view,
+                active: active,
+                intent: intent
             )
+        }
+        let resolutionIntent = pending.first(where: {
+            $0.kind == "conflictResolution"
+        })
+        if activeConflict != nil, resolutionIntent == nil {
+            return .idle
+        }
+        return try await planTransfer(
+            workID: workID,
+            scope: localScope,
+            view: view,
+            records: records,
+            active: activeConflict,
+            resolutionIntentID: resolutionIntent?.intentID
+        )
+    }
+
+    private func planInitialResolution(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        active: V2ConflictCandidate,
+        intent: V2PendingIntent
+    ) async throws -> SyncV2CommandPlan {
+        let command: SealedCommand
+        if let reservation = try await store.latestKeepBothReservation(
+            sourceWorkID: workID,
+            conflictID: active.conflictID,
+            scope: localScope
+        ) {
+            let remoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
+            command = try makeClone(view, conflict: active, reservation: reservation, remoteHead: remoteHead)
+        } else {
+            command = try makeResolveServer(view, conflict: active)
+        }
+        try await store.seal(command, intentID: intent.intentID, scope: localScope)
+        return .command(command)
+    }
+
+    private func planTransfer(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        records: [V2SealedCommandRecord],
+        active: V2ConflictCandidate?,
+        resolutionIntentID: UUID?
+    ) async throws -> SyncV2CommandPlan {
+        let currentRecords = records.filter {
+            $0.lifecycle == .completed &&
+                $0.sourceSnapshotID == view.snapshot.snapshotId &&
+                $0.sourceGeneration == view.pendingIntent.sourceGeneration
+        }
+        let completedKinds = Set(records.filter { $0.lifecycle == .completed }.map(\.commandKind))
+        let progress = try await transferProgress(
+            workID: workID,
+            scope: localScope,
+            view: view,
+            records: currentRecords
+        )
+        if !completedKinds.contains("createWork"), view.summary.acknowledgedHeadGeneration == nil {
+            let command = try makeCreateWork(view)
+            try await store.seal(command, scope: localScope)
             return .command(command)
         }
-        return .idle
+        if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) }) {
+            let command = try makeObjectCommand(kind: "prepareObject", objectID: object, view: view)
+            try await store.seal(command, scope: localScope)
+            return .command(command)
+        }
+        if let upload = try await nextUpload(
+            workID: workID,
+            scope: localScope,
+            view: view,
+            records: currentRecords,
+            progress: progress
+        ) {
+            return upload
+        }
+        let ready = progress.finalized.union(remoteReady[workID, default: []])
+        if ready.count < progress.prepared.count {
+            guard let object = progress.prepared.subtracting(ready).first else {
+                return .blocked(.fatal(.invalidLocalState))
+            }
+            let command = try makeObjectCommand(
+                kind: "finalizeObject",
+                objectID: object,
+                view: view,
+                uploadID: transfers[workID]?[object]?.uploadID
+            )
+            try await store.seal(command, scope: localScope)
+            return .command(command)
+        }
+        if !progress.registered {
+            let command = try makeRegister(view)
+            try await store.seal(command, scope: localScope)
+            return .command(command)
+        }
+        if let active {
+            return try await planActiveTail(
+                workID: workID,
+                scope: localScope,
+                view: view,
+                active: active,
+                resolutionIntentID: resolutionIntentID
+            )
+        }
+        let command = try makePublish(view)
+        try await store.seal(command, intentID: view.pendingIntent.intentID, scope: localScope)
+        return .command(command)
+    }
+
+    private struct TransferProgress {
+        let prepared: Set<ObjectID>
+        let finalized: Set<ObjectID>
+        let registered: Bool
+    }
+
+    private func transferProgress(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        records: [V2SealedCommandRecord]
+    ) async throws -> TransferProgress {
+        var prepared = Set<ObjectID>()
+        var finalized = Set<ObjectID>()
+        var registered = false
+        for record in records {
+            switch record.commandKind {
+            case "prepareObject":
+                let object = try objectID(record)
+                if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope),
+                   transfer.lifecycle == "prepared", transfer.expiresAt <= Date() {
+                    continue
+                }
+                prepared.insert(object)
+                if let receipt = try await store.receiptReadback(commandID: record.commandID, scope: localScope),
+                   receipt.result == .noChanges {
+                    remoteReady[workID, default: []].insert(object)
+                }
+            case "finalizeObject":
+                try finalized.insert(objectID(record))
+            case "registerSnapshot":
+                registered = try commandSnapshotID(record) == view.snapshot.snapshotId
+            default:
+                continue
+            }
+        }
+        return TransferProgress(prepared: prepared, finalized: finalized, registered: registered)
+    }
+
+    private func nextUpload(
+        workID: WorkID,
+        scope _: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        records: [V2SealedCommandRecord],
+        progress: TransferProgress
+    ) async throws -> SyncV2CommandPlan? {
+        let candidates = view.snapshot.manifest.entries.map(\.objectId).filter {
+            progress.prepared.contains($0) && !progress.finalized.contains($0) &&
+                !uploaded[workID, default: []].contains($0) &&
+                !remoteReady[workID, default: []].contains($0)
+        }
+        guard let target = candidates.first else { return nil }
+        if let transfer = transfers[workID]?[target], !uploaded[workID, default: []].contains(target) {
+            return .upload(transfer)
+        }
+        guard let prepare = records.reversed().first(where: {
+            $0.commandKind == "prepareObject" && (try? objectID($0)) == target
+        }),
+            let transfer = try await makeTransfer(from: prepare, view: view) else {
+            return nil
+        }
+        transfers[workID, default: [:]][target] = transfer
+        return .upload(transfer)
+    }
+
+    private func planActiveTail(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        active: V2ConflictCandidate,
+        resolutionIntentID: UUID?
+    ) async throws -> SyncV2CommandPlan {
+        guard let resolutionIntentID,
+              view.pendingIntent.intentID == resolutionIntentID else {
+            return .idle
+        }
+        let expectedRemoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
+        let command: SealedCommand
+        if let reservation = try await store.latestKeepBothReservation(
+            sourceWorkID: workID,
+            conflictID: active.conflictID,
+            scope: localScope
+        ) {
+            guard view.summary.localGeneration >= active.sourceGeneration + 1 else {
+                return .idle
+            }
+            command = try makeClone(
+                view,
+                conflict: active,
+                reservation: reservation,
+                remoteHead: expectedRemoteHead
+            )
+        } else {
+            guard view.pendingIntent.sourceGeneration == active.sourceGeneration + 1,
+                  view.snapshot.snapshotId != active.localSnapshotID else {
+                return .idle
+            }
+            command = try makeResolveDevice(
+                view,
+                conflict: active,
+                decisionSnapshotID: view.snapshot.snapshotId,
+                expectedRemoteHead: expectedRemoteHead
+            )
+        }
+        try await store.seal(command, intentID: resolutionIntentID, scope: localScope)
+        return .command(command)
     }
 
     func markSending(
@@ -240,16 +364,47 @@ private extension ProductionSyncV2Planner {
         try makeCommand(kind: "createWork", payload: CreateWorkPayload(documentId: view.summary.documentID.description, workId: view.workID.description), view: view)
     }
 
-    func makeObjectCommand(kind: String, objectID: ObjectID, view: V2ImmutableTransferView, uploadID: UUID? = nil) throws -> SealedCommand {
+    func makeObjectCommand(
+        kind: String,
+        objectID: ObjectID,
+        view: V2ImmutableTransferView,
+        uploadID: UUID? = nil
+    ) throws -> SealedCommand {
         if kind == "prepareObject" {
-            return try makeCommand(kind: kind, payload: PrepareObjectPayload(byteCount: view.snapshot.objects[objectID]?.count ?? 0, objectId: objectID.rawValue, workId: view.workID.description), view: view)
+            return try makeCommand(
+                kind: kind,
+                payload: PrepareObjectPayload(
+                    byteCount: view.snapshot.objects[objectID]?.count ?? 0,
+                    objectId: objectID.rawValue,
+                    workId: view.workID.description
+                ),
+                view: view
+            )
         }
         guard let uploadID else { throw SyncV2Failure.fatal(.invalidLocalState) }
-        return try makeCommand(kind: kind, payload: FinalizeObjectPayload(byteCount: view.snapshot.objects[objectID]?.count ?? 0, objectId: objectID.rawValue, uploadId: uploadID.uuidString.lowercased(), workId: view.workID.description), view: view)
+        return try makeCommand(
+            kind: kind,
+            payload: FinalizeObjectPayload(
+                byteCount: view.snapshot.objects[objectID]?.count ?? 0,
+                objectId: objectID.rawValue,
+                uploadId: uploadID.uuidString.lowercased(),
+                workId: view.workID.description
+            ),
+            view: view
+        )
     }
 
     func makeRegister(_ view: V2ImmutableTransferView) throws -> SealedCommand {
-        try makeCommand(kind: "registerSnapshot", payload: RegisterSnapshotPayload(manifestBase64URL: view.snapshot.manifestBytes.base64URLEncodedString(), manifestBytesDigest: view.snapshot.snapshotId.rawValue, snapshotId: view.snapshot.snapshotId.rawValue, workId: view.workID.description), view: view)
+        try makeCommand(
+            kind: "registerSnapshot",
+            payload: RegisterSnapshotPayload(
+                manifestBase64URL: view.snapshot.manifestBytes.base64URLEncodedString(),
+                manifestBytesDigest: view.snapshot.snapshotId.rawValue,
+                snapshotId: view.snapshot.snapshotId.rawValue,
+                workId: view.workID.description
+            ),
+            view: view
+        )
     }
 
     func makePublish(_ view: V2ImmutableTransferView) throws -> SealedCommand {
@@ -285,14 +440,41 @@ private extension ProductionSyncV2Planner {
         )
     }
 
+    func makeResolveDevice(
+        _ view: V2ImmutableTransferView,
+        conflict: V2ConflictCandidate,
+        decisionSnapshotID: SnapshotID,
+        expectedRemoteHead: V2RemoteHead
+    ) throws -> SealedCommand {
+        let envelope = CommandEnvelope(
+            binding: CommandBinding(binding: view.binding),
+            commandId: UUID().uuidString.lowercased(),
+            commandKind: "resolveDevice",
+            payload: ResolveDevicePayload(
+                conflictId: conflict.conflictID.uuidString.lowercased(),
+                conflictRevision: conflict.revision,
+                decisionSnapshotId: decisionSnapshotID.rawValue,
+                expectedRemoteHead: CommandHead(expectedRemoteHead),
+                localCandidateSnapshotId: conflict.localSnapshotID.rawValue,
+                workId: view.workID.description
+            ),
+            schemaVersion: 2,
+            sourceGeneration: conflict.sourceGeneration,
+            sourceSnapshotId: conflict.localSnapshotID.rawValue
+        )
+        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
+    }
+
     func makeClone(
         _ view: V2ImmutableTransferView,
         conflict: V2ConflictCandidate,
         reservation: V2KeepBothReservation,
         remoteHead: V2RemoteHead
     ) throws -> SealedCommand {
-        try makeCommand(
-            kind: "cloneWork",
+        let envelope = CommandEnvelope(
+            binding: CommandBinding(binding: view.binding),
+            commandId: UUID().uuidString.lowercased(),
+            commandKind: "cloneWork",
             payload: CloneWorkPayload(
                 conflictId: conflict.conflictID.uuidString.lowercased(),
                 conflictRevision: conflict.revision,
@@ -303,12 +485,27 @@ private extension ProductionSyncV2Planner {
                 newWorkId: reservation.newWorkID.description,
                 sourceWorkId: view.workID.description
             ),
-            view: view
+            schemaVersion: 2,
+            sourceGeneration: conflict.sourceGeneration,
+            sourceSnapshotId: conflict.localSnapshotID.rawValue
         )
+        return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
     }
 
-    func makeCommand(kind: String, payload: some Encodable, view: V2ImmutableTransferView) throws -> SealedCommand {
-        let envelope = CommandEnvelope(binding: CommandBinding(binding: view.binding), commandId: UUID().uuidString.lowercased(), commandKind: kind, payload: payload, schemaVersion: 2, sourceGeneration: view.pendingIntent.sourceGeneration, sourceSnapshotId: view.pendingIntent.sourceSnapshotID.rawValue)
+    func makeCommand(
+        kind: String,
+        payload: some Encodable,
+        view: V2ImmutableTransferView
+    ) throws -> SealedCommand {
+        let envelope = CommandEnvelope(
+            binding: CommandBinding(binding: view.binding),
+            commandId: UUID().uuidString.lowercased(),
+            commandKind: kind,
+            payload: payload,
+            schemaVersion: 2,
+            sourceGeneration: view.pendingIntent.sourceGeneration,
+            sourceSnapshotId: view.pendingIntent.sourceSnapshotID.rawValue
+        )
         return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
     }
 
@@ -356,7 +553,16 @@ private extension ProductionSyncV2Planner {
               let uploadRaw = object["uploadId"] as? String, let uploadID = UUID(uuidString: uploadRaw),
               let capability = object["uploadCapability"] as? String, let expiresRaw = object["expiresAt"] as? String,
               let expires = ISO8601DateFormatter().date(from: expiresRaw) else { return nil }
-        let transfer = SyncV2UploadTransfer(transferID: record.commandID, workID: view.workID, uploadID: uploadID, objectID: objectID, exactBytes: bytes, acknowledgedOffset: 0, expiresAt: expires, capability: capability)
+        let transfer = SyncV2UploadTransfer(
+            transferID: record.commandID,
+            workID: view.workID,
+            uploadID: uploadID,
+            objectID: objectID,
+            exactBytes: bytes,
+            acknowledgedOffset: 0,
+            expiresAt: expires,
+            capability: capability
+        )
         try await store.persistUploadTransfer(
             V2UploadTransferRecord(
                 transferID: transfer.transferID,
@@ -430,6 +636,15 @@ private struct ResolveServerPayload: Encodable {
     let expectedLocalGeneration: Int64
     let preAdoptionSnapshotId: String
     let remoteSnapshotId: String
+    let workId: String
+}
+
+private struct ResolveDevicePayload: Encodable {
+    let conflictId: String
+    let conflictRevision: Int64
+    let decisionSnapshotId: String
+    let expectedRemoteHead: CommandHead
+    let localCandidateSnapshotId: String
     let workId: String
 }
 

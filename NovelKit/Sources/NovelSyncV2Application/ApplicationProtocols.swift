@@ -90,6 +90,10 @@ public extension SyncV2RemoteClient {
 public protocol SyncV2LocalKernel: Sendable {
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
+    /// Returns the durable active conflict projection, if one exists. This is
+    /// intentionally a local read so a process restart can restore the
+    /// conflict UI without a network round trip.
+    func activeConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
     func localHistoryPage(
         workID: WorkID,
         cursor: String?,

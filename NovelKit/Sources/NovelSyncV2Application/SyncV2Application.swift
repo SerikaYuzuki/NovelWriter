@@ -81,7 +81,7 @@ public actor SyncV2Application {
                     resources: resources
                 )
             )
-            return finishCheckpoint(local, workID: workID)
+            return try await finishCheckpoint(local, workID: workID)
         } catch {
             setState(
                 workID: workID,
@@ -107,20 +107,22 @@ extension SyncV2Application {
     func finishCheckpoint(
         _ local: SyncV2LocalCheckpoint,
         workID: WorkID
-    ) -> SyncV2OperationResult {
+    ) async throws -> SyncV2OperationResult {
         let result: SyncV2TypedResult = local.noChanges
             ? .noChanges : .checkpointed
         let hasPending = local.intentID != nil
+        let durableConflict = try await kernel.activeConflict(workID: workID) != nil
+        let hasConflict = states[workID]?.conflict != nil || durableConflict
         let state = setState(
             workID: workID,
             localDurability: .saved(
                 generation: local.generation,
                 snapshotID: local.snapshotID
             ),
-            remoteProgress: hasPending ? .pending : .noChanges,
+            remoteProgress: hasConflict ? .needsChoice : (hasPending ? .pending : .noChanges),
             result: result
         )
-        if hasPending {
+        if hasPending, !hasConflict {
             scheduleWorker(for: workID)
         }
         return SyncV2OperationResult(state: state, typedResult: result)

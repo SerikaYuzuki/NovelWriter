@@ -205,68 +205,12 @@ public extension LocalSyncV2Store {
             )
         }
 
-        return try inTransaction {
-            if existing == nil {
-                try insertWork(
-                    workID: request.workID,
-                    documentID: DocumentID(request.document.id),
-                    documentCreatedAt: anchor,
-                    lane: .normal,
-                    scope: scope
-                )
-            }
-            guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
-                  current[2].int64 == request.expectedGeneration,
-                  current[1].text == DocumentID(request.document.id).description,
-                  current[5].text == anchor else {
-                throw SyncV2StoreError.generationMismatch
-            }
-            try insertEncoded(encoded, workID: request.workID)
-            if let resources = request.resources {
-                try replacePortableResources(
-                    workID: request.workID,
-                    resources: resources
-                )
-            }
-            let next = request.expectedGeneration + 1
-            try exec(
-                """
-                UPDATE works SET current_snapshot_id=?,local_generation=?
-                WHERE work_id=? AND local_generation=?
-                """,
-                [
-                    .blob(encoded.snapshotIDBytes), .int(next),
-                    .text(request.workID.description), .int(request.expectedGeneration)
-                ]
-            )
-            guard try changes() == 1 else {
-                throw SyncV2StoreError.generationMismatch
-            }
-            try insertHistory(
-                workID: request.workID,
-                snapshotID: encoded.snapshotId,
-                reason: request.reason.rawValue,
-                pinned: request.reason.protectsOccurrence,
-                generation: next
-            )
-            let lane = V2SyncLane(rawValue: current[6].text ?? "")
-            let intentID: UUID? = if lane == .normal {
-                try upsertCheckpointIntent(
-                    workID: request.workID,
-                    snapshotID: encoded.snapshotId,
-                    generation: next,
-                    scope: scope
-                )
-            } else {
-                nil
-            }
-            return V2CheckpointResult(
-                snapshotID: encoded.snapshotId,
-                generation: next,
-                intentID: intentID,
-                noChanges: false
-            )
-        }
+        return try commitCheckpointTransaction(
+            request,
+            scope: scope,
+            createWork: existing == nil,
+            encoded: encoded
+        )
     }
 
     func pendingIntents(
@@ -275,7 +219,17 @@ public extension LocalSyncV2Store {
     ) throws -> [V2PendingIntent] {
         var sql = """
         SELECT intent_id,work_id,source_snapshot_id,source_generation,kind,status
-        FROM sync_intents WHERE status IN ('pending','sealed')
+        FROM sync_intents
+        WHERE status IN ('pending','sealed')
+          -- A publish that already received conflictPending is immutable
+          -- evidence, not an actionable retry. Its resolution intent (a
+          -- different row) remains visible and is selected explicitly.
+          AND NOT EXISTS (
+            SELECT 1 FROM sealed_commands blocked
+            WHERE blocked.intent_id=sync_intents.intent_id
+              AND blocked.command_kind='publish'
+              AND blocked.status='conflictPending'
+          )
         """
         sql += scope.intentPredicateSQL
         var values = scope.intentPredicateValues
@@ -283,7 +237,7 @@ public extension LocalSyncV2Store {
             sql += " AND work_id=?"
             values.append(.text(workID.description))
         }
-        sql += " ORDER BY work_id,source_generation"
+        sql += " ORDER BY CASE WHEN kind='conflictResolution' THEN 0 ELSE 1 END, work_id,source_generation, rowid"
         return try query(sql, values).map(Self.pendingIntent)
     }
 
@@ -645,5 +599,75 @@ private extension LocalSyncV2Store {
             localGeneration: localGeneration,
             occurrenceID: occurrenceID
         )
+    }
+}
+
+private extension LocalSyncV2Store {
+    func commitCheckpointTransaction(
+        _ request: V2CheckpointRequest,
+        scope: V2LocalWorkScope,
+        createWork: Bool,
+        encoded: EncodedSnapshot
+    ) throws -> V2CheckpointResult {
+        let anchor = try Self.iso8601(request.documentCreatedAt)
+        return try inTransaction {
+            if createWork {
+                try insertWork(
+                    workID: request.workID,
+                    documentID: DocumentID(request.document.id),
+                    documentCreatedAt: anchor,
+                    lane: .normal,
+                    scope: scope
+                )
+            }
+            guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
+                  current[2].int64 == request.expectedGeneration,
+                  current[1].text == DocumentID(request.document.id).description,
+                  current[5].text == anchor else {
+                throw SyncV2StoreError.generationMismatch
+            }
+            try insertEncoded(encoded, workID: request.workID)
+            if let resources = request.resources {
+                try replacePortableResources(workID: request.workID, resources: resources)
+            }
+            let next = request.expectedGeneration + 1
+            try exec(
+                """
+                UPDATE works SET current_snapshot_id=?,local_generation=?
+                WHERE work_id=? AND local_generation=?
+                """,
+                [
+                    .blob(encoded.snapshotIDBytes), .int(next),
+                    .text(request.workID.description), .int(request.expectedGeneration)
+                ]
+            )
+            guard try changes() == 1 else {
+                throw SyncV2StoreError.generationMismatch
+            }
+            try insertHistory(
+                workID: request.workID,
+                snapshotID: encoded.snapshotId,
+                reason: request.reason.rawValue,
+                pinned: request.reason.protectsOccurrence,
+                generation: next
+            )
+            let lane = V2SyncLane(rawValue: current[6].text ?? "")
+            let intentID: UUID? = if lane == .normal {
+                try upsertCheckpointIntent(
+                    workID: request.workID,
+                    snapshotID: encoded.snapshotId,
+                    generation: next,
+                    scope: scope
+                )
+            } else {
+                nil
+            }
+            return V2CheckpointResult(
+                snapshotID: encoded.snapshotId,
+                generation: next,
+                intentID: intentID,
+                noChanges: false
+            )
+        }
     }
 }

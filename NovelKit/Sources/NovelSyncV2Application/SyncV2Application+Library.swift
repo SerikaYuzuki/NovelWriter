@@ -5,7 +5,9 @@ public extension SyncV2Application {
         do {
             let opened = try await kernel.open(workID: workID)
             recordOpened(opened)
-            if let adoption = try await kernel.pendingAdoption(workID: workID) {
+            let activeConflict = try await kernel.activeConflict(workID: workID)
+            let adoption = try await kernel.pendingAdoption(workID: workID)
+            if let adoption {
                 setState(
                     workID: workID,
                     localDurability: durability(for: opened),
@@ -13,6 +15,14 @@ public extension SyncV2Application {
                         inboxID: adoption.inboxID
                     ),
                     result: .adoptionPending
+                )
+            } else if let conflict = activeConflict {
+                setState(
+                    workID: workID,
+                    localDurability: durability(for: opened),
+                    remoteProgress: .needsChoice,
+                    result: .conflictPending,
+                    conflict: .set(conflict)
                 )
             }
             scheduleWorker(for: workID)
@@ -62,6 +72,19 @@ public extension SyncV2Application {
             return SyncV2OperationResult(
                 state: state,
                 typedResult: .adoptionPending
+            )
+        }
+        if let conflict = try await kernel.activeConflict(workID: workID) {
+            let state = setState(
+                workID: workID,
+                localDurability: states[workID]?.localDurability ?? .unsaved,
+                remoteProgress: .needsChoice,
+                result: .conflictPending,
+                conflict: .set(conflict)
+            )
+            return SyncV2OperationResult(
+                state: state,
+                typedResult: .conflictPending
             )
         }
         return try await synchronizePendingCommand(workID: workID)

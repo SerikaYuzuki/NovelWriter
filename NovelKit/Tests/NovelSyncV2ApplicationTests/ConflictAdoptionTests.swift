@@ -165,13 +165,11 @@ struct ConflictAdoptionTests {
             try await fixture.app.pendingAdoption(workID: fixture.workID)
         )
         let preAdoption = try await fixture.app.open(workID: fixture.workID)
+        let projected = await fixture.app.uiState(workID: fixture.workID)
 
         #expect(preAdoption.document?.title == "端末版")
-        #expect(await fixture.app.uiState(workID: fixture.workID)?.conflict != nil)
-        #expect(
-            await fixture.app.uiState(workID: fixture.workID)?.remoteProgress ==
-                .readyForSafeAdoption(inboxID: pending.inboxID)
-        )
+        #expect(projected?.conflict != nil)
+        #expect(projected?.remoteProgress == .readyForSafeAdoption(inboxID: pending.inboxID))
 
         let session = await fixture.app.beginSession(workID: fixture.workID)
         let token = try await fixture.app.documentGateToken(for: session)
@@ -305,7 +303,7 @@ private struct ConflictFixture {
             ? .applied(inbox: serverInbox)
             : resolutionReply ?? .applied()
         var replies: [ApplicationTestRemote.Reply] = [
-            .conflict(projection),
+            .conflict(projection, inbox: serverInbox),
             selectedReply
         ]
         if let trailingReply {

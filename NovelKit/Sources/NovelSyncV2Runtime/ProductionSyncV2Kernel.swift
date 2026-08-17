@@ -60,6 +60,28 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
+    func activeConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
+        do {
+            let localScope = try await scope.existingScope(workID: workID)
+            guard case .bound = localScope else { return nil }
+            guard let conflict = try await store.activeConflict(
+                workID: workID,
+                scope: localScope
+            ) else { return nil }
+            return SyncV2ConflictProjection(
+                conflictID: conflict.conflictID,
+                revision: conflict.revision,
+                baseSnapshotID: conflict.baseSnapshotID,
+                localSnapshotID: conflict.localSnapshotID,
+                remoteSnapshotID: conflict.remoteSnapshotID,
+                sourceGeneration: conflict.sourceGeneration,
+                commandID: nil
+            )
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
     func localHistoryPage(
         workID: WorkID,
         cursor: String?,
@@ -86,97 +108,6 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 },
                 nextCursor: page.nextCursor
             )
-        } catch {
-            throw mapStoreError(error)
-        }
-    }
-
-    func prepareConflict(
-        _ action: SyncV2ConflictAction
-    ) async throws -> SyncV2Preparation {
-        do {
-            let localScope = try await scope.existingScope(workID: action.workID)
-            guard case .bound = localScope,
-                  let active = try await store.activeConflict(
-                      workID: action.workID,
-                      scope: localScope
-                  ),
-                  active.conflictID == action.conflictID,
-                  active.revision == action.revision,
-                  active.sourceGeneration == action.sourceGeneration,
-                  active.localSnapshotID == action.localSnapshotID,
-                  active.remoteSnapshotID == action.remoteSnapshotID else {
-                throw SyncV2ApplicationError.staleConflictAction
-            }
-            let remoteHead = try await store.remoteHeadForConflict(
-                active,
-                scope: localScope
-            )
-            switch action.choice {
-            case .useDevice:
-                let prepared = try await store.prepareUseDevice(
-                    V2DeviceResolutionRequest(
-                        workID: action.workID,
-                        conflictID: action.conflictID,
-                        revision: action.revision,
-                        sourceGeneration: action.sourceGeneration,
-                        localSnapshotID: action.localSnapshotID,
-                        remoteSnapshotID: action.remoteSnapshotID,
-                        inboxID: store.conflictInboxID(active),
-                        remoteHead: remoteHead
-                    ),
-                    scope: localScope
-                )
-                return SyncV2Preparation(
-                    intentID: prepared.intentID,
-                    noChanges: prepared.noChanges
-                )
-            case .useServer:
-                let prepared = try await store.prepareUseServer(
-                    V2ServerResolutionRequest(
-                        workID: action.workID,
-                        conflictID: action.conflictID,
-                        revision: action.revision,
-                        sourceGeneration: action.sourceGeneration,
-                        localSnapshotID: action.localSnapshotID,
-                        remoteSnapshotID: action.remoteSnapshotID,
-                        inboxID: store.conflictInboxID(active),
-                        expectedRemoteHead: remoteHead
-                    ),
-                    scope: localScope
-                )
-                return SyncV2Preparation(intentID: prepared.intentID, noChanges: prepared.noChanges)
-            case .keepBoth:
-                let newWorkID = action.newWorkID ?? WorkID(UUID())
-                let newDocumentID = action.newDocumentID ?? DocumentID(UUID())
-                let prepared = try await store.prepareKeepBothResolution(
-                    V2KeepBothPreparationRequest(
-                        workID: action.workID,
-                        conflictID: action.conflictID,
-                        revision: action.revision,
-                        sourceGeneration: action.sourceGeneration,
-                        localSnapshotID: action.localSnapshotID,
-                        remoteSnapshotID: action.remoteSnapshotID,
-                        newWorkID: newWorkID,
-                        newDocumentID: newDocumentID
-                    ),
-                    scope: localScope
-                )
-                // The store transaction has already installed the clone.  A
-                // local open here gives the application the exact bytes to
-                // hand to the editor before it wakes the source worker.
-                let clone = try await store.open(
-                    workID: prepared.reservation.newWorkID,
-                    scope: localScope
-                )
-                return SyncV2Preparation(
-                    intentID: prepared.intentID,
-                    noChanges: false,
-                    preparedWorkID: clone.summary.workID
-                )
-            }
-        } catch SyncV2ApplicationError.staleConflictAction {
-            throw SyncV2ApplicationError.staleConflictAction
         } catch {
             throw mapStoreError(error)
         }
@@ -378,6 +309,87 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     }
 }
 
+extension ProductionSyncV2Kernel {
+    func prepareConflict(
+        _ action: SyncV2ConflictAction
+    ) async throws -> SyncV2Preparation {
+        do {
+            let localScope = try await scope.existingScope(workID: action.workID)
+            guard case .bound = localScope,
+                  let active = try await store.activeConflict(
+                      workID: action.workID,
+                      scope: localScope
+                  ),
+                  active.conflictID == action.conflictID,
+                  active.revision == action.revision,
+                  active.sourceGeneration == action.sourceGeneration,
+                  active.localSnapshotID == action.localSnapshotID,
+                  active.remoteSnapshotID == action.remoteSnapshotID else {
+                throw SyncV2ApplicationError.staleConflictAction
+            }
+            let remoteHead = try await store.remoteHeadForConflict(active, scope: localScope)
+            switch action.choice {
+            case .useDevice:
+                let prepared = try await store.prepareUseDevice(
+                    V2DeviceResolutionRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        inboxID: store.conflictInboxID(active),
+                        remoteHead: remoteHead
+                    ),
+                    scope: localScope
+                )
+                return SyncV2Preparation(intentID: prepared.intentID, noChanges: prepared.noChanges)
+            case .useServer:
+                let prepared = try await store.prepareUseServer(
+                    V2ServerResolutionRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        inboxID: store.conflictInboxID(active),
+                        expectedRemoteHead: remoteHead
+                    ),
+                    scope: localScope
+                )
+                return SyncV2Preparation(intentID: prepared.intentID, noChanges: prepared.noChanges)
+            case .keepBoth:
+                let newWorkID = action.newWorkID ?? WorkID(UUID())
+                let newDocumentID = action.newDocumentID ?? DocumentID(UUID())
+                let prepared = try await store.prepareKeepBothResolution(
+                    V2KeepBothPreparationRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        newWorkID: newWorkID,
+                        newDocumentID: newDocumentID
+                    ),
+                    scope: localScope
+                )
+                let clone = try await store.open(workID: prepared.reservation.newWorkID, scope: localScope)
+                return SyncV2Preparation(
+                    intentID: prepared.intentID,
+                    noChanges: false,
+                    preparedWorkID: clone.summary.workID
+                )
+            }
+        } catch SyncV2ApplicationError.staleConflictAction {
+            throw SyncV2ApplicationError.staleConflictAction
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+}
+
 private extension ProductionSyncV2Kernel {
     func items(
         scope localScope: V2LocalWorkScope,
@@ -393,13 +405,37 @@ private extension ProductionSyncV2Kernel {
                         workID: summary.workID,
                         scope: localScope
                     )
+                    let conflict = try await self.activeConflict(workID: summary.workID)
+                    let pending = try await store.pendingIntents(
+                        scope: localScope,
+                        workID: summary.workID
+                    )
+                    let sealed: [V2SealedCommandRecord] = switch localScope {
+                    case .bound:
+                        try await store.pendingSealedCommands(
+                            scope: localScope,
+                            workID: summary.workID
+                        )
+                    case .unbound:
+                        []
+                    }
+                    let progress: SyncV2RemoteProgress = if conflict != nil {
+                        .needsChoice
+                    } else if case .unbound = localScope, !pending.isEmpty {
+                        .authenticationRequired
+                    } else if !pending.isEmpty || !sealed.isEmpty {
+                        .pending
+                    } else {
+                        .idle
+                    }
                     return SyncV2LibraryItem(
                         workID: summary.workID,
                         title: opened.document?.title ?? "名称未設定の作品",
                         availability: .localOnly,
                         accountState: accountState,
                         localGeneration: summary.localGeneration,
-                        remoteProgress: .pending
+                        conflict: conflict,
+                        remoteProgress: progress
                     )
                 }
             }

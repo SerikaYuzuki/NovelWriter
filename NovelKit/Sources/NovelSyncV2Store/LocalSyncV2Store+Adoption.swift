@@ -47,8 +47,7 @@ public extension LocalSyncV2Store {
             return nil
         }
         let expected = try SnapshotID(rawValue: snapshot.hexString)
-        guard generation == active.sourceGeneration,
-              expected == active.localSnapshotID else { return nil }
+        guard generation >= active.sourceGeneration else { return nil }
         return V2PendingServerAdoption(
             workID: workID,
             inboxID: inboxID,
@@ -73,18 +72,34 @@ public extension LocalSyncV2Store {
         guard let remoteHead = graph.expectedRemoteHead else {
             throw SyncV2StoreError.invalidRemoteHead
         }
+        guard let active = try activeConflict(
+            workID: workID,
+            scope: scope
+        ) else {
+            throw SyncV2StoreError.staleConflictAction
+        }
         let request = V2ServerResolutionRequest(
             workID: workID,
             conflictID: pending.conflictID,
             revision: pending.conflictRevision,
-            sourceGeneration: pending.expectedLocalGeneration,
-            localSnapshotID: pending.expectedCurrentSnapshotID,
+            sourceGeneration: active.sourceGeneration,
+            localSnapshotID: active.localSnapshotID,
             remoteSnapshotID: graph.headSnapshotID,
             inboxID: inboxID,
             expectedRemoteHead: remoteHead
         )
         try inTransaction {
-            try adoptGraphTransaction(graph, expectedConflict: request, binding: binding)
+            let exactSource = pending.expectedLocalGeneration == active.sourceGeneration &&
+                pending.expectedCurrentSnapshotID == active.localSnapshotID
+            if exactSource {
+                try adoptGraphTransaction(graph, expectedConflict: request, binding: binding)
+            } else {
+                try finalizeConflictRemoteGraphTransaction(
+                    graph,
+                    request: request,
+                    binding: binding
+                )
+            }
         }
         return try open(workID: workID, scope: scope)
     }

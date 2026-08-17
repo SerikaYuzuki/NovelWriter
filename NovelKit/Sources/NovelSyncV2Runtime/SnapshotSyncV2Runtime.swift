@@ -11,6 +11,20 @@ public enum SnapshotSyncV2Runtime {
     public static func makeApplication(
         mode: RuntimeMode
     ) async throws -> SyncV2Application {
+        try await makeApplication(mode: mode, resumeOnLaunch: true)
+    }
+
+    static func makeApplicationForTesting(
+        mode: RuntimeMode,
+        resumeOnLaunch: Bool
+    ) async throws -> SyncV2Application {
+        try await makeApplication(mode: mode, resumeOnLaunch: resumeOnLaunch)
+    }
+
+    private static func makeApplication(
+        mode: RuntimeMode,
+        resumeOnLaunch: Bool
+    ) async throws -> SyncV2Application {
         let composition: SyncV2RuntimeComposition
         switch mode {
         case let .test(configuration):
@@ -78,7 +92,9 @@ public enum SnapshotSyncV2Runtime {
             )
         }
         let app = try SyncV2Application(mode: mode, composition: composition)
-        try await app.resumePending()
+        if resumeOnLaunch {
+            try await app.resumePending()
+        }
         return app
     }
 }

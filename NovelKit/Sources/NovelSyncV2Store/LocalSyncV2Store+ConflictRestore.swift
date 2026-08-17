@@ -115,19 +115,29 @@ public extension LocalSyncV2Store {
                 try insertEncoded(snapshot, workID: request.workID)
             }
             try insertEncoded(decision, workID: request.workID)
-            try exec(
-                """
-                UPDATE works SET current_snapshot_id=?,local_generation=?
-                WHERE work_id=? AND current_snapshot_id=? AND local_generation=?
-                """,
-                [
-                    .blob(decision.snapshotIDBytes), .int(next),
-                    .text(request.workID.description),
-                    .blob(request.localSnapshotID.bytes),
-                    .int(request.sourceGeneration)
-                ]
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
+            let current = try scopedWorkRow(workID: request.workID, scope: scope)
+            guard let currentGeneration = current?[2].int64,
+                  currentGeneration >= request.sourceGeneration else {
+                throw SyncV2StoreError.staleCAS
+            }
+            if currentGeneration == request.sourceGeneration {
+                guard current?[3].blob == request.localSnapshotID.bytes else {
+                    throw SyncV2StoreError.staleCAS
+                }
+                try exec(
+                    """
+                    UPDATE works SET current_snapshot_id=?,local_generation=?
+                    WHERE work_id=? AND current_snapshot_id=? AND local_generation=?
+                    """,
+                    [
+                        .blob(decision.snapshotIDBytes), .int(next),
+                        .text(request.workID.description),
+                        .blob(request.localSnapshotID.bytes),
+                        .int(request.sourceGeneration)
+                    ]
+                )
+                guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
+            }
             try insertHistory(
                 workID: request.workID,
                 snapshotID: decision.snapshotId,
@@ -163,8 +173,7 @@ public extension LocalSyncV2Store {
         try validateExactConflict(request, binding: binding)
         guard try inboxState(inboxID: request.inboxID, binding: binding) == "verified",
               let current = try scopedWorkRow(workID: request.workID, scope: scope),
-              current[2].int64 == request.sourceGeneration,
-              current[3].blob == request.localSnapshotID.bytes else {
+              (current[2].int64.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
         let existing = try pendingIntents(scope: scope, workID: request.workID)
@@ -222,8 +231,7 @@ public extension LocalSyncV2Store {
         }
         guard try !workExists(workID: request.newWorkID),
               let work = try scopedWorkRow(workID: request.workID, scope: scope),
-              work[2].int64 == request.sourceGeneration,
-              work[3].blob == request.localSnapshotID.bytes else {
+              (work[2].int64.map { $0 >= request.sourceGeneration } == true) else {
             throw SyncV2StoreError.staleConflictAction
         }
         let inbox = try conflictInbox(active)

@@ -150,6 +150,15 @@ extension LocalSyncV2Store {
         }
     }
 
+    private func requireCurrentAtLeast(
+        _ context: CommandValidationContext,
+        generation: Int64
+    ) throws {
+        guard context.work[2].int64.map({ $0 >= generation }) == true else {
+            throw SyncV2StoreError.invalidCommand
+        }
+    }
+
     private func requireIntent(
         _ context: CommandValidationContext,
         snapshotID: SnapshotID,
@@ -193,9 +202,8 @@ extension LocalSyncV2Store {
     }
 
     private func validateObjectCommand(_ context: CommandValidationContext) throws {
-        try requireCurrent(
+        try requireCurrentAtLeast(
             context,
-            snapshotID: context.command.sourceSnapshotId,
             generation: context.command.sourceGeneration
         )
         let object = try context.payload.object("objectId")
@@ -213,9 +221,8 @@ extension LocalSyncV2Store {
     }
 
     private func validateRegisterSnapshot(_ context: CommandValidationContext) throws {
-        try requireCurrent(
+        try requireCurrentAtLeast(
             context,
-            snapshotID: context.command.sourceSnapshotId,
             generation: context.command.sourceGeneration
         )
         let snapshot = try context.payload.snapshot("snapshotId")
@@ -240,30 +247,34 @@ extension LocalSyncV2Store {
             serverInstanceID: context.command.binding.serverInstanceId,
             protocolEpoch: context.command.binding.protocolEpoch
         )
-        guard try activeConflictRow(
-            workID: context.workID,
-            binding: binding
-        ) == nil else {
+        let conflictRow = try activeConflictRow(workID: context.workID, binding: binding)
+        if conflictRow != nil {
             throw SyncV2StoreError.staleConflictAction
         }
-        try requireCurrent(
-            context,
-            snapshotID: context.command.sourceSnapshotId,
-            generation: context.command.sourceGeneration
+        let currentMatches = context.work[2].int64 == context.command.sourceGeneration &&
+            context.work[3].blob == context.command.sourceSnapshotId.bytes
+        let candidateMatches = try context.payload.snapshot("candidateSnapshotId") ==
+            context.command.sourceSnapshotId
+        let headMatches = try expectedHeadMatchesWork(
+            payload: context.payload,
+            key: "expectedRemoteHead",
+            workID: context.workID
         )
-        try requireIntent(
-            context,
-            snapshotID: context.command.sourceSnapshotId,
-            generation: context.command.sourceGeneration,
-            kind: "checkpoint"
-        )
-        guard try context.payload.snapshot("candidateSnapshotId") ==
-            context.command.sourceSnapshotId,
-            try expectedHeadMatchesWork(
-                payload: context.payload,
-                key: "expectedRemoteHead",
-                workID: context.workID
-            ) else { throw SyncV2StoreError.invalidCommand }
+        let intentMatches: Bool
+        do {
+            try requireIntent(
+                context,
+                snapshotID: context.command.sourceSnapshotId,
+                generation: context.command.sourceGeneration,
+                kind: "checkpoint"
+            )
+            intentMatches = true
+        } catch {
+            intentMatches = false
+        }
+        guard currentMatches, candidateMatches, headMatches, intentMatches else {
+            throw SyncV2StoreError.invalidCommand
+        }
     }
 
     private func validateResolveDevice(_ context: CommandValidationContext) throws {
@@ -301,11 +312,7 @@ extension LocalSyncV2Store {
     }
 
     private func validateResolveServer(_ context: CommandValidationContext) throws {
-        try requireCurrent(
-            context,
-            snapshotID: context.command.sourceSnapshotId,
-            generation: context.command.sourceGeneration
-        )
+        try requireCurrentAtLeast(context, generation: context.command.sourceGeneration)
         guard try context.payload.snapshot("preAdoptionSnapshotId") ==
             context.command.sourceSnapshotId,
             try context.payload.snapshot("expectedCurrentSnapshotId") ==
@@ -324,28 +331,39 @@ extension LocalSyncV2Store {
 
     private func validateCloneWork(_ context: CommandValidationContext) throws {
         let newWorkID = try WorkID(uuidString: context.payload.uuid("newWorkId"))
-        guard try context.payload.snapshot("localCandidateSnapshotId") ==
-            context.command.sourceSnapshotId,
-            let reservation = try loadKeepBothReservation(
-                sourceWorkID: context.workID,
-                newWorkID: newWorkID
-            ),
-            try reservation.newRootSnapshotID ==
-            context.payload.snapshot("newRootSnapshotId"),
-            try reservation.newDocumentID.description ==
-            context.payload.uuid("newDocumentId"),
-            let expected = try context.payload.remoteHead("expectedOriginalHead"),
-            let stored = try reservationExpectedHead(
-                sourceWorkID: context.workID,
-                newWorkID: newWorkID
-            ),
-            expected == stored else {
+        let localCandidate = try context.payload.snapshot("localCandidateSnapshotId")
+        let binding = V2AccountBinding(
+            accountID: context.command.binding.accountId,
+            accountFence: context.command.binding.accountFence,
+            serverInstanceID: context.command.binding.serverInstanceId,
+            protocolEpoch: context.command.binding.protocolEpoch
+        )
+        let active = try activeConflict(workID: context.workID, scope: .bound(binding))
+        let reservation = try loadKeepBothReservation(
+            sourceWorkID: context.workID,
+            newWorkID: newWorkID
+        )
+        let newRootSnapshotID = try context.payload.snapshot("newRootSnapshotId")
+        let newDocumentID = try context.payload.uuid("newDocumentId")
+        let expected = try context.payload.remoteHead("expectedOriginalHead")
+        let stored = try reservationExpectedHead(
+            sourceWorkID: context.workID,
+            newWorkID: newWorkID
+        )
+        guard let active,
+              localCandidate == active.localSnapshotID,
+              let reservation,
+              reservation.newRootSnapshotID == newRootSnapshotID,
+              reservation.newDocumentID.description == newDocumentID,
+              let expected,
+              let stored,
+              expected == stored else {
             throw SyncV2StoreError.invalidCommand
         }
         try validateConflictPayload(context.payload, workID: context.workID)
         try validateConflictCandidateSnapshots(
             workID: context.workID,
-            local: context.command.sourceSnapshotId
+            local: localCandidate
         )
     }
 

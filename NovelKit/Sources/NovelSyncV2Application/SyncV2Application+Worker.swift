@@ -49,6 +49,18 @@ extension SyncV2Application {
                         .command(SyncV2SealedRemoteCommand(command: command)),
                         workID: workID
                     )
+                    if ["resolveServer", "resolveDevice", "cloneWork"].contains(command.commandKind) {
+                        workerTasks[workID] = nil
+                        if command.commandKind != "resolveServer" {
+                            scheduleWorker(for: workID)
+                        } else if wakeEpochs[workID, default: 0] != observedWake {
+                            // Safe adoption can arrive while this resolution
+                            // task is handing off. Preserve that wake after
+                            // the task releases its single-flight slot.
+                            scheduleWorker(for: workID)
+                        }
+                        return
+                    }
                 case let .upload(upload):
                     try await execute(.upload(upload), workID: workID)
                 }
@@ -101,10 +113,20 @@ extension SyncV2Application {
         case let (.command(planned), .command(receipt, inbox)):
             guard receipt.commandID == planned.command.commandId,
                   receipt.requestDigest == planned.command.requestDigest,
-                  receipt.predicates.allVerified else {
+                  receipt.predicates.allVerified,
+                  try commandWorkID(planned.command) == workID else {
+                throw SyncV2Failure.receiptMismatch
+            }
+            guard receipt.result != .conflictPending || inbox != nil else {
                 throw SyncV2Failure.receiptMismatch
             }
             if let inbox {
+                try validateInbox(
+                    inbox,
+                    receipt: receipt,
+                    command: planned.command,
+                    workID: workID
+                )
                 try await kernel.stageRemote(inbox)
                 try await kernel.verifyRemote(
                     inboxID: inbox.inboxID,
@@ -141,6 +163,60 @@ extension SyncV2Application {
         default:
             throw SyncV2Failure.receiptMismatch
         }
+    }
+
+    private func commandWorkID(_ command: SealedCommand) throws -> WorkID {
+        guard let object = try JSONSerialization.jsonObject(with: command.payloadBytes) as? [String: Any],
+              let raw = (object["workId"] as? String) ?? (object["sourceWorkId"] as? String) else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        return try WorkID(uuidString: raw)
+    }
+
+    private func validateInbox(
+        _ inbox: SyncV2RemoteInbox,
+        receipt: SyncV2ReceiptReadback,
+        command: SealedCommand,
+        workID: WorkID
+    ) throws {
+        guard inbox.workID == workID,
+              inbox.headSnapshotID == inbox.expectedRemoteHead.snapshotID,
+              receipt.remoteHead == inbox.expectedRemoteHead,
+              inbox.expectedLocalGeneration == command.sourceGeneration,
+              inbox.expectedCurrentSnapshotID == command.sourceSnapshotId else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        if let conflict = receipt.conflict {
+            let expectedBase = try expectedRemoteHeadSnapshotID(command)
+            guard receipt.result == .conflictPending,
+                  conflict.localSnapshotID == command.sourceSnapshotId,
+                  conflict.sourceGeneration == command.sourceGeneration,
+                  conflict.remoteSnapshotID == inbox.headSnapshotID,
+                  conflict.baseSnapshotID == expectedBase else {
+                throw SyncV2Failure.receiptMismatch
+            }
+        } else {
+            guard receipt.result != .conflictPending else {
+                throw SyncV2Failure.receiptMismatch
+            }
+        }
+    }
+
+    private func expectedRemoteHeadSnapshotID(_ command: SealedCommand) throws -> SnapshotID? {
+        guard let payload = try JSONSerialization.jsonObject(with: command.payloadBytes) as? [String: Any],
+              let raw = payload["expectedRemoteHead"] else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        if raw is NSNull {
+            return nil
+        }
+        guard let head = raw as? [String: Any],
+              Set(head.keys) == ["generation", "snapshotId"],
+              head["generation"] is NSNumber,
+              let snapshot = head["snapshotId"] as? String else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        return try SnapshotID(rawValue: snapshot)
     }
 
     private func project(
@@ -182,9 +258,19 @@ extension SyncV2Application {
             guard let candidate = receipt.conflict else {
                 throw SyncV2Failure.receiptMismatch
             }
-            result = .conflictPending
-            progress = .needsChoice
-            conflict = .set(candidate)
+            // A conflict receipt can be projected after the resolution ACK
+            // when the two worker actor hops interleave.  Once the durable
+            // server-adoption marker exists, it is authoritative and must
+            // not regress the UI back to the choice screen.
+            if let adoption = try await kernel.pendingAdoption(workID: workID) {
+                result = .adoptionPending
+                progress = .readyForSafeAdoption(inboxID: adoption.inboxID)
+                conflict = .retain
+            } else {
+                result = .conflictPending
+                progress = .needsChoice
+                conflict = .set(candidate)
+            }
         }
         setState(
             workID: workID,

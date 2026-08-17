@@ -54,6 +54,7 @@ public extension SyncV2Application {
             result: .sent,
             conflict: .clear
         )
+        scheduleWorker(for: boundary.workID)
         return opened
     }
 
@@ -64,6 +65,22 @@ public extension SyncV2Application {
     func pendingAdoption(
         workID: WorkID
     ) async throws -> SyncV2PendingAdoption? {
-        try await kernel.pendingAdoption(workID: workID)
+        let pending = try await kernel.pendingAdoption(workID: workID)
+        guard let pending else { return nil }
+
+        // The durable kernel acknowledgement and the in-memory UI projection
+        // are separate actor hops.  A caller may observe the adoption record
+        // in between those hops (especially after restart).  Project the
+        // durable fact here as well so the UI never reports a stale syncing
+        // state while a safe adoption is already available.
+        if states[workID]?.remoteProgress != .readyForSafeAdoption(inboxID: pending.inboxID) {
+            setState(
+                workID: workID,
+                localDurability: states[workID]?.localDurability ?? .unsaved,
+                remoteProgress: .readyForSafeAdoption(inboxID: pending.inboxID),
+                result: .adoptionPending
+            )
+        }
+        return pending
     }
 }

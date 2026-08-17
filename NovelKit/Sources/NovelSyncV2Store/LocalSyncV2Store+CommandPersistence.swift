@@ -106,7 +106,7 @@ extension LocalSyncV2Store {
                 [
                     .text(command.commandId.uuidString.lowercased()),
                     .text(workID.description),
-                    .blob(command.sourceSnapshotId.bytes),
+                    .blob(payload.snapshot("localCandidateSnapshotId").bytes),
                     .text(payload.uuid("newWorkId")),
                     .blob(payload.snapshot("newRootSnapshotId").bytes)
                 ]
@@ -161,6 +161,13 @@ extension LocalSyncV2Store {
         try insertReceipt(acknowledgement, record: record, binding: binding)
         if successful {
             try acknowledgeLinkedIntent(record)
+            if ["resolveDevice", "cloneWork"].contains(record.commandKind) {
+                try reopenNewerCheckpointIntents(
+                    workID: record.workID,
+                    afterGeneration: record.sourceGeneration,
+                    binding: binding
+                )
+            }
         }
     }
 
