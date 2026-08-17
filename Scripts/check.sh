@@ -4,6 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+echo "==> Snapshot Sync v2 independent conformance"
+./Scripts/conformance-v2.sh
+
 echo "==> D-076 source structure"
 ./Scripts/check-code-structure.sh
 ./Scripts/check-sync-legacy-inventory.sh

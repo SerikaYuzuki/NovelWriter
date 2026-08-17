@@ -48,6 +48,7 @@ fn canonical_snapshot_and_all_sealed_command_hashes_match_contract() {
     let snapshot: Value =
         serde_json::from_slice(&fs::read(fixture("snapshot.json")).unwrap()).unwrap();
     let snapshot_bytes = canonical_json(&snapshot).unwrap();
+    assert_eq!(snapshot_bytes, fs::read(fixture("snapshot.json")).unwrap());
     let expected = fs::read_to_string(fixture("snapshot.sha256"))
         .unwrap()
         .trim()
@@ -59,6 +60,7 @@ fn canonical_snapshot_and_all_sealed_command_hashes_match_contract() {
         let value: Value =
             serde_json::from_slice(&fs::read(fixture(&command.file)).unwrap()).unwrap();
         let bytes = canonical_json(&value).unwrap();
+        assert_eq!(bytes, fs::read(fixture(&command.file)).unwrap());
         assert_eq!(
             bytes.len(),
             command.byte_count,
@@ -71,6 +73,34 @@ fn canonical_snapshot_and_all_sealed_command_hashes_match_contract() {
             "{} digest",
             command.file
         );
+    }
+}
+
+#[derive(Deserialize)]
+struct ObjectHashes {
+    objects: Vec<ObjectHash>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ObjectHash {
+    file: String,
+    byte_count: usize,
+    object_id: String,
+}
+
+#[test]
+fn canonical_object_ids_and_snapshot_id_match_the_same_fixture_bytes() {
+    let snapshot = fs::read(fixture("snapshot.json")).unwrap();
+    let snapshot_id = hex::encode(sha256(&snapshot));
+    assert_eq!(snapshot_id, fs::read_to_string(fixture("snapshot.sha256")).unwrap().trim());
+
+    let hashes: ObjectHashes =
+        serde_json::from_slice(&fs::read(fixture("object-hashes.json")).unwrap()).unwrap();
+    for row in hashes.objects {
+        let bytes = fs::read(fixture(&format!("objects/{}", row.file))).unwrap();
+        assert_eq!(bytes.len(), row.byte_count, "{} byte count", row.file);
+        assert_eq!(hex::encode(sha256(&bytes)), row.object_id, "{} ObjectID", row.file);
     }
 }
 

@@ -19,6 +19,7 @@ struct NovelSyncV2ConformanceTests {
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(SHA256Digest.hex(snapshotBytes) == snapshotDigest)
         let manifest = try SnapshotValidator.validate(manifestBytes: snapshotBytes)
+        #expect(SnapshotID(data: snapshotBytes).rawValue == snapshotDigest)
         var objects: [ObjectID: Data] = [:]
         let hashBytes = try Data(
             contentsOf: canonical.appendingPathComponent("object-hashes.json")
