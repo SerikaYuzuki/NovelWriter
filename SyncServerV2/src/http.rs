@@ -38,7 +38,24 @@ fn error_response(error: SyncError) -> Response {
         | SyncError::SizeLimitExceeded => StatusCode::UNPROCESSABLE_ENTITY,
         _ => StatusCode::BAD_REQUEST,
     };
-    let code = error.to_string();
+    let code = match &error {
+        SyncError::InvalidCanonicalBytes => "invalidCanonicalBytes",
+        SyncError::SchemaViolation(_) => "schemaViolation",
+        SyncError::Unauthorized => "unauthorized",
+        SyncError::AccountFenceMismatch => "accountFenceMismatch",
+        SyncError::ProtocolEpochMismatch => "protocolEpochMismatch",
+        SyncError::CommandIdReused => "commandIdReused",
+        SyncError::NotFound => "notFoundInAccount",
+        SyncError::StaleHead => "staleHead",
+        SyncError::StaleConflictRevision => "staleConflictRevision",
+        SyncError::ObjectDigestMismatch => "objectDigestMismatch",
+        SyncError::SnapshotDigestMismatch => "snapshotDigestMismatch",
+        SyncError::LineageViolation => "lineageViolation",
+        SyncError::UploadCapabilityMismatch => "uploadCapabilityMismatch",
+        SyncError::UploadExpired => "uploadExpired",
+        SyncError::SizeLimitExceeded => "sizeLimitExceeded",
+        SyncError::Retryable | SyncError::Database(_) => "retryable",
+    };
     let retryable = matches!(error, SyncError::Retryable);
     let value = serde_json::json!({"error": code,"result":if retryable {"retryable"} else {"parked"},"retryable":retryable});
     let bytes = crate::domain::canonical_json(&value)
@@ -368,7 +385,10 @@ async fn history(
             return error_response(SyncError::SchemaViolation("cursor.pageSize".into()));
         }
         match cursor_scope(&cursor, "history", &p, page, Some(work)) {
-            Ok((high, last)) => (high, last.parse::<i64>().unwrap_or(0), page),
+            Ok((high, last)) => match last.parse::<i64>() {
+                Ok(last) if last >= 0 => (high, last, page),
+                _ => return error_response(SyncError::SchemaViolation("cursor.last".into())),
+            },
             Err(error) => return error_response(error),
         }
     } else {
