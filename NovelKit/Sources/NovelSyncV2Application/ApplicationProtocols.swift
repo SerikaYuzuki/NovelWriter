@@ -90,6 +90,11 @@ public extension SyncV2RemoteClient {
 public protocol SyncV2LocalKernel: Sendable {
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
+    func localHistoryPage(
+        workID: WorkID,
+        cursor: String?,
+        pageSize: Int
+    ) async throws -> SyncV2LocalHistoryPage
     func prepareConflict(_ action: SyncV2ConflictAction) async throws -> SyncV2Preparation
     func prepareRestore(_ request: SyncV2RestoreRequest) async throws -> SyncV2Preparation
     func prepareExplicitAccountClone(

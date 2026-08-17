@@ -58,6 +58,37 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
+    func localHistoryPage(
+        workID: WorkID,
+        cursor: String?,
+        pageSize: Int
+    ) async throws -> SyncV2LocalHistoryPage {
+        do {
+            let localScope = try await scope.existingScope(workID: workID)
+            let page = try await store.historyPage(
+                workID: workID,
+                scope: localScope,
+                cursor: cursor,
+                pageSize: pageSize
+            )
+            return SyncV2LocalHistoryPage(
+                items: page.items.map {
+                    SyncV2LocalHistoryOccurrence(
+                        occurrenceID: $0.occurrenceID,
+                        snapshotID: $0.snapshotID,
+                        reason: $0.reason,
+                        pinned: $0.pinned,
+                        localGeneration: $0.localGeneration,
+                        createdAt: $0.createdAt
+                    )
+                },
+                nextCursor: page.nextCursor
+            )
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
     func prepareConflict(
         _ action: SyncV2ConflictAction
     ) async throws -> SyncV2Preparation {

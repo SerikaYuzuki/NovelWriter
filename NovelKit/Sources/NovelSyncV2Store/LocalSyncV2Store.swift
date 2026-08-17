@@ -462,23 +462,94 @@ public extension LocalSyncV2Store {
         }
         return try query(
             """
-            SELECT snapshot_id,reason,pinned,local_generation
+            SELECT snapshot_id,reason,pinned,local_generation,occurrence_id,created_at
             FROM history_occurrences WHERE work_id=? ORDER BY rowid
             """,
             [.text(workID.description)]
         ).map { row in
             guard let snapshot = row[0].blob,
                   let reason = row[1].text,
-                  let generation = row[3].int64 else {
-                throw SyncV2StoreError.sqlite("history")
+                  let generation = row[3].int64,
+                  let occurrenceText = row[4].text,
+                  let occurrenceID = UUID(uuidString: occurrenceText),
+                  let createdText = row[5].text,
+                  let createdAt = Self.parseHistoryDate(createdText) else {
+                throw SyncV2StoreError.invalidHistoryDate
             }
             return try V2HistoryOccurrence(
+                occurrenceID: occurrenceID,
                 snapshotID: SnapshotID(rawValue: snapshot.hexString),
                 reason: reason,
                 pinned: row[2].int64 == 1,
-                localGeneration: generation
+                localGeneration: generation,
+                createdAt: createdAt
             )
         }
+    }
+
+    /// Returns immutable local occurrences newest-first. The cursor is an
+    /// opaque `(created_at, local_generation, occurrence_id)` boundary, so inserts after a page
+    /// was read cannot reorder or duplicate an already-read occurrence.
+    func historyPage(
+        workID: WorkID,
+        scope: V2LocalWorkScope,
+        cursor: String? = nil,
+        pageSize: Int = 100
+    ) throws -> V2HistoryPage {
+        guard (1 ... 500).contains(pageSize) else {
+            throw SyncV2StoreError.invalidHistoryCursor
+        }
+        guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
+            throw SyncV2StoreError.workNotFound
+        }
+
+        let boundary = try cursor.map(Self.decodeHistoryCursor)
+        var sql = """
+        SELECT occurrence_id,snapshot_id,reason,pinned,local_generation,created_at
+        FROM history_occurrences
+        WHERE work_id=?
+        """
+        var values: [SQLiteValue] = [.text(workID.description)]
+        if let boundary {
+            sql += " AND (created_at < ? OR (created_at = ? AND (local_generation < ? OR (local_generation = ? AND occurrence_id < ?))))"
+            values += [
+                .text(boundary.createdAt),
+                .text(boundary.createdAt),
+                .int(boundary.localGeneration),
+                .int(boundary.localGeneration),
+                .text(boundary.occurrenceID.uuidString.lowercased())
+            ]
+        }
+        sql += " ORDER BY created_at DESC, local_generation DESC, occurrence_id DESC LIMIT ?"
+        values.append(.int(Int64(pageSize)))
+
+        let occurrences = try query(sql, values).map { row in
+            guard let occurrenceText = row[0].text,
+                  let occurrenceID = UUID(uuidString: occurrenceText),
+                  let snapshot = row[1].blob,
+                  let reason = row[2].text,
+                  let pinned = row[3].int64,
+                  let generation = row[4].int64,
+                  let createdText = row[5].text,
+                  let createdAt = Self.parseHistoryDate(createdText) else {
+                throw SyncV2StoreError.invalidHistoryDate
+            }
+            guard pinned == 0 || pinned == 1, generation > 0 else {
+                throw SyncV2StoreError.invalidHistoryDate
+            }
+            return try V2HistoryOccurrence(
+                occurrenceID: occurrenceID,
+                snapshotID: SnapshotID(rawValue: snapshot.hexString),
+                reason: reason,
+                pinned: pinned == 1,
+                localGeneration: generation,
+                createdAt: createdAt
+            )
+        }
+        let nextCursor = occurrences.count == pageSize
+            ? occurrences.last.map { Self.encodeHistoryCursor($0) }
+            : nil
+        return V2HistoryPage(items: occurrences, nextCursor: nextCursor)
     }
 
     func snapshotParents(
@@ -501,5 +572,58 @@ public extension LocalSyncV2Store {
             }
             return try SnapshotID(rawValue: bytes.hexString)
         }
+    }
+}
+
+private extension LocalSyncV2Store {
+    struct HistoryCursor {
+        let createdAt: String
+        let localGeneration: Int64
+        let occurrenceID: UUID
+    }
+
+    static func parseHistoryDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [
+            .withInternetDateTime,
+            .withDashSeparatorInDate,
+            .withColonSeparatorInTime,
+            .withFractionalSeconds
+        ]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions.remove(.withFractionalSeconds)
+        return formatter.date(from: value)
+    }
+
+    static func encodeHistoryCursor(_ occurrence: V2HistoryOccurrence) -> String {
+        let date = (try? iso8601(occurrence.createdAt)) ?? "1970-01-01T00:00:00Z"
+        let raw = "\(date)|\(occurrence.localGeneration)|\(occurrence.occurrenceID.uuidString.lowercased())"
+        return Data(raw.utf8).base64EncodedString()
+    }
+
+    static func decodeHistoryCursor(_ cursor: String) throws -> HistoryCursor {
+        guard let data = Data(base64Encoded: cursor),
+              let raw = String(data: data, encoding: .utf8),
+              let lastSeparator = raw.lastIndex(of: "|"),
+              let firstSeparator = raw[..<lastSeparator].lastIndex(of: "|") else {
+            throw SyncV2StoreError.invalidHistoryCursor
+        }
+        let dateText = String(raw[..<firstSeparator])
+        let generationText = String(raw[raw.index(after: firstSeparator) ..< lastSeparator])
+        let idText = String(raw[raw.index(after: lastSeparator)...])
+        guard let date = parseHistoryDate(dateText),
+              let localGeneration = Int64(generationText),
+              localGeneration > 0,
+              let occurrenceID = UUID(uuidString: idText) else {
+            throw SyncV2StoreError.invalidHistoryCursor
+        }
+        return HistoryCursor(
+            createdAt: (try? iso8601(date)) ?? dateText,
+            localGeneration: localGeneration,
+            occurrenceID: occurrenceID
+        )
     }
 }

@@ -19,7 +19,7 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         let kind: Kind
     }
 
-    private struct Work: Sendable {
+    struct Work: Sendable {
         var document: NovelDocument
         let documentCreatedAt: Date
         var attachments: [SyncAttachment]
@@ -28,6 +28,7 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         var encoded: [SnapshotID: EncodedSnapshot]
         var intents: [Intent]
         var conflict: SyncV2ConflictProjection?
+        var history: [SyncV2LocalHistoryOccurrence]
     }
 
     private struct PendingCommand: Sendable {
@@ -38,7 +39,7 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
 
     private let account: TestAccount?
     private let readOnly: Bool
-    private var works: [WorkID: Work] = [:]
+    var works: [WorkID: Work] = [:]
     private var commands: [WorkID: [PendingCommand]] = [:]
     private var blocked: [WorkID: SyncV2Failure] = [:]
     private var inboxes: [UUID: SyncV2RemoteInbox] = [:]
@@ -76,6 +77,16 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             work.generation += 1
             work.snapshotID = encoded.snapshotId
             work.encoded[encoded.snapshotId] = encoded
+            work.history.append(
+                SyncV2LocalHistoryOccurrence(
+                    occurrenceID: UUID(),
+                    snapshotID: encoded.snapshotId,
+                    reason: capture.reason.rawValue,
+                    pinned: capture.reason == .explicit || capture.reason == .navigation || capture.reason == .close || capture.reason == .migration,
+                    localGeneration: work.generation,
+                    createdAt: Date()
+                )
+            )
             let intent = coalescedIntent(for: work)
             work.intents = intent.intents
             works[capture.workID] = work
@@ -105,7 +116,17 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             snapshotID: encoded.snapshotId,
             encoded: [encoded.snapshotId: encoded],
             intents: [intent],
-            conflict: nil
+            conflict: nil,
+            history: [
+                SyncV2LocalHistoryOccurrence(
+                    occurrenceID: UUID(),
+                    snapshotID: encoded.snapshotId,
+                    reason: capture.reason.rawValue,
+                    pinned: capture.reason == .explicit || capture.reason == .navigation || capture.reason == .close || capture.reason == .migration,
+                    localGeneration: 1,
+                    createdAt: Date()
+                )
+            ]
         )
         return SyncV2LocalCheckpoint(
             snapshotID: encoded.snapshotId,
@@ -272,6 +293,16 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         work.generation += 1
         work.snapshotID = encoded.snapshotId
         work.encoded[encoded.snapshotId] = encoded
+        work.history.append(
+            SyncV2LocalHistoryOccurrence(
+                occurrenceID: UUID(),
+                snapshotID: encoded.snapshotId,
+                reason: SyncV2CheckpointReason.restore.rawValue,
+                pinned: false,
+                localGeneration: work.generation,
+                createdAt: Date()
+            )
+        )
         works[boundary.workID] = work
         pendingAdoptions[boundary.workID] = nil
         return opened(workID: boundary.workID, work: work)
@@ -298,7 +329,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             snapshotID: encoded.snapshotId,
             encoded: [encoded.snapshotId: encoded],
             intents: [],
-            conflict: nil
+            conflict: nil,
+            history: []
         )
         works[inbox.workID] = work
         return opened(workID: inbox.workID, work: work)

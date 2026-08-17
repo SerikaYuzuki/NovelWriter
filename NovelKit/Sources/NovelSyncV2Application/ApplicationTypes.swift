@@ -9,6 +9,7 @@ public enum SyncV2ApplicationError: Error, Equatable, Sendable {
     case staleConflictAction
     case safeBoundaryRejected
     case remoteOnlyInstallRejected
+    case invalidHistoryCursor
 }
 
 public enum SyncV2Failure: Error, Equatable, Sendable {

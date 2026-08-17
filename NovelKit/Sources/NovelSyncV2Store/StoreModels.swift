@@ -23,6 +23,8 @@ public enum SyncV2StoreError: Error, Equatable, Sendable {
     case conflictNotFound
     case staleConflictAction
     case reservationNotFound
+    case invalidHistoryCursor
+    case invalidHistoryDate
 }
 
 public enum V2StoreOpenPolicy: Equatable, Sendable {
@@ -209,10 +211,38 @@ public struct V2UploadTransferRecord: Hashable, Sendable {
 }
 
 public struct V2HistoryOccurrence: Hashable, Sendable {
+    public let occurrenceID: UUID
     public let snapshotID: SnapshotID
     public let reason: String
     public let pinned: Bool
     public let localGeneration: Int64
+    public let createdAt: Date
+
+    public init(
+        occurrenceID: UUID,
+        snapshotID: SnapshotID,
+        reason: String,
+        pinned: Bool,
+        localGeneration: Int64,
+        createdAt: Date
+    ) {
+        self.occurrenceID = occurrenceID
+        self.snapshotID = snapshotID
+        self.reason = reason
+        self.pinned = pinned
+        self.localGeneration = localGeneration
+        self.createdAt = createdAt
+    }
+}
+
+public struct V2HistoryPage: Hashable, Sendable {
+    public let items: [V2HistoryOccurrence]
+    public let nextCursor: String?
+
+    public init(items: [V2HistoryOccurrence], nextCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
+    }
 }
 
 public struct V2RemoteHead: Hashable, Sendable {
