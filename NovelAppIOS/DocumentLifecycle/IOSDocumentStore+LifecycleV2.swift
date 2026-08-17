@@ -58,10 +58,9 @@ extension IOSDocumentStore {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
                 document = value
-                // Portable manifests retain millisecond precision. Keep the
-                // in-memory anchor at that precision too, so an explicit
-                // export can round-trip the current work date byte-for-byte
-                // through ISO8601 without reintroducing filesystem time.
+                // Snapshot Sync v2 and the portable bridge use UTC whole
+                // seconds for the document anchor. Normalize at creation so
+                // the SQLite value remains stable across every reopen/export.
                 documentCreatedAt = Self.portableDatePrecision(Date())
                 let workID = WorkID(UUID())
                 syncV2ActiveWorkID = workID
@@ -90,6 +89,16 @@ extension IOSDocumentStore {
 
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        guard (try? IOSPrivateWorkingCopyLocation.validateExplicitPackageSource(sourceURL)) != nil else {
+            operationErrorMessage = "読み込める作品パッケージを選択できませんでした。"
+            return false
+        }
         guard await configureSnapshotSyncV2() else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
@@ -98,12 +107,6 @@ extension IOSDocumentStore {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
                 let staging = try location.stagingDestination()
-                let accessed = sourceURL.startAccessingSecurityScopedResource()
-                defer {
-                    if accessed {
-                        sourceURL.stopAccessingSecurityScopedResource()
-                    }
-                }
                 do {
                     try fileManager.copyItem(at: sourceURL, to: staging)
                     let portable = try await portableBridge.importExplicitPackage(from: staging)
@@ -124,7 +127,7 @@ extension IOSDocumentStore {
                     // The package manifest is the explicit portable boundary;
                     // filesystem timestamps are not document identity or
                     // authoring metadata.
-                    documentCreatedAt = portable.documentCreatedAt
+                    documentCreatedAt = Self.portableDatePrecision(portable.documentCreatedAt)
                     adoptV2AttachmentRecords(syncAttachments)
                     syncV2PortableResources = portable.resources
                     guard await checkpointSnapshotSyncV2(
@@ -183,7 +186,9 @@ extension IOSDocumentStore {
         }
         do {
             if startupState == .ready {
-                _ = await saveNow()
+                guard await saveNow() else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
             }
             try await operation()
             return true
@@ -292,6 +297,6 @@ extension IOSDocumentStore {
     }
 
     private static func portableDatePrecision(_ date: Date) -> Date {
-        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded(.down) / 1000)
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
     }
 }

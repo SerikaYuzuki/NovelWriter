@@ -46,6 +46,58 @@ struct IOSSnapshotSyncV2Tests {
         ))
     }
 
+    @Test("公開open境界はdirty本文を先にSQLiteへcheckpointし、clean再openはno-opにする")
+    func openCheckpointsDirtyCurrentWorkBeforeTarget() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let originalWorkID = try #require(store.syncV2ActiveWorkID)
+        store.updateDocumentTitle("dirty本文")
+        #expect(store.saveState == .dirty)
+
+        let application = try #require(store.snapshotSyncV2Application)
+        let runtimeConfiguration = try #require(
+            IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
+        )
+        let targetWorkID = WorkID(UUID())
+        let targetDocument = NovelDocument.newDocument(title: "別作品")
+        _ = try await application.checkpoint(
+            workID: targetWorkID,
+            document: targetDocument,
+            reason: .explicit,
+            documentCreatedAt: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        )
+        try await waitForOfflineWorker(
+            application,
+            remote: runtimeConfiguration.remote,
+            workID: targetWorkID
+        )
+
+        #expect(await store.openSnapshotSyncV2(workID: targetWorkID.rawValue))
+        #expect(store.syncV2ActiveWorkID == targetWorkID)
+        #expect(store.document.title == "別作品")
+        #expect(await store.openSnapshotSyncV2(workID: originalWorkID.rawValue))
+        #expect(store.document.title == "dirty本文")
+        try await waitForOfflineWorker(
+            application,
+            remote: runtimeConfiguration.remote,
+            workID: originalWorkID
+        )
+
+        let stateBeforeCleanReopen = try #require(await application.uiState(workID: originalWorkID))
+        let remoteOperationsBeforeCleanReopen = await runtimeConfiguration.remote.recordedOperations()
+        #expect(await store.openSnapshotSyncV2(workID: originalWorkID.rawValue))
+        let stateAfterCleanReopen = try #require(await application.uiState(workID: originalWorkID))
+        #expect(stateAfterCleanReopen.localDurability == stateBeforeCleanReopen.localDurability)
+        let remoteOperationsAfterCleanReopen = await runtimeConfiguration.remote.recordedOperations()
+        #expect(remoteOperationsAfterCleanReopen.count == remoteOperationsBeforeCleanReopen.count)
+    }
+
     @Test("WorkIDはDocumentIDから独立したsession identityになる")
     func workIdentityIsNotDocumentIdentity() async throws {
         let environment = makeEnvironment()
@@ -301,14 +353,49 @@ struct IOSSnapshotSyncV2Tests {
         defaults.removePersistentDomain(forName: suiteName)
         return TestEnvironment(root: root, defaults: defaults, suiteName: suiteName)
     }
+
+    private func waitForOfflineWorker(
+        _ application: SyncV2Application,
+        remote: FakeSyncV2RemoteClient,
+        workID: WorkID
+    ) async throws {
+        var previousOperationCount: Int?
+        var stableSamples = 0
+        for _ in 0 ..< 100 {
+            let operationCount = await remote.recordedOperations().count
+            if let state = await application.uiState(workID: workID),
+               case .offline = state.remoteProgress {
+                if previousOperationCount == operationCount {
+                    stableSamples += 1
+                } else {
+                    stableSamples = 0
+                }
+                if stableSamples >= 3 {
+                    return
+                }
+            } else {
+                stableSamples = 0
+            }
+            previousOperationCount = operationCount
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("test worker did not reach the offline terminal state")
+    }
 }
 
+@MainActor
 private struct TestEnvironment {
     let root: URL
     let defaults: UserDefaults
     let suiteName: String
 
     func cleanup() {
+        let key = root.standardizedFileURL
+        let configuration = IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: key)
+        IOSDocumentStore.testRuntimeApplications.removeValue(forKey: key)
+        if let runtimeRoot = configuration?.localRoot.url {
+            try? FileManager.default.removeItem(at: runtimeRoot)
+        }
         try? FileManager.default.removeItem(at: root)
         defaults.removePersistentDomain(forName: suiteName)
     }

@@ -41,7 +41,14 @@ extension IOSDocumentStore {
                     if let cached = Self.testRuntimeApplications[key] {
                         snapshotSyncV2Application = cached
                     } else {
-                        let configuration = try TestRuntimeConfiguration()
+                        let configuration: TestRuntimeConfiguration
+                        if let cachedConfiguration = Self.testRuntimeConfigurations[key] {
+                            configuration = cachedConfiguration
+                        } else {
+                            let newConfiguration = try TestRuntimeConfiguration()
+                            Self.testRuntimeConfigurations[key] = newConfiguration
+                            configuration = newConfiguration
+                        }
                         let application = try await SnapshotSyncV2Runtime.makeApplication(
                             mode: .test(configuration)
                         )
@@ -226,19 +233,23 @@ extension IOSDocumentStore {
     func openSnapshotSyncV2(workID: UUID) async -> Bool {
         guard let application = snapshotSyncV2Application else { return false }
         return await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            do {
-                let opened = try await application.open(workID: WorkID(workID))
-                guard let value = opened.document else { return false }
-                installSnapshotSyncV2Opened(opened, value: value)
-                await applySnapshotSyncV2State(application.uiState(workID: opened.workID))
-                return true
-            } catch {
-                operationErrorMessage = "作品を安全に開けませんでした。"
-                return false
+            guard let self else { return false }
+            var didOpen = false
+            let transitioned = await performDocumentTransition {
+                do {
+                    // `performDocumentTransition` first confirms IME input and
+                    // flushes a dirty editor through the local SQLite
+                    // checkpoint.  It never wakes or awaits the remote worker.
+                    let opened = try await application.open(workID: WorkID(workID))
+                    guard let value = opened.document else { return }
+                    installSnapshotSyncV2Opened(opened, value: value)
+                    await applySnapshotSyncV2State(application.uiState(workID: opened.workID))
+                    didOpen = true
+                } catch {
+                    operationErrorMessage = "作品を安全に開けませんでした。"
+                }
             }
+            return transitioned && didOpen
         }
     }
 

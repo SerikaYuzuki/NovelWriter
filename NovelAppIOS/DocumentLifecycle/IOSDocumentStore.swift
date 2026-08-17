@@ -50,6 +50,12 @@ final class IOSDocumentStore {
     /// SQLite composition, so reopen tests exercise persistence rather than a
     /// second unrelated UUID database. Production never consults this cache.
     static var testRuntimeApplications: [URL: SyncV2Application] = [:]
+    /// Keep the test composition's UUID-backed SQLite root alongside the
+    /// application cache. Removing an application for a restart fixture must
+    /// recreate the composition from the same TestRuntimeConfiguration;
+    /// constructing a fresh configuration would silently point at a new
+    /// database even when the iOS library root is unchanged.
+    static var testRuntimeConfigurations: [URL: TestRuntimeConfiguration] = [:]
 
     var document: NovelDocument
     var documentCreatedAt: Date

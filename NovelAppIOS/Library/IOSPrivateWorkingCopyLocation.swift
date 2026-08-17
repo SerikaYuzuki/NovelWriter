@@ -161,6 +161,22 @@ extension IOSPrivateWorkingCopyLocation {
         guard !name.isEmpty, !name.hasPrefix("."), name.hasSuffix(".novelpkg") else { return false }
         return URL(fileURLWithPath: name).lastPathComponent == name
     }
+
+    /// Validate a user-selected package before the explicit portable bridge is
+    /// given a URL.  Import sources are outside the fixed private root, so the
+    /// root/inode attestation used for installed works cannot protect them.
+    /// Rejecting symlink components here keeps `copyItem` and the bridge from
+    /// ever following an attacker-controlled package alias.
+    static func validateExplicitPackageSource(_ packageURL: URL) throws {
+        let requested = packageURL.standardizedFileURL
+        guard requested.isFileURL,
+              isValidPortablePackageName(requested.lastPathComponent),
+              let status = try pathStatus(requested),
+              status.st_mode & S_IFMT == S_IFDIR else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        try validateExternalPathComponents(for: requested)
+    }
 }
 
 extension IOSPrivateWorkingCopyLocation {
@@ -442,6 +458,38 @@ private extension IOSPrivateWorkingCopyLocation {
             && component != "."
             && component != ".."
             && URL(fileURLWithPath: component).lastPathComponent == component
+    }
+
+    private static func isValidPortablePackageName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name.hasSuffix(".novelpkg")
+            && isSafePathComponent(name)
+    }
+
+    private static func validateExternalPathComponents(for url: URL) throws {
+        let components = url.standardizedFileURL.pathComponents
+        guard let first = components.first else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        var current = URL(fileURLWithPath: first, isDirectory: true)
+        for component in components.dropFirst() {
+            current.appendPathComponent(component, isDirectory: true)
+            guard let status = try pathStatus(current) else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            if status.st_mode & S_IFMT == S_IFLNK {
+                // `/var` (and the equivalent `/tmp` alias) are OS-managed
+                // aliases on macOS.  They are canonicalized by the sandbox,
+                // not user-controlled package paths, so allow only these
+                // known aliases and reject every package/ancestor symlink.
+                let resolved = current.resolvingSymlinksInPath().standardizedFileURL.path
+                let isSystemAlias = (current.path == "/var" && resolved == "/private/var")
+                    || (current.path == "/tmp" && resolved == "/private/tmp")
+                guard isSystemAlias else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+            }
+        }
     }
 
     private static func identity(_ status: stat) -> Identity {

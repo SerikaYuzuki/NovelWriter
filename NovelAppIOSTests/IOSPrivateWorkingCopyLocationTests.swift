@@ -91,7 +91,7 @@ struct IOSPrivateWorkingCopyLocationTests {
         #expect(store.deviceSyncStartupFailedSafely)
         await store.bootstrap()
         #expect(await !(store.makeNewDocument()))
-        #expect(store.currentPrivateDocumentID == nil)
+        #expect(store.syncV2ActiveWorkID == nil)
         #expect(try fileManager.contentsOfDirectory(atPath: target.path).isEmpty)
     }
 
@@ -102,16 +102,23 @@ struct IOSPrivateWorkingCopyLocationTests {
         let externalPackage = environment.root.appendingPathComponent("external.novelpkg", isDirectory: true)
         let document = NovelDocument.newDocument(title: "外部作品")
         try await NovelpkgRepository().save(document, to: externalPackage)
+        let privateRoot = environment.root.appendingPathComponent("private-library", isDirectory: true)
         let store = IOSDocumentStore(
             userDefaults: environment.defaults,
-            libraryRoot: environment.root.appendingPathComponent("private-library", isDirectory: true)
+            libraryRoot: privateRoot
         )
         await store.bootstrap()
 
         #expect(!store.install(document, at: externalPackage, attachments: []))
-        #expect(store.deviceSyncStartupFailedSafely)
-        #expect(store.currentPrivateDocumentID == nil)
+        #expect(!store.deviceSyncStartupFailedSafely)
+        #expect(store.syncV2ActiveWorkID == nil)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastDocumentNameKey) == nil)
+        #expect(environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey) == nil)
+        let privateItems = try FileManager.default.contentsOfDirectory(
+            at: store.libraryRoot,
+            includingPropertiesForKeys: nil
+        )
+        #expect(privateItems.isEmpty)
     }
 
     @Test("package symlinkはremote operation前に拒否しside effectを起こさない")
@@ -185,7 +192,6 @@ struct IOSPrivateWorkingCopyLocationTests {
 
         let libraryRoot = environment.root.appendingPathComponent("private-library", isDirectory: true)
         let store = IOSDocumentStore(
-            repository: NovelpkgRepository(),
             userDefaults: environment.defaults,
             libraryRoot: libraryRoot
         )
@@ -194,9 +200,10 @@ struct IOSPrivateWorkingCopyLocationTests {
 
         #expect(await !store.importPackage(from: linkedSource))
         #expect(store.startupState == .library)
-        #expect(store.currentPrivateDocumentID == nil)
-        #expect(store.libraryItems.isEmpty)
+        #expect(store.syncV2ActiveWorkID == nil)
+        #expect(store.syncV2LibraryItems.isEmpty)
         #expect(environment.defaults.string(forKey: IOSDocumentStore.lastDocumentNameKey) == nil)
+        #expect(environment.defaults.string(forKey: IOSDocumentStore.lastWorkIDKey) == nil)
         #expect(fileManager.fileExists(atPath: externalPackage.path))
         let privateItems = try fileManager.contentsOfDirectory(
             at: store.libraryRoot,
