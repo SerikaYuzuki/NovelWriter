@@ -1,7 +1,7 @@
 //! Explicit Auth v1 PostgreSQL conformance gate.
 //!
 //! The runner refuses ambient/LAN databases. It only accepts a fresh database
-//! whose name contains `auth_v2_test`, then applies migrations and executes the
+//! named `auth_v2_test` or `auth_v2_test_<unique>`, then applies migrations and executes the
 //! concurrent transaction scenarios against that isolated authority.
 
 use async_trait::async_trait;
@@ -80,16 +80,24 @@ impl AppleProvider for ScenarioAppleProvider {
         challenge: &ChallengeClaim,
         _authorization_code: &[u8],
         _identity_token: &[u8],
-    ) -> Result<VerifiedExternalIdentity, AuthError> {
+    ) -> Result<AppleIdentityEvidence, AuthError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let mut identity = VerifiedExternalIdentity::apple(self.subject.clone(), unix_now())?;
-        if let Some(secret) = self.credential_by_audience.get(&challenge.audience) {
-            identity.provider_credential = Some(VerifiedProviderCredential {
-                audience: challenge.audience.clone(),
-                encrypted_refresh_token: secret.clone(),
-            });
-        }
-        Ok(identity)
+        let provider_credential =
+            self.credential_by_audience
+                .get(&challenge.audience)
+                .map(|secret| VerifiedProviderCredential {
+                    audience: challenge.audience.clone(),
+                    encrypted_refresh_token: secret.clone(),
+                });
+        AppleIdentityEvidence::from_verified_claims(
+            ProviderConfigId::new(APPLE_PROVIDER_CONFIG)?,
+            APPLE_ISSUER,
+            self.subject.clone(),
+            challenge.audience.clone(),
+            challenge.nonce_hash.clone(),
+            unix_now(),
+            provider_credential,
+        )
     }
 
     async fn revoke(
@@ -115,7 +123,7 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let database_url = std::env::var("AUTH_V2_TEST_DATABASE_URL").map_err(|_| {
-        "set AUTH_V2_TEST_DATABASE_URL to a fresh isolated database whose name contains auth_v2_test"
+        "set AUTH_V2_TEST_DATABASE_URL to a fresh isolated auth_v2_test or auth_v2_test_<unique> database"
     })?;
     let pool = PgPoolOptions::new()
         .max_connections(12)
@@ -133,22 +141,84 @@ async fn require_fresh_test_database(pool: &PgPool) -> Result<(), Box<dyn Error>
         .fetch_one(pool)
         .await?
         .try_get("name")?;
-    if !database.contains("auth_v2_test") {
+    if !is_isolated_database_name(&database) {
         return Err(format!(
-            "refusing database {database:?}; isolated database name must contain auth_v2_test"
+            "refusing database {database:?}; use auth_v2_test or auth_v2_test_<unique>"
         )
         .into());
     }
-    let already_initialized: bool = sqlx::query(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name IN ('auth_v1','sync_v2')) OR to_regclass('public._sqlx_migrations') IS NOT NULL AS initialized",
+    let row = sqlx::query(
+        r#"
+        SELECT
+          (SELECT count(*) FROM pg_namespace n
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
+               AND n.nspname !~ '^pg_toast'
+               AND n.nspname !~ '^pg_temp') AS user_schemas,
+          (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE (n.nspname='public' OR (
+               n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname !~ '^pg_toast'
+               AND n.nspname !~ '^pg_temp'))
+               AND c.relkind IN ('r','p','v','m','S','f')) AS user_relations,
+          (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE (n.nspname='public' OR (
+               n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname !~ '^pg_toast'
+               AND n.nspname !~ '^pg_temp'))
+               AND t.typtype IN ('c','d','e','r','m')) AS user_types,
+          (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname='public' OR (
+               n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname !~ '^pg_toast'
+               AND n.nspname !~ '^pg_temp')) AS user_routines,
+          (SELECT count(*) FROM pg_extension WHERE extname NOT IN ('plpgsql'))
+            AS disallowed_extensions
+        "#,
     )
     .fetch_one(pool)
-    .await?
-    .try_get("initialized")?;
-    if already_initialized {
-        return Err("database is not fresh; create a new temporary auth_v2_test database".into());
+    .await?;
+    FreshDatabaseInventory {
+        user_schemas: row.try_get("user_schemas")?,
+        user_relations: row.try_get("user_relations")?,
+        user_types: row.try_get("user_types")?,
+        user_routines: row.try_get("user_routines")?,
+        disallowed_extensions: row.try_get("disallowed_extensions")?,
     }
-    Ok(())
+    .require_empty()
+    .map_err(Into::into)
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct FreshDatabaseInventory {
+    user_schemas: i64,
+    user_relations: i64,
+    user_types: i64,
+    user_routines: i64,
+    disallowed_extensions: i64,
+}
+
+impl FreshDatabaseInventory {
+    fn require_empty(&self) -> Result<(), String> {
+        if self == &Self::default() {
+            Ok(())
+        } else {
+            Err(format!(
+                "database is not completely fresh: schemas={}, relations={}, types={}, routines={}, disallowed_extensions={}",
+                self.user_schemas,
+                self.user_relations,
+                self.user_types,
+                self.user_routines,
+                self.disallowed_extensions
+            ))
+        }
+    }
+}
+
+fn is_isolated_database_name(name: &str) -> bool {
+    name == "auth_v2_test"
+        || name
+            .strip_prefix("auth_v2_test_")
+            .is_some_and(|suffix| !suffix.is_empty())
 }
 
 async fn seed_apple_config(pool: &PgPool) -> Result<(), sqlx::Error> {
@@ -198,7 +268,7 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
         hasher.token_key(),
         "00000000-0000-4000-8000-000000000001".into(),
     )?;
-    let app = AuthApplication::new(repository);
+    let app = AuthApplication::new(repository.clone());
     let now = unix_now();
 
     let concurrent_create = parse_auth_command(
@@ -220,6 +290,42 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     ensure(
         challenge_count == 1,
         "concurrent createChallenge created duplicate challenges",
+    )?;
+
+    let invalid_challenge =
+        create_challenge(&app, "10000000-0000-4000-8000-000000000009", "macos", now).await?;
+    let invalid_exchange = exchange_command(
+        "30000000-0000-4000-8000-000000000009",
+        &invalid_challenge.challenge_id,
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let reserved_before: i64 =
+        sqlx::query("SELECT count(*) AS count FROM auth_v1.auth_operations WHERE state='reserved'")
+            .fetch_one(pool)
+            .await?
+            .try_get("count")?;
+    ensure(
+        matches!(
+            app.exchange_apple_from_wire(&invalid_exchange, &provider, &hasher, &vault, now)
+                .await,
+            Err(AuthError::InvalidRequest)
+        ),
+        "invalid challenge state was not rejected",
+    )?;
+    let invalid_operation_count: i64 = sqlx::query(
+        "SELECT count(*) AS count FROM auth_v1.auth_operations WHERE operation_id='30000000-0000-4000-8000-000000000009'",
+    )
+    .fetch_one(pool)
+    .await?
+    .try_get("count")?;
+    let reserved_after: i64 =
+        sqlx::query("SELECT count(*) AS count FROM auth_v1.auth_operations WHERE state='reserved'")
+            .fetch_one(pool)
+            .await?
+            .try_get("count")?;
+    ensure(
+        invalid_operation_count == 0 && reserved_after == reserved_before,
+        "invalid exchange reserved a durable operation",
     )?;
 
     let mac_challenge =
@@ -260,6 +366,79 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     .await?
     .try_get("count")?;
     ensure(distinct_audiences == 2, "multi-audience grants collapsed")?;
+
+    let resume_provider = ScenarioAppleProvider {
+        subject: "same-concurrent-apple-subject".into(),
+        credential_by_audience: Arc::new(HashMap::new()),
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let resume_challenge =
+        create_challenge(&app, "10000000-0000-4000-8000-000000000008", "macos", now).await?;
+    let resume_exchange = exchange_command(
+        "30000000-0000-4000-8000-000000000008",
+        &resume_challenge.challenge_id,
+        &resume_challenge.state,
+    )?;
+    let resume_operation = OperationId::new("30000000-0000-4000-8000-000000000008")?;
+    let resume_claim = match repository
+        .claim_challenge_for_exchange(
+            &resume_challenge.challenge_id,
+            &resume_operation,
+            resume_exchange.digest,
+            &digest_request(resume_challenge.state.as_bytes()),
+            now,
+        )
+        .await?
+    {
+        ChallengeClaimResult::ProviderCallRequired(value) => value,
+        _ => return Err("resume fixture did not acquire the provider call".into()),
+    };
+    let resume_evidence = resume_provider
+        .exchange(&resume_claim, b"fixture-code", b"fixture.token.signature")
+        .await?;
+    let resume_identity =
+        VerifiedExternalIdentity::bind_apple(resume_evidence, &resume_claim, now)?;
+    let durable = DurableVerifiedIdentity::from(&resume_identity);
+    let durable_value = serde_json::to_value(&durable)?;
+    let durable_bytes = fuminiwa_sync_server_v2::domain::canonical_json(&durable_value)?;
+    let durable_secret = vault
+        .seal(
+            "verified_external_identity_v1",
+            resume_challenge.challenge_id.as_str(),
+            &durable_bytes,
+        )
+        .await?;
+    repository
+        .mark_provider_result_known(
+            &resume_challenge.challenge_id,
+            &resume_operation,
+            &resume_identity,
+            durable_secret,
+        )
+        .await?;
+    let restarted_app = AuthApplication::new(repository.clone());
+    restarted_app
+        .exchange_apple_from_wire(
+            &resume_exchange,
+            &resume_provider,
+            &hasher,
+            &vault,
+            now + 301,
+        )
+        .await?;
+    ensure(
+        resume_provider.calls.load(Ordering::SeqCst) == 1,
+        "providerResultKnown restart called Apple a second time",
+    )?;
+    let resume_state = sqlx::query("SELECT c.phase,o.state AS operation_state FROM auth_v1.auth_challenges c JOIN auth_v1.auth_operations o ON o.operation_id=c.exchange_operation_id WHERE c.challenge_id=$1")
+        .bind(uuid::Uuid::parse_str(resume_challenge.challenge_id.as_str())?)
+        .fetch_one(pool)
+        .await?;
+    ensure(
+        resume_state.try_get::<String, _>("phase")? == "terminal"
+            && resume_state.try_get::<String, _>("operation_state")? == "completed",
+        "providerResultKnown restart did not converge terminally",
+    )?;
 
     let exchange_operation = OperationId::new("30000000-0000-4000-8000-000000000001")?;
     let exchange_receipt_before = app
@@ -594,4 +773,49 @@ fn ensure(condition: bool, message: &str) -> Result<(), Box<dyn Error>> {
 
 fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_database_guard_accepts_only_empty_inventory() {
+        assert!(FreshDatabaseInventory::default().require_empty().is_ok());
+        for inventory in [
+            FreshDatabaseInventory {
+                user_schemas: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_relations: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_types: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_routines: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                disallowed_extensions: 1,
+                ..Default::default()
+            },
+        ] {
+            assert!(inventory.require_empty().is_err());
+        }
+    }
+
+    #[test]
+    fn fresh_database_guard_rejects_lookalike_names() {
+        assert!(is_isolated_database_name("auth_v2_test"));
+        assert!(is_isolated_database_name("auth_v2_test_550e8400"));
+        assert!(!is_isolated_database_name("fuminiwa_auth_v2_test"));
+        assert!(!is_isolated_database_name(
+            "auth_v2_test".trim_end_matches('t')
+        ));
+        assert!(!is_isolated_database_name("production_auth_v2_test_copy"));
+    }
 }

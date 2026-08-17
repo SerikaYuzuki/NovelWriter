@@ -1,14 +1,83 @@
 use fuminiwa_sync_server_v2::auth_domain::*;
 
+fn apple_challenge() -> ChallengeClaim {
+    ChallengeClaim {
+        id: ChallengeId::new("20000000-0000-4000-8000-000000000001").unwrap(),
+        operation_id: OperationId::new("10000000-0000-4000-8000-000000000001").unwrap(),
+        provider_config_id: ProviderConfigId::new(APPLE_PROVIDER_CONFIG).unwrap(),
+        audience: "dev.serikayuzuki.fuminiwa".into(),
+        platform: "macos".into(),
+        state_hash: vec![0x11; 32],
+        nonce_hash: vec![0x22; 32],
+        phase: ChallengePhase::ProviderCallStarted,
+        lease_until_unix: 301,
+        expires_at_unix: 301,
+    }
+}
+
 #[test]
 fn apple_identity_is_provider_closed_and_account_opaque() {
-    let identity = VerifiedExternalIdentity::apple("fixture-subject", 1).unwrap();
-    assert_eq!(identity.provider_config_id.as_str(), APPLE_PROVIDER_CONFIG);
-    assert_eq!(identity.exact_issuer, APPLE_ISSUER);
-    assert!(identity.validate_apple().is_ok());
+    let challenge = apple_challenge();
+    let evidence = AppleIdentityEvidence::from_verified_claims(
+        ProviderConfigId::new(APPLE_PROVIDER_CONFIG).unwrap(),
+        APPLE_ISSUER,
+        "fixture-subject",
+        challenge.audience.clone(),
+        challenge.nonce_hash.clone(),
+        1,
+        None,
+    )
+    .unwrap();
+    let identity = VerifiedExternalIdentity::bind_apple(evidence, &challenge, 1).unwrap();
+    assert_eq!(
+        identity.provider_config_id().as_str(),
+        APPLE_PROVIDER_CONFIG
+    );
+    assert_eq!(identity.exact_issuer(), APPLE_ISSUER);
+    assert!(identity.validate_durable_for_challenge(&challenge).is_ok());
     assert!(AccountId::new("apple-subject").is_ok());
-    assert_ne!(identity.subject, "apple-subject");
+    assert_ne!(identity.subject(), "apple-subject");
     assert!(!format!("{identity:?}").contains("fixture-subject"));
+}
+
+#[test]
+fn apple_identity_binding_rejects_wrong_config_audience_and_nonce() {
+    let challenge = apple_challenge();
+    for (config, audience, nonce, expected) in [
+        (
+            "apple-other-config",
+            challenge.audience.as_str(),
+            challenge.nonce_hash.clone(),
+            AuthError::ProviderNotAllowed,
+        ),
+        (
+            APPLE_PROVIDER_CONFIG,
+            "dev.serikayuzuki.fuminiwa.ios",
+            challenge.nonce_hash.clone(),
+            AuthError::ProviderNotAllowed,
+        ),
+        (
+            APPLE_PROVIDER_CONFIG,
+            challenge.audience.as_str(),
+            vec![0x33; 32],
+            AuthError::InvalidRequest,
+        ),
+    ] {
+        let evidence = AppleIdentityEvidence::from_verified_claims(
+            ProviderConfigId::new(config).unwrap(),
+            APPLE_ISSUER,
+            "fixture-subject",
+            audience,
+            nonce,
+            1,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            VerifiedExternalIdentity::bind_apple(evidence, &challenge, 1).unwrap_err(),
+            expected
+        );
+    }
 }
 
 #[test]

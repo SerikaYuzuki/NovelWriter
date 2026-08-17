@@ -67,20 +67,45 @@ struct FakeProvider {
     indeterminate: bool,
     subject: String,
     calls: Arc<AtomicUsize>,
+    audience_override: Option<String>,
+    nonce_override: Option<Vec<u8>>,
+}
+impl FakeProvider {
+    fn valid(subject: &str) -> Self {
+        Self {
+            indeterminate: false,
+            subject: subject.into(),
+            calls: Arc::new(AtomicUsize::new(0)),
+            audience_override: None,
+            nonce_override: None,
+        }
+    }
 }
 #[async_trait]
 impl AppleProvider for FakeProvider {
     async fn exchange(
         &self,
-        _challenge: &ChallengeClaim,
+        challenge: &ChallengeClaim,
         _code: &[u8],
         _token: &[u8],
-    ) -> Result<VerifiedExternalIdentity, AuthError> {
+    ) -> Result<AppleIdentityEvidence, AuthError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.indeterminate {
             return Err(AuthError::ProviderExchangeIndeterminate);
         }
-        VerifiedExternalIdentity::apple(self.subject.clone(), 1_000)
+        AppleIdentityEvidence::from_verified_claims(
+            ProviderConfigId::new(APPLE_PROVIDER_CONFIG)?,
+            APPLE_ISSUER,
+            self.subject.clone(),
+            self.audience_override
+                .clone()
+                .unwrap_or_else(|| challenge.audience.clone()),
+            self.nonce_override
+                .clone()
+                .unwrap_or_else(|| challenge.nonce_hash.clone()),
+            1_000,
+            None,
+        )
     }
     async fn revoke(
         &self,
@@ -162,28 +187,6 @@ impl AuthRepository for FakeRepo {
             None => Ok(None),
         }
     }
-    async fn reserve_operation(
-        &self,
-        operation_id: &OperationId,
-        kind: &str,
-        digest: &[u8; 32],
-    ) -> Result<(), AuthError> {
-        let mut state = self.0.lock().unwrap();
-        match state.operations.get(operation_id.as_str()) {
-            Some((existing_kind, existing_digest))
-                if existing_kind == kind && existing_digest == digest =>
-            {
-                Ok(())
-            }
-            Some(_) => Err(AuthError::OperationIdReused),
-            None => {
-                state
-                    .operations
-                    .insert(operation_id.to_string(), (kind.to_owned(), *digest));
-                Ok(())
-            }
-        }
-    }
     async fn create_challenge(
         &self,
         request: &NewChallenge,
@@ -240,6 +243,7 @@ impl AuthRepository for FakeRepo {
         &self,
         _id: &ChallengeId,
         operation_id: &OperationId,
+        request_digest: [u8; 32],
         state_hash: &[u8],
         now_unix: i64,
     ) -> Result<ChallengeClaimResult, AuthError> {
@@ -248,11 +252,29 @@ impl AuthRepository for FakeRepo {
         if challenge.state_hash != state_hash {
             return Err(AuthError::InvalidRequest);
         }
+        if matches!(challenge.phase, ChallengePhase::Claimed)
+            && challenge.expires_at_unix <= now_unix
+        {
+            return Err(AuthError::ChallengeExpired);
+        }
+        if !matches!(challenge.phase, ChallengePhase::Claimed)
+            && s.exchange_operation.as_deref() != Some(operation_id.as_str())
+        {
+            return Err(AuthError::ChallengeConsumed);
+        }
+        match s.operations.get(operation_id.as_str()) {
+            Some((kind, digest)) if kind == EXCHANGE_APPLE_COMMAND && digest == &request_digest => {
+            }
+            Some(_) => return Err(AuthError::OperationIdReused),
+            None => {
+                s.operations.insert(
+                    operation_id.to_string(),
+                    (EXCHANGE_APPLE_COMMAND.into(), request_digest),
+                );
+            }
+        }
         match challenge.phase {
             ChallengePhase::Claimed => {
-                if challenge.expires_at_unix <= now_unix {
-                    return Err(AuthError::ChallengeExpired);
-                }
                 challenge.phase = ChallengePhase::ProviderCallStarted;
                 challenge.lease_until_unix = now_unix + 300;
                 s.phase = Some(ChallengePhase::ProviderCallStarted);
@@ -261,9 +283,6 @@ impl AuthRepository for FakeRepo {
                 Ok(ChallengeClaimResult::ProviderCallRequired(challenge))
             }
             ChallengePhase::ProviderCallStarted => {
-                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
-                    return Err(AuthError::ChallengeConsumed);
-                }
                 if challenge.lease_until_unix > now_unix {
                     return Err(AuthError::InvalidChallengePhase);
                 }
@@ -271,22 +290,11 @@ impl AuthRepository for FakeRepo {
                 s.challenge.as_mut().unwrap().phase = ChallengePhase::Terminal;
                 Ok(ChallengeClaimResult::ProviderExchangeIndeterminate)
             }
-            ChallengePhase::ProviderResultKnown => {
-                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
-                    return Err(AuthError::ChallengeConsumed);
-                }
-                Ok(ChallengeClaimResult::ProviderResultKnown(
-                    challenge,
-                    s.provider_result.clone().ok_or(AuthError::Vault)?,
-                ))
-            }
-            ChallengePhase::Terminal => {
-                if s.exchange_operation.as_deref() != Some(operation_id.as_str()) {
-                    Err(AuthError::ChallengeConsumed)
-                } else {
-                    Ok(ChallengeClaimResult::ProviderExchangeIndeterminate)
-                }
-            }
+            ChallengePhase::ProviderResultKnown => Ok(ChallengeClaimResult::ProviderResultKnown(
+                challenge,
+                s.provider_result.clone().ok_or(AuthError::Vault)?,
+            )),
+            ChallengePhase::Terminal => Ok(ChallengeClaimResult::ProviderExchangeIndeterminate),
         }
     }
     async fn mark_provider_exchange_indeterminate(
@@ -545,6 +553,32 @@ fn request(operation: &str, challenge: &str) -> (NewChallenge, ExchangeRequest) 
     (request, exchange)
 }
 
+fn bound_identity(subject: &str, audience: &str, nonce_hash: Vec<u8>) -> VerifiedExternalIdentity {
+    let challenge = ChallengeClaim {
+        id: ChallengeId::new("20000000-0000-4000-8000-000000000099").unwrap(),
+        operation_id: OperationId::new("10000000-0000-4000-8000-000000000099").unwrap(),
+        provider_config_id: ProviderConfigId::new(APPLE_PROVIDER_CONFIG).unwrap(),
+        audience: audience.into(),
+        platform: "macos".into(),
+        state_hash: vec![0x22; 32],
+        nonce_hash: nonce_hash.clone(),
+        phase: ChallengePhase::ProviderResultKnown,
+        lease_until_unix: 1_300,
+        expires_at_unix: 1_300,
+    };
+    let evidence = AppleIdentityEvidence::from_verified_claims(
+        ProviderConfigId::new(APPLE_PROVIDER_CONFIG).unwrap(),
+        APPLE_ISSUER,
+        subject,
+        audience,
+        nonce_hash,
+        1_000,
+        None,
+    )
+    .unwrap();
+    VerifiedExternalIdentity::bind_apple(evidence, &challenge, 1_000).unwrap()
+}
+
 fn create_wire(operation_id: &str, platform: &str) -> ParsedAuthCommand {
     let raw = format!(
         "{{\"clientPlatform\":\"{platform}\",\"flow\":\"native\",\"operationId\":\"{operation_id}\",\"provider\":\"apple\"}}"
@@ -590,11 +624,7 @@ async fn same_identity_reuses_account_and_hmac_is_shared() {
         result.challenge_id.as_str(),
         "20000000-0000-4000-8000-000000000001"
     );
-    let provider = FakeProvider {
-        indeterminate: false,
-        subject: "same".into(),
-        calls: Arc::new(AtomicUsize::new(0)),
-    };
+    let provider = FakeProvider::valid("same");
     let vault = FakeVault::default();
     let first = app
         .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
@@ -630,7 +660,7 @@ async fn same_identity_reuses_account_and_hmac_is_shared() {
 #[tokio::test]
 async fn concurrent_same_subject_finishes_to_one_account() {
     let repo = FakeRepo::default();
-    let identity = VerifiedExternalIdentity::apple("same-subject", 1_000).unwrap();
+    let identity = bound_identity("same-subject", "dev.serikayuzuki.fuminiwa", vec![0x33; 32]);
     let challenge = ChallengeId::new("challenge_fake").unwrap();
     let op_a = OperationId::new("op_concurrent_a").unwrap();
     let op_b = OperationId::new("op_concurrent_b").unwrap();
@@ -690,11 +720,7 @@ async fn refresh_lost_ack_replay_and_reuse_revoke_are_distinct() {
         &challenge.challenge_id,
         &challenge.state,
     );
-    let provider = FakeProvider {
-        indeterminate: false,
-        subject: "same".into(),
-        calls: Arc::new(AtomicUsize::new(0)),
-    };
+    let provider = FakeProvider::valid("same");
     let vault = FakeVault::default();
     let grant = app
         .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
@@ -758,11 +784,8 @@ async fn provider_call_indeterminate_is_terminal_and_revoke_is_idempotent() {
         &challenge.challenge_id,
         &challenge.state,
     );
-    let provider = FakeProvider {
-        indeterminate: true,
-        subject: "same".into(),
-        calls: Arc::new(AtomicUsize::new(0)),
-    };
+    let mut provider = FakeProvider::valid("same");
+    provider.indeterminate = true;
     let vault = FakeVault::default();
     assert_eq!(
         app.exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
@@ -838,6 +861,97 @@ async fn challenge_material_is_server_generated_256_bit_and_platform_scoped() {
 }
 
 #[tokio::test]
+async fn provider_evidence_must_match_exact_audience_and_nonce_without_credential() {
+    for mismatch in ["audience", "nonce"] {
+        let repo = FakeRepo::default();
+        let app = AuthApplication::new(repo.clone());
+        let challenge = app
+            .create_challenge_from_wire(
+                &create_wire(
+                    if mismatch == "audience" {
+                        "10000000-0000-4000-8000-000000000021"
+                    } else {
+                        "10000000-0000-4000-8000-000000000022"
+                    },
+                    "ios",
+                ),
+                1_000,
+            )
+            .await
+            .unwrap();
+        let exchange = exchange_wire(
+            if mismatch == "audience" {
+                "30000000-0000-4000-8000-000000000021"
+            } else {
+                "30000000-0000-4000-8000-000000000022"
+            },
+            &challenge.challenge_id,
+            &challenge.state,
+        );
+        let mut provider = FakeProvider::valid("proof-mismatch-subject");
+        if mismatch == "audience" {
+            provider.audience_override = Some("dev.serikayuzuki.fuminiwa".into());
+        } else {
+            provider.nonce_override = Some(vec![0x77; 32]);
+        }
+        assert_eq!(
+            app.exchange_apple_from_wire(
+                &exchange,
+                &provider,
+                &fixture_hasher(),
+                &FakeVault::default(),
+                1_000,
+            )
+            .await
+            .unwrap_err(),
+            AuthError::ProviderExchangeIndeterminate
+        );
+        let state = repo.0.lock().unwrap();
+        assert!(state.account.is_none());
+        assert_eq!(state.phase, Some(ChallengePhase::Terminal));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn invalid_exchange_state_does_not_reserve_an_operation() {
+    let repo = FakeRepo::default();
+    let app = AuthApplication::new(repo.clone());
+    let challenge = app
+        .create_challenge_from_wire(
+            &create_wire("10000000-0000-4000-8000-000000000023", "ios"),
+            1_000,
+        )
+        .await
+        .unwrap();
+    let exchange = exchange_wire(
+        "30000000-0000-4000-8000-000000000023",
+        &challenge.challenge_id,
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    );
+    let operation_count_before = repo.0.lock().unwrap().operations.len();
+    let provider = FakeProvider::valid("unused-subject");
+    assert_eq!(
+        app.exchange_apple_from_wire(
+            &exchange,
+            &provider,
+            &fixture_hasher(),
+            &FakeVault::default(),
+            1_000,
+        )
+        .await
+        .unwrap_err(),
+        AuthError::InvalidRequest
+    );
+    let state = repo.0.lock().unwrap();
+    assert_eq!(state.operations.len(), operation_count_before);
+    assert!(!state
+        .operations
+        .contains_key("30000000-0000-4000-8000-000000000023"));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn provider_result_known_resumes_without_calling_apple_again() {
     let repo = FakeRepo::default();
     let app = AuthApplication::new(repo.clone());
@@ -854,11 +968,7 @@ async fn provider_result_known_resumes_without_calling_apple_again() {
         &challenge.state,
     );
     repo.0.lock().unwrap().fail_finish_once = true;
-    let provider = FakeProvider {
-        indeterminate: false,
-        subject: "crash-resume-subject".into(),
-        calls: Arc::new(AtomicUsize::new(0)),
-    };
+    let provider = FakeProvider::valid("crash-resume-subject");
     let vault = FakeVault::default();
     assert!(matches!(
         app.exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
@@ -871,12 +981,14 @@ async fn provider_result_known_resumes_without_calling_apple_again() {
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 
-    let grant = app
-        .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_000)
+    let restarted_app = AuthApplication::new(repo.clone());
+    let grant = restarted_app
+        .exchange_apple_from_wire(&exchange, &provider, &fixture_hasher(), &vault, 1_301)
         .await
         .unwrap();
     assert_eq!(grant.principal.account_id.as_str(), "acct_fake");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(repo.0.lock().unwrap().phase, Some(ChallengePhase::Terminal));
 }
 
 #[tokio::test]
@@ -890,17 +1002,11 @@ async fn challenge_expiry_and_provider_call_lease_fail_closed() {
     )
     .await
     .unwrap();
-    repo.reserve_operation(
-        &exchange.operation_id,
-        EXCHANGE_APPLE_COMMAND,
-        &exchange.request_digest,
-    )
-    .await
-    .unwrap();
     assert!(matches!(
         repo.claim_challenge_for_exchange(
             &exchange.challenge_id,
             &exchange.operation_id,
+            exchange.request_digest,
             &digest_request(&exchange.state),
             1_000,
         )
@@ -912,6 +1018,7 @@ async fn challenge_expiry_and_provider_call_lease_fail_closed() {
         repo.claim_challenge_for_exchange(
             &exchange.challenge_id,
             &exchange.operation_id,
+            exchange.request_digest,
             &digest_request(&exchange.state),
             1_001,
         )
@@ -923,6 +1030,7 @@ async fn challenge_expiry_and_provider_call_lease_fail_closed() {
         repo.claim_challenge_for_exchange(
             &exchange.challenge_id,
             &exchange.operation_id,
+            exchange.request_digest,
             &digest_request(&exchange.state),
             1_300,
         )
@@ -934,6 +1042,7 @@ async fn challenge_expiry_and_provider_call_lease_fail_closed() {
         repo.claim_challenge_for_exchange(
             &exchange.challenge_id,
             &exchange.operation_id,
+            exchange.request_digest,
             &digest_request(&exchange.state),
             1_301,
         )
@@ -956,6 +1065,7 @@ async fn challenge_expiry_and_provider_call_lease_fail_closed() {
             .claim_challenge_for_exchange(
                 &exchange.challenge_id,
                 &exchange.operation_id,
+                exchange.request_digest,
                 &digest_request(&exchange.state),
                 challenge.expires_at_unix,
             )

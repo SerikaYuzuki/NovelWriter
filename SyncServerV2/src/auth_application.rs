@@ -125,12 +125,6 @@ pub trait AuthRepository: Send + Sync {
         kind: &str,
         digest: &[u8; 32],
     ) -> Result<Option<AuthReceipt>, AuthError>;
-    async fn reserve_operation(
-        &self,
-        operation_id: &OperationId,
-        kind: &str,
-        digest: &[u8; 32],
-    ) -> Result<(), AuthError>;
     async fn create_challenge(
         &self,
         challenge: &NewChallenge,
@@ -141,6 +135,7 @@ pub trait AuthRepository: Send + Sync {
         &self,
         challenge_id: &ChallengeId,
         operation_id: &OperationId,
+        request_digest: [u8; 32],
         state_hash: &[u8],
         now_unix: i64,
     ) -> Result<ChallengeClaimResult, AuthError>;
@@ -285,33 +280,33 @@ impl<R: AuthRepository> AuthApplication<R> {
         {
             return decode_exchange_receipt(&receipt);
         }
-        self.repository
-            .reserve_operation(
-                &request.operation_id,
-                EXCHANGE_APPLE_COMMAND,
-                &request.request_digest,
-            )
-            .await?;
-        if let Some(receipt) = self
-            .repository
-            .find_operation_receipt(
-                &request.operation_id,
-                EXCHANGE_APPLE_COMMAND,
-                &request.request_digest,
-            )
-            .await?
-        {
-            return decode_exchange_receipt(&receipt);
-        }
-        let claimed = self
+        let claimed = match self
             .repository
             .claim_challenge_for_exchange(
                 &request.challenge_id,
                 &request.operation_id,
+                request.request_digest,
                 &digest_request(&request.state),
                 now_unix,
             )
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(receipt) = self
+                    .repository
+                    .find_operation_receipt(
+                        &request.operation_id,
+                        EXCHANGE_APPLE_COMMAND,
+                        &request.request_digest,
+                    )
+                    .await?
+                {
+                    return decode_exchange_receipt(&receipt);
+                }
+                return Err(error);
+            }
+        };
         let (challenge, identity) = match claimed {
             ChallengeClaimResult::ProviderExchangeIndeterminate => {
                 self.repository
@@ -331,12 +326,34 @@ impl<R: AuthRepository> AuthApplication<R> {
                         &secret,
                     )
                     .await?;
-                let durable: DurableVerifiedIdentity =
-                    serde_json::from_slice(&bytes).map_err(|_| AuthError::Vault)?;
-                (challenge, VerifiedExternalIdentity::from(durable))
+                let durable: DurableVerifiedIdentity = match serde_json::from_slice(&bytes) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        self.repository
+                            .mark_provider_exchange_indeterminate(
+                                &request.challenge_id,
+                                &request.operation_id,
+                                request.request_digest,
+                            )
+                            .await?;
+                        return Err(AuthError::ProviderExchangeIndeterminate);
+                    }
+                };
+                let identity = VerifiedExternalIdentity::from(durable);
+                if identity.validate_durable_for_challenge(&challenge).is_err() {
+                    self.repository
+                        .mark_provider_exchange_indeterminate(
+                            &request.challenge_id,
+                            &request.operation_id,
+                            request.request_digest,
+                        )
+                        .await?;
+                    return Err(AuthError::ProviderExchangeIndeterminate);
+                }
+                (challenge, identity)
             }
             ChallengeClaimResult::ProviderCallRequired(challenge) => {
-                let identity = match provider
+                let evidence = match provider
                     .exchange(
                         &challenge,
                         &request.authorization_code,
@@ -357,12 +374,20 @@ impl<R: AuthRepository> AuthApplication<R> {
                     }
                     Err(error) => return Err(error),
                 };
-                identity.validate_apple()?;
-                if let Some(credential) = &identity.provider_credential {
-                    if credential.audience != challenge.audience {
-                        return Err(AuthError::ProviderNotAllowed);
-                    }
-                }
+                let identity =
+                    match VerifiedExternalIdentity::bind_apple(evidence, &challenge, now_unix) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            self.repository
+                                .mark_provider_exchange_indeterminate(
+                                    &request.challenge_id,
+                                    &request.operation_id,
+                                    request.request_digest,
+                                )
+                                .await?;
+                            return Err(AuthError::ProviderExchangeIndeterminate);
+                        }
+                    };
                 let durable = DurableVerifiedIdentity::from(&identity);
                 let value = serde_json::to_value(&durable).map_err(|_| AuthError::Vault)?;
                 let raw = crate::domain::canonical_json(&value).map_err(|_| AuthError::Vault)?;
@@ -384,24 +409,19 @@ impl<R: AuthRepository> AuthApplication<R> {
                 (challenge, identity)
             }
         };
-        identity.validate_apple()?;
-        if now_unix - identity.authenticated_at_unix > 300
-            || identity.authenticated_at_unix - now_unix > 300
-        {
-            return Err(AuthError::InvalidRequest);
-        }
+        identity.validate_durable_for_challenge(&challenge)?;
         let subject_lookup = hasher
             .subject_lookup(
-                &identity.provider_config_id,
-                &identity.exact_issuer,
-                &identity.subject,
+                identity.provider_config_id(),
+                identity.exact_issuer(),
+                identity.subject(),
             )
             .await?;
         let mut subject_bytes = b"FUMINIWA-EXTERNAL-IDENTITY-V1".to_vec();
         for value in [
-            identity.provider_config_id.as_str(),
-            identity.exact_issuer.as_str(),
-            identity.subject.as_str(),
+            identity.provider_config_id().as_str(),
+            identity.exact_issuer(),
+            identity.subject(),
         ] {
             let length =
                 u32::try_from(value.len()).map_err(|_| AuthError::InvalidExternalIdentity)?;

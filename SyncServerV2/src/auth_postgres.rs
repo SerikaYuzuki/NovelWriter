@@ -193,34 +193,6 @@ impl AuthRepository for AuthPostgresRepository {
         self.find_receipt(operation_id, kind, digest).await
     }
 
-    async fn reserve_operation(
-        &self,
-        operation_id: &OperationId,
-        kind: &str,
-        digest: &[u8; 32],
-    ) -> Result<(), AuthError> {
-        let id = Self::uuid(operation_id.as_str())?;
-        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
-        sqlx::query("INSERT INTO auth_v1.auth_operations(operation_id,command_kind,request_digest,state) VALUES($1,$2,$3,'reserved') ON CONFLICT DO NOTHING")
-            .bind(id).bind(kind).bind(digest.as_slice()).execute(&mut *tx).await.map_err(Self::map_db)?;
-        let row = sqlx::query("SELECT command_kind,request_digest FROM auth_v1.auth_operations WHERE operation_id=$1 FOR UPDATE")
-            .bind(id).fetch_one(&mut *tx).await.map_err(Self::map_db)?;
-        if row
-            .try_get::<String, _>("command_kind")
-            .map_err(Self::map_db)?
-            != kind
-            || row
-                .try_get::<Vec<u8>, _>("request_digest")
-                .map_err(Self::map_db)?
-                .as_slice()
-                != digest
-        {
-            return Err(AuthError::OperationIdReused);
-        }
-        tx.commit().await.map_err(Self::map_db)?;
-        Ok(())
-    }
-
     async fn create_challenge(
         &self,
         challenge: &NewChallenge,
@@ -346,26 +318,80 @@ impl AuthRepository for AuthPostgresRepository {
         &self,
         challenge_id: &ChallengeId,
         operation_id: &OperationId,
+        request_digest: [u8; 32],
         state_hash: &[u8],
         now_unix: i64,
     ) -> Result<ChallengeClaimResult, AuthError> {
         let id = Self::uuid(challenge_id.as_str().trim_start_matches("challenge_"))?;
-        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
         let exchange_operation = Self::uuid(operation_id.as_str())?;
-        let operation = sqlx::query("SELECT command_kind,state FROM auth_v1.auth_operations WHERE operation_id=$1 FOR UPDATE")
-            .bind(exchange_operation)
-            .fetch_optional(&mut *tx)
+        // Reject malformed, expired, or already-owned challenges before an
+        // operation row can be reserved. The same predicates are repeated
+        // under row lock below; a race therefore rolls the reservation back.
+        let preliminary = sqlx::query("SELECT exchange_operation_id,state_hash,phase,expires_at FROM auth_v1.auth_challenges WHERE challenge_id=$1")
+            .bind(id)
+            .fetch_optional(&self.pool)
             .await
             .map_err(Self::map_db)?
-            .ok_or(AuthError::InvalidChallengePhase)?;
+            .ok_or(AuthError::NotFound)?;
+        if preliminary
+            .try_get::<Vec<u8>, _>("state_hash")
+            .map_err(Self::map_db)?
+            .as_slice()
+            != state_hash
+        {
+            return Err(AuthError::InvalidRequest);
+        }
+        let preliminary_phase = parse_phase(
+            &preliminary
+                .try_get::<String, _>("phase")
+                .map_err(Self::map_db)?,
+        );
+        if matches!(preliminary_phase, ChallengePhase::Claimed)
+            && preliminary
+                .try_get::<DateTime<Utc>, _>("expires_at")
+                .map_err(Self::map_db)?
+                .timestamp()
+                <= now_unix
+        {
+            return Err(AuthError::ChallengeExpired);
+        }
+        if !matches!(preliminary_phase, ChallengePhase::Claimed)
+            && preliminary
+                .try_get::<Option<Uuid>, _>("exchange_operation_id")
+                .map_err(Self::map_db)?
+                != Some(exchange_operation)
+        {
+            return Err(AuthError::ChallengeConsumed);
+        }
+
+        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+        sqlx::query("INSERT INTO auth_v1.auth_operations(operation_id,command_kind,request_digest,state) VALUES($1,'exchangeAppleNativeCredential',$2,'reserved') ON CONFLICT DO NOTHING")
+            .bind(exchange_operation)
+            .bind(request_digest.as_slice())
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+        let operation = sqlx::query("SELECT command_kind,request_digest,state FROM auth_v1.auth_operations WHERE operation_id=$1 FOR UPDATE")
+            .bind(exchange_operation)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
         if operation
             .try_get::<String, _>("command_kind")
             .map_err(Self::map_db)?
             != EXCHANGE_APPLE_COMMAND
             || operation
-                .try_get::<String, _>("state")
+                .try_get::<Vec<u8>, _>("request_digest")
                 .map_err(Self::map_db)?
-                != "reserved"
+                .as_slice()
+                != request_digest
+        {
+            return Err(AuthError::OperationIdReused);
+        }
+        if operation
+            .try_get::<String, _>("state")
+            .map_err(Self::map_db)?
+            != "reserved"
         {
             return Err(AuthError::InvalidChallengePhase);
         }
@@ -531,7 +557,7 @@ impl AuthRepository for AuthPostgresRepository {
             tx.commit().await.map_err(Self::map_db)?;
             return Ok(());
         }
-        let changed = sqlx::query("UPDATE auth_v1.auth_challenges SET phase='terminal' WHERE challenge_id=$1 AND exchange_operation_id=$2 AND phase IN ('providerCallStarted','terminal')")
+        let changed = sqlx::query("UPDATE auth_v1.auth_challenges SET phase='terminal',provider_result_ciphertext=NULL,provider_result_key_version=NULL,provider_result_purpose=NULL WHERE challenge_id=$1 AND exchange_operation_id=$2 AND phase IN ('providerCallStarted','providerResultKnown','terminal')")
             .bind(id).bind(op).execute(&mut *tx).await.map_err(Self::map_db)?;
         if changed.rows_affected() != 1 {
             return Err(AuthError::InvalidChallengePhase);
@@ -571,7 +597,26 @@ impl AuthRepository for AuthPostgresRepository {
         let id = Self::uuid(challenge_id.as_str().trim_start_matches("challenge_"))?;
         let op = Self::uuid(operation_id.as_str())?;
         let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
-        let claimed = sqlx::query("SELECT c.phase,c.exchange_operation_id,o.command_kind,o.state AS operation_state FROM auth_v1.auth_challenges c JOIN auth_v1.auth_operations o ON o.operation_id=c.exchange_operation_id WHERE c.challenge_id=$1 FOR UPDATE OF c,o")
+        let operation = sqlx::query(
+            "SELECT command_kind,state FROM auth_v1.auth_operations WHERE operation_id=$1 FOR UPDATE",
+        )
+            .bind(op)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(Self::map_db)?
+            .ok_or(AuthError::NotFound)?;
+        if operation
+            .try_get::<String, _>("command_kind")
+            .map_err(Self::map_db)?
+            != EXCHANGE_APPLE_COMMAND
+            || operation
+                .try_get::<String, _>("state")
+                .map_err(Self::map_db)?
+                != "reserved"
+        {
+            return Err(AuthError::InvalidChallengePhase);
+        }
+        let claimed = sqlx::query("SELECT phase,exchange_operation_id FROM auth_v1.auth_challenges WHERE challenge_id=$1 FOR UPDATE")
             .bind(id)
             .fetch_optional(&mut *tx)
             .await
@@ -581,14 +626,6 @@ impl AuthRepository for AuthPostgresRepository {
             .try_get::<Option<Uuid>, _>("exchange_operation_id")
             .map_err(Self::map_db)?
             != Some(op)
-            || claimed
-                .try_get::<String, _>("command_kind")
-                .map_err(Self::map_db)?
-                != EXCHANGE_APPLE_COMMAND
-            || claimed
-                .try_get::<String, _>("operation_state")
-                .map_err(Self::map_db)?
-                != "reserved"
             || claimed
                 .try_get::<String, _>("phase")
                 .map_err(Self::map_db)?
@@ -719,7 +756,7 @@ impl AuthRepository for AuthPostgresRepository {
             || challenge
                 .try_get::<String, _>("provider_config_id")
                 .map_err(Self::map_db)?
-                != identity.provider_config_id.as_str()
+                != identity.provider_config_id().as_str()
             || challenge
                 .try_get::<String, _>("audience")
                 .map_err(Self::map_db)?
@@ -740,7 +777,7 @@ impl AuthRepository for AuthPostgresRepository {
         // read back the committed AccountID instead of returning a duplicate
         // key error.
         let config_row = sqlx::query("SELECT provider_kind,exact_issuer,allowed_audiences,enabled FROM auth_v1.provider_configs WHERE provider_config_id=$1 FOR UPDATE")
-            .bind(identity.provider_config_id.as_str()).fetch_optional(&mut *tx).await.map_err(Self::map_db)?.ok_or(AuthError::ProviderNotAllowed)?;
+            .bind(identity.provider_config_id().as_str()).fetch_optional(&mut *tx).await.map_err(Self::map_db)?.ok_or(AuthError::ProviderNotAllowed)?;
         if !config_row
             .try_get::<bool, _>("enabled")
             .map_err(Self::map_db)?
@@ -751,7 +788,7 @@ impl AuthRepository for AuthPostgresRepository {
             || config_row
                 .try_get::<String, _>("exact_issuer")
                 .map_err(Self::map_db)?
-                != identity.exact_issuer
+                != identity.exact_issuer()
             || !config_row
                 .try_get::<Vec<String>, _>("allowed_audiences")
                 .map_err(Self::map_db)?
@@ -760,8 +797,8 @@ impl AuthRepository for AuthPostgresRepository {
         {
             return Err(AuthError::ProviderNotAllowed);
         }
-        let config = identity.provider_config_id.as_str();
-        let row = sqlx::query("SELECT identity_id,account_id,state FROM auth_v1.external_identities WHERE provider_config_id=$1 AND exact_issuer=$2 AND subject_lookup_hmac=$3 FOR UPDATE").bind(config).bind(&identity.exact_issuer).bind(&subject_lookup).fetch_optional(&mut *tx).await.map_err(Self::map_db)?;
+        let config = identity.provider_config_id().as_str();
+        let row = sqlx::query("SELECT identity_id,account_id,state FROM auth_v1.external_identities WHERE provider_config_id=$1 AND exact_issuer=$2 AND subject_lookup_hmac=$3 FOR UPDATE").bind(config).bind(identity.exact_issuer()).bind(&subject_lookup).fetch_optional(&mut *tx).await.map_err(Self::map_db)?;
         let (account_id, tenant_id, epoch, fence, identity_id) = if let Some(row) = row {
             if row.try_get::<String, _>("state").map_err(Self::map_db)? != "active" {
                 return Err(AuthError::SessionRevoked);
@@ -795,11 +832,11 @@ impl AuthRepository for AuthPostgresRepository {
             let fence = Self::fence()?;
             sqlx::query("INSERT INTO auth_v1.accounts(account_id,tenant_id,state,auth_epoch,fence) VALUES($1,$2,'active',1,$3)").bind(account.as_str()).bind(tenant.as_str()).bind(&fence).execute(&mut *tx).await.map_err(Self::map_db)?;
             let iid = Uuid::new_v4();
-            sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state) VALUES($1,$2,$3,$4,1,$5,'active')").bind(iid).bind(account.as_str()).bind(config).bind(&identity.exact_issuer).bind(&subject_lookup).execute(&mut *tx).await.map_err(Self::map_db)?;
+            sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state) VALUES($1,$2,$3,$4,1,$5,'active')").bind(iid).bind(account.as_str()).bind(config).bind(identity.exact_issuer()).bind(&subject_lookup).execute(&mut *tx).await.map_err(Self::map_db)?;
             sqlx::query("INSERT INTO auth_v1.external_identity_secrets(identity_id,key_version,purpose,ciphertext) VALUES($1,$2,'external_identity_subject_v1',$3)").bind(iid).bind(subject_secret.key_version).bind(subject_secret.ciphertext).execute(&mut *tx).await.map_err(Self::map_db)?;
             (account, tenant, 1, fence, iid)
         };
-        if let Some(credential) = &identity.provider_credential {
+        if let Some(credential) = identity.provider_credential() {
             if credential.audience != audience {
                 return Err(AuthError::ProviderNotAllowed);
             }

@@ -87,20 +87,76 @@ impl AccountFence {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Eq, PartialEq)]
+pub struct AppleIdentityEvidence {
+    provider_config_id: ProviderConfigId,
+    exact_issuer: String,
+    subject: String,
+    audience: String,
+    nonce_hash: Vec<u8>,
+    authenticated_at_unix: i64,
+    provider_credential: Option<VerifiedProviderCredential>,
+}
+impl AppleIdentityEvidence {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_verified_claims(
+        provider_config_id: ProviderConfigId,
+        exact_issuer: impl Into<String>,
+        subject: impl Into<String>,
+        audience: impl Into<String>,
+        nonce_hash: Vec<u8>,
+        authenticated_at_unix: i64,
+        provider_credential: Option<VerifiedProviderCredential>,
+    ) -> Result<Self, AuthError> {
+        let exact_issuer = exact_issuer.into();
+        let subject = subject.into();
+        let audience = audience.into();
+        if exact_issuer.is_empty()
+            || subject.is_empty()
+            || subject.len() > 512
+            || subject.bytes().any(|byte| byte == 0)
+            || audience.is_empty()
+            || audience.len() > 255
+            || nonce_hash.len() != 32
+        {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        Ok(Self {
+            provider_config_id,
+            exact_issuer,
+            subject,
+            audience,
+            nonce_hash,
+            authenticated_at_unix,
+            provider_credential,
+        })
+    }
+}
+impl fmt::Debug for AppleIdentityEvidence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AppleIdentityEvidence")
+            .field("provider_config_id", &self.provider_config_id)
+            .field("exact_issuer", &self.exact_issuer)
+            .field("subject", &"<redacted>")
+            .field("audience", &self.audience)
+            .field("nonce_hash", &"<redacted>")
+            .field("authenticated_at_unix", &self.authenticated_at_unix)
+            .field("provider_credential", &self.provider_credential.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub struct VerifiedExternalIdentity {
-    pub provider_config_id: ProviderConfigId,
-    pub exact_issuer: String,
-    /// This value is memory-only.  Persistence receives only a versioned HMAC
-    /// and an envelope ciphertext returned by the vault port.
-    #[serde(skip)]
-    pub subject: String,
-    pub authenticated_at_unix: i64,
-    /// Already envelope-encrypted provider refresh material. It never enters
-    /// the sync domain or a plaintext log/database field.
-    #[serde(skip)]
-    pub provider_credential: Option<VerifiedProviderCredential>,
+    provider_config_id: ProviderConfigId,
+    exact_issuer: String,
+    subject: String,
+    verified_audience: String,
+    verified_nonce_hash: Vec<u8>,
+    provider_authenticated_at_unix: i64,
+    freshness_verified_at_unix: i64,
+    provider_credential: Option<VerifiedProviderCredential>,
 }
 impl fmt::Debug for VerifiedExternalIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -109,7 +165,16 @@ impl fmt::Debug for VerifiedExternalIdentity {
             .field("provider_config_id", &self.provider_config_id)
             .field("exact_issuer", &self.exact_issuer)
             .field("subject", &"<redacted>")
-            .field("authenticated_at_unix", &self.authenticated_at_unix)
+            .field("verified_audience", &self.verified_audience)
+            .field("verified_nonce_hash", &"<redacted>")
+            .field(
+                "provider_authenticated_at_unix",
+                &self.provider_authenticated_at_unix,
+            )
+            .field(
+                "freshness_verified_at_unix",
+                &self.freshness_verified_at_unix,
+            )
             .field("provider_credential", &self.provider_credential.is_some())
             .finish()
     }
@@ -135,7 +200,10 @@ pub struct DurableVerifiedIdentity {
     pub provider_config_id: ProviderConfigId,
     pub exact_issuer: String,
     pub subject: String,
-    pub authenticated_at_unix: i64,
+    pub verified_audience: String,
+    pub verified_nonce_hash: Vec<u8>,
+    pub provider_authenticated_at_unix: i64,
+    pub freshness_verified_at_unix: i64,
     pub provider_credential: Option<VerifiedProviderCredential>,
 }
 impl fmt::Debug for DurableVerifiedIdentity {
@@ -145,7 +213,16 @@ impl fmt::Debug for DurableVerifiedIdentity {
             .field("provider_config_id", &self.provider_config_id)
             .field("exact_issuer", &self.exact_issuer)
             .field("subject", &"<redacted>")
-            .field("authenticated_at_unix", &self.authenticated_at_unix)
+            .field("verified_audience", &self.verified_audience)
+            .field("verified_nonce_hash", &"<redacted>")
+            .field(
+                "provider_authenticated_at_unix",
+                &self.provider_authenticated_at_unix,
+            )
+            .field(
+                "freshness_verified_at_unix",
+                &self.freshness_verified_at_unix,
+            )
             .field("provider_credential", &self.provider_credential.is_some())
             .finish()
     }
@@ -156,7 +233,10 @@ impl From<&VerifiedExternalIdentity> for DurableVerifiedIdentity {
             provider_config_id: value.provider_config_id.clone(),
             exact_issuer: value.exact_issuer.clone(),
             subject: value.subject.clone(),
-            authenticated_at_unix: value.authenticated_at_unix,
+            verified_audience: value.verified_audience.clone(),
+            verified_nonce_hash: value.verified_nonce_hash.clone(),
+            provider_authenticated_at_unix: value.provider_authenticated_at_unix,
+            freshness_verified_at_unix: value.freshness_verified_at_unix,
             provider_credential: value.provider_credential.clone(),
         }
     }
@@ -167,38 +247,92 @@ impl From<DurableVerifiedIdentity> for VerifiedExternalIdentity {
             provider_config_id: value.provider_config_id,
             exact_issuer: value.exact_issuer,
             subject: value.subject,
-            authenticated_at_unix: value.authenticated_at_unix,
+            verified_audience: value.verified_audience,
+            verified_nonce_hash: value.verified_nonce_hash,
+            provider_authenticated_at_unix: value.provider_authenticated_at_unix,
+            freshness_verified_at_unix: value.freshness_verified_at_unix,
             provider_credential: value.provider_credential,
         }
     }
 }
 impl VerifiedExternalIdentity {
-    pub fn apple(
-        subject: impl Into<String>,
-        authenticated_at_unix: i64,
+    pub fn bind_apple(
+        evidence: AppleIdentityEvidence,
+        challenge: &ChallengeClaim,
+        freshness_verified_at_unix: i64,
     ) -> Result<Self, AuthError> {
-        let subject = subject.into();
-        if subject.is_empty() || subject.len() > 512 || subject.bytes().any(|b| b == 0) {
-            return Err(AuthError::InvalidExternalIdentity);
-        }
-        Ok(Self {
-            provider_config_id: ProviderConfigId::new(APPLE_PROVIDER_CONFIG)?,
-            exact_issuer: APPLE_ISSUER.into(),
-            subject,
-            authenticated_at_unix,
-            provider_credential: None,
-        })
-    }
-    pub fn validate_apple(&self) -> Result<(), AuthError> {
-        if self.provider_config_id.as_str() != APPLE_PROVIDER_CONFIG
-            || self.exact_issuer != APPLE_ISSUER
+        if evidence.provider_config_id.as_str() != APPLE_PROVIDER_CONFIG
+            || evidence.provider_config_id != challenge.provider_config_id
+            || evidence.exact_issuer != APPLE_ISSUER
+            || evidence.audience != challenge.audience
         {
             return Err(AuthError::ProviderNotAllowed);
         }
-        if self.subject.is_empty() {
+        if evidence.nonce_hash != challenge.nonce_hash
+            || evidence
+                .authenticated_at_unix
+                .abs_diff(freshness_verified_at_unix)
+                > 300
+            || evidence
+                .provider_credential
+                .as_ref()
+                .is_some_and(|credential| credential.audience != challenge.audience)
+        {
+            return Err(AuthError::InvalidRequest);
+        }
+        Ok(Self {
+            provider_config_id: evidence.provider_config_id,
+            exact_issuer: evidence.exact_issuer,
+            subject: evidence.subject,
+            verified_audience: evidence.audience,
+            verified_nonce_hash: evidence.nonce_hash,
+            provider_authenticated_at_unix: evidence.authenticated_at_unix,
+            freshness_verified_at_unix,
+            provider_credential: evidence.provider_credential,
+        })
+    }
+    pub fn validate_durable_for_challenge(
+        &self,
+        challenge: &ChallengeClaim,
+    ) -> Result<(), AuthError> {
+        if self.provider_config_id.as_str() != APPLE_PROVIDER_CONFIG
+            || self.provider_config_id != challenge.provider_config_id
+            || self.exact_issuer != APPLE_ISSUER
+            || self.verified_audience != challenge.audience
+        {
+            return Err(AuthError::ProviderNotAllowed);
+        }
+        if self.verified_nonce_hash != challenge.nonce_hash
+            || self
+                .provider_authenticated_at_unix
+                .abs_diff(self.freshness_verified_at_unix)
+                > 300
+            || self
+                .provider_credential
+                .as_ref()
+                .is_some_and(|credential| credential.audience != challenge.audience)
+        {
+            return Err(AuthError::InvalidRequest);
+        }
+        if self.subject.is_empty()
+            || self.subject.len() > 512
+            || self.subject.bytes().any(|byte| byte == 0)
+        {
             return Err(AuthError::InvalidExternalIdentity);
         }
         Ok(())
+    }
+    pub fn provider_config_id(&self) -> &ProviderConfigId {
+        &self.provider_config_id
+    }
+    pub fn exact_issuer(&self) -> &str {
+        &self.exact_issuer
+    }
+    pub fn subject(&self) -> &str {
+        &self.subject
+    }
+    pub fn provider_credential(&self) -> Option<&VerifiedProviderCredential> {
+        self.provider_credential.as_ref()
     }
 }
 
@@ -446,7 +580,7 @@ pub trait AppleProvider: Send + Sync {
         challenge: &ChallengeClaim,
         authorization_code: &[u8],
         identity_token: &[u8],
-    ) -> Result<VerifiedExternalIdentity, AuthError>;
+    ) -> Result<AppleIdentityEvidence, AuthError>;
     async fn revoke(
         &self,
         credential_id: &CredentialId,
