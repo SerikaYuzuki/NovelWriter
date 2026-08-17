@@ -164,7 +164,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 // local open here gives the application the exact bytes to
                 // hand to the editor before it wakes the source worker.
                 let clone = try await store.open(
-                    workID: newWorkID,
+                    workID: prepared.reservation.newWorkID,
                     scope: localScope
                 )
                 return SyncV2Preparation(

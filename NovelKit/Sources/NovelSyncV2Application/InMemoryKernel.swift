@@ -159,6 +159,19 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             throw SyncV2ApplicationError.staleConflictAction
         }
         if action.choice == .keepBoth {
+            if let existingIntent = work.intents.first(where: {
+                guard case let .conflict(existingAction) = $0.kind else { return false }
+                return existingAction.conflictID == action.conflictID &&
+                    existingAction.choice == .keepBoth
+            }), case let .conflict(existingAction) = existingIntent.kind,
+            let existingWorkID = existingAction.newWorkID,
+            works[existingWorkID] != nil {
+                return SyncV2Preparation(
+                    intentID: existingIntent.id,
+                    noChanges: false,
+                    preparedWorkID: existingWorkID
+                )
+            }
             guard let newWorkID = action.newWorkID,
                   let newDocumentID = action.newDocumentID,
                   newWorkID != action.workID else {
@@ -167,17 +180,6 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             if let existing = works[newWorkID] {
                 guard existing.document.id == newDocumentID.rawValue else {
                     throw SyncV2ApplicationError.staleConflictAction
-                }
-                if let existingIntent = work.intents.first(where: {
-                    guard case let .conflict(existingAction) = $0.kind else { return false }
-                    return existingAction.conflictID == action.conflictID &&
-                        existingAction.choice == .keepBoth
-                }) {
-                    return SyncV2Preparation(
-                        intentID: existingIntent.id,
-                        noChanges: false,
-                        preparedWorkID: newWorkID
-                    )
                 }
                 throw SyncV2ApplicationError.staleConflictAction
             }
