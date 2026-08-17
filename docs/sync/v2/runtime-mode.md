@@ -20,9 +20,8 @@ struct TestDependencies: Sendable {
 `ProductionDependencies`, `TestRoot`, `FakeTransport`, and `TestKeychain` are
 distinct types. A test cannot construct a production root, production URL, or
 production Keychain through this API; a production composition cannot accept a
-test root. `RuntimeMode.v1ArchiveReadOnly` is deliberately not an enum case.
-Archive reading belongs to a separate offline migration executable and cannot
-construct a live worker.
+test root. There is no archive case in `RuntimeMode`. Archive reading belongs
+to a separate offline migration executable and cannot construct a live worker.
 
 `preview` uses fixed values and no SQLite/network/Keychain. `test` requires a
 temporary root and injected fake transport/keychain. It rejects symlink roots,

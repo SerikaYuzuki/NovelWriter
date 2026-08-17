@@ -8,36 +8,298 @@ sharing canonicalization or state-machine code.
 find docs/sync/v2 -name '*.json' -print0 | xargs -0 -n1 jq -e . >/dev/null
 ruby -e 'require "yaml"; YAML.safe_load(File.read("docs/sync/v2/openapi.yaml"), aliases: true)'
 python3 - <<'PY'
-import hashlib, json
+import base64
+import hashlib
+import json
 from pathlib import Path
+
+import yaml
 from jsonschema import Draft202012Validator
+
 root = Path("docs/sync/v2")
-for schema, fixture in [("snapshot.schema.json", "fixtures/canonical/snapshot.json"),
-                        ("command.schema.json", "fixtures/canonical/publish-command.json")]:
-    model = json.loads((root / fixture).read_text())
-    Draft202012Validator(json.loads((root / schema).read_text())).validate(model)
-for fixture, digest_file in [("snapshot.json", "snapshot.sha256"),
-                             ("publish-command.json", "publish-command.sha256")]:
-    canonical = (root / "fixtures/canonical" / fixture).read_bytes()
-    assert not canonical.endswith(b"\\n"), fixture
-    json.loads(canonical)
-    expected = (root / "fixtures/canonical" / digest_file).read_text().strip()
-    assert hashlib.sha256(canonical).hexdigest() == expected
-for row in json.loads((root / "fixtures/canonical/object-hashes.json").read_bytes())["objects"]:
-    data = (root / "fixtures/canonical/objects" / row["file"]).read_bytes()
-    assert not data.endswith(b"\\n"), row["file"]
-    assert len(data) == row["byteCount"]
-    assert hashlib.sha256(data).hexdigest() == row["objectId"]
-print("v2 JSON/schema/hash checks passed")
+canonical_root = root / "fixtures/canonical"
+
+
+def read_json(path):
+    return json.loads(path.read_bytes())
+
+
+def simple_fixture_jcs(value):
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+
+
+for path in root.rglob("*.schema.json"):
+    Draft202012Validator.check_schema(read_json(path))
+
+snapshot_schema = Draft202012Validator(read_json(root / "snapshot.schema.json"))
+command_schema = Draft202012Validator(read_json(root / "command.schema.json"))
+expected_model_schema = Draft202012Validator(
+    read_json(root / "expected-model.schema.json")
+)
+snapshot_bytes = (canonical_root / "snapshot.json").read_bytes()
+snapshot = read_json(canonical_root / "snapshot.json")
+snapshot_schema.validate(snapshot)
+expected_model = read_json(canonical_root / "expected-model.json")
+expected_model_schema.validate(expected_model)
+
+entity_map = read_json(canonical_root / "entity-fixture-map.json")
+for row in entity_map["fixtures"]:
+    schema = Draft202012Validator(
+        read_json(root / "entity-schemas" / row["schema"])
+    )
+    model = read_json(canonical_root / "objects" / row["file"])
+    schema.validate(model)
+
+scenario_schema = Draft202012Validator(read_json(root / "scenario.schema.json"))
+for path in (root / "fixtures/scenarios").glob("*.json"):
+    scenario_schema.validate(read_json(path))
+
+for fixture, digest_file in [
+    ("snapshot.json", "snapshot.sha256"),
+    ("publish-command.json", "publish-command.sha256"),
+]:
+    exact = (canonical_root / fixture).read_bytes()
+    assert not exact.endswith(b"\n"), fixture
+    assert exact == simple_fixture_jcs(json.loads(exact)), fixture
+    expected = (canonical_root / digest_file).read_text().strip()
+    assert hashlib.sha256(exact).hexdigest() == expected, fixture
+
+command_rows = read_json(canonical_root / "command-hashes.json")["commands"]
+assert {row["commandKind"] for row in command_rows} == {
+    "cloneWork",
+    "createWork",
+    "finalizeObject",
+    "prepareObject",
+    "publish",
+    "registerSnapshot",
+    "resolveDevice",
+    "resolveServer",
+    "restore",
+}
+for row in command_rows:
+    exact = (canonical_root / row["file"]).read_bytes()
+    command = json.loads(exact)
+    assert not exact.endswith(b"\n"), row["file"]
+    assert exact == simple_fixture_jcs(command), row["file"]
+    assert len(exact) == row["byteCount"], row["file"]
+    assert hashlib.sha256(exact).hexdigest() == row["requestDigest"], row["file"]
+    assert command["commandKind"] == row["commandKind"]
+    command_schema.validate(command)
+
+register = read_json(canonical_root / "commands/register-snapshot.json")
+encoded = register["payload"]["manifestBase64URL"]
+decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+assert decoded == snapshot_bytes
+assert hashlib.sha256(decoded).hexdigest() == register["payload"]["snapshotId"]
+assert register["payload"]["manifestBytesDigest"] == register["payload"]["snapshotId"]
+
+clone_hashes = read_json(canonical_root / "clone-derived-hashes.json")
+clone_document_bytes = (canonical_root / clone_hashes["document"]["file"]).read_bytes()
+clone_snapshot_bytes = (canonical_root / clone_hashes["snapshot"]["file"]).read_bytes()
+assert not clone_document_bytes.endswith(b"\n")
+assert not clone_snapshot_bytes.endswith(b"\n")
+assert len(clone_document_bytes) == clone_hashes["document"]["byteCount"]
+assert hashlib.sha256(clone_document_bytes).hexdigest() == clone_hashes["document"]["objectId"]
+assert len(clone_snapshot_bytes) == clone_hashes["snapshot"]["byteCount"]
+assert hashlib.sha256(clone_snapshot_bytes).hexdigest() == clone_hashes["snapshot"]["snapshotId"]
+assert clone_document_bytes == simple_fixture_jcs(json.loads(clone_document_bytes))
+assert clone_snapshot_bytes == simple_fixture_jcs(json.loads(clone_snapshot_bytes))
+clone_snapshot = json.loads(clone_snapshot_bytes)
+snapshot_schema.validate(clone_snapshot)
+clone_command = read_json(canonical_root / "commands/clone-work.json")
+derived_clone = json.loads(snapshot_bytes)
+derived_clone["workId"] = clone_command["payload"]["newWorkId"]
+derived_clone["parentSnapshotIds"] = []
+clone_document = json.loads(clone_document_bytes)
+assert clone_document["documentId"] == clone_command["payload"]["newDocumentId"]
+clone_document_entry = next(
+    entry for entry in derived_clone["entries"] if entry["entityKey"] == "work/document"
+)
+clone_document_entry["objectId"] = clone_hashes["document"]["objectId"]
+clone_document_entry["byteCount"] = clone_hashes["document"]["byteCount"]
+assert simple_fixture_jcs(derived_clone) == clone_snapshot_bytes
+assert clone_command["payload"]["newRootSnapshotId"] == clone_hashes["snapshot"]["snapshotId"]
+
+object_rows = read_json(canonical_root / "object-hashes.json")["objects"]
+objects_by_digest = {row["objectId"]: row for row in object_rows}
+objects_by_file = {row["file"]: row for row in object_rows}
+assert len(objects_by_digest) == len(object_rows) == len(objects_by_file)
+for row in object_rows:
+    exact = (canonical_root / "objects" / row["file"]).read_bytes()
+    assert not exact.endswith(b"\n"), row["file"]
+    assert len(exact) == row["byteCount"], row["file"]
+    assert hashlib.sha256(exact).hexdigest() == row["objectId"], row["file"]
+    if row["file"].endswith(".json"):
+        assert exact == simple_fixture_jcs(json.loads(exact)), row["file"]
+
+keys = [entry["entityKey"] for entry in snapshot["entries"]]
+assert keys == sorted(keys) and len(keys) == len(set(keys))
+mandatory = {
+    "work/document",
+    "work/title",
+    "work/synopsis",
+    "work/chapter-order",
+    "work/character-order",
+    "work/plot-card-order",
+    "work/flag-order",
+    "work/world-note-order",
+    "work/attachment-order",
+}
+assert mandatory <= set(keys)
+entries = {entry["entityKey"]: entry for entry in snapshot["entries"]}
+for entry in snapshot["entries"]:
+    object_row = objects_by_digest[entry["objectId"]]
+    assert entry["byteCount"] == object_row["byteCount"], entry["entityKey"]
+
+
+def entity(entity_key):
+    row = objects_by_digest[entries[entity_key]["objectId"]]
+    return read_json(canonical_root / "objects" / row["file"])
+
+
+document = expected_model["document"]
+assert snapshot["workId"] == expected_model["workId"]
+assert entity("work/document") == {
+    "documentCreatedAt": document["documentCreatedAt"],
+    "documentId": document["id"],
+}
+assert entity("work/title")["value"] == document["title"]
+assert entity("work/synopsis")["value"] == document["synopsis"]
+assert entity("work/chapter-order")["ids"] == [x["id"] for x in document["chapters"]]
+assert entity("work/character-order")["ids"] == [x["id"] for x in document["characters"]]
+assert entity("work/plot-card-order")["ids"] == [x["id"] for x in document["plotCards"]]
+assert entity("work/flag-order")["ids"] == [x["id"] for x in document["flags"]]
+assert entity("work/world-note-order")["ids"] == [x["id"] for x in document["worldNotes"]]
+assert entity("work/attachment-order")["ids"] == [x["attachmentId"] for x in expected_model["attachments"]]
+
+accounted = set(mandatory)
+for chapter in document["chapters"]:
+    chapter_prefix = f"chapter/{chapter['id']}"
+    assert entity(f"{chapter_prefix}/title")["value"] == chapter["title"]
+    assert entity(f"{chapter_prefix}/episode-order")["ids"] == [
+        episode["id"] for episode in chapter["episodes"]
+    ]
+    accounted |= {f"{chapter_prefix}/title", f"{chapter_prefix}/episode-order"}
+    for episode in chapter["episodes"]:
+        episode_prefix = f"episode/{episode['id']}"
+        for key, field in [("title", "title"), ("body", "content"), ("memo", "memo")]:
+            assert entity(f"{episode_prefix}/{key}")["value"] == episode[field]
+            accounted.add(f"{episode_prefix}/{key}")
+for collection, prefix in [
+    ("characters", "character"),
+    ("plotCards", "plot-card"),
+    ("flags", "flag"),
+    ("worldNotes", "world-note"),
+]:
+    for value in document[collection]:
+        key = f"{prefix}/{value['id']}"
+        assert entity(key) == value
+        accounted.add(key)
+for attachment in expected_model["attachments"]:
+    prefix = f"attachment/{attachment['attachmentId']}"
+    metadata = entity(f"{prefix}/metadata")
+    assert metadata == {
+        "attachmentId": attachment["attachmentId"],
+        "byteCount": attachment["byteCount"],
+        "fileName": attachment["fileName"],
+    }
+    raw_entry = entries[f"{prefix}/bytes"]
+    assert raw_entry["objectId"] == attachment["objectId"]
+    assert raw_entry["byteCount"] == attachment["byteCount"]
+    accounted |= {f"{prefix}/metadata", f"{prefix}/bytes"}
+assert accounted == set(entries)
+
+openapi = yaml.safe_load((root / "openapi.yaml").read_text())
+refs = []
+
+
+def collect_refs(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "$ref":
+                refs.append(child)
+            collect_refs(child)
+    elif isinstance(value, list):
+        for child in value:
+            collect_refs(child)
+
+
+collect_refs(openapi)
+for ref in refs:
+    if ref.startswith("#/"):
+        target = openapi
+        pointer = ref[2:]
+    elif ref.startswith("./"):
+        file_name, fragment = (ref.split("#", 1) + [""])[:2]
+        target = read_json(root / file_name[2:])
+        pointer = fragment[1:] if fragment.startswith("/") else fragment
+    else:
+        continue
+    for raw in pointer.split("/") if pointer else []:
+        key = raw.replace("~1", "/").replace("~0", "~")
+        target = target[int(key)] if isinstance(target, list) else target[key]
+operation_ids = []
+for path_item in openapi["paths"].values():
+    for method, operation in path_item.items():
+        if method in {"get", "post", "put", "patch", "delete"}:
+            operation_ids.append(operation["operationId"])
+            assert "default" in operation["responses"]
+assert len(operation_ids) == len(set(operation_ids))
+assert "/v2/uploads/{uploadId}" in openapi["paths"]
+assert openapi["components"]["schemas"]["CommandResult"]["properties"]["receipt"]["$ref"].endswith("/CommandReceipt")
+
+postgres = (root / "postgres.sql").read_text()
+tenant_tables = {
+    "works",
+    "account_objects",
+    "snapshots",
+    "snapshot_parents",
+    "snapshot_entries",
+    "upload_capabilities",
+    "receipts",
+    "sealed_commands",
+    "active_conflicts",
+    "conflict_candidates",
+    "conflict_events",
+    "history",
+    "restore_receipts",
+    "head_events",
+    "catalog_events",
+    "quarantine_records",
+}
+for table in tenant_tables:
+    start = postgres.index(f"CREATE TABLE sync_v2.{table} (")
+    end = postgres.index("\n);", start)
+    block = postgres[start:end]
+    assert "account_id TEXT NOT NULL" in block, table
+    assert "PRIMARY KEY (account_id," in block, table
+for required in [
+    "FOREIGN KEY (account_id, work_id, parent_snapshot_id)",
+    "REFERENCES sync_v2.account_objects(account_id, object_id)",
+    "UNIQUE (account_id, work_id, conflict_id)",
+    "PRIMARY KEY (account_id, command_id)",
+    "export_backup_marker TEXT",
+    "adoption_marker TEXT",
+    "migration_staging_batches",
+    "migration_staging_objects",
+    "'createWork', 'prepareObject'",
+]:
+    assert required in postgres, required
+
+print("v2 JSON/schema/hash/OpenAPI/DDL static checks passed")
 PY
-git diff --check
+sqlite3 :memory: < docs/sync/v2/sqlite.sql
+git diff --check -- docs/DECISIONS.md docs/SNAPSHOT_SYNC_V2.md docs/sync/v2
 ```
 
-The production conformance runner must add byte-for-byte JCS (including a
-no-final-newline assertion), duplicate-member rejection, I-JSON safe-number
-checks, UTF-8/surrogate rejection, entry sorting/uniqueness, self-parent and
-cycle rejection, WorkID parent lineage, object/manifest digest read-back,
-receipt uniqueness, account/fence non-disclosure, upload capability binding,
-CAS current+generation rejection, one-active-conflict revision append, and
-process-kill migration markers. These are represented by the scenario fixtures
-and are not optional semantic extensions of JSON Schema.
+The production conformance runner must add byte-for-byte RFC 8785 JCS,
+duplicate-member rejection, I-JSON safe-number checks, UTF-8/surrogate
+rejection, self-parent/cycle/other-work lineage rejection, PostgreSQL migration
+execution against an empty supported server, exact response receipt replay,
+account/fence non-disclosure, upload capability binding, CAS current+generation
+rejection, one-active-conflict revision append, and process-kill migration
+markers. These are represented by the scenario fixtures and are not optional
+semantic extensions of JSON Schema. The static PostgreSQL assertions above do
+not replace executing `postgres.sql` in the Rust integration Gate.

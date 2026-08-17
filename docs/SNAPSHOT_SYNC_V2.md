@@ -1,26 +1,30 @@
 # FUMINIWA Snapshot Sync v2
 
-Status: design contract, D-080. This document replaces the v1 runtime contract
-for the next implementation. It does not migrate or delete existing data.
+Status: implementation-ready design contract, D-080. This document replaces
+the v1 runtime contract for the next implementation. It does not report the
+Swift/Rust runtime as implemented, migrate data, or delete existing data.
 
 ## 1. Scope and cutover
 
 v2 is a new, server-readable, local-first synchronization namespace. Its live
 components are physically separated from v1:
 
-- the client opens only the v2 SQLite database and v2 CAS root;
+- the client opens only the v2 SQLite database; v2 object bytes are SQLite
+  BLOBs in the initial implementation;
 - the Rust service uses the v2 API namespace and a new PostgreSQL schema and
-  object-store/Docker volume;
+  new PostgreSQL Docker volume;
 - v1 databases, package snapshots, server rows, and old caches are read-only
   archive inputs for an explicit migration/import tool, never a live fallback;
 - the live client has no v1 dual-read, dual-write, schema fallback, or
   CloudKit path. A missing or invalid v2 database is a startup error, not an
   empty-database fallback.
 
-The development volume names are `fuminiwa_sync_v2_pgdata` and
-`fuminiwa_sync_v2_objects`. A deployment may choose different names only in a
-versioned deployment manifest. The client does not connect to PostgreSQL or an
-object store directly.
+The development volume is `fuminiwa_sync_v2_pgdata`. Initial server object
+bytes are PostgreSQL `BYTEA`. The Rust domain depends on an `ObjectStore`
+trait; `PostgresObjectStore` is the only v2 implementation and a future S3
+adapter requires a new deployment migration/gate. No external CAS root or
+object Docker volume is part of this contract. The client never connects to
+PostgreSQL or an object store directly.
 
 The v2 media type is `application/vnd.fuminiwa.sync.v2+jcs`. Every accepted
 JSON body is already RFC 8785 JCS UTF-8. The server stores the exact accepted
@@ -29,26 +33,26 @@ into JSONB and reserializes it before checking its digest.
 
 ## 2. Authorities and physical runtime modes
 
-`RuntimeMode.v2Live` is the only mode allowed in a production app. The mode
+`RuntimeMode.production` is the only mode allowed in a production app. The mode
 selects a distinct composition at process start, before opening a database or
 creating a network transport:
 
 | Mode | Local root | Network namespace | Allowed mutation |
 | --- | --- | --- | --- |
-| `v2Live` | `Library/SnapshotSyncV2/` | `/v2/...` | v2 SQLite and v2 server only |
-| `v1ArchiveReadOnly` | explicit archive URL | none | archive read only |
-| `v2Test` | test temporary root | injected fake only | test root only |
+| `production` | `Library/SnapshotSyncV2/` | `/v2/...` | v2 SQLite and v2 server only |
+| `test(TestDependencies)` | typed temporary test root | typed fake only | test SQLite only |
+| `preview` | none | none | none |
 
-`v1ArchiveReadOnly` is an offline import source, not a sync mode. It cannot
-  construct a v2 worker or use a production URL. `v2Test` must fail closed if
-  a production root or URL is injected. macOS and iOS use the same v2 domain,
-  SQLite, command, conflict, and restore kernel; only filesystem and UI
-  adapters differ.
+Archive reading is implemented only by the separate offline migration
+executable and is not a `RuntimeMode` case. It cannot construct a v2 worker or
+use a production URL. `test` must fail closed if a production root, URL, or
+Keychain is injected. macOS and iOS use the same v2 domain, SQLite, command,
+conflict, and restore kernel; only filesystem and UI adapters differ.
 
 SQLite is the sole local authority. A committed checkpoint contains the local
-  current pointer, immutable Snapshot row, object references, account binding,
-  and sealed command/outbox state in one transaction. The network is never
-  awaited inside that transaction. `.novelpkg` remains Import/Export only.
+current pointer, immutable Snapshot row, object references, account binding,
+and sealed command/outbox state in one transaction. The network is never
+awaited inside that transaction. `.novelpkg` remains Import/Export only.
 
 ## 3. Identity, account isolation, and fence
 
@@ -116,9 +120,10 @@ conflictPending
   `-- no choice -> parked (no overwrite)
 ```
 
-There is at most one active conflict per work. New divergence updates that
-record's immutable branch references and increments a server revision; it does
-not create a competing UI queue. The three choices are exactly:
+There is at most one active conflict per work. Each new divergence appends an
+immutable candidate revision and atomically advances only the active-conflict
+projection; earlier branch references are never updated. It does not create a
+competing UI queue. The three choices are exactly:
 
 1. **この端末の版を使う** — publish the durable local branch against the
    observed remote head.
@@ -127,7 +132,7 @@ not create a competing UI queue. The three choices are exactly:
 3. **両方を残す** — clone to a new WorkID, preserving both histories.
 
 No choice, authentication failure, or remote unavailability leaves the local
-  manuscript and pending commands intact.
+manuscript and pending commands intact.
 
 ## 6. Wire minimum
 
@@ -136,8 +141,9 @@ The v2 wire has these endpoints under `/v2`:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/v2/capabilities` | server instance, protocol epoch, account fence, limits |
+| POST | `/v2/works` | sealed account-scoped null-head Work bootstrap |
 | POST | `/v2/objects/prepare` | sealed object upload command |
-| PUT | `/v2/objects/{object_id}` | exact bytes, only after prepare |
+| PUT | `/v2/uploads/{upload_id}` | exact bytes with the prepared capability |
 | POST | `/v2/objects/finalize` | receipt-idempotent object finalize |
 | POST | `/v2/snapshots/register` | immutable exact manifest registration |
 | POST | `/v2/works/{work_id}/publish` | expected-head CAS |
@@ -154,10 +160,12 @@ divergence, not an overwrite instruction.
 
 ## 7. Migration and release gates
 
-The migration tool reads v1/package/CloudKit archives as immutable input and
-writes only a staged v2 database/CAS. It verifies bytes, hashes, schema, and
-account scope before an explicit adoption marker. It never deletes, rewrites,
-or automatically uploads the archive. The live app cannot invoke that reader.
+Legacy processing separates verified Export backup projection from v2
+adoption. The current migration tool may prove only the former. A separate
+adoption phase reads that immutable artifact, stages a v2 database, verifies
+bytes, logical model and account scope, then writes a distinct adoption marker.
+Unknown account scope is quarantined. Neither phase deletes, rewrites, or
+automatically uploads the archive, and the live app cannot invoke its reader.
 
 Before v2 is enabled, Swift and Rust independent harnesses must agree on all
 canonical bytes, SHA-256 IDs, schema failures, command digests, account
@@ -171,9 +179,9 @@ this decision.
 ## 8. Closed canonical validation
 
 The v2 schemas are closed at every object boundary. In particular, command
-`payload` is a discriminated closed schema; the allowed fields for `publish`,
-`registerSnapshot`, `finalizeObject`, `resolveDevice`, `resolveServer`,
-`cloneWork`, and `restore` are fixed in
+`payload` is a discriminated closed schema; the allowed fields for
+`createWork`, `prepareObject`, `finalizeObject`, `registerSnapshot`, `publish`,
+`resolveDevice`, `resolveServer`, `cloneWork`, and `restore` are fixed in
 [`docs/sync/v2/command.schema.json`](sync/v2/command.schema.json). An unknown
 field, missing field, duplicate JSON member, or command-kind/payload mismatch
 is rejected before a receipt is created.
@@ -212,7 +220,10 @@ edit creates the next Intent against the installed state.
 `keepBoth` is one PostgreSQL transaction: preserve the original Work and head,
 create a new WorkID with a root Snapshot and head, record both history roots,
 mark the active conflict resolved, and insert the receipt. The transaction
-must either complete all of those writes or none of them.
+must either complete all of those writes or none of them. The new root is the
+deterministic clone defined in `wire.md`: same local candidate content, new
+WorkID/new DocumentID, no cross-work parent, and exact digest equality with the
+sealed `newRootSnapshotId`.
 
 `active_conflicts.work_id` is unique. Repeated divergence appends an immutable
 candidate row and increments `revision`; it never mutates an earlier candidate
@@ -234,14 +245,15 @@ marker follow [`migration.md`](sync/v2/migration.md); only verified staged
 bytes can be committed, and crash recovery never treats an uncommitted marker
 as success.
 
-v2 reuses Auth v1 only at the protocol boundary: the bearer session and
-capabilities response provide the opaque `AccountID`, server instance,
-protocol epoch, and AccountFence. v2 does not reuse the Auth database tables,
-Apple subject, email, refresh token, or provider credential. The server auth
-schema/role authorizes the request; `sync_v2` stores only opaque account scope
-and checks it on every resource query and command. The same AccountID and
-unchanged Fence can continue after token refresh. A different account or
-Fence is rejected before object existence is disclosed.
+v2 reuses the frozen Auth v1 wire/state contract, not a v1 sync database. The
+new v2 PostgreSQL deployment implements it in a separately owned `auth_v1`
+schema/role; the bearer session and capabilities response provide the opaque
+`AccountID`, server instance, protocol epoch, and AccountFence. `sync_v2`
+never stores or joins Apple subject, email, refresh token, or provider
+credential. It stores only opaque account scope and checks it on every
+resource query and command. The same AccountID and unchanged Fence can
+continue after token refresh. A different account or Fence is rejected before
+object existence is disclosed.
 
 ## 11. Shared UI result contract
 

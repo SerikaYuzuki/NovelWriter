@@ -1,14 +1,25 @@
 {
   "schemaVersion": 2,
   "objects": [
-    {"file": "attachment-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "chapter-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "character-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "flag-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "plot-card-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "world-note-order.json", "byteCount": 10, "objectId": "8f05bafd61f29998ca102b333f853628502d4e45d53cff41148d6dd15f011792"},
-    {"file": "work-document.json", "byteCount": 96, "objectId": "1ada402c66c29866fb31c52ab76eccfe2c624eaea94e7a88074d9ebc191e1b5d"},
-    {"file": "work-synopsis.json", "byteCount": 42, "objectId": "1b480863422b62bbe354c950dec8f130c2cc85072cb797f391a4806221fdd381"},
-    {"file": "work-title.json", "byteCount": 27, "objectId": "16dc45cdbf32d3158bcd5e2c52ddafee992004fd8bdfb5f44900e684896a81f0"}
+    {"file":"attachment-bytes.txt","byteCount":3,"objectId":"60be9861750facbfad8758254a2f76c0cfe78d54459a3bc187d49b1401fcd8e8"},
+    {"file":"attachment-metadata.json","byteCount":90,"objectId":"fc6cf4063320fb64649855d0c981ca430812d75f890882be2dda562e864c7779"},
+    {"file":"attachment-order.json","byteCount":48,"objectId":"4d9648bcadb7ca74730a311f9592837d3aa2802dd5dcb60b254a5657e92fe90d"},
+    {"file":"chapter-order.json","byteCount":48,"objectId":"1edd25755c907a4b86447d7445a9e4fcf71dacd96f3ea027d955de16f677bdf7"},
+    {"file":"chapter-title.json","byteCount":21,"objectId":"846de54f526906f43423feabd3cb7cb8564eb8818058f96e59c2981465e4fe20"},
+    {"file":"character-order.json","byteCount":48,"objectId":"1b24395c01ecbecef4724726bc4161a1f201dcdc9ad043f1122d1a8ac3643a1c"},
+    {"file":"character.json","byteCount":278,"objectId":"e3251c7bf97ac4103ac9a66b7875d7c3fce63695b9d28027da6ec7a367a62948"},
+    {"file":"episode-body.json","byteCount":27,"objectId":"cc10b883d6b9f239651d728f9f655c3667035be36b4e8ef940cc33e4a8cb6eb7"},
+    {"file":"episode-memo.json","byteCount":18,"objectId":"fb50aa3fc52d407d1d464ec6846d5f63e4d4c597833e81a8432e7c46c953d3e2"},
+    {"file":"episode-order.json","byteCount":48,"objectId":"ac8f84b04b57e0ac63e128604bd068cc3f632bf3eb53ebdb6397521b9958c7c7"},
+    {"file":"episode-title.json","byteCount":27,"objectId":"089b6c3b12affb9d63ed46fc064476d980f93e9fc15f014f5be0e06e5c6e11b5"},
+    {"file":"flag-order.json","byteCount":48,"objectId":"4e2631bcc7a504d68dde7559e3e89950d9abaf169056df4e664db83df91c84db"},
+    {"file":"flag.json","byteCount":186,"objectId":"404481ddb31ebcb168f0f506a36dab8cab0fed65a070fffc19620219985ccf4c"},
+    {"file":"plot-card-order.json","byteCount":48,"objectId":"c6865afd00697bcca9dc621fb40ac9051086f7b4d46191ce22340e7fa02215df"},
+    {"file":"plot-card.json","byteCount":132,"objectId":"6ac3f5aff753e3cfa0b003f572d272c1c566d8b7ff5298929887eafd5c63c4e1"},
+    {"file":"work-document.json","byteCount":96,"objectId":"1ada402c66c29866fb31c52ab76eccfe2c624eaea94e7a88074d9ebc191e1b5d"},
+    {"file":"work-synopsis.json","byteCount":42,"objectId":"1b480863422b62bbe354c950dec8f130c2cc85072cb797f391a4806221fdd381"},
+    {"file":"work-title.json","byteCount":27,"objectId":"16dc45cdbf32d3158bcd5e2c52ddafee992004fd8bdfb5f44900e684896a81f0"},
+    {"file":"world-note-order.json","byteCount":48,"objectId":"4b3a0e2bd8de24e3e0a58d26c40025edca4f60df84f29f77392da2fb75050b90"},
+    {"file":"world-note.json","byteCount":90,"objectId":"35ac6a5bf3e9f816abd77c0ebb0f6cac1927b7685fdbbd43900e103bcb783898"}
   ]
 }

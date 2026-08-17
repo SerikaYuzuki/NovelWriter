@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "fixtures": [
+    {"file":"work-document.json","schema":"work-document.schema.json"},
+    {"file":"work-title.json","schema":"string-value.schema.json"},
+    {"file":"work-synopsis.json","schema":"string-value.schema.json"},
+    {"file":"chapter-order.json","schema":"id-order.schema.json"},
+    {"file":"character-order.json","schema":"id-order.schema.json"},
+    {"file":"plot-card-order.json","schema":"id-order.schema.json"},
+    {"file":"flag-order.json","schema":"id-order.schema.json"},
+    {"file":"world-note-order.json","schema":"id-order.schema.json"},
+    {"file":"attachment-order.json","schema":"id-order.schema.json"},
+    {"file":"chapter-title.json","schema":"string-value.schema.json"},
+    {"file":"episode-order.json","schema":"id-order.schema.json"},
+    {"file":"episode-title.json","schema":"string-value.schema.json"},
+    {"file":"episode-body.json","schema":"string-value.schema.json"},
+    {"file":"episode-memo.json","schema":"string-value.schema.json"},
+    {"file":"character.json","schema":"character.schema.json"},
+    {"file":"plot-card.json","schema":"plot-card.schema.json"},
+    {"file":"flag.json","schema":"flag.schema.json"},
+    {"file":"world-note.json","schema":"world-note.schema.json"},
+    {"file":"attachment-metadata.json","schema":"attachment-metadata.schema.json"}
+  ]
+}

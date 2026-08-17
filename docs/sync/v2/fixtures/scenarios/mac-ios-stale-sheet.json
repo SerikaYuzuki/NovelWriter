@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "name": "mac-and-ios-reject-stale-conflict-sheet-identically",
+  "initial": {"sheetRevision":1,"currentRevision":2,"conflictId":"00000000-0000-4000-8000-000000000030"},
+  "events": [
+    {"type":"tapConflictChoice","platform":"macOS","choice":"useServer"},
+    {"type":"tapConflictChoice","platform":"iOS","choice":"useServer"}
+  ],
+  "expect": {"macResult":"staleConflictAction","iosResult":"staleConflictAction","sqliteMutations":0,"networkBytes":0,"sheetRefresh":true}
+}

@@ -1,24 +1,54 @@
 # v1/archive to v2 migration evidence
 
-Migration is an explicit, offline, resumable operation. The live v2 runtime
-never opens the archive reader. Each source is represented in `migration_ledger`
-with the source kind, source digest, exact evidence bytes, and a monotonic
-marker. The only successful sequence is:
+Migration has two separate products and success boundaries:
+
+1. **Export backup projection** reads legacy v1/package data and produces a
+   verified, read-only backup artifact plus evidence. The current
+   `Tools/SnapshotSyncV2Migration` work is this phase only; its success never
+   means a Work was adopted into v2.
+2. **v2 adoption** consumes a verified backup artifact, stages a new v2
+   Work/Snapshot/object closure, verifies the logical model/account scope, and
+   writes a separate adoption marker transaction.
+
+Both are explicit, offline, resumable operations. The live v2 runtime never
+opens the archive reader. Each source is represented in `migration_ledger`
+with source kind/digest, exact evidence, `export_backup_marker`, and a distinct
+`adoption_marker`. The successful sequence is:
 
 ```text
-discovered -> staged -> verified -> committed
+discovered -> backupExported -> staged -> verified -> committed
                          `-> quarantined
 ```
 
-`staged` copies bytes to a new v2 CAS staging root without changing the source.
+`staged` copies exact manifest/object bytes to
+`migration_staging_batches`/`migration_staging_objects` without changing the
+source. Those tables intentionally have no FK to authoritative Work,
+Snapshot, object, or account-binding rows, so a not-yet-adopted Work can be
+resumed safely after a crash. They are never exposed by the live HTTP API.
 `verified` requires the source hash, object byte count, schema, account scope,
 portable projection, and every referenced object to read back successfully.
 Any invalid UTF-8, unknown account scope, duplicate identity, symlink, digest
 mismatch, or unsupported payload goes to `quarantined` with evidence and never
-becomes a v2 Work. `committed` adds a new v2 WorkID and its first Snapshot in
-one transaction; the original work is not rebound or deleted.
+becomes a v2 Work. A migration run has exactly one declared target database:
 
-The marker is written only after SQLite/PostgreSQL transaction commit and CAS
-read-back. On crash, an uncommitted marker is retried from staging or moved to
-quarantine; it is never treated as imported merely because files exist. A
-failed migration cannot create an empty replacement database.
+- **client SQLite adoption** revalidates the staged closure, adds the local
+  WorkID/first Snapshot and adoption marker in one SQLite transaction, then
+  later publishes through `createWork` -> object prepare/upload/finalize ->
+  register -> publish;
+- **operator-only PostgreSQL adoption** revalidates the closure and adds the
+  server Work, objects, first Snapshot/head/history/catalog rows and adoption
+  marker in one PostgreSQL transaction. It does not call `createWork`, because
+  the Work is already present, and it is not reachable from the live HTTP API.
+
+The SQLite and PostgreSQL ledgers/staging tables belong to these distinct
+target runs; a single run never commits both. In either case the original work
+is not rebound or deleted, and staging itself is never live authority.
+
+`account_id` remains nullable until independently verified. An unknown or
+ambiguous account can only enter `quarantined`; it cannot be committed,
+uploaded, or inferred from title/path/device/login timing.
+
+The adoption marker is written only after SQLite/PostgreSQL transaction commit
+and BLOB read-back. On crash, an uncommitted marker is retried from staging or
+moved to quarantine; it is never treated as imported merely because files
+exist. A failed migration cannot create an empty replacement database.

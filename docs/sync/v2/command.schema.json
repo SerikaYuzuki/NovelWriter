@@ -2,30 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:fuminiwa:sync:v2:command",
   "title": "FUMINIWA sealed command v2",
-  "description": "Every mutating request is one closed command variant. payload is never an open JSON object.",
   "oneOf": [
-    { "$ref": "#/$defs/publish" },
-    { "$ref": "#/$defs/registerSnapshot" },
+    { "$ref": "#/$defs/createWork" },
+    { "$ref": "#/$defs/prepareObject" },
     { "$ref": "#/$defs/finalizeObject" },
+    { "$ref": "#/$defs/registerSnapshot" },
+    { "$ref": "#/$defs/publish" },
     { "$ref": "#/$defs/resolveDevice" },
     { "$ref": "#/$defs/resolveServer" },
     { "$ref": "#/$defs/cloneWork" },
     { "$ref": "#/$defs/restore" }
   ],
   "$defs": {
-    "uuid": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base64URL": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$"
+    },
+    "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
     "head": {
       "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["generation", "snapshotId"],
-      "properties": {
-        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-        "snapshotId": { "$ref": "#/$defs/digest" }
-      }
+      "properties": { "generation": { "$ref": "#/$defs/generation" }, "snapshotId": { "$ref": "#/$defs/digest" } }
     },
     "binding": {
       "type": "object",
@@ -34,50 +35,49 @@
       "properties": {
         "accountFence": { "type": "string", "minLength": 1, "maxLength": 256 },
         "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "protocolEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "protocolEpoch": { "$ref": "#/$defs/generation" },
         "serverInstanceId": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     },
     "envelope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "commandId", "commandKind", "binding", "payload"],
+      "required": ["binding", "commandId", "commandKind", "payload", "schemaVersion", "sourceGeneration", "sourceSnapshotId"],
       "properties": {
-        "schemaVersion": { "type": "integer", "const": 2 },
+        "binding": { "$ref": "#/$defs/binding" },
         "commandId": { "$ref": "#/$defs/uuid" },
         "commandKind": { "type": "string" },
-        "binding": { "$ref": "#/$defs/binding" },
-        "payload": { "type": "object" }
+        "payload": { "type": "object" },
+        "schemaVersion": { "type": "integer", "const": 2 },
+        "sourceGeneration": { "$ref": "#/$defs/generation" },
+        "sourceSnapshotId": { "$ref": "#/$defs/digest" }
       }
     },
-    "publish": {
+    "createWork": {
       "allOf": [
         { "$ref": "#/$defs/envelope" },
-        { "properties": { "commandKind": { "const": "publish" }, "payload": { "$ref": "#/$defs/publishPayload" } } }
+        { "properties": { "commandKind": { "const": "createWork" }, "payload": { "$ref": "#/$defs/createWorkPayload" } } }
       ]
     },
-    "publishPayload": {
+    "createWorkPayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["candidateSnapshotId", "expectedHead", "sourceGeneration", "sourceSnapshotId", "workId"],
+      "required": ["documentId", "workId"],
       "properties": {
-        "candidateSnapshotId": { "$ref": "#/$defs/digest" }, "expectedHead": { "$ref": "#/$defs/head" },
-        "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-        "sourceSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+        "documentId": { "$ref": "#/$defs/uuid" }, "workId": { "$ref": "#/$defs/uuid" }
       }
     },
-    "registerSnapshot": {
+    "prepareObject": {
       "allOf": [
         { "$ref": "#/$defs/envelope" },
-        { "properties": { "commandKind": { "const": "registerSnapshot" }, "payload": { "$ref": "#/$defs/registerSnapshotPayload" } } }
+        { "properties": { "commandKind": { "const": "prepareObject" }, "payload": { "$ref": "#/$defs/prepareObjectPayload" } } }
       ]
     },
-    "registerSnapshotPayload": {
+    "prepareObjectPayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["manifestBytesDigest", "parentSnapshotIds", "snapshotId", "workId"],
+      "required": ["byteCount", "objectId", "workId"],
       "properties": {
-        "manifestBytesDigest": { "$ref": "#/$defs/digest" },
-        "parentSnapshotIds": { "type": "array", "maxItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/digest" } },
-        "snapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
+        "objectId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
       }
     },
     "finalizeObject": {
@@ -88,10 +88,40 @@
     },
     "finalizeObjectPayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["byteCount", "objectId", "uploadId"],
+      "required": ["byteCount", "objectId", "uploadId", "workId"],
       "properties": {
         "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
-        "objectId": { "$ref": "#/$defs/digest" }, "uploadId": { "$ref": "#/$defs/uuid" }
+        "objectId": { "$ref": "#/$defs/digest" }, "uploadId": { "$ref": "#/$defs/uuid" },
+        "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "registerSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "registerSnapshot" }, "payload": { "$ref": "#/$defs/registerSnapshotPayload" } } }
+      ]
+    },
+    "registerSnapshotPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifestBase64URL", "manifestBytesDigest", "snapshotId", "workId"],
+      "properties": {
+        "manifestBase64URL": { "$ref": "#/$defs/base64URL", "maxLength": 22369624 },
+        "manifestBytesDigest": { "$ref": "#/$defs/digest" },
+        "snapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "publish": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "publish" }, "payload": { "$ref": "#/$defs/publishPayload" } } }
+      ]
+    },
+    "publishPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateSnapshotId", "expectedRemoteHead", "workId"],
+      "properties": {
+        "candidateSnapshotId": { "$ref": "#/$defs/digest" }, "expectedRemoteHead": { "$ref": "#/$defs/head" },
+        "workId": { "$ref": "#/$defs/uuid" }
       }
     },
     "resolveDevice": {
@@ -102,10 +132,11 @@
     },
     "resolveDevicePayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["conflictId", "localSnapshotId", "remoteSnapshotId", "workId"],
+      "required": ["conflictId", "conflictRevision", "decisionSnapshotId", "expectedRemoteHead", "localCandidateSnapshotId", "workId"],
       "properties": {
-        "conflictId": { "$ref": "#/$defs/uuid" }, "localSnapshotId": { "$ref": "#/$defs/digest" },
-        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "decisionSnapshotId": { "$ref": "#/$defs/digest" }, "expectedRemoteHead": { "$ref": "#/$defs/head" },
+        "localCandidateSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
       }
     },
     "resolveServer": {
@@ -116,10 +147,12 @@
     },
     "resolveServerPayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["conflictId", "preAdoptionSnapshotId", "remoteSnapshotId", "workId"],
+      "required": ["conflictId", "conflictRevision", "expectedCurrentSnapshotId", "expectedLocalGeneration", "preAdoptionSnapshotId", "remoteSnapshotId", "workId"],
       "properties": {
-        "conflictId": { "$ref": "#/$defs/uuid" }, "preAdoptionSnapshotId": { "$ref": "#/$defs/digest" },
-        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "expectedCurrentSnapshotId": { "$ref": "#/$defs/digest" }, "expectedLocalGeneration": { "$ref": "#/$defs/generation" },
+        "preAdoptionSnapshotId": { "$ref": "#/$defs/digest" }, "remoteSnapshotId": { "$ref": "#/$defs/digest" },
+        "workId": { "$ref": "#/$defs/uuid" }
       }
     },
     "cloneWork": {
@@ -130,10 +163,12 @@
     },
     "cloneWorkPayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["conflictId", "newWorkId", "remoteSnapshotId", "sourceWorkId"],
+      "required": ["conflictId", "conflictRevision", "expectedOriginalHead", "localCandidateSnapshotId", "newDocumentId", "newRootSnapshotId", "newWorkId", "sourceWorkId"],
       "properties": {
-        "conflictId": { "$ref": "#/$defs/uuid" }, "newWorkId": { "$ref": "#/$defs/uuid" },
-        "remoteSnapshotId": { "$ref": "#/$defs/digest" }, "sourceWorkId": { "$ref": "#/$defs/uuid" }
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "expectedOriginalHead": { "$ref": "#/$defs/head" }, "localCandidateSnapshotId": { "$ref": "#/$defs/digest" },
+        "newDocumentId": { "$ref": "#/$defs/uuid" }, "newRootSnapshotId": { "$ref": "#/$defs/digest" },
+        "newWorkId": { "$ref": "#/$defs/uuid" }, "sourceWorkId": { "$ref": "#/$defs/uuid" }
       }
     },
     "restore": {
@@ -144,9 +179,10 @@
     },
     "restorePayload": {
       "type": "object", "additionalProperties": false,
-      "required": ["currentSnapshotId", "newSnapshotId", "selectedSnapshotId", "workId"],
+      "required": ["expectedCurrentSnapshotId", "expectedLocalGeneration", "expectedRemoteHead", "newSnapshotId", "selectedSnapshotId", "workId"],
       "properties": {
-        "currentSnapshotId": { "$ref": "#/$defs/digest" }, "newSnapshotId": { "$ref": "#/$defs/digest" },
+        "expectedCurrentSnapshotId": { "$ref": "#/$defs/digest" }, "expectedLocalGeneration": { "$ref": "#/$defs/generation" },
+        "expectedRemoteHead": { "$ref": "#/$defs/head" }, "newSnapshotId": { "$ref": "#/$defs/digest" },
         "selectedSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
       }
     }

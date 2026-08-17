@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:entity:character",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["age", "appearance", "background", "colorHex", "firstPerson", "gender", "id", "kana", "memo", "name", "personality", "role", "secondPerson", "speechStyle"],
+  "properties": {
+    "age": { "$ref": "#/$defs/optionalString" }, "appearance": { "$ref": "#/$defs/optionalString" },
+    "background": { "$ref": "#/$defs/optionalString" }, "colorHex": { "type": ["string", "null"], "pattern": "^#[0-9A-Fa-f]{6}$" },
+    "firstPerson": { "$ref": "#/$defs/optionalString" }, "gender": { "$ref": "#/$defs/optionalString" },
+    "id": { "$ref": "#/$defs/uuid" }, "kana": { "type": "string", "maxLength": 1048576 },
+    "memo": { "type": "string", "maxLength": 1048576 }, "name": { "type": "string", "maxLength": 1048576 },
+    "personality": { "$ref": "#/$defs/optionalString" }, "role": { "$ref": "#/$defs/optionalString" },
+    "secondPerson": { "$ref": "#/$defs/optionalString" }, "speechStyle": { "$ref": "#/$defs/optionalString" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "optionalString": { "type": ["string", "null"], "maxLength": 1048576 }
+  }
+}

@@ -8,6 +8,7 @@
     "ids": {
       "type": "array",
       "maxItems": 100000,
+      "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
     }
   }

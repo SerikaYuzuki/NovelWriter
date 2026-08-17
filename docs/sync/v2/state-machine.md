@@ -3,6 +3,7 @@
 ## Work and command states
 
 ```text
+localOnly -> createWorkSealed -> remoteNullHead -> remotePublished
 unbound -> bound -> quarantined -> bound
                      `-> parked (different account)
 
@@ -28,6 +29,9 @@ Required invariants:
    new WorkID; no path rewinds a head in place;
 7. active editor text is changed only at the existing safe document/IME/session
    boundary.
+8. a new local Work remains editable at generation 1 or later while offline;
+   its first remote plan is exactly createWork, object closure, register, then
+   publish with expected head null. No later step may bootstrap a missing Work.
 
 ## Conflict choices
 

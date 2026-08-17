@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 2,
+  "name": "stale-conflict-revision-is-rejected",
+  "initial": {"conflictId":"00000000-0000-4000-8000-000000000030","currentRevision":2},
+  "event": {"type":"resolveConflict","submittedRevision":1,"choice":"useDevice"},
+  "expect": {"typedResult":"staleConflictRevision","headChanged":false,"conflictResolved":false,"receiptCreated":false}
+}

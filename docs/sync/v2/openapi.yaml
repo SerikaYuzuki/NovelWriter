@@ -1,8 +1,12 @@
 openapi: 3.1.0
 info:
   title: FUMINIWA Snapshot Sync v2
-  version: 2.0.0-design
-  description: Closed v2 server-readable local-first Snapshot API.
+  version: 2.0.0-design-contract
+  description: |
+    Implementation contract, not an implementation report. Account scope is
+    derived from AuthenticatedPrincipal. Body binding is an equality assertion
+    only and never selects an account. Foreign and absent resources use the
+    same 404 body.
 servers:
   - url: https://sync.invalid
 security:
@@ -11,116 +15,522 @@ paths:
   /v2/capabilities:
     get:
       operationId: v2Capabilities
+      parameters: [ { $ref: '#/components/parameters/ClientVersion' } ]
       responses:
-        '200': { description: Authenticated account binding and limits }
+        '200':
+          description: AuthenticatedPrincipal-bound v2 scope and limits.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Capabilities' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works:
     get:
       operationId: v2ListWorks
       parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
         - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/PageSize' }
       responses:
-        '200': { description: Account-scoped catalog page }
+        '200':
+          description: Account-scoped catalog page.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/CatalogPage' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
+    post:
+      operationId: v2CreateWork
+      parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/createWork' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/CommandResult' }
+        '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/head:
     get:
       operationId: v2GetHead
       parameters:
         - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
       responses:
-        '200': { description: Head or null }
+        '200':
+          description: Current head or explicit null head.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/HeadResponse' } } }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/history:
     get:
       operationId: v2ListHistory
       parameters:
         - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
         - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/PageSize' }
       responses:
-        '200': { description: Immutable history occurrence page }
+        '200':
+          description: Immutable history page.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/HistoryPage' } } }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/snapshots/{snapshotId}/manifest:
     get:
       operationId: v2GetManifest
       parameters:
         - { $ref: '#/components/parameters/SnapshotId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
       responses:
-        '200': { description: Exact JCS manifest bytes }
+        '200':
+          description: Base64url exact JCS manifest bytes and digest.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/ManifestResponse' } } }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/objects/{objectId}:
     get:
       operationId: v2DownloadObject
       parameters:
         - { $ref: '#/components/parameters/ObjectId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
       responses:
-        '200': { description: Raw object bytes and digest header }
+        '200':
+          description: Exact raw object bytes.
+          headers:
+            X-Fuminiwa-Object-Digest: { schema: { $ref: '#/components/schemas/Digest' } }
+            X-Fuminiwa-Byte-Count: { schema: { type: integer, minimum: 0 } }
+            X-Fuminiwa-Result: { schema: { type: string, const: noChanges } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
+  /v2/objects/missing:
+    post:
+      operationId: v2MissingObjects
+      parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody:
+        required: true
+        content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/MissingObjectsRequest' } } }
+      responses:
+        '200':
+          description: Account-scoped missing list; does not reveal global blobs.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/MissingObjectsResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/objects/prepare:
     post:
       operationId: v2PrepareObject
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/prepareObject' } } } }
       responses:
-        '201': { description: Upload capability bound to command, account, and fence }
+        '200':
+          description: Object already belongs to this account; no upload is needed.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectNoChanges' } } }
+        '201':
+          description: Upload capability bound to principal, fence, command, object and expiry.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectApplied' } } }
         '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
+  /v2/uploads/{uploadId}:
+    put:
+      operationId: v2UploadObjectBytes
+      parameters:
+        - { $ref: '#/components/parameters/UploadId' }
+        - { $ref: '#/components/parameters/UploadCapability' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody:
+        required: true
+        content: { application/octet-stream: { schema: { type: string, format: binary } } }
+      responses:
+        '204':
+          description: Exact bytes accepted for the bound open upload.
+          headers:
+            X-Fuminiwa-Result: { schema: { type: string, const: applied } }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/objects/finalize:
     post:
       operationId: v2FinalizeObject
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/finalizeObject' } } } }
       responses:
-        '200': { description: Receipt-idempotent result }
+        '200': { $ref: '#/components/responses/CommandResult' }
         '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/snapshots/register:
     post:
       operationId: v2RegisterSnapshot
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/registerSnapshot' } } } }
       responses:
-        '200': { description: Immutable snapshot read-back receipt }
+        '200': { $ref: '#/components/responses/CommandResult' }
         '422': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '409': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/publish:
     post:
       operationId: v2Publish
-      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/publish' } } } }
       responses:
-        '200': { description: Applied or noChanges result }
-        '409': { description: Preserved head conflict and active conflict revision }
+        '200': { $ref: '#/components/responses/CommandResult' }
+        '409': { $ref: '#/components/responses/CommandResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/conflict:
     get:
       operationId: v2GetConflict
-      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
       responses:
-        '200': { description: One active conflict or null }
+        '200':
+          description: Single current conflict projection or null.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/ConflictResponse' } } }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/conflict/resolve:
     post:
       operationId: v2ResolveConflict
-      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/ConflictResolutionCommand' } } } }
       responses:
-        '200': { description: Atomic resolution receipt and read-back predicate }
+        '200': { $ref: '#/components/responses/CommandResult' }
         '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/restore:
     post:
       operationId: v2Restore
-      parameters: [ { $ref: '#/components/parameters/WorkId' } ]
-      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/SealedCommand' } } } }
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/restore' } } } }
       responses:
-        '200': { description: New two-parent restore Snapshot and receipt }
+        '200': { $ref: '#/components/responses/CommandResult' }
         '409': { $ref: '#/components/responses/TypedError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '422': { $ref: '#/components/responses/TypedError' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
+  /v2/receipts/{commandId}:
+    get:
+      operationId: v2GetReceipt
+      parameters:
+        - { $ref: '#/components/parameters/CommandId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      responses:
+        '200':
+          description: Exact receipted response and read-back predicate fields.
+          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Receipt' } } }
+        '404': { $ref: '#/components/responses/NotFoundInAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
   parameters:
-    Cursor: { name: cursor, in: query, required: false, schema: { type: string } }
-    WorkId: { name: workId, in: path, required: true, schema: { type: string, format: uuid } }
-    SnapshotId: { name: snapshotId, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
-    ObjectId: { name: objectId, in: path, required: true, schema: { type: string, pattern: '^[0-9a-f]{64}$' } }
+    ClientVersion: { name: X-Fuminiwa-Client-Version, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+    ServerInstance: { name: X-Fuminiwa-Server-Instance, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    ProtocolEpoch: { name: X-Fuminiwa-Protocol-Epoch, in: header, required: true, schema: { type: integer, const: 2 } }
+    AccountFence: { name: X-Fuminiwa-Account-Fence, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+    Cursor: { name: cursor, in: query, required: false, description: Opaque endpoint/account/fence/query/page-size/high-water/position binding., schema: { type: string, minLength: 1, maxLength: 2048 } }
+    PageSize: { name: pageSize, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+    WorkId: { name: workId, in: path, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    SnapshotId: { name: snapshotId, in: path, required: true, schema: { $ref: '#/components/schemas/Digest' } }
+    ObjectId: { name: objectId, in: path, required: true, schema: { $ref: '#/components/schemas/Digest' } }
+    UploadId: { name: uploadId, in: path, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    CommandId: { name: commandId, in: path, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    UploadCapability: { name: X-Fuminiwa-Upload-Capability, in: header, required: true, schema: { type: string, minLength: 32, maxLength: 2048 } }
   schemas:
-    SealedCommand: { $ref: './command.schema.json' }
+    UUID: { type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }
+    Digest: { type: string, pattern: '^[0-9a-f]{64}$' }
+    Base64URL: { type: string, minLength: 2, pattern: '^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$' }
+    ConflictResolutionCommand:
+      oneOf:
+        - { $ref: './command.schema.json#/$defs/resolveDevice' }
+        - { $ref: './command.schema.json#/$defs/resolveServer' }
+        - { $ref: './command.schema.json#/$defs/cloneWork' }
+    Head:
+      type: [object, 'null']
+      additionalProperties: false
+      required: [generation, snapshotId]
+      properties:
+        generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    Capabilities:
+      type: object
+      additionalProperties: false
+      required: [accountFence, accountId, limits, protocolEpoch, result, serverInstanceId]
+      properties:
+        accountFence: { type: string, minLength: 1, maxLength: 256 }
+        accountId: { type: string, minLength: 1, maxLength: 128 }
+        limits: { $ref: '#/components/schemas/Limits' }
+        protocolEpoch: { type: integer, const: 2 }
+        result: { const: noChanges }
+        serverInstanceId: { type: string, minLength: 1, maxLength: 128 }
+    Limits:
+      type: object
+      additionalProperties: false
+      required: [maxEntries, maxManifestBytes, maxObjectBytes]
+      properties:
+        maxEntries: { type: integer, const: 100000 }
+        maxManifestBytes: { type: integer, const: 16777216 }
+        maxObjectBytes: { type: integer, const: 262144000 }
+    CatalogEntry:
+      type: object
+      additionalProperties: false
+      required: [head, title, workId]
+      properties:
+        head: { $ref: '#/components/schemas/Head' }
+        title: { type: string }
+        workId: { $ref: '#/components/schemas/UUID' }
+    CatalogPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor, result]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CatalogEntry' } }
+        nextCursor: { type: [string, 'null'] }
+        result: { const: noChanges }
+    HeadResponse:
+      type: object
+      additionalProperties: false
+      required: [head, result]
+      properties: { head: { $ref: '#/components/schemas/Head' }, result: { const: noChanges } }
+    HistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [createdAt, occurrenceId, pinned, reason, snapshotId]
+      properties:
+        createdAt: { type: string, format: date-time }
+        occurrenceId: { $ref: '#/components/schemas/UUID' }
+        pinned: { type: boolean }
+        reason: { type: string }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    HistoryPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor, result]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } }
+        nextCursor: { type: [string, 'null'] }
+        result: { const: noChanges }
+    ManifestResponse:
+      type: object
+      additionalProperties: false
+      required: [manifestBase64URL, manifestBytesDigest, result, snapshotId]
+      properties:
+        manifestBase64URL: { $ref: '#/components/schemas/Base64URL', maxLength: 22369624 }
+        manifestBytesDigest: { $ref: '#/components/schemas/Digest' }
+        result: { const: noChanges }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    MissingObjectsRequest:
+      type: object
+      additionalProperties: false
+      required: [objectIds, schemaVersion, workId]
+      properties:
+        objectIds: { type: array, maxItems: 100000, uniqueItems: true, items: { $ref: '#/components/schemas/Digest' } }
+        schemaVersion: { const: 2 }
+        workId: { $ref: '#/components/schemas/UUID' }
+    MissingObjectsResponse:
+      type: object
+      additionalProperties: false
+      required: [missingObjectIds, result]
+      properties:
+        missingObjectIds: { type: array, uniqueItems: true, items: { $ref: '#/components/schemas/Digest' } }
+        result: { enum: [noChanges, applied] }
+    PrepareObjectNoChanges:
+      type: object
+      additionalProperties: false
+      required: [receipt, result]
+      properties:
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: noChanges }
+    PrepareObjectApplied:
+      type: object
+      additionalProperties: false
+      required: [expiresAt, receipt, result, uploadCapability, uploadId]
+      properties:
+        expiresAt: { type: string, format: date-time }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+        uploadCapability: { type: string }
+        uploadId: { $ref: '#/components/schemas/UUID' }
+    Conflict:
+      type: object
+      additionalProperties: false
+      required: [baseSnapshotId, conflictId, localSnapshotId, remoteSnapshotId, revision, workId]
+      properties:
+        baseSnapshotId: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        localSnapshotId: { $ref: '#/components/schemas/Digest' }
+        remoteSnapshotId: { $ref: '#/components/schemas/Digest' }
+        revision: { type: integer, minimum: 1 }
+        workId: { $ref: '#/components/schemas/UUID' }
+    ConflictResponse:
+      type: object
+      additionalProperties: false
+      required: [conflict, result]
+      properties:
+        conflict: { oneOf: [ { $ref: '#/components/schemas/Conflict' }, { type: 'null' } ] }
+        result: { const: noChanges }
+    ReadBackPredicate:
+      type: object
+      additionalProperties: false
+      required: [accountMatched, commandDigestMatched, resourceMatched, stateMatched]
+      properties:
+        accountMatched: { type: boolean }
+        commandDigestMatched: { type: boolean }
+        headMatched: { type: boolean }
+        resourceMatched: { type: boolean }
+        stateMatched: { type: boolean }
+    CommandReceipt:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, readBack, requestDigest]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { type: string }
+        readBack: { $ref: '#/components/schemas/ReadBackPredicate' }
+        requestDigest: { $ref: '#/components/schemas/Digest' }
+    Receipt:
+      type: object
+      additionalProperties: false
+      required: [canonicalResponseBase64URL, commandId, commandKind, originalResult, readBack, requestDigest, result]
+      properties:
+        canonicalResponseBase64URL: { $ref: '#/components/schemas/Base64URL', maxLength: 44739244 }
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { type: string }
+        originalResult: { enum: [noChanges, applied, conflictPending, parked, retryable] }
+        readBack: { $ref: '#/components/schemas/ReadBackPredicate' }
+        requestDigest: { $ref: '#/components/schemas/Digest' }
+        result: { const: noChanges }
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [head, receipt, result]
+      properties:
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { enum: [noChanges, applied, conflictPending, parked, retryable] }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, result, retryable]
+      properties:
+        error:
+          enum: [invalidCanonicalBytes, schemaViolation, unauthorized, accountFenceMismatch, protocolEpochMismatch, commandIdReused, uploadExpired, uploadCapabilityMismatch, objectDigestMismatch, snapshotDigestMismatch, lineageViolation, staleHead, staleConflictRevision, notFoundInAccount, sizeLimitExceeded, rateLimited, retryable]
+        result: { enum: [parked, retryable] }
+        retryable: { type: boolean }
   responses:
-    Unauthorized: { description: Typed unauthorized error }
-    ProtocolMismatch: { description: Typed protocol mismatch error }
-    NotFoundInAccount: { description: Absent and foreign resources are indistinguishable }
-    TypedError: { description: Typed error with result status and retryability }
+    Unauthorized:
+      description: Invalid FUMINIWA session; no Apple token accepted.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+    ProtocolMismatch:
+      description: Protocol epoch mismatch.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+    FenceMismatch:
+      description: Account fence mismatch before resource lookup.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFoundInAccount:
+      description: Absent and foreign resources are indistinguishable.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+    TypedError:
+      description: Closed typed error.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
+    CommandResult:
+      description: Receipt-idempotent exact response with read-back predicate.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/CommandResult' } } }

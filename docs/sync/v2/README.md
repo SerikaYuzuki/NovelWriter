@@ -1,8 +1,17 @@
 # Snapshot Sync wire v2
 
-This directory is the versioned implementation contract selected by D-080.
-It is intentionally independent from `docs/sync/v1/`: v1 is an archive
-format, not a live compatibility mode.
+This directory is the versioned **design contract** selected by D-080. It is
+intentionally independent from `docs/sync/v1/`: v1 is an archive format, not a
+live compatibility mode.
+
+- **Contract status**: implementation-ready design after schema/fixture/DDL
+  conformance checks. A contract defect is a design P0.
+- **Implementation status**: not yet satisfied. Swift/Rust runtime, migrations,
+  deployment, and device acceptance are later implementation Gates; their
+  absence while this is a document-only phase is not itself a contract P0.
+
+An implementation may claim a Gate only after its independent runner passes
+the exact artifacts here. Code behavior never silently overrides this contract.
 
 ## Contract files
 
@@ -16,8 +25,19 @@ format, not a live compatibility mode.
 - `sqlite.sql` / `postgres.sql`: concrete v2 local/server DDL and lock order.
 - `openapi.yaml`: v2 resource, cursor, receipt, and typed-result surface.
 - `entity-schemas/`: materializable work/document, value, and order payloads.
-- `fixtures/canonical/snapshot.json`: smallest valid canonical manifest.
+- `entity-contract.md` / `expected-model.schema.json`: dynamic EntityKey,
+  referential invariants, full NovelDocument fixture, and package round trip.
+- `auth-boundary.md`: Auth v1 wire in the new v2 PostgreSQL deployment and the
+  Apple credential to opaque AccountID/session boundary.
+- `deployment.md`: `/v2`, `auth_v1`/`sync_v2`, and the isolated PostgreSQL
+  Docker volume contract.
+- `fixtures/canonical/snapshot.json`: materializable full-domain canonical
+  manifest with one chapter/episode and every current metadata domain.
 - `fixtures/canonical/snapshot.sha256`: SHA-256 of the exact canonical bytes.
+- `fixtures/canonical/clone-derived-hashes.json`: deterministic keep-both
+  replacement document/root bytes and their ObjectID/SnapshotID.
+- `fixtures/canonical/command-hashes.json`: one exact canonical request and
+  digest for every sealed mutating command kind.
 - `fixtures/scenarios/*.json`: language-neutral state-machine acceptance cases.
 
 The canonical bytes in the hash fixture are UTF-8, one-line JSON with no final

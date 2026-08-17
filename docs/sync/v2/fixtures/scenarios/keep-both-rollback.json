@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "keep-both-rolls-back-one-pg-transaction",
+  "initial": {"originalWorkId":"00000000-0000-4000-8000-000000000002","newWorkId":"00000000-0000-4000-8000-000000000202","conflictRevision":2},
+  "events": [
+    {"type":"beginKeepBoth"},
+    {"type":"injectFailure","after":"newWorkHeadInsert"},
+    {"type":"transactionRollback"}
+  ],
+  "expect": {"originalHeadUnchanged":true,"newWorkExists":false,"newHeadExists":false,"conflictStillActive":true,"receiptExists":false}
+}
