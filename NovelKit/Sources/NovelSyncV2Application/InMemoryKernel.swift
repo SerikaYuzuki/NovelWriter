@@ -2,124 +2,517 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 
-/// A deterministic, process-local kernel useful for previews and focused
-/// application tests. It deliberately has no filesystem or network access.
-public actor InMemorySyncV2Kernel: SyncV2LocalKernel {
-    private struct Work: Sendable {
-        var document: NovelDocument?
-        var generation: Int64
-        var snapshotID: SnapshotID?
-        var encoded: [SnapshotID: EncodedSnapshot]
-        var commands: [SealedCommand]
+/// Process-local test kernel. It shares intent and command state so focused
+/// restart tests exercise the same once-only sealing contract as SQLite.
+public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
+    SyncV2CommandPlanner, SyncV2LibraryProvider {
+    struct Intent: Sendable {
+        enum Kind: Sendable {
+            case checkpoint
+            case conflict(SyncV2ConflictAction)
+            case restore(selected: SnapshotID, previous: SnapshotID)
+        }
+
+        let id: UUID
+        let snapshotID: SnapshotID
+        let generation: Int64
+        let kind: Kind
     }
 
+    private struct Work: Sendable {
+        var document: NovelDocument
+        let documentCreatedAt: Date
+        var attachments: [SyncAttachment]
+        var generation: Int64
+        var snapshotID: SnapshotID
+        var encoded: [SnapshotID: EncodedSnapshot]
+        var intents: [Intent]
+        var conflict: SyncV2ConflictProjection?
+    }
+
+    private struct PendingCommand: Sendable {
+        let command: SealedCommand
+        let intentID: UUID
+        var sending: Bool
+    }
+
+    private let account: TestAccount?
+    private let readOnly: Bool
     private var works: [WorkID: Work] = [:]
+    private var commands: [WorkID: [PendingCommand]] = [:]
+    private var blocked: [WorkID: SyncV2Failure] = [:]
+    private var inboxes: [UUID: SyncV2RemoteInbox] = [:]
+    private var verifiedInboxes: Set<UUID> = []
+    private var remoteOnly: [WorkID: SyncV2RemoteInbox] = [:]
+    private var pendingAdoptions: [WorkID: SyncV2PendingAdoption] = [:]
 
-    public init() {}
+    public init(account: TestAccount? = nil, readOnly: Bool = false) {
+        self.account = account
+        self.readOnly = readOnly
+    }
 
-    public func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint {
-        var work = works[capture.workID] ?? Work(
-            document: nil,
-            generation: 0,
-            snapshotID: nil,
-            encoded: [:],
-            commands: []
-        )
-        if work.snapshotID == capture.encoded.snapshotId,
-           work.document == (try? SnapshotCodec.decode(
-               manifestBytes: capture.encoded.manifestBytes,
-               objects: capture.encoded.objects
-           ))?.document {
+    public func checkpoint(
+        _ capture: SyncV2CheckpointCapture
+    ) throws -> SyncV2LocalCheckpoint {
+        guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
+        if var work = works[capture.workID] {
+            guard work.document.id == capture.document.id,
+                  work.documentCreatedAt == capture.documentCreatedAt,
+                  work.generation == capture.expectedGeneration else {
+                throw SyncV2Failure.fatal(.invalidLocalState)
+            }
+            if work.document == capture.document,
+               attachmentsEqual(work.attachments, capture.attachments) {
+                return SyncV2LocalCheckpoint(
+                    snapshotID: work.snapshotID,
+                    generation: work.generation,
+                    intentID: work.intents.last?.id,
+                    noChanges: true
+                )
+            }
+            let encoded = try encode(capture, parent: work.snapshotID)
+            work.document = capture.document
+            work.attachments = capture.attachments
+            work.generation += 1
+            work.snapshotID = encoded.snapshotId
+            work.encoded[encoded.snapshotId] = encoded
+            let intent = coalescedIntent(for: work)
+            work.intents = intent.intents
             works[capture.workID] = work
             return SyncV2LocalCheckpoint(
-                snapshotID: capture.encoded.snapshotId,
+                snapshotID: work.snapshotID,
                 generation: work.generation,
-                intentID: nil,
-                noChanges: true
+                intentID: intent.id,
+                noChanges: false
             )
         }
-        let model = try SnapshotCodec.decode(
-            manifestBytes: capture.encoded.manifestBytes,
-            objects: capture.encoded.objects
+
+        guard capture.expectedGeneration == 0 else {
+            throw SyncV2Failure.fatal(.invalidLocalState)
+        }
+        let encoded = try encode(capture, parent: nil)
+        let intent = Intent(
+            id: UUID(),
+            snapshotID: encoded.snapshotId,
+            generation: 1,
+            kind: .checkpoint
         )
-        work.document = model.document
-        work.generation += 1
-        work.snapshotID = capture.encoded.snapshotId
-        work.encoded[capture.encoded.snapshotId] = capture.encoded
-        works[capture.workID] = work
+        works[capture.workID] = Work(
+            document: capture.document,
+            documentCreatedAt: capture.documentCreatedAt,
+            attachments: capture.attachments,
+            generation: 1,
+            snapshotID: encoded.snapshotId,
+            encoded: [encoded.snapshotId: encoded],
+            intents: [intent],
+            conflict: nil
+        )
         return SyncV2LocalCheckpoint(
-            snapshotID: capture.encoded.snapshotId,
-            generation: work.generation,
-            intentID: UUID(),
+            snapshotID: encoded.snapshotId,
+            generation: 1,
+            intentID: intent.id,
             noChanges: false
         )
     }
 
-    public func open(workID: WorkID) async throws -> SyncV2OpenedWork {
-        guard let work = works[workID] else { throw SyncV2ApplicationError.workNotFound }
-        return SyncV2OpenedWork(
-            workID: workID,
-            document: work.document,
-            generation: work.generation,
-            snapshotID: work.snapshotID
-        )
-    }
-
-    public func pendingCommands(workID: WorkID) async throws -> [SealedCommand] {
-        works[workID]?.commands ?? []
-    }
-
-    public func markSending(commandID: UUID, workID: WorkID) async throws -> SealedCommand {
-        guard let command = works[workID]?.commands.first(where: { $0.commandId == commandID }) else {
+    public func open(workID: WorkID) throws -> SyncV2OpenedWork {
+        guard let work = works[workID] else {
             throw SyncV2ApplicationError.workNotFound
         }
-        return command
+        return opened(workID: workID, work: work)
     }
 
-    public func requeue(commandID: UUID, workID: WorkID) async throws {
-        _ = commandID
-        _ = workID
+    public func prepareConflict(
+        _ action: SyncV2ConflictAction
+    ) throws -> SyncV2Preparation {
+        guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
+        guard let conflict = works[action.workID]?.conflict,
+              conflict.conflictID == action.conflictID,
+              conflict.revision == action.revision,
+              conflict.sourceGeneration == action.sourceGeneration else {
+            throw SyncV2ApplicationError.staleConflictAction
+        }
+        guard var work = works[action.workID],
+              work.generation == action.sourceGeneration,
+              work.snapshotID == action.localSnapshotID else {
+            throw SyncV2ApplicationError.staleConflictAction
+        }
+        if action.choice == .useDevice {
+            let decision = try SnapshotCodec.encode(
+                SnapshotModel(
+                    workId: action.workID,
+                    document: work.document,
+                    documentCreatedAt: work.documentCreatedAt,
+                    attachments: work.attachments
+                ),
+                parents: [action.localSnapshotID, action.remoteSnapshotID].sorted {
+                    $0.rawValue < $1.rawValue
+                }
+            )
+            work.generation += 1
+            work.snapshotID = decision.snapshotId
+            work.encoded[decision.snapshotId] = decision
+        }
+        let intent = Intent(
+            id: UUID(),
+            snapshotID: work.snapshotID,
+            generation: work.generation,
+            kind: .conflict(action)
+        )
+        work.intents.append(intent)
+        works[action.workID] = work
+        return SyncV2Preparation(intentID: intent.id, noChanges: false)
     }
 
-    public func acknowledge(
+    public func prepareRestore(
+        _ request: SyncV2RestoreRequest
+    ) throws -> SyncV2Preparation {
+        guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
+        guard var work = works[request.workID] else {
+            throw SyncV2ApplicationError.workNotFound
+        }
+        guard work.snapshotID != request.snapshotID else {
+            return SyncV2Preparation(intentID: nil, noChanges: true)
+        }
+        guard let selected = work.encoded[request.snapshotID] else {
+            throw SyncV2ApplicationError.workNotFound
+        }
+        let model = try SnapshotCodec.decode(
+            manifestBytes: selected.manifestBytes,
+            objects: selected.objects
+        )
+        let previous = work.snapshotID
+        let restored = try SnapshotCodec.encode(
+            model,
+            parents: [previous, request.snapshotID].sorted {
+                $0.rawValue < $1.rawValue
+            }
+        )
+        work.document = model.document
+        work.attachments = model.attachments
+        work.generation += 1
+        work.snapshotID = restored.snapshotId
+        work.encoded[restored.snapshotId] = restored
+        let intent = Intent(
+            id: UUID(),
+            snapshotID: restored.snapshotId,
+            generation: work.generation,
+            kind: .restore(selected: request.snapshotID, previous: previous)
+        )
+        work.intents.append(intent)
+        works[request.workID] = work
+        return SyncV2Preparation(intentID: intent.id, noChanges: false)
+    }
+
+    public func stageRemote(_ inbox: SyncV2RemoteInbox) throws {
+        guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
+        inboxes[inbox.inboxID] = inbox
+    }
+
+    public func verifyRemote(inboxID: UUID, workID: WorkID) throws {
+        guard inboxes[inboxID]?.workID == workID else {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
+        verifiedInboxes.insert(inboxID)
+    }
+
+    public func pendingAdoption(
+        workID: WorkID
+    ) -> SyncV2PendingAdoption? {
+        pendingAdoptions[workID]
+    }
+
+    public func applyStagedRemote(
+        _ transaction: SyncV2AdoptionTransaction
+    ) throws -> SyncV2OpenedWork {
+        let boundary = transaction.boundary
+        guard var work = works[boundary.workID],
+              work.generation == boundary.gate.expectedLocalVersion.generation,
+              work.snapshotID == boundary.gate.expectedLocalVersion.snapshotID,
+              !transaction.requireNoPendingIntent || work.intents.isEmpty,
+              boundary.session.workID == boundary.workID,
+              boundary.gate.workID == boundary.workID,
+              boundary.gate.sessionIdentity == boundary.session.identity,
+              boundary.gate.sessionRevision == boundary.session.revision,
+              let inbox = inboxes[boundary.inboxID],
+              inbox.workID == boundary.workID,
+              verifiedInboxes.contains(boundary.inboxID),
+              let encoded = inbox.snapshots.first(where: {
+                  $0.snapshotId == inbox.headSnapshotID
+              }) else {
+            throw SyncV2ApplicationError.safeBoundaryRejected
+        }
+        let model = try SnapshotCodec.decode(
+            manifestBytes: encoded.manifestBytes,
+            objects: encoded.objects
+        )
+        work.document = model.document
+        work.attachments = model.attachments
+        work.generation += 1
+        work.snapshotID = encoded.snapshotId
+        work.encoded[encoded.snapshotId] = encoded
+        works[boundary.workID] = work
+        pendingAdoptions[boundary.workID] = nil
+        return opened(workID: boundary.workID, work: work)
+    }
+
+    public func installRemoteOnly(
+        _ inbox: SyncV2RemoteInbox
+    ) throws -> SyncV2OpenedWork {
+        guard !readOnly, works[inbox.workID] == nil,
+              let encoded = inbox.snapshots.first(where: {
+                  $0.snapshotId == inbox.headSnapshotID
+              }) else {
+            throw SyncV2ApplicationError.remoteOnlyInstallRejected
+        }
+        let model = try SnapshotCodec.decode(
+            manifestBytes: encoded.manifestBytes,
+            objects: encoded.objects
+        )
+        let work = Work(
+            document: model.document,
+            documentCreatedAt: model.documentCreatedAt,
+            attachments: model.attachments,
+            generation: 1,
+            snapshotID: encoded.snapshotId,
+            encoded: [encoded.snapshotId: encoded],
+            intents: [],
+            conflict: nil
+        )
+        works[inbox.workID] = work
+        return opened(workID: inbox.workID, work: work)
+    }
+}
+
+public extension InMemorySyncV2RuntimeState {
+    func nextCommand(workID: WorkID) throws -> SyncV2CommandPlan {
+        if let failure = blocked[workID] {
+            return .blocked(failure)
+        }
+        if let command = commands[workID]?.first {
+            return .command(command.command)
+        }
+        guard let intent = works[workID]?.intents.first else { return .idle }
+        guard let account else {
+            return .blocked(.authenticationRequired)
+        }
+        let command = try makeCommand(
+            workID: workID,
+            intent: intent,
+            account: account
+        )
+        commands[workID, default: []].append(
+            PendingCommand(command: command, intentID: intent.id, sending: false)
+        )
+        return .command(command)
+    }
+
+    func markSending(
+        _ operation: SyncV2RemoteOperation,
+        workID: WorkID
+    ) throws -> SyncV2RemoteOperation {
+        guard case let .command(candidate) = operation,
+              var pending = commands[workID],
+              let index = pending.firstIndex(where: {
+                  $0.command.commandId == candidate.command.commandId
+              }),
+              pending[index].command == candidate.command else {
+            throw SyncV2Failure.fatal(.invalidLocalState)
+        }
+        pending[index].sending = true
+        commands[workID] = pending
+        return operation
+    }
+
+    func recordFailure(
+        operation: SyncV2RemoteOperation,
+        workID: WorkID,
+        disposition: SyncV2CommandFailureDisposition
+    ) throws {
+        switch disposition {
+        case .requeue:
+            guard case let .command(candidate) = operation,
+                  var pending = commands[workID],
+                  let index = pending.firstIndex(where: {
+                      $0.command.commandId == candidate.command.commandId
+                  }) else { return }
+            pending[index].sending = false
+            commands[workID] = pending
+        case .quarantine:
+            blocked[workID] = .quarantined(.unsafeLocalState)
+        case .park:
+            blocked[workID] = .quarantined(.differentAccount)
+        }
+    }
+
+    func acknowledgeCommand(
         _ receipt: SyncV2ReceiptReadback,
         command: SealedCommand,
         verifiedInboxID: UUID?
-    ) async throws {
+    ) throws {
         _ = verifiedInboxID
         guard receipt.commandID == command.commandId,
               receipt.requestDigest == command.requestDigest,
-              receipt.predicates.allVerified else {
-            throw SyncV2ApplicationError.receiptMismatch
+              receipt.predicates.allVerified,
+              let workID = commands.first(where: { entry in
+                  entry.value.contains { $0.command.commandId == command.commandId }
+              })?.key,
+              var work = works[workID],
+              let linked = commands[workID]?.first(where: {
+                  $0.command.commandId == command.commandId
+              }),
+              let linkedIntent = work.intents.first(where: {
+                  $0.id == linked.intentID
+              }) else {
+            throw SyncV2Failure.receiptMismatch
         }
-        guard let workID = works.first(where: { $0.value.commands.contains { $0.commandId == command.commandId } })?.key,
-              var work = works[workID] else {
-            throw SyncV2ApplicationError.workNotFound
+        commands[workID]?.removeAll { $0.command.commandId == command.commandId }
+        work.intents.removeAll { $0.id == linked.intentID }
+        if receipt.result == .conflictPending {
+            guard let conflict = receipt.conflict else {
+                throw SyncV2Failure.receiptMismatch
+            }
+            work.conflict = conflict
+        } else if case let .conflict(action) = linkedIntent.kind {
+            if action.choice == .useServer, let inboxID = verifiedInboxID {
+                pendingAdoptions[workID] = SyncV2PendingAdoption(
+                    workID: workID,
+                    inboxID: inboxID,
+                    expectedLocalVersion: SyncV2LocalVersion(
+                        generation: action.sourceGeneration,
+                        snapshotID: action.localSnapshotID
+                    ),
+                    conflictID: action.conflictID,
+                    conflictRevision: action.revision
+                )
+            } else {
+                work.conflict = nil
+            }
         }
-        work.commands.removeAll { $0.commandId == command.commandId }
         works[workID] = work
     }
 
-    public func prepareConflict(_ action: SyncV2ConflictAction) async throws -> SealedCommand {
-        _ = action
-        throw SyncV2ApplicationError.staleConflictAction
+    func acknowledgeUpload(_ completion: SyncV2UploadCompletion) throws {
+        _ = completion
+        throw SyncV2Failure.fatal(.unsupportedCommand)
+    }
+}
+
+public extension InMemorySyncV2RuntimeState {
+    func library() -> SyncV2LibraryProjection {
+        SyncV2LibraryProjection(items: works.map { workID, work in
+            SyncV2LibraryItem(
+                workID: workID,
+                title: work.document.title,
+                availability: .localOnly,
+                accountState: account == nil ? .unbound : .active,
+                localGeneration: work.generation,
+                conflict: work.conflict,
+                remoteProgress: work.conflict == nil ? .idle : .needsChoice
+            )
+        } + remoteOnly.compactMap { workID, inbox in
+            guard works[workID] == nil,
+                  let encoded = inbox.snapshots.first(where: {
+                      $0.snapshotId == inbox.headSnapshotID
+                  }),
+                  let model = try? SnapshotCodec.decode(
+                      manifestBytes: encoded.manifestBytes,
+                      objects: encoded.objects
+                  ) else { return nil }
+            return SyncV2LibraryItem(
+                workID: workID,
+                title: model.document.title,
+                availability: .remoteOnly,
+                accountState: .active,
+                remoteHead: inbox.expectedRemoteHead
+            )
+        })
     }
 
-    public func prepareRestore(_ request: SyncV2RestoreRequest) async throws -> SealedCommand? {
-        _ = request
-        return nil
+    func downloadRemoteOnly(
+        workID: WorkID
+    ) throws -> SyncV2RemoteInbox {
+        guard let inbox = remoteOnly[workID] else {
+            throw SyncV2ApplicationError.workNotFound
+        }
+        return inbox
     }
 
-    public func stageRemote(_ inbox: SyncV2RemoteInbox) async throws {
-        _ = inbox
+    func addRemoteOnly(_ inbox: SyncV2RemoteInbox) {
+        remoteOnly[inbox.workID] = inbox
     }
 
-    public func verifyRemote(inboxID: UUID, workID: WorkID) async throws {
-        _ = inboxID
-        _ = workID
+    func setBlocked(_ failure: SyncV2Failure?, workID: WorkID) {
+        blocked[workID] = failure
     }
 
-    public func applyStagedRemote(_ boundary: SafeAdoptionBoundary) async throws -> SyncV2OpenedWork {
-        try await open(workID: boundary.workID)
+    func setConflict(
+        _ conflict: SyncV2ConflictProjection?,
+        workID: WorkID
+    ) {
+        works[workID]?.conflict = conflict
+    }
+
+    func pendingIntentCount(workID: WorkID) -> Int {
+        works[workID]?.intents.count ?? 0
+    }
+}
+
+private extension InMemorySyncV2RuntimeState {
+    func encode(
+        _ capture: SyncV2CheckpointCapture,
+        parent: SnapshotID?
+    ) throws -> EncodedSnapshot {
+        try SnapshotCodec.encode(
+            SnapshotModel(
+                workId: capture.workID,
+                document: capture.document,
+                documentCreatedAt: capture.documentCreatedAt,
+                attachments: capture.attachments
+            ),
+            parents: parent.map { [$0] } ?? []
+        )
+    }
+
+    func attachmentsEqual(
+        _ lhs: [SyncAttachment],
+        _ rhs: [SyncAttachment]
+    ) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            left.attachmentId == right.attachmentId &&
+                left.fileName == right.fileName && left.bytes == right.bytes
+        }
+    }
+
+    private func coalescedIntent(for work: Work) -> (id: UUID, intents: [Intent]) {
+        let sealedIDs = Set(commands.values.flatMap { $0.map(\.intentID) })
+        if let last = work.intents.last, !sealedIDs.contains(last.id) {
+            let replacement = Intent(
+                id: last.id,
+                snapshotID: work.snapshotID,
+                generation: work.generation,
+                kind: .checkpoint
+            )
+            return (last.id, Array(work.intents.dropLast()) + [replacement])
+        }
+        let intent = Intent(
+            id: UUID(),
+            snapshotID: work.snapshotID,
+            generation: work.generation,
+            kind: .checkpoint
+        )
+        return (intent.id, work.intents + [intent])
+    }
+
+    private func opened(workID: WorkID, work: Work) -> SyncV2OpenedWork {
+        SyncV2OpenedWork(
+            workID: workID,
+            document: work.document,
+            documentCreatedAt: work.documentCreatedAt,
+            attachments: work.attachments,
+            generation: work.generation,
+            snapshotID: work.snapshotID
+        )
     }
 }

@@ -1,41 +1,84 @@
 import Foundation
 
-public struct ProductionRoot: Hashable, Sendable {
+public struct ProductionLocalRoot: Hashable, Sendable {
+    public let url: URL
+
+    package init(applicationSupportDirectory: URL) throws {
+        let candidate = applicationSupportDirectory
+            .appendingPathComponent("FUMINIWA", isDirectory: true)
+            .appendingPathComponent("SnapshotSyncV2", isDirectory: true)
+            .standardizedFileURL
+        guard applicationSupportDirectory.isFileURL,
+              isSafeLocalPath(
+                  candidate,
+                  within: applicationSupportDirectory
+              ) else {
+            throw SyncV2ApplicationError.invalidRuntimeMode
+        }
+        url = candidate
+    }
+}
+
+public struct ProductionHTTPSOrigin: Hashable, Sendable {
     public let url: URL
 
     public init(url: URL) throws {
         guard url.isFileURL == false,
               url.scheme?.lowercased() == "https",
-              url.host != nil else {
+              url.host != nil,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil,
+              url.path.isEmpty || url.path == "/" else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
         self.url = url
     }
 }
 
-public struct TestRoot: Hashable, Sendable {
+public struct ProductionRuntimeConfiguration: Hashable, Sendable {
+    public let localRoot: ProductionLocalRoot
+    public let origin: ProductionHTTPSOrigin
+
+    public init(origin: ProductionHTTPSOrigin) throws {
+        guard let applicationSupportDirectory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw SyncV2ApplicationError.invalidRuntimeMode
+        }
+        localRoot = try ProductionLocalRoot(
+            applicationSupportDirectory: applicationSupportDirectory
+        )
+        self.origin = origin
+    }
+}
+
+public struct TestLocalRoot: Hashable, Sendable {
     public let url: URL
+    public let runID: UUID
 
-    public init(url: URL) throws {
-        guard url.isFileURL,
-              !FileManager.default.fileExists(atPath: url.path, isDirectory: nil) ||
-              url.resolvingSymlinksInPath().path == url.path else {
+    package init(baseDirectory: URL, runID: UUID) throws {
+        let candidate = baseDirectory
+            .appendingPathComponent("FUMINIWA-SnapshotSyncV2-Tests")
+            .appendingPathComponent(runID.uuidString.lowercased())
+            .standardizedFileURL
+        guard baseDirectory.isFileURL,
+              isSafeLocalPath(candidate, within: baseDirectory) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
-        self.url = url
+        self.runID = runID
+        url = candidate
     }
 }
 
-public struct ProductionVault: Sendable {
-    public init() {}
-}
+public struct TestDefaults: Hashable, Sendable {
+    public let suiteName: String
 
-public struct TestVault: Sendable {
-    public init() {}
-}
-
-public struct TestDefaults: Sendable {
-    public init() {}
+    package init(runID: UUID) {
+        suiteName = "jp.fuminiwa.sync-v2.tests.\(runID.uuidString.lowercased())"
+    }
 }
 
 public struct TestAccount: Hashable, Sendable {
@@ -48,89 +91,106 @@ public struct TestAccount: Hashable, Sendable {
     }
 }
 
-public actor FakeTransport: SyncV2Transport {
-    public enum Behavior: Sendable {
-        case response(SyncV2TransportResponse)
-        case offline
-        case lostAcknowledgement
-    }
+public actor TestSyncV2Vault {
+    private var account: TestAccount?
 
-    private var behavior: Behavior = .offline
-    private var requests: [SyncV2TransportRequest] = []
-
-    public init() {}
-
-    public func setBehavior(_ behavior: Behavior) {
-        self.behavior = behavior
-    }
-
-    public func recordedRequests() -> [SyncV2TransportRequest] {
-        requests
-    }
-
-    public func send(_ request: SyncV2TransportRequest) async throws -> SyncV2TransportResponse {
-        requests.append(request)
-        switch behavior {
-        case let .response(response):
-            return response
-        case .offline:
-            throw SyncV2ApplicationError.transport("offline")
-        case .lostAcknowledgement:
-            throw SyncV2ApplicationError.transport("lostAcknowledgement")
-        }
-    }
-}
-
-public struct ProductionDependencies: Sendable {
-    public let root: ProductionRoot
-    public let transport: any SyncV2Transport
-    public let vault: ProductionVault
-    public let kernel: any SyncV2LocalKernel
-
-    public init(
-        root: ProductionRoot,
-        transport: any SyncV2Transport,
-        vault: ProductionVault,
-        kernel: any SyncV2LocalKernel
-    ) {
-        self.root = root
-        self.transport = transport
-        self.vault = vault
-        self.kernel = kernel
-    }
-}
-
-public struct TestDependencies: Sendable {
-    public let root: TestRoot
-    public let transport: FakeTransport
-    public let vault: TestVault
-    public let defaults: TestDefaults
-    public let account: TestAccount
-    public let kernel: any SyncV2LocalKernel
-
-    public init(
-        root: TestRoot,
-        transport: FakeTransport,
-        vault: TestVault,
-        defaults: TestDefaults,
-        account: TestAccount,
-        kernel: any SyncV2LocalKernel
-    ) {
-        self.root = root
-        self.transport = transport
-        self.vault = vault
-        self.defaults = defaults
+    public init(account: TestAccount?) {
         self.account = account
-        self.kernel = kernel
+    }
+
+    public func currentAccount() -> TestAccount? {
+        account
+    }
+
+    public func replaceAccount(_ account: TestAccount?) {
+        self.account = account
     }
 }
 
-public struct PreviewDependencies: Sendable {
+public struct TestRuntimeConfiguration: Sendable {
+    public let localRoot: TestLocalRoot
+    public let defaults: TestDefaults
+    public let vault: TestSyncV2Vault
+    public let remote: FakeSyncV2RemoteClient
+
+    public init(
+        account: TestAccount? = TestAccount(
+            accountID: "test-account",
+            accountFence: "test-fence"
+        ),
+        remote: FakeSyncV2RemoteClient = FakeSyncV2RemoteClient()
+    ) throws {
+        let runID = UUID()
+        localRoot = try TestLocalRoot(
+            baseDirectory: FileManager.default.temporaryDirectory
+                .resolvingSymlinksInPath(),
+            runID: runID
+        )
+        defaults = TestDefaults(runID: runID)
+        vault = TestSyncV2Vault(account: account)
+        self.remote = remote
+    }
+}
+
+public struct PreviewRuntimeConfiguration: Hashable, Sendable {
     public init() {}
 }
 
 public enum RuntimeMode: Sendable {
-    case production(ProductionDependencies)
-    case test(TestDependencies)
-    case preview(PreviewDependencies)
+    case production(ProductionRuntimeConfiguration)
+    case test(TestRuntimeConfiguration)
+    case preview(PreviewRuntimeConfiguration)
+}
+
+package struct SyncV2RuntimeComposition: Sendable {
+    package enum Identity: Sendable {
+        case production
+        case test
+        case preview
+    }
+
+    package let identity: Identity
+    package let kernel: any SyncV2LocalKernel
+    package let planner: any SyncV2CommandPlanner
+    package let remote: any SyncV2RemoteClient
+    package let gate: any SyncV2DocumentGate
+    package let library: any SyncV2LibraryProvider
+
+    package init(
+        identity: Identity,
+        kernel: any SyncV2LocalKernel,
+        planner: any SyncV2CommandPlanner,
+        remote: any SyncV2RemoteClient,
+        gate: any SyncV2DocumentGate,
+        library: any SyncV2LibraryProvider
+    ) {
+        self.identity = identity
+        self.kernel = kernel
+        self.planner = planner
+        self.remote = remote
+        self.gate = gate
+        self.library = library
+    }
+}
+
+private func isSafeLocalPath(_ candidate: URL, within base: URL) -> Bool {
+    let standardizedBase = base.standardizedFileURL
+    let standardizedCandidate = candidate.standardizedFileURL
+    guard standardizedCandidate.path == standardizedBase.path ||
+        standardizedCandidate.path.hasPrefix(standardizedBase.path + "/") else {
+        return false
+    }
+    var ancestor = standardizedCandidate
+    while true {
+        if (try? FileManager.default.destinationOfSymbolicLink(
+            atPath: ancestor.path
+        )) != nil {
+            return false
+        }
+        if ancestor.path == standardizedBase.path {
+            break
+        }
+        ancestor.deleteLastPathComponent()
+    }
+    return true
 }

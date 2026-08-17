@@ -93,6 +93,8 @@ extension V2CheckpointReason {
 public struct V2OpenResult: Sendable {
     public let summary: V2WorkSummary
     public let document: NovelDocument?
+    public let documentCreatedAt: Date
+    public let attachments: [SyncAttachment]
 }
 
 public struct V2CheckpointRequest: Sendable {

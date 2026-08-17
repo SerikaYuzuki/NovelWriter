@@ -127,8 +127,17 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.workNotFound
         }
         let summary = try Self.summary(row)
+        guard let anchor = row[5].text,
+              let documentCreatedAt = ISO8601DateFormatter().date(from: anchor) else {
+            throw SyncV2StoreError.invalidSnapshot
+        }
         guard let snapshotID = summary.currentSnapshotID else {
-            return V2OpenResult(summary: summary, document: nil)
+            return V2OpenResult(
+                summary: summary,
+                document: nil,
+                documentCreatedAt: documentCreatedAt,
+                attachments: []
+            )
         }
         let encoded = try loadEncoded(workID: workID, snapshotID: snapshotID)
         let model = try SnapshotCodec.decode(
@@ -136,7 +145,12 @@ public extension LocalSyncV2Store {
             objects: encoded.objects
         )
         try validateAnchor(model, workRow: row)
-        return V2OpenResult(summary: summary, document: model.document)
+        return V2OpenResult(
+            summary: summary,
+            document: model.document,
+            documentCreatedAt: model.documentCreatedAt,
+            attachments: model.attachments
+        )
     }
 
     func checkpoint(

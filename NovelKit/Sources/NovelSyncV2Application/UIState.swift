@@ -11,34 +11,35 @@ public enum SyncV2LocalDurability: Equatable, Sendable {
 public enum SyncV2RemoteProgress: Equatable, Sendable {
     case idle
     case noChanges
-    case syncing(commandID: UUID)
+    case pending
+    case syncing(operationID: UUID)
     case offline
-    case parked(reason: String)
-    case quarantined(reason: String)
+    case authenticationRequired
+    case fenceChanged
+    case parkedDifferentAccount
+    case quarantined(SyncV2QuarantineReason)
+    case retryable(SyncV2RetryReason)
     case needsChoice
-    case failed
+    case readyForSafeAdoption(inboxID: UUID)
+    case failed(SyncV2FatalReason)
+    case receiptMismatch
 
     public var japaneseLabel: String {
         switch self {
         case .idle, .noChanges: "同期済み"
+        case .pending: "同期待ち"
         case .syncing: "同期中"
         case .offline: "端末に保存済み・通信待ち"
-        case .parked: "別のアカウントのため保留中"
+        case .authenticationRequired: "サインインすると同期します"
+        case .fenceChanged: "アカウントの安全確認が必要です"
+        case .parkedDifferentAccount: "別のアカウントのため保留中"
         case .quarantined: "安全確認後に同期を再開します"
+        case .retryable: "端末に保存済み・同期を再試行します"
         case .needsChoice: "競合の確認が必要です"
-        case .failed: "同期を再試行できます"
+        case .readyForSafeAdoption: "サーバーの版を適用できます"
+        case .failed, .receiptMismatch: "同期を再試行できます"
         }
     }
-}
-
-public struct SyncV2ConflictProjection: Hashable, Sendable {
-    public let conflictID: UUID
-    public let revision: Int64
-    public let baseSnapshotID: SnapshotID?
-    public let localSnapshotID: SnapshotID
-    public let remoteSnapshotID: SnapshotID
-    public let sourceGeneration: Int64
-    public let commandID: UUID?
 }
 
 public enum SyncV2TypedResult: Equatable, Sendable {
@@ -49,8 +50,9 @@ public enum SyncV2TypedResult: Equatable, Sendable {
     case conflictPending
     case staleConflictAction
     case restored
-    case offline
-    case failed
+    case remoteOnlyInstalled
+    case adoptionPending
+    case failure(SyncV2Failure)
 }
 
 public struct SyncUIState: Equatable, Sendable {
@@ -59,19 +61,22 @@ public struct SyncUIState: Equatable, Sendable {
     public let remoteProgress: SyncV2RemoteProgress
     public let conflict: SyncV2ConflictProjection?
     public let lastTypedResult: SyncV2TypedResult
+    public let lastFailure: SyncV2Failure?
 
     public init(
         workID: WorkID,
         localDurability: SyncV2LocalDurability,
         remoteProgress: SyncV2RemoteProgress,
         conflict: SyncV2ConflictProjection? = nil,
-        lastTypedResult: SyncV2TypedResult
+        lastTypedResult: SyncV2TypedResult,
+        lastFailure: SyncV2Failure? = nil
     ) {
         self.workID = workID
         self.localDurability = localDurability
         self.remoteProgress = remoteProgress
         self.conflict = conflict
         self.lastTypedResult = lastTypedResult
+        self.lastFailure = lastFailure
     }
 
     public var japaneseLabel: String {
@@ -79,33 +84,8 @@ public struct SyncUIState: Equatable, Sendable {
     }
 }
 
-public struct SafeAdoptionBoundary: Hashable, Sendable {
-    public let workID: WorkID
-    public let sessionToken: UUID
-    public let expectedGeneration: Int64
-    public let expectedSnapshotID: SnapshotID?
-    public let imeActive: Bool
-    public let hasUnsavedChanges: Bool
-    public let hasPendingIntent: Bool
-    public let documentGateProof: UUID
-
-    public init(
-        workID: WorkID,
-        sessionToken: UUID,
-        expectedGeneration: Int64,
-        expectedSnapshotID: SnapshotID?,
-        imeActive: Bool,
-        hasUnsavedChanges: Bool,
-        hasPendingIntent: Bool,
-        documentGateProof: UUID
-    ) {
-        self.workID = workID
-        self.sessionToken = sessionToken
-        self.expectedGeneration = expectedGeneration
-        self.expectedSnapshotID = expectedSnapshotID
-        self.imeActive = imeActive
-        self.hasUnsavedChanges = hasUnsavedChanges
-        self.hasPendingIntent = hasPendingIntent
-        self.documentGateProof = documentGateProof
-    }
+enum SyncV2ConflictUpdate: Sendable {
+    case retain
+    case set(SyncV2ConflictProjection)
+    case clear
 }
