@@ -65,9 +65,10 @@ docker compose --env-file /secure/fuminiwa-sync-v2.env \
 On `192.168.11.5`, use a new Compose project exactly as shown above. Do not
 run `down -v`, `volume rm`, `docker system prune`, or any command against the
 old project while validating v2. The v2 health chain is PostgreSQL readiness,
-then the authenticated Axum listener, then Caddy TLS. A `401` from the
-unauthenticated capabilities probe is expected and means the listener is
-alive; it is not an account or data read-back.
+then the Axum listener, then Caddy TLS. The public Auth capabilities probe
+must return `200`; any `401` or other status is a failed health read-back.
+This endpoint proves only listener/router readiness and is not an account or
+data read-back.
 
 ## Verification
 
