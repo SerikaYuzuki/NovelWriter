@@ -52,12 +52,14 @@ struct RemoteHTTPLineageTests {
         #expect(localState.summary.localGeneration == 2)
         #expect(localState.summary.currentSnapshotID == local.snapshotId)
         let candidate = try await appendRemoteConflict(
-            store: store,
-            fixture: fixture,
-            conflict: conflict,
-            inbox: inbox,
-            remote: remote,
-            localSnapshotID: local.snapshotId
+            RemoteConflictAppendRequest(
+                store: store,
+                fixture: fixture,
+                conflict: conflict,
+                inbox: inbox,
+                remote: remote,
+                localSnapshotID: local.snapshotId
+            )
         )
         #expect(candidate.baseSnapshotID == base.snapshotId)
         #expect(try await store.activeConflict(workID: fixture.workID, scope: scope)?.baseSnapshotID == base.snapshotId)
@@ -106,15 +108,24 @@ struct RemoteHTTPLineageTests {
     }
 }
 
+private struct RemoteConflictAppendRequest {
+    let store: LocalSyncV2Store
+    let fixture: LineageFixture
+    let conflict: SyncV2ConflictProjection
+    let inbox: SyncV2RemoteInbox
+    let remote: EncodedSnapshot
+    let localSnapshotID: SnapshotID
+}
+
 private func appendRemoteConflict(
-    store: LocalSyncV2Store,
-    fixture: LineageFixture,
-    conflict: SyncV2ConflictProjection,
-    inbox: SyncV2RemoteInbox,
-    remote: EncodedSnapshot,
-    localSnapshotID: SnapshotID
+    _ request: RemoteConflictAppendRequest
 ) async throws -> V2ConflictCandidate {
-    try await store.appendConflict(
+    let fixture = request.fixture
+    let conflict = request.conflict
+    let inbox = request.inbox
+    let remote = request.remote
+    let localSnapshotID = request.localSnapshotID
+    return try await request.store.appendConflict(
         workID: fixture.workID,
         baseSnapshotID: conflict.baseSnapshotID,
         localSnapshotID: localSnapshotID,
@@ -308,124 +319,5 @@ private struct LineageFixture: Sendable {
 
     func requestCount(path: String) -> Int {
         LineageURLProtocol.state?.count(path: path) ?? 0
-    }
-}
-
-private struct LineageHTTPReply: Sendable {
-    let status: Int
-    let headers: [String: String]
-    let body: Data
-}
-
-private final class LineageHTTPState: @unchecked Sendable {
-    private let lock = NSLock()
-    private let replies: [String: LineageHTTPReply]
-    private var paths: [String] = []
-
-    init(workID: WorkID, snapshots: [EncodedSnapshot], publishResponse: Data?) {
-        var replies: [String: LineageHTTPReply] = [:]
-        let headers = [
-            "Cache-Control": "no-store",
-            "Pragma": "no-cache",
-            "Content-Type": "application/vnd.fuminiwa.sync.v2+jcs"
-        ]
-        let head = snapshots.last!
-        replies["GET /v2/works/\(workID.description)/head"] = LineageHTTPReply(
-            status: 200,
-            headers: headers,
-            body: Data("{\"head\":{\"generation\":1,\"snapshotId\":\"\(head.snapshotId.rawValue)\"}}".utf8)
-        )
-        for snapshot in snapshots {
-            let manifest = snapshot.manifestBytes.base64URLEncodedString()
-            let body = [
-                "{\"manifestBase64URL\":\"", manifest,
-                "\",\"manifestBytesDigest\":\"",
-                ObjectID(data: snapshot.manifestBytes).rawValue,
-                "\",\"result\":\"noChanges\",\"snapshotId\":\"",
-                snapshot.snapshotId.rawValue, "\"}"
-            ].joined()
-            replies["GET /v2/snapshots/\(snapshot.snapshotId.rawValue)/manifest"] = LineageHTTPReply(
-                status: 200,
-                headers: headers,
-                body: Data(body.utf8)
-            )
-            for entry in snapshot.manifest.entries {
-                replies["GET /v2/objects/\(entry.objectId.rawValue)"] = LineageHTTPReply(
-                    status: 200,
-                    headers: [
-                        "Cache-Control": "no-store",
-                        "Pragma": "no-cache",
-                        "Content-Type": "application/octet-stream",
-                        "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
-                        "X-Fuminiwa-Byte-Count": String(snapshot.objects[entry.objectId]?.count ?? 0)
-                    ],
-                    body: snapshot.objects[entry.objectId] ?? Data()
-                )
-            }
-        }
-        if let publishResponse {
-            let path = "POST /v2/works/\(workID.description)/publish"
-            replies[path] = LineageHTTPReply(
-                status: 409,
-                headers: headers,
-                body: publishResponse
-            )
-        }
-        self.replies = replies
-    }
-
-    func reply(for request: URLRequest) -> LineageHTTPReply? {
-        let method = request.httpMethod ?? "GET"
-        let path = request.url?.path ?? ""
-        lock.lock()
-        paths.append(path)
-        lock.unlock()
-        return replies["\(method) \(path)"]
-    }
-
-    func count(path: String) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return paths.count(where: { $0 == path })
-    }
-}
-
-private class LineageURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var state: LineageHTTPState?
-
-    override class func canInit(with _: URLRequest) -> Bool {
-        true
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let reply = Self.state?.reply(for: request),
-              let url = request.url,
-              let response = HTTPURLResponse(
-                  url: url,
-                  statusCode: reply.status,
-                  httpVersion: nil,
-                  headerFields: reply.headers
-              ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: reply.body)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-}
-
-private extension Data {
-    func base64URLEncodedString() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }
