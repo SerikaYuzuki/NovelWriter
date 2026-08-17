@@ -283,13 +283,26 @@ impl Repository {
         p: &AuthenticatedPrincipal,
         cmd: &SealedCommand,
     ) -> SyncResult<Option<(i32, Vec<u8>)>> {
-        if let Some(row) = sqlx::query("SELECT command_kind,request_digest,state,response_status,canonical_response FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 FOR UPDATE")
+        if let Some(row) = sqlx::query("SELECT work_id,command_kind,canonical_request,request_digest,state,response_status,canonical_response FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 FOR UPDATE")
             .bind(&p.account_id).bind(cmd.command_id).fetch_optional(&mut **tx).await? {
+            let work_id: Uuid = row.try_get("work_id")?;
             let kind: String = row.try_get("command_kind")?;
+            let canonical_request: Vec<u8> = row.try_get("canonical_request")?;
             let digest: Vec<u8> = row.try_get("request_digest")?;
             let state: String = row.try_get("state")?;
             let status: Option<i32> = row.try_get("response_status")?;
             let response: Option<Vec<u8>> = row.try_get("canonical_response")?;
+            // An operation ID is a nonce for one immutable command envelope,
+            // not merely for a digest.  Check every identity-bearing field
+            // before replaying a response so a digest collision, malformed
+            // receipt, or accidental command reuse cannot cross a Work.
+            if work_id != cmd.work_id
+                || kind != cmd.kind.as_str()
+                || canonical_request != cmd.canonical_bytes
+                || digest.as_slice() != cmd.request_digest
+            {
+                return Err(SyncError::CommandIdReused);
+            }
             return replay_receipt(
                 &kind,
                 &digest,
@@ -927,13 +940,18 @@ impl Repository {
                 .execute(&mut *tx)
                 .await?;
         }
+        // A quarantined Work is not an addressable remote resource.  Check
+        // its bound state before receipt replay for every non-bootstrap
+        // command, otherwise a lost-ACK retry could still read a completed
+        // response from a parked Work.
+        if cmd.kind != CommandKind::CreateWork {
+            self.require_work(&mut tx, p, cmd.work_id).await?;
+        }
         if let Some(r) = self.receipt_lookup(&mut tx, p, cmd).await? {
             tx.commit().await?;
             return Ok(r);
         }
-        if cmd.kind != CommandKind::CreateWork {
-            self.require_work(&mut tx, p, cmd.work_id).await?;
-        } else {
+        if cmd.kind == CommandKind::CreateWork {
             // sealed_commands has an immediate Work FK. Bootstrap the null-head
             // Work before sealing, in the same transaction, after scope/receipt
             // lookup. A failed command rolls this row back atomically.
@@ -2355,7 +2373,7 @@ impl Repository {
         p: &AuthenticatedPrincipal,
         id: Uuid,
     ) -> SyncResult<(String, Uuid, Vec<u8>, Vec<u8>, i32)> {
-        let row=sqlx::query("SELECT command_kind,work_id,request_digest,canonical_response,response_status FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 AND state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
+        let row=sqlx::query("SELECT r.command_kind,r.work_id,r.request_digest,r.canonical_response,r.response_status FROM sync_v2.receipts r JOIN sync_v2.works w ON w.account_id=r.account_id AND w.work_id=r.work_id AND w.state='bound' WHERE r.account_id=$1 AND r.command_id=$2 AND r.state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
         Ok((
             row.try_get("command_kind")?,
             row.try_get("work_id")?,
