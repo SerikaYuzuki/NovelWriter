@@ -204,6 +204,53 @@ async fn exercise_database_identity_guard(url: &str) -> ScenarioResult<()> {
         .execute(&pool)
         .await?;
 
+    // An exact marker must not bless a mixed database either.  The unknown
+    // relation is the sentinel; the before/after count proves rejection is
+    // still read-only when the marker itself looks current.
+    sqlx::query("CREATE SCHEMA sync_v2").execute(&pool).await?;
+    sqlx::query("CREATE TABLE sync_v2.server_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO sync_v2.server_meta(key,value) VALUES
+         ('namespace','fuminiwa-snapshot-sync-v2'),
+         ('protocol_epoch','2'),
+         ('schema_version','2'),
+         ('ddl_contract_marker',$1)",
+    )
+    .bind(DDL_CONTRACT_MARKER)
+    .execute(&pool)
+    .await?;
+    sqlx::query("CREATE TABLE sync_v2.legacy_rows (sentinel TEXT NOT NULL)")
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO sync_v2.legacy_rows(sentinel) VALUES ('keep-exact-marker')")
+        .execute(&pool)
+        .await?;
+    let before: String = sqlx::query_scalar(
+        "SELECT sentinel FROM sync_v2.legacy_rows WHERE sentinel='keep-exact-marker'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    ensure(
+        Repository::connect(url, SERVER_INSTANCE.into())
+            .await
+            .is_err(),
+        "exact v2 marker mixed with an unknown relation was accepted",
+    )?;
+    let after: String = sqlx::query_scalar(
+        "SELECT sentinel FROM sync_v2.legacy_rows WHERE sentinel='keep-exact-marker'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    ensure(
+        before == after,
+        "exact-marker identity rejection mutated the unknown relation",
+    )?;
+    sqlx::query("DROP SCHEMA sync_v2 CASCADE")
+        .execute(&pool)
+        .await?;
+
     // A nonempty public schema without a v2 marker is also not a migration
     // target.  The sentinel proves the guard did not truncate or rewrite it.
     sqlx::query("CREATE TABLE public.legacy_sync_v2_rows (sentinel TEXT NOT NULL)")

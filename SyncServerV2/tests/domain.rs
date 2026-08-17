@@ -238,4 +238,13 @@ fn compose_uses_the_canonical_v2_postgres_volume_name() {
     let compose = include_str!("../docker-compose.yml");
     assert!(compose.contains("- fuminiwa-sync-v2-data:/var/lib/postgresql/data"));
     assert!(compose.contains("  fuminiwa-sync-v2-data:\n    name: fuminiwa-sync-v2-data"));
+
+    // A copied service/project name must never reconnect this deployment to
+    // the retired v1 development project, volume, or network.
+    assert!(
+        !compose
+            .lines()
+            .any(|line| line.contains("fuminiwa-sync-dev-")),
+        "v2 Compose must not reference legacy fuminiwa-sync-dev resources"
+    );
 }

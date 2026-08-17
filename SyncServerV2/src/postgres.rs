@@ -31,6 +31,200 @@ enum DatabaseIdentity {
     SnapshotSyncV2,
 }
 
+/// The identity guard runs before SQLx has a chance to apply a migration.  A
+/// marker alone is not sufficient: an operator can restore a v2 marker into a
+/// database that also contains an unrelated schema, extension, routine, or
+/// relation.  Keep this inventory in lockstep with the checked-in migrations
+/// and the audited PostgreSQL contract instead of treating the marker as an
+/// authority on its own.
+fn expected_v2_database_objects() -> HashSet<String> {
+    let mut objects = HashSet::new();
+    for schema in ["auth_v1", "sync_v2"] {
+        objects.insert(format!("schema:{schema}"));
+    }
+    for (schema, tables) in [
+        (
+            "sync_v2",
+            &[
+                "server_meta",
+                "deployment_binding",
+                "account_scopes",
+                "works",
+                "global_blobs",
+                "account_objects",
+                "snapshots",
+                "snapshot_parents",
+                "snapshot_entries",
+                "upload_capabilities",
+                "receipts",
+                "sealed_commands",
+                "active_conflicts",
+                "conflict_candidates",
+                "conflict_events",
+                "history",
+                "restore_receipts",
+                "head_events",
+                "catalog_events",
+                "quarantine_records",
+                "migration_ledger",
+                "migration_staging_batches",
+                "migration_staging_objects",
+            ][..],
+        ),
+        (
+            "auth_v1",
+            &[
+                "accounts",
+                "provider_configs",
+                "external_identities",
+                "external_identity_secrets",
+                "provider_credentials",
+                "auth_operations",
+                "auth_challenges",
+                "auth_sessions",
+                "refresh_families",
+                "refresh_tokens",
+                "access_tokens",
+                "session_refresh_receipts",
+                "provider_notification_receipts",
+                "auth_events",
+                "vault_rewrap_ledger",
+            ][..],
+        ),
+    ] {
+        for table in tables {
+            objects.insert(format!("relation:r:{schema}.{table}"));
+            objects.insert(format!("type:c:{schema}.{table}"));
+        }
+    }
+
+    // SQLx creates this relation during the first migration run.  Its row
+    // type is a normal PostgreSQL composite type, so it is listed as well.
+    objects.insert("relation:r:public._sqlx_migrations".into());
+    objects.insert("relation:i:public._sqlx_migrations_pkey".into());
+    objects.insert("type:c:public._sqlx_migrations".into());
+
+    for (schema, indexes) in [
+        (
+            "sync_v2",
+            &[
+                "server_meta_pkey",
+                "deployment_binding_pkey",
+                "account_scopes_pkey",
+                "works_pkey",
+                "global_blobs_pkey",
+                "account_objects_pkey",
+                "snapshots_pkey",
+                "snapshots_account_id_work_id_snapshot_id_key",
+                "snapshots_account_manifest_digest_key",
+                "snapshot_parents_pkey",
+                "snapshot_entries_pkey",
+                "upload_capabilities_pkey",
+                "upload_capabilities_account_id_command_id_key",
+                "receipts_pkey",
+                "receipts_account_id_work_id_command_id_key",
+                "receipts_account_id_work_id_command_id_command_kind_key",
+                "sealed_commands_pkey",
+                "sealed_commands_account_id_work_id_command_id_key",
+                "sealed_commands_account_id_work_id_command_id_command_kind_key",
+                "active_conflicts_pkey",
+                "active_conflicts_account_id_work_id_conflict_id_key",
+                "one_active_conflict_per_account_work",
+                "conflict_candidates_pkey",
+                "conflict_candidates_account_id_conflict_id_revision_key",
+                "conflict_candidates_account_id_conflict_id_revision_source_generation_key",
+                "conflict_events_pkey",
+                "history_pkey",
+                "history_account_id_event_id_key",
+                "restore_receipts_pkey",
+                "head_events_pkey",
+                "head_events_account_id_work_id_generation_key",
+                "catalog_events_pkey",
+                "quarantine_records_pkey",
+                "migration_ledger_pkey",
+                "migration_ledger_source_kind_source_digest_key",
+                "migration_staging_batches_pkey",
+                "migration_staging_objects_pkey",
+                "work_catalog_cursor",
+                "snapshot_history_cursor",
+            ][..],
+        ),
+        (
+            "auth_v1",
+            &[
+                "accounts_pkey",
+                "accounts_tenant_id_key",
+                "provider_configs_pkey",
+                "provider_configs_provider_kind_exact_issuer_key",
+                "external_identities_pkey",
+                "external_identities_lookup_key_version_subject_lookup_hmac_key",
+                "external_identities_account_id_provider_config_id_exact_issuer_key",
+                "external_identity_secrets_pkey",
+                "provider_credentials_pkey",
+                "provider_credentials_vault_context_key",
+                "provider_credentials_identity_id_original_audience_credential_generation_key",
+                "provider_credentials_one_active_audience",
+                "provider_credentials_identity_audience_idx",
+                "auth_operations_pkey",
+                "auth_operations_operation_id_command_kind_request_digest_key",
+                "auth_challenges_pkey",
+                "auth_sessions_pkey",
+                "auth_sessions_family_id_key",
+                "refresh_families_pkey",
+                "refresh_tokens_pkey",
+                "refresh_tokens_family_id_token_hmac_key",
+                "refresh_tokens_token_hmac_key_version_token_hmac_key",
+                "access_tokens_pkey",
+                "access_tokens_token_hmac_key",
+                "session_refresh_receipts_pkey",
+                "provider_notification_receipts_pkey",
+                "auth_events_pkey",
+                "auth_sessions_account_idx",
+                "external_identities_account_idx",
+                "vault_rewrap_ledger_pkey",
+                "external_identity_secrets_vault_context_idx",
+            ][..],
+        ),
+    ] {
+        for index in indexes {
+            objects.insert(format!("relation:i:{schema}.{index}"));
+        }
+    }
+
+    // BIGSERIAL/IDENTITY columns in the migrations create these sequences.
+    for (schema, sequences) in [
+        (
+            "sync_v2",
+            &[
+                "conflict_events_event_id_seq",
+                "history_event_id_seq",
+                "head_events_event_id_seq",
+                "catalog_events_event_id_seq",
+            ][..],
+        ),
+        ("auth_v1", &["auth_events_event_id_seq"]),
+    ] {
+        for sequence in sequences {
+            objects.insert(format!("relation:S:{schema}.{sequence}"));
+        }
+    }
+
+    objects.insert("extension:plpgsql".into());
+    objects
+}
+
+fn sqlx_only_database_objects() -> HashSet<String> {
+    [
+        "relation:r:public._sqlx_migrations",
+        "relation:i:public._sqlx_migrations_pkey",
+        "type:c:public._sqlx_migrations",
+        "extension:plpgsql",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
 fn classify_database_identity(
     server_meta_exists: bool,
     server_meta: &[(String, String)],
@@ -49,13 +243,26 @@ fn classify_database_identity(
                 .iter()
                 .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
         });
-    if marker_matches {
+    let expected_objects = expected_v2_database_objects();
+    if marker_matches
+        && user_objects.len() == expected_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| expected_objects.contains(object))
+    {
         return Ok(DatabaseIdentity::SnapshotSyncV2);
     }
     if server_meta_exists {
+        if marker_matches {
+            return Err("database contains an unknown object beside the v2 contract");
+        }
         return Err("database has a non-v2 or incomplete sync_v2.server_meta marker");
     }
-    if user_objects.is_empty() {
+    let sqlx_objects = sqlx_only_database_objects();
+    if user_objects
+        .iter()
+        .all(|object| sqlx_objects.contains(object))
+    {
         return Ok(DatabaseIdentity::Fresh);
     }
     Err("database has unrecognized user schema or data")
@@ -158,45 +365,82 @@ impl Repository {
             Vec::new()
         };
 
-        // `public` exists in every normal PostgreSQL database.  Ignore only
-        // SQLx's bookkeeping relation; every other user schema/relation is
-        // evidence that this is not a fresh database.  The v2 marker path is
-        // checked first, so a fully migrated v2 database remains accepted.
-        let user_objects: Vec<String> = sqlx::query_scalar(
-            "SELECT n.nspname
-             FROM pg_namespace n
-             WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
-               AND n.nspname NOT LIKE 'pg_toast%'
-             UNION ALL
-             SELECT n.nspname || '.' || c.relname
-             FROM pg_class c
-             JOIN pg_namespace n ON n.oid=c.relnamespace
-             WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
-               AND n.nspname NOT LIKE 'pg_toast%'
-               AND c.relkind NOT IN ('i','I')
-             UNION ALL
-             SELECT n.nspname || '.' || c.relname
-             FROM pg_class c
-             JOIN pg_namespace n ON n.oid=c.relnamespace
-             WHERE n.nspname='public'
-               AND c.relname <> '_sqlx_migrations'
-               AND c.relkind NOT IN ('i','I')
-             UNION ALL
-             SELECT n.nspname || '.' || p.proname
-             FROM pg_proc p
-             JOIN pg_namespace n ON n.oid=p.pronamespace
-             WHERE n.nspname='public'
-             UNION ALL
-             SELECT n.nspname || '.' || t.typname
-             FROM pg_type t
-             JOIN pg_namespace n ON n.oid=t.typnamespace
-             WHERE n.nspname='public'
-               AND t.typtype IN ('c','d','e','r')
-               AND left(t.typname,1) <> '_'
-             ORDER BY 1",
+        // `public` and PostgreSQL's system schemas are present in every
+        // normal database.  Inspect every other schema/object kind, including
+        // indexes, sequences, routines, types, and extensions: a marker must
+        // never bless a mixed authority.  SQLx's bookkeeping relation is
+        // explicitly included in the contract inventory.
+        let mut user_objects = Vec::new();
+        let schemas: Vec<String> = sqlx::query_scalar(
+            "SELECT nspname FROM pg_namespace
+             WHERE nspname NOT IN ('pg_catalog','information_schema','public')
+               AND nspname NOT LIKE 'pg_toast%'
+             ORDER BY nspname",
         )
         .fetch_all(pool)
         .await?;
+        user_objects.extend(schemas.into_iter().map(|schema| format!("schema:{schema}")));
+
+        let relations: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT c.relkind::TEXT, n.nspname, c.relname
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+             ORDER BY n.nspname, c.relkind, c.relname",
+        )
+        .fetch_all(pool)
+        .await?;
+        user_objects.extend(
+            relations
+                .into_iter()
+                .map(|(kind, schema, name)| format!("relation:{kind}:{schema}.{name}")),
+        );
+
+        let types: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT t.typtype::TEXT, n.nspname, t.typname
+             FROM pg_type t
+             JOIN pg_namespace n ON n.oid = t.typnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND t.typelem = 0
+               AND t.typtype IN ('c','d','e','r')
+             ORDER BY n.nspname, t.typtype, t.typname",
+        )
+        .fetch_all(pool)
+        .await?;
+        user_objects.extend(
+            types
+                .into_iter()
+                .map(|(kind, schema, name)| format!("type:{kind}:{schema}.{name}")),
+        );
+
+        let routines: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT 'routine', n.nspname,
+                    p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+             ORDER BY n.nspname, p.proname, p.oid",
+        )
+        .fetch_all(pool)
+        .await?;
+        user_objects.extend(
+            routines
+                .into_iter()
+                .map(|(kind, schema, name)| format!("{kind}:{schema}.{name}")),
+        );
+
+        let extensions: Vec<String> =
+            sqlx::query_scalar("SELECT extname FROM pg_extension ORDER BY extname")
+                .fetch_all(pool)
+                .await?;
+        user_objects.extend(
+            extensions
+                .into_iter()
+                .map(|name| format!("extension:{name}")),
+        );
         classify_database_identity(server_meta_exists, &server_meta, &user_objects)
             .map_err(|message| sqlx::Error::Protocol(message.into()))?;
         Ok(())
@@ -2514,8 +2758,8 @@ mod create_work_lock_key_tests {
 #[cfg(test)]
 mod database_identity_tests {
     use super::{
-        classify_database_identity, DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION,
-        SERVER_NAMESPACE,
+        classify_database_identity, expected_v2_database_objects, sqlx_only_database_objects,
+        DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION, SERVER_NAMESPACE,
     };
 
     fn exact_marker() -> Vec<(String, String)> {
@@ -2536,17 +2780,22 @@ mod database_identity_tests {
     }
 
     #[test]
-    fn accepts_exact_v2_marker_with_sqlx_metadata_and_schema_objects() {
+    fn accepts_exact_v2_marker_with_the_complete_contract_inventory() {
+        let objects = expected_v2_database_objects()
+            .into_iter()
+            .collect::<Vec<_>>();
         assert_eq!(
-            classify_database_identity(
-                true,
-                &exact_marker(),
-                &[
-                    "sync_v2.server_meta".into(),
-                    "public._sqlx_migrations".into()
-                ]
-            ),
+            classify_database_identity(true, &exact_marker(), &objects),
             Ok(DatabaseIdentity::SnapshotSyncV2)
+        );
+    }
+
+    #[test]
+    fn accepts_sqlx_bookkeeping_without_user_schema_as_fresh() {
+        let objects = sqlx_only_database_objects().into_iter().collect::<Vec<_>>();
+        assert_eq!(
+            classify_database_identity(false, &[], &objects),
+            Ok(DatabaseIdentity::Fresh)
         );
     }
 
@@ -2560,5 +2809,20 @@ mod database_identity_tests {
     #[test]
     fn rejects_nonempty_unrecognized_database() {
         assert!(classify_database_identity(false, &[], &["public.legacy_rows".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_object_even_when_the_marker_is_exact() {
+        let mut objects = expected_v2_database_objects()
+            .into_iter()
+            .collect::<Vec<_>>();
+        objects.push("relation:r:sync_v2.legacy_rows".into());
+        assert!(classify_database_identity(true, &exact_marker(), &objects).is_err());
+    }
+
+    #[test]
+    fn rejects_partial_v2_inventory_even_when_the_marker_is_exact() {
+        let objects = ["schema:sync_v2".to_owned()];
+        assert!(classify_database_identity(true, &exact_marker(), &objects).is_err());
     }
 }

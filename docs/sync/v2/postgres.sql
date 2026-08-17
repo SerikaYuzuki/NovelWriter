@@ -2,7 +2,7 @@
 -- Auth v1 supplies AuthenticatedPrincipal.account_id. The sync schema stores
 -- no Apple subject, email, identity token, authorization code, or credential.
 -- The same new PostgreSQL deployment installs the frozen Auth v1 state in a
--- separately owned auth_v1 schema/migration; this sync DDL neither owns nor
+-- separately namespaced auth_v1 schema/migration; this sync DDL neither owns nor
 -- joins those provider/session tables.
 CREATE SCHEMA IF NOT EXISTS sync_v2;
 

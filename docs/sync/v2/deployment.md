@@ -14,9 +14,16 @@ object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
 ```
 
 The checked-in Compose file currently bootstraps both schemas with one
-PostgreSQL role. Separate database owners/roles are a staging hardening gate,
-not a capability claimed by this Compose revision; deployment evidence must
-include role grants and authenticated read-back before that claim is restored.
+PostgreSQL role. This is an intentional, audited limitation of the current
+revision: separate database owners/roles are **NO-GO for this deployment
+change**. A fresh-only bootstrap would need file-backed credentials, an
+explicit migration-owner service, runtime grants, and authenticated
+read-back. The server currently opens one SQLx pool for both migrations and
+runtime queries, and existing v2 objects are owned by the current role;
+splitting those roles without a versioned, non-destructive ownership/grants
+migration would either break startup or require destructive rewriting. Do not
+weaken startup or claim role isolation until that blocker is resolved in a
+separate deployment revision.
 
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks
