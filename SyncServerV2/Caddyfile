@@ -1,5 +1,8 @@
 {
     auto_https disable_redirects
+    # URLSession and BusyBox probes may omit SNI for an IP-literal URL.
+    # Select the LAN staging certificate in that case as well.
+    default_sni {$FUMINIWA_SYNC_V2_EDGE_HOST:192.168.11.5}
 }
 
 https://{$FUMINIWA_SYNC_V2_EDGE_HOST:192.168.11.5}:8443 {
