@@ -334,7 +334,26 @@ extension IOSDocumentStore {
                     applySnapshotSyncV2State(result.state)
                     return false
                 }
-                applySnapshotSyncV2State(result.state)
+                if choice == .keepBoth {
+                    // The shared application has already prepared and opened
+                    // the clone in SQLite. Install that exact value while
+                    // this document gate is still held; reopening by WorkID
+                    // would add a second boundary and could race resume.
+                    guard let newWorkID,
+                          let opened = result.openedWork,
+                          opened.workID == newWorkID,
+                          let value = opened.document,
+                          syncV2KeepBothPendingWorkID == opened.workID,
+                          currentDocumentSessionToken == expectedSession,
+                          localEditGeneration == expectedEditGeneration else {
+                        operationErrorMessage = "両方を保持する作品を安全に開けませんでした。"
+                        return false
+                    }
+                    installSnapshotSyncV2Opened(opened, value: value)
+                    await applySnapshotSyncV2State(app.uiState(workID: opened.workID))
+                } else {
+                    applySnapshotSyncV2State(result.state)
+                }
                 // Resolution is queued locally.  The worker will perform the
                 // network operation outside this UI call; reproject its
                 // eventual conflict/adoption result without making this
@@ -355,32 +374,8 @@ extension IOSDocumentStore {
                         try? await app.resumePending()
                         await self?.reprojectAfterResume(app, workID: workID)
                     case .keepBoth:
-                        if let newWorkID {
-                            // The candidate is installed before the remote
-                            // worker is resumed.  This is deliberately local
-                            // and remains safe when transport never returns.
-                            let switched = await self?.adoptKeepBothCandidate(
-                                application: app,
-                                sourceWorkID: workID,
-                                newWorkID: newWorkID,
-                                expectedSession: expectedSession,
-                                expectedEditGeneration: expectedEditGeneration
-                            ) ?? false
-                            if !switched {
-                                await self?.reprojectAfterResume(app, workID: workID)
-                                _ = await self?.adoptKeepBothCandidate(
-                                    application: app,
-                                    sourceWorkID: workID,
-                                    newWorkID: newWorkID,
-                                    expectedSession: expectedSession,
-                                    expectedEditGeneration: expectedEditGeneration
-                                )
-                            }
-                            try? await app.resumePending()
-                        } else {
-                            try? await app.resumePending()
-                            await self?.reprojectAfterResume(app, workID: workID)
-                        }
+                        try? await app.resumePending()
+                        await self?.reprojectAfterResume(app, workID: workID)
                     }
                 }
                 return true
@@ -392,58 +387,6 @@ extension IOSDocumentStore {
                 return false
             }
         }
-    }
-
-    /// Keep-both creates a local candidate WorkID while its remote command is
-    /// still pending. Switch the editor to that candidate at the same safe
-    /// boundary so future edits can never republish the source Work.
-    private func adoptKeepBothCandidate(
-        application: SyncV2Application,
-        sourceWorkID: WorkID,
-        newWorkID: WorkID,
-        expectedSession: IOSDocumentSessionToken,
-        expectedEditGeneration: UInt64
-    ) async -> Bool {
-        guard currentDocumentSessionToken == expectedSession,
-              localEditGeneration == expectedEditGeneration else {
-            syncV2KeepBothPendingWorkID = newWorkID
-            return false
-        }
-        let adopted = await documentOperationGate.perform { [weak self] in
-            guard let self,
-                  syncV2ActiveWorkID == sourceWorkID,
-                  currentDocumentSessionToken == expectedSession,
-                  localEditGeneration == expectedEditGeneration,
-                  saveState == .saved,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            switch editorCommandSession.captureActiveCommittedText() {
-            case .compositionInProgress:
-                return false
-            case let .captured(text):
-                guard let episodeID = selectedEpisodeID,
-                      document.episode(episodeID)?.episode.content == text else { return false }
-            case .notActive:
-                break
-            }
-            guard currentDocumentSessionToken == expectedSession,
-                  localEditGeneration == expectedEditGeneration else { return false }
-            do {
-                let opened = try await application.open(workID: newWorkID)
-                guard let value = opened.document else { return false }
-                installSnapshotSyncV2Opened(opened, value: value)
-                await applySnapshotSyncV2State(application.uiState(workID: newWorkID))
-                syncV2KeepBothPendingWorkID = nil
-                return true
-            } catch {
-                return false
-            }
-        }
-        if !adopted {
-            syncV2KeepBothPendingWorkID = newWorkID
-            operationErrorMessage = "両方を保持する作品を準備中です。準備が完了するまで本文の保存を一時停止します。"
-        }
-        return adopted
     }
 
     func installSnapshotSyncV2Opened(
