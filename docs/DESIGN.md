@@ -882,9 +882,9 @@ Windows 版も `App.WinUI → Core / Storage / Export / Editor`、`Storage / Exp
 
 ## 11. 直近の次タスク
 
-Phase 0〜5（PDF除く）、Phase 7のIOS-1〜5、D-063のiCloud作品棚、D-071〜D-074のNote同期／明示同期／package snapshotは現行sourceとして入っている。D-077は次世代設計だけを採択した段階で、Rust server、SQLite client、同期切替は未実装である。コードの現行経路と移行負債は[CODE_HEALTH.md](CODE_HEALTH.md)、新設計は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、実装委譲は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)を正とする。
+Phase 0〜5（PDF除く）とPhase 7のiOS製品機能を維持したまま、D-080のSnapshot Sync v2へlive経路を置換中である。v2のSQLite local kernel、Rust／PostgreSQL server、Sign in with Apple session、portable Import／Export、macOS／iOS compositionは実装済みの意味単位から統合しており、旧CloudKit／Note／Work／Episode runtimeとv1 SQLite／server namespaceはlive対象ではない。旧local／server／packageはread-only archiveとして残し、検証済み作品だけを別v2 namespaceへ非破壊移行する。コードの現行経路と移行負債は[CODE_HEALTH.md](CODE_HEALTH.md)、v2の正は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)と`docs/sync/v2/`である。
 
-D-077の着手順:
+D-080の統合順（R0〜R8の設計成果をv2 namespaceへ適用）:
 
 1. **R0 Contract freeze（実装なし）**。D-078の`serverReadableV1`／Sign in with Apple、versioned sync＋auth OpenAPI、JSON Schema、RFC 8785 canonical fixture、Intent／Attempt／cursor／Conflict／auth scenarioを固定する
 2. **R1 Snapshot domain＋SQLite／CAS**。pure domain、GRDB、WorkID API、transactional migration、autosave、Online Backup、process-kill／DB corruption recovery

@@ -991,7 +991,7 @@
 
 ## D-080: Snapshot Sync v2を新namespace・新DB・新Docker volumeの唯一live経路にする
 
-- **日付**: 2026-08-17 / **状態**: 設計採択・実装前
+- **日付**: 2026-08-17 / **状態**: 実装中・統合／実機Gate前
 - **内容**:
   1. v2はD-077〜D-079のlocal-first、server-readable、Sign in with Apple、AccountID／AccountFence境界を引き継ぐが、v1のlive runtime、schema、wire、dual-read／dual-writeを置き換える非互換namespaceとする。v1はread-only archiveであり、live appはv1へfallbackしない。
   2. clientは`Library/SnapshotSyncV2/`の新SQLiteだけを開き、初版object bytesはSQLite BLOBへ置く。serverは`/v2` API、新PostgreSQL schema、新Docker volume（development既定名`fuminiwa_sync_v2_pgdata`）だけを使い、初版object bytesをPostgreSQL `BYTEA`へ置く。Rust domainは`ObjectStore` traitへ依存し、初版は`PostgresObjectStore`、将来S3は別migration／Gateとする。外部CAS root／object volumeを初版契約へ含めない。旧DB／server rows／CloudKit／package snapshotは明示migration/export backupの入力に限り、削除・上書き・暗黙adoptしない。
