@@ -1031,6 +1031,7 @@ impl Repository {
         if row.try_get::<chrono::DateTime<Utc>, _>("expires_at")? <= Utc::now() {
             sqlx::query("UPDATE sync_v2.upload_capabilities SET state='expired' WHERE account_id=$1 AND upload_id=$2")
                 .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
+            tx.commit().await?;
             return Err(SyncError::UploadExpired);
         }
         if row.try_get::<String, _>("state")? == "uploaded"
