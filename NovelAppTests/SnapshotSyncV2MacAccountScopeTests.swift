@@ -278,7 +278,10 @@ struct SnapshotSyncV2MacAccountScopeTests {
         #expect(state.currentSnapshotSyncV2WorkID == currentWorkID)
         #expect(state.document.title == currentTitle)
     }
+}
 
+@Suite("macOS Snapshot Sync v2 account scope authentication boundary races")
+struct SnapshotSyncV2MacAuthBoundaryTests {
     @Test("queued signout does not block local work while Apple exchange is suspended")
     @MainActor
     func queuedSignOutKeepsLocalOperationsAvailableDuringExchange() async throws {
