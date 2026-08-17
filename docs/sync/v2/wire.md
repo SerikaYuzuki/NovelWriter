@@ -12,13 +12,13 @@ these before resource lookup.
 ## Receipt and digest
 
 The server computes SHA-256 over the exact accepted canonical command bytes and
-stores `(account_id, work_id, command_id, command_kind, digest, response)` in
-the v2 receipt table. Receipt identity remains `(AccountID, commandId)`, while
-the stored WorkID must equal the sealed payload/route scope. Exact retries
-return the same response. Reusing a command ID
-with another kind or bytes returns `commandIdReused`; a different request gets
-a new ID. Transport errors, 401/403, and fence/version errors do not create a
-success receipt.
+stores `(account_id, work_id, command_id, command_kind, digest,
+response_status, response)` in the v2 receipt table. Receipt identity remains
+`(AccountID, commandId)`, while the stored WorkID must equal the sealed
+payload/route scope. Exact retries return the same HTTP status and canonical
+response bytes. Reusing a command ID with another kind or bytes returns
+`commandIdReused`; a different request gets a new ID. Transport errors,
+401/403, and fence/version errors do not create a success receipt.
 
 ## Errors
 
@@ -63,10 +63,37 @@ Pages are stable and never infer a winner from timestamps. `GET
 /v2/snapshots/{snapshotId}/manifest`
 returns the exact manifest bytes and its digest; `GET
 /v2/objects/{objectId}` returns raw bytes and `X-Fuminiwa-Object-Digest`.
-Every JCS response includes a `result` status: `noChanges`, `applied`,
-`conflictPending`, `parked`, or `retryable`. Raw object download/upload uses
-the equivalent `X-Fuminiwa-Result` response header. A no-op is a successful
-`noChanges`, not an error.
+Every successful command JCS response is a closed, command-kind-specific
+response. Its `result` is `noChanges`, `applied`, or `conflictPending`; these
+are the only terminal results that may contain a `CommandReceipt`. The HTTP
+status is part of the contract: `createWork` is 201, `prepareObject` is 200 for
+`noChanges` and 201 for `applied`, `publish` is 200 for `applied` and 409 for
+`conflictPending`, and the remaining terminal command responses are 200.
+Raw object download/upload uses the equivalent `X-Fuminiwa-Result` response
+header. A no-op is a successful `noChanges`, not an error.
+
+`parked` and `retryable` are typed nonterminal/local/error outcomes. They never
+carry a `CommandReceipt`, never advance a remote head, and never clear a local
+intent. A worker preserves the sealed command and retries or parks it according
+to the error and account-fence state.
+
+The terminal response union is closed as follows. Every row also contains the
+common `commandId`, `commandKind`, and exact `receipt` fields; no other fields
+are allowed.
+
+| command / HTTP status / result | additional fields |
+| --- | --- |
+| `createWork` / 201 / `applied` | `documentId`, `head` (`null`), `workId` |
+| `prepareObject` / 200 / `noChanges` | none |
+| `prepareObject` / 201 / `applied` | `expiresAt`, `objectId`, `uploadCapability`, `uploadId` |
+| `finalizeObject` / 200 / `applied` | `byteCount`, `head`, `objectId` |
+| `registerSnapshot` / 200 / `noChanges` or `applied` | `head`, `snapshotId` |
+| `publish` / 200 / `applied` | `generation`, `head`, `snapshotId` |
+| `publish` / 409 / `conflictPending` | `conflictId`, `conflictRevision`, `head`, `sourceGeneration` |
+| `resolveDevice` / 200 / `applied` | `conflictId`, `conflictRevision`, `generation`, `head`, `snapshotId` |
+| `resolveServer` / 200 / `applied` | `conflictId`, `conflictRevision`, `head`, `remoteGeneration`, `remoteSnapshotId` |
+| `cloneWork` / 200 / `applied` | `conflictId`, `conflictRevision`, `head`, `newRootSnapshotId`, `newWorkId` |
+| `restore` / 200 / `applied` | `generation`, `head`, `protectedRestoreBeforeSnapshotId`, `snapshotId` |
 
 `404 notFoundInAccount` is returned for both an absent resource and a resource
 owned by another account. The server performs account and fence checks before
@@ -85,9 +112,12 @@ foreign possession.
 base64url in the closed command. The server decodes them, rejects any non-JCS
 or digest mismatch, and stores the decoded bytes in `BYTEA`; it never hashes
 the base64 text or a parsed/JSONB reserialization. `GET /v2/receipts/{id}`
-returns the exact canonical response bytes plus predicates proving account,
-command digest, resource, and resulting head read-back. A command is complete
-locally only when every required predicate, including `headMatched`, is true.
+returns the exact canonical response bytes, the original HTTP status
+(`originalResponseStatus`), and predicates proving account, command digest,
+resource, and resulting head read-back. `originalResult` is limited to
+`noChanges`, `applied`, or `conflictPending`; the base64url value is the exact
+stored response body, not a reserialization. A command is complete locally
+only when every required predicate, including `headMatched`, is true.
 For a command that must not advance a head, `headMatched` proves the observed
 head remained at the command's expected value; it is never omitted.
 

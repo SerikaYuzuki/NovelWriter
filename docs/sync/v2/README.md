@@ -24,6 +24,12 @@ the exact artifacts here. Code behavior never silently overrides this contract.
 - `ui-state.md`: identical macOS/iOS result projection and Japanese labels.
 - `sqlite.sql` / `postgres.sql`: concrete v2 local/server DDL and lock order.
 - `openapi.yaml`: v2 resource, cursor, receipt, and typed-result surface.
+- command responses are closed by command kind: `createWork`,
+  `prepareObject` (`noChanges`/`applied`), `finalizeObject`,
+  `registerSnapshot`, `publish` (`applied`/`conflictPending`),
+  `resolveDevice`, `resolveServer`, `cloneWork`, and `restore`. There is no
+  generic `CommandResult`; `parked`/`retryable` are nonterminal errors and
+  never carry a receipt.
 - `entity-schemas/`: materializable work/document, value, and order payloads.
 - `entity-contract.md` / `expected-model.schema.json`: dynamic EntityKey,
   referential invariants, full NovelDocument fixture, and package round trip.
@@ -38,6 +44,10 @@ the exact artifacts here. Code behavior never silently overrides this contract.
   replacement document/root bytes and their ObjectID/SnapshotID.
 - `fixtures/canonical/command-hashes.json`: one exact canonical request and
   digest for every sealed mutating command kind.
+- `fixtures/canonical/responses/`: exact one-line JCS response bodies,
+  SHA-256 sidecars, and expected decode models for every terminal response
+  variant. Receipt envelopes include the original HTTP status and exact
+  `canonicalResponseBase64URL`.
 - `fixtures/scenarios/*.json`: language-neutral state-machine acceptance cases.
 
 The canonical bytes in the hash fixture are UTF-8, one-line JSON with no final

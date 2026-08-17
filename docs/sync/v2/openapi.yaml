@@ -49,7 +49,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/createWork' } } } }
       responses:
-        '201': { $ref: '#/components/responses/CommandResult' }
+        '201': { $ref: '#/components/responses/CreateWorkResponse' }
         '409': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -160,12 +160,8 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/prepareObject' } } } }
       responses:
-        '200':
-          description: Object already belongs to this account; no upload is needed.
-          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectNoChanges' } } }
-        '201':
-          description: Upload capability bound to principal, fence, command, object and expiry.
-          content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectApplied' } } }
+        '200': { $ref: '#/components/responses/PrepareObjectNoChangesResponse' }
+        '201': { $ref: '#/components/responses/PrepareObjectAppliedResponse' }
         '409': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -205,7 +201,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/finalizeObject' } } } }
       responses:
-        '200': { $ref: '#/components/responses/CommandResult' }
+        '200': { $ref: '#/components/responses/FinalizeObjectResponse' }
         '409': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -222,7 +218,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/registerSnapshot' } } } }
       responses:
-        '200': { $ref: '#/components/responses/CommandResult' }
+        '200': { $ref: '#/components/responses/RegisterSnapshotResponse' }
         '422': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -240,8 +236,8 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/publish' } } } }
       responses:
-        '200': { $ref: '#/components/responses/CommandResult' }
-        '409': { $ref: '#/components/responses/CommandResult' }
+        '200': { $ref: '#/components/responses/PublishAppliedResponse' }
+        '409': { $ref: '#/components/responses/PublishConflictPendingResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
         '404': { $ref: '#/components/responses/NotFoundInAccount' }
@@ -275,7 +271,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/ConflictResolutionCommand' } } } }
       responses:
-        '200': { $ref: '#/components/responses/CommandResult' }
+        '200': { $ref: '#/components/responses/ConflictResolutionResponse' }
         '409': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -293,7 +289,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/restore' } } } }
       responses:
-        '200': { $ref: '#/components/responses/CommandResult' }
+        '200': { $ref: '#/components/responses/RestoreResponse' }
         '409': { $ref: '#/components/responses/TypedError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -344,12 +340,16 @@ components:
         - { $ref: './command.schema.json#/$defs/resolveServer' }
         - { $ref: './command.schema.json#/$defs/cloneWork' }
     Head:
-      type: [object, 'null']
+      type: object
       additionalProperties: false
       required: [generation, snapshotId]
       properties:
         generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
         snapshotId: { $ref: '#/components/schemas/Digest' }
+    NullableHead:
+      oneOf:
+        - { $ref: '#/components/schemas/Head' }
+        - { type: 'null' }
     Capabilities:
       type: object
       additionalProperties: false
@@ -374,7 +374,7 @@ components:
       additionalProperties: false
       required: [head, title, workId]
       properties:
-        head: { $ref: '#/components/schemas/Head' }
+        head: { $ref: '#/components/schemas/NullableHead' }
         title: { type: string }
         workId: { $ref: '#/components/schemas/UUID' }
     CatalogPage:
@@ -389,7 +389,7 @@ components:
       type: object
       additionalProperties: false
       required: [head, result]
-      properties: { head: { $ref: '#/components/schemas/Head' }, result: { const: noChanges } }
+      properties: { head: { $ref: '#/components/schemas/NullableHead' }, result: { const: noChanges } }
     HistoryEntry:
       type: object
       additionalProperties: false
@@ -435,20 +435,145 @@ components:
     PrepareObjectNoChanges:
       type: object
       additionalProperties: false
-      required: [receipt, result]
+      required: [commandId, commandKind, receipt, result]
       properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: prepareObject }
         receipt: { $ref: '#/components/schemas/CommandReceipt' }
         result: { const: noChanges }
     PrepareObjectApplied:
       type: object
       additionalProperties: false
-      required: [expiresAt, receipt, result, uploadCapability, uploadId]
+      required: [commandId, commandKind, expiresAt, objectId, receipt, result, uploadCapability, uploadId]
       properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: prepareObject }
         expiresAt: { type: string, format: date-time }
+        objectId: { $ref: '#/components/schemas/Digest' }
         receipt: { $ref: '#/components/schemas/CommandReceipt' }
         result: { const: applied }
         uploadCapability: { type: string }
         uploadId: { $ref: '#/components/schemas/UUID' }
+    CreateWorkResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, documentId, head, receipt, result, workId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: createWork }
+        documentId: { $ref: '#/components/schemas/UUID' }
+        head: { type: 'null' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+        workId: { $ref: '#/components/schemas/UUID' }
+    FinalizeObjectResponse:
+      type: object
+      additionalProperties: false
+      required: [byteCount, commandId, commandKind, head, objectId, receipt, result]
+      properties:
+        byteCount: { type: integer, minimum: 0, maximum: 262144000 }
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: finalizeObject }
+        head: { type: 'null' }
+        objectId: { $ref: '#/components/schemas/Digest' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+    RegisterSnapshotResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, head, receipt, result, snapshotId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: registerSnapshot }
+        head: { type: 'null' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { enum: [noChanges, applied] }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    PublishAppliedResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, generation, head, receipt, result, snapshotId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: publish }
+        generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    PublishConflictPendingResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, conflictId, conflictRevision, head, receipt, result, sourceGeneration]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: publish }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        conflictRevision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: conflictPending }
+        sourceGeneration: { type: integer, minimum: 1, maximum: 9007199254740991 }
+    ResolveDeviceResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, conflictId, conflictRevision, generation, head, receipt, result, snapshotId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: resolveDevice }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        conflictRevision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    ResolveServerResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, conflictId, conflictRevision, head, receipt, remoteGeneration, remoteSnapshotId, result]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: resolveServer }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        conflictRevision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        remoteGeneration: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        remoteSnapshotId: { $ref: '#/components/schemas/Digest' }
+        result: { const: applied }
+    CloneWorkResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, conflictId, conflictRevision, head, newRootSnapshotId, newWorkId, receipt, result]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: cloneWork }
+        conflictId: { $ref: '#/components/schemas/UUID' }
+        conflictRevision: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        newRootSnapshotId: { $ref: '#/components/schemas/Digest' }
+        newWorkId: { $ref: '#/components/schemas/UUID' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+    RestoreResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, generation, head, protectedRestoreBeforeSnapshotId, receipt, result, snapshotId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: restore }
+        generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        protectedRestoreBeforeSnapshotId: { $ref: '#/components/schemas/Digest' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: applied }
+        snapshotId: { $ref: '#/components/schemas/Digest' }
+    ConflictResolutionResponse:
+      oneOf:
+        - { $ref: '#/components/schemas/ResolveDeviceResponse' }
+        - { $ref: '#/components/schemas/ResolveServerResponse' }
+        - { $ref: '#/components/schemas/CloneWorkResponse' }
     Conflict:
       type: object
       additionalProperties: false
@@ -491,24 +616,17 @@ components:
     Receipt:
       type: object
       additionalProperties: false
-      required: [canonicalResponseBase64URL, commandId, commandKind, originalResult, readBack, requestDigest, result, workId]
+      required: [canonicalResponseBase64URL, commandId, commandKind, originalResponseStatus, originalResult, readBack, requestDigest, result, workId]
       properties:
         canonicalResponseBase64URL: { $ref: '#/components/schemas/Base64URL', maxLength: 44739244 }
         commandId: { $ref: '#/components/schemas/UUID' }
         commandKind: { type: string }
-        originalResult: { enum: [noChanges, applied, conflictPending, parked, retryable] }
+        originalResponseStatus: { type: integer, enum: [200, 201, 409] }
+        originalResult: { enum: [noChanges, applied, conflictPending] }
         readBack: { $ref: '#/components/schemas/ReadBackPredicate' }
         requestDigest: { $ref: '#/components/schemas/Digest' }
         result: { const: noChanges }
         workId: { $ref: '#/components/schemas/UUID' }
-    CommandResult:
-      type: object
-      additionalProperties: false
-      required: [head, receipt, result]
-      properties:
-        head: { $ref: '#/components/schemas/Head' }
-        receipt: { $ref: '#/components/schemas/CommandReceipt' }
-        result: { enum: [noChanges, applied, conflictPending, parked, retryable] }
     Error:
       type: object
       additionalProperties: false
@@ -534,6 +652,30 @@ components:
     TypedError:
       description: Closed typed error.
       content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/Error' } } }
-    CommandResult:
-      description: Receipt-idempotent exact response with read-back predicate.
-      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/CommandResult' } } }
+    CreateWorkResponse:
+      description: Receipt-idempotent createWork response; status is 201.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/CreateWorkResponse' } } }
+    PrepareObjectNoChangesResponse:
+      description: Receipt-idempotent prepareObject no-op response; status is 200.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectNoChanges' } } }
+    PrepareObjectAppliedResponse:
+      description: Receipt-idempotent prepareObject upload-capability response; status is 201.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PrepareObjectApplied' } } }
+    FinalizeObjectResponse:
+      description: Receipt-idempotent finalizeObject response; status is 200.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/FinalizeObjectResponse' } } }
+    RegisterSnapshotResponse:
+      description: Receipt-idempotent registerSnapshot response; status is 200.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/RegisterSnapshotResponse' } } }
+    PublishAppliedResponse:
+      description: Receipt-idempotent publish success response; status is 200.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishAppliedResponse' } } }
+    PublishConflictPendingResponse:
+      description: Receipt-idempotent publish divergence response; status is 409 and does not overwrite the remote head.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishConflictPendingResponse' } } }
+    ConflictResolutionResponse:
+      description: Receipt-idempotent response for exactly one conflict resolution command kind.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/ConflictResolutionResponse' } } }
+    RestoreResponse:
+      description: Receipt-idempotent restore response; status is 200.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/RestoreResponse' } } }

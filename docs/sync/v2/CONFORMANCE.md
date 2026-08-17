@@ -21,6 +21,25 @@ root = Path("docs/sync/v2")
 canonical_root = root / "fixtures/canonical"
 
 
+class UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+
+def construct_unique_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise AssertionError(f"duplicate YAML key: {key}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_unique_mapping
+)
+
+
 def read_json(path):
     return json.loads(path.read_bytes())
 
@@ -66,6 +85,62 @@ for fixture, digest_file in [
     assert exact == simple_fixture_jcs(json.loads(exact)), fixture
     expected = (canonical_root / digest_file).read_text().strip()
     assert hashlib.sha256(exact).hexdigest() == expected, fixture
+
+response_index = read_json(canonical_root / "responses/response-hashes.json")
+response_models = read_json(canonical_root / "responses/expected-response-models.json")
+assert response_index["schemaVersion"] == 2
+assert len(response_index["responses"]) == 11
+assert {row["commandKind"] for row in response_index["responses"]} == {
+    "cloneWork", "createWork", "finalizeObject", "prepareObject", "publish",
+    "registerSnapshot", "resolveDevice", "resolveServer", "restore",
+}
+for row in response_index["responses"]:
+    exact_path = canonical_root / "responses" / row["file"]
+    exact = exact_path.read_bytes()
+    assert not exact.endswith(b"\n"), row["file"]
+    decoded = json.loads(exact)
+    assert exact == simple_fixture_jcs(decoded), row["file"]
+    assert len(exact) == row["byteCount"], row["file"]
+    assert hashlib.sha256(exact).hexdigest() == row["sha256"], row["file"]
+    assert hashlib.sha256(exact).hexdigest() == (
+        exact_path.with_suffix(exact_path.suffix + ".sha256").read_text().strip()
+    )
+    assert decoded["commandKind"] == row["commandKind"]
+    assert decoded["result"] == row["result"]
+    assert response_models[row["file"]] == {
+        key: value for key, value in decoded.items() if key != "receipt"
+    }
+    assert decoded["receipt"]["commandId"] == decoded["commandId"]
+    assert decoded["receipt"]["commandKind"] == decoded["commandKind"]
+    assert decoded["receipt"]["readBack"] == {
+        "accountMatched": True,
+        "commandDigestMatched": True,
+        "headMatched": True,
+        "resourceMatched": True,
+        "stateMatched": True,
+    }
+    assert row["status"] in {200, 201, 409}
+    if row["result"] in {"noChanges", "conflictPending"}:
+        assert row["status"] in {200, 409}
+    if row["commandKind"] == "createWork":
+        assert decoded["head"] is None and row["status"] == 201
+    if row["commandKind"] in {"finalizeObject", "registerSnapshot"}:
+        assert decoded["head"] is None and row["status"] == 200
+
+receipt_bytes = (canonical_root / "receipts/publish-applied.json").read_bytes()
+receipt = json.loads(receipt_bytes)
+assert not receipt_bytes.endswith(b"\n")
+assert receipt_bytes == simple_fixture_jcs(receipt)
+assert receipt["originalResponseStatus"] == 200
+assert receipt["originalResult"] == "applied"
+replayed = base64.urlsafe_b64decode(
+    receipt["canonicalResponseBase64URL"] + "=" * (-len(receipt["canonicalResponseBase64URL"]) % 4)
+)
+assert replayed == (canonical_root / "responses/publish-applied.json").read_bytes()
+assert hashlib.sha256(replayed).hexdigest() == "a953f5e4d7f72a371312b44639f689910aca814be4cf66c428a432b815da9648"
+assert hashlib.sha256(receipt_bytes).hexdigest() == (
+    (canonical_root / "receipts/publish-applied.json.sha256").read_text().strip()
+)
 
 command_rows = read_json(canonical_root / "command-hashes.json")["commands"]
 assert {row["commandKind"] for row in command_rows} == {
@@ -212,7 +287,7 @@ for attachment in expected_model["attachments"]:
     accounted |= {f"{prefix}/metadata", f"{prefix}/bytes"}
 assert accounted == set(entries)
 
-openapi = yaml.safe_load((root / "openapi.yaml").read_text())
+openapi = yaml.load((root / "openapi.yaml").read_text(), Loader=UniqueKeyLoader)
 refs = []
 
 
@@ -249,13 +324,33 @@ for path_item in openapi["paths"].values():
             assert "default" in operation["responses"]
 assert len(operation_ids) == len(set(operation_ids))
 assert "/v2/uploads/{uploadId}" in openapi["paths"]
-assert openapi["components"]["schemas"]["CommandResult"]["properties"]["receipt"]["$ref"].endswith("/CommandReceipt")
 schemas = openapi["components"]["schemas"]
+assert "CommandResult" not in schemas
+assert schemas["Receipt"]["properties"]["originalResponseStatus"]["enum"] == [200, 201, 409]
+assert "originalResponseStatus" in schemas["Receipt"]["required"]
+assert schemas["Receipt"]["properties"]["originalResult"]["enum"] == ["noChanges", "applied", "conflictPending"]
+for schema_name in [
+    "CreateWorkResponse", "PrepareObjectNoChanges", "PrepareObjectApplied",
+    "FinalizeObjectResponse", "RegisterSnapshotResponse", "PublishAppliedResponse",
+    "PublishConflictPendingResponse", "ResolveDeviceResponse", "ResolveServerResponse",
+    "CloneWorkResponse", "RestoreResponse",
+]:
+    assert schemas[schema_name]["additionalProperties"] is False
 assert "headMatched" in schemas["ReadBackPredicate"]["required"]
 assert "sourceGeneration" in schemas["Conflict"]["required"]
 assert schemas["Conflict"]["properties"]["sourceGeneration"]["minimum"] == 1
 assert "workId" in schemas["CommandReceipt"]["required"]
 assert "workId" in schemas["Receipt"]["required"]
+for path, method, status, response_name in [
+    ("/v2/works", "post", "201", "CreateWorkResponse"),
+    ("/v2/objects/finalize", "post", "200", "FinalizeObjectResponse"),
+    ("/v2/snapshots/register", "post", "200", "RegisterSnapshotResponse"),
+    ("/v2/works/{workId}/publish", "post", "200", "PublishAppliedResponse"),
+    ("/v2/works/{workId}/publish", "post", "409", "PublishConflictPendingResponse"),
+    ("/v2/works/{workId}/conflict/resolve", "post", "200", "ConflictResolutionResponse"),
+    ("/v2/works/{workId}/restore", "post", "200", "RestoreResponse"),
+]:
+    assert openapi["paths"][path][method]["responses"][status]["$ref"].endswith(response_name)
 
 conflict_scenario = read_json(root / "fixtures/scenarios/conflict-three-choice.json")
 assert conflict_scenario["initial"]["sourceGeneration"] > 0
