@@ -9,6 +9,54 @@ import Testing
 
 @Suite("macOS Snapshot Sync v2 account scope races")
 struct SnapshotSyncV2MacAccountScopeTests {
+    @Test("signout/account/fence transition parks the active Work but keeps local checkpointing")
+    @MainActor
+    func accountBoundaryPreservesParkedWorkLocally() async throws {
+        let targets: [FuminiwaSession?] = [
+            nil,
+            makeMacV2Session(accountID: "account-b", fence: "fence-b"),
+            makeMacV2Session(accountID: "account-a", fence: "fence-rotated")
+        ]
+
+        for target in targets {
+            let configuration = try TestRuntimeConfiguration(
+                account: TestAccount(accountID: "account-a", accountFence: "fence-a")
+            )
+            let defaults = try #require(
+                UserDefaults(suiteName: "FUMINIWA.SnapshotSyncV2MacParked.\(UUID().uuidString)")
+            )
+            let state = AppState(
+                dependencies: AppDependencies(
+                    userDefaults: defaults,
+                    snapshotSyncV2Factory: {
+                        try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                    }
+                )
+            )
+            #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+            await state.bootstrap()
+            _ = await state.transitionFuminiwaSession(
+                to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
+                authState: .signedIn(accountID: "account-a")
+            )
+            let workID = try #require(state.currentSnapshotSyncV2WorkID)
+            state.document.title = "変更前"
+            state.markDocumentDirty()
+
+            #expect(await state.transitionFuminiwaSession(
+                to: target,
+                authState: target.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
+            ))
+            state.document.title = "遷移後"
+            state.markDocumentDirty()
+            #expect(await state.saveNow())
+
+            let reopened = try await state.snapshotSyncV2Application?.open(workID: workID)
+            #expect(reopened?.document?.title == "遷移後")
+            #expect(state.currentSnapshotSyncV2WorkID == workID)
+        }
+    }
+
     @Test("old account catalog completion cannot repopulate the new account shelf")
     @MainActor
     func catalogCompletionIsRejectedAfterAccountSwitch() async throws {
@@ -20,7 +68,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         let state = AppState(dependencies: dependencies)
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        state.transitionFuminiwaSession(
+        _ = await state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
@@ -32,7 +80,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
             await suspendedCatalog.isWaiting
         }
 
-        state.transitionFuminiwaSession(
+        _ = await state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
             authState: .signedIn(accountID: "account-b")
         )
@@ -67,7 +115,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         let state = AppState(dependencies: dependencies)
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        state.transitionFuminiwaSession(
+        _ = await state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
@@ -88,10 +136,12 @@ struct SnapshotSyncV2MacAccountScopeTests {
         try await eventuallyMac {
             await suspendedOpen.isWaiting(for: remoteWorkID)
         }
-        state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
-            authState: .signedIn(accountID: "account-b")
-        )
+        let accountSwitch = Task { @MainActor in
+            _ = await state.transitionFuminiwaSession(
+                to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
+                authState: .signedIn(accountID: "account-b")
+            )
+        }
         await suspendedOpen.resume(
             returning: SyncV2OpenedWork(
                 workID: remoteWorkID,
@@ -101,13 +151,14 @@ struct SnapshotSyncV2MacAccountScopeTests {
                 snapshotID: nil
             )
         )
+        _ = await accountSwitch.value
         try await eventuallyMac {
             state.snapshotSyncV2RemoteOnlyOpenTask == nil
         }
 
         #expect(state.authSession?.accountID == "account-b")
         #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(state.documentSessionToken == originalSession)
+        #expect(state.documentSessionToken != originalSession)
         #expect(state.document == originalDocument)
         #expect(state.operationMessage == nil)
     }
@@ -123,7 +174,7 @@ struct SnapshotSyncV2MacAccountScopeTests {
         let state = AppState(dependencies: dependencies)
         #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
         await state.bootstrap()
-        state.transitionFuminiwaSession(
+        _ = await state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
@@ -145,10 +196,12 @@ struct SnapshotSyncV2MacAccountScopeTests {
         try await eventuallyMac {
             await suspendedOpen.isWaiting(for: localWorkID)
         }
-        state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
-            authState: .signedIn(accountID: "account-b")
-        )
+        let accountSwitch = Task { @MainActor in
+            _ = await state.transitionFuminiwaSession(
+                to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
+                authState: .signedIn(accountID: "account-b")
+            )
+        }
         await suspendedOpen.resume(
             returning: SyncV2OpenedWork(
                 workID: localWorkID,
@@ -158,11 +211,13 @@ struct SnapshotSyncV2MacAccountScopeTests {
                 snapshotID: nil
             )
         )
+        _ = await accountSwitch.value
+        try await eventuallyMac { state.authSession?.accountID == "account-b" }
 
         #expect(await opening.value == false)
         #expect(state.authSession?.accountID == "account-b")
         #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(state.documentSessionToken == originalSession)
+        #expect(state.documentSessionToken != originalSession)
         #expect(state.document == originalDocument)
         #expect(state.operationMessage == nil)
     }

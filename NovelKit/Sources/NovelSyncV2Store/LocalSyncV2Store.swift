@@ -100,7 +100,7 @@ public extension LocalSyncV2Store {
                 FROM works w
                 WHERE NOT EXISTS (
                   SELECT 1 FROM account_bindings b
-                  WHERE b.work_id=w.work_id
+                  WHERE b.work_id=w.work_id AND b.state='bound'
                 )
                 ORDER BY lower(w.work_id)
                 """
@@ -413,6 +413,65 @@ public extension LocalSyncV2Store {
                 """,
                 [.text(UUID().uuidString.lowercased()), .text(workID.description)] +
                     old.values + [.text(disposition)] + new.values + [.text(Self.now())]
+            )
+        }
+    }
+
+    /// Retires an account binding without creating a destination binding.
+    /// The Work remains editable through the local unbound scope, while all
+    /// old-account remote lanes are parked atomically.
+    func parkWork(
+        workID: WorkID,
+        binding: V2AccountBinding
+    ) throws {
+        try inTransaction {
+            guard try bindingIsActive(workID: workID, binding: binding) else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            try exec(
+                """
+                UPDATE account_bindings SET state='parked'
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=? AND state='bound'
+                """,
+                [.text(workID.description)] + binding.values
+            )
+            guard try changes() == 1 else { throw SyncV2StoreError.accountMismatch }
+            try exec(
+                """
+                UPDATE sealed_commands SET status='parked'
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+                  AND status IN ('sealed','sending','conflictPending')
+                """,
+                [.text(workID.description)] + binding.values
+            )
+            try exec(
+                """
+                UPDATE sync_intents SET status='parked'
+                WHERE work_id=? AND scope_kind='bound'
+                  AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+                  AND status IN ('pending','sealed')
+                """,
+                [.text(workID.description)] + binding.values
+            )
+            try exec(
+                """
+                UPDATE inbox_batches SET state='rejected',rejection_code='parked'
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+                  AND state IN ('staged','verified')
+                """,
+                [.text(workID.description)] + binding.values
+            )
+            try exec(
+                """
+                UPDATE conflicts SET state='parked'
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=? AND state='active'
+                """,
+                [.text(workID.description)] + binding.values
             )
         }
     }

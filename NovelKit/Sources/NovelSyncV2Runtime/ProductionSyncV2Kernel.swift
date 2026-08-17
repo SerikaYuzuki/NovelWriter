@@ -60,6 +60,24 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
+    func parkAccountScope(workID: WorkID, binding: SyncV2AccountScopeBinding) async throws {
+        do {
+            let storeBinding = V2AccountBinding(
+                accountID: binding.accountID,
+                accountFence: binding.accountFence,
+                serverInstanceID: binding.serverInstanceID,
+                protocolEpoch: binding.protocolEpoch
+            )
+            // Resolve against the binding supplied by the pre-transition
+            // session, rather than the currently selected vault. Auth
+            // exchanges may replace the vault before the UI observes them;
+            // that must not make the old binding impossible to park.
+            try await store.parkWork(workID: workID, binding: storeBinding)
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
     func activeConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
         do {
             let localScope = try await scope.existingScope(workID: workID)

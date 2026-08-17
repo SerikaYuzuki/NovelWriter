@@ -155,6 +155,13 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         return opened(workID: workID, work: work)
     }
 
+    public func parkAccountScope(workID: WorkID, binding _: SyncV2AccountScopeBinding) throws {
+        // The in-memory test kernel has no persisted account-binding rows. A
+        // Work remains local and its fake remote lane is already isolated by
+        // the fixed test composition.
+        guard works[workID] != nil else { throw SyncV2ApplicationError.workNotFound }
+    }
+
     public func prepareRestore(
         _ request: SyncV2RestoreRequest
     ) throws -> SyncV2Preparation {

@@ -2,6 +2,25 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 
+public struct SyncV2AccountScopeBinding: Hashable, Sendable {
+    public let accountID: String
+    public let accountFence: String
+    public let serverInstanceID: String
+    public let protocolEpoch: Int64
+
+    public init(
+        accountID: String,
+        accountFence: String,
+        serverInstanceID: String,
+        protocolEpoch: Int64 = 2
+    ) {
+        self.accountID = accountID
+        self.accountFence = accountFence
+        self.serverInstanceID = serverInstanceID
+        self.protocolEpoch = protocolEpoch
+    }
+}
+
 public enum SyncV2ApplicationError: Error, Equatable, Sendable {
     case workNotFound
     case invalidRuntimeMode

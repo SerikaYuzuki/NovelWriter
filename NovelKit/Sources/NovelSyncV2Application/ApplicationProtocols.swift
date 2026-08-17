@@ -90,6 +90,13 @@ public extension SyncV2RemoteClient {
 public protocol SyncV2LocalKernel: Sendable {
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
+    /// Retires the active account binding without rebinding the Work. The
+    /// retained local bytes remain editable offline, while the old remote
+    /// lane is parked and cannot be adopted by a later account.
+    func parkAccountScope(
+        workID: WorkID,
+        binding: SyncV2AccountScopeBinding
+    ) async throws
     /// Returns the durable active conflict projection, if one exists. This is
     /// intentionally a local read so a process restart can restore the
     /// conflict UI without a network round trip.

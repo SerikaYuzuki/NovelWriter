@@ -93,6 +93,28 @@ public actor SyncV2Application {
             throw error
         }
     }
+
+    /// Parks a Work's current account lane before the auth session changes.
+    /// This is deliberately local-only; no remote worker is resumed here.
+    public func parkAccountScope(
+        workID: WorkID,
+        binding: SyncV2AccountScopeBinding
+    ) async throws {
+        guard runtimeIdentity != .preview else {
+            throw SyncV2ApplicationError.previewReadOnly
+        }
+        try await kernel.parkAccountScope(workID: workID, binding: binding)
+        workerTasks[workID]?.cancel()
+        workerTasks[workID] = nil
+        wakeEpochs[workID, default: 0] &+= 1
+        states[workID] = SyncUIState(
+            workID: workID,
+            localDurability: states[workID]?.localDurability ?? .unsaved,
+            remoteProgress: .idle,
+            conflict: nil,
+            lastTypedResult: .checkpointed
+        )
+    }
 }
 
 extension SyncV2Application {

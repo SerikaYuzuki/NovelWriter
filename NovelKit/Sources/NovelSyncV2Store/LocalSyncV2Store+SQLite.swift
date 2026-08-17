@@ -44,7 +44,8 @@ extension LocalSyncV2Store {
                 """
                 SELECT \(columns) FROM works w
                 WHERE w.work_id=? AND NOT EXISTS (
-                  SELECT 1 FROM account_bindings b WHERE b.work_id=w.work_id
+                  SELECT 1 FROM account_bindings b
+                  WHERE b.work_id=w.work_id AND b.state='bound'
                 )
                 """,
                 [.text(workID.description)]

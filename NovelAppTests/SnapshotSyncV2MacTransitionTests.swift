@@ -12,7 +12,7 @@ struct SnapshotSyncV2MacTransitionTests {
     @MainActor
     func automaticServerAdoptionCannotCrossAccountScope() async throws {
         let fixture = try await makeMacConflictFixture(remoteBehavior: .suspended)
-        fixture.state.transitionFuminiwaSession(
+        _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "test-account", fence: "test-fence"),
             authState: .signedIn(accountID: "test-account")
         )
@@ -26,7 +26,7 @@ struct SnapshotSyncV2MacTransitionTests {
                 inbox: serverInbox
             )
         }
-        fixture.state.transitionFuminiwaSession(
+        _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
             authState: .signedIn(accountID: "account-b")
         )
@@ -39,7 +39,7 @@ struct SnapshotSyncV2MacTransitionTests {
                 && fixture.state.document.title == fixture.document.title
         }
 
-        #expect(fixture.state.authSession?.accountID == "account-b")
+        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
         #expect(fixture.state.document.title == fixture.document.title)
         #expect(fixture.state.document.chapters.first?.episodes.first?.content == "本文")
         #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) != nil)
@@ -53,14 +53,14 @@ struct SnapshotSyncV2MacTransitionTests {
         let fixture = try await makeMacConflictFixture(
             remoteBehavior: .suspended,
             afterStagedRemote: {
-                stateReference.state?.transitionFuminiwaSession(
+                _ = await stateReference.state?.transitionFuminiwaSession(
                     to: newSession,
                     authState: .signedIn(accountID: newSession.accountID)
                 )
             }
         )
         stateReference.state = fixture.state
-        fixture.state.transitionFuminiwaSession(
+        _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "test-account", fence: "test-fence"),
             authState: .signedIn(accountID: "test-account")
         )
@@ -85,7 +85,7 @@ struct SnapshotSyncV2MacTransitionTests {
         fixture.state.cancelSnapshotSyncV2BackgroundOperations()
 
         #expect(await fixture.state.applySnapshotSyncV2ServerVersion() == false)
-        #expect(fixture.state.authSession?.accountID == "account-b")
+        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
         #expect(fixture.state.document.title == fixture.document.title)
         #expect(fixture.state.document.chapters.first?.episodes.first?.content == "本文")
         #expect(fixture.state.snapshotSyncV2ActiveWorkID == fixture.workID)
@@ -308,7 +308,7 @@ struct SnapshotSyncV2MacTransitionTests {
         let originalDocument = fixture.state.document
         let originalWorkID = try #require(fixture.state.currentSnapshotSyncV2WorkID)
         let originalSession = fixture.state.documentSessionToken
-        fixture.state.transitionFuminiwaSession(
+        _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
             authState: .signedIn(accountID: "account-a")
         )
@@ -324,7 +324,7 @@ struct SnapshotSyncV2MacTransitionTests {
         let accountSwitch = Task { @MainActor () -> Bool in
             for _ in 0 ..< 100 {
                 if fixture.state.isDocumentTransitionInProgress {
-                    fixture.state.transitionFuminiwaSession(
+                    _ = await fixture.state.transitionFuminiwaSession(
                         to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
                         authState: .signedIn(accountID: "account-b")
                     )
@@ -338,9 +338,9 @@ struct SnapshotSyncV2MacTransitionTests {
 
         #expect(await accountSwitch.value)
         #expect(restored == false)
-        #expect(fixture.state.authSession?.accountID == "account-b")
+        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
         #expect(fixture.state.snapshotSyncV2ActiveWorkID == originalWorkID)
-        #expect(fixture.state.documentSessionToken == originalSession)
+        #expect(fixture.state.documentSessionToken != originalSession)
         #expect(fixture.state.document == originalDocument)
     }
 }
