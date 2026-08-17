@@ -467,8 +467,14 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         await store.requestExport()
         let exportedDuringExchange = try #require(store.pendingExportURL)
         #expect(await store.importPackage(from: exportedDuringExchange))
+        let importedWorkID = try #require(store.syncV2ActiveWorkID)
+        let importedTitle = store.document.title
         store.dismissExport()
 
+        // Exercise local history/restore on the parked source, then return to
+        // the imported Work. Both are local-only operations and must not make
+        // the late Apple response the owner of the editor surface.
+        #expect(await store.openSnapshotSyncV2(workID: workID.rawValue))
         let parkedSnapshot = try LocalSyncV2Store(
             root: configuration.localRoot.url,
             policy: .openExisting
@@ -481,13 +487,18 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(parkedOpen.summary.localGeneration >= 2)
         #expect(parkedOpen.document?.title == preflightTitle)
 
-        await store.resumeSnapshotSyncV2()
-        #expect(await store.synchronizeSnapshotSyncV2() == false)
-        #expect(await store.refreshRemoteCatalog() == false)
         #expect(await store.refreshSnapshotHistory(for: workID))
         if let localSnapshot = store.syncV2HistoryItems.first {
             #expect(await store.restoreSnapshotSyncV2(snapshotID: localSnapshot.snapshotID.rawValue))
         }
+        #expect(await store.openSnapshotSyncV2(workID: importedWorkID.rawValue))
+        #expect(store.syncV2ActiveWorkID == importedWorkID)
+        #expect(store.document.title == importedTitle)
+        let activeSessionBeforeExchange = try #require(store.currentDocumentSessionToken)
+
+        await store.resumeSnapshotSyncV2()
+        #expect(await store.synchronizeSnapshotSyncV2() == false)
+        #expect(await store.refreshRemoteCatalog() == false)
         #expect(await store.adoptPendingSnapshotSyncV2() == false)
         #expect(await store.startRemoteOnlySnapshotSyncV2Open(workID: remoteOnlyWorkID) == false)
         #expect(await configuration.remote.recordedOperations().count == remoteOperationCount)
@@ -497,6 +508,8 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(store.document.title == "Apple交換待ちでも保持するローカル編集")
         #expect(store.localEditGeneration > localGenerationBeforeEdit)
         #expect(await store.saveNow())
+        let activeTitleBeforeExchangeRelease = store.document.title
+        let activeSessionAfterLocalEdit = try #require(store.currentDocumentSessionToken)
         #expect(await configuration.remote.recordedOperations().count == remoteOperationCount)
 
         let sqliteDuringExchange = try LocalSyncV2Store(
@@ -523,8 +536,15 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(store.syncV2AccountTransitionRequested == false)
         #expect(store.syncV2AccountTransitionRequestOwner == nil)
         #expect(store.syncV2RemoteSuspensionToken == nil)
+        #expect(store.syncV2ActiveWorkID == importedWorkID)
+        #expect(store.document.title == activeTitleBeforeExchangeRelease)
+        #expect(store.currentDocumentSessionToken == activeSessionAfterLocalEdit)
+        #expect(activeSessionAfterLocalEdit == activeSessionBeforeExchange)
         let rebound = try await application.library().items.first { $0.workID == workID }
         #expect(rebound?.accountState == .active)
+        let imported = try await application.library().items.first { $0.workID == importedWorkID }
+        #expect(imported?.accountState == .unbound)
+        #expect(imported?.availability == .localOnly)
         try await waitForIOSP1RemoteOperation(
             configuration.remote,
             atLeast: remoteOperationCount + 1
