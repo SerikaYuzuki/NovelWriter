@@ -15,9 +15,14 @@ object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
 
 The v2 Compose revision uses three isolated database roles:
 
-- `fuminiwa_sync_v2_bootstrap` exists only as the PostgreSQL image bootstrap
-  administrator. It creates the two application roles and revokes PUBLIC
-  database/schema defaults; it does not run application migrations.
+- `fuminiwa_sync_v2_bootstrap` is used only as a locked, fresh-database
+  provisioning administrator. The official PostgreSQL image may initially
+  give this login superuser/role-management/replication attributes; the
+  migrator accepts those attributes only after a fresh identity check, creates
+  the two application roles, revokes PUBLIC database/schema defaults, and
+  finally applies the exact `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+  NOREPLICATION NOBYPASSRLS` downgrade before the final read-back. It does not
+  run application migrations.
 - `fuminiwa_sync_v2_migrator` is the schema/object owner. The one-shot
   `migrator` service runs SQLx DDL, writes `_sqlx_migrations`, bootstraps
   `server_meta` and `deployment_binding`, and grants the audited runtime ACL.
@@ -35,10 +40,11 @@ identity, role/ACL, exact marker, and binding read-back. PostgreSQL has no
   separate sequence `EXECUTE` privilege; `USAGE` is the exact minimum
   PostgreSQL privilege required for the server's nextval-backed inserts.
 
-Fresh bootstrap is the only path that creates roles or applies grants. A
-re-run against an exact v2 volume is read-only and succeeds only when the
-existing role/grant attestation is exact. Legacy, single-role, mixed, partial,
-or unknown databases fail closed; the migrator never auto-ALTERs, rewrites
+Fresh bootstrap is the only path that creates roles, applies grants, or
+downgrades the bootstrap role. A re-run against an exact v2 volume first
+attests the already-hardened bootstrap flags and is read-only: it never
+re-requests role DDL or grants. Legacy, single-role, mixed, partial, or
+unknown databases fail closed; the migrator never auto-ALTERs, rewrites
 ownership, or grants privileges on an existing volume.
 
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
@@ -62,6 +68,14 @@ the expected administrator flags, and it must own the target database with
 `CONNECT`/`CREATE`. Fresh role-count preflight counts only the migration-owner
 and runtime roles; the bootstrap role is expected to already exist and is
 validated by this separate session attestation.
+
+Migration authority names every index and constraint that could exceed
+PostgreSQL's 63-byte identifier limit (including
+`conflict_candidates_conflict_revision_generation_key`,
+`external_identities_account_provider_issuer_key`, and
+`provider_credentials_identity_audience_generation_key`). The catalog
+attestation expects these exact deterministic names; PostgreSQL's implicit
+identifier truncation is not accepted as the contract.
 
 `sync_v2_role_split_runner` is the opt-in PostgreSQL gate for this boundary.
 It requires three separately provisioned disposable databases and password-file

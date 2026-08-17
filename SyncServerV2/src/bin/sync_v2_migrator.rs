@@ -55,13 +55,13 @@ async fn main() -> Result<()> {
     // migration connection deliberately does not acquire this lock: the
     // bootstrap session is the single deployment-wide serialization point.
     let mut bootstrap_session = lock.acquire(&mut admin).await?;
-    attest_bootstrap_session(&mut bootstrap_session).await?;
     let identity =
         Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?;
     match identity {
         DatabaseIdentity::SnapshotSyncV2 => {
             // Never repair an existing volume implicitly. The only permitted
             // repeat is a pure read-back of the already-attested contract.
+            attest_bootstrap_session(&mut bootstrap_session).await?;
             let runtime_pool = connect(
                 &runtime_user,
                 &required("FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_FILE")?,
@@ -83,7 +83,13 @@ async fn main() -> Result<()> {
             println!("Snapshot Sync v2 role bootstrap already attested; no changes made");
             return Ok(());
         }
-        DatabaseIdentity::Fresh => {}
+        DatabaseIdentity::Fresh => {
+            // The official PostgreSQL image creates POSTGRES_USER as a
+            // temporary superuser administrator. Accept that shape only for
+            // this fresh, locked provisioning phase; it is hardened before
+            // the process exits.
+            attest_bootstrap_provisioning_session(&mut bootstrap_session).await?;
+        }
     }
 
     let role_count: i64 =
@@ -160,6 +166,8 @@ async fn main() -> Result<()> {
     )
     .await?;
     Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE).await?;
+    harden_bootstrap_role(&mut bootstrap_session).await?;
+    attest_bootstrap_session(&mut bootstrap_session).await?;
     if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
         != DatabaseIdentity::SnapshotSyncV2
     {
@@ -207,10 +215,10 @@ fn required(name: &str) -> Result<String> {
     env::var(name).map_err(|_| format!("{name} is required").into())
 }
 
-async fn attest_bootstrap_session(connection: &mut PgConnection) -> Result<()> {
+async fn attest_bootstrap_provisioning_session(connection: &mut PgConnection) -> Result<()> {
     let role = sqlx::query(
         "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
-                r.rolcanlogin, r.rolreplication, r.rolbypassrls
+                r.rolcanlogin, r.rolinherit, r.rolreplication, r.rolbypassrls
          FROM pg_roles r WHERE r.rolname=current_user",
     )
     .fetch_one(&mut *connection)
@@ -221,10 +229,66 @@ async fn attest_bootstrap_session(connection: &mut PgConnection) -> Result<()> {
         || !role.try_get::<bool, _>("rolcreaterole")?
         || !role.try_get::<bool, _>("rolcreatedb")?
         || !role.try_get::<bool, _>("rolcanlogin")?
-        || role.try_get::<bool, _>("rolreplication")?
+        || !role.try_get::<bool, _>("rolinherit")?
+        || !role.try_get::<bool, _>("rolreplication")?
         || !role.try_get::<bool, _>("rolbypassrls")?
     {
         return Err("v2 bootstrap role flags are not exact".into());
+    }
+    let is_database_owner: bool = sqlx::query_scalar(
+        "SELECT d.datdba = r.oid
+         FROM pg_database d
+         JOIN pg_roles r ON r.oid=d.datdba
+         WHERE d.datname=current_database() AND r.rolname=current_user",
+    )
+    .fetch_optional(&mut *connection)
+    .await?
+    .unwrap_or(false);
+    if !is_database_owner {
+        return Err("v2 bootstrap role must own the target database".into());
+    }
+    for privilege in ["CONNECT", "CREATE"] {
+        let allowed: bool =
+            sqlx::query_scalar("SELECT has_database_privilege(current_user,current_database(),$1)")
+                .bind(privilege)
+                .fetch_one(&mut *connection)
+                .await?;
+        if !allowed {
+            return Err(format!("v2 bootstrap role lacks database {privilege}").into());
+        }
+    }
+    Ok(())
+}
+
+async fn harden_bootstrap_role(connection: &mut PgConnection) -> Result<()> {
+    sqlx::query(
+        "ALTER ROLE fuminiwa_sync_v2_bootstrap
+         NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS",
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+async fn attest_bootstrap_session(connection: &mut PgConnection) -> Result<()> {
+    let role = sqlx::query(
+        "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                r.rolcanlogin, r.rolinherit, r.rolreplication, r.rolbypassrls
+         FROM pg_roles r WHERE r.rolname=current_user",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let current_user: String = role.try_get("current_user")?;
+    if current_user != BOOTSTRAP_ROLE
+        || role.try_get::<bool, _>("rolsuper")?
+        || role.try_get::<bool, _>("rolcreaterole")?
+        || role.try_get::<bool, _>("rolcreatedb")?
+        || !role.try_get::<bool, _>("rolcanlogin")?
+        || role.try_get::<bool, _>("rolinherit")?
+        || role.try_get::<bool, _>("rolreplication")?
+        || role.try_get::<bool, _>("rolbypassrls")?
+    {
+        return Err("v2 bootstrap role flags are not hardened".into());
     }
     let is_database_owner: bool = sqlx::query_scalar(
         "SELECT d.datdba = r.oid

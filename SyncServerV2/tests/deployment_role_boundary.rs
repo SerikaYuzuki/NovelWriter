@@ -95,9 +95,39 @@ fn opt_in_role_split_gate_covers_positive_negative_and_unchanged_paths() {
 fn fresh_bootstrap_lock_and_role_inventory_are_scoped() {
     let migrator = fs::read_to_string("src/bin/sync_v2_migrator.rs").expect("v2 migrator");
     assert!(migrator.contains("attest_bootstrap_session"));
-    assert!(migrator.contains("v2 bootstrap role flags are not exact"));
+    assert!(migrator.contains("attest_bootstrap_provisioning_session"));
+    assert!(migrator.contains("harden_bootstrap_role"));
+    assert!(migrator.contains("v2 bootstrap role flags are not hardened"));
     assert!(migrator.contains("let mut bootstrap_session = lock.acquire"));
     assert!(migrator.contains("MIGRATION_OWNER_ROLE, RUNTIME_ROLE"));
     assert!(!migrator.contains("migration_lock"));
     assert!(migrator.contains("final v2 role bootstrap identity read-back failed"));
+}
+
+#[test]
+fn migration_names_are_explicit_and_within_postgres_identifier_limit() {
+    let sync = fs::read_to_string("migrations/0001_sync_v2.sql").expect("sync migration");
+    let auth = fs::read_to_string("migrations/0002_auth_v1.sql").expect("auth migration");
+    for name in [
+        "conflict_candidates_conflict_revision_generation_key",
+        "external_identities_account_provider_issuer_key",
+        "provider_credentials_identity_audience_generation_key",
+    ] {
+        assert!(
+            name.len() <= 63,
+            "explicit name exceeds PostgreSQL limit: {name}"
+        );
+        assert!(
+            sync.contains(name) || auth.contains(name),
+            "missing explicit name: {name}"
+        );
+    }
+    assert!(sync
+        .contains("CONSTRAINT conflict_candidates_conflict_revision_generation_key\n    UNIQUE"));
+    assert!(
+        auth.contains("CONSTRAINT external_identities_account_provider_issuer_key\n        UNIQUE")
+    );
+    assert!(auth.contains(
+        "CONSTRAINT provider_credentials_identity_audience_generation_key\n        UNIQUE"
+    ));
 }

@@ -204,7 +204,8 @@ CREATE TABLE sync_v2.conflict_candidates (
   pinned BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (account_id, conflict_id, revision),
-  UNIQUE (account_id, conflict_id, revision, source_generation),
+  CONSTRAINT conflict_candidates_conflict_revision_generation_key
+    UNIQUE (account_id, conflict_id, revision, source_generation),
   FOREIGN KEY (account_id, work_id, conflict_id)
     REFERENCES sync_v2.active_conflicts(account_id, work_id, conflict_id),
   FOREIGN KEY (account_id, work_id, base_snapshot_id)

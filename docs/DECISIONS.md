@@ -1020,3 +1020,12 @@
 - **日付**: 2026-08-18 / **状態**: D-081を部分撤回・Production read-back Gate前
 - **内容**: Rust server sourceにsequenceの`currval`、`setval`、`last_value`参照はなく、runtime roleは必要なsequenceに`USAGE`だけを持つ。D-081の`USAGE, SELECT, UPDATE`というsequence grant記述と実装を撤回し、`SELECT`／`UPDATE`をruntimeへ与えない。PostgreSQLにsequenceの独立した`EXECUTE`権限はないため、insert時のnextval利用に必要な最小権限を`USAGE`とする。
 - **検証**: runtime attestationは全sequenceで`USAGE=true`かつ`SELECT=false`／`UPDATE=false`をread-backし、実PostgreSQL opt-in gateは`last_value`／`setval`を拒否する。D-081のmigration owner、schema/table DML、ownership、column ACL、既存volume非破壊境界は維持する。
+
+## D-083: Snapshot Sync v2のbootstrap縮退とPostgreSQL識別子を固定する
+
+- **日付**: 2026-08-18 / **状態**: 実装・隔離PostgreSQL Gate検証中
+- **内容**:
+  1. 公式PostgreSQL imageが初期化したbootstrap loginのsuperuser／createdb／createrole／inherit／replication／bypass-RLS属性は、fresh databaseをadvisory lock下で初期構築する間だけ許可する。migration owner、runtime role、schema、marker、ACLの検証が完了した後、migratorはbootstrap自身へ`NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`を適用し、最終属性をread-backする。login、対象DB owner、CONNECT／CREATEは維持する。
+  2. exact v2 databaseの再実行は、縮退済みbootstrapと既存role／ACL／identityのread-only attestationだけを行う。既存経路でrole変更、grant、migration、metadata修復を再要求しない。fresh／unknown／legacyの判定はadvisory lock取得後に行い、拒否時はDBを変更しない。
+  3. PostgreSQLの63-byte identifier制限に依存せず、長いunique constraint／indexにはauthority migrationで決定的な63-byte以下の名前を明示する。catalog attestationはその完全な名前を要求し、暗黙切り詰め名を成功扱いにしない。Swift／Rustのschema fixtureとmigration bytesは同じ名前を検証する。
+- **詳細**: `SyncServerV2/src/bin/sync_v2_migrator.rs`、`SyncServerV2/src/postgres.rs`、`SyncServerV2/migrations/0001_sync_v2.sql`、`SyncServerV2/migrations/0002_auth_v1.sql`、`docs/sync/v2/deployment.md`を正とする。

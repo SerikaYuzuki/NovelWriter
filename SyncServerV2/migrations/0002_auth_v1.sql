@@ -31,7 +31,8 @@ CREATE TABLE auth_v1.external_identities (
     linked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at TIMESTAMPTZ,
     UNIQUE(lookup_key_version, subject_lookup_hmac),
-    UNIQUE(account_id, provider_config_id, exact_issuer)
+    CONSTRAINT external_identities_account_provider_issuer_key
+        UNIQUE(account_id, provider_config_id, exact_issuer)
 );
 CREATE TABLE auth_v1.external_identity_secrets (
     identity_id UUID PRIMARY KEY REFERENCES auth_v1.external_identities(identity_id),
@@ -52,7 +53,8 @@ CREATE TABLE auth_v1.provider_credentials (
     state TEXT NOT NULL CHECK (state IN ('active','superseded','revokeRetryPending','revoked')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at TIMESTAMPTZ,
-    UNIQUE(identity_id, original_audience, credential_generation)
+    CONSTRAINT provider_credentials_identity_audience_generation_key
+        UNIQUE(identity_id, original_audience, credential_generation)
 );
 CREATE UNIQUE INDEX provider_credentials_one_active_audience
     ON auth_v1.provider_credentials(identity_id, original_audience) WHERE state='active';
