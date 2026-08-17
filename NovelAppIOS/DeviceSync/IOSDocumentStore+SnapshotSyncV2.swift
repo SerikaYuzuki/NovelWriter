@@ -14,6 +14,13 @@ enum IOSSnapshotSyncOutcome: Equatable, Sendable {
     case notStarted, offline, idle, pending, syncing, conflict, failed
 }
 
+func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
+    switch result {
+    case .queued, .noChanges: true
+    default: false
+    }
+}
+
 extension IOSDocumentStore {
     @discardableResult
     func configureSnapshotSyncV2() async -> Bool {
@@ -320,7 +327,7 @@ extension IOSDocumentStore {
                     syncV2KeepBothPendingWorkID = newWorkID
                 }
                 let result = try await app.resolveConflict(workID: workID, action: action)
-                guard result.typedResult == .queued else {
+                guard acceptsSnapshotSyncV2ConflictResult(result.typedResult) else {
                     if choice == .keepBoth {
                         syncV2KeepBothPendingWorkID = nil
                     }

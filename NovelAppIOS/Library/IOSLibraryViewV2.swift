@@ -4,28 +4,12 @@ import SwiftUI
 
 struct IOSLibraryView: View {
     let store: IOSDocumentStore
-    let openDocument: (IOSPrivateDocumentID) -> Void
-    let openCloudDocument: (WorkID) -> Void
+    let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
 
     var body: some View {
         List {
-            Section("この端末") {
-                ForEach(store.libraryItems) { item in
-                    Button {
-                        openDocument(item.id)
-                    } label: {
-                        Label(
-                            item.title,
-                            systemImage: item.availability == .available
-                                ? "doc.text"
-                                : "exclamationmark.triangle"
-                        )
-                    }
-                    .disabled(item.availability != .available)
-                }
-            }
-            Section("同期対象") {
+            Section("作品") {
                 if store.authUIState == .signedOut {
                     Button("Appleでサインイン") {
                         Task { await store.signInWithApple() }
@@ -46,7 +30,7 @@ struct IOSLibraryView: View {
                 }
                 ForEach(store.syncV2LibraryItems, id: \.workID) { item in
                     Button {
-                        openCloudDocument(item.workID)
+                        openWork(item.workID)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title.isEmpty ? "名称未設定の作品" : item.title)

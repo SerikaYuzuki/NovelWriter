@@ -84,6 +84,13 @@ struct IOSSnapshotSyncV2Tests {
         }
     }
 
+    @Test("競合解決のno-opは冪等成功として再投影し、staleだけを再選択に戻す")
+    func conflictResolutionResultIdempotency() {
+        #expect(acceptsSnapshotSyncV2ConflictResult(.queued))
+        #expect(acceptsSnapshotSyncV2ConflictResult(.noChanges))
+        #expect(!acceptsSnapshotSyncV2ConflictResult(.staleConflictAction))
+    }
+
     @Test("resumeはoffline workerを待たずにUIへ戻る")
     func resumeIsNonBlocking() async {
         let environment = makeEnvironment()

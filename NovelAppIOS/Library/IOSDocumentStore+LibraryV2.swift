@@ -25,7 +25,9 @@ struct IOSDocumentSessionToken: Hashable, Sendable {
 
     /// The sync owner is explicit even while the package-name compatibility
     /// value remains available to navigation code and retired fixtures.
-    var workID: WorkID? { workingCopyID.workID }
+    var workID: WorkID? {
+        workingCopyID.workID
+    }
 }
 
 enum IOSDocumentLibraryAvailability: Equatable, Sendable {
@@ -59,18 +61,8 @@ extension IOSDocumentStore {
         snapshotSyncV2Application != nil && startupState == .ready
     }
 
-    var canPublishCurrentWorkToCloud: Bool {
-        canExplicitlySyncCurrentWork
-    }
-
     var isExplicitSyncInFlight: Bool {
         isSnapshotSyncInFlight
-    }
-
-    var activeCloudWorkID: WorkID? {
-        guard startupState == .ready,
-              syncV2ParkedAccountID == nil else { return nil }
-        return syncV2ActiveWorkID
     }
 
     @discardableResult

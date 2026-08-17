@@ -426,8 +426,7 @@ struct IOSWorkbenchView: View {
         NavigationStack(path: path) {
             IOSLibraryView(
                 store: store,
-                openDocument: openDocument,
-                openCloudDocument: openRemote,
+                openWork: openRemote,
                 makeNewDocument: makeNew
             )
             .navigationDestination(for: IOSWorkspaceRoute.self) { route in
@@ -493,14 +492,6 @@ struct IOSWorkbenchView: View {
         case .references: IOSReferencesFeatureView(store: store)
         case .settings: IOSSettingsView(store: store)
         case .editor: IOSEditorPane(store: store)
-        }
-    }
-
-    private func openDocument(_ id: IOSPrivateDocumentID) {
-        Task {
-            guard await store.openPrivateDocument(id: id),
-                  let session = store.currentDocumentSessionToken else { return }
-            navigation.showProjectHome(for: session)
         }
     }
 
