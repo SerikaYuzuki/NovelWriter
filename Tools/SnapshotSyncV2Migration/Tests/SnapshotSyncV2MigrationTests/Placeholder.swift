@@ -308,7 +308,7 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
 }
 
 private func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
-    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,4,\(snapshotID),4,evidence\r\n"
+    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,1,\(snapshotID),4,evidence\r\n"
 }
 
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
@@ -338,7 +338,7 @@ private func makeLegacyDatabase(
     CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY, work_id TEXT NOT NULL, parent_snapshot_ids TEXT NOT NULL, manifest BLOB NOT NULL, reason TEXT NOT NULL, local_generation INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
     CREATE TABLE objects(object_id TEXT PRIMARY KEY, byte_count INTEGER NOT NULL, bytes BLOB NOT NULL);
     """)
-    try exec(database, "INSERT INTO works VALUES ('\(workID.uuidString.lowercased())','\(documentID.uuidString.lowercased())','2026-08-17T00:00:00Z','\(snapshotID)',4,'\(snapshotID)',4)")
+    try exec(database, "INSERT INTO works VALUES ('\(workID.uuidString.lowercased())','\(documentID.uuidString.lowercased())','2026-08-17T00:00:00Z','\(snapshotID)',2,'\(snapshotID)',4)")
     try insertSnapshot(database, snapshotID: snapshotID, workID: workID, manifest: manifest)
     if let objectID, let object {
         var statement: OpaquePointer?

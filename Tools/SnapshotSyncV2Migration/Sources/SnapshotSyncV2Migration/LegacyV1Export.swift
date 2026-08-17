@@ -728,7 +728,7 @@ private enum ClassificationLedger {
             } catch {
                 throw LegacyV1ExportError.malformedClassification(workID: "<unknown>", value: "unclosed quote")
             }
-            let knownHeader = ["workID", "classification", "currentSnapshotID", "currentSnapshotCreatedAt", "localGeneration", "acknowledgedHeadSnapshotID", "acknowledgedHeadGeneration", "evidence"]
+            let knownHeader = ["workID", "classification", "currentSnapshotID", "currentSnapshotCreatedAt", "currentSnapshotLocalGeneration", "acknowledgedHeadSnapshotID", "acknowledgedHeadGeneration", "evidence"]
             if fields == knownHeader {
                 continue
             }
@@ -759,7 +759,7 @@ private enum ClassificationLedger {
                 disposition: disposition,
                 snapshotID: fields[2],
                 createdAt: fields[3],
-                generation: Int(fields[4])!,
+                currentSnapshotLocalGeneration: Int(fields[4])!,
                 headSnapshotID: fields[5],
                 headGeneration: Int(fields[6])!
             )
@@ -788,7 +788,7 @@ private struct ClassificationRecord: Equatable {
     let disposition: LegacyV1Disposition
     let snapshotID: String
     let createdAt: String
-    let generation: Int
+    let currentSnapshotLocalGeneration: Int
     let headSnapshotID: String
     let headGeneration: Int
 }
@@ -833,7 +833,6 @@ private struct LegacyWork {
     let currentSnapshotID: String
     let acknowledgedHeadSnapshotID: String
     let acknowledgedHeadGeneration: Int
-    let localGeneration: Int
 }
 
 private struct ArchiveEvidence {
@@ -938,6 +937,7 @@ private struct LegacySnapshot {
     let manifest: Data
     let manifestModel: LegacyV1Manifest
     let createdAt: String
+    let localGeneration: Int
     let pinned: Int
 }
 
@@ -1080,7 +1080,7 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     func works() throws -> [LegacyWork] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, local_generation, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement -> LegacyWork? in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement -> LegacyWork? in
             guard let work = text(statement, 0), let workID = UUID(uuidString: work),
                   let document = text(statement, 1), let documentID = UUID(uuidString: document),
                   let snapshot = text(statement, 2), !snapshot.isEmpty else { return nil }
@@ -1088,19 +1088,18 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                 workID: workID,
                 documentID: documentID,
                 currentSnapshotID: snapshot,
-                acknowledgedHeadSnapshotID: text(statement, 4) ?? "",
-                acknowledgedHeadGeneration: Int(sqlite3_column_int64(statement, 5)),
-                localGeneration: Int(sqlite3_column_int64(statement, 3))
+                acknowledgedHeadSnapshotID: text(statement, 3) ?? "",
+                acknowledgedHeadGeneration: Int(sqlite3_column_int64(statement, 4))
             )
         }
     }
 
     func malformedWorkRows() throws -> [String] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, local_generation, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement in
             let work = text(statement, 0) ?? "<null>"
             let document = text(statement, 1) ?? "<null>"
             let snapshot = text(statement, 2) ?? "<null>"
-            let acknowledged = text(statement, 4) ?? "<null>"
+            let acknowledged = text(statement, 3) ?? "<null>"
             guard UUID(uuidString: work) != nil,
                   UUID(uuidString: document) != nil,
                   !snapshot.isEmpty,
@@ -1113,7 +1112,7 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     func snapshot(id: String, workID: UUID) throws -> LegacySnapshot? {
-        try one(sql: "SELECT snapshot_id, manifest, created_at, pinned FROM snapshots WHERE snapshot_id = ? AND work_id = ?", binds: [id, workID.uuidString.lowercased()]) { statement in
+        try one(sql: "SELECT snapshot_id, manifest, created_at, local_generation, pinned FROM snapshots WHERE snapshot_id = ? AND work_id = ?", binds: [id, workID.uuidString.lowercased()]) { statement in
             guard let snapshotID = text(statement, 0), let manifest = data(statement, 1) else { return nil }
             let manifestModel: LegacyV1Manifest
             do {
@@ -1126,7 +1125,8 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                 manifest: manifest,
                 manifestModel: manifestModel,
                 createdAt: text(statement, 2) ?? "",
-                pinned: Int(sqlite3_column_int(statement, 3))
+                localGeneration: Int(sqlite3_column_int64(statement, 3)),
+                pinned: Int(sqlite3_column_int(statement, 4))
             )
         }
     }
@@ -1135,14 +1135,24 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
         for work in works {
             guard let classification = classifications[work.workID],
                   classification.snapshotID == work.currentSnapshotID,
-                  classification.generation == work.localGeneration,
                   classification.headSnapshotID == work.acknowledgedHeadSnapshotID,
-                  classification.headGeneration == work.acknowledgedHeadGeneration,
-                  let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID),
+                  classification.headGeneration == work.acknowledgedHeadGeneration else {
+                throw LegacyV1ExportError.malformedClassification(
+                    workID: work.workID.uuidString,
+                    value: "currentSnapshotID or acknowledged head evidence does not match works"
+                )
+            }
+            guard let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID),
                   classification.createdAt == snapshot.createdAt else {
                 throw LegacyV1ExportError.malformedClassification(
                     workID: work.workID.uuidString,
-                    value: "classification evidence does not match source"
+                    value: "currentSnapshotCreatedAt does not match snapshots.created_at"
+                )
+            }
+            guard classification.currentSnapshotLocalGeneration == snapshot.localGeneration else {
+                throw LegacyV1ExportError.malformedClassification(
+                    workID: work.workID.uuidString,
+                    value: "currentSnapshotLocalGeneration does not match snapshots.local_generation"
                 )
             }
         }
