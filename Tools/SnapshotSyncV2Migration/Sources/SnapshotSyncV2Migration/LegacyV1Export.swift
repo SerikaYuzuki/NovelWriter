@@ -700,10 +700,20 @@ private enum ClassificationLedger {
     static func load(from url: URL) throws -> [UUID: ClassificationRecord] {
         let text = try String(contentsOf: url, encoding: .utf8)
         var values: [UUID: ClassificationRecord] = [:]
-        let lines = text.components(separatedBy: .newlines)
-        for (index, line) in lines.enumerated() {
+        guard !text.isEmpty else {
+            throw LegacyV1ExportError.malformedClassification(workID: "<empty>", value: "empty CSV")
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        for (index, rawLine) in lines.enumerated() {
+            var line = String(rawLine)
+            if index < lines.count - 1, line.last == "\r" {
+                line.removeLast()
+            }
+            guard !line.contains("\r") else {
+                throw LegacyV1ExportError.malformedClassification(workID: "<unknown>", value: "bare or internal CR")
+            }
             if line.isEmpty {
-                if index == lines.count - 1 {
+                if index == lines.count - 1, text.hasSuffix("\n") {
                     continue
                 }
                 throw LegacyV1ExportError.malformedClassification(workID: "<empty>", value: "empty CSV row")

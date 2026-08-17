@@ -126,7 +126,9 @@ func exportsClassifiedWork() async throws {
         "not-a-uuid,verified,snapshot,date,1,snapshot,1,evidence\n",
         classificationRow(workID: workID, disposition: "unknown"),
         "\(workID.uuidString),verified\n",
-        classificationRow(workID: workID, disposition: "verified") + classificationRow(workID: workID, disposition: "verified")
+        classificationRow(workID: workID, disposition: "verified") + classificationRow(workID: workID, disposition: "verified"),
+        classificationRow(workID: workID, disposition: "verified") + "\r\n",
+        String(classificationRow(workID: workID, disposition: "verified").dropLast(2)) + "\r"
     ]
     for (index, row) in malformedRows.enumerated() {
         try row.write(to: ledgerURL, atomically: true, encoding: .utf8)
@@ -292,7 +294,7 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
 }
 
 private func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
-    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,4,\(snapshotID),4,evidence\n"
+    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,4,\(snapshotID),4,evidence\r\n"
 }
 
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
