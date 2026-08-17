@@ -2,7 +2,7 @@
     auto_https disable_redirects
 }
 
-:8443 {
+https://{$FUMINIWA_SYNC_V2_EDGE_HOST:192.168.11.5}:8443 {
     # tls internal is a staging-only local CA. Production must terminate with
     # a publicly trusted certificate at the deployment edge.
     tls internal

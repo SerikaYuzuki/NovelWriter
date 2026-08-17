@@ -121,7 +121,10 @@ from the same network path used by the app, then read back the authenticated
 capabilities response and a newly created v2 work. A successful container
 healthcheck alone is not a TLS or account-isolation read-back.
 
-The device-facing URL is `https://192.168.11.5:${FUMINIWA_SYNC_V2_EDGE_PORT}`
-(default `https://192.168.11.5:8443`). Trusting the Caddy staging CA is a
-separate test-device setup step; do not weaken certificate validation in the
-app. Keep the server's `8092` port unexposed from the host.
+The device-facing URL is
+`https://${FUMINIWA_SYNC_V2_EDGE_HOST}:${FUMINIWA_SYNC_V2_EDGE_PORT}` (defaults
+to `https://192.168.11.5:8443`). The edge host is part of the Caddy site
+address, so the internally issued leaf certificate contains the exact LAN IP
+used by macOS and iOS. Trusting the Caddy staging CA is a separate test-device
+setup step; do not weaken certificate validation in the app. Keep the server's
+`8092` port unexposed from the host.
