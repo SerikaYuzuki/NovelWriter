@@ -38,6 +38,28 @@ public enum AuthJCS {
     }
 }
 
+/// Canonical request builders shared by the transport and the operation
+/// journal. Keeping one builder ensures an exact replay uses byte-identical
+/// credentials and challenge fields.
+public enum AuthCanonicalRequests {
+    public static func exchangeApple(
+        challenge: AuthChallenge,
+        authorizationCode: Data,
+        identityToken: Data,
+        operationID: UUID
+    ) throws -> AuthCanonicalCommand {
+        guard let code = String(data: authorizationCode, encoding: .utf8),
+              let token = String(data: identityToken, encoding: .utf8) else {
+            throw AuthError.invalidCredentialEncoding
+        }
+        return AuthJCS.object([
+            ("authorizationCode", code), ("challengeId", challenge.challengeID.uuidString.lowercased()),
+            ("identityToken", token), ("operationId", operationID.uuidString.lowercased()),
+            ("provider", "apple"), ("state", challenge.state)
+        ])
+    }
+}
+
 // swiftlint:disable:next type_body_length
 public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
     public let configuration: AuthClientConfiguration
@@ -116,12 +138,12 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
 
     public func exchangeApple(challenge: AuthChallenge, authorizationCode: Data, identityToken: Data, operationID: UUID) async throws -> FuminiwaSession {
         guard challenge.provider == .apple, challenge.flow == "native", challenge.requestedScopes.isEmpty else { throw AuthError.invalidProvider }
-        guard let code = String(data: authorizationCode, encoding: .utf8), let token = String(data: identityToken, encoding: .utf8) else { throw AuthError.invalidCredentialEncoding }
-        let command = AuthJCS.object([
-            ("authorizationCode", code), ("challengeId", challenge.challengeID.uuidString.lowercased()),
-            ("identityToken", token), ("operationId", operationID.uuidString.lowercased()),
-            ("provider", "apple"), ("state", challenge.state)
-        ])
+        let command = try AuthCanonicalRequests.exchangeApple(
+            challenge: challenge,
+            authorizationCode: authorizationCode,
+            identityToken: identityToken,
+            operationID: operationID
+        )
         let path = "v1/auth/challenges/\(challenge.challengeID.uuidString.lowercased()):exchange"
         let request = makeRequest(path: path, method: "POST", body: command.bytes)
         let (data, response) = try await session.data(for: request)

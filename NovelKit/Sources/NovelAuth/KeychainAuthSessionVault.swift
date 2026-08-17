@@ -89,6 +89,24 @@ public actor KeychainAuthSessionVault: AuthSessionVault {
         try writeRecord(record)
     }
 
+    public func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws {
+        var record = try readRecord()
+        record.clearOperation(kind: kind, fingerprint: fingerprint)
+        try writeRecord(record)
+    }
+
+    public func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry {
+        var record = try readRecord()
+        let entry = try record.bindOperationRequest(
+            kind: kind,
+            operationID: operationID,
+            fingerprint: fingerprint,
+            requestDigest: requestDigest
+        )
+        try writeRecord(record)
+        return entry
+    }
+
     public func loadPendingRevoke() async throws -> AuthPendingRevoke? {
         try readRecord().pendingRevoke
     }
@@ -96,6 +114,17 @@ public actor KeychainAuthSessionVault: AuthSessionVault {
     public func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke {
         var record = try readRecord()
         let pending = try record.loadOrReserveRevokeOperation(proposed: proposed, for: session, now: now, receiptLifetimeSeconds: receiptLifetimeSeconds)
+        try writeRecord(record)
+        return pending
+    }
+
+    public func rollForwardExpiredRevokeOperation(proposed: UUID, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke {
+        var record = try readRecord()
+        let pending = try record.rollForwardExpiredRevokeOperation(
+            proposed: proposed,
+            now: now,
+            receiptLifetimeSeconds: receiptLifetimeSeconds
+        )
         try writeRecord(record)
         return pending
     }

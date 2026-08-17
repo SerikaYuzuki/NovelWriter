@@ -136,6 +136,132 @@ struct AuthDomainTests {
         #expect(resumed.phase == .providerCallStarted)
         #expect(record.operations.allSatisfy { !$0.fingerprint.contains("token") })
     }
+}
+
+extension AuthDomainTests {
+    @Test("exchange lost acknowledgement replays identical canonical bytes")
+    func exchangeLostAckReplay() async throws {
+        let challenge = fixtureChallenge(expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let operationID = try #require(UUID(uuidString: "56000000-0000-4000-8000-000000000001"))
+        let transport = ExchangeReplayTransport()
+        let firstVault = InMemoryAuthSessionVault()
+        let firstCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: firstVault,
+            authLimits: fixtureLimits(),
+            platform: .macos,
+            clock: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+        do {
+            _ = try await firstCoordinator.completeAppleSignIn(
+                challenge: challenge,
+                authorizationCode: Data("code-1".utf8),
+                identityToken: Data("header.payload.signature".utf8),
+                operationID: operationID
+            )
+            Issue.record("first exchange unexpectedly succeeded")
+        } catch let error as AuthError {
+            #expect(error == .providerRejected)
+        }
+
+        let interruptedRecord = await firstVault.snapshot()
+        let interruptedBytes = try JSONEncoder().encode(interruptedRecord)
+        #expect(!String(decoding: interruptedBytes, as: UTF8.self).contains("code-1"))
+        let restartedVault = await InMemoryAuthSessionVault(record: firstVault.snapshot())
+        await transport.allowSuccess()
+        let restartedCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: restartedVault,
+            authLimits: fixtureLimits(),
+            platform: .macos,
+            clock: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+        let session = try await restartedCoordinator.completeAppleSignIn(
+            challenge: challenge,
+            authorizationCode: Data("code-1".utf8),
+            identityToken: Data("header.payload.signature".utf8),
+            operationID: operationID
+        )
+        #expect(session.accountID == "acct_AAAAAAAAAAAAAAAA")
+        #expect(await transport.exchangeCallCount() == 2)
+        let requests = await transport.exchangeRequests()
+        #expect(requests.count == 2)
+        #expect(requests[0] == requests[1])
+        let restartedRecord = await restartedVault.snapshot()
+        #expect(restartedRecord.operations.isEmpty)
+        let persistedJournal = try JSONEncoder().encode(restartedRecord)
+        #expect(!String(decoding: persistedJournal, as: UTF8.self).contains("code-1"))
+    }
+
+    @Test("exchange credential mismatch fails closed and explicit cleanup enables fresh sign in")
+    func exchangeMismatchAndCleanup() async throws {
+        let challenge = fixtureChallenge(expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let operationID = try #require(UUID(uuidString: "57000000-0000-4000-8000-000000000001"))
+        let transport = ExchangeReplayTransport()
+        let firstVault = InMemoryAuthSessionVault()
+        let firstCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: firstVault,
+            authLimits: fixtureLimits(),
+            platform: .macos,
+            clock: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+        do {
+            _ = try await firstCoordinator.completeAppleSignIn(
+                challenge: challenge,
+                authorizationCode: Data("code-1".utf8),
+                identityToken: Data("header.payload.signature".utf8),
+                operationID: operationID
+            )
+        } catch {}
+        let restartedVault = await InMemoryAuthSessionVault(record: firstVault.snapshot())
+        let restartedCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: restartedVault,
+            authLimits: fixtureLimits(),
+            platform: .macos,
+            clock: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+        await transport.allowSuccess()
+        let differentChallengeID = try #require(UUID(uuidString: "20000000-0000-4000-8000-000000000002"))
+        do {
+            _ = try await restartedCoordinator.completeAppleSignIn(
+                challenge: fixtureChallenge(
+                    expiresAt: Date(timeIntervalSince1970: 1_800_000_000),
+                    challengeID: differentChallengeID
+                ),
+                authorizationCode: Data("code-1".utf8),
+                identityToken: Data("header.payload.signature".utf8),
+                operationID: UUID()
+            )
+            Issue.record("challenge mismatch unexpectedly replayed")
+        } catch let error as AuthError {
+            #expect(error == .operationJournalConflict)
+        }
+        do {
+            _ = try await restartedCoordinator.completeAppleSignIn(
+                challenge: challenge,
+                authorizationCode: Data("code-1".utf8),
+                identityToken: Data("header.payload.signature".utf8),
+                operationID: UUID()
+            )
+            Issue.record("credential mismatch unexpectedly replayed")
+        } catch let error as AuthError {
+            #expect(error == .operationJournalConflict)
+        }
+        let interruptedRecord = await restartedVault.snapshot()
+        #expect(!interruptedRecord.operations.isEmpty)
+        try await restartedCoordinator.discardInterruptedAppleExchange(challengeID: challenge.challengeID)
+        let cleanedRecord = await restartedVault.snapshot()
+        #expect(cleanedRecord.operations.isEmpty)
+        _ = try await restartedCoordinator.completeAppleSignIn(
+            challenge: challenge,
+            authorizationCode: Data("fresh-code".utf8),
+            identityToken: Data("header.payload.signature".utf8),
+            operationID: UUID()
+        )
+        #expect(await transport.exchangeCallCount() == 2)
+    }
 
     @Test("sign out removes local credentials even when revoke is unavailable")
     func signOutIsLocalFirst() async throws {
@@ -197,6 +323,57 @@ struct AuthDomainTests {
         #expect(requestDigests == [pending.requestDigest, pending.requestDigest])
     }
 
+    @Test("expired pending revoke rolls forward across restart")
+    func expiredRevokeRollForward() async throws {
+        let session = fixtureSession(generation: 1)
+        let transport = RevokeTransport()
+        let firstVault = InMemoryAuthSessionVault(session: session)
+        let firstCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: firstVault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        do {
+            try await firstCoordinator.signOut()
+            Issue.record("first revoke unexpectedly succeeded")
+        } catch {}
+        let oldPending = try #require(await firstVault.loadPendingRevoke())
+        let restartedVault = await InMemoryAuthSessionVault(record: firstVault.snapshot())
+        await transport.succeed()
+        let restartedCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: restartedVault,
+            authLimits: fixtureLimits(),
+            clock: { oldPending.expiresAt.addingTimeInterval(1) }
+        )
+        try await restartedCoordinator.signOut()
+        #expect(try await restartedVault.loadPendingRevoke() == nil)
+        let operationIDs = await transport.revokeOperationIDs()
+        #expect(operationIDs.count == 2)
+        #expect(operationIDs[0] != operationIDs[1])
+        let requests = await transport.revokeRequestBytes()
+        #expect(requests.count == 2)
+        #expect(requests[0] != requests[1])
+    }
+
+    @Test("server sessionRevoked is a successful sign-out outcome")
+    func sessionAlreadyRevokedIsSuccess() async throws {
+        let transport = RevokeTransport()
+        await transport.returnSessionRevoked()
+        let vault = InMemoryAuthSessionVault(session: fixtureSession(generation: 1))
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: vault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+
+        try await coordinator.signOut()
+        #expect(try await vault.load() == nil)
+        #expect(try await vault.loadPendingRevoke() == nil)
+    }
+
     @Test("Apple callback validator rejects a mismatched state and expired challenge")
     func appleStateValidation() throws {
         let challenge = fixtureChallenge(expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
@@ -216,7 +393,9 @@ struct AuthDomainTests {
         #expect(try await vault.load(providerConfigurationID: "apple-primary-fuminiwa-v1") == "opaque-apple-user")
         #expect(try await vault.load(providerConfigurationID: "other") == nil)
     }
+}
 
+extension AuthDomainTests {
     private func fixtureSession(
         generation: UInt64,
         refresh: String = "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -256,9 +435,12 @@ struct AuthDomainTests {
         )
     }
 
-    private func fixtureChallenge(expiresAt: Date) -> AuthChallenge {
+    private func fixtureChallenge(
+        expiresAt: Date,
+        challengeID: UUID = UUID(uuidString: "20000000-0000-4000-8000-000000000001") ?? UUID()
+    ) -> AuthChallenge {
         AuthChallenge(
-            challengeID: UUID(uuidString: "20000000-0000-4000-8000-000000000001") ?? UUID(),
+            challengeID: challengeID,
             expiresAt: expiresAt,
             audience: "dev.serikayuzuki.fuminiwa",
             providerConfigurationID: "apple-primary-fuminiwa-v1",
@@ -291,13 +473,88 @@ private struct FailingTransport: FuminiwaAuthTransport {
     }
 }
 
+private actor ExchangeReplayTransport: FuminiwaAuthTransport {
+    private var shouldFail = true
+    private var requests: [Data] = []
+
+    func allowSuccess() {
+        shouldFail = false
+    }
+
+    func exchangeCallCount() -> Int {
+        requests.count
+    }
+
+    func exchangeRequests() -> [Data] {
+        requests
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
+        throw AuthError.providerRejected
+    }
+
+    func exchangeApple(challenge: AuthChallenge, authorizationCode: Data, identityToken: Data, operationID: UUID) async throws -> FuminiwaSession {
+        let request = try AuthCanonicalRequests.exchangeApple(
+            challenge: challenge,
+            authorizationCode: authorizationCode,
+            identityToken: identityToken,
+            operationID: operationID
+        )
+        requests.append(request.bytes)
+        if shouldFail {
+            throw AuthError.providerRejected
+        }
+        return fixtureSession()
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.providerRejected
+    }
+
+    private func fixtureSession() -> FuminiwaSession {
+        let binding = AuthSessionBinding(
+            serverInstanceID: UUID(uuidString: "00000000-0000-4000-8000-000000000001") ?? UUID(),
+            syncProtocolEpoch: 2,
+            accountID: "acct_AAAAAAAAAAAAAAAA",
+            accountAuthEpoch: 1,
+            accountFence: "fence_AAAAAAAAAAAAAAAAAAAA",
+            sessionID: UUID(uuidString: "40000000-0000-4000-8000-000000000001") ?? UUID()
+        )
+        return FuminiwaSession(
+            binding: binding,
+            tokens: AuthSessionTokens(
+                accessToken: "fma1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                accessTokenExpiresAt: Date(timeIntervalSince1970: 1_755_312_900),
+                refreshToken: "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                refreshTokenExpiresAt: Date(timeIntervalSince1970: 1_778_000_000),
+                refreshGeneration: 1
+            ),
+            receipt: AuthReceipt(
+                commandKind: "exchangeAppleNativeCredential",
+                operationID: UUID(uuidString: "30000000-0000-4000-8000-000000000001") ?? UUID(),
+                replayUntil: Date(timeIntervalSince1970: 1_778_000_000)
+            )
+        )
+    }
+}
+
 private actor RevokeTransport: FuminiwaAuthTransport {
     private var shouldFail = true
+    private var shouldReturnSessionRevoked = false
     private var operationIDs: [UUID] = []
     private var requestBytes: [Data] = []
     private var requestDigests: [Data] = []
 
     func succeed() {
+        shouldFail = false
+    }
+
+    func returnSessionRevoked() {
+        shouldReturnSessionRevoked = true
         shouldFail = false
     }
 
@@ -329,6 +586,14 @@ private actor RevokeTransport: FuminiwaAuthTransport {
         operationIDs.append(pending.operationID)
         requestBytes.append(pending.canonicalRequest)
         requestDigests.append(pending.requestDigest)
+        if shouldReturnSessionRevoked {
+            throw AuthError.remote(AuthRemoteError(
+                code: "sessionRevoked",
+                recoveryAction: .interactiveAppleSignIn,
+                retryability: .afterInteractiveAuthentication,
+                requestID: UUID(uuidString: "90000000-0000-4000-8000-000000000031") ?? UUID()
+            ))
+        }
         if shouldFail {
             throw AuthError.providerRejected
         }

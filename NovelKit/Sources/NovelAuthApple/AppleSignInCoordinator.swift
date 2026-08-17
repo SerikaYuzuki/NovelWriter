@@ -9,6 +9,13 @@ import AppKit
 import UIKit
 #endif
 
+@MainActor
+public protocol AppleAuthorizationProviding: AnyObject {
+    func authorize(using challenge: AuthChallenge) async throws -> AppleAuthorizationPayload
+}
+
+extension AppleSignInCoordinator: AppleAuthorizationProviding {}
+
 /// Thin native adapter. It only obtains Apple's one-use credentials; the
 /// backend performs nonce/state/JWS/code validation and issues FUMINIWA tokens.
 @MainActor
@@ -114,6 +121,107 @@ public struct AppleAuthorizationPayload: Sendable {
         self.userHandle = userHandle
         self.authorizationCode = authorizationCode
         self.identityToken = identityToken
+    }
+}
+
+public enum AppleCredentialState: Equatable, Sendable {
+    case authorized
+    case revoked
+    case notFound
+    case transferred
+}
+
+public protocol AppleCredentialStateProviding: Sendable {
+    func credentialState(for userHandle: String) async throws -> AppleCredentialState
+}
+
+#if canImport(AuthenticationServices)
+public struct SystemAppleCredentialStateProvider: AppleCredentialStateProviding, Sendable {
+    public init() {}
+
+    public func credentialState(for userHandle: String) async throws -> AppleCredentialState {
+        guard !userHandle.isEmpty else { throw AppleCredentialStateProviderError.invalidHandle }
+        return try await withCheckedThrowingContinuation { continuation in
+            ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userHandle) { state, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                switch state {
+                case .authorized:
+                    continuation.resume(returning: .authorized)
+                case .revoked:
+                    continuation.resume(returning: .revoked)
+                case .notFound:
+                    continuation.resume(returning: .notFound)
+                case .transferred:
+                    continuation.resume(returning: .transferred)
+                @unknown default:
+                    continuation.resume(throwing: AppleCredentialStateProviderError.unknownState)
+                }
+            }
+        }
+    }
+}
+#endif
+
+public enum AppleCredentialStateProviderError: Error, Equatable, Sendable {
+    case invalidHandle
+    case unknownState
+}
+
+/// Coordinates native Apple authorization, FUMINIWA exchange, and the
+/// provider-only credential-state handle. The handle is committed only after
+/// the server has accepted the exchange and is never sent to the server.
+@MainActor
+public final class AppleAuthenticationOrchestrator {
+    private let authSessionCoordinator: AuthSessionCoordinator
+    private let authorizationProvider: any AppleAuthorizationProviding
+    private let credentialStateHandleVault: any AppleCredentialStateHandleVault
+    private let credentialStateProvider: any AppleCredentialStateProviding
+    private let providerConfigurationID: String
+
+    public init(
+        authSessionCoordinator: AuthSessionCoordinator,
+        authorizationProvider: any AppleAuthorizationProviding,
+        credentialStateHandleVault: any AppleCredentialStateHandleVault,
+        credentialStateProvider: any AppleCredentialStateProviding,
+        providerConfigurationID: String = "apple-primary-fuminiwa-v1"
+    ) {
+        self.authSessionCoordinator = authSessionCoordinator
+        self.authorizationProvider = authorizationProvider
+        self.credentialStateHandleVault = credentialStateHandleVault
+        self.credentialStateProvider = credentialStateProvider
+        self.providerConfigurationID = providerConfigurationID
+    }
+
+    public func signIn(challengeOperationID: UUID? = nil, exchangeOperationID: UUID? = nil) async throws -> FuminiwaSession {
+        let challenge = try await authSessionCoordinator.createAppleChallenge(operationID: challengeOperationID)
+        let authorization = try await authorizationProvider.authorize(using: challenge)
+        let session = try await authSessionCoordinator.completeAppleSignIn(
+            challenge: challenge,
+            authorizationCode: authorization.authorizationCode,
+            identityToken: authorization.identityToken,
+            operationID: exchangeOperationID ?? UUID()
+        )
+        try await credentialStateHandleVault.save(
+            authorization.userHandle,
+            providerConfigurationID: challenge.providerConfigurationID
+        )
+        return session
+    }
+
+    public func checkCredentialState() async throws -> AppleCredentialState? {
+        guard let handle = try await credentialStateHandleVault.load(
+            providerConfigurationID: providerConfigurationID
+        ) else {
+            return nil
+        }
+        let state = try await credentialStateProvider.credentialState(for: handle)
+        if state != .authorized {
+            try await credentialStateHandleVault.remove(providerConfigurationID: providerConfigurationID)
+        }
+        return state
     }
 }
 

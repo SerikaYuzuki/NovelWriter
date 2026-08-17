@@ -247,17 +247,27 @@ public struct AuthOperationJournalEntry: Codable, Hashable, Sendable {
     public let kind: AuthOperationKind
     public let operationID: UUID
     public let fingerprint: String
+    /// Digest of the exact canonical request, when the operation has one.
+    /// This is never a credential or a replayable payload.
+    public let requestDigest: Data?
     public let phase: AuthOperationPhase
 
-    public init(kind: AuthOperationKind, operationID: UUID, fingerprint: String, phase: AuthOperationPhase = .reserved) {
+    public init(
+        kind: AuthOperationKind,
+        operationID: UUID,
+        fingerprint: String,
+        requestDigest: Data? = nil,
+        phase: AuthOperationPhase = .reserved
+    ) {
         self.kind = kind
         self.operationID = operationID
         self.fingerprint = fingerprint
+        self.requestDigest = requestDigest
         self.phase = phase
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, operationID = "operationId", fingerprint, phase
+        case kind, operationID = "operationId", fingerprint, requestDigest, phase
     }
 }
 
@@ -403,6 +413,11 @@ public struct AuthVaultRecord: Codable, Hashable, Sendable {
     }
 
     public mutating func loadOrReserveOperation(kind: AuthOperationKind, proposed: UUID, fingerprint: String) throws -> AuthOperationJournalEntry {
+        if kind == .exchangeAppleNativeCredential,
+           let activeExchange = operations.first(where: { $0.kind == kind }),
+           activeExchange.fingerprint != fingerprint {
+            throw AuthError.operationJournalConflict
+        }
         if let existing = operations.first(where: { $0.kind == kind && $0.fingerprint == fingerprint }) {
             return existing
         }
@@ -424,13 +439,84 @@ public struct AuthVaultRecord: Codable, Hashable, Sendable {
         if existing.phase == .providerCallStarted {
             return existing
         }
-        let started = AuthOperationJournalEntry(kind: existing.kind, operationID: existing.operationID, fingerprint: existing.fingerprint, phase: .providerCallStarted)
+        let started = AuthOperationJournalEntry(
+            kind: existing.kind,
+            operationID: existing.operationID,
+            fingerprint: existing.fingerprint,
+            requestDigest: existing.requestDigest,
+            phase: .providerCallStarted
+        )
         operations[index] = started
         return started
     }
 
     public mutating func clearOperation(kind: AuthOperationKind, operationID: UUID) {
         operations.removeAll { $0.kind == kind && $0.operationID == operationID }
+    }
+
+    public mutating func clearOperation(kind: AuthOperationKind, fingerprint: String) {
+        operations.removeAll { $0.kind == kind && $0.fingerprint == fingerprint }
+    }
+
+    public mutating func rollForwardExpiredRevokeOperation(
+        proposed: UUID,
+        now: Date,
+        receiptLifetimeSeconds: UInt64
+    ) throws -> AuthPendingRevoke {
+        guard let pendingRevoke, pendingRevoke.expiresAt <= now else {
+            throw AuthError.staleSession
+        }
+        self.pendingRevoke = nil
+        operations.removeAll { $0.operationID == pendingRevoke.operationID }
+        let fingerprint = pendingRevoke.requestFingerprint
+        let operation = try loadOrReserveOperation(
+            kind: .revokeCurrentSession,
+            proposed: proposed,
+            fingerprint: fingerprint
+        )
+        _ = try beginOperation(kind: operation.kind, operationID: operation.operationID, fingerprint: fingerprint)
+        let command = AuthJCS.object([
+            ("operationId", operation.operationID.uuidString.lowercased()),
+            ("scope", "currentSession")
+        ])
+        let rolled = AuthPendingRevoke(
+            session: pendingRevoke.session,
+            operationID: operation.operationID,
+            expiresAt: now.addingTimeInterval(TimeInterval(receiptLifetimeSeconds)),
+            requestFingerprint: fingerprint,
+            canonicalRequest: command.bytes,
+            requestDigest: command.sha256
+        )
+        self.pendingRevoke = rolled
+        session = nil
+        pendingRotationID = nil
+        return rolled
+    }
+
+    public mutating func bindOperationRequest(
+        kind: AuthOperationKind,
+        operationID: UUID,
+        fingerprint: String,
+        requestDigest: Data
+    ) throws -> AuthOperationJournalEntry {
+        guard let index = operations.firstIndex(where: {
+            $0.kind == kind && $0.operationID == operationID && $0.fingerprint == fingerprint
+        }) else {
+            throw AuthError.operationJournalConflict
+        }
+        let existing = operations[index]
+        if let existingDigest = existing.requestDigest, existingDigest != requestDigest {
+            throw AuthError.operationJournalConflict
+        }
+        let bound = AuthOperationJournalEntry(
+            kind: existing.kind,
+            operationID: existing.operationID,
+            fingerprint: existing.fingerprint,
+            requestDigest: requestDigest,
+            phase: existing.phase
+        )
+        operations[index] = bound
+        return bound
     }
 }
 
@@ -450,8 +536,11 @@ public protocol AuthSessionVault: Sendable {
     func loadOrReserveOperation(kind: AuthOperationKind, proposed: UUID, fingerprint: String) async throws -> AuthOperationJournalEntry
     func beginOperation(kind: AuthOperationKind, operationID: UUID, fingerprint: String) async throws -> AuthOperationJournalEntry
     func clearOperation(kind: AuthOperationKind, operationID: UUID) async throws
+    func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws
+    func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry
     func loadPendingRevoke() async throws -> AuthPendingRevoke?
     func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke
+    func rollForwardExpiredRevokeOperation(proposed: UUID, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke
     func clearPendingRevoke(operationID: UUID) async throws
 }
 
@@ -498,12 +587,24 @@ public actor InMemoryAuthSessionVault: AuthSessionVault {
         record.clearOperation(kind: kind, operationID: operationID)
     }
 
+    public func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws {
+        record.clearOperation(kind: kind, fingerprint: fingerprint)
+    }
+
+    public func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry {
+        try record.bindOperationRequest(kind: kind, operationID: operationID, fingerprint: fingerprint, requestDigest: requestDigest)
+    }
+
     public func loadPendingRevoke() async throws -> AuthPendingRevoke? {
         record.pendingRevoke
     }
 
     public func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke {
         try record.loadOrReserveRevokeOperation(proposed: proposed, for: session, now: now, receiptLifetimeSeconds: receiptLifetimeSeconds)
+    }
+
+    public func rollForwardExpiredRevokeOperation(proposed: UUID, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke {
+        try record.rollForwardExpiredRevokeOperation(proposed: proposed, now: now, receiptLifetimeSeconds: receiptLifetimeSeconds)
     }
 
     public func clearPendingRevoke(operationID: UUID) async throws {
@@ -555,9 +656,21 @@ public actor AuthSessionCoordinator {
     public func completeAppleSignIn(challenge: AuthChallenge, authorizationCode: Data, identityToken: Data, operationID: UUID = UUID()) async throws -> FuminiwaSession {
         let fingerprint = "apple-exchange:\(challenge.challengeID.uuidString.lowercased())"
         let reserved = try await vault.loadOrReserveOperation(kind: .exchangeAppleNativeCredential, proposed: operationID, fingerprint: fingerprint)
-        if reserved.phase == .providerCallStarted {
-            throw AuthError.restartAuthentication
+        guard reserved.operationID == operationID else {
+            throw AuthError.operationJournalConflict
         }
+        let request = try AuthCanonicalRequests.exchangeApple(
+            challenge: challenge,
+            authorizationCode: authorizationCode,
+            identityToken: identityToken,
+            operationID: reserved.operationID
+        )
+        _ = try await vault.bindOperationRequest(
+            kind: reserved.kind,
+            operationID: reserved.operationID,
+            fingerprint: fingerprint,
+            requestDigest: request.sha256
+        )
         _ = try await vault.beginOperation(kind: .exchangeAppleNativeCredential, operationID: reserved.operationID, fingerprint: fingerprint)
         let session: FuminiwaSession
         do {
@@ -574,6 +687,14 @@ public actor AuthSessionCoordinator {
         try await vault.clearOperation(kind: .exchangeAppleNativeCredential, operationID: reserved.operationID)
         try await vault.save(session)
         return session
+    }
+
+    /// Explicitly abandons an interrupted exchange after a process restart.
+    /// Credentials are never recovered from the journal; the caller must start
+    /// a fresh Apple authorization flow afterward.
+    public func discardInterruptedAppleExchange(challengeID: UUID) async throws {
+        let fingerprint = "apple-exchange:\(challengeID.uuidString.lowercased())"
+        try await vault.clearOperation(kind: .exchangeAppleNativeCredential, fingerprint: fingerprint)
     }
 
     public func refresh() async throws -> FuminiwaSession {
@@ -593,7 +714,23 @@ public actor AuthSessionCoordinator {
     public func signOut() async throws {
         if let pending = try await vault.loadPendingRevoke() {
             if pending.expiresAt <= clock() {
-                try await vault.clearPendingRevoke(operationID: pending.operationID)
+                let rolled = try await vault.rollForwardExpiredRevokeOperation(
+                    proposed: UUID(),
+                    now: clock(),
+                    receiptLifetimeSeconds: authLimits.authReceiptLifetimeSeconds
+                )
+                do {
+                    try await transport.revoke(pending: rolled)
+                    try await vault.clearPendingRevoke(operationID: rolled.operationID)
+                    return
+                } catch let error as AuthError {
+                    if case let .remote(remote) = error, remote.code == "sessionRevoked" {
+                        try await vault.clearPendingRevoke(operationID: rolled.operationID)
+                        return
+                    }
+                    try await vault.remove()
+                    throw error
+                }
             } else {
                 do {
                     try await transport.revoke(pending: pending)
@@ -605,6 +742,7 @@ public actor AuthSessionCoordinator {
                 } catch let error as AuthError {
                     if case let .remote(remote) = error, remote.code == "sessionRevoked" {
                         try await vault.clearPendingRevoke(operationID: pending.operationID)
+                        return
                     }
                     try await vault.remove()
                     throw error
@@ -621,6 +759,12 @@ public actor AuthSessionCoordinator {
         do {
             try await transport.revoke(pending: pending)
             try await vault.clearPendingRevoke(operationID: pending.operationID)
+        } catch let error as AuthError {
+            if case let .remote(remote) = error, remote.code == "sessionRevoked" {
+                try await vault.clearPendingRevoke(operationID: pending.operationID)
+                return
+            }
+            throw error
         } catch {
             // Active credentials were removed atomically when the pending
             // revoke was parked. Keep only the exact replay credential.
