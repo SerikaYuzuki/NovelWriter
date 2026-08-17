@@ -10,28 +10,36 @@ database, Docker project and volumes are never read or mounted.
 ## Local development and LAN staging
 
 ```sh
-cp SyncServerV2/.env.example /secure/fuminiwa-sync-v2.env
+cp SyncServerV2/.env.example /secure/fuminiwa-sync-v2-role-split.env
 # Fill the copy with v2-only paths and values; never commit that file.
-docker compose --env-file /secure/fuminiwa-sync-v2.env \
-  -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2 up --build -d
+docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
+  -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split up --build -d
 ```
 
-The only database volume is `fuminiwa-sync-v2-data`; Caddy also has two
-edge-state volumes (`fuminiwa-sync-v2-caddy-data` and
-`fuminiwa-sync-v2-caddy-config`). The only project, network, containers, and
-volumes are `fuminiwa-sync-v2-*`. This compose file never names, mounts, or
+The only database volume is `fuminiwa-sync-v2-role-split-data`; Caddy also has two
+edge-state volumes (`fuminiwa-sync-v2-role-split-caddy-data` and
+`fuminiwa-sync-v2-role-split-caddy-config`). The only project, network, containers, and
+volumes are `fuminiwa-sync-v2-role-split-*`. This compose file never names, mounts, or
 connects to the v1 project or its volumes. The Axum listener is internal to
 the compose network; only Caddy's LAN staging TLS port (default `8443`) is
 published. `tls internal` is intentionally staging-only and requires trusting
 the generated Caddy local CA on each test device.
 
-Before SQLx migrations run, startup checks the database identity. A genuinely
-fresh database (apart from PostgreSQL system objects and SQLx's own
-`_sqlx_migrations` bookkeeping) or an existing database with the exact v2
-`sync_v2.server_meta` markers is accepted. Legacy, partial, nonempty, or
-unrecognized user schemas are rejected before migration can mutate them; the
-rejection path is read-only. This guard also permits an already-migrated v2
-database to restart normally.
+The `migrator` one-shot service is the only service that can run SQLx
+migrations, bootstrap `server_meta`/`deployment_binding`, or grant privileges.
+It first inventories the database under the v2 advisory lock. A fresh database
+is bootstrapped with `fuminiwa_sync_v2_migrator` (DDL/migration owner) and
+`fuminiwa_sync_v2_runtime` (DML-only runtime role), then the exact grants are
+read back before the server is allowed to start. The server itself never runs
+SQLx migrations and starts only after read-only catalog, role/ACL, schema
+marker, and deployment-binding verification. Runtime PostgreSQL sequence
+access is the PostgreSQL `USAGE, SELECT, UPDATE` privilege set; PostgreSQL has
+no separate sequence `EXECUTE` privilege.
+
+On an already-initialized exact v2 database, a repeated migrator invocation is
+read-only and succeeds only when the role/ACL attestation is already exact. A
+legacy, single-role, partial, mixed, or unrecognized database is rejected
+without `ALTER`, `DROP`, automatic role creation, or automatic grants.
 
 The server image runs as the non-root `fuminiwa` user with a read-only root
 filesystem, a small `tmpfs` at `/tmp`, all Linux capabilities dropped, and
@@ -59,15 +67,15 @@ sudo SyncServerV2/scripts/prepare-runtime-secrets.sh \
 Set every `*_FILE`/`*_HOST_PATH` entry in the private compose env file to the
 corresponding file under `runtime-secrets`. The script rejects symlinked
 inputs, leaves the source directory untouched, atomically replaces only the
-six named v2 copies, and sets mode `0400` with owner `10001:10001`. Re-run it
+eight named v2 copies, and sets mode `0400` with owner `10001:10001`. Re-run it
 after rotating a source secret, before recreating only the v2 server.
 
 Before using a new host or IP, inspect the rendered configuration without
 starting it and verify that every resource has the v2 prefix:
 
 ```sh
-docker compose --env-file /secure/fuminiwa-sync-v2.env \
-  -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2 config
+docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
+  -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split config
 ```
 
 On `192.168.11.5`, use a new Compose project exactly as shown above. Do not

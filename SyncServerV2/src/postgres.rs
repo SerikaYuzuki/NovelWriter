@@ -22,8 +22,8 @@ const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
 // All v2 server processes use the same two-key advisory lock.  Keep this
 // outside either schema: the lock must exist before the identity inventory
 // can safely be read and while SQLx is applying DDL.
-const DATABASE_IDENTITY_LOCK_KEY_1: i32 = 0x4655_4D49; // "FUMI"
-const DATABASE_IDENTITY_LOCK_KEY_2: i32 = 0x4E49_5741; // "NIWA"
+pub const DATABASE_IDENTITY_LOCK_KEY_1: i32 = 0x4655_4D49; // "FUMI"
+pub const DATABASE_IDENTITY_LOCK_KEY_2: i32 = 0x4E49_5741; // "NIWA"
 
 fn is_temporary_namespace(name: &str) -> bool {
     name.starts_with("pg_temp_") || name.starts_with("pg_toast_temp_")
@@ -34,8 +34,59 @@ fn is_temporary_namespace(name: &str) -> bool {
 /// head/conflict/receipt mutation can be committed.
 const MAX_LINEAGE_NODES: i64 = 4096;
 
+pub const MIGRATION_OWNER_ROLE: &str = "fuminiwa_sync_v2_migrator";
+pub const RUNTIME_ROLE: &str = "fuminiwa_sync_v2_runtime";
+pub const BOOTSTRAP_ROLE: &str = "fuminiwa_sync_v2_bootstrap";
+
+const SYNC_RUNTIME_DML_TABLES: &[&str] = &[
+    "account_scopes",
+    "works",
+    "global_blobs",
+    "account_objects",
+    "snapshots",
+    "snapshot_parents",
+    "snapshot_entries",
+    "upload_capabilities",
+    "receipts",
+    "sealed_commands",
+    "active_conflicts",
+    "conflict_candidates",
+    "conflict_events",
+    "history",
+    "restore_receipts",
+    "head_events",
+    "catalog_events",
+    "quarantine_records",
+];
+
+const AUTH_RUNTIME_DML_TABLES: &[&str] = &[
+    "accounts",
+    "provider_configs",
+    "external_identities",
+    "external_identity_secrets",
+    "provider_credentials",
+    "auth_operations",
+    "auth_challenges",
+    "auth_sessions",
+    "refresh_families",
+    "refresh_tokens",
+    "access_tokens",
+    "session_refresh_receipts",
+    "provider_notification_receipts",
+    "auth_events",
+    "vault_rewrap_ledger",
+];
+
+const SEQUENCE_NAMES: &[(&str, &str)] = &[
+    ("sync_v2", "conflict_events_event_id_seq"),
+    ("sync_v2", "history_event_id_seq"),
+    ("sync_v2", "head_events_event_id_seq"),
+    ("sync_v2", "catalog_events_event_id_seq"),
+    ("auth_v1", "auth_events_event_id_seq"),
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DatabaseIdentity {
+pub enum DatabaseIdentity {
     Fresh,
     SnapshotSyncV2,
 }
@@ -301,7 +352,12 @@ impl Repository {
         let database = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_DB")
             .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
         let username = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_USER")
-            .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
+            .unwrap_or_else(|_| RUNTIME_ROLE.to_string());
+        if username != RUNTIME_ROLE {
+            return Err(sqlx::Error::Configuration(
+                "Snapshot Sync v2 runtime must use the dedicated runtime role".into(),
+            ));
+        }
         let password_file =
             std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE").map_err(|_| {
                 sqlx::Error::Configuration("PostgreSQL password file is required".into())
@@ -325,31 +381,11 @@ impl Repository {
             .max_connections(10)
             .connect_with(options)
             .await?;
-        // The checked-out connection owns the session-level lock until every
-        // startup phase has completed.  Do not release it between the guard,
-        // migration, and metadata/binding verification: another process must
-        // not be able to pass the same pre-migration inventory check and then
-        // create an unknown object before this process finishes its DDL.
-        let mut identity_connection = pool.acquire().await?;
-        let identity_lock = PgAdvisoryLock::with_key(PgAdvisoryLockKey::IntPair(
-            DATABASE_IDENTITY_LOCK_KEY_1,
-            DATABASE_IDENTITY_LOCK_KEY_2,
-        ));
-        let mut identity_guard = identity_lock.acquire(&mut identity_connection).await?;
-        Self::verify_database_identity(&mut identity_guard).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        // Re-read the complete catalog after migrations while the same
-        // deployment-wide lock is still held.  Advisory locks are
-        // cooperative, so this second check is the fail-closed boundary for
-        // a non-cooperative DDL session that raced the pre-migration check.
-        Self::verify_database_identity(&mut identity_guard).await?;
-        Self::verify_server_meta(&pool, &server_instance_id).await?;
-        // Re-read once more after the binding transaction. The binding is
-        // never considered a successful startup if an external DDL session
-        // inserted an unknown object during metadata verification.
-        Self::verify_database_identity(&mut identity_guard).await?;
-        drop(identity_guard);
-        drop(identity_connection);
+        // Runtime startup is intentionally read-only.  The one-shot v2
+        // migrator owns SQLx DDL, server_meta bootstrap, and grants.  Keeping
+        // this path free of migrate!/INSERT makes the database role boundary
+        // enforceable instead of relying on cooperative advisory locks.
+        Self::verify_runtime_pool(&pool, &server_instance_id, RUNTIME_ROLE).await?;
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
         Ok(Self {
             pool,
@@ -396,6 +432,364 @@ impl Repository {
             server_instance_id,
             protocol_epoch: PROTOCOL_EPOCH,
         })
+    }
+
+    /// Verify the exact startup contract used by the runtime role.  This is
+    /// deliberately separate from `connect`, which remains a disposable
+    /// integration-test helper that may apply migrations to a test database.
+    pub async fn verify_runtime_pool(
+        pool: &PgPool,
+        server_instance_id: &str,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if expected_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut connection = pool.acquire().await?;
+        Self::verify_runtime_role(&mut connection, expected_role).await?;
+        Self::verify_database_identity(&mut connection).await?;
+        Self::verify_server_meta_read_only(&mut connection, server_instance_id).await
+    }
+
+    /// Read back the runtime role's PostgreSQL flags and ACLs.  The checks
+    /// intentionally reject database/schema DDL, migration-table access,
+    /// memberships, ownership, and non-DML table privileges.
+    pub async fn verify_runtime_role_attestation(
+        pool: &PgPool,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if expected_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut connection = pool.acquire().await?;
+        Self::verify_runtime_role(&mut connection, expected_role).await
+    }
+
+    async fn verify_runtime_role(
+        connection: &mut PgConnection,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        let role = sqlx::query(
+            "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                    r.rolcanlogin, r.rolreplication, r.rolbypassrls
+             FROM pg_roles r WHERE r.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let current_user: String = role.try_get("current_user")?;
+        if current_user != expected_role
+            || role.try_get::<bool, _>("rolsuper")?
+            || role.try_get::<bool, _>("rolcreaterole")?
+            || role.try_get::<bool, _>("rolcreatedb")?
+            || !role.try_get::<bool, _>("rolcanlogin")?
+            || role.try_get::<bool, _>("rolreplication")?
+            || role.try_get::<bool, _>("rolbypassrls")?
+        {
+            return Err(sqlx::Error::Protocol(
+                "runtime role flags are broader than the v2 contract".into(),
+            ));
+        }
+        let memberships: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_auth_members m
+             JOIN pg_roles member ON member.oid=m.member
+             WHERE member.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if memberships != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not inherit a role membership".into(),
+            ));
+        }
+        for privilege in ["CREATE", "TEMPORARY"] {
+            let allowed: bool = sqlx::query_scalar(
+                "SELECT has_database_privilege(current_user,current_database(),$1)",
+            )
+            .bind(privilege)
+            .fetch_one(&mut *connection)
+            .await?;
+            if allowed {
+                return Err(sqlx::Error::Protocol(
+                    "runtime role has a prohibited database privilege".into(),
+                ));
+            }
+        }
+        for schema in ["auth_v1", "sync_v2"] {
+            let usage: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'USAGE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let create: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'CREATE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if !usage || create {
+                return Err(sqlx::Error::Protocol(
+                    "runtime schema privileges do not match the v2 contract".into(),
+                ));
+            }
+        }
+        let owned_objects: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_class c
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+               AND n.nspname IN ('auth_v1','sync_v2','public')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if owned_objects != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own database objects".into(),
+            ));
+        }
+        let owned_namespaces: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_namespace n
+             WHERE n.nspname IN ('auth_v1','sync_v2')
+               AND n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let owned_types: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2')
+               AND t.typowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let owned_routines: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2')
+               AND p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if owned_namespaces != 0 || owned_types != 0 || owned_routines != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own schemas, types, or routines".into(),
+            ));
+        }
+
+        for (schema, table) in [
+            ("sync_v2", "server_meta"),
+            ("sync_v2", "deployment_binding"),
+        ] {
+            Self::verify_table_privileges(connection, schema, table, &["SELECT"]).await?;
+        }
+        for table in SYNC_RUNTIME_DML_TABLES {
+            Self::verify_table_privileges(
+                connection,
+                "sync_v2",
+                table,
+                &["SELECT", "INSERT", "UPDATE", "DELETE"],
+            )
+            .await?;
+        }
+        for table in AUTH_RUNTIME_DML_TABLES {
+            Self::verify_table_privileges(
+                connection,
+                "auth_v1",
+                table,
+                &["SELECT", "INSERT", "UPDATE", "DELETE"],
+            )
+            .await?;
+        }
+        for table in [
+            "migration_ledger",
+            "migration_staging_batches",
+            "migration_staging_objects",
+        ] {
+            for privilege in [
+                "SELECT",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "TRUNCATE",
+                "REFERENCES",
+                "TRIGGER",
+            ] {
+                let allowed: bool =
+                    sqlx::query_scalar("SELECT has_table_privilege(current_user,$1,$2)")
+                        .bind(format!("sync_v2.{table}"))
+                        .bind(privilege)
+                        .fetch_one(&mut *connection)
+                        .await?;
+                if allowed {
+                    return Err(sqlx::Error::Protocol(
+                        "runtime role can access migration staging data".into(),
+                    ));
+                }
+            }
+        }
+        for privilege in [
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        ] {
+            let allowed: bool = sqlx::query_scalar(
+                "SELECT has_table_privilege(current_user,'public._sqlx_migrations',$1)",
+            )
+            .bind(privilege)
+            .fetch_one(&mut *connection)
+            .await?;
+            if allowed {
+                return Err(sqlx::Error::Protocol(
+                    "runtime role can access SQLx migration bookkeeping".into(),
+                ));
+            }
+        }
+        for (schema, sequence) in SEQUENCE_NAMES {
+            for privilege in ["USAGE", "SELECT", "UPDATE"] {
+                let allowed: bool =
+                    sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,$2)")
+                        .bind(format!("{schema}.{sequence}"))
+                        .bind(privilege)
+                        .fetch_one(&mut *connection)
+                        .await?;
+                if !allowed {
+                    return Err(sqlx::Error::Protocol(
+                        "runtime sequence privileges are incomplete".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify that the migration owner still owns every v2 schema/object and
+    /// retains only the DDL authority needed by the one-shot migrator. This
+    /// read-back is also required on an idempotent existing-v2 invocation;
+    /// ownership drift is never repaired implicitly.
+    pub async fn verify_migration_owner_attestation(pool: &PgPool) -> Result<(), sqlx::Error> {
+        let mut connection = pool.acquire().await?;
+        let role = sqlx::query(
+            "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                    r.rolcanlogin, r.rolreplication, r.rolbypassrls
+             FROM pg_roles r WHERE r.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let current_user: String = role.try_get("current_user")?;
+        if current_user != MIGRATION_OWNER_ROLE
+            || role.try_get::<bool, _>("rolsuper")?
+            || role.try_get::<bool, _>("rolcreaterole")?
+            || role.try_get::<bool, _>("rolcreatedb")?
+            || !role.try_get::<bool, _>("rolcanlogin")?
+            || role.try_get::<bool, _>("rolreplication")?
+            || role.try_get::<bool, _>("rolbypassrls")?
+        {
+            return Err(sqlx::Error::Protocol(
+                "migration owner role flags are not exact".into(),
+            ));
+        }
+        let memberships: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_auth_members m
+             JOIN pg_roles member ON member.oid=m.member
+             WHERE member.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if memberships != 0 {
+            return Err(sqlx::Error::Protocol(
+                "migration owner must not inherit a role membership".into(),
+            ));
+        }
+        let can_create_database_objects: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CREATE')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if !can_create_database_objects {
+            return Err(sqlx::Error::Protocol(
+                "migration owner lacks database CREATE authority".into(),
+            ));
+        }
+        for schema in ["auth_v1", "sync_v2"] {
+            let owner_mismatch: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM pg_namespace
+                 WHERE nspname=$1
+                   AND nspowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+            )
+            .bind(schema)
+            .fetch_one(&mut *connection)
+            .await?;
+            let can_create: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'CREATE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if owner_mismatch != 0 || !can_create {
+                return Err(sqlx::Error::Protocol(
+                    "migration owner schema ownership/privilege mismatch".into(),
+                ));
+            }
+        }
+        let class_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND c.relowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let type_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2')
+               AND t.typowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let routine_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2')
+               AND p.proowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if class_owner_mismatch != 0 || type_owner_mismatch != 0 || routine_owner_mismatch != 0 {
+            return Err(sqlx::Error::Protocol(
+                "migration owner does not own the exact v2 objects".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn verify_table_privileges(
+        connection: &mut PgConnection,
+        schema: &str,
+        table: &str,
+        expected: &[&str],
+    ) -> Result<(), sqlx::Error> {
+        for privilege in [
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        ] {
+            let actual: bool = sqlx::query_scalar("SELECT has_table_privilege(current_user,$1,$2)")
+                .bind(format!("{schema}.{table}"))
+                .bind(privilege)
+                .fetch_one(&mut *connection)
+                .await?;
+            if actual != expected.contains(&privilege) {
+                return Err(sqlx::Error::Protocol(
+                    "runtime table privileges are broader than the v2 contract".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Refuse to let SQLx migrations inspect or mutate an existing authority.
@@ -516,6 +910,210 @@ impl Repository {
         Ok(())
     }
 
+    pub async fn inspect_database_identity(pool: &PgPool) -> Result<DatabaseIdentity, sqlx::Error> {
+        let mut connection = pool.acquire().await?;
+        Self::inspect_database_identity_connection(&mut connection).await
+    }
+
+    async fn inspect_database_identity_connection(
+        connection: &mut PgConnection,
+    ) -> Result<DatabaseIdentity, sqlx::Error> {
+        let server_meta_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('sync_v2.server_meta') IS NOT NULL")
+                .fetch_one(&mut *connection)
+                .await?;
+        let server_meta = if server_meta_exists {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT key,value FROM sync_v2.server_meta ORDER BY key",
+            )
+            .fetch_all(&mut *connection)
+            .await?
+        } else {
+            Vec::new()
+        };
+        // The same complete catalog inventory used by runtime startup is
+        // required before the migrator can change roles or run any DDL.
+        let mut user_objects = Vec::new();
+        let schemas: Vec<String> = sqlx::query_scalar(
+            "SELECT nspname FROM pg_namespace
+             WHERE nspname NOT IN ('pg_catalog','information_schema','public')
+               AND nspname NOT LIKE 'pg_toast%'
+               AND nspname NOT LIKE 'pg_temp_%'
+               AND nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY nspname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(schemas.into_iter().map(|schema| format!("schema:{schema}")));
+        let relations: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT c.relkind::TEXT, n.nspname, c.relname
+             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND c.relpersistence <> 't'
+             ORDER BY n.nspname, c.relkind, c.relname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            relations
+                .into_iter()
+                .map(|(kind, schema, name)| format!("relation:{kind}:{schema}.{name}")),
+        );
+        let types: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT t.typtype::TEXT, n.nspname, t.typname
+             FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND t.typelem=0 AND t.typtype IN ('c','d','e','r')
+             ORDER BY n.nspname, t.typtype, t.typname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            types
+                .into_iter()
+                .map(|(kind, schema, name)| format!("type:{kind}:{schema}.{name}")),
+        );
+        let routines: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT 'routine', n.nspname,
+                    p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+             FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY n.nspname, p.proname, p.oid",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            routines
+                .into_iter()
+                .map(|(_, schema, name)| format!("routine:{schema}.{name}")),
+        );
+        let extensions: Vec<String> =
+            sqlx::query_scalar("SELECT extname FROM pg_extension ORDER BY extname")
+                .fetch_all(&mut *connection)
+                .await?;
+        user_objects.extend(
+            extensions
+                .into_iter()
+                .map(|name| format!("extension:{name}")),
+        );
+        classify_database_identity(server_meta_exists, &server_meta, &user_objects)
+            .map_err(|message| sqlx::Error::Protocol(message.into()))
+    }
+
+    /// Apply the fresh-v2 runtime ACL contract.  This method is callable only
+    /// by the one-shot migrator, after SQLx has created every object.  It is
+    /// never called from the server runtime path.
+    pub async fn apply_runtime_grants(
+        pool: &PgPool,
+        runtime_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if runtime_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query("REVOKE ALL ON SCHEMA auth_v1, sync_v2 FROM PUBLIC")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("GRANT USAGE ON SCHEMA auth_v1, sync_v2 TO fuminiwa_sync_v2_runtime")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "REVOKE ALL ON TABLE sync_v2.server_meta, sync_v2.deployment_binding,
+             sync_v2.migration_ledger, sync_v2.migration_staging_batches,
+             sync_v2.migration_staging_objects, public._sqlx_migrations
+             FROM fuminiwa_sync_v2_runtime",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "GRANT SELECT ON TABLE sync_v2.server_meta, sync_v2.deployment_binding
+             TO fuminiwa_sync_v2_runtime",
+        )
+        .execute(&mut *tx)
+        .await?;
+        for schema in ["sync_v2", "auth_v1"] {
+            let tables = if schema == "sync_v2" {
+                SYNC_RUNTIME_DML_TABLES
+            } else {
+                AUTH_RUNTIME_DML_TABLES
+            };
+            for table in tables {
+                let statement = format!(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {schema}.{table} TO {runtime_role}"
+                );
+                sqlx::query(&statement).execute(&mut *tx).await?;
+            }
+        }
+        for (schema, sequence) in SEQUENCE_NAMES {
+            let statement = format!(
+                "GRANT USAGE, SELECT, UPDATE ON SEQUENCE {schema}.{sequence} TO {runtime_role}"
+            );
+            sqlx::query(&statement).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn verify_server_meta_read_only(
+        connection: &mut PgConnection,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        if server_instance_id.is_empty()
+            || server_instance_id.len() > 128
+            || server_instance_id == "unbound"
+        {
+            return Err(sqlx::Error::Protocol(
+                "invalid Snapshot Sync v2 server instance id".into(),
+            ));
+        }
+        let rows = sqlx::query("SELECT key,value FROM sync_v2.server_meta ORDER BY key")
+            .fetch_all(&mut *connection)
+            .await?;
+        let metadata: HashMap<String, String> = rows
+            .into_iter()
+            .map(|row| Ok((row.try_get("key")?, row.try_get("value")?)))
+            .collect::<Result<_, sqlx::Error>>()?;
+        for (key, expected) in [
+            ("namespace", SERVER_NAMESPACE),
+            ("protocol_epoch", "2"),
+            ("schema_version", SCHEMA_VERSION),
+            ("ddl_contract_marker", DDL_CONTRACT_MARKER),
+        ] {
+            if metadata.get(key).map(String::as_str) != Some(expected) {
+                return Err(sqlx::Error::Protocol(format!(
+                    "Snapshot Sync v2 server_meta mismatch: {key}"
+                )));
+            }
+        }
+        if metadata.len() != 4 {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 server_meta contains an unknown marker".into(),
+            ));
+        }
+        let binding: Option<String> = sqlx::query_scalar(
+            "SELECT server_instance_id FROM sync_v2.deployment_binding WHERE singleton=true",
+        )
+        .fetch_optional(&mut *connection)
+        .await?;
+        if binding.as_deref() != Some(server_instance_id) {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 deployment binding is missing or mismatched".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn verify_server_meta(
         pool: &PgPool,
         server_instance_id: &str,
@@ -576,6 +1174,16 @@ impl Repository {
         }
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Bootstrap the singleton deployment binding from the migration-owner
+    /// process. Runtime startup uses the read-only counterpart above and
+    /// therefore cannot create or mutate this binding.
+    pub async fn bootstrap_server_meta(
+        pool: &PgPool,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        Self::verify_server_meta(pool, server_instance_id).await
     }
     async fn scope<'a>(
         &self,

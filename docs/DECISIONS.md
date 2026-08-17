@@ -1007,3 +1007,10 @@
 - **置き換える範囲**: D-077／D-078のv1 wire／schema／runtimeをv2 contractへ置き換える。D-077〜D-079のoffline editing、原稿保全、SQLite authority、`.novelpkg` portable境界、D-041のsession／IME／operation gate、D-078のApple-only／server-readable／AccountID／Fenceは維持する。`docs/sync/v1/`は編集・削除せず履歴として残す。
 - **詳細**: [SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)と`docs/sync/v2/`を正とする。closed command／entity schema、JCS exact bytes／hash、SQLite／PostgreSQL DDL、`/v2` resource/cursor/read-back wire、RuntimeMode、migration evidence、Mac／iOS UI projection、account switch、conflict、restore fixtureは同一versioned contractとして変更する。新v2 PostgreSQL deploymentは凍結済みAuth v1 wire/stateを別ownerの`auth_v1` schemaへ実装し、`sync_v2`はopaque AuthenticatedPrincipal／capabilities境界だけを受ける。Apple identity／credentialをsync schemaへ持ち込まない。
 - **完了条件**: Swift／Rustの独立conformance harnessがv2 fixtureのJCS bytes、hash、schema failure、sealed command、account isolation、single conflict、3択、restore、restartを一致検証し、v2 DB／server namespace／Docker volumeの新規構成、macOS／iOS共有kernel、旧archiveの非破壊read-only境界を確認するまでv2 live cutoverを宣言しない。
+
+## D-081: Snapshot Sync v2のmigration ownerとruntime roleを分離する
+
+- **日付**: 2026-08-18 / **状態**: 実装中・Production read-back／既存volume移行Gate前
+- **内容**: 新しいrole-split Compose projectだけが、fresh v2 databaseでbootstrap roleから migration owner と runtime roleを作成する。migration ownerだけがSQLx migration、`_sqlx_migrations`、`server_meta`／`deployment_binding` bootstrap、runtime ACL grantを実行し、runtime roleは必要なschema USAGE、table DML、sequence `USAGE, SELECT, UPDATE`だけを持つ。runtime serverはmigrationを実行せず、role flags、所有権、database/schema DDL、migration table、exact ACL、server marker、deployment bindingをread-backしてから起動する。
+- **安全境界**: 既存のsingle-role／legacy／partial／mixed volumeは自動ALTER、ownership rewrite、GRANT、REVOKE、DROPの対象にしない。exact role-split v2だけは再実行をread-only attestationとして許可し、現staging volumeは別のversioned non-destructive operator migrationとrollback evidenceが揃うまで保持する。新Composeは既存volumeと異なるrole-split volume名を使う。
+- **詳細**: `docs/sync/v2/deployment.md`、`docs/sync/v2/auth-boundary.md`、`SyncServerV2/docker-compose.yml`、`SyncServerV2/src/bin/sync_v2_migrator.rs`を正とする。

@@ -4,8 +4,14 @@ Snapshot Sync v2 reuses `docs/auth/v1/` as the authentication wire and state
 contract, not an old sync database or an Apple credential shortcut. The new
 v2 PostgreSQL volume implements those tables in the separately namespaced
 `auth_v1` schema and implements sync content in `sync_v2`. The checked-in
-Compose revision still uses one PostgreSQL role for both schemas; the
-schema-level authority boundary is not a database-role isolation claim.
+Compose revision uses a dedicated migration owner and runtime role. The runtime
+role is granted only the exact `auth_v1`/`sync_v2` table DML, read-only
+`server_meta`/`deployment_binding`, and PostgreSQL sequence `USAGE, SELECT,
+UPDATE`; it has no migration-table, schema/database DDL, ownership,
+role-membership, or superuser capability. The one-shot migrator is the only
+process allowed to run SQLx migrations or bootstrap deployment metadata. The
+server performs read-only role/ACL and metadata attestation before serving
+requests.
 
 ```text
 Apple native credential
@@ -21,14 +27,12 @@ Apple native credential
 Apple authorization code, identity/access/refresh token, subject, email, and
 name never enter a sync request, `sync_v2`, Snapshot, SQLite, object payload,
 cursor, receipt, or log. A request body AccountID is only compared with the
-principal; it never selects scope. The eventual role split must preserve this
-boundary, but it is not enabled by this deployment revision. A separate
-runtime role cannot be introduced by changing this Compose file alone: the
-server currently opens one SQLx pool and runs all migrations and runtime
-queries through it, while existing v2 objects are owned by the current role.
-A fresh-only bootstrap plus a versioned, non-destructive grants/ownership
-migration and read-back tests are required; until those are implemented,
-there is no claim that database roles isolate auth from sync.
+principal; it never selects scope. The role split is fresh-only. A repeated
+migrator invocation against an exact already-split v2 database is read-only; a
+legacy single-role, partial, mixed, or unknown volume fails closed without
+automatic `ALTER`, ownership rewrite, `GRANT`, or `REVOKE`. Existing staging
+data therefore requires a separately reviewed, versioned, non-destructive
+operator migration before cutover.
 
 Development bearer support is a separately compiled/configured harness. A
 production build/configuration has no dev-token verifier or fallback secret;

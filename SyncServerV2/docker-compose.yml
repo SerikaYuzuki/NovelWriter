@@ -1,18 +1,18 @@
-name: fuminiwa-sync-v2
+name: fuminiwa-sync-v2-role-split
 services:
   postgres:
     image: postgres:16
-    container_name: fuminiwa-sync-v2-postgres
+    container_name: fuminiwa-sync-v2-role-split-postgres
     environment:
       POSTGRES_DB: fuminiwa_sync_v2
-      POSTGRES_USER: fuminiwa_sync_v2
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_USER: fuminiwa_sync_v2_bootstrap
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-bootstrap-password
     volumes:
-      - fuminiwa-sync-v2-data:/var/lib/postgresql/data
+      - fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data
     secrets:
-      - postgres-password
+      - postgres-bootstrap-password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2 -d fuminiwa_sync_v2"]
+      test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2_bootstrap -d fuminiwa_sync_v2"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -28,13 +28,51 @@ services:
       - SETGID
       - SETUID
     networks:
-      - fuminiwa-sync-v2-net
-  server:
+      - fuminiwa-sync-v2-role-split-net
+  migrator:
     build: .
-    container_name: fuminiwa-sync-v2-server
+    container_name: fuminiwa-sync-v2-role-split-migrator
+    entrypoint: ["/usr/local/bin/sync_v2_migrator"]
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:?set a v2-only lowercase UUID}
+      FUMINIWA_SYNC_V2_POSTGRES_HOST: postgres
+      FUMINIWA_SYNC_V2_POSTGRES_PORT: 5432
+      FUMINIWA_SYNC_V2_POSTGRES_DB: fuminiwa_sync_v2
+      FUMINIWA_SYNC_V2_BOOTSTRAP_USER: fuminiwa_sync_v2_bootstrap
+      FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE: /run/secrets/postgres-bootstrap-password
+      FUMINIWA_SYNC_V2_MIGRATION_USER: fuminiwa_sync_v2_migrator
+      FUMINIWA_SYNC_V2_MIGRATION_PASSWORD_FILE: /run/secrets/migration-owner-password
+      FUMINIWA_SYNC_V2_RUNTIME_USER: fuminiwa_sync_v2_runtime
+      FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_FILE: /run/secrets/runtime-password
+    secrets:
+      - postgres-bootstrap-password
+      - migration-owner-password
+      - runtime-password
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /proc/1/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    networks:
+      - fuminiwa-sync-v2-role-split-net
+  server:
+    build: .
+    container_name: fuminiwa-sync-v2-role-split-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     environment:
       FUMINIWA_RUNTIME_MODE: production
       FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:?set a v2-only lowercase UUID}
@@ -42,8 +80,8 @@ services:
       FUMINIWA_SYNC_V2_POSTGRES_HOST: postgres
       FUMINIWA_SYNC_V2_POSTGRES_PORT: 5432
       FUMINIWA_SYNC_V2_POSTGRES_DB: fuminiwa_sync_v2
-      FUMINIWA_SYNC_V2_POSTGRES_USER: fuminiwa_sync_v2
-      FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      FUMINIWA_SYNC_V2_POSTGRES_USER: fuminiwa_sync_v2_runtime
+      FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE: /run/secrets/runtime-password
       FUMINIWA_AUTH_VAULT_KEY_VERSION: ${FUMINIWA_AUTH_VAULT_KEY_VERSION:?set the active vault key version}
       FUMINIWA_AUTH_VAULT_KEY_FILE: /run/secrets/auth-vault-key
       FUMINIWA_AUTH_VAULT_KEYRING_FILE: /run/secrets/auth-vault-keyring
@@ -55,7 +93,7 @@ services:
       FUMINIWA_APPLE_IOS_CLIENT_ID: ${FUMINIWA_APPLE_IOS_CLIENT_ID:?set the iOS App ID}
       FUMINIWA_APPLE_PRIVATE_KEY_FILE: /run/secrets/apple-sign-in-key.p8
     secrets:
-      - postgres-password
+      - runtime-password
       - auth-vault-key
       - auth-vault-keyring
       - auth-subject-hmac-key
@@ -86,10 +124,10 @@ services:
       retries: 12
       start_period: 10s
     networks:
-      - fuminiwa-sync-v2-net
+      - fuminiwa-sync-v2-role-split-net
   edge:
     image: caddy:2.8-alpine
-    container_name: fuminiwa-sync-v2-edge
+    container_name: fuminiwa-sync-v2-role-split-edge
     environment:
       FUMINIWA_SYNC_V2_EDGE_HOST: ${FUMINIWA_SYNC_V2_EDGE_HOST:-192.168.11.5}
     depends_on:
@@ -99,8 +137,8 @@ services:
       - "${FUMINIWA_SYNC_V2_EDGE_PORT:-8443}:8443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - fuminiwa_sync_v2_caddy_data:/data
-      - fuminiwa_sync_v2_caddy_config:/config
+      - fuminiwa_sync_v2_role_split_caddy_data:/data
+      - fuminiwa_sync_v2_role_split_caddy_config:/config
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
@@ -125,17 +163,21 @@ services:
       retries: 12
       start_period: 10s
     networks:
-      - fuminiwa-sync-v2-net
+      - fuminiwa-sync-v2-role-split-net
 volumes:
-  fuminiwa-sync-v2-data:
-    name: fuminiwa-sync-v2-data
-  fuminiwa_sync_v2_caddy_data:
-    name: fuminiwa-sync-v2-caddy-data
-  fuminiwa_sync_v2_caddy_config:
-    name: fuminiwa-sync-v2-caddy-config
+  fuminiwa-sync-v2-role-split-data:
+    name: fuminiwa-sync-v2-role-split-data
+  fuminiwa_sync_v2_role_split_caddy_data:
+    name: fuminiwa-sync-v2-role-split-caddy-data
+  fuminiwa_sync_v2_role_split_caddy_config:
+    name: fuminiwa-sync-v2-role-split-caddy-config
 secrets:
-  postgres-password:
-    file: ${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE:?set a password file path}
+  postgres-bootstrap-password:
+    file: ${FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE:?set the v2 bootstrap password file path}
+  migration-owner-password:
+    file: ${FUMINIWA_SYNC_V2_MIGRATION_PASSWORD_HOST_PATH:?set the v2 migration owner password file path}
+  runtime-password:
+    file: ${FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_HOST_PATH:?set the v2 runtime password file path}
   auth-vault-key:
     file: ${FUMINIWA_AUTH_VAULT_KEY_HOST_PATH:?set vault key file path}
   auth-vault-keyring:
@@ -147,6 +189,6 @@ secrets:
   apple-sign-in-key.p8:
     file: ${FUMINIWA_APPLE_PRIVATE_KEY_HOST_PATH:?set Apple p8 file path}
 networks:
-  fuminiwa-sync-v2-net:
-    name: fuminiwa-sync-v2-net
+  fuminiwa-sync-v2-role-split-net:
+    name: fuminiwa-sync-v2-role-split-net
     internal: false

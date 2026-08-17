@@ -11,6 +11,7 @@ RUN apt-get update \
     && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin fuminiwa
 WORKDIR /app
 COPY --from=build /src/target/release/fuminiwa-sync-server-v2 /usr/local/bin/fuminiwa-sync-server-v2
+COPY --from=build /src/target/release/sync_v2_migrator /usr/local/bin/sync_v2_migrator
 USER fuminiwa
 EXPOSE 8092
 ENTRYPOINT ["/usr/local/bin/fuminiwa-sync-server-v2"]

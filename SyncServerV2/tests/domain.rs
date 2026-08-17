@@ -236,8 +236,11 @@ fn sync_migration_is_byte_identical_to_the_audited_contract() {
 #[test]
 fn compose_uses_the_canonical_v2_postgres_volume_name() {
     let compose = include_str!("../docker-compose.yml");
-    assert!(compose.contains("- fuminiwa-sync-v2-data:/var/lib/postgresql/data"));
-    assert!(compose.contains("  fuminiwa-sync-v2-data:\n    name: fuminiwa-sync-v2-data"));
+    assert!(compose.contains("- fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data"));
+    assert!(compose.contains(
+        "  fuminiwa-sync-v2-role-split-data:\n    name: fuminiwa-sync-v2-role-split-data"
+    ));
+    assert!(!compose.contains("fuminiwa-sync-v2-data:/var/lib/postgresql/data"));
 
     // A copied service/project name must never reconnect this deployment to
     // the retired v1 development project, volume, or network.
