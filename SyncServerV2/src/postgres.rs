@@ -667,13 +667,22 @@ impl Repository {
             .try_get::<Option<i64>, _>("head_generation")?
             .unwrap_or(0);
         let current_id: Option<Vec<u8>> = current.try_get("head_snapshot_id")?;
-        let expected_id = if expected.is_null() {
-            None
+        let (expected_id, expected_remote_generation) = if expected.is_null() {
+            (None, None)
         } else {
-            Some(
-                digest_field(expected, "snapshotId")
-                    .map_err(SyncError::SchemaViolation)?
-                    .to_vec(),
+            let expected_generation = expected
+                .get("generation")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    SyncError::SchemaViolation("expectedRemoteHead.generation".into())
+                })?;
+            (
+                Some(
+                    digest_field(expected, "snapshotId")
+                        .map_err(SyncError::SchemaViolation)?
+                        .to_vec(),
+                ),
+                Some(expected_generation),
             )
         };
         if c.kind == CommandKind::ResolveServer {
@@ -725,7 +734,9 @@ impl Repository {
                 ),
             ));
         }
-        if current_id != expected_id {
+        if c.kind == CommandKind::ResolveDevice
+            && (current_id != expected_id || Some(generation) != expected_remote_generation)
+        {
             return Err(SyncError::StaleHead);
         }
         if sqlx::query(

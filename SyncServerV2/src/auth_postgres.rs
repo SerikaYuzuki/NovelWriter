@@ -92,6 +92,34 @@ impl AuthPostgresRepository {
 
 #[async_trait]
 impl AuthRepository for AuthPostgresRepository {
+    async fn token_verifier(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
+        self.hmac(purpose, token)
+    }
+
+    async fn authenticate_access(
+        &self,
+        token_verifier: Vec<u8>,
+    ) -> Result<AuthenticatedPrincipal, AuthError> {
+        let row = sqlx::query("SELECT s.session_id,s.account_id,a.tenant_id,a.auth_epoch,a.fence FROM auth_v1.access_tokens t JOIN auth_v1.auth_sessions s ON s.session_id=t.session_id JOIN auth_v1.accounts a ON a.account_id=t.account_id WHERE t.token_hmac=$1 AND t.revoked_at IS NULL AND t.expires_at>now() AND s.state='active' AND t.auth_epoch=a.auth_epoch AND t.fence=a.fence FOR UPDATE OF t,s,a")
+            .bind(token_verifier).fetch_optional(&self.pool).await.map_err(Self::map_db)?.ok_or(AuthError::AccountNotFound)?;
+        Ok(AuthenticatedPrincipal {
+            account_id: AccountId::new(
+                row.try_get::<String, _>("account_id")
+                    .map_err(Self::map_db)?,
+            )?,
+            tenant_id: TenantId::new(
+                row.try_get::<String, _>("tenant_id")
+                    .map_err(Self::map_db)?,
+            )?,
+            session_id: SessionId::new(format!(
+                "session_{}",
+                row.try_get::<Uuid, _>("session_id").map_err(Self::map_db)?
+            ))?,
+            account_auth_epoch: row.try_get("auth_epoch").map_err(Self::map_db)?,
+            account_fence: row.try_get("fence").map_err(Self::map_db)?,
+        })
+    }
+
     async fn find_operation_receipt(
         &self,
         operation_id: &OperationId,
@@ -129,20 +157,31 @@ impl AuthRepository for AuthPostgresRepository {
         let challenge_id = ChallengeId::random("challenge");
         let challenge_uuid = Self::uuid(challenge_id.as_str().trim_start_matches("challenge_"))?;
         let config = ProviderConfigId::new(APPLE_PROVIDER_CONFIG)?;
-        sqlx::query("INSERT INTO auth_v1.auth_operations(operation_id,command_kind,request_digest,state) VALUES($1,'createChallenge',$2,'completed')")
-            .bind(op).bind(digest_request_for_challenge(challenge)).execute(&mut *tx).await.map_err(Self::map_db)?;
-        sqlx::query("INSERT INTO auth_v1.auth_challenges(challenge_id,operation_id,provider_config_id,audience,client_platform,state_hash,nonce_hash,phase,lease_until,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'claimed',to_timestamp($8),to_timestamp($8))")
-            .bind(challenge_uuid).bind(op).bind(config.as_str()).bind(&challenge.audience).bind(&challenge.platform).bind(&state_hash).bind(&nonce_hash).bind(challenge.expires_at_unix).execute(&mut *tx).await.map_err(Self::map_db)?;
-        tx.commit().await.map_err(Self::map_db)?;
-        Ok(ChallengeResult {
-            challenge_id,
+        let request_digest = digest_request_for_challenge(challenge);
+        let result = ChallengeResult {
+            challenge_id: challenge_id.clone(),
             operation_id: challenge.operation_id.clone(),
-            provider_config_id: config,
+            provider_config_id: config.clone(),
             audience: challenge.audience.clone(),
             state: challenge.state.clone(),
             nonce: challenge.nonce.clone(),
             expires_at_unix: challenge.expires_at_unix,
-        })
+        };
+        let response = to_vec(&result).map_err(|_| AuthError::Vault)?;
+        let sealed = self
+            .vault
+            .seal(
+                "auth_receipt_v1",
+                challenge.operation_id.as_str(),
+                &response,
+            )
+            .await?;
+        sqlx::query("INSERT INTO auth_v1.auth_operations(operation_id,command_kind,request_digest,state,response_status,response_ciphertext,completed_at) VALUES($1,'createChallenge',$2,'completed',201,$3,now())")
+            .bind(op).bind(&request_digest).bind(sealed.ciphertext).execute(&mut *tx).await.map_err(Self::map_db)?;
+        sqlx::query("INSERT INTO auth_v1.auth_challenges(challenge_id,operation_id,provider_config_id,audience,client_platform,state_hash,nonce_hash,phase,lease_until,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'claimed',to_timestamp($8),to_timestamp($8))")
+            .bind(challenge_uuid).bind(op).bind(config.as_str()).bind(&challenge.audience).bind(&challenge.platform).bind(&state_hash).bind(&nonce_hash).bind(challenge.expires_at_unix).execute(&mut *tx).await.map_err(Self::map_db)?;
+        tx.commit().await.map_err(Self::map_db)?;
+        Ok(result)
     }
 
     async fn load_challenge_for_update(
@@ -179,6 +218,16 @@ impl AuthRepository for AuthPostgresRepository {
         if result.rows_affected() != 1 {
             return Err(AuthError::InvalidChallengePhase);
         }
+        Ok(())
+    }
+
+    async fn mark_provider_exchange_indeterminate(
+        &self,
+        challenge_id: &ChallengeId,
+    ) -> Result<(), AuthError> {
+        let id = Self::uuid(challenge_id.as_str().trim_start_matches("challenge_"))?;
+        sqlx::query("UPDATE auth_v1.auth_challenges SET phase='terminal' WHERE challenge_id=$1 AND phase='providerCallStarted'")
+            .bind(id).execute(&self.pool).await.map_err(Self::map_db)?;
         Ok(())
     }
 
@@ -298,6 +347,10 @@ impl AuthRepository for AuthPostgresRepository {
         let fid = Self::uuid(family.as_str().trim_start_matches("family_"));
         let fid = fid?;
         sqlx::query("INSERT INTO auth_v1.auth_sessions(session_id,account_id,identity_id,family_id,auth_epoch,state,client_platform,expires_at) VALUES($1,$2,$3,$4,$5,'active','macos',now()+interval '90 days')").bind(sid).bind(account_id.as_str()).bind(identity_id).bind(fid).bind(epoch).execute(&mut *tx).await.map_err(Self::map_db)?;
+        let access_hash = self.hmac("access", &access)?;
+        sqlx::query("INSERT INTO auth_v1.access_tokens(token_id,session_id,account_id,token_hmac,auth_epoch,fence,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '15 minutes')")
+            .bind(Uuid::new_v4()).bind(sid).bind(account_id.as_str()).bind(access_hash).bind(epoch).bind(&fence)
+            .execute(&mut *tx).await.map_err(Self::map_db)?;
         sqlx::query("INSERT INTO auth_v1.refresh_families(family_id,session_id,account_id,state,current_generation,expires_at) VALUES($1,$2,$3,'active',1,now()+interval '90 days')").bind(fid).bind(sid).bind(account_id.as_str()).execute(&mut *tx).await.map_err(Self::map_db)?;
         let token_hash = self.hmac("refresh", &refresh)?;
         sqlx::query("INSERT INTO auth_v1.refresh_tokens(family_id,generation,token_hmac,state) VALUES($1,1,$2,'active')").bind(fid).bind(&token_hash).execute(&mut *tx).await.map_err(Self::map_db)?;

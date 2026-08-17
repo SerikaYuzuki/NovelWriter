@@ -106,6 +106,16 @@ CREATE TABLE auth_v1.refresh_tokens (
     PRIMARY KEY(family_id,generation),
     UNIQUE(family_id,token_hmac)
 );
+CREATE TABLE auth_v1.access_tokens (
+    token_id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES auth_v1.auth_sessions(session_id),
+    account_id TEXT NOT NULL REFERENCES auth_v1.accounts(account_id),
+    token_hmac BYTEA NOT NULL CHECK(octet_length(token_hmac)=32) UNIQUE,
+    auth_epoch BIGINT NOT NULL CHECK(auth_epoch > 0),
+    fence BYTEA NOT NULL CHECK(octet_length(fence)=32),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
 CREATE TABLE auth_v1.session_refresh_receipts (
     operation_id UUID PRIMARY KEY,
     family_id UUID NOT NULL REFERENCES auth_v1.refresh_families(family_id),

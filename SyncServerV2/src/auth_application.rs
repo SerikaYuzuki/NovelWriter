@@ -19,7 +19,7 @@ pub struct NewChallenge {
     pub expires_at_unix: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChallengeResult {
     pub challenge_id: ChallengeId,
     pub operation_id: OperationId,
@@ -66,6 +66,11 @@ pub struct SecurityTransition {
 #[async_trait]
 #[allow(clippy::too_many_arguments)]
 pub trait AuthRepository: Send + Sync {
+    async fn token_verifier(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError>;
+    async fn authenticate_access(
+        &self,
+        token_verifier: Vec<u8>,
+    ) -> Result<AuthenticatedPrincipal, AuthError>;
     async fn find_operation_receipt(
         &self,
         operation_id: &OperationId,
@@ -84,6 +89,10 @@ pub trait AuthRepository: Send + Sync {
     ) -> Result<ChallengeClaim, AuthError>;
     async fn mark_provider_call_started(&self, challenge_id: &ChallengeId)
         -> Result<(), AuthError>;
+    async fn mark_provider_exchange_indeterminate(
+        &self,
+        challenge_id: &ChallengeId,
+    ) -> Result<(), AuthError>;
     async fn mark_provider_result_known(
         &self,
         challenge_id: &ChallengeId,
@@ -149,6 +158,14 @@ impl<R: AuthRepository> AuthApplication<R> {
         }
         let state_hash = digest_request(&request.state).to_vec();
         let nonce_hash = digest_request(&request.nonce).to_vec();
+        let digest = digest_request_for_challenge(&request);
+        if let Some(receipt) = self
+            .repository
+            .find_operation_receipt(&request.operation_id, "createChallenge", &digest)
+            .await?
+        {
+            return serde_json::from_slice(&receipt.response_bytes).map_err(|_| AuthError::Vault);
+        }
         self.repository
             .create_challenge(&request, state_hash, nonce_hash)
             .await
@@ -210,7 +227,10 @@ impl<R: AuthRepository> AuthApplication<R> {
         {
             Ok(value) => value,
             Err(AuthError::ProviderExchangeIndeterminate) => {
-                return Err(AuthError::ProviderExchangeIndeterminate)
+                self.repository
+                    .mark_provider_exchange_indeterminate(&request.challenge_id)
+                    .await?;
+                return Err(AuthError::ProviderExchangeIndeterminate);
             }
             Err(error) => return Err(error),
         };
@@ -264,15 +284,23 @@ impl<R: AuthRepository> AuthApplication<R> {
         Ok(grant)
     }
 
-    pub async fn refresh(
-        &self,
-        request: RefreshRequest,
-        hasher: &impl SecretHasher,
-    ) -> Result<RefreshOutcome, AuthError> {
-        let verifier = hasher
+    pub async fn refresh(&self, request: RefreshRequest) -> Result<RefreshOutcome, AuthError> {
+        let verifier = self
+            .repository
             .token_verifier("refresh", &request.refresh_token)
             .await?;
         self.repository.refresh(&request, verifier).await
+    }
+
+    pub async fn authenticate_access(
+        &self,
+        access_token: &str,
+    ) -> Result<AuthenticatedPrincipal, AuthError> {
+        let verifier = self
+            .repository
+            .token_verifier("access", access_token)
+            .await?;
+        self.repository.authenticate_access(verifier).await
     }
 
     pub async fn revoke_current_session(
@@ -285,6 +313,14 @@ impl<R: AuthRepository> AuthApplication<R> {
             .revoke_current_session(&operation_id, digest, &session_id)
             .await
     }
+}
+
+fn digest_request_for_challenge(request: &NewChallenge) -> [u8; 32] {
+    let mut bytes = request.operation_id.to_string().into_bytes();
+    bytes.extend_from_slice(request.provider.as_bytes());
+    bytes.extend_from_slice(request.platform.as_bytes());
+    bytes.extend_from_slice(request.audience.as_bytes());
+    digest_request(&bytes)
 }
 
 fn decode_grant_receipt(receipt: &AuthReceipt) -> Result<SessionGrant, AuthError> {
@@ -303,17 +339,20 @@ impl SecretHasher for FixtureHasher {
         issuer: &str,
         subject: &str,
     ) -> Result<Vec<u8>, AuthError> {
-        Ok(digest_request(
-            format!(
-                "FUMINIWA-EXTERNAL-IDENTITY-LOOKUP-V1\0{}\0{}\0{}",
-                provider_config, issuer, subject
-            )
-            .as_bytes(),
-        )
-        .to_vec())
+        let mut bytes = b"FUMINIWA-EXTERNAL-IDENTITY-LOOKUP-V1".to_vec();
+        for value in [provider_config.as_str(), issuer, subject] {
+            let length =
+                u32::try_from(value.len()).map_err(|_| AuthError::InvalidExternalIdentity)?;
+            bytes.extend_from_slice(&length.to_be_bytes());
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        Ok(digest_request(&bytes).to_vec())
     }
     async fn token_verifier(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
-        Ok(digest_request(format!("{purpose}\0{token}").as_bytes()).to_vec())
+        let mut bytes = purpose.as_bytes().to_vec();
+        bytes.push(0);
+        bytes.extend_from_slice(token.as_bytes());
+        Ok(digest_request(&bytes).to_vec())
     }
 }
 
