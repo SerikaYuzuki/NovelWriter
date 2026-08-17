@@ -126,7 +126,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NovelSyncV2StoreTests",
-            dependencies: ["NovelSyncV2Store", "NovelSyncV2", "NovelCore"]
+            dependencies: ["NovelSyncV2Store", "NovelSyncV2", "NovelCore", "CSQLite"]
         ),
         .testTarget(
             name: "NovelLibraryTests",
