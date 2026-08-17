@@ -551,6 +551,8 @@ func makeMacConflictFixture(
     dependencies.snapshotSyncV2AfterStagedRemoteOverride = afterStagedRemote
     let state = AppState(dependencies: dependencies, initialStartupState: .ready)
     state.snapshotSyncV2Application = kernel.application
+    state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+    state.authUIState = .signedIn(accountID: "test-account")
     state.installV2Document(
         kernel.storage.document,
         workID: kernel.storage.workID,
