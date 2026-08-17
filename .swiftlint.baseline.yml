@@ -80,7 +80,7 @@
       "location": {
         "character": 1,
         "line": 4,
-        "file": "NovelApp/DeviceSync/Conflict/WorkConflictPresentation.swift"
+        "file": "NovelApp/DeviceSync/Legacy/Conflict/WorkConflictPresentation.swift"
       },
       "severity": "error",
       "ruleIdentifier": "type_body_length",
@@ -410,7 +410,7 @@
       "location": {
         "character": 5,
         "line": 10,
-        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+        "file": "NovelApp/DeviceSync/Legacy/Note/AppState+NoteSync.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "function_body_length",
@@ -425,7 +425,7 @@
       "location": {
         "character": 5,
         "line": 234,
-        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+        "file": "NovelApp/DeviceSync/Legacy/Note/AppState+NoteSync.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -440,7 +440,7 @@
       "location": {
         "character": 5,
         "line": 234,
-        "file": "NovelApp/DeviceSync/Note/AppState+NoteSync.swift"
+        "file": "NovelApp/DeviceSync/Legacy/Note/AppState+NoteSync.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -679,8 +679,8 @@
       "ruleDescription": "Complexity of function bodies should be limited.",
       "location": {
         "character": 5,
-        "line": 300,
-        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+        "line": 309,
+        "file": "NovelApp/DeviceSync/Legacy/RetiredAppPaths/AppState+Lifecycle.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -695,7 +695,7 @@
       "location": {
         "character": 5,
         "line": 300,
-        "file": "NovelApp/DocumentLifecycle/AppState+Lifecycle.swift"
+        "file": "NovelApp/DeviceSync/Legacy/RetiredAppPaths/AppState+Lifecycle.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -1099,8 +1099,8 @@
       "ruleDescription": "Complexity of function bodies should be limited.",
       "location": {
         "character": 13,
-        "line": 96,
-        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+        "line": 100,
+        "file": "NovelApp/DeviceSync/Legacy/Library/AppState+StartupLibrary.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -1114,8 +1114,8 @@
       "ruleDescription": "Function bodies should not span too many lines",
       "location": {
         "character": 13,
-        "line": 96,
-        "file": "NovelApp/Library/AppState+StartupLibrary.swift"
+        "line": 100,
+        "file": "NovelApp/DeviceSync/Legacy/Library/AppState+StartupLibrary.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -1190,7 +1190,7 @@
       "location": {
         "character": 13,
         "line": 259,
-        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+        "file": "NovelApp/DeviceSync/Legacy/Library/AppState+StartupLibraryOpening.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -1219,8 +1219,8 @@
       "ruleDescription": "Complexity of function bodies should be limited.",
       "location": {
         "character": 13,
-        "line": 357,
-        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+        "line": 378,
+        "file": "NovelApp/DeviceSync/Legacy/Library/AppState+StartupLibraryOpening.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -1234,8 +1234,8 @@
       "ruleDescription": "Function bodies should not span too many lines",
       "location": {
         "character": 13,
-        "line": 357,
-        "file": "NovelApp/Library/AppState+StartupLibraryOpening.swift"
+        "line": 378,
+        "file": "NovelApp/DeviceSync/Legacy/Library/AppState+StartupLibraryOpening.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -1580,7 +1580,7 @@
       "location": {
         "character": 5,
         "line": 10,
-        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/Note/IOSDocumentStore+NoteSync.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -1609,8 +1609,8 @@
       "ruleDescription": "Complexity of function bodies should be limited.",
       "location": {
         "character": 5,
-        "line": 227,
-        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+        "line": 233,
+        "file": "NovelAppIOS/DeviceSync/Legacy/Note/IOSDocumentStore+NoteSync.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -1624,8 +1624,8 @@
       "ruleDescription": "Function bodies should not span too many lines",
       "location": {
         "character": 5,
-        "line": 227,
-        "file": "NovelAppIOS/DeviceSync/Note/IOSDocumentStore+NoteSync.swift"
+        "line": 233,
+        "file": "NovelAppIOS/DeviceSync/Legacy/Note/IOSDocumentStore+NoteSync.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -2060,7 +2060,7 @@
       "location": {
         "character": 13,
         "line": 77,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -2075,7 +2075,7 @@
       "location": {
         "character": 13,
         "line": 77,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "function_body_length",
@@ -2090,7 +2090,7 @@
       "location": {
         "character": 13,
         "line": 296,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "warning",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -2105,7 +2105,7 @@
       "location": {
         "character": 13,
         "line": 296,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -2120,7 +2120,7 @@
       "location": {
         "character": 13,
         "line": 414,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "error",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -2135,7 +2135,7 @@
       "location": {
         "character": 13,
         "line": 414,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibrary.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibrary.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -2165,7 +2165,7 @@
       "location": {
         "character": 5,
         "line": 111,
-        "file": "NovelAppIOS/Library/IOSDocumentStore+CloudLibraryMutations.swift"
+        "file": "NovelAppIOS/DeviceSync/Legacy/CloudLibrary/IOSDocumentStore+CloudLibraryMutations.swift"
       },
       "severity": "error",
       "ruleIdentifier": "function_body_length",
@@ -2269,8 +2269,8 @@
       "ruleDescription": "Complexity of function bodies should be limited.",
       "location": {
         "character": 5,
-        "line": 448,
-        "file": "NovelAppIOS/Library/IOSLibraryView.swift"
+        "line": 484,
+        "file": "NovelAppIOS/DeviceSync/Legacy/RetiredAppPaths/Library/IOSLibraryView.swift"
       },
       "severity": "error",
       "ruleIdentifier": "cyclomatic_complexity",
@@ -4738,5 +4738,65 @@
       "reason": "File should contain 400 lines or less: currently contains 629"
     },
     "text": "}"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 6,
+        "file": "NovelKit/Sources/NovelSyncV2Runtime/ProductionSyncV2Kernel.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 353 lines"
+    },
+    "text": "actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Type bodies should not span too many lines",
+      "location": {
+        "character": 1,
+        "line": 6,
+        "file": "NovelKit/Sources/NovelSyncV2Runtime/ProductionSyncV2Planner.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "type_body_length",
+      "ruleName": "Type Body Length",
+      "reason": "Actor body should span 350 lines or less excluding comments and whitespace: currently spans 430 lines"
+    },
+    "text": "actor ProductionSyncV2Planner: SyncV2CommandPlanner {"
+  },
+  {
+    "violation": {
+      "ruleDescription": "Complexity of function bodies should be limited.",
+      "location": {
+        "character": 13,
+        "line": 195,
+        "file": "NovelKit/Sources/NovelSyncV2Store/CommandReceiptDecoder.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "cyclomatic_complexity",
+      "ruleName": "Cyclomatic Complexity",
+      "reason": "Function should have complexity 10 or less; currently complexity is 21"
+    },
+    "text": "    private func validateCommandResponseFields("
+  },
+  {
+    "violation": {
+      "ruleDescription": "Function bodies should not span too many lines",
+      "location": {
+        "character": 5,
+        "line": 528,
+        "file": "NovelKit/Sources/NovelSyncV2Store/LocalSyncV2Store+Inbox.swift"
+      },
+      "severity": "error",
+      "ruleIdentifier": "function_body_length",
+      "ruleName": "Function Body Length",
+      "reason": "Function body should span 100 lines or less excluding comments and whitespace: currently spans 101 lines"
+    },
+    "text": "    func adoptGraphTransaction("
   }
 ]
