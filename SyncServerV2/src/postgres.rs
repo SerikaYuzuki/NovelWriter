@@ -1,17 +1,22 @@
 use crate::{
     application::{strict_json, validate_entity_payload, validate_manifest_bytes},
     domain::*,
+    object_store::{ObjectStore, PostgresObjectStore},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Repository {
     pub pool: PgPool,
+    pub object_store: Arc<dyn ObjectStore>,
     pub server_instance_id: String,
     pub protocol_epoch: i64,
 }
@@ -22,15 +27,19 @@ impl Repository {
             .connect(url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
         Ok(Self {
             pool,
+            object_store,
             server_instance_id,
             protocol_epoch: PROTOCOL_EPOCH,
         })
     }
     pub fn new(pool: PgPool, server_instance_id: String) -> Self {
+        let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
         Self {
             pool,
+            object_store,
             server_instance_id,
             protocol_epoch: PROTOCOL_EPOCH,
         }
@@ -1114,19 +1123,11 @@ impl Repository {
         if count != bytes.len() as i64 || sha256(bytes).as_slice() != object.as_slice() {
             return Err(SyncError::ObjectDigestMismatch);
         };
-        let inserted = sqlx::query("INSERT INTO sync_v2.global_blobs(object_id,byte_count,raw_bytes) VALUES($1,$2,$3) ON CONFLICT(object_id) DO NOTHING")
-            .bind(&object).bind(count).bind(bytes).execute(&mut *tx).await?;
-        let blob =
-            sqlx::query("SELECT byte_count,raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1")
-                .bind(&object)
-                .fetch_one(&mut *tx)
-                .await?;
-        let stored_count: i64 = blob.try_get("byte_count")?;
-        let stored_bytes: Vec<u8> = blob.try_get("raw_bytes")?;
-        if stored_count != count || stored_bytes.as_slice() != bytes {
-            return Err(SyncError::ObjectDigestMismatch);
-        }
-        let _ = inserted;
+        let object_id: [u8; 32] = object
+            .as_slice()
+            .try_into()
+            .map_err(|_| SyncError::ObjectDigestMismatch)?;
+        self.object_store.put(&object_id, bytes).await?;
         sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2")
             .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
         tx.commit().await?;

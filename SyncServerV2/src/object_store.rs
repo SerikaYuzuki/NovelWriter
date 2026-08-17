@@ -18,8 +18,25 @@ impl ObjectStore for PostgresObjectStore {
         if bytes.len() > MAX_OBJECT_BYTES || sha256(bytes) != *object_id {
             return Err(SyncError::ObjectDigestMismatch);
         }
-        sqlx::query("INSERT INTO sync_v2.global_blobs(object_id, byte_count, raw_bytes) VALUES ($1,$2,$3) ON CONFLICT (object_id) DO UPDATE SET byte_count=EXCLUDED.byte_count, raw_bytes=EXCLUDED.raw_bytes")
-            .bind(object_id.as_slice()).bind(bytes.len() as i64).bind(bytes).execute(&self.pool).await?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("INSERT INTO sync_v2.global_blobs(object_id,byte_count,raw_bytes) VALUES($1,$2,$3) ON CONFLICT(object_id) DO NOTHING")
+            .bind(object_id.as_slice())
+            .bind(bytes.len() as i64)
+            .bind(bytes)
+            .execute(&mut *tx)
+            .await?;
+        let stored = sqlx::query(
+            "SELECT byte_count,raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1 FOR SHARE",
+        )
+        .bind(object_id.as_slice())
+        .fetch_one(&mut *tx)
+        .await?;
+        let stored_count: i64 = stored.try_get("byte_count")?;
+        let stored_bytes: Vec<u8> = stored.try_get("raw_bytes")?;
+        if stored_count != bytes.len() as i64 || stored_bytes.as_slice() != bytes {
+            return Err(SyncError::ObjectDigestMismatch);
+        }
+        tx.commit().await?;
         Ok(())
     }
     async fn get(&self, account_id: &str, object_id: &[u8; 32]) -> SyncResult<Vec<u8>> {

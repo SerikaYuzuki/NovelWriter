@@ -461,21 +461,16 @@ async fn object(
         Ok(v) => v,
         Err(_) => return error_response(SyncError::NotFound),
     };
-    let row=sqlx::query("SELECT b.raw_bytes FROM sync_v2.global_blobs b JOIN sync_v2.account_objects a ON a.object_id=b.object_id WHERE a.account_id=$1 AND a.object_id=$2 AND a.state='available'").bind(&p.account_id).bind(id.as_slice()).fetch_optional(&state.repo.pool).await;
-    match row {
-        Ok(Some(r)) => {
-            let bytes: Vec<u8> = r.try_get("raw_bytes").unwrap_or_default();
-            Response::builder()
-                .status(200)
-                .header("content-type", "application/octet-stream")
-                .header("x-fuminiwa-object-digest", hex::encode(id))
-                .header("x-fuminiwa-byte-count", bytes.len().to_string())
-                .header("x-fuminiwa-result", "noChanges")
-                .body(axum::body::Body::from(bytes))
-                .unwrap()
-        }
-        Ok(None) => error_response(SyncError::NotFound),
-        Err(e) => error_response(SyncError::Database(e)),
+    match state.repo.object_store.get(&p.account_id, &id).await {
+        Ok(bytes) => Response::builder()
+            .status(200)
+            .header("content-type", "application/octet-stream")
+            .header("x-fuminiwa-object-digest", hex::encode(id))
+            .header("x-fuminiwa-byte-count", bytes.len().to_string())
+            .header("x-fuminiwa-result", "noChanges")
+            .body(axum::body::Body::from(bytes))
+            .unwrap(),
+        Err(e) => error_response(e),
     }
 }
 async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Response {
