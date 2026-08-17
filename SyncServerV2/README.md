@@ -12,9 +12,24 @@ database, Docker project and volumes are never read or mounted.
 ```sh
 cp SyncServerV2/.env.example /secure/fuminiwa-sync-v2-role-split.env
 # Fill the copy with v2-only paths and values; never commit that file.
+# Fresh volume only: explicitly provision the temporary admin once.
+docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
+  -f SyncServerV2/docker-compose.yml \
+  -f SyncServerV2/docker-compose.provision.yml \
+  -p fuminiwa-sync-v2-role-split \
+  --profile provision run --rm bootstrap-admin
+# Normal startup and every exact-v2 restart omit the provision profile.
 docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
   -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split up --build -d
 ```
+
+The `bootstrap-admin` one-shot and PostgreSQL initialization password live
+only in `docker-compose.provision.yml`; they are not part of the normal
+startup graph. If the provision file/profile is omitted on a fresh volume,
+PostgreSQL itself and the migrator both fail closed. On an exact-v2 restart,
+use only `docker-compose.yml`: the official PostgreSQL initialization secret
+is neither present in the rendered graph nor mounted/contacted, and the
+migrator uses only the permanent bootstrap role for read-only attestation.
 
 The only database volume is `fuminiwa-sync-v2-role-split-data`; Caddy also has two
 edge-state volumes (`fuminiwa-sync-v2-role-split-caddy-data` and
@@ -36,10 +51,15 @@ marker, and deployment-binding verification. Runtime PostgreSQL sequence
 access is `USAGE` only on the required sequences. The source does not use
 `currval`, `setval`, or `last_value`; PostgreSQL has no separate sequence
 `EXECUTE` privilege, so `USAGE` is the least privilege needed for inserts.
-The locked bootstrap session is separately attested as the fixed bootstrap
-administrator, target-database owner, and expected role flags; fresh role
-preflight counts only the two application roles because the bootstrap role is
-already present by PostgreSQL image initialization.
+The official PostgreSQL OID-10 initialization role is isolated to the
+one-shot `bootstrap-admin` service and is never mounted into the migrator or
+server. That service creates the temporary `fuminiwa_sync_v2_bootstrap_admin`
+role under the same advisory lock. The migrator then creates and owns the
+fixed bootstrap role, migration owner, and runtime role; after DDL and grants
+it hardens the temporary admin to `NOLOGIN NOSUPERUSER NOCREATEDB
+NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`. It closes the admin
+authority and reacquires the lock through a new fixed-bootstrap connection,
+including `is_superuser=off` and ACL read-back.
 
 On an already-initialized exact v2 database, a repeated migrator invocation is
 read-only and succeeds only when the role/ACL attestation is already exact. A
@@ -72,7 +92,7 @@ sudo SyncServerV2/scripts/prepare-runtime-secrets.sh \
 Set every `*_FILE`/`*_HOST_PATH` entry in the private compose env file to the
 corresponding file under `runtime-secrets`. The script rejects symlinked
 inputs, leaves the source directory untouched, atomically replaces only the
-eight named v2 copies, and sets mode `0400` with owner `10001:10001`. Re-run it
+ten named v2 copies, and sets mode `0400` with owner `10001:10001`. Re-run it
 after rotating a source secret, before recreating only the v2 server.
 
 Before using a new host or IP, inspect the rendered configuration without
@@ -81,6 +101,10 @@ starting it and verify that every resource has the v2 prefix:
 ```sh
 docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
   -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split config
+docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
+  -f SyncServerV2/docker-compose.yml \
+  -f SyncServerV2/docker-compose.provision.yml \
+  -p fuminiwa-sync-v2-role-split --profile provision config
 ```
 
 On `192.168.11.5`, use a new Compose project exactly as shown above. Do not
@@ -133,7 +157,7 @@ separately named, disposable databases whose names begin with
 `fuminiwa_v2_role_split_test_`: one empty fresh database, one database where an
 operator-created unknown table is present, and one database containing only a
 legacy/single-role `sync_v2.server_meta` marker. Supply their URLs and the
-three password-file paths through the `FUMINIWA_V2_ROLE_SPLIT_*` environment
+four password-file paths through the `FUMINIWA_V2_ROLE_SPLIT_*` environment
 names in `.env.example`; never put credential values in this repository. Build
 both binaries before running the gate:
 
@@ -144,6 +168,7 @@ FUMINIWA_V2_ROLE_SPLIT_TEST_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_
 FUMINIWA_V2_ROLE_SPLIT_UNKNOWN_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_test_unknown_<uuid>' \
 FUMINIWA_V2_ROLE_SPLIT_SINGLE_ROLE_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_test_legacy_<uuid>' \
 FUMINIWA_V2_ROLE_SPLIT_SERVER_INSTANCE_ID='<lowercase-uuid>' \
+FUMINIWA_V2_ROLE_SPLIT_BOOTSTRAP_ADMIN_PASSWORD_FILE='/secure/v2/bootstrap-admin-password' \
 FUMINIWA_V2_ROLE_SPLIT_BOOTSTRAP_PASSWORD_FILE='/secure/v2/bootstrap-password' \
 FUMINIWA_V2_ROLE_SPLIT_MIGRATION_PASSWORD_FILE='/secure/v2/migration-password' \
 FUMINIWA_V2_ROLE_SPLIT_RUNTIME_PASSWORD_FILE='/secure/v2/runtime-password' \
@@ -160,6 +185,19 @@ confirms unknown/legacy rejection leaves catalog fingerprints unchanged. The
 unknown-object and legacy-marker databases must already be operator-provisioned;
 the runner performs no setup writes to those targets and returns `NO-GO` when
 their required marker is absent.
+
+Before starting the runner, provision the fixed temporary bootstrap admin on
+every disposable PostgreSQL cluster used by the three targets. When all three
+databases are on one cluster, one explicit `docker compose --profile
+provision run --rm bootstrap-admin` invocation is sufficient because roles
+are cluster-scoped. If the targets are on separate clusters, run the same
+one-shot independently on each cluster. The runner first opens the unknown and
+legacy targets through this temporary admin to capture their immutable
+pre-rejection catalog/data fingerprints; it then provisions the fresh target,
+which hardens that admin to `NOLOGIN`. Therefore unknown/legacy markers and
+their temporary-admin access must be prepared before the runner starts. Never
+put a password value in the command line; supply all four password-file paths
+shown above.
 
 For a disposable PostgreSQL database, create a separate v2-only Compose
 project and volume; do not use the staging project or its volume. For example,

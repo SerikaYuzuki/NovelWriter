@@ -3,10 +3,39 @@ use std::fs;
 #[test]
 fn compose_bootstraps_role_split_before_runtime() {
     let compose = fs::read_to_string("docker-compose.yml").expect("v2 compose");
+    let provision =
+        fs::read_to_string("docker-compose.provision.yml").expect("v2 provision compose");
     assert!(compose.contains("migrator:"));
     assert!(compose.contains("service_completed_successfully"));
     assert!(compose.contains("fuminiwa_sync_v2_migrator"));
     assert!(compose.contains("fuminiwa_sync_v2_runtime"));
+    assert!(!compose.contains("bootstrap-admin:"));
+    assert!(!compose.contains("postgres-init-password"));
+    assert!(compose.contains("pg_isready -U fuminiwa_sync_v2_bootstrap -d fuminiwa_sync_v2"));
+    assert!(provision.contains("bootstrap-admin:"));
+    let bootstrap_admin = provision
+        .split("  bootstrap-admin:")
+        .nth(1)
+        .expect("bootstrap-admin service")
+        .split("secrets:")
+        .next()
+        .expect("bootstrap-admin service body");
+    assert!(bootstrap_admin.contains("profiles:") && bootstrap_admin.contains("provision"));
+    assert!(bootstrap_admin
+        .contains(r#"printf '%s\n' "\\set bootstrap_admin_password $$admin_password""#));
+    assert!(!bootstrap_admin.contains("%s\\n' \"$$admin_password\""));
+    let migrator = compose
+        .split("  migrator:")
+        .nth(1)
+        .expect("migrator service")
+        .split("  server:")
+        .next()
+        .expect("migrator service body");
+    assert!(!migrator.contains("bootstrap-admin:"));
+    assert!(compose.contains("fuminiwa_sync_v2_postgres_init"));
+    assert!(provision.contains("POSTGRES_PASSWORD_FILE: /run/secrets/postgres-init-password"));
+    assert!(provision.contains("pg_isready -U fuminiwa_sync_v2_postgres_init -d fuminiwa_sync_v2"));
+    assert!(provision.contains("FUMINIWA_SYNC_V2_POSTGRES_INIT_PASSWORD_HOST_PATH"));
     assert!(compose.contains("fuminiwa-sync-v2-role-split-data"));
     assert!(!compose.contains("fuminiwa-sync-v2-data:"));
     assert!(!compose.contains("POSTGRES_USER: fuminiwa_sync_v2\n"));
@@ -31,6 +60,15 @@ fn production_server_has_no_migration_or_bootstrap_path() {
     assert!(server.contains("fuminiwa_sync_v2_runtime"));
     assert!(!server.contains("migration-owner-password"));
     assert!(!server.contains("FUMINIWA_SYNC_V2_MIGRATION"));
+    assert!(!server.contains("postgres-init-password"));
+    let migrator = compose
+        .split("  migrator:")
+        .nth(1)
+        .expect("migrator service")
+        .split("  server:")
+        .next()
+        .expect("migrator service body");
+    assert!(!migrator.contains("postgres-init-password"));
 }
 
 #[test]
@@ -96,12 +134,15 @@ fn fresh_bootstrap_lock_and_role_inventory_are_scoped() {
     let migrator = fs::read_to_string("src/bin/sync_v2_migrator.rs").expect("v2 migrator");
     assert!(migrator.contains("attest_bootstrap_session"));
     assert!(migrator.contains("attest_bootstrap_provisioning_session"));
-    assert!(migrator.contains("harden_bootstrap_role"));
+    assert!(migrator.contains("harden_role"));
     assert!(migrator.contains("v2 bootstrap role flags are not hardened"));
     assert!(migrator.contains("let mut bootstrap_session = lock.acquire"));
     assert!(migrator.contains("MIGRATION_OWNER_ROLE, RUNTIME_ROLE"));
     assert!(!migrator.contains("migration_lock"));
     assert!(migrator.contains("final v2 role bootstrap identity read-back failed"));
+    assert!(migrator.contains("let repeat_identity"));
+    assert!(migrator.contains("inspect_database_identity_on_connection(&mut permanent_lock)"));
+    assert!(!migrator.contains("if identity != DatabaseIdentity::SnapshotSyncV2"));
 }
 
 #[test]

@@ -1,0 +1,51 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-init-password
+    secrets:
+      - postgres-init-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2_postgres_init -d fuminiwa_sync_v2"]
+  bootstrap-admin:
+    image: postgres:16
+    container_name: fuminiwa-sync-v2-role-split-bootstrap-admin
+    profiles:
+      - provision
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        script=$$(mktemp /tmp/bootstrap-admin.XXXXXX);
+        chmod 600 "$$script";
+        admin_password=$$(cat /run/secrets/bootstrap-admin-password);
+        case "$$admin_password" in
+          ''|*[!A-Za-z0-9_-]*) echo 'bootstrap-admin password must use the fixed safe grammar' >&2; exit 65 ;;
+        esac;
+        printf '%s\n' "\\set bootstrap_admin_password $$admin_password" > "$$script";
+        cat /run/bootstrap-admin.sql >> "$$script";
+        PGPASSWORD=$$(cat /run/secrets/postgres-init-password)
+        psql --host=postgres --port=5432 --username=fuminiwa_sync_v2_postgres_init
+        --dbname=fuminiwa_sync_v2 --set=ON_ERROR_STOP=1
+        --file="$$script";
+        rc=$$?;
+        rm -f "$$script";
+        exit $$rc
+    secrets:
+      - postgres-init-password
+      - bootstrap-admin-password
+    volumes:
+      - ./scripts/bootstrap-admin.sql:/run/bootstrap-admin.sql:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - fuminiwa-sync-v2-role-split-net
+secrets:
+  postgres-init-password:
+    file: ${FUMINIWA_SYNC_V2_POSTGRES_INIT_PASSWORD_HOST_PATH:?set the official postgres init password file path}

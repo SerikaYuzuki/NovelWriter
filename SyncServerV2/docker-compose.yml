@@ -5,12 +5,9 @@ services:
     container_name: fuminiwa-sync-v2-role-split-postgres
     environment:
       POSTGRES_DB: fuminiwa_sync_v2
-      POSTGRES_USER: fuminiwa_sync_v2_bootstrap
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-bootstrap-password
+      POSTGRES_USER: fuminiwa_sync_v2_postgres_init
     volumes:
       - fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data
-    secrets:
-      - postgres-bootstrap-password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2_bootstrap -d fuminiwa_sync_v2"]
       interval: 5s
@@ -41,6 +38,8 @@ services:
       FUMINIWA_SYNC_V2_POSTGRES_HOST: postgres
       FUMINIWA_SYNC_V2_POSTGRES_PORT: 5432
       FUMINIWA_SYNC_V2_POSTGRES_DB: fuminiwa_sync_v2
+      FUMINIWA_SYNC_V2_BOOTSTRAP_ADMIN_USER: fuminiwa_sync_v2_bootstrap_admin
+      FUMINIWA_SYNC_V2_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap-admin-password
       FUMINIWA_SYNC_V2_BOOTSTRAP_USER: fuminiwa_sync_v2_bootstrap
       FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE: /run/secrets/postgres-bootstrap-password
       FUMINIWA_SYNC_V2_MIGRATION_USER: fuminiwa_sync_v2_migrator
@@ -48,6 +47,7 @@ services:
       FUMINIWA_SYNC_V2_RUNTIME_USER: fuminiwa_sync_v2_runtime
       FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_FILE: /run/secrets/runtime-password
     secrets:
+      - bootstrap-admin-password
       - postgres-bootstrap-password
       - migration-owner-password
       - runtime-password
@@ -172,6 +172,8 @@ volumes:
   fuminiwa_sync_v2_role_split_caddy_config:
     name: fuminiwa-sync-v2-role-split-caddy-config
 secrets:
+  bootstrap-admin-password:
+    file: ${FUMINIWA_SYNC_V2_BOOTSTRAP_ADMIN_PASSWORD_HOST_PATH:?set the v2 bootstrap admin password file path}
   postgres-bootstrap-password:
     file: ${FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE:?set the v2 bootstrap password file path}
   migration-owner-password:

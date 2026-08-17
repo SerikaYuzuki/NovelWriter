@@ -10,7 +10,7 @@ set -eu
 #   prepare-runtime-secrets.sh SOURCE_DIR RUNTIME_DIR
 #
 # SOURCE_DIR is never modified.  RUNTIME_DIR must be a separate directory;
-# the eight files are replaced atomically and remain mode 0400, owned by
+# the ten files are replaced atomically and remain mode 0400, owned by
 # 10001:10001.  Do not put either directory in the repository.
 
 if [ "$#" -ne 2 ]; then
@@ -34,7 +34,9 @@ if [ -L "$runtime_dir" ]; then
     exit 65
 fi
 
-secret_names='bootstrap-password
+secret_names='postgres-init-password
+bootstrap-admin-password
+bootstrap-password
 migration-owner-password
 runtime-password
 auth-vault-key

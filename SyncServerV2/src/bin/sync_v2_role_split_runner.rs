@@ -8,7 +8,8 @@
 //! and fail-closed unchanged rejection paths.
 
 use fuminiwa_sync_server_v2::postgres::{
-    DatabaseIdentity, Repository, BOOTSTRAP_ROLE, MIGRATION_OWNER_ROLE, RUNTIME_ROLE,
+    DatabaseIdentity, Repository, BOOTSTRAP_ADMIN_ROLE, BOOTSTRAP_ROLE, MIGRATION_OWNER_ROLE,
+    RUNTIME_ROLE,
 };
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -31,6 +32,7 @@ const FRESH_URL: &str = "FUMINIWA_V2_ROLE_SPLIT_TEST_DATABASE_URL";
 const UNKNOWN_URL: &str = "FUMINIWA_V2_ROLE_SPLIT_UNKNOWN_DATABASE_URL";
 const LEGACY_URL: &str = "FUMINIWA_V2_ROLE_SPLIT_SINGLE_ROLE_DATABASE_URL";
 const SERVER_INSTANCE: &str = "FUMINIWA_V2_ROLE_SPLIT_SERVER_INSTANCE_ID";
+const BOOTSTRAP_ADMIN_PASSWORD: &str = "FUMINIWA_V2_ROLE_SPLIT_BOOTSTRAP_ADMIN_PASSWORD_FILE";
 const BOOTSTRAP_PASSWORD: &str = "FUMINIWA_V2_ROLE_SPLIT_BOOTSTRAP_PASSWORD_FILE";
 const MIGRATION_PASSWORD: &str = "FUMINIWA_V2_ROLE_SPLIT_MIGRATION_PASSWORD_FILE";
 const RUNTIME_PASSWORD: &str = "FUMINIWA_V2_ROLE_SPLIT_RUNTIME_PASSWORD_FILE";
@@ -54,6 +56,7 @@ struct Config {
     unknown: Target,
     legacy: Target,
     server_instance: String,
+    bootstrap_admin_password: String,
     bootstrap_password: String,
     migration_password: String,
     runtime_password: String,
@@ -82,18 +85,45 @@ async fn run() -> Result<()> {
     };
 
     assert_distinct_targets(&config)?;
-    let fresh_bootstrap =
-        connect_target(&config.fresh, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
-    let unknown_bootstrap =
-        connect_target(&config.unknown, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
-    let legacy_bootstrap =
-        connect_target(&config.legacy, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
+    let fresh_bootstrap = connect_target(
+        &config.fresh,
+        BOOTSTRAP_ADMIN_ROLE,
+        &config.bootstrap_admin_password,
+    )
+    .await?;
+    let unknown_bootstrap = connect_target(
+        &config.unknown,
+        BOOTSTRAP_ADMIN_ROLE,
+        &config.bootstrap_admin_password,
+    )
+    .await?;
+    let legacy_bootstrap = connect_target(
+        &config.legacy,
+        BOOTSTRAP_ADMIN_ROLE,
+        &config.bootstrap_admin_password,
+    )
+    .await?;
     assert_distinct_connected_targets(&[&fresh_bootstrap, &unknown_bootstrap, &legacy_bootstrap])
         .await?;
+    // The temporary admin is intentionally demoted by the fresh provisioning
+    // path. Validate the fail-closed databases while their pre-seeded
+    // fingerprint reader is still an authenticated admin backend; after
+    // demotion there must be no credential available that can read those
+    // intentionally rejected databases.
+    verify_unknown_database_rejection(&config, &unknown_bootstrap).await?;
+    verify_legacy_database_rejection(&config, &legacy_bootstrap).await?;
     if Repository::inspect_database_identity(&fresh_bootstrap).await? != DatabaseIdentity::Fresh {
         return Err("fresh role-split test database is not empty".into());
     }
 
+    // Explicitly close every cached temporary-admin backend before fresh
+    // provisioning. Dropping a handle is not enough for this security
+    // boundary: a pool may retain an authenticated superuser connection until
+    // its async close completes. All subsequent positive read-backs therefore
+    // use a newly authenticated, hardened permanent-bootstrap session.
+    fresh_bootstrap.close().await;
+    unknown_bootstrap.close().await;
+    legacy_bootstrap.close().await;
     run_concurrent_migrators(&config, &config.fresh).await?;
     let runtime = connect_target(&config.fresh, RUNTIME_ROLE, &config.runtime_password).await?;
     let migration = connect_target(
@@ -104,18 +134,21 @@ async fn run() -> Result<()> {
     .await?;
     Repository::verify_migration_owner_attestation(&migration).await?;
     Repository::verify_runtime_pool(&runtime, &config.server_instance, RUNTIME_ROLE).await?;
+    assert_hardened_bootstrap(&config, &config.fresh).await?;
+    assert_hardened_admin_login_rejected(&config, &config.fresh).await?;
     exercise_runtime_dml(&runtime).await?;
     exercise_runtime_denials(&runtime).await?;
 
+    let fresh_bootstrap =
+        connect_target(&config.fresh, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
     let repeat_before = catalog_fingerprint(&fresh_bootstrap).await?;
     run_migrator(&config, &config.fresh).await?;
     let repeat_after = catalog_fingerprint(&fresh_bootstrap).await?;
     if repeat_before != repeat_after {
         return Err("repeat migrator changed the already-attested v2 database".into());
     }
+    assert_hardened_admin_login_rejected(&config, &config.fresh).await?;
 
-    verify_unknown_database_rejection(&config, &unknown_bootstrap).await?;
-    verify_legacy_database_rejection(&config, &legacy_bootstrap).await?;
     Ok(())
 }
 
@@ -126,6 +159,7 @@ impl Config {
         let legacy = target(LEGACY_URL)?;
         let server_instance = required(SERVER_INSTANCE)?;
         let bootstrap_password = required(BOOTSTRAP_PASSWORD)?;
+        let bootstrap_admin_password = required(BOOTSTRAP_ADMIN_PASSWORD)?;
         let migration_password = required(MIGRATION_PASSWORD)?;
         let runtime_password = required(RUNTIME_PASSWORD)?;
         let migrator = env::var("FUMINIWA_V2_MIGRATOR_BIN")
@@ -149,6 +183,7 @@ impl Config {
             unknown,
             legacy,
             server_instance,
+            bootstrap_admin_password,
             bootstrap_password,
             migration_password,
             runtime_password,
@@ -291,6 +326,14 @@ fn child_environment(config: &Config, target: &Target) -> Result<Vec<(String, St
             BOOTSTRAP_ROLE.into(),
         ),
         (
+            "FUMINIWA_SYNC_V2_BOOTSTRAP_ADMIN_USER".into(),
+            BOOTSTRAP_ADMIN_ROLE.into(),
+        ),
+        (
+            "FUMINIWA_SYNC_V2_BOOTSTRAP_ADMIN_PASSWORD_FILE".into(),
+            config.bootstrap_admin_password.clone(),
+        ),
+        (
             "FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE".into(),
             config.bootstrap_password.clone(),
         ),
@@ -308,6 +351,87 @@ fn child_environment(config: &Config, target: &Target) -> Result<Vec<(String, St
             config.runtime_password.clone(),
         ),
     ])
+}
+
+async fn assert_hardened_bootstrap(config: &Config, target: &Target) -> Result<()> {
+    let pool = connect_target(target, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
+    let (
+        current_user,
+        is_superuser,
+        role_superuser,
+        role_createdb,
+        role_createrole,
+        role_inherit,
+        role_replication,
+        role_bypassrls,
+        is_owner,
+        can_connect,
+        can_create,
+    ): (
+        String,
+        String,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+        bool,
+    ) = sqlx::query_as(
+        "SELECT current_user, current_setting('is_superuser'), r.rolsuper,
+                r.rolcreatedb, r.rolcreaterole, r.rolinherit,
+                r.rolreplication, r.rolbypassrls,
+                d.datdba=r.oid,
+                has_database_privilege(current_user,current_database(),'CONNECT'),
+                has_database_privilege(current_user,current_database(),'CREATE')
+         FROM pg_roles r CROSS JOIN pg_database d
+         WHERE r.rolname=current_user AND d.datname=current_database()",
+    )
+    .fetch_one(&pool)
+    .await?;
+    if current_user != BOOTSTRAP_ROLE
+        || is_superuser != "off"
+        || role_superuser
+        || role_createdb
+        || role_createrole
+        || role_inherit
+        || role_replication
+        || role_bypassrls
+        || !is_owner
+        || !can_connect
+        || !can_create
+    {
+        return Err("bootstrap role did not establish a non-superuser session".into());
+    }
+    Ok(())
+}
+
+async fn assert_hardened_admin_login_rejected(config: &Config, target: &Target) -> Result<()> {
+    let bootstrap = connect_target(target, BOOTSTRAP_ROLE, &config.bootstrap_password).await?;
+    let flags: (bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT rolsuper, rolcreatedb, rolcreaterole, rolcanlogin,
+                rolinherit, rolreplication, rolbypassrls
+         FROM pg_roles WHERE rolname=$1",
+    )
+    .bind(BOOTSTRAP_ADMIN_ROLE)
+    .fetch_one(&bootstrap)
+    .await?;
+    if flags.0 || flags.1 || flags.2 || flags.3 || flags.4 || flags.5 || flags.6 {
+        return Err("temporary bootstrap admin is not fully hardened".into());
+    }
+    if connect_target(
+        target,
+        BOOTSTRAP_ADMIN_ROLE,
+        &config.bootstrap_admin_password,
+    )
+    .await
+    .is_ok()
+    {
+        return Err("temporary bootstrap admin still accepts login".into());
+    }
+    Ok(())
 }
 
 async fn run_concurrent_migrators(config: &Config, target: &Target) -> Result<()> {
@@ -413,7 +537,13 @@ async fn expect_permission_denied(pool: &PgPool, statement: &str) -> Result<()> 
         .await
         .expect_err("runtime operation unexpectedly succeeded");
     let message = error.to_string().to_ascii_lowercase();
-    if !message.contains("permission denied") {
+    // PostgreSQL reports ownership-protected DDL as "must be owner" rather
+    // than "permission denied". Both are a successful negative assertion:
+    // the runtime role must not be able to mutate authority-owned objects.
+    if !message.contains("permission denied")
+        && !message.contains("must be owner")
+        && !message.contains("not owner")
+    {
         return Err(format!("runtime operation failed for the wrong reason: {statement}").into());
     }
     Ok(())
@@ -469,7 +599,7 @@ async fn catalog_fingerprint(pool: &PgPool) -> Result<Vec<String>> {
         "SELECT COALESCE(string_agg(format('%s|%s|%s',n.nspname,t.typname,t.typowner),E'\\n' ORDER BY n.nspname,t.typname),'') FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname IN ('auth_v1','sync_v2','public')",
         "SELECT COALESCE(string_agg(format('%s|%s|%s',n.nspname,p.proname,p.proowner),E'\\n' ORDER BY n.nspname,p.proname,p.oid),'') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('auth_v1','sync_v2','public')",
         "SELECT COALESCE(string_agg(format('%s|%s|%s',n.nspname,c.relname,a.attname),E'\\n' ORDER BY n.nspname,c.relname,a.attnum),'') FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE a.attnum>0 AND NOT a.attisdropped AND (n.nspname IN ('auth_v1','sync_v2') OR (n.nspname='public' AND c.relname='_sqlx_migrations'))",
-        "SELECT COALESCE(string_agg(format('%s|%s|%s|%s|%s|%s|%s',rolname,rolsuper,rolcreaterole,rolcreatedb,rolcanlogin,rolbypassrls,rolpassword),E'\\n' ORDER BY rolname),'') FROM pg_roles WHERE rolname IN ('fuminiwa_sync_v2_bootstrap','fuminiwa_sync_v2_migrator','fuminiwa_sync_v2_runtime')",
+        "SELECT COALESCE(string_agg(format('%s|%s|%s|%s|%s|%s|%s|%s',rolname,rolsuper,rolcreaterole,rolcreatedb,rolcanlogin,rolbypassrls,rolreplication,rolinherit),E'\\n' ORDER BY rolname),'') FROM pg_roles WHERE rolname IN ('fuminiwa_sync_v2_bootstrap','fuminiwa_sync_v2_bootstrap_admin','fuminiwa_sync_v2_migrator','fuminiwa_sync_v2_runtime')",
         "SELECT COALESCE(string_agg(format('%s|%s',member::regrole,roleid::regrole),E'\\n' ORDER BY member,roleid),'') FROM pg_auth_members WHERE member IN (SELECT oid FROM pg_roles WHERE rolname IN ('fuminiwa_sync_v2_bootstrap','fuminiwa_sync_v2_migrator','fuminiwa_sync_v2_runtime'))",
     ];
     let mut values = Vec::with_capacity(queries.len());
@@ -499,6 +629,19 @@ async fn catalog_fingerprint(pool: &PgPool) -> Result<Vec<String>> {
     } else {
         String::new()
     });
+    values.push(
+        if table_exists(pool, "public.role_split_unknown_marker").await? {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT COALESCE(string_agg(marker,E'\\n' ORDER BY marker),'')
+             FROM public.role_split_unknown_marker",
+            )
+            .fetch_one(pool)
+            .await?
+            .unwrap_or_default()
+        } else {
+            String::new()
+        },
+    );
     Ok(values)
 }
 

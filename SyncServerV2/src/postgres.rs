@@ -37,6 +37,8 @@ const MAX_LINEAGE_NODES: i64 = 4096;
 pub const MIGRATION_OWNER_ROLE: &str = "fuminiwa_sync_v2_migrator";
 pub const RUNTIME_ROLE: &str = "fuminiwa_sync_v2_runtime";
 pub const BOOTSTRAP_ROLE: &str = "fuminiwa_sync_v2_bootstrap";
+pub const BOOTSTRAP_ADMIN_ROLE: &str = "fuminiwa_sync_v2_bootstrap_admin";
+pub const POSTGRES_INIT_ROLE: &str = "fuminiwa_sync_v2_postgres_init";
 
 const SYNC_RUNTIME_DML_TABLES: &[&str] = &[
     "account_scopes",

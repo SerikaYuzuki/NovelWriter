@@ -13,16 +13,18 @@ sync schema:      sync_v2 (separate schema namespace)
 object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
 ```
 
-The v2 Compose revision uses three isolated database roles:
+The v2 Compose revision uses one initialization role plus three isolated
+application roles:
 
-- `fuminiwa_sync_v2_bootstrap` is used only as a locked, fresh-database
-  provisioning administrator. The official PostgreSQL image may initially
-  give this login superuser/role-management/replication attributes; the
-  migrator accepts those attributes only after a fresh identity check, creates
-  the two application roles, revokes PUBLIC database/schema defaults, and
-  finally applies the exact `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
-  NOREPLICATION NOBYPASSRLS` downgrade before the final read-back. It does not
-  run application migrations.
+- The official PostgreSQL OID-10 initialization role is used only by the
+  one-shot `bootstrap-admin` service. It creates
+  `fuminiwa_sync_v2_bootstrap_admin` under the deployment advisory lock; the
+  official role is never passed to the migrator or runtime.
+- `fuminiwa_sync_v2_bootstrap` is the permanent login/connect authority and
+  target-database owner. After migration and grants, the temporary admin is
+  hardened to `NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+  NOREPLICATION NOBYPASSRLS`; the migrator closes that authority and
+  reattests through a fresh permanent-bootstrap connection.
 - `fuminiwa_sync_v2_migrator` is the schema/object owner. The one-shot
   `migrator` service runs SQLx DDL, writes `_sqlx_migrations`, bootstraps
   `server_meta` and `deployment_binding`, and grants the audited runtime ACL.
@@ -41,11 +43,22 @@ identity, role/ACL, exact marker, and binding read-back. PostgreSQL has no
   PostgreSQL privilege required for the server's nextval-backed inserts.
 
 Fresh bootstrap is the only path that creates roles, applies grants, or
-downgrades the bootstrap role. A re-run against an exact v2 volume first
-attests the already-hardened bootstrap flags and is read-only: it never
+downgrades the temporary admin. A re-run against an exact v2 volume first
+connects through the already-hardened permanent bootstrap role and is
+read-only: it never
 re-requests role DDL or grants. Legacy, single-role, mixed, partial, or
 unknown databases fail closed; the migrator never auto-ALTERs, rewrites
 ownership, or grants privileges on an existing volume.
+
+The `bootstrap-admin` Compose service and official PostgreSQL initialization
+secret exist only in `docker-compose.provision.yml` under the explicit
+`provision` profile. For a newly-created volume, merge that file and run
+`docker compose --profile provision run --rm bootstrap-admin` once before
+starting the normal migrator/server graph. If that step is omitted, fresh
+PostgreSQL initialization and the migrator fail closed. Normal startup and
+exact-v2 restart use only `docker-compose.yml`; the official OID-10 secret is
+absent from the rendered graph, cannot be mounted or contacted, and the
+migrator uses only the permanent bootstrap read-back path.
 
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks
@@ -62,12 +75,12 @@ not need that lock for DDL coordination because it lacks DDL authority; it
 performs a read-only inventory and metadata check after the migrator service
 has completed successfully.
 
-Before that inventory, the locked bootstrap session is attested separately:
-`current_user` must be `fuminiwa_sync_v2_bootstrap`, its bootstrap flags must be
-the expected administrator flags, and it must own the target database with
-`CONNECT`/`CREATE`. Fresh role-count preflight counts only the migration-owner
-and runtime roles; the bootstrap role is expected to already exist and is
-validated by this separate session attestation.
+Before that inventory, the locked permanent-bootstrap session is attested
+separately: `current_user` must be `fuminiwa_sync_v2_bootstrap`, its session
+must report `is_superuser=off`, and it must own the target database with
+`CONNECT`/`CREATE`. The temporary admin's catalog flags are also read back as
+non-login and non-privileged. Fresh role-count preflight rejects any partial
+bootstrap role set.
 
 Migration authority names every index and constraint that could exceed
 PostgreSQL's 63-byte identifier limit (including

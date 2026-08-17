@@ -1040,3 +1040,14 @@
   4. workerはWorkごとのowner UUIDを持ち、cancel後の非協力remote応答は新worker slotを消去せず、ACK／failure／UI projectionを適用しない。history/catalog cursorはaccount、server、protocol、fence、session generationの境界を検査する。既存retirement前v2 DBは固定legacy DDLのchecksumをattestしてから、transactionalな`retired` migrationを行い、未知schemaはbyte/catalogを変更せず拒否する。
 - **理由**: 認証応答、remote worker、SQLite scope transitionの到着順をUIだけで管理すると、旧tenantへの送信、旧receiptの新fence適用、同WorkIDの暗黙merge、またはlocal原稿の棚消失が起こり得る。owner付き停止とdurable replanを単一境界にすることで、local-first編集を継続しながらaccount namespaceを越えるremote mutationとデータ損失を防ぐ。
 - **詳細**: 実装契約とschema／migrationは`docs/SNAPSHOT_SYNC_V2.md`、`docs/sync/v2/sqlite.sql`、shared `NovelSyncV2Application`／`NovelSyncV2Store`を正とする。
+
+## D-085: Snapshot Sync v2のPostgreSQL初期化専用OIDと永続roleを分離する
+
+- **日付**: 2026-08-18 / **状態**: 採択・隔離PostgreSQL Gate PASS、staging切替前
+- **D-083との関係**: D-083の「公式image初期bootstrap自身を最終的に縮退させる」案は、PostgreSQL公式imageの初期OID 10 roleをその接続から変更できないため成立しない。この部分を本Decisionで置き換える。D-083の決定的identifier命名、exact-v2 repeat、unknown／legacy fail-closed境界は維持する。
+- **内容**:
+  1. `POSTGRES_USER`（公式初期OID 10）とそのsecretはコンテナ初期化専用とし、runtime／通常migratorのDSN、environment、secret mount、runnerへ渡さない。公式secretと`bootstrap_admin` serviceはfresh専用`docker-compose.provision.yml`へ物理分離し、明示`provision` profileのone-shotからだけ公式roleへ接続して一時`bootstrap_admin`を作成する。
+  2. 一時`bootstrap_admin`がadvisory lock下で固定のpermanent bootstrap、migration owner、runtime role、database ownership、schema／table／sequence ACLを確立する。migration・read-back・attestation完了後、一時roleは`NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD NULL`へ縮退する。以後の管理接続は一時roleを再利用せず、permanent bootstrapへ新規接続して`is_superuser=off`を含めてread-backする。
+  3. concurrent loserが縮退前に一時roleへ接続済みでも、lock取得直後に実効superuserとcatalog属性を再検査し、縮退済みならpool／backendをcloseしてpermanent bootstrapへbounded retryする。縮退済みroleから`pg_authid`／secret verifierを読むことは禁止し、一時roleのlogin拒否は新規接続で検証する。
+  4. exact-v2 repeatはprovision profileを起動せず、公式OID10 secretをmount／connectせず、DDL、role変更、GRANT、metadata修復を行わず、permanent bootstrapによるread-only attestationだけを実行する。freshでprovisionを忘れたmigratorはfail closedする。unknown／legacyはmarker／catalog／data fingerprintを保持したままfail closedする。隔離Gateはfresh、concurrent 2 migrators、runtime DDL deny、migration DML deny、temp-admin login reject、repeat、unknown／legacy unchanged、旧container／volume pre/post unchangedを必須証跡とする。
+- **詳細**: `SyncServerV2/docker-compose.yml`、`SyncServerV2/scripts/bootstrap-admin.sql`、`SyncServerV2/src/bin/sync_v2_migrator.rs`、`SyncServerV2/src/bin/sync_v2_role_split_runner.rs`、`docs/sync/v2/deployment.md`を正とする。
