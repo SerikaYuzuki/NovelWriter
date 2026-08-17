@@ -15,8 +15,9 @@ Options:
   --force             Replace an existing output file
   -h, --help          Show this help
 
-The remote sudo timestamp must already be authorized (for example, run
-`ssh -tt USER@HOST 'sudo -v'` first). No password is read or stored here.
+The script may prompt SSH/sudo interactively, but never reads or stores the
+password itself. A public CA is staged briefly under the remote user's `/tmp`
+and removed on exit.
 USAGE
 }
 
@@ -68,6 +69,7 @@ while (($# > 0)); do
 done
 
 command -v ssh >/dev/null || fail "ssh is required"
+command -v scp >/dev/null || fail "scp is required"
 command -v openssl >/dev/null || fail "openssl is required"
 command -v curl >/dev/null || fail "curl is required"
 command -v jq >/dev/null || fail "jq is required"
@@ -84,17 +86,27 @@ mkdir -p "$output_dir"
 [[ -d "$output_dir" ]] || fail "output directory is not a directory"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/fuminiwa-sync-v2-ca.XXXXXX")"
-trap 'rm -rf "$work_dir"' EXIT
 root_pem="$work_dir/root.crt"
 leaf_pem="$work_dir/leaf.crt"
+leaf_chain="$work_dir/leaf-chain.txt"
 capabilities_json="$work_dir/capabilities.json"
+remote_temp="/tmp/fuminiwa-sync-v2-ca.$$.crt"
+
+cleanup_remote() {
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_user@$staging_host" \
+        "rm -f -- '$remote_temp'" >/dev/null 2>&1 || true
+}
+trap 'cleanup_remote; rm -rf "$work_dir"' EXIT
 
 # The exact v2 edge container and path are intentional. --user 0 is needed
 # because Caddy's public CA is owned by the container root; no old container or
 # volume name is accepted by this command.
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_user@$staging_host" \
-    "sudo -n docker exec --user 0 fuminiwa-sync-v2-edge cat /data/caddy/pki/authorities/local/root.crt" \
-    > "$root_pem" || fail "could not read the v2 Caddy root; authorize sudo first"
+ssh -tt -o ConnectTimeout=10 "$ssh_user@$staging_host" \
+    "umask 077; sudo docker exec --user 0 fuminiwa-sync-v2-edge cat /data/caddy/pki/authorities/local/root.crt > '$remote_temp' && chmod 0644 '$remote_temp'" \
+    || fail "could not stage the v2 Caddy root"
+scp -q -o ConnectTimeout=10 "$ssh_user@$staging_host:$remote_temp" "$root_pem" \
+    || fail "could not copy the staged v2 Caddy root"
+cleanup_remote
 
 openssl x509 -in "$root_pem" -noout >/dev/null \
     || fail "remote CA is not a valid X.509 certificate"
@@ -106,10 +118,17 @@ root_constraints="$(openssl x509 -in "$root_pem" -noout -text | grep -F 'CA:TRUE
 # Inspect the leaf SAN separately. The HTTP read-back below uses the exported
 # CA with curl --cacert; no -k/--insecure mode is used.
 openssl s_client -connect "$staging_host:$staging_port" \
-    -servername "$staging_host" -showcerts < /dev/null 2>/dev/null \
-    | openssl x509 -out "$leaf_pem" \
+    -servername "$staging_host" -showcerts < /dev/null \
+    > "$leaf_chain" 2>/dev/null || true
+awk '
+    /-----BEGIN CERTIFICATE-----/ { capturing = 1 }
+    capturing { print }
+    /-----END CERTIFICATE-----/ && capturing { exit }
+' "$leaf_chain" > "$leaf_pem"
+openssl x509 -in "$leaf_pem" -noout >/dev/null \
     || fail "could not read the staging leaf certificate"
-leaf_san="$(openssl x509 -in "$leaf_pem" -noout -ext subjectAltName 2>/dev/null || true)"
+leaf_san="$(openssl x509 -in "$leaf_pem" -noout -text 2>/dev/null \
+    | grep -A1 -F 'Subject Alternative Name' || true)"
 printf '%s\n' "$leaf_san" | grep -Eq 'IP Address:192\.168\.11\.5([,[:space:]]|$)' \
     || fail "staging leaf SAN does not contain IP Address:192.168.11.5"
 leaf_fingerprint="$(openssl x509 -in "$leaf_pem" -noout -fingerprint -sha256 | cut -d= -f2-)"

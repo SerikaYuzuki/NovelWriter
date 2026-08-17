@@ -19,8 +19,8 @@ It also checks the leaf certificate SAN, prints SHA-256 fingerprints, and
 performs an HTTPS auth-capabilities read-back with the exported CA:
 
 ```sh
-# The script requires a sudo timestamp that is valid for non-interactive SSH.
-# It never reads or stores a password.
+# The script may prompt for SSH/sudo interactively, but never reads or stores
+# a password. It stages the public CA briefly under the remote user's /tmp.
 Scripts/export-sync-v2-staging-ca.sh \
   --output "$HOME/Downloads/fuminiwa-sync-v2-root.crt"
 ```
