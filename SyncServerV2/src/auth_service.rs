@@ -5,9 +5,10 @@ use crate::{
     auth_apple::{AppleClientSecretSigner, ProductionAppleProvider, ProductionAppleTransport},
     auth_application::{AuthApplication, AuthRepository, HmacSecretHasher},
     auth_domain::{
-        AuthError, AuthenticatedPrincipal, SecretHasher, CHALLENGE_LIFETIME_SECONDS,
-        CREATE_CHALLENGE_COMMAND, EXCHANGE_APPLE_COMMAND, REFRESH_TOKEN_LIFETIME_SECONDS,
-        REVOKE_SESSION_COMMAND, ROTATE_REFRESH_COMMAND,
+        AppleProvider, AuthError, AuthenticatedPrincipal, OperationId, SecretHasher,
+        VerifiedProviderCredential, CHALLENGE_LIFETIME_SECONDS, CREATE_CHALLENGE_COMMAND,
+        EXCHANGE_APPLE_COMMAND, REFRESH_TOKEN_LIFETIME_SECONDS, REVOKE_SESSION_COMMAND,
+        ROTATE_REFRESH_COMMAND,
     },
     auth_http::{AuthApiError, AuthHttpService, AuthResponse},
     auth_postgres::AuthPostgresRepository,
@@ -139,6 +140,38 @@ impl ProductionAuthService {
                 crate::auth_domain::digest_request(body),
             )
             .await
+    }
+
+    /// Bounded, restart-safe provider revocation worker. It never runs on an
+    /// auth or sync request path; callers may schedule it from a background
+    /// task at their preferred cadence.
+    pub async fn run_apple_revocation_batch(&self, limit: i64) -> Result<usize, AuthError> {
+        let now = chrono::Utc::now();
+        let entries = self
+            .application
+            .repository
+            .claim_apple_revocations(now, limit)
+            .await?;
+        let count = entries.len();
+        for entry in entries {
+            let operation = OperationId::new(format!("apple-revoke-{}", entry.credential_id))?;
+            let credential = VerifiedProviderCredential {
+                audience: entry.audience,
+                vault_context: entry.vault_context,
+                encrypted_refresh_token: entry.secret,
+            };
+            let result = self.apple.revoke(&credential, &operation).await;
+            self.application
+                .repository
+                .finish_apple_revocation(
+                    entry.credential_id,
+                    result.as_ref().map(|_| ()),
+                    now,
+                    entry.attempt,
+                )
+                .await?;
+        }
+        Ok(count)
     }
 
     fn parsed(kind: &str, body: &[u8]) -> Result<ParsedAuthCommand, AuthApiError> {

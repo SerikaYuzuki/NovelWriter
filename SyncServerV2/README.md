@@ -67,3 +67,14 @@ follows Apple's primary documentation for
 and [JWKS retrieval](https://developer.apple.com/documentation/signinwithapplerestapi/fetch-apple%27s-public-key-for-verifying-token-signature).
 No private key, provider token, or real identity fixture belongs in this
 repository.
+
+## Staging TLS and health read-back
+
+The included Caddy edge uses `tls internal` only for a LAN staging deployment.
+The generated local CA must be explicitly trusted on each test device; it is
+not a production certificate. Production requires a separately managed,
+publicly trusted TLS edge and must not expose the Axum listener directly.
+Before device testing, verify the edge health response and certificate chain
+from the same network path used by the app, then read back the authenticated
+capabilities response and a newly created v2 work. A successful container
+healthcheck alone is not a TLS or account-isolation read-back.

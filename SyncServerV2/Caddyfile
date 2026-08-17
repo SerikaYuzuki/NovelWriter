@@ -3,6 +3,8 @@
 }
 
 :443 {
+    # tls internal is a staging-only local CA. Production must terminate with
+    # a publicly trusted certificate at the deployment edge.
     tls internal
     reverse_proxy server:8092
 }

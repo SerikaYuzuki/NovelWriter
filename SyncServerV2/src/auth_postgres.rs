@@ -31,6 +31,16 @@ pub struct AuthPostgresRepository {
     token_hmac_key: Arc<[u8; 32]>,
     server_instance_id: Arc<str>,
 }
+
+#[derive(Clone, Debug)]
+pub struct PendingAppleRevocation {
+    pub credential_id: Uuid,
+    pub audience: String,
+    pub vault_context: String,
+    pub secret: SealedSecret,
+    pub attempt: i32,
+}
+
 impl AuthPostgresRepository {
     pub fn new(
         pool: PgPool,
@@ -101,33 +111,149 @@ impl AuthPostgresRepository {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(Self::map_db)?;
-            if latest.is_some_and(|value| value > notification.issued_at_unix) {
+            if latest.is_some_and(|value| value >= notification.event_time_unix) {
                 (Some(account_id), "staleAfterReauthentication")
             } else {
                 let destructive = matches!(
                     notification.notification_type.as_str(),
-                    "CONSENT_REVOKED" | "ACCOUNT_DELETE"
+                    "consent-revoked" | "account-deleted"
                 );
                 if destructive {
                     let fence = random_fence()?;
                     sqlx::query("UPDATE auth_v1.accounts SET auth_epoch=auth_epoch+1,fence=$2,state=CASE WHEN $3 THEN 'deletionPending' ELSE state END,updated_at=now() WHERE account_id=$1")
-                    .bind(&account_id).bind(fence).bind(notification.notification_type == "ACCOUNT_DELETE")
+                    .bind(&account_id).bind(fence).bind(notification.notification_type == "account-deleted")
                     .execute(&mut *tx).await.map_err(Self::map_db)?;
                     sqlx::query("UPDATE auth_v1.auth_sessions SET state='reauthRequired' WHERE account_id=$1 AND state='active'")
                     .bind(&account_id).execute(&mut *tx).await.map_err(Self::map_db)?;
                     sqlx::query("UPDATE auth_v1.provider_credentials SET state='revokeRetryPending' WHERE identity_id=$1 AND state='active'")
                     .bind(identity_id).execute(&mut *tx).await.map_err(Self::map_db)?;
                 }
-                (Some(account_id), "applied")
+                let outcome = if matches!(
+                    notification.notification_type.as_str(),
+                    "email-enabled" | "email-disabled"
+                ) {
+                    "emailStateOnly"
+                } else {
+                    "applied"
+                };
+                (Some(account_id), outcome)
             }
         } else {
             (None, "unknownIdentity")
         };
         sqlx::query("INSERT INTO auth_v1.provider_notification_receipts(provider_config_id,event_key_version,event_key_hmac,request_digest,event_kind,event_issued_at,outcome,account_id) VALUES($1,1,$2,$3,$4,$5,$6,$7)")
             .bind(APPLE_PROVIDER_CONFIG).bind(&event_key).bind(request_digest.as_slice())
-            .bind(&notification.notification_type).bind(notification.issued_at_unix).bind(outcome)
+            .bind(&notification.notification_type).bind(notification.event_time_unix).bind(outcome)
             .bind(account_id)
             .execute(&mut *tx).await.map_err(Self::map_db)?;
+        tx.commit().await.map_err(Self::map_db)
+    }
+
+    /// Claims a bounded batch of provider revocations. The lease and attempt
+    /// increment are durable before the Apple call, so a crash or lost ACK can
+    /// safely resume without sending a different credential generation.
+    pub async fn claim_apple_revocations(
+        &self,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<PendingAppleRevocation>, AuthError> {
+        if !(1..=64).contains(&limit) {
+            return Err(AuthError::InvalidRequest);
+        }
+        let lease_until = now + chrono::Duration::seconds(60);
+        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+        let rows = sqlx::query(
+            "SELECT credential_id,original_audience,vault_context,key_version,ciphertext,revoke_attempts
+               FROM auth_v1.provider_credentials
+              WHERE state='revokeRetryPending'
+                AND (revoke_next_attempt_at IS NULL OR revoke_next_attempt_at <= $1)
+                AND (revoke_lease_until IS NULL OR revoke_lease_until <= $1)
+              ORDER BY created_at,credential_id
+              FOR UPDATE SKIP LOCKED
+              LIMIT $2",
+        )
+        .bind(now)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(Self::map_db)?;
+        let mut claimed = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.try_get("credential_id").map_err(Self::map_db)?;
+            let attempt: i32 = row.try_get("revoke_attempts").map_err(Self::map_db)?;
+            sqlx::query(
+                "UPDATE auth_v1.provider_credentials
+                    SET revoke_attempts=revoke_attempts+1,revoke_lease_until=$2,
+                        revoke_last_error=NULL
+                  WHERE credential_id=$1 AND state='revokeRetryPending'",
+            )
+            .bind(id)
+            .bind(lease_until)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+            claimed.push(PendingAppleRevocation {
+                credential_id: id,
+                audience: row.try_get("original_audience").map_err(Self::map_db)?,
+                vault_context: row.try_get("vault_context").map_err(Self::map_db)?,
+                secret: SealedSecret {
+                    key_version: row.try_get("key_version").map_err(Self::map_db)?,
+                    ciphertext: row.try_get("ciphertext").map_err(Self::map_db)?,
+                },
+                attempt: attempt + 1,
+            });
+        }
+        tx.commit().await.map_err(Self::map_db)?;
+        Ok(claimed)
+    }
+
+    pub async fn finish_apple_revocation(
+        &self,
+        credential_id: Uuid,
+        outcome: Result<(), &AuthError>,
+        now: DateTime<Utc>,
+        attempt: i32,
+    ) -> Result<(), AuthError> {
+        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+        match outcome {
+            Ok(()) | Err(AuthError::InvalidExternalIdentity) => {
+                sqlx::query(
+                    "UPDATE auth_v1.provider_credentials
+                        SET state='revoked',revoked_at=COALESCE(revoked_at,$2),
+                            revoke_lease_until=NULL,revoke_next_attempt_at=NULL,
+                            revoke_last_error=NULL
+                      WHERE credential_id=$1 AND state='revokeRetryPending'",
+                )
+                .bind(credential_id)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::map_db)?;
+            }
+            Err(error) => {
+                let shift = attempt.clamp(0, 10) as u32;
+                let delay = 2_i64.saturating_pow(shift).min(3600);
+                let message = match error {
+                    AuthError::ProviderExchangeIndeterminate => "providerIndeterminate",
+                    AuthError::Database(_) => "database",
+                    AuthError::Vault => "vault",
+                    _ => "retryable",
+                };
+                sqlx::query(
+                    "UPDATE auth_v1.provider_credentials
+                        SET revoke_lease_until=NULL,
+                            revoke_next_attempt_at=$2,
+                            revoke_last_error=$3
+                      WHERE credential_id=$1 AND state='revokeRetryPending'",
+                )
+                .bind(credential_id)
+                .bind(now + chrono::Duration::seconds(delay))
+                .bind(message)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::map_db)?;
+            }
+        }
         tx.commit().await.map_err(Self::map_db)
     }
     fn hmac(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {

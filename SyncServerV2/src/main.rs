@@ -42,6 +42,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         apple_signer,
         apple_transport,
     )?);
+    let revocation_service = auth_service.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            ticker.tick().await;
+            if let Err(error) = revocation_service.run_apple_revocation_batch(16).await {
+                tracing::warn!(?error, "apple revocation worker iteration failed");
+            }
+        }
+    });
     let access_authenticator: Arc<dyn AccessAuthenticator> = auth_service.clone();
     let auth_http_service: Arc<dyn AuthHttpService> = auth_service;
     let app = router(AppState {

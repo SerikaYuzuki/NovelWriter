@@ -33,6 +33,7 @@ pub struct AppleS2SNotification {
     pub jti: String,
     pub audience: String,
     pub issued_at_unix: i64,
+    pub event_time_unix: i64,
 }
 
 #[derive(Clone)]
@@ -308,30 +309,32 @@ impl<T, V> ProductionAppleProvider<T, V> {
         validation.set_issuer(&[APPLE_ISSUER]);
         validation.set_audience(&[MAC_AUDIENCE, IOS_AUDIENCE]);
         validation.leeway = MAX_CLOCK_SKEW_SECONDS as u64;
-        validation.set_required_spec_claims(&["iss", "aud", "iat", "jti", "sub"]);
+        validation.set_required_spec_claims(&["iss", "aud", "iat", "jti", "events"]);
         let claims = decode::<AppleS2SNotificationClaims>(token, &key, &validation)
             .map_err(|_| AuthError::InvalidExternalIdentity)?
             .claims;
         if claims.iss != APPLE_ISSUER
-            || claims.subject.is_empty()
-            || claims.subject.len() > 512
             || claims.jti.is_empty()
             || claims.jti.len() > 512
-            || claims.issued_at < now_unix - MAX_CLOCK_SKEW_SECONDS
             || claims.issued_at > now_unix + MAX_CLOCK_SKEW_SECONDS
+            || claims.events.sub.is_empty()
+            || claims.events.sub.len() > 512
+            || claims.events.event_time <= 0
+            || claims.events.event_time > now_unix + MAX_CLOCK_SKEW_SECONDS
             || !matches!(
-                claims.notification_type.as_str(),
-                "CONSENT_REVOKED" | "ACCOUNT_DELETE" | "EMAIL_ENABLED" | "EMAIL_DISABLED"
+                claims.events.notification_type.as_str(),
+                "email-enabled" | "email-disabled" | "consent-revoked" | "account-deleted"
             )
         {
             return Err(AuthError::InvalidExternalIdentity);
         }
         Ok(AppleS2SNotification {
-            notification_type: claims.notification_type,
-            subject: claims.subject,
+            notification_type: claims.events.notification_type,
+            subject: claims.events.sub,
             jti: claims.jti,
             audience: claims.aud,
             issued_at_unix: claims.issued_at,
+            event_time_unix: claims.events.event_time,
         })
     }
 }
@@ -339,15 +342,26 @@ impl<T, V> ProductionAppleProvider<T, V> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AppleS2SNotificationClaims {
-    #[serde(rename = "notificationType")]
-    notification_type: String,
-    #[serde(rename = "sub")]
-    subject: String,
     jti: String,
     aud: String,
     iss: String,
     #[serde(rename = "iat")]
     issued_at: i64,
+    events: AppleS2SEvent,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct AppleS2SEvent {
+    #[serde(rename = "type")]
+    notification_type: String,
+    sub: String,
+    event_time: i64,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    is_private_email: Option<bool>,
 }
 
 #[async_trait]
@@ -712,6 +726,84 @@ mod tests {
         let set = provider.fetch_jwks().await.unwrap();
         assert!(matches!(set.decoding_key("fixture-kid"), Some(Ok(_))));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn verifies_official_nested_apple_notification_shape_and_signature() {
+        let now = 1_700_000_000_i64;
+        let private_key = EncodingKey::from_rsa_pem(
+            br"-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAmqpAlQaF3VYqHO2V2TAERubuvrWVGGWMxuE97pfwyVzwQRBa
+fi0NJ9aVKqqoMnsvP7zS6wI+ZmuBtnS4WX8kq3ARveILBRWcczWbPEr6FEy12lqb
+SOonUtfvEcz0URUDQ/7GgR1H+XXngQA3u/95Zn1R0oefg+Xx4seSadSCZzWBgkTM
+wBqBh0gDATO7/nmyabHgh6DpajHhufFM3mUGv3eFTpfzhWWq6hvSZqRZx6PHzop7
+eEw2ahxjy9jaisMeFohrWur7Ts6MwNKdvyQ88sgi2m+1vlUeDSnUvVWbdmsyInhX
+fdq7ALwVRNJFPwlDvUMrGr3X2bf0FHGihVsO1QIDAQABAoIBAC3ul+VqHYFBIJqc
+uF7a0rpXxNlgRdoL9oXtyJ2+A+VZM4SvHaDRMlH9eSlFq1Pqn3qXUjA25181WD1e
+Zo01pCdBzhMNOWaWJ3NTnTmHrsMukOc691jtKSaCOF6Z9ojJ68FavYsEriZYrJrz
+/JlZYq1cVFtoqafbNz25NTM2yE9r70ysgzreiezPLySTFHoZlUQ7eWhv+xU2G3I/
+U/D4hf2wsbcCFvXMw3wozOOHGwJq3euxrnfQJqShYvn/Dd8BNLDmrgTICqJ8h1o0
+PJP4W4+TF9HklukhsOtSKqL09PqNF2PvQCDqqlQ8perCGFgxq6Foi0+bRXzbF4FT
+F+7da3UCgYEAx9+JkErZ6EqcMR7XS0yqC0GmGgkZvvohT2XWYYDSxxCj0UdllkeL
+wRNMbB2oLRj2T/9umcR56RKhJeL18Hvarz1KTix+DtHklQjE7G2eS7mGgX4JaWqg
+twb39cXpLPO/lKmrfcUqz+6OlcdOHMsnzQv5tjFo0vp7KUBjpJODodsCgYEAxhjL
+8SNTB2PhGpx5tJABuOOqho7R1FWp8SUgAdcgb1jgDHlQ7r5LpSQiQ4sUbAIH5Dx+
+75yp7dboqwyzuPTqkVxwx/FaxFZpmEvZCxzESAJVVBzTMh3LjSRT2/qmxE1Eghzq
+u88W+FSnc7064WHftBPJ5qhz+vdM1ZvDr7XRqQ8CgYAiqSQs7p4NR2sApa2GNFxE
+qXTJjQx27t956lob/IAQ31TZRP1b6zpUGCmnkhkJAQwt4Ujnx4ewoHdrn4kw0/mf
+bAyHs/WEUmfGZIfpzDSoQxsNN7MgIcqPEtlLOK/wCLEPccD4hYmgF2mIldB4884K
+I+qA6t6Xv7I9/BmLf71TAwKBgQCtUrLV6D9UPvqMqw39guZO27uvAbTroIwRdpcb
+pRs28T8PCvJaAVv0QLpN+JlEqz42Xwv9IEi51Yg7aOCy2m+GAaiX+D+fe6/mVa6w
+f1npW0lHT/Ula1ZWxssstJFHPgfMA/sJmfcSDhd5N78VxenSCGJmE0tu8QNj/mZo
+DaBE1wKBgCDwK0X00kYOgEnoYx2dAEofLVNvAYUGrzvrNS2OTBivm1g5JXnQ7nHf
+3tXa3o+7AhBVlbPuo4t5sV8Y0qWWd/w2vvnWlt0FT6hOqG/9ApoFmjCtxS43nEYI
+gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
+-----END RSA PRIVATE KEY-----
+",
+        )
+        .unwrap();
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("fixture-notification-kid".into());
+        let claims = serde_json::json!({
+            "iss": APPLE_ISSUER,
+            "aud": MAC_AUDIENCE,
+            "iat": now,
+            "jti": "fixture-jti-1",
+            "events": {"type":"consent-revoked","sub":"apple-sub-1","event_time":now}
+        });
+        let token = encode(&header, &claims, &private_key).unwrap();
+        let transport = FakeTransport {
+            calls: Arc::new(AtomicUsize::new(0)),
+            jwks: serde_json::to_vec(&serde_json::json!({"keys":[{
+                "kty":"RSA","kid":"fixture-notification-kid","use":"sig","alg":"RS256",
+                "n":"mqpAlQaF3VYqHO2V2TAERubuvrWVGGWMxuE97pfwyVzwQRBafi0NJ9aVKqqoMnsvP7zS6wI-ZmuBtnS4WX8kq3ARveILBRWcczWbPEr6FEy12lqbSOonUtfvEcz0URUDQ_7GgR1H-XXngQA3u_95Zn1R0oefg-Xx4seSadSCZzWBgkTMwBqBh0gDATO7_nmyabHgh6DpajHhufFM3mUGv3eFTpfzhWWq6hvSZqRZx6PHzop7eEw2ahxjy9jaisMeFohrWur7Ts6MwNKdvyQ88sgi2m-1vlUeDSnUvVWbdmsyInhXfdq7ALwVRNJFPwlDvUMrGr3X2bf0FHGihVsO1Q",
+                "e":"AQAB"}]})).unwrap(),
+        };
+        let provider = ProductionAppleProvider::new(
+            transport,
+            dummy_signer(),
+            AesGcmCredentialVault::new(1, [7; 32]).unwrap(),
+        );
+        let notification = provider.verify_s2s_notification(&token, now).await.unwrap();
+        assert_eq!(notification.notification_type, "consent-revoked");
+        assert_eq!(notification.subject, "apple-sub-1");
+        assert_eq!(notification.event_time_unix, now);
+        let invalid = encode(
+            &header,
+            &serde_json::json!({
+                "iss": APPLE_ISSUER,
+                "aud": MAC_AUDIENCE,
+                "iat": now,
+                "jti": "fixture-jti-2",
+                "events": {"type":"CONSENT_REVOKED","sub":"apple-sub-1","event_time":now}
+            }),
+            &private_key,
+        )
+        .unwrap();
+        assert_eq!(
+            provider.verify_s2s_notification(&invalid, now).await,
+            Err(AuthError::InvalidExternalIdentity)
+        );
     }
 
     #[test]
