@@ -176,7 +176,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "account_objects_pkey",
                 "snapshots_pkey",
                 "snapshots_account_id_work_id_snapshot_id_key",
-                "snapshots_account_manifest_digest_key",
+                "snapshots_account_id_manifest_digest_key",
                 "snapshot_parents_pkey",
                 "snapshot_entries_pkey",
                 "upload_capabilities_pkey",
