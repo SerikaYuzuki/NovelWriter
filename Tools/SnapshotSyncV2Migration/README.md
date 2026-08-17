@@ -33,6 +33,25 @@ v2へcommitするmigration CLIは、stage内のreportだけを信頼しません
 
 authorityはsource SQLite、archive manifest、classification ledgerのdigestとWorkID別inventory evidenceを記録します。`verified_candidate`は採用候補に過ぎず、authority側のdispositionが文字通り`verified`でなければcommitされません。authority pathのstage内配置、同一ファイル指定、symlink、path swap、canonical bytes変更は拒否されます。
 
+authorityは既存stageから専用builderで生成します。builderはstageを変更せず、stage外のread-only classification/archive/SQLiteとoperator指定の期待digestを突き合わせ、別の新規rootへ`provenance.json`をatomic作成します。
+
+```sh
+swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-authority-builder \
+  --stage-root /path/to/stage \
+  --classification /path/to/classification.csv \
+  --archive-root /path/to/legacy-archive-root \
+  --archive-manifest /path/to/legacy-archive-root/sha256-manifest.txt \
+  --source-sqlite /path/to/legacy-archive-root/library.sqlite \
+  --expected-classification-digest <sha256> \
+  --expected-source-sqlite-digest <sha256> \
+  --expected-archive-manifest-digest <sha256> \
+  --expected-work-count 62 \
+  --authority-id <operator-identity> \
+  --authority-root /path/to/new-authority-root
+```
+
+builderの出力JSONに含まれる`authorityDigest`と`authorityID`を、adopterのcommit引数へ別経路で渡します。既存のauthority rootや入力と重なる出力root、symlink、書込み可能な入力、直前のdigest変更は拒否されます。
+
 各作品について次を検証します。
 
 - canonical `WorkSnapshot`のdecode/materialize

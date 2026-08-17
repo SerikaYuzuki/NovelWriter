@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "SnapshotSyncV2Migration", targets: ["SnapshotSyncV2Migration"]),
         .executable(name: "snapshot-sync-v2-export", targets: ["SnapshotSyncV2Export"]),
+        .executable(name: "snapshot-sync-v2-authority-builder", targets: ["SnapshotSyncV2AuthorityBuilder"]),
         .library(name: "SnapshotSyncV2MigrationCore", targets: ["SnapshotSyncV2MigrationCore"]),
         .executable(name: "snapshot-sync-v2-migration", targets: ["SnapshotSyncV2MigrationCLI"])
     ],
@@ -25,6 +26,10 @@ let package = Package(
         .executableTarget(
             name: "SnapshotSyncV2Export",
             dependencies: ["SnapshotSyncV2Migration"]
+        ),
+        .executableTarget(
+            name: "SnapshotSyncV2AuthorityBuilder",
+            dependencies: ["SnapshotSyncV2MigrationCore"]
         ),
         .target(
             name: "SnapshotSyncV2MigrationCore",

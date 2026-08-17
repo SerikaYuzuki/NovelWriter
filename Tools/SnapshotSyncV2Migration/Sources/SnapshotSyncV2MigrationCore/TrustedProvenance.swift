@@ -62,3 +62,12 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
         self.inventoryEvidenceSHA256 = inventoryEvidenceSHA256
     }
 }
+
+func migrationInventoryEvidenceDigest(_ inventory: SourceInventory) throws -> String {
+    guard var object = try JSONSerialization.jsonObject(with: inventory.registryEvidence) as? [String: Any] else {
+        throw TrustedProvenanceBuilderError.invalidInventoryEvidence
+    }
+    object.removeValue(forKey: "sourcePath")
+    let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    return SHA256Digest.hex(canonical)
+}

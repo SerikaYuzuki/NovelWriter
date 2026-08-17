@@ -75,6 +75,18 @@ the authority disposition `verified`; an authority entry with
 adopter even when a copied package is placed under `verified/` and the stage
 report is rewritten.
 
+The standalone `snapshot-sync-v2-authority-builder` creates this authority
+from an existing committed stage. It takes the stage root, the stage-external
+literal classification CSV, the read-only legacy archive root and manifest,
+and the read-only source SQLite. The operator must provide expected SHA-256
+values for all three external evidence files, the expected Work count, and a
+separate authority identity. It validates all input realpaths, regular-file /
+directory types, symlink absence, non-writable state, committed stage
+report/run, literal classification, and every package's tree/projection/
+path-independent inventory evidence before creating a new authority root.
+The builder never modifies the stage or source archive; an existing or
+overlapping output root, input tamper, or output race fails closed.
+
 The standalone package also inventories every non-hidden tree entry, including
 empty directories and opaque/orphan files. Each entry records its normalized
 relative path, kind, byte count, SHA-256/ObjectID (for files), and empty-directory

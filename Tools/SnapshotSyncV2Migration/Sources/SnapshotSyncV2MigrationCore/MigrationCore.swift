@@ -567,7 +567,12 @@ public actor MigrationRunner {
         guard logicalWorkID.description == entry.workID.uuidString.lowercased() else {
             throw MigrationError.exportProvenanceMismatch("workID")
         }
-        let evidenceDigest = try inventoryEvidenceDigest(archive.inventory)
+        let evidenceDigest: String
+        do {
+            evidenceDigest = try migrationInventoryEvidenceDigest(archive.inventory)
+        } catch {
+            throw MigrationError.exportProvenanceMismatch("inventoryEvidence")
+        }
         guard let trustedEntry = authority.authority.entries.first(where: { $0.workID == entry.workID }),
               authority.authority.entries.count(where: { $0.workID == entry.workID }) == 1,
               trustedEntry.disposition == "verified",
@@ -706,15 +711,6 @@ public actor MigrationRunner {
             throw MigrationError.exportProvenanceMismatch("authorityJSON")
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-    }
-
-    private func inventoryEvidenceDigest(_ inventory: SourceInventory) throws -> String {
-        guard var object = try JSONSerialization.jsonObject(with: inventory.registryEvidence) as? [String: Any] else {
-            throw MigrationError.exportProvenanceMismatch("inventoryEvidence")
-        }
-        object.removeValue(forKey: "sourcePath")
-        let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-        return SHA256Digest.hex(canonical)
     }
 
     private func trustedRegularFile(_ url: URL, fileManager: FileManager) throws -> Data {

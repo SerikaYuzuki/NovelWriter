@@ -374,6 +374,116 @@ struct MigrationTests {
         }
         #expect(!FileManager.default.fileExists(atPath: options.targetRoot.appendingPathComponent("Library/library.sqlite").path))
     }
+
+    @Test
+    func authorityBuilderCreatesExternalAuthorityAndAdopterUsesIt() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let builderOptions = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified")
+        let built = try await TrustedProvenanceBuilder().build(builderOptions)
+        #expect(FileManager.default.fileExists(atPath: built.authorityURL.path))
+        let authorityData = try Data(contentsOf: built.authorityURL)
+        #expect(built.authorityDigest == SHA256Digest.hex(authorityData))
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let adoption = MigrationOptions(
+            sourceURL: trusted,
+            targetRoot: fixture.root.appendingPathComponent("builder-target"),
+            commit: true,
+            expectedSourceDigest: archive.inventory.sourceDigest,
+            verifiedMarker: "builder-marker",
+            account: account,
+            workID: workID,
+            trustedAuthorityRootURL: builderOptions.outputRootURL,
+            trustedAuthorityURL: built.authorityURL,
+            expectedAuthorityDigest: built.authorityDigest,
+            expectedAuthorityID: built.authorityID
+        )
+        let result = try await MigrationRunner().run(adoption)
+        #expect(result.state == .committed)
+    }
+
+    @Test
+    func authorityBuilderPreservesCandidateAndRejectsSelfReportSpoof() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let builderOptions = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified_candidate")
+        let built = try await TrustedProvenanceBuilder().build(builderOptions)
+        let authority = try JSONDecoder().decode(MigrationTrustedProvenanceAuthority.self, from: Data(contentsOf: built.authorityURL))
+        #expect(authority.entries.first?.disposition == "verified_candidate")
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let adoption = MigrationOptions(
+            sourceURL: trusted,
+            targetRoot: fixture.root.appendingPathComponent("candidate-target"),
+            commit: true,
+            expectedSourceDigest: archive.inventory.sourceDigest,
+            verifiedMarker: "candidate-marker",
+            account: account,
+            workID: workID,
+            trustedAuthorityRootURL: builderOptions.outputRootURL,
+            trustedAuthorityURL: built.authorityURL,
+            expectedAuthorityDigest: built.authorityDigest,
+            expectedAuthorityID: built.authorityID
+        )
+        await #expect(throws: MigrationError.self) {
+            try await MigrationRunner().run(adoption)
+        }
+        #expect(!FileManager.default.fileExists(atPath: adoption.targetRoot.appendingPathComponent("Library/library.sqlite").path))
+    }
+
+    @Test
+    func authorityBuilderRejectsTamperExistingOutputSymlinkAndTOCTOU() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let builderOptions = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified")
+        let first = try await TrustedProvenanceBuilder().build(builderOptions)
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(builderOptions)
+        }
+        let tampered = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "tampered-authority", setReadOnly: false)
+        try Data("tampered".utf8).write(to: tampered.classificationLedgerURL, options: .atomic)
+        try fixture.makeReadOnly(tampered.classificationLedgerURL)
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(tampered)
+        }
+        _ = first
+
+        let symlinkRoot = fixture.root.appendingPathComponent("symlink-authority")
+        try FileManager.default.createSymbolicLink(at: symlinkRoot, withDestinationURL: builderOptions.outputRootURL)
+        let symlinkOptions = TrustedProvenanceBuilderOptions(
+            stageRootURL: builderOptions.stageRootURL,
+            classificationLedgerURL: builderOptions.classificationLedgerURL,
+            sourceArchiveRootURL: builderOptions.sourceArchiveRootURL,
+            archiveManifestURL: builderOptions.archiveManifestURL,
+            sourceSQLiteURL: builderOptions.sourceSQLiteURL,
+            expectedClassificationDigest: builderOptions.expectedClassificationDigest,
+            expectedSourceSQLiteDigest: builderOptions.expectedSourceSQLiteDigest,
+            expectedArchiveManifestDigest: builderOptions.expectedArchiveManifestDigest,
+            expectedWorkCount: builderOptions.expectedWorkCount,
+            authorityID: builderOptions.authorityID,
+            outputRootURL: symlinkRoot
+        )
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(symlinkOptions)
+        }
+
+        let toctou = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "toctou-authority")
+        let builder = TrustedProvenanceBuilder(beforeOutputHook: {
+            try fixture.makeWritable(toctou.classificationLedgerURL)
+            try Data("changed".utf8).write(to: toctou.classificationLedgerURL, options: .atomic)
+            try fixture.makeReadOnly(toctou.classificationLedgerURL)
+        })
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await builder.build(toctou)
+        }
+    }
 }
 
 private func knownAccount() -> MigrationAccountBinding {
@@ -545,6 +655,127 @@ private struct Fixture {
                 )
             }
         ))
+    }
+
+    func makeBuilderOptions(
+        archive: ArchiveReadResult,
+        stage: URL,
+        disposition: String,
+        outputName: String = "builder-authority",
+        setReadOnly: Bool = true
+    ) throws -> TrustedProvenanceBuilderOptions {
+        let stageRoot = stage.lastPathComponent == "verified" || stage.pathExtension == "novelpkg"
+            ? stage.deletingLastPathComponent().deletingLastPathComponent()
+            : stage
+        let archiveRoot = root.appendingPathComponent("legacy-archive", isDirectory: true)
+        if FileManager.default.fileExists(atPath: stageRoot.path) {
+            try makeWritableTree(stageRoot)
+        }
+        if FileManager.default.fileExists(atPath: archiveRoot.path) {
+            try makeWritableTree(archiveRoot)
+        }
+        try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+        let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
+        let manifestURL = archiveRoot.appendingPathComponent("sha256-manifest.txt")
+        try Data("legacy sqlite fixture".utf8).write(to: sqliteURL, options: .atomic)
+        let sqliteData = try Data(contentsOf: sqliteURL)
+        let manifest = "\(SHA256Digest.hex(sqliteData)) library.sqlite\n"
+        try Data(manifest.utf8).write(to: manifestURL, options: .atomic)
+        let classificationURL = root.appendingPathComponent("classification.csv")
+        if FileManager.default.fileExists(atPath: classificationURL.path) {
+            try makeWritable(classificationURL)
+        }
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let classification = "\(workID.description),\(disposition),\(archive.encoded.snapshotId.description),2026-01-01T00:00:00Z,1,\(archive.encoded.snapshotId.description),1,operator-evidence\n"
+        try classification.write(to: classificationURL, atomically: true, encoding: .utf8)
+        let manifestData = try Data(contentsOf: manifestURL)
+        let classificationData = try Data(contentsOf: classificationURL)
+        let sourceSQLiteDigest = SHA256Digest.hex(sqliteData)
+        let archiveManifestDigest = SHA256Digest.hex(manifestData)
+        let classificationDigest = SHA256Digest.hex(classificationData)
+        try updateStageEvidence(
+            stage: stageRoot,
+            sourceSQLiteDigest: sourceSQLiteDigest,
+            archiveManifestDigest: archiveManifestDigest,
+            classificationDigest: classificationDigest
+        )
+        if setReadOnly {
+            try makeReadOnly(stageRoot)
+            try makeReadOnly(archiveRoot)
+            try makeReadOnly(classificationURL)
+        }
+        return TrustedProvenanceBuilderOptions(
+            stageRootURL: stageRoot,
+            classificationLedgerURL: classificationURL,
+            sourceArchiveRootURL: archiveRoot,
+            archiveManifestURL: manifestURL,
+            sourceSQLiteURL: sqliteURL,
+            expectedClassificationDigest: classificationDigest,
+            expectedSourceSQLiteDigest: sourceSQLiteDigest,
+            expectedArchiveManifestDigest: archiveManifestDigest,
+            expectedWorkCount: 1,
+            authorityID: "builder-authority",
+            outputRootURL: root.appendingPathComponent(outputName, isDirectory: true)
+        )
+    }
+
+    private func updateStageEvidence(
+        stage: URL,
+        sourceSQLiteDigest: String,
+        archiveManifestDigest: String,
+        classificationDigest: String
+    ) throws {
+        let reportURL = stage.appendingPathComponent("migration-ledger.json")
+        var report = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: reportURL)) as? [String: Any])
+        report["sourceSQLiteSHA256"] = sourceSQLiteDigest
+        report["sourceArchiveManifestSHA256"] = archiveManifestDigest
+        report["classificationLedgerSHA256"] = classificationDigest
+        try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: reportURL, options: .atomic)
+        let runURL = stage.appendingPathComponent("migration-run.json")
+        var run = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: runURL)) as? [String: Any])
+        run["sourceDigest"] = sourceSQLiteDigest
+        run["archiveManifestDigest"] = archiveManifestDigest
+        run["classificationLedgerDigest"] = classificationDigest
+        try JSONSerialization.data(withJSONObject: run, options: [.sortedKeys]).write(to: runURL, options: .atomic)
+        let workID = try #require((report["entries"] as? [[String: Any]])?.first?["workID"] as? String)
+        let stateURL = stage.appendingPathComponent(".state/\(workID).json")
+        var state = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        state["sourceDigest"] = sourceSQLiteDigest
+        try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+    }
+
+    func makeWritable(_ url: URL) throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+    }
+
+    func makeWritableTree(_ url: URL) throws {
+        let fileManager = FileManager.default
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+        if values.isDirectory == true {
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey])
+            while let item = enumerator?.nextObject() as? URL {
+                let itemValues = try item.resourceValues(forKeys: [.isDirectoryKey])
+                try fileManager.setAttributes([.posixPermissions: itemValues.isDirectory == true ? 0o755 : 0o644], ofItemAtPath: item.path)
+            }
+        } else {
+            try makeWritable(url)
+        }
+    }
+
+    func makeReadOnly(_ url: URL) throws {
+        let fileManager = FileManager.default
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+        if values.isDirectory == true {
+            let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey])
+            while let item = enumerator?.nextObject() as? URL {
+                let itemValues = try item.resourceValues(forKeys: [.isDirectoryKey])
+                try fileManager.setAttributes([.posixPermissions: itemValues.isDirectory == true ? 0o555 : 0o444], ofItemAtPath: item.path)
+            }
+            try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: url.path)
+        } else {
+            try fileManager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+        }
     }
 }
 
