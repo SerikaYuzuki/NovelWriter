@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "NovelSync", targets: ["NovelSync"]),
+        .library(name: "NovelSyncV2", targets: ["NovelSyncV2"]),
         .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
         .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
         .library(name: "NovelLocalStore", targets: ["NovelLocalStore"]),
@@ -40,6 +41,10 @@ let package = Package(
         // D-059／D-061の旧revision経路は履歴として残し、D-071のNoteSyncがlive domain。
         .target(
             name: "NovelSync",
+            dependencies: ["NovelCore"]
+        ),
+        .target(
+            name: "NovelSyncV2",
             dependencies: ["NovelCore"]
         ),
         // D-076 R5: filesystem journals for the retired Episode/Work
@@ -108,6 +113,10 @@ let package = Package(
             name: "NovelSyncTests",
             dependencies: ["NovelSync", "NovelSyncLegacy", "NovelSyncTesting", "NovelCore"],
             resources: [.process("Fixtures")]
+        ),
+        .testTarget(
+            name: "NovelSyncV2Tests",
+            dependencies: ["NovelSyncV2", "NovelCore"]
         ),
         .testTarget(
             name: "NovelLibraryTests",
