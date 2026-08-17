@@ -46,6 +46,8 @@ fi
 # sync product.  The block extraction avoids matching package/test targets.
 for target in FUMINIWA FUMINIWAIOS; do
   block="$(awk -v target="$target" '
+    $0 == "targets:" { in_targets=1; next }
+    !in_targets { next }
     $0 ~ "^  " target ":" { in_target=1; next }
     in_target && $0 ~ /^  [A-Za-z0-9_-]+:/ { exit }
     in_target { print }
@@ -53,7 +55,7 @@ for target in FUMINIWA FUMINIWAIOS; do
   [[ -n "$block" ]] || fail "project.yml target is missing: $target"
   grep -Fq 'product: NovelSyncV2Runtime' <<<"$block" \
     || fail "$target does not link NovelSyncV2Runtime"
-  if grep -Eq 'product: (NovelSync|NovelSyncLegacy|NovelSyncV2Store|NovelSyncV2Application)' <<<"$block"; then
+  if grep -Eq 'product: (NovelSync|NovelSyncLegacy|NovelSyncV2Store|NovelSyncV2Application)[[:space:]]*$' <<<"$block"; then
     fail "$target links a non-composed sync product directly"
   fi
 done
