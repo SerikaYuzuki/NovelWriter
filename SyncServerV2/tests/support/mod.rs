@@ -583,6 +583,42 @@ async fn setup_conflicted_work(
     let mut effective_manifest = local_bytes;
     let mut effective_local = local;
 
+    // A lost response can be retried with a new operation ID. It must project
+    // the existing active revision rather than append another candidate.
+    let candidates_before_retry: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_v2.conflict_candidates
+         WHERE account_id=$1 AND conflict_id=$2",
+    )
+    .bind(&principal.account_id)
+    .bind(conflict_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    let (_, retry_status, retry_response) =
+        publish(repo, principal, work_id, local, 3, Some((root, 1))).await?;
+    ensure(
+        retry_status == 409,
+        "semantic conflict retry did not remain pending",
+    )?;
+    let retry = response_value(&retry_response)?;
+    ensure(
+        retry["conflictId"] == Value::String(conflict_id.to_string())
+            && retry["conflictRevision"] == 1
+            && retry["sourceGeneration"] == 3,
+        "semantic conflict retry changed the active revision",
+    )?;
+    let candidates_after_retry: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_v2.conflict_candidates
+         WHERE account_id=$1 AND conflict_id=$2",
+    )
+    .bind(&principal.account_id)
+    .bind(conflict_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    ensure(
+        candidates_after_retry == candidates_before_retry,
+        "semantic conflict retry appended a candidate",
+    )?;
+
     if add_revision {
         let latest_title =
             canonical_json(&json!({"value":format!("local-latest-{work_id}")})).map_err(failure)?;

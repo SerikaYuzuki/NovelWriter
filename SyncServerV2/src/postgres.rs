@@ -245,25 +245,35 @@ impl Repository {
     /// must perform this check before looking up any Work/object/receipt so a
     /// rotated fence cannot continue to expose the old account projection.
     pub async fn check_scope(&self, p: &AuthenticatedPrincipal) -> SyncResult<()> {
-        if let Some(row) = sqlx::query(
+        let Some(row) = sqlx::query(
             "SELECT server_instance_id,protocol_epoch,account_auth_epoch,account_fence
              FROM sync_v2.account_scopes WHERE account_id=$1",
         )
         .bind(&p.account_id)
         .fetch_optional(&self.pool)
         .await?
+        else {
+            return Ok(());
+        };
+        let instance: String = row.try_get("server_instance_id")?;
+        let epoch: i64 = row.try_get("account_auth_epoch")?;
+        let protocol_epoch: i64 = row.try_get("protocol_epoch")?;
+        let fence: String = row.try_get("account_fence")?;
+        if instance != p.server_instance_id || protocol_epoch != p.protocol_epoch {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if epoch > p.account_auth_epoch
+            || (epoch == p.account_auth_epoch && fence != p.account_fence)
         {
-            let instance: String = row.try_get("server_instance_id")?;
-            let epoch: i64 = row.try_get("protocol_epoch")?;
-            let auth_epoch: i64 = row.try_get("account_auth_epoch")?;
-            let fence: String = row.try_get("account_fence")?;
-            if instance != p.server_instance_id
-                || epoch != p.protocol_epoch
-                || auth_epoch > p.account_auth_epoch
-                || (auth_epoch == p.account_auth_epoch && fence != p.account_fence)
-            {
-                return Err(SyncError::AccountFenceMismatch);
-            }
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if epoch < p.account_auth_epoch {
+            // Read-only HTTP endpoints call check_scope before resource
+            // lookup. Rebind here so quarantine happens before a newer-auth
+            // request can read through the old fence.
+            let mut tx = self.pool.begin().await?;
+            self.scope(&mut tx, p).await?;
+            tx.commit().await?;
         }
         Ok(())
     }
@@ -1542,12 +1552,20 @@ impl Repository {
         }
 
         // There is one active conflict lane per Work. Lock it after the Work
-        // row (the repository-wide lock order). A newer divergent candidate
-        // is an immutable revision in that same lane; it must not be rejected
-        // merely because an older candidate is still awaiting a choice.
+        // row (the repository-wide lock order), and lock its current
+        // candidate in the same statement. This preserves semantic retries:
+        // a different operation ID must not create a new revision for equal
+        // candidate bytes.
         let active = sqlx::query(
-            "SELECT conflict_id,current_revision FROM sync_v2.active_conflicts
-             WHERE account_id=$1 AND work_id=$2 AND state='active' FOR UPDATE",
+            "SELECT a.conflict_id,a.current_revision,a.source_generation,
+                    c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id,
+                    c.source_generation AS candidate_source_generation
+             FROM sync_v2.active_conflicts a
+             JOIN sync_v2.conflict_candidates c
+               ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id
+              AND c.work_id=a.work_id AND c.revision=a.current_revision
+             WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'
+             FOR UPDATE OF a,c",
         )
         .bind(&p.account_id)
         .bind(c.work_id)
@@ -1556,6 +1574,58 @@ impl Repository {
         if let Some(active) = active {
             let conflict_id: Uuid = active.try_get("conflict_id")?;
             let current_revision: i64 = active.try_get("current_revision")?;
+            let active_source_generation: i64 = active.try_get("source_generation")?;
+            let candidate_source_generation: i64 = active.try_get("candidate_source_generation")?;
+            if active_source_generation != candidate_source_generation {
+                return Err(SyncError::LineageViolation);
+            }
+            let active_base: Option<Vec<u8>> = active.try_get("base_snapshot_id")?;
+            let active_local: Vec<u8> = active.try_get("local_snapshot_id")?;
+            let active_remote: Vec<u8> = active.try_get("remote_snapshot_id")?;
+            let same_base = expected_id.as_deref() == active_base.as_deref();
+            let same_remote = current.as_deref() == Some(active_remote.as_slice());
+            if c.source_generation == active_source_generation
+                && candidate.as_slice() == active_local.as_slice()
+                && same_base
+                && same_remote
+            {
+                // A lost ACK retried with another operation ID is the same
+                // conflict revision. The outer command still receives its
+                // own receipt, but this lane gets no row or event.
+                return Ok((
+                    409,
+                    Self::response(
+                        c,
+                        "conflictPending",
+                        vec![
+                            ("conflictId".into(), Value::String(conflict_id.to_string())),
+                            ("conflictRevision".into(), Value::from(current_revision)),
+                            (
+                                "sourceGeneration".into(),
+                                Value::from(active_source_generation),
+                            ),
+                            (
+                                "head".into(),
+                                Self::head_value(active_remote.as_slice(), generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            if c.source_generation <= active_source_generation {
+                // Never move the active projection backwards. A same/older
+                // branch with a different candidate is stale; a different
+                // remote head is a forged lineage.
+                return Err(if same_remote {
+                    SyncError::StaleConflictRevision
+                } else {
+                    SyncError::LineageViolation
+                });
+            }
+            if !same_base || !same_remote {
+                // A newer candidate is appendable only to this exact lane.
+                return Err(SyncError::LineageViolation);
+            }
             let revision = current_revision
                 .checked_add(1)
                 .ok_or(SyncError::SizeLimitExceeded)?;
