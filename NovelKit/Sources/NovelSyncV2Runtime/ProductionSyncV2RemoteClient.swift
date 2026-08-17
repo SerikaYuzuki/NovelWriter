@@ -93,8 +93,12 @@ public actor ProductionSyncV2SessionProvider: SyncV2SessionProvider {
 
     private func refreshSingleFlight(expected: FuminiwaSession) async throws -> FuminiwaSession {
         if let refreshTask {
-            let joined = try await refreshTask.value
-            return try await validateRefreshResult(joined, expected: expected)
+            do {
+                let joined = try await refreshTask.value
+                return try await validateRefreshResult(joined, expected: expected)
+            } catch {
+                throw mapRefreshFailure(error)
+            }
         }
         // Install the task before the first suspension. Otherwise two
         // callers can both load the old vault record and reserve separate
@@ -136,8 +140,35 @@ public actor ProductionSyncV2SessionProvider: SyncV2SessionProvider {
                current.binding != expected.binding {
                 throw SyncV2Failure.accountFenceChanged
             }
-            throw error
+            throw mapRefreshFailure(error)
         }
+    }
+
+    private func mapRefreshFailure(_ error: Error) -> Error {
+        if let failure = error as? SyncV2Failure {
+            return failure
+        }
+        if let authError = error as? AuthError {
+            switch authError {
+            case let .remote(remote):
+                switch remote.code {
+                case "authenticationRequired", "refreshTokenExpired", "refreshTokenReused", "sessionRevoked":
+                    return SyncV2Failure.authenticationRequired
+                case "rateLimited", "temporarilyUnavailable":
+                    return SyncV2Failure.retryable(.serverUnavailable)
+                default:
+                    return authError
+                }
+            case .staleResponse, .staleSession:
+                return SyncV2Failure.accountFenceChanged
+            default:
+                return authError
+            }
+        }
+        if (error as NSError).domain == NSURLErrorDomain {
+            return SyncV2Failure.retryable(.lostResponse)
+        }
+        return error
     }
 
     private func validateRefreshResult(
@@ -161,7 +192,11 @@ public actor ProductionSyncV2SessionProvider: SyncV2SessionProvider {
             }
             return current
         }
-        return refreshed
+        // A coordinator refresh must publish its result to the vault before
+        // the remote lane can use it. Returning a response that is ahead of
+        // the vault would let a delayed/rolled-back refresh become a token
+        // authority that was never committed.
+        throw SyncV2Failure.accountFenceChanged
     }
 }
 

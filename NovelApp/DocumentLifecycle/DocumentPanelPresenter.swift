@@ -17,7 +17,7 @@ final class DocumentPanelPresenter {
     }
 
     func presentNewDocument(expectedSession: DocumentSessionToken? = nil) {
-        guard appState.permitsDocumentChoice else { return }
+        guard appState.permitsDocumentTransitionOperation else { return }
         let session = expectedSession ?? appState.documentSessionToken
         Task {
             let success = await appState.createNewDocument(expectedSession: session)
@@ -30,7 +30,7 @@ final class DocumentPanelPresenter {
     }
 
     func presentOpenPanel(expectedSession: DocumentSessionToken? = nil) {
-        guard appState.permitsDocumentChoice else { return }
+        guard appState.permitsDocumentTransitionOperation else { return }
         let session = expectedSession ?? appState.documentSessionToken
         guard session == appState.documentSessionToken else { return }
 

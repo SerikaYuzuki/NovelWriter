@@ -371,7 +371,16 @@ public extension LocalSyncV2Store {
         _ request: V2RestorePreparationRequest,
         scope: V2LocalWorkScope
     ) throws -> V2RestorePreparationResult {
-        if let prepared = try preparedRestore(request, scope: scope) {
+        let localOnly = switch scope {
+        case .parked, .unbound: true
+        case .bound: false
+        }
+        if localOnly {
+            // Older clients could leave an unbound restore intent behind for
+            // a local Work. It is not an online lane; close it before the
+            // local-only transaction below, retaining the audit rows.
+            try parkPendingUnboundIntents(workID: request.workID)
+        } else if let prepared = try preparedRestore(request, scope: scope) {
             return prepared
         }
         guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
@@ -407,18 +416,76 @@ public extension LocalSyncV2Store {
         let parents = [currentID, request.selectedSnapshotID]
             .sorted { $0.rawValue < $1.rawValue }
         let result = try SnapshotCodec.encode(model, parents: parents)
-        return try persistRestore(
-            request: request,
-            scope: scope,
-            prepared: RestorePreparedMaterial(
-                currentBytes: currentBytes,
-                currentID: currentID,
-                result: result,
-                intentID: UUID(),
-                restoreID: UUID(),
-                nextGeneration: request.expectedLocalGeneration + 1,
-                expectedRemoteHead: acknowledgedHead(workID: request.workID)
-            )
+        let prepared = try RestorePreparedMaterial(
+            currentBytes: currentBytes,
+            currentID: currentID,
+            result: result,
+            intentID: UUID(),
+            restoreID: UUID(),
+            nextGeneration: request.expectedLocalGeneration + 1,
+            expectedRemoteHead: acknowledgedHead(workID: request.workID)
         )
+        if localOnly {
+            return try persistLocalRestore(
+                request: request,
+                scope: scope,
+                prepared: prepared
+            )
+        }
+        return try persistRestore(request: request, scope: scope, prepared: prepared)
+    }
+}
+
+private extension LocalSyncV2Store {
+    /// A local Work may restore historical bytes without creating an unbound
+    /// remote intent or restore record. The resulting head and history are
+    /// still one durable SQLite transaction. A later same-namespace
+    /// reauthentication or explicit account clone is the only path that may
+    /// create a new remote checkpoint lane.
+    func persistLocalRestore(
+        request: V2RestorePreparationRequest,
+        scope: V2LocalWorkScope,
+        prepared: RestorePreparedMaterial
+    ) throws -> V2RestorePreparationResult {
+        try inTransaction {
+            guard let latest = try scopedWorkRow(
+                workID: request.workID,
+                scope: scope
+            ),
+                latest[2].int64 == request.expectedLocalGeneration,
+                latest[3].blob == prepared.currentBytes else {
+                throw SyncV2StoreError.staleCAS
+            }
+            guard try acknowledgedHead(workID: request.workID) ==
+                prepared.expectedRemoteHead else {
+                throw SyncV2StoreError.staleCAS
+            }
+            try insertEncoded(prepared.result, workID: request.workID)
+            try insertHistory(
+                workID: request.workID,
+                snapshotID: prepared.currentID,
+                reason: "preRestore",
+                pinned: true,
+                generation: request.expectedLocalGeneration
+            )
+            try installRestoreHead(request: request, prepared: prepared)
+            try insertHistory(
+                workID: request.workID,
+                snapshotID: prepared.result.snapshotId,
+                reason: V2CheckpointReason.restore.rawValue,
+                pinned: false,
+                generation: prepared.nextGeneration
+            )
+            return V2RestorePreparationResult(
+                restoreID: nil,
+                checkpoint: V2CheckpointResult(
+                    snapshotID: prepared.result.snapshotId,
+                    generation: prepared.nextGeneration,
+                    intentID: nil,
+                    noChanges: false
+                ),
+                expectedRemoteHead: prepared.expectedRemoteHead
+            )
+        }
     }
 }

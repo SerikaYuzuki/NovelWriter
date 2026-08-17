@@ -76,6 +76,82 @@ struct RemoteAuthRefreshTests {
         #expect(Auth401URLProtocol.requestCount == 2)
         #expect(await provider.refreshCount() == 1)
     }
+
+    @Test("refresh transport failure keeps the command retryable")
+    func refreshTransportFailureIsRetryable() async throws {
+        let session = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
+        let provider = try ProductionSyncV2SessionProvider(
+            vault: InMemoryAuthSessionVault(session: session),
+            transport: RefreshFailureTransport(error: URLError(.timedOut)),
+            authLimits: limits()
+        )
+        do {
+            _ = try await provider.refresh(afterUnauthorizedFor: session)
+            Issue.record("timed out refresh unexpectedly succeeded")
+        } catch let error as SyncV2Failure {
+            #expect(error == .retryable(.lostResponse))
+        }
+    }
+
+    @Test("refresh token rejection requires interactive authentication")
+    func refreshTokenRejectionIsAuthenticationRequired() async throws {
+        let session = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
+        let remote = AuthRemoteError(
+            code: "refreshTokenExpired",
+            recoveryAction: .interactiveAppleSignIn,
+            retryability: .afterInteractiveAuthentication,
+            requestID: UUID()
+        )
+        let provider = try ProductionSyncV2SessionProvider(
+            vault: InMemoryAuthSessionVault(session: session),
+            transport: RefreshFailureTransport(error: AuthError.remote(remote)),
+            authLimits: limits()
+        )
+        do {
+            _ = try await provider.refresh(afterUnauthorizedFor: session)
+            Issue.record("expired refresh token unexpectedly succeeded")
+        } catch let error as SyncV2Failure {
+            #expect(error == .authenticationRequired)
+        }
+    }
+
+    @Test("plain transient refresh failure remains retryable")
+    func refreshTransientServerFailureIsRetryable() async throws {
+        let session = refreshSession(binding: refreshBinding(account: "acct"), generation: 1)
+        let remote = AuthRemoteError(
+            code: "temporarilyUnavailable",
+            recoveryAction: .retrySameRequestAfterBackoff,
+            retryability: .afterBackoff,
+            requestID: UUID()
+        )
+        let provider = try ProductionSyncV2SessionProvider(
+            vault: InMemoryAuthSessionVault(session: session),
+            transport: RefreshFailureTransport(error: AuthError.remote(remote)),
+            authLimits: limits()
+        )
+        do {
+            _ = try await provider.refresh(afterUnauthorizedFor: session)
+            Issue.record("transient refresh failure unexpectedly succeeded")
+        } catch let error as SyncV2Failure {
+            #expect(error == .retryable(.serverUnavailable))
+        }
+    }
+
+    @Test("refresh response with a lower generation is rejected")
+    func lowerGenerationRefreshIsRejected() async throws {
+        let session = refreshSession(binding: refreshBinding(account: "acct"), generation: 2)
+        let provider = try ProductionSyncV2SessionProvider(
+            vault: InMemoryAuthSessionVault(session: session),
+            transport: FixedRefreshResultTransport(generationDelta: -1),
+            authLimits: limits()
+        )
+        do {
+            _ = try await provider.refresh(afterUnauthorizedFor: session)
+            Issue.record("lower-generation refresh response was accepted")
+        } catch let error as SyncV2Failure {
+            #expect(error == .accountFenceChanged)
+        }
+    }
 }
 
 private actor FixedSessionProvider: SyncV2SessionProvider {
@@ -163,6 +239,56 @@ private actor CountingRefreshTransport: FuminiwaAuthTransport {
     }
 }
 
+private actor RefreshFailureTransport: FuminiwaAuthTransport {
+    let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
+        throw error
+    }
+
+    func exchangeApple(challenge _: AuthChallenge, authorizationCode _: Data, identityToken _: Data, operationID _: UUID) async throws -> FuminiwaSession {
+        throw error
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        throw error
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw error
+    }
+}
+
+private actor FixedRefreshResultTransport: FuminiwaAuthTransport {
+    let generationDelta: Int64
+
+    init(generationDelta: Int64) {
+        self.generationDelta = generationDelta
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
+        throw AuthError.invalidProvider
+    }
+
+    func exchangeApple(challenge _: AuthChallenge, authorizationCode _: Data, identityToken _: Data, operationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.invalidProvider
+    }
+
+    func refresh(session current: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        let generation = Int64(current.refreshGeneration) + generationDelta
+        guard generation > 0 else { throw AuthError.invalidProvider }
+        return refreshSession(binding: current.binding, generation: UInt64(generation))
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.invalidProvider
+    }
+}
+
 private func limits() throws -> AuthLimits {
     try AuthLimits(
         accessTokenLifetimeSeconds: 900,
@@ -180,7 +306,7 @@ private func refreshBinding(account: String) -> AuthSessionBinding {
         syncProtocolEpoch: 2,
         accountID: account,
         accountAuthEpoch: 1,
-        accountFence: "fence-(account)",
+        accountFence: "fence-\(account)",
         sessionID: UUID(uuidString: "dddddddd-dddd-4ddd-8ddd-dddddddddddd")!
     )
 }

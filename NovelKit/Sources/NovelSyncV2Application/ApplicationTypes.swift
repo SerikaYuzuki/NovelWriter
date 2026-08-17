@@ -21,6 +21,17 @@ public struct SyncV2AccountScopeBinding: Hashable, Sendable {
     }
 }
 
+/// An owner-scoped lease that suppresses remote scheduling while an auth
+/// transition checkpoints and swaps the durable account binding. The token is
+/// intentionally opaque so a stale transition cannot release a newer lease.
+public struct SyncV2AccountTransitionRemoteSuspensionToken: Hashable, Sendable {
+    let rawValue: UUID
+
+    init(rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+}
+
 public enum SyncV2ApplicationError: Error, Equatable, Sendable {
     case workNotFound
     case invalidRuntimeMode
@@ -29,6 +40,7 @@ public enum SyncV2ApplicationError: Error, Equatable, Sendable {
     case safeBoundaryRejected
     case remoteOnlyInstallRejected
     case invalidHistoryCursor
+    case remoteSchedulingSuspensionRequired
 }
 
 public enum SyncV2Failure: Error, Equatable, Sendable {

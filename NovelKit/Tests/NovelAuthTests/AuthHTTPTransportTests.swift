@@ -196,6 +196,24 @@ struct AuthHTTPTransportTests {
         }
     }
 
+    @Test("plain upstream 503 and 429 responses remain typed retryable failures")
+    func plainTransientHTTPFailures() async throws {
+        let rotationID = try #require(UUID(uuidString: "50000000-0000-4000-8000-000000000001"))
+        let unavailable = try makeTransport { _ in
+            .init(status: 503, headers: [:], body: Data("upstream unavailable".utf8))
+        }
+        await expectRemoteCode("temporarilyUnavailable") {
+            _ = try await unavailable.transport.refresh(session: Self.session(), rotationID: rotationID)
+        }
+
+        let limited = try makeTransport { _ in
+            .init(status: 429, headers: [:], body: Data("slow down".utf8))
+        }
+        await expectRemoteCode("rateLimited") {
+            _ = try await limited.transport.refresh(session: Self.session(), rotationID: rotationID)
+        }
+    }
+
     @Test("non-ASCII lookalikes are rejected in opaque binding values")
     func nonASCIIOpaqueValue() async throws {
         let operationID = try #require(UUID(uuidString: "30000000-0000-4000-8000-000000000001"))
@@ -502,6 +520,19 @@ private func expectAuthError(_ expected: AuthError, operation: () async throws -
         Issue.record("operation unexpectedly succeeded")
     } catch let actual as AuthError {
         #expect(actual == expected)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+}
+
+private func expectRemoteCode(_ expected: String, operation: () async throws -> Void) async {
+    do {
+        try await operation()
+        Issue.record("operation unexpectedly succeeded")
+    } catch let AuthError.remote(remote) {
+        #expect(remote.code == expected)
+        #expect(remote.retryability == .afterBackoff)
+        #expect(remote.recoveryAction == .retrySameRequestAfterBackoff)
     } catch {
         Issue.record("unexpected error: \(error)")
     }

@@ -231,12 +231,52 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
 
     private func validate(_ response: URLResponse, data: Data, status: Int, allowedErrorCodes: Set<String>) throws {
         guard let http = response as? HTTPURLResponse else { throw AuthError.providerRejected }
+        if let transient = transientHTTPError(statusCode: http.statusCode) {
+            let hasContractHeaders = http.value(forHTTPHeaderField: "Cache-Control")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-store" &&
+                http.value(forHTTPHeaderField: "Pragma")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-cache" &&
+                http.value(forHTTPHeaderField: "Content-Type")?.trimmingCharacters(in: .whitespacesAndNewlines) == Self.mediaType
+            if hasContractHeaders, !data.isEmpty {
+                do {
+                    let decoded = try decodeRemoteError(data, allowedCodes: allowedErrorCodes)
+                    throw decoded
+                } catch let error as AuthError {
+                    if case .remote = error {
+                        throw error
+                    }
+                } catch {
+                    // A non-canonical upstream body remains the generated
+                    // typed transient below.
+                }
+            }
+            throw transient
+        }
         guard http.value(forHTTPHeaderField: "Cache-Control")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-store" else { throw AuthError.missingNoStore }
         guard http.value(forHTTPHeaderField: "Pragma")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no-cache" else { throw AuthError.missingNoStore }
         guard http.value(forHTTPHeaderField: "Content-Type")?.trimmingCharacters(in: .whitespacesAndNewlines) == Self.mediaType else { throw AuthError.invalidMediaType }
         guard !data.isEmpty else { throw AuthError.invalidWireResponse }
         guard http.statusCode != status else { return }
         throw try decodeRemoteError(data, allowedCodes: allowedErrorCodes)
+    }
+
+    /// Gate upstream transport failures before the closed v1 error envelope
+    /// checks. Proxies and load balancers often return a plain 408/429/5xx
+    /// body without cache or media headers; those failures remain retryable
+    /// without exposing their response bytes or misclassifying them as auth.
+    private func transientHTTPError(statusCode: Int) -> AuthError? {
+        let code: String
+        if statusCode == 429 {
+            code = "rateLimited"
+        } else if statusCode == 408 || (500 ... 599).contains(statusCode) {
+            code = "temporarilyUnavailable"
+        } else {
+            return nil
+        }
+        return .remote(AuthRemoteError(
+            code: code,
+            recoveryAction: .retrySameRequestAfterBackoff,
+            retryability: .afterBackoff,
+            requestID: UUID()
+        ))
     }
 
     // swiftlint:disable:next cyclomatic_complexity

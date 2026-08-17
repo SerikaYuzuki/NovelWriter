@@ -101,6 +101,82 @@ func restorePinsCurrentUsesTwoParentsAndAckPreservesNewerEdit() async throws {
 }
 
 @Test
+func localOnlyRestoreDoesNotCreateAnUnboundRemoteLane() async throws {
+    let root = temporaryStoreRoot("restore-local-only")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    var document = makeDocument(title: "local-first")
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let first = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: .unbound
+    )
+    document.title = "newer"
+    let second = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: first.generation
+        ),
+        scope: .unbound
+    )
+
+    let restored = try await store.prepareRestore(
+        V2RestorePreparationRequest(
+            workID: workID,
+            selectedSnapshotID: first.snapshotID,
+            expectedLocalGeneration: second.generation
+        ),
+        scope: .unbound
+    )
+    #expect(restored.restoreID == nil)
+    #expect(restored.checkpoint.intentID == nil)
+    #expect(try await store.pendingIntents(scope: .unbound, workID: workID).isEmpty)
+    #expect(try await store.open(workID: workID, scope: .unbound).document?.title == "local-first")
+
+    let parkedWorkID = WorkID(UUID())
+    var parkedDocument = makeDocument(title: "parked-first")
+    let parkedFirst = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: parkedWorkID,
+            document: parkedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    parkedDocument.title = "parked-newer"
+    _ = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: parkedWorkID,
+            document: parkedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: parkedFirst.generation
+        ),
+        scope: scopeA
+    )
+    try await store.parkWork(workID: parkedWorkID, binding: bindingA)
+    let parkedRestore = try await store.prepareRestore(
+        V2RestorePreparationRequest(
+            workID: parkedWorkID,
+            selectedSnapshotID: parkedFirst.snapshotID,
+            expectedLocalGeneration: 2
+        ),
+        scope: .parked
+    )
+    #expect(parkedRestore.restoreID == nil)
+    #expect(parkedRestore.checkpoint.intentID == nil)
+    #expect(try await store.pendingIntents(scope: .parked, workID: parkedWorkID).isEmpty)
+    #expect(try await store.open(workID: parkedWorkID, scope: .parked).document?.title == "parked-first")
+}
+
+@Test
 func keepBothReservationSurvivesRestartAndFinalizesAtomically() async throws {
     let root = temporaryStoreRoot("keep-both")
     defer { try? FileManager.default.removeItem(at: root) }

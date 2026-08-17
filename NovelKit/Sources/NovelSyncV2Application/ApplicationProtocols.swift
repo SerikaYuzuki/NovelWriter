@@ -102,6 +102,12 @@ public protocol SyncV2LocalKernel: Sendable {
         from old: SyncV2AccountScopeBinding,
         to new: SyncV2AccountScopeBinding
     ) async throws
+    /// Atomically retires every active Work in the supplied source scope.
+    /// `from == nil` reconciles all active database bindings during cold launch.
+    func transitionAccountScopes(
+        from old: SyncV2AccountScopeBinding?,
+        to new: SyncV2AccountScopeBinding?
+    ) async throws
     /// Returns the durable active conflict projection, if one exists. This is
     /// intentionally a local read so a process restart can restore the
     /// conflict UI without a network round trip.

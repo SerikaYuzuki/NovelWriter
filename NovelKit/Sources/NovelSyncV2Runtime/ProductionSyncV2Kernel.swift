@@ -68,20 +68,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 serverInstanceID: binding.serverInstanceID,
                 protocolEpoch: binding.protocolEpoch
             )
-            // Resolve against the binding supplied by the pre-transition
-            // session, rather than the currently selected vault. Auth
-            // exchanges may replace the vault before the UI observes them;
-            // that must not make the old binding impossible to park.
             try await store.parkWork(workID: workID, binding: storeBinding)
-        } catch SyncV2StoreError.accountMismatch {
-            // A work can still be a local-only work when the UI session has
-            // changed before the first account binding was committed. There
-            // is no remote lane to park in that case. Do not turn this
-            // benign, idempotent case into a failed auth transition; every
-            // other mismatch remains fail-closed below.
-            guard try await isLocalOnly(workID: workID) else {
-                throw SyncV2StoreError.accountMismatch
-            }
         } catch {
             throw mapStoreError(error)
         }
@@ -109,21 +96,33 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 throw SyncV2StoreError.accountMismatch
             }
             try await store.rebindWork(workID: workID, from: oldBinding, to: newBinding)
-        } catch SyncV2StoreError.accountMismatch {
-            // Same-account fence rotation is a no-op for a work that has not
-            // been bound yet. A bound work still has to pass rebindWork's
-            // exact old-binding check and cannot be silently adopted.
-            // If the pre-transition auth session lagged the persisted vault,
-            // park the one actual old lane. It is safer to retire that lane
-            // than to leave it eligible for a late worker completion.
-            do {
-                try await store.parkWork(workID: workID, binding: oldBinding)
-                return
-            } catch SyncV2StoreError.accountMismatch {
-                guard try await isLocalOnly(workID: workID) else {
-                    throw SyncV2StoreError.accountMismatch
-                }
-            }
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
+    func transitionAccountScopes(
+        from old: SyncV2AccountScopeBinding?,
+        to new: SyncV2AccountScopeBinding?
+    ) async throws {
+        let oldBinding = old.map {
+            V2AccountBinding(
+                accountID: $0.accountID,
+                accountFence: $0.accountFence,
+                serverInstanceID: $0.serverInstanceID,
+                protocolEpoch: $0.protocolEpoch
+            )
+        }
+        let newBinding = new.map {
+            V2AccountBinding(
+                accountID: $0.accountID,
+                accountFence: $0.accountFence,
+                serverInstanceID: $0.serverInstanceID,
+                protocolEpoch: $0.protocolEpoch
+            )
+        }
+        do {
+            try await store.transitionAccountScopes(from: oldBinding, to: newBinding)
         } catch {
             throw mapStoreError(error)
         }
@@ -497,7 +496,9 @@ private extension ProductionSyncV2Kernel {
                 }
             }
             var result: [SyncV2LibraryItem] = []
-            for try await item in group { result.append(item) }
+            for try await item in group {
+                result.append(item)
+            }
             return result
         }
     }
@@ -534,11 +535,13 @@ private extension ProductionSyncV2Kernel {
                     case .unbound, .parked:
                         []
                     }
-                    let progress: SyncV2RemoteProgress = if let adoption {
+                    let progress: SyncV2RemoteProgress = if accountState == .parkedDifferentAccount {
+                        .parkedDifferentAccount
+                    } else if let adoption {
                         .readyForSafeAdoption(inboxID: adoption.inboxID)
                     } else if conflict != nil {
                         .needsChoice
-                    } else if case .unbound = localScope, !pending.isEmpty {
+                    } else if localScope == .unbound || localScope == .parked, !pending.isEmpty {
                         .authenticationRequired
                     } else if !pending.isEmpty || !sealed.isEmpty {
                         .pending

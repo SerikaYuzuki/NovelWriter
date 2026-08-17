@@ -175,6 +175,10 @@ CREATE TABLE sealed_commands (
   receipt_verified INTEGER NOT NULL DEFAULT 0 CHECK (receipt_verified IN (0, 1)),
   UNIQUE (account_id, command_id),
   UNIQUE (account_id, work_id, command_id),
+  UNIQUE (
+    server_instance_id, protocol_epoch, account_id, account_fence,
+    work_id, command_id, source_snapshot_id, source_generation
+  ),
   FOREIGN KEY (
     work_id, server_instance_id, protocol_epoch, account_id, account_fence
   ) REFERENCES account_bindings(
@@ -183,6 +187,44 @@ CREATE TABLE sealed_commands (
   FOREIGN KEY (work_id, source_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   CHECK ((response_status IS NULL) = (canonical_response IS NULL))
 );
+CREATE TABLE upload_transfers (
+  transfer_id TEXT PRIMARY KEY,
+  command_id TEXT NOT NULL UNIQUE,
+  work_id TEXT NOT NULL,
+  object_id BLOB NOT NULL CHECK (length(object_id) = 32),
+  source_snapshot_id BLOB NOT NULL CHECK (length(source_snapshot_id) = 32),
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+  upload_id TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  exact_bytes BLOB NOT NULL,
+  bytes_digest BLOB NOT NULL CHECK (length(bytes_digest) = 32),
+  acknowledged_offset INTEGER NOT NULL CHECK (
+    acknowledged_offset >= 0 AND acknowledged_offset <= length(exact_bytes)
+  ),
+  expires_at TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN (
+    'prepared', 'sending', 'acknowledged', 'quarantined', 'parked'
+  )),
+  server_instance_id TEXT NOT NULL,
+  protocol_epoch INTEGER NOT NULL,
+  account_id TEXT NOT NULL,
+  account_fence TEXT NOT NULL,
+  FOREIGN KEY (work_id, source_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
+  FOREIGN KEY (
+    work_id, server_instance_id, protocol_epoch, account_id, account_fence
+  ) REFERENCES account_bindings(
+      work_id, server_instance_id, protocol_epoch, account_id, account_fence
+    ),
+  FOREIGN KEY (
+    server_instance_id, protocol_epoch, account_id, account_fence,
+    work_id, command_id, source_snapshot_id, source_generation
+  ) REFERENCES sealed_commands(
+    server_instance_id, protocol_epoch, account_id, account_fence,
+    work_id, command_id, source_snapshot_id, source_generation
+  )
+);
+CREATE INDEX upload_transfers_scope
+  ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id);
 CREATE TABLE remote_receipts (
   account_id TEXT NOT NULL,
   work_id TEXT NOT NULL,
@@ -402,7 +444,7 @@ CREATE TABLE restore_records (
     expected_remote_head_generation IS NULL OR
     expected_remote_head_generation BETWEEN 1 AND 9007199254740991
   ),
-  state TEXT NOT NULL CHECK (state IN ('prepared', 'sealed', 'finalized')),
+  state TEXT NOT NULL CHECK (state IN ('prepared', 'sealed', 'finalized', 'retired')),
   FOREIGN KEY (work_id, selected_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, pre_restore_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, result_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
@@ -419,7 +461,8 @@ CREATE TABLE restore_records (
   ),
   CHECK (
     (state = 'prepared' AND command_id IS NULL) OR
-    (state IN ('sealed', 'finalized') AND command_id IS NOT NULL)
+    (state IN ('sealed', 'finalized') AND command_id IS NOT NULL) OR
+    state = 'retired'
   )
 );
 CREATE TABLE snapshot_remote_equivalents (

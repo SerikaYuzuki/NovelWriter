@@ -170,6 +170,14 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         guard works[workID] != nil else { throw SyncV2ApplicationError.workNotFound }
     }
 
+    public func transitionAccountScopes(
+        from _: SyncV2AccountScopeBinding?,
+        to _: SyncV2AccountScopeBinding?
+    ) throws {
+        // The in-memory composition has no persisted account-binding rows;
+        // its fixed test account is already isolated from production lanes.
+    }
+
     public func prepareRestore(
         _ request: SyncV2RestoreRequest
     ) throws -> SyncV2Preparation {

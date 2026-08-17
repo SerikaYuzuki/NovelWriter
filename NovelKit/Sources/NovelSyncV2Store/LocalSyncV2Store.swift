@@ -352,246 +352,6 @@ public extension LocalSyncV2Store {
         }
     }
 
-    func rebindWork(
-        workID: WorkID,
-        from old: V2AccountBinding,
-        to new: V2AccountBinding
-    ) throws {
-        try inTransaction {
-            guard try query(
-                "SELECT 1 FROM restore_records WHERE work_id=? AND account_id=? AND state IN ('prepared','sealed')",
-                [.text(workID.description), .text(old.accountID)]
-            ).isEmpty else {
-                // restore_records is part of the reviewed canonical DDL. A
-                // transition cannot rewrite its state without a schema
-                // migration; fail closed until the restore is terminal.
-                throw SyncV2StoreError.invalidLifecycle
-            }
-            guard try bindingIsActive(workID: workID, binding: old) else {
-                throw SyncV2StoreError.accountMismatch
-            }
-            let disposition = old.accountID == new.accountID &&
-                old.serverInstanceID == new.serverInstanceID &&
-                old.protocolEpoch == new.protocolEpoch ? "quarantined" : "parked"
-            try exec(
-                """
-                UPDATE account_bindings SET state=?
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=? AND state='bound'
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.accountMismatch }
-            try exec(
-                """
-                UPDATE sealed_commands SET status=?
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND status IN ('sealed','sending','conflictPending')
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            try exec(
-                """
-                UPDATE sync_intents SET status=?
-                WHERE work_id=? AND scope_kind='bound'
-                  AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND status IN ('pending','sealed')
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            try exec(
-                """
-                UPDATE inbox_batches SET state='rejected',rejection_code=?
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND state IN ('staged','verified')
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            try exec(
-                """
-                UPDATE conflicts SET state=?
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=? AND state='active'
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            try exec(
-                """
-                UPDATE pending_keep_both SET state=?
-                WHERE source_work_id=? AND conflict_id IN (
-                  SELECT conflict_id FROM conflicts
-                  WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                    AND account_id=? AND account_fence=? AND state=?
-                ) AND state IN ('prepared','sealed')
-                """,
-                [
-                    .text(disposition), .text(workID.description),
-                    .text(workID.description)
-                ] + old.values + [.text(disposition)]
-            )
-            try retireScopeCaches(workID: workID)
-            try exec(
-                """
-                UPDATE upload_transfers SET lifecycle=?
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND lifecycle IN ('prepared','sending','acknowledged')
-                """,
-                [.text(disposition), .text(workID.description)] + old.values
-            )
-            if disposition == "quarantined" {
-                try insertBinding(workID: workID, binding: new)
-            }
-            try exec(
-                """
-                INSERT INTO binding_transitions(
-                  transition_id,work_id,old_server_instance_id,old_protocol_epoch,
-                  old_account_id,old_account_fence,disposition,
-                  new_server_instance_id,new_protocol_epoch,new_account_id,
-                  new_account_fence,created_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                [.text(UUID().uuidString.lowercased()), .text(workID.description)] +
-                    old.values + [.text(disposition)] + new.values + [.text(Self.now())]
-            )
-        }
-    }
-
-    /// Retires an account binding without creating a destination binding.
-    /// The Work remains editable through the local unbound scope, while all
-    /// old-account remote lanes are parked atomically.
-    func parkWork(
-        workID: WorkID,
-        binding: V2AccountBinding
-    ) throws {
-        // The UI session can lag the persisted vault (notably while an auth
-        // exchange is being finalized). Retire the one active binding that is
-        // actually present for this Work rather than guessing its account
-        // from that stale session. Multiple active bindings remain a hard
-        // failure; no lane is allowed to be parked ambiguously.
-        let effectiveBinding: V2AccountBinding
-        if try bindingIsActive(workID: workID, binding: binding) {
-            effectiveBinding = binding
-        } else {
-            let rows = try query(
-                """
-                SELECT account_id,account_fence,server_instance_id,protocol_epoch
-                FROM account_bindings WHERE work_id=? AND state='bound'
-                """,
-                [.text(workID.description)]
-            )
-            guard rows.count == 1,
-                  let accountID = rows[0][0].text,
-                  let accountFence = rows[0][1].text,
-                  let serverInstanceID = rows[0][2].text,
-                  let protocolEpoch = rows[0][3].int64 else {
-                throw SyncV2StoreError.accountMismatch
-            }
-            effectiveBinding = V2AccountBinding(
-                accountID: accountID,
-                accountFence: accountFence,
-                serverInstanceID: serverInstanceID,
-                protocolEpoch: protocolEpoch
-            )
-        }
-        try inTransaction {
-            guard try query(
-                "SELECT 1 FROM restore_records WHERE work_id=? AND state IN ('prepared','sealed')",
-                [.text(workID.description)]
-            ).isEmpty else {
-                // As with rebind, the reviewed DDL has no safe transition
-                // state for an active restore. Refuse the whole transition.
-                throw SyncV2StoreError.invalidLifecycle
-            }
-            guard try bindingIsActive(workID: workID, binding: effectiveBinding) else {
-                throw SyncV2StoreError.accountMismatch
-            }
-            try exec(
-                """
-                UPDATE account_bindings SET state='parked'
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=? AND state='bound'
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.accountMismatch }
-            try exec(
-                """
-                UPDATE sealed_commands SET status='parked'
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND status IN ('sealed','sending','conflictPending')
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-            try exec(
-                """
-                UPDATE sync_intents SET status='parked'
-                WHERE work_id=? AND scope_kind='bound'
-                  AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND status IN ('pending','sealed')
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-            try exec(
-                """
-                UPDATE inbox_batches SET state='rejected',rejection_code='parked'
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND state IN ('staged','verified')
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-            try exec(
-                """
-                UPDATE conflicts SET state='parked'
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=? AND state='active'
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-            try retireScopeCaches(workID: workID)
-            try exec(
-                """
-                UPDATE pending_keep_both SET state='parked'
-                WHERE source_work_id=? AND state IN ('prepared','sealed')
-                """,
-                [.text(workID.description)]
-            )
-            try exec(
-                """
-                UPDATE upload_transfers SET lifecycle='parked'
-                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
-                  AND account_id=? AND account_fence=?
-                  AND lifecycle IN ('prepared','sending','acknowledged')
-                """,
-                [.text(workID.description)] + effectiveBinding.values
-            )
-        }
-    }
-
-    /// Scope-free remote head/equivalence values belong to the retired fence.
-    /// Clearing them forces the next fence through bootstrap and replan.
-    private func retireScopeCaches(workID: WorkID) throws {
-        try exec(
-            """
-            UPDATE works SET acknowledged_head_snapshot_id=NULL,
-                             acknowledged_head_generation=NULL,
-                             remote_equivalent_local_snapshot_id=NULL
-            WHERE work_id=?
-            """,
-            [.text(workID.description)]
-        )
-        try exec(
-            "DELETE FROM snapshot_remote_equivalents WHERE work_id=?",
-            [.text(workID.description)]
-        )
-    }
-
     func historyCount(workID: WorkID, scope: V2LocalWorkScope) throws -> Int {
         guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.workNotFound
@@ -637,8 +397,8 @@ public extension LocalSyncV2Store {
     }
 
     /// Returns immutable local occurrences newest-first. The cursor is an
-    /// opaque `(created_at, local_generation, occurrence_id)` boundary, so inserts after a page
-    /// was read cannot reorder or duplicate an already-read occurrence.
+    /// opaque scope-boundary plus `(created_at, local_generation, occurrence_id)`
+    /// token, so a cursor from an old account/fence cannot page a new scope.
     func historyPage(
         workID: WorkID,
         scope: V2LocalWorkScope,
@@ -653,6 +413,10 @@ public extension LocalSyncV2Store {
         }
 
         let boundary = try cursor.map(Self.decodeHistoryCursor)
+        let scopeKey = Self.historyScopeKey(scope)
+        if let boundary, boundary.scopeKey != scopeKey {
+            throw SyncV2StoreError.invalidHistoryCursor
+        }
         var sql = """
         SELECT occurrence_id,snapshot_id,reason,pinned,local_generation,created_at
         FROM history_occurrences
@@ -696,7 +460,7 @@ public extension LocalSyncV2Store {
             )
         }
         let nextCursor = occurrences.count == pageSize
-            ? occurrences.last.map { Self.encodeHistoryCursor($0) }
+            ? occurrences.last.map { Self.encodeHistoryCursor($0, scopeKey: scopeKey) }
             : nil
         return V2HistoryPage(items: occurrences, nextCursor: nextCursor)
     }
@@ -725,7 +489,8 @@ public extension LocalSyncV2Store {
 }
 
 private extension LocalSyncV2Store {
-    struct HistoryCursor {
+    struct HistoryCursor: Codable {
+        let scopeKey: String
         let createdAt: String
         let localGeneration: Int64
         let occurrenceID: UUID
@@ -747,32 +512,42 @@ private extension LocalSyncV2Store {
         return formatter.date(from: value)
     }
 
-    static func encodeHistoryCursor(_ occurrence: V2HistoryOccurrence) -> String {
+    static func historyScopeKey(_ scope: V2LocalWorkScope) -> String {
+        switch scope {
+        case .unbound: "unbound"
+        case .parked: "parked"
+        case let .bound(binding):
+            "bound|\(binding.serverInstanceID)|\(binding.protocolEpoch)|\(binding.accountID)|\(binding.accountFence)"
+        }
+    }
+
+    static func encodeHistoryCursor(
+        _ occurrence: V2HistoryOccurrence,
+        scopeKey: String
+    ) -> String {
         let date = (try? iso8601(occurrence.createdAt)) ?? "1970-01-01T00:00:00Z"
-        let raw = "\(date)|\(occurrence.localGeneration)|\(occurrence.occurrenceID.uuidString.lowercased())"
-        return Data(raw.utf8).base64EncodedString()
+        let cursor = HistoryCursor(
+            scopeKey: scopeKey,
+            createdAt: date,
+            localGeneration: occurrence.localGeneration,
+            occurrenceID: occurrence.occurrenceID
+        )
+        let data = (try? JSONEncoder().encode(cursor)) ?? Data()
+        return data.base64EncodedString()
     }
 
     static func decodeHistoryCursor(_ cursor: String) throws -> HistoryCursor {
         guard let data = Data(base64Encoded: cursor),
-              let raw = String(data: data, encoding: .utf8),
-              let lastSeparator = raw.lastIndex(of: "|"),
-              let firstSeparator = raw[..<lastSeparator].lastIndex(of: "|") else {
-            throw SyncV2StoreError.invalidHistoryCursor
-        }
-        let dateText = String(raw[..<firstSeparator])
-        let generationText = String(raw[raw.index(after: firstSeparator) ..< lastSeparator])
-        let idText = String(raw[raw.index(after: lastSeparator)...])
-        guard let date = parseHistoryDate(dateText),
-              let localGeneration = Int64(generationText),
-              localGeneration > 0,
-              let occurrenceID = UUID(uuidString: idText) else {
+              let value = try? JSONDecoder().decode(HistoryCursor.self, from: data),
+              let date = parseHistoryDate(value.createdAt),
+              value.localGeneration > 0 else {
             throw SyncV2StoreError.invalidHistoryCursor
         }
         return HistoryCursor(
-            createdAt: (try? iso8601(date)) ?? dateText,
-            localGeneration: localGeneration,
-            occurrenceID: occurrenceID
+            scopeKey: value.scopeKey,
+            createdAt: (try? iso8601(date)) ?? value.createdAt,
+            localGeneration: value.localGeneration,
+            occurrenceID: value.occurrenceID
         )
     }
 }
@@ -827,15 +602,26 @@ private extension LocalSyncV2Store {
                 generation: next
             )
             let lane = V2SyncLane(rawValue: current[6].text ?? "")
-            let intentID: UUID? = if lane == .normal {
-                try upsertCheckpointIntent(
-                    workID: request.workID,
-                    snapshotID: encoded.snapshotId,
-                    generation: next,
-                    scope: scope
-                )
-            } else {
+            if case .parked = scope {
+                // A parked Work continues to checkpoint locally, but it must
+                // not create an unbound remote lane while no account is
+                // attested. Close any legacy unbound intent in this same tx.
+                try parkPendingUnboundIntents(workID: request.workID)
+            }
+            let intentID: UUID? = switch scope {
+            case .parked:
                 nil
+            case .unbound, .bound:
+                if lane == .normal {
+                    try upsertCheckpointIntent(
+                        workID: request.workID,
+                        snapshotID: encoded.snapshotId,
+                        generation: next,
+                        scope: scope
+                    )
+                } else {
+                    nil
+                }
             }
             return V2CheckpointResult(
                 snapshotID: encoded.snapshotId,

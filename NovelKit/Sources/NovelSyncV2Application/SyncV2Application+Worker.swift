@@ -6,51 +6,75 @@ extension SyncV2Application {
     /// launch, foreground, and connectivity callbacks; per-work single flight
     /// keeps command bytes and operation IDs stable.
     public func resumePending() async throws {
-        guard runtimeIdentity != .preview else { return }
+        guard runtimeIdentity != .preview, remoteSchedulingSuspensions.isEmpty else { return }
         for workID in try await planner.pendingWorkIDs() {
             scheduleWorker(for: workID)
         }
     }
 
+    /// Invalidates the worker slot before cancelling the task.  Cancellation
+    /// is advisory for a remote implementation, so owner invalidation is the
+    /// actual late-completion boundary.
+    func cancelWorker(for workID: WorkID) {
+        workerOwners[workID] = nil
+        workerTasks[workID]?.cancel()
+        workerTasks[workID] = nil
+        wakeEpochs[workID, default: 0] &+= 1
+    }
+
     func scheduleWorker(for workID: WorkID) {
         wakeEpochs[workID, default: 0] &+= 1
-        guard workerTasks[workID] == nil, runtimeIdentity != .preview else {
+        guard workerTasks[workID] == nil,
+              runtimeIdentity != .preview,
+              remoteSchedulingSuspensions.isEmpty else {
             return
         }
+        let owner = UUID()
+        workerOwners[workID] = owner
         workerTasks[workID] = Task { [weak self] in
             guard let self else { return }
-            await runWorker(for: workID)
+            await runWorker(for: workID, owner: owner)
         }
     }
 
-    func runWorker(for workID: WorkID) async {
+    func runWorker(for workID: WorkID, owner: UUID) async {
         while !Task.isCancelled {
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
             let observedWake = wakeEpochs[workID, default: 0]
             do {
                 let plan = try await planner.nextCommand(workID: workID)
+                guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 switch plan {
                 case .idle:
                     if finishWorkerIfUnchanged(
                         workID: workID,
+                        owner: owner,
                         observedWake: observedWake
                     ) {
                         return
                     }
                 case let .blocked(failure):
+                    guard isCurrentWorker(workID: workID, owner: owner) else { return }
                     record(failure: failure, workID: workID)
                     if finishWorkerIfUnchanged(
                         workID: workID,
+                        owner: owner,
                         observedWake: observedWake
                     ) {
                         return
                     }
                 case let .command(command):
-                    try await execute(
+                    let completed = try await execute(
                         .command(SyncV2SealedRemoteCommand(command: command)),
-                        workID: workID
+                        workID: workID,
+                        owner: owner
                     )
+                    guard completed else { return }
+                    guard isCurrentWorker(workID: workID, owner: owner) else { return }
                     if ["resolveServer", "resolveDevice", "cloneWork"].contains(command.commandKind) {
-                        workerTasks[workID] = nil
+                        guard finishCurrentWorker(workID: workID, owner: owner) else {
+                            return
+                        }
                         if command.commandKind != "resolveServer" {
                             scheduleWorker(for: workID)
                         } else if wakeEpochs[workID, default: 0] != observedWake {
@@ -62,27 +86,34 @@ extension SyncV2Application {
                         return
                     }
                 case let .upload(upload):
-                    try await execute(.upload(upload), workID: workID)
+                    guard try await execute(.upload(upload), workID: workID, owner: owner) else {
+                        return
+                    }
                 }
             } catch {
+                guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
                 record(failure: failure, workID: workID)
                 if finishWorkerIfUnchanged(
                     workID: workID,
+                    owner: owner,
                     observedWake: observedWake
                 ) {
                     return
                 }
             }
         }
-        workerTasks[workID] = nil
+        _ = finishCurrentWorker(workID: workID, owner: owner)
     }
 
     private func execute(
         _ proposed: SyncV2RemoteOperation,
-        workID: WorkID
-    ) async throws {
+        workID: WorkID,
+        owner: UUID
+    ) async throws -> Bool {
+        guard isCurrentWorker(workID: workID, owner: owner) else { return false }
         let sending = try await planner.markSending(proposed, workID: workID)
+        guard isCurrentWorker(workID: workID, owner: owner) else { return false }
         setState(
             workID: workID,
             localDurability: states[workID]?.localDurability ?? .unsaved,
@@ -91,14 +122,21 @@ extension SyncV2Application {
         )
         do {
             let execution = try await remote.execute(sending)
-            try await accept(execution, for: sending, workID: workID)
+            guard isCurrentWorker(workID: workID, owner: owner) else { return false }
+            try await accept(execution, for: sending, workID: workID, owner: owner)
+            guard isCurrentWorker(workID: workID, owner: owner) else { return false }
+            return true
         } catch {
+            if !isCurrentWorker(workID: workID, owner: owner) {
+                return false
+            }
             let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
-            try? await planner.recordFailure(
+            try await planner.recordFailure(
                 operation: sending,
                 workID: workID,
                 disposition: disposition(for: failure)
             )
+            guard isCurrentWorker(workID: workID, owner: owner) else { return false }
             record(failure: failure, workID: workID)
             throw failure
         }
@@ -107,8 +145,10 @@ extension SyncV2Application {
     private func accept(
         _ execution: SyncV2RemoteExecution,
         for operation: SyncV2RemoteOperation,
-        workID: WorkID
+        workID: WorkID,
+        owner: UUID
     ) async throws {
+        guard isCurrentWorker(workID: workID, owner: owner) else { return }
         switch (operation, execution) {
         case let (.command(planned), .command(receipt, inbox)):
             guard receipt.commandID == planned.command.commandId,
@@ -121,6 +161,7 @@ extension SyncV2Application {
                 throw SyncV2Failure.receiptMismatch
             }
             if let inbox {
+                guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 try validateInbox(
                     inbox,
                     receipt: receipt,
@@ -128,24 +169,30 @@ extension SyncV2Application {
                     workID: workID
                 )
                 try await kernel.stageRemote(inbox)
+                guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 try await kernel.verifyRemote(
                     inboxID: inbox.inboxID,
                     workID: inbox.workID
                 )
+                guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 if receipt.result == .conflictPending, let conflict = receipt.conflict {
                     try await kernel.recordConflict(
                         conflict,
                         workID: inbox.workID,
                         inboxID: inbox.inboxID
                     )
+                    guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 }
             }
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
             try await planner.acknowledgeCommand(
                 receipt,
                 command: planned.command,
                 verifiedInboxID: inbox?.inboxID ?? receipt.verifiedInboxID
             )
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
             try await project(receipt, command: planned, workID: workID)
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
         case let (.upload(planned), .upload(completion)):
             guard completion.transferID == planned.transferID,
                   completion.uploadID == planned.uploadID,
@@ -153,7 +200,9 @@ extension SyncV2Application {
                   completion.acknowledgedByteCount == planned.exactBytes.count else {
                 throw SyncV2Failure.receiptMismatch
             }
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
             try await planner.acknowledgeUpload(completion)
+            guard isCurrentWorker(workID: workID, owner: owner) else { return }
             setState(
                 workID: workID,
                 localDurability: states[workID]?.localDurability ?? .unsaved,
@@ -283,11 +332,27 @@ extension SyncV2Application {
 
     private func finishWorkerIfUnchanged(
         workID: WorkID,
+        owner: UUID,
         observedWake: UInt64
     ) -> Bool {
-        guard wakeEpochs[workID, default: 0] == observedWake else {
+        guard isCurrentWorker(workID: workID, owner: owner),
+              !Task.isCancelled,
+              wakeEpochs[workID, default: 0] == observedWake else {
             return false
         }
+        return finishCurrentWorker(workID: workID, owner: owner)
+    }
+
+    private func isCurrentWorker(workID: WorkID, owner: UUID) -> Bool {
+        workerOwners[workID] == owner &&
+            workerTasks[workID] != nil &&
+            !Task.isCancelled
+    }
+
+    @discardableResult
+    private func finishCurrentWorker(workID: WorkID, owner: UUID) -> Bool {
+        guard workerOwners[workID] == owner else { return false }
+        workerOwners[workID] = nil
         workerTasks[workID] = nil
         return true
     }

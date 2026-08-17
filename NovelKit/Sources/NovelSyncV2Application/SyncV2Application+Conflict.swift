@@ -91,13 +91,16 @@ public extension SyncV2Application {
             )
             return SyncV2OperationResult(state: state, typedResult: .noChanges)
         }
+        let hasPendingRemoteIntent = prepared.intentID != nil
         let state = setState(
             workID: workID,
             localDurability: states[workID]?.localDurability ?? .unsaved,
-            remoteProgress: .pending,
+            remoteProgress: hasPendingRemoteIntent ? .pending : .authenticationRequired,
             result: .restored
         )
-        scheduleWorker(for: workID)
+        if hasPendingRemoteIntent {
+            scheduleWorker(for: workID)
+        }
         return SyncV2OperationResult(state: state, typedResult: .restored)
     }
 }

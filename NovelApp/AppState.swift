@@ -167,6 +167,18 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
     @ObservationIgnored var snapshotSyncV2AccountScopeGeneration: UInt64 = 0
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
+    @ObservationIgnored let authOperationGate = AuthOperationGate()
+    @ObservationIgnored var authOperationOwner: UUID?
+    /// Counts interactive auth requests from invocation until the serialized
+    /// operation fully commits. This is separate from the presentation-only
+    /// `authUIState` so queued requests close replacement boundaries early.
+    @ObservationIgnored var interactiveAuthOperationCount = 0
+    @ObservationIgnored var interactiveAuthOperationOwners: Set<UUID> = []
+    /// Represents the one queued or active interactive Apple sign-in request.
+    /// It is deliberately independent from `interactiveAuthOperationCount`:
+    /// a request waiting behind sign-out must not block local work, while a
+    /// duplicate tap must not enqueue a second Apple exchange.
+    @ObservationIgnored var pendingSignInRequest = false
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var aiClipboardPromptNoticeDismissTask: Task<Void, Never>?
@@ -193,12 +205,19 @@ final class AppState {
         startupState.isReady && !isDocumentTransitionInProgress && !isTerminationPending
     }
 
+    /// Replacing/exporting/restoring a document must not race the Apple
+    /// exchange. Local editor edits and checkpoints remain permitted while
+    /// this transition-only boundary is closed.
+    var permitsDocumentTransitionOperation: Bool {
+        permitsDocumentInteraction && interactiveAuthOperationCount == 0
+    }
+
     var canExplicitlySyncCurrentWork: Bool {
-        permitsDocumentInteraction
+        permitsDocumentTransitionOperation
     }
 
     var canCloneCurrentWorkIntoActiveAccount: Bool {
-        permitsDocumentInteraction && isSignedInToFuminiwa
+        permitsDocumentTransitionOperation && isSignedInToFuminiwa
             && snapshotSyncCurrentWorkAccountState == .unbound
     }
 

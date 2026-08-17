@@ -25,7 +25,10 @@ extension LocalSyncV2Store {
             try exec("COMMIT")
             return result
         } catch {
-            try? exec("ROLLBACK")
+            // A failed rollback is itself a fail-closed store error; never
+            // hide it while reporting a transition/checkpoint as if the
+            // transaction had been safely undone.
+            try exec("ROLLBACK")
             throw error
         }
     }
@@ -94,6 +97,27 @@ extension LocalSyncV2Store {
             """,
             [.text(workID.description)] + binding.values
         ).isEmpty
+    }
+
+    func commandBindingIsActive(
+        commandID: UUID,
+        binding: V2AccountBinding
+    ) throws -> Bool {
+        let rows = try query(
+            """
+            SELECT 1 FROM sealed_commands c
+            JOIN account_bindings b ON b.work_id=c.work_id
+              AND b.server_instance_id=c.server_instance_id
+              AND b.protocol_epoch=c.protocol_epoch
+              AND b.account_id=c.account_id
+              AND b.account_fence=c.account_fence
+            WHERE c.command_id=? AND c.server_instance_id=?
+              AND c.protocol_epoch=? AND c.account_id=?
+              AND c.account_fence=? AND b.state='bound'
+            """,
+            [.text(commandID.uuidString.lowercased())] + binding.values
+        )
+        return !rows.isEmpty
     }
 
     func insertBinding(workID: WorkID, binding: V2AccountBinding) throws {
@@ -612,7 +636,9 @@ extension V2LocalWorkScope {
         case .unbound:
             " AND scope_kind='unbound'"
         case .parked:
-            " AND scope_kind='unbound'"
+            // Parked work is local-only. Its legacy/unbound intent rows are
+            // retained as audit evidence but are never actionable.
+            " AND 1=0"
         case .bound:
             """
              AND scope_kind='bound' AND server_instance_id=?

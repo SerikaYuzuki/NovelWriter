@@ -32,7 +32,9 @@ struct StartupLibraryWork: Identifiable, Equatable {
     let remoteProgress: SyncV2RemoteProgress
 
     var isOpenable: Bool {
-        availability != .excluded && availability != .parked
+        // Parked works remain local-first and editable.  They are projected
+        // separately and never take the remote-only/adoption path.
+        availability != .excluded
     }
 }
 

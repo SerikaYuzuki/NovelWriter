@@ -252,12 +252,14 @@ extension AppState {
     }
 
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
-        guard expectedSession == nil || expectedSession == documentSessionToken else { return false }
+        guard permitsDocumentTransitionOperation,
+              expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await createNewV2Document()
     }
 
     func openDocument(at url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
-        guard expectedSession == nil || expectedSession == documentSessionToken else { return false }
+        guard permitsDocumentTransitionOperation,
+              expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await openExternalDocument(at: url)
     }
 
@@ -271,7 +273,7 @@ extension AppState {
     ) async throws {
         let result: Result<Void, Error> = await documentOperationGate.perform { [weak self] in
             guard let self,
-                  permitsDocumentInteraction,
+                  permitsDocumentTransitionOperation,
                   expectedSession == nil || expectedSession == documentSessionToken,
                   editorCommandSession.prepareForDocumentTransition() else {
                 return .failure(CancellationError())

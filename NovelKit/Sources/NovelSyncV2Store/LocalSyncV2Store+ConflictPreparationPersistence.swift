@@ -164,7 +164,7 @@ extension LocalSyncV2Store {
         }
     }
 
-    private func installRestoreHead(
+    func installRestoreHead(
         request: V2RestorePreparationRequest,
         prepared: RestorePreparedMaterial
     ) throws {

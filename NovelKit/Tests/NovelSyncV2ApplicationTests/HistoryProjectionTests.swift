@@ -34,6 +34,39 @@ private actor HistoryProjectionRemote: SyncV2RemoteClient {
     }
 }
 
+private actor BlockingHistoryProjectionRemote: SyncV2RemoteClient {
+    private var continuation: CheckedContinuation<SyncV2RemoteHistoryPage, Error>?
+    private var entered = false
+
+    func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution {
+        _ = operation
+        throw SyncV2Failure.offline
+    }
+
+    func historyPage(
+        workID: WorkID,
+        cursor: String?,
+        pageSize: Int
+    ) async throws -> SyncV2RemoteHistoryPage {
+        _ = (workID, cursor, pageSize)
+        entered = true
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilEntered() async {
+        while !entered {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    func release() {
+        continuation?.resume(returning: SyncV2RemoteHistoryPage(items: [], nextCursor: nil))
+        continuation = nil
+    }
+}
+
 @Test
 func applicationHistoryKeepsLocalRowsWhenRemoteFails() async throws {
     let state = InMemorySyncV2RuntimeState(account: nil)
@@ -114,4 +147,77 @@ func applicationHistoryDoesNotMergeSameSnapshotOccurrences() async throws {
     #expect(Set(page.items.map(\.source)) == [.local, .remote])
     #expect(Set(page.items.map(\.occurrenceID)).count == 2)
     #expect(page.items.allSatisfy { $0.snapshotID == snapshotID })
+}
+
+@Test("history continuation is rejected after an account transition")
+func applicationHistoryCursorCannotCrossAccountTransition() async throws {
+    let state = InMemorySyncV2RuntimeState(account: nil)
+    let remote = HistoryProjectionRemote()
+    let app = try applicationTestApp(state: state, remote: remote)
+    let workID = WorkID(UUID())
+    var document = applicationTestDocument(title: "first")
+    _ = try await app.checkpoint(
+        workID: workID,
+        document: document,
+        reason: .explicit,
+        documentCreatedAt: applicationTestCreatedAt
+    )
+    document.title = "second"
+    _ = try await app.checkpoint(
+        workID: workID,
+        document: document,
+        reason: .explicit,
+        documentCreatedAt: applicationTestCreatedAt
+    )
+    await remote.set(entries: [], failure: .offline)
+    let firstPage = try await app.historyPage(workID: workID, pageSize: 1)
+    let cursor = try #require(firstPage.nextCursor)
+
+    let suspension = await app.beginAccountTransitionRemoteSuspension()
+    try await app.transitionAccountScopes(
+        from: nil,
+        to: SyncV2AccountScopeBinding(
+            accountID: "account-b",
+            accountFence: "fence-b",
+            serverInstanceID: "test-server"
+        ),
+        suspensionToken: suspension
+    )
+    #expect(await app.endAccountTransitionRemoteSuspension(suspension, resume: false))
+
+    await #expect(throws: SyncV2ApplicationError.invalidHistoryCursor) {
+        _ = try await app.historyPage(workID: workID, cursor: cursor, pageSize: 1)
+    }
+}
+
+@Test("history page completion cannot cross an account transition")
+func applicationHistoryPageCompletionUsesTransitionCAS() async throws {
+    let state = InMemorySyncV2RuntimeState(account: nil)
+    let remote = BlockingHistoryProjectionRemote()
+    let app = try applicationTestApp(state: state, remote: remote)
+    let workID = WorkID(UUID())
+    let pending = Task {
+        try await app.historyPage(workID: workID, pageSize: 1)
+    }
+    await remote.waitUntilEntered()
+
+    let suspension = await app.beginAccountTransitionRemoteSuspension()
+    try await app.transitionAccountScopes(
+        from: nil,
+        to: SyncV2AccountScopeBinding(
+            accountID: "account-b",
+            accountFence: "fence-b",
+            serverInstanceID: "test-server"
+        ),
+        suspensionToken: suspension
+    )
+    #expect(await app.endAccountTransitionRemoteSuspension(suspension, resume: false))
+    await remote.release()
+
+    do {
+        _ = try await pending.value
+        Issue.record("history page completed after its account scope was replaced")
+    } catch SyncV2ApplicationError.invalidHistoryCursor {
+        // Expected: the completion CAS rejects the stale page.
+    }
 }

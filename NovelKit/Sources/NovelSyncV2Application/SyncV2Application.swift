@@ -28,9 +28,21 @@ public actor SyncV2Application {
     let libraryProvider: any SyncV2LibraryProvider
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
     var workerTasks: [WorkID: Task<Void, Never>] = [:]
+    /// Identity of the currently installed worker for each Work.  A cancelled
+    /// task can still resume after a non-cooperative remote await, so a task
+    /// must never use the dictionary slot or clear a newer worker merely
+    /// because it has the same WorkID.
+    var workerOwners: [WorkID: UUID] = [:]
     var wakeEpochs: [WorkID: UInt64] = [:]
     var states: [WorkID: SyncUIState] = [:]
     var sessions: [WorkID: DocumentSessionToken] = [:]
+    var remoteSchedulingSuspensions: Set<UUID> = []
+    var activeAccountTransitionSuspensions: Set<UUID> = []
+    /// Monotonic process-local generation for merged history cursors. A
+    /// cursor is a continuation of both the account/fence scope and this
+    /// application session; auth transitions invalidate it before any later
+    /// page can append stale rows.
+    var historyScopeGeneration: UInt64 = 0
 
     package init(
         mode: RuntimeMode,
@@ -104,9 +116,8 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.previewReadOnly
         }
         try await kernel.parkAccountScope(workID: workID, binding: binding)
-        workerTasks[workID]?.cancel()
-        workerTasks[workID] = nil
-        wakeEpochs[workID, default: 0] &+= 1
+        historyScopeGeneration &+= 1
+        cancelWorker(for: workID)
         states[workID] = SyncUIState(
             workID: workID,
             localDurability: states[workID]?.localDurability ?? .unsaved,
@@ -128,9 +139,8 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.previewReadOnly
         }
         try await kernel.rebindAccountScope(workID: workID, from: old, to: new)
-        workerTasks[workID]?.cancel()
-        workerTasks[workID] = nil
-        wakeEpochs[workID, default: 0] &+= 1
+        historyScopeGeneration &+= 1
+        cancelWorker(for: workID)
         states[workID] = SyncUIState(
             workID: workID,
             localDurability: states[workID]?.localDurability ?? .unsaved,
@@ -138,6 +148,80 @@ public actor SyncV2Application {
             conflict: nil,
             lastTypedResult: .checkpointed
         )
+    }
+
+    /// Performs the database-wide auth transition before any new scope can be
+    /// scheduled. The store owns the transaction; this actor only invalidates
+    /// every in-flight worker after the durable transition succeeds.
+    public func transitionAccountScopes(
+        from old: SyncV2AccountScopeBinding?,
+        to new: SyncV2AccountScopeBinding?,
+        suspensionToken: SyncV2AccountTransitionRemoteSuspensionToken
+    ) async throws {
+        guard runtimeIdentity != .preview else {
+            throw SyncV2ApplicationError.previewReadOnly
+        }
+        guard remoteSchedulingSuspensions.contains(suspensionToken.rawValue),
+              activeAccountTransitionSuspensions.isEmpty else {
+            throw SyncV2ApplicationError.remoteSchedulingSuspensionRequired
+        }
+        activeAccountTransitionSuspensions.insert(suspensionToken.rawValue)
+        defer { activeAccountTransitionSuspensions.remove(suspensionToken.rawValue) }
+        try await kernel.transitionAccountScopes(from: old, to: new)
+        guard remoteSchedulingSuspensions.contains(suspensionToken.rawValue) else {
+            throw SyncV2ApplicationError.remoteSchedulingSuspensionRequired
+        }
+        historyScopeGeneration &+= 1
+        let affectedWorkIDs = Set(workerTasks.keys)
+            .union(workerOwners.keys)
+            .union(states.keys)
+            .union(sessions.keys)
+        for workID in affectedWorkIDs {
+            cancelWorker(for: workID)
+            states[workID] = SyncUIState(
+                workID: workID,
+                localDurability: states[workID]?.localDurability ?? .unsaved,
+                remoteProgress: .idle,
+                conflict: nil,
+                lastTypedResult: .checkpointed
+            )
+        }
+    }
+
+    /// Stops every old remote worker before an auth transition can checkpoint
+    /// or swap the durable binding. Local checkpoints continue to commit while
+    /// the lease is held; all worker wake paths observe the lease.
+    public func beginAccountTransitionRemoteSuspension() -> SyncV2AccountTransitionRemoteSuspensionToken {
+        let token = SyncV2AccountTransitionRemoteSuspensionToken()
+        remoteSchedulingSuspensions.insert(token.rawValue)
+        let affectedWorkIDs = Set(workerTasks.keys).union(workerOwners.keys)
+        for workID in affectedWorkIDs {
+            cancelWorker(for: workID)
+        }
+        return token
+    }
+
+    /// Releases exactly the supplied transition lease. A stale lease cannot
+    /// resume a later auth operation. `resume` is used only when the durable
+    /// transition failed and the old authenticated scope remains authoritative.
+    @discardableResult
+    public func endAccountTransitionRemoteSuspension(
+        _ token: SyncV2AccountTransitionRemoteSuspensionToken,
+        resume: Bool
+    ) async -> Bool {
+        guard !activeAccountTransitionSuspensions.contains(token.rawValue) else {
+            return false
+        }
+        guard remoteSchedulingSuspensions.remove(token.rawValue) != nil else {
+            return false
+        }
+        guard resume, remoteSchedulingSuspensions.isEmpty else { return true }
+        do {
+            try await resumePending()
+            return true
+        } catch {
+            return false
+        }
     }
 }
 

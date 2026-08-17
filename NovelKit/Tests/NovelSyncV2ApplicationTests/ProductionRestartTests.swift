@@ -118,4 +118,76 @@ struct ProductionRestartTests {
         let history = try await store.historyPage(workID: fixture.workID, scope: productionScope)
         #expect(history.items.contains { $0.snapshotID == fixture.localSnapshotID && $0.pinned })
     }
+
+    @Test("production fence rebind starts a fresh command lane")
+    func productionFenceRebindCreatesFreshCommandAfterSuspension() async throws {
+        let configuration = try TestRuntimeConfiguration()
+        let app = try await SnapshotSyncV2Runtime.makeApplicationForTesting(
+            mode: .test(configuration),
+            resumeOnLaunch: false
+        )
+        let old = productionBinding
+        let rotated = TestAccount(accountID: old.accountID, accountFence: "rotated-fence")
+        let workID = WorkID(UUID())
+        let suspension = await app.beginAccountTransitionRemoteSuspension()
+
+        _ = try await app.checkpoint(
+            workID: workID,
+            document: applicationTestDocument(),
+            reason: .autosave,
+            documentCreatedAt: applicationTestCreatedAt
+        )
+        let queued = try await app.synchronize(workID: workID)
+        #expect(queued.typedResult == .queued)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await configuration.remote.recordedOperations().isEmpty)
+
+        let store = try LocalSyncV2Store(
+            root: configuration.localRoot.url,
+            policy: .openExisting
+        )
+        let oldSealed = try await store.pendingSealedCommands(
+            scope: productionScope,
+            workID: workID
+        )
+        let oldCommandID = try #require(oldSealed.first?.commandID)
+
+        try await app.transitionAccountScopes(
+            from: SyncV2AccountScopeBinding(
+                accountID: old.accountID,
+                accountFence: old.accountFence,
+                serverInstanceID: old.serverInstanceID,
+                protocolEpoch: old.protocolEpoch
+            ),
+            to: SyncV2AccountScopeBinding(
+                accountID: rotated.accountID,
+                accountFence: rotated.accountFence,
+                serverInstanceID: old.serverInstanceID,
+                protocolEpoch: old.protocolEpoch
+            ),
+            suspensionToken: suspension
+        )
+        await configuration.vault.replaceAccount(rotated)
+        #expect(try await store.pendingSealedCommands(scope: productionScope, workID: workID).isEmpty)
+
+        #expect(await app.endAccountTransitionRemoteSuspension(suspension, resume: false))
+        try await app.resumePending()
+        try await eventually {
+            let operations = await configuration.remote.recordedOperations()
+            return !operations.isEmpty
+        }
+        let operations = await configuration.remote.recordedOperations()
+        let newCommand = try #require(operations.compactMap(sealedCommand).first)
+        #expect(newCommand.command.commandId != oldCommandID)
+        #expect(newCommand.command.binding.accountFence == rotated.accountFence)
+        #expect(newCommand.command.binding.accountId == rotated.accountID)
+        #expect(try await store.pendingSealedCommands(
+            scope: .bound(V2AccountBinding(
+                accountID: rotated.accountID,
+                accountFence: rotated.accountFence,
+                serverInstanceID: "test-server"
+            )),
+            workID: workID
+        ).allSatisfy { $0.commandID != oldCommandID })
+    }
 }

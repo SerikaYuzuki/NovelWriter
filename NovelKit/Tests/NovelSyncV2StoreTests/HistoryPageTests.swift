@@ -72,6 +72,50 @@ func localHistoryPageIsNewestFirstStableAndScoped() async throws {
 }
 
 @Test
+func historyCursorCannotResumeAcrossFenceTransition() async throws {
+    let root = temporaryStoreRoot("history-fence-cursor")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    var document = makeDocument(title: "one")
+    let first = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    document.title = "two"
+    _ = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: first.generation
+        ),
+        scope: scopeA
+    )
+    let page = try await store.historyPage(workID: workID, scope: scopeA, pageSize: 1)
+    let cursor = try #require(page.nextCursor)
+    let rotated = V2AccountBinding(
+        accountID: bindingA.accountID,
+        accountFence: "history-rotated",
+        serverInstanceID: bindingA.serverInstanceID
+    )
+    try await store.transitionAccountScopes(from: bindingA, to: rotated)
+    await #expect(throws: SyncV2StoreError.invalidHistoryCursor) {
+        try await store.historyPage(
+            workID: workID,
+            scope: .bound(rotated),
+            cursor: cursor,
+            pageSize: 1
+        )
+    }
+}
+
+@Test
 func localHistoryRejectsInvalidCreatedAt() async throws {
     let root = temporaryStoreRoot("history-invalid-date")
     defer { try? FileManager.default.removeItem(at: root) }

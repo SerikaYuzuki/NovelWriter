@@ -35,3 +35,39 @@ final class DocumentOperationGate {
         next.resume()
     }
 }
+
+/// Serializes the whole auth ownership exchange, not only individual vault
+/// calls. A sign-out or later sign-in therefore cannot interleave with an
+/// earlier Apple exchange while its response is being committed.
+@MainActor
+final class AuthOperationGate {
+    private var isRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func perform<T>(_ operation: @MainActor () async throws -> T) async rethrows -> T {
+        await acquire()
+        defer { release() }
+        return try await operation()
+    }
+
+    private func acquire() async {
+        guard isRunning else {
+            isRunning = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        guard !waiters.isEmpty else {
+            isRunning = false
+            return
+        }
+
+        let next = waiters.removeFirst()
+        next.resume()
+    }
+}

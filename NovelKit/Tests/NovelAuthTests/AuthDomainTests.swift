@@ -98,6 +98,86 @@ struct AuthDomainTests {
         #expect(try await vault.load() == new)
     }
 
+    @Test("refresh CAS rejects an account, fence, or session binding mutation")
+    func refreshCASRejectsBindingMutation() async throws {
+        let current = fixtureSession(generation: 1)
+        let rotationID = try #require(UUID(uuidString: "52100000-0000-4000-8000-000000000001"))
+        let mutatedBindings = try [
+            AuthSessionBinding(
+                serverInstanceID: current.serverInstanceID,
+                syncProtocolEpoch: current.syncProtocolEpoch,
+                accountID: "acct_BBBBBBBBBBBBBBBB",
+                accountAuthEpoch: current.accountAuthEpoch,
+                accountFence: current.accountFence,
+                sessionID: current.sessionID
+            ),
+            AuthSessionBinding(
+                serverInstanceID: current.serverInstanceID,
+                syncProtocolEpoch: current.syncProtocolEpoch,
+                accountID: current.accountID,
+                accountAuthEpoch: current.accountAuthEpoch,
+                accountFence: "fence_BBBBBBBBBBBBBBBBBBBB",
+                sessionID: current.sessionID
+            ),
+            AuthSessionBinding(
+                serverInstanceID: current.serverInstanceID,
+                syncProtocolEpoch: current.syncProtocolEpoch,
+                accountID: current.accountID,
+                accountAuthEpoch: current.accountAuthEpoch,
+                accountFence: current.accountFence,
+                sessionID: #require(UUID(uuidString: "40000000-0000-4000-8000-000000000099"))
+            )
+        ]
+        let vault = InMemoryAuthSessionVault(session: current)
+        _ = try await vault.loadOrReserveRefreshRotation(proposed: rotationID, for: current)
+        for binding in mutatedBindings {
+            let replacement = FuminiwaSession(
+                binding: binding,
+                tokens: AuthSessionTokens(
+                    accessToken: "fma1_mutated",
+                    accessTokenExpiresAt: current.accessTokenExpiresAt,
+                    refreshToken: "fmr1_mutated",
+                    refreshTokenExpiresAt: current.refreshTokenExpiresAt,
+                    refreshGeneration: current.refreshGeneration + 1
+                ),
+                receipt: current.receipt
+            )
+            #expect(try await vault.compareAndSwap(
+                expectedRefreshToken: current.refreshToken,
+                expectedGeneration: current.refreshGeneration,
+                rotationID: rotationID,
+                replacing: replacement
+            ) == false)
+            #expect(try await vault.load() == current)
+        }
+
+        let coordinatorVault = InMemoryAuthSessionVault(session: current)
+        let transport = BindingMutationRefreshTransport(session: FuminiwaSession(
+            binding: mutatedBindings[0],
+            tokens: AuthSessionTokens(
+                accessToken: "fma1_mutated",
+                accessTokenExpiresAt: current.accessTokenExpiresAt,
+                refreshToken: "fmr1_mutated",
+                refreshTokenExpiresAt: current.refreshTokenExpiresAt,
+                refreshGeneration: current.refreshGeneration + 1
+            ),
+            receipt: current.receipt
+        ))
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: coordinatorVault,
+            authLimits: fixtureLimits(),
+            platform: .macos
+        )
+        do {
+            _ = try await coordinator.refresh()
+            Issue.record("binding mutation was accepted by the coordinator")
+        } catch let error as AuthError {
+            #expect(error == .staleResponse)
+        }
+        #expect(try await coordinatorVault.load() == current)
+    }
+
     @Test("refresh reservation rejects a different session")
     func staleRefreshReservation() async throws {
         let current = fixtureSession(generation: 1)
@@ -135,6 +215,94 @@ struct AuthDomainTests {
         #expect(resumed.operationID == operationID)
         #expect(resumed.phase == .providerCallStarted)
         #expect(record.operations.allSatisfy { !$0.fingerprint.contains("token") })
+    }
+
+    @Test("sign-out ownership rejects a delayed Apple exchange response")
+    func delayedAppleExchangeCannotCommitAfterSignOut() async throws {
+        let challengeID = try #require(UUID(uuidString: "54100000-0000-4000-8000-000000000001"))
+        let exchangeID = try #require(UUID(uuidString: "55100000-0000-4000-8000-000000000001"))
+        let revokeID = try #require(UUID(uuidString: "56100000-0000-4000-8000-000000000001"))
+        let oldSession = fixtureSession(generation: 1)
+        let delayedSession = fixtureSession(
+            generation: 1,
+            sessionID: "40000000-0000-4000-8000-000000000002"
+        )
+        let fingerprint = "apple-exchange:\(challengeID.uuidString.lowercased())"
+        var record = AuthVaultRecord(session: oldSession)
+        _ = try record.loadOrReserveOperation(
+            kind: .exchangeAppleNativeCredential,
+            proposed: exchangeID,
+            fingerprint: fingerprint
+        )
+        _ = try record.beginOperation(
+            kind: .exchangeAppleNativeCredential,
+            operationID: exchangeID,
+            fingerprint: fingerprint
+        )
+        let vault = InMemoryAuthSessionVault(record: record)
+
+        // Sign-out atomically claims the vault and removes the active session
+        // while preserving only its exact revoke replay operation.
+        let pending = try await vault.loadOrReserveRevokeOperation(
+            proposed: revokeID,
+            for: oldSession,
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            receiptLifetimeSeconds: 86400
+        )
+        let committed = try await vault.commitOperationSession(
+            kind: .exchangeAppleNativeCredential,
+            operationID: exchangeID,
+            fingerprint: fingerprint,
+            session: delayedSession
+        )
+
+        #expect(!committed)
+        #expect(try await vault.load() == nil)
+        #expect(try await vault.loadPendingRevoke()?.operationID == pending.operationID)
+        let afterSignOut = await vault.snapshot()
+        #expect(afterSignOut.operations.allSatisfy {
+            $0.operationID == pending.operationID && $0.kind == .revokeCurrentSession
+        })
+    }
+
+    @Test("a fresh Apple exchange can commit while an older revoke is pending")
+    func freshExchangeCoexistsWithPendingRevoke() async throws {
+        let oldSession = fixtureSession(generation: 1)
+        let newSession = fixtureSession(
+            generation: 1,
+            sessionID: "40000000-0000-4000-8000-000000000002"
+        )
+        let challengeID = try #require(UUID(uuidString: "54200000-0000-4000-8000-000000000001"))
+        let revokeID = try #require(UUID(uuidString: "56200000-0000-4000-8000-000000000002"))
+        let exchangeID = try #require(UUID(uuidString: "55200000-0000-4000-8000-000000000002"))
+        let fingerprint = "apple-exchange:\(challengeID.uuidString.lowercased())"
+        var record = AuthVaultRecord(session: oldSession)
+        let pending = try record.loadOrReserveRevokeOperation(
+            proposed: revokeID,
+            for: oldSession,
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            receiptLifetimeSeconds: 86400
+        )
+        _ = try record.loadOrReserveOperation(
+            kind: .exchangeAppleNativeCredential,
+            proposed: exchangeID,
+            fingerprint: fingerprint
+        )
+        _ = try record.beginOperation(
+            kind: .exchangeAppleNativeCredential,
+            operationID: exchangeID,
+            fingerprint: fingerprint
+        )
+        let vault = InMemoryAuthSessionVault(record: record)
+
+        #expect(try await vault.commitOperationSession(
+            kind: .exchangeAppleNativeCredential,
+            operationID: exchangeID,
+            fingerprint: fingerprint,
+            session: newSession
+        ))
+        #expect(try await vault.load() == newSession)
+        #expect(try await vault.loadPendingRevoke()?.operationID == pending.operationID)
     }
 }
 
@@ -321,6 +489,76 @@ extension AuthDomainTests {
         let requestDigests = await transport.revokeRequestDigests()
         #expect(requestBytes == [pending.canonicalRequest, pending.canonicalRequest])
         #expect(requestDigests == [pending.requestDigest, pending.requestDigest])
+    }
+
+    @Test("pending revoke replay never signs out a newer session")
+    func pendingRevokeReplayPreservesNewSession() async throws {
+        let oldSession = fixtureSession(generation: 1)
+        let newSession = fixtureSession(
+            generation: 2,
+            refresh: "fmr1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            sessionID: "40000000-0000-4000-8000-000000000002"
+        )
+        let transport = RevokeTransport()
+        let vault = InMemoryAuthSessionVault(session: oldSession)
+        let pending = try await vault.loadOrReserveRevokeOperation(
+            proposed: #require(UUID(uuidString: "56200000-0000-4000-8000-000000000001")),
+            for: oldSession,
+            now: Date(timeIntervalSince1970: 1_800_000_000),
+            receiptLifetimeSeconds: 86400
+        )
+        try await vault.save(newSession)
+        await transport.succeed()
+
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: vault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        try await coordinator.resumePendingRevoke()
+
+        #expect(try await vault.load() == newSession)
+        #expect(try await vault.loadPendingRevoke() == nil)
+        #expect(await transport.revokeOperationIDs() == [pending.operationID])
+    }
+
+    @Test("expired pending revoke rolls forward without signing out a newer session")
+    func expiredPendingRevokeReplayPreservesNewSession() async throws {
+        let oldSession = fixtureSession(generation: 1)
+        let newSession = fixtureSession(
+            generation: 2,
+            refresh: "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            sessionID: "40000000-0000-4000-8000-000000000003"
+        )
+        let transport = RevokeTransport()
+        let vault = InMemoryAuthSessionVault(session: oldSession)
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let oldPending = try await vault.loadOrReserveRevokeOperation(
+            proposed: #require(UUID(uuidString: "56300000-0000-4000-8000-000000000001")),
+            for: oldSession,
+            now: createdAt,
+            receiptLifetimeSeconds: 86400
+        )
+        try await vault.save(newSession)
+        let refreshRotationID = try #require(UUID(uuidString: "56400000-0000-4000-8000-000000000001"))
+        _ = try await vault.loadOrReserveRefreshRotation(proposed: refreshRotationID, for: newSession)
+        await transport.succeed()
+
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: vault,
+            authLimits: fixtureLimits(),
+            clock: { oldPending.expiresAt.addingTimeInterval(1) }
+        )
+        try await coordinator.resumePendingRevoke()
+
+        #expect(try await vault.load() == newSession)
+        #expect(try await vault.loadPendingRevoke() == nil)
+        #expect(await vault.snapshot().pendingRotationID == refreshRotationID)
+        let operationIDs = await transport.revokeOperationIDs()
+        #expect(operationIDs.count == 1)
+        #expect(operationIDs[0] != oldPending.operationID)
     }
 
     @Test("expired pending revoke rolls forward across restart")
@@ -539,6 +777,30 @@ private actor ExchangeReplayTransport: FuminiwaAuthTransport {
                 replayUntil: Date(timeIntervalSince1970: 1_778_000_000)
             )
         )
+    }
+}
+
+private actor BindingMutationRefreshTransport: FuminiwaAuthTransport {
+    let session: FuminiwaSession
+
+    init(session: FuminiwaSession) {
+        self.session = session
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
+        throw AuthError.providerRejected
+    }
+
+    func exchangeApple(challenge _: AuthChallenge, authorizationCode _: Data, identityToken _: Data, operationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        session
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.providerRejected
     }
 }
 

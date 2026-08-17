@@ -39,13 +39,21 @@ extension LocalSyncV2Store {
                     generation: request.expectedGeneration
                 )
             }
-            return try V2CheckpointResult(
-                snapshotID: current,
-                generation: request.expectedGeneration,
-                intentID: latestPendingIntentID(
+            if case .parked = scope {
+                try parkPendingUnboundIntents(workID: request.workID)
+            }
+            let intentID: UUID? = if case .parked = scope {
+                nil
+            } else {
+                try latestPendingIntentID(
                     workID: request.workID,
                     scope: scope
-                ),
+                )
+            }
+            return V2CheckpointResult(
+                snapshotID: current,
+                generation: request.expectedGeneration,
+                intentID: intentID,
                 noChanges: true
             )
         }

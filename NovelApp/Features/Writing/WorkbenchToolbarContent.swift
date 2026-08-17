@@ -29,7 +29,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
                 .help("作品一覧へ戻る")
-                .disabled(!appState.permitsDocumentChoice)
+                .disabled(!appState.permitsDocumentTransitionOperation)
                 .accessibilityIdentifier("workbench.library")
             }
             .customizationBehavior(.disabled)

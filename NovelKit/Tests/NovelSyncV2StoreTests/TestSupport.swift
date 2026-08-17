@@ -26,6 +26,27 @@ func sqliteExecutionSucceeded(databaseURL: URL, sql: String) throws -> Bool {
     try sqliteResult(databaseURL: databaseURL, sql: sql) == SQLITE_OK
 }
 
+func sqliteScalarInt(databaseURL: URL, sql: String) throws -> Int64? {
+    var database: OpaquePointer?
+    guard sqlite3_open_v2(
+        databaseURL.path,
+        &database,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+        nil
+    ) == SQLITE_OK,
+        let database else {
+        throw SyncV2StoreError.sqlite("test open")
+    }
+    defer { sqlite3_close(database) }
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+        throw SyncV2StoreError.sqlite("test prepare")
+    }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+    return sqlite3_column_int64(statement, 0)
+}
+
 private func sqliteResult(databaseURL: URL, sql: String) throws -> Int32 {
     var database: OpaquePointer?
     guard sqlite3_open_v2(

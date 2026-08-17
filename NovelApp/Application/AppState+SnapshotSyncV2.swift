@@ -191,7 +191,17 @@ extension AppState {
     /// It intentionally does not wait for a remote response.
     func resumeSnapshotSyncV2() async {
         guard let application = snapshotSyncV2Application else { return }
+        let coordinator = authSessionCoordinator
         Task { @MainActor [weak self] in
+            if let coordinator {
+                // A pending revoke is an old-session lane, not a request to
+                // sign out whatever session may have been saved since. Keep
+                // its replay behind the whole auth gate and never block the
+                // local bootstrap/foreground caller on the network.
+                try? await self?.authOperationGate.perform {
+                    try await coordinator.resumePendingRevoke()
+                }
+            }
             try? await application.resumePending()
             // Re-project terminal worker state after the background wake. The
             // caller has already returned and never waits for the network lane.
@@ -208,7 +218,7 @@ extension AppState {
     /// shared planner in a detached UI task. The toolbar never waits for a
     /// remote receipt; `.noChanges` is still rendered as successful sync.
     func synchronizeSnapshotSyncV2() async {
-        guard permitsDocumentInteraction,
+        guard permitsDocumentTransitionOperation,
               await saveNow(),
               let application = snapshotSyncV2Application else { return }
         guard let workID = currentSnapshotSyncV2WorkID else { return }
@@ -325,9 +335,10 @@ extension AppState {
     func openExternalDocument(at url: URL) async -> Bool {
         let isBootstrapImport = !hasCompletedBootstrap && startupState == .loading
         guard let application = snapshotSyncV2Application,
-              permitsDocumentChoice || isBootstrapImport else { return false }
+              permitsDocumentTransitionOperation || isBootstrapImport else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsDocumentTransitionOperation || isBootstrapImport,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -444,9 +455,10 @@ extension AppState {
     @discardableResult
     func createNewV2Document() async -> Bool {
         guard let application = snapshotSyncV2Application,
-              permitsDocumentChoice else { return false }
+              permitsDocumentTransitionOperation else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -501,10 +513,12 @@ extension AppState {
     @discardableResult
     func cloneCurrentWorkIntoActiveAccount() async -> Bool {
         guard canCloneCurrentWorkIntoActiveAccount,
+              permitsDocumentTransitionOperation,
               let application = snapshotSyncV2Application,
               let sourceWorkID = currentSnapshotSyncV2WorkID else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true

@@ -7,10 +7,38 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope
     ) throws {
         guard case let .bound(binding) = scope,
-              transfer.bytesDigest == ObjectID(data: transfer.exactBytes) else {
+              Self.validUploadTransferLifecycles.contains(transfer.lifecycle),
+              transfer.objectID == ObjectID(data: transfer.exactBytes),
+              transfer.bytesDigest == ObjectID(data: transfer.exactBytes),
+              transfer.sourceGeneration > 0,
+              transfer.acknowledgedOffset >= 0,
+              transfer.acknowledgedOffset <= transfer.exactBytes.count,
+              transfer.objectID.bytes.count == 32,
+              transfer.sourceSnapshotID.bytes.count == 32,
+              transfer.bytesDigest.bytes.count == 32 else {
             throw SyncV2StoreError.invalidCommand
         }
         try inTransaction {
+            guard let command = try query(
+                """
+                SELECT c.work_id,c.source_snapshot_id,c.source_generation
+                FROM sealed_commands c
+                JOIN account_bindings b ON b.work_id=c.work_id
+                  AND b.server_instance_id=c.server_instance_id
+                  AND b.protocol_epoch=c.protocol_epoch
+                  AND b.account_id=c.account_id
+                  AND b.account_fence=c.account_fence
+                WHERE c.command_id=? AND c.server_instance_id=?
+                  AND c.protocol_epoch=? AND c.account_id=?
+                  AND c.account_fence=? AND b.state='bound'
+                """,
+                [.text(transfer.commandID.uuidString.lowercased())] + binding.values
+            ).first,
+                command[0].text == transfer.workID.description,
+                command[1].blob == transfer.sourceSnapshotID.bytes,
+                command[2].int64 == transfer.sourceGeneration else {
+                throw SyncV2StoreError.invalidCommand
+            }
             try exec(
                 """
                 INSERT INTO upload_transfers(
@@ -33,6 +61,15 @@ public extension LocalSyncV2Store {
                   lifecycle=CASE
                     WHEN upload_transfers.lifecycle='acknowledged' THEN upload_transfers.lifecycle
                     ELSE excluded.lifecycle END
+                WHERE upload_transfers.transfer_id=excluded.transfer_id
+                  AND upload_transfers.work_id=excluded.work_id
+                  AND upload_transfers.object_id=excluded.object_id
+                  AND upload_transfers.source_snapshot_id=excluded.source_snapshot_id
+                  AND upload_transfers.source_generation=excluded.source_generation
+                  AND upload_transfers.upload_id=excluded.upload_id
+                  AND upload_transfers.capability=excluded.capability
+                  AND upload_transfers.exact_bytes=excluded.exact_bytes
+                  AND upload_transfers.bytes_digest=excluded.bytes_digest
                 """,
                 [
                     .text(transfer.transferID.uuidString.lowercased()),
@@ -54,6 +91,7 @@ public extension LocalSyncV2Store {
                     .text(binding.accountFence)
                 ]
             )
+            guard try changes() == 1 else { throw SyncV2StoreError.invalidCommand }
         }
     }
 
@@ -62,6 +100,9 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope
     ) throws -> V2UploadTransferRecord? {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        guard try commandBindingIsActive(commandID: commandID, binding: binding) else {
+            throw SyncV2StoreError.accountMismatch
+        }
         let row = try query(
             """
             SELECT transfer_id,command_id,work_id,object_id,source_snapshot_id,
@@ -94,23 +135,49 @@ public extension LocalSyncV2Store {
               let expiresRaw = row[11].text,
               let expiresAt = ISO8601DateFormatter().date(from: expiresRaw),
               let lifecycle = row[12].text else { throw SyncV2StoreError.invalidCommand }
-        guard ObjectID(data: exactBytes) == ObjectID(data: digestBytes) else {
+        guard Self.validUploadTransferLifecycles.contains(lifecycle),
+              objectBytes.count == 32,
+              snapshotBytes.count == 32,
+              digestBytes.count == 32,
+              generation > 0,
+              offset >= 0,
+              offset <= Int64(exactBytes.count),
+              ObjectID(data: exactBytes).bytes == digestBytes,
+              ObjectID(data: exactBytes).bytes == objectBytes else {
+            throw SyncV2StoreError.invalidCommand
+        }
+        guard let commandRow = try query(
+            """
+            SELECT work_id,source_snapshot_id,source_generation
+            FROM sealed_commands WHERE command_id=?
+            """,
+            [.text(command.uuidString.lowercased())]
+        ).first,
+            commandRow[0].text == work.description,
+            commandRow[1].blob == snapshotBytes,
+            commandRow[2].int64 == generation else {
             throw SyncV2StoreError.invalidCommand
         }
         let sourceSnapshotID: SnapshotID
+        let objectID: ObjectID
+        let bytesDigest: ObjectID
         do { sourceSnapshotID = try SnapshotID(rawValue: snapshotBytes.hexString) }
         catch { throw SyncV2StoreError.invalidCommand }
+        do {
+            objectID = try ObjectID(rawValue: objectBytes.hexString)
+            bytesDigest = try ObjectID(rawValue: digestBytes.hexString)
+        } catch { throw SyncV2StoreError.invalidCommand }
         return V2UploadTransferRecord(
             transferID: transfer,
             commandID: command,
             workID: work,
-            objectID: ObjectID(data: objectBytes),
+            objectID: objectID,
             sourceSnapshotID: sourceSnapshotID,
             sourceGeneration: generation,
             uploadID: upload,
             capability: capability,
             exactBytes: exactBytes,
-            bytesDigest: ObjectID(data: digestBytes),
+            bytesDigest: bytesDigest,
             acknowledgedOffset: Int(offset),
             expiresAt: expiresAt,
             lifecycle: lifecycle
@@ -123,7 +190,45 @@ public extension LocalSyncV2Store {
         scope: V2LocalWorkScope
     ) throws {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
-        guard byteCount >= 0 else { throw SyncV2StoreError.invalidCommand }
+        guard try query(
+            """
+            SELECT 1 FROM upload_transfers u
+            JOIN sealed_commands c ON c.command_id=u.command_id
+              AND c.work_id=u.work_id
+              AND c.source_snapshot_id=u.source_snapshot_id
+              AND c.source_generation=u.source_generation
+            JOIN account_bindings b ON b.work_id=c.work_id
+              AND b.server_instance_id=c.server_instance_id
+              AND b.protocol_epoch=c.protocol_epoch
+              AND b.account_id=c.account_id
+              AND b.account_fence=c.account_fence
+            WHERE u.transfer_id=? AND u.server_instance_id=?
+              AND u.protocol_epoch=? AND u.account_id=? AND u.account_fence=?
+              AND b.state='bound'
+            """,
+            [.text(transferID.uuidString.lowercased())] + binding.values
+        ).isEmpty == false else {
+            throw SyncV2StoreError.accountMismatch
+        }
+        guard let row = try query(
+            """
+            SELECT exact_bytes,acknowledged_offset,lifecycle
+            FROM upload_transfers
+            WHERE transfer_id=? AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
+            """,
+            [.text(transferID.uuidString.lowercased())] + binding.values
+        ).first,
+            let exactBytes = row[0].blob,
+            let currentOffset = row[1].int64,
+            let lifecycle = row[2].text,
+            Self.validUploadTransferLifecycles.contains(lifecycle),
+            lifecycle == "prepared" || lifecycle == "acknowledged",
+            byteCount >= 0,
+            byteCount <= exactBytes.count,
+            currentOffset >= 0,
+            currentOffset <= Int64(exactBytes.count),
+            byteCount >= currentOffset else { throw SyncV2StoreError.invalidCommand }
         try exec(
             """
             UPDATE upload_transfers
@@ -139,4 +244,10 @@ public extension LocalSyncV2Store {
         )
         guard try changes() == 1 else { throw SyncV2StoreError.invalidAcknowledgement }
     }
+}
+
+private extension LocalSyncV2Store {
+    static let validUploadTransferLifecycles: Set<String> = [
+        "prepared", "sending", "acknowledged", "quarantined", "parked"
+    ]
 }

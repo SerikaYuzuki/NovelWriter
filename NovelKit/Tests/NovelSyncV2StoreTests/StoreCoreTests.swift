@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import NovelCore
 import NovelSyncV2
@@ -276,9 +277,11 @@ func openPolicyUnknownDatabaseAndSymlinkFailClosed() async throws {
         databaseURL: altered.appendingPathComponent("snapshot-sync-v2.sqlite"),
         sql: "CREATE TRIGGER unexpected AFTER UPDATE ON works BEGIN SELECT 1; END"
     ))
+    let alteredBytes = try Data(contentsOf: altered.appendingPathComponent("snapshot-sync-v2.sqlite"))
     #expect(throws: SyncV2StoreError.schemaMismatch) {
         _ = try LocalSyncV2Store(root: altered, policy: .openExisting)
     }
+    #expect(try Data(contentsOf: altered.appendingPathComponent("snapshot-sync-v2.sqlite")) == alteredBytes)
 }
 
 @Test
@@ -304,6 +307,203 @@ func schemaResourceExactlyMatchesTheReviewedDDL() throws {
     ))
     #expect(try SnapshotSyncV2SchemaContract.resourceSQL() == reviewed)
     #expect(SnapshotSyncV2SchemaContract.checksum(reviewed).count == 32)
+}
+
+@Test
+func freshSchemaAttestsCanonicalTransferJournalAndReopens() async throws {
+    let root = temporaryStoreRoot("canonical-transfer-journal")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let databaseURL = await store.databaseURL
+    #expect(try sqliteScalarInt(
+        databaseURL: databaseURL,
+        sql: "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='upload_transfers'"
+    ) == 1)
+    #expect(try sqliteScalarInt(
+        databaseURL: databaseURL,
+        sql: "SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name='upload_transfers_scope'"
+    ) == 1)
+    await store.close()
+    _ = try LocalSyncV2Store(root: root, policy: .openExisting)
+}
+
+@Test
+func unknownSchemaIsRejectedWithoutCatalogOrFileMutation() async throws {
+    let root = temporaryStoreRoot("unknown-schema-no-mutation")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    await store.close()
+    let databaseURL = root.appendingPathComponent("snapshot-sync-v2.sqlite")
+    #expect(try sqliteExecutionSucceeded(
+        databaseURL: databaseURL,
+        sql: "CREATE TABLE unknown_schema_marker(value TEXT NOT NULL)"
+    ))
+    let beforeDatabase = try Data(contentsOf: databaseURL)
+    do {
+        _ = try LocalSyncV2Store(root: root, policy: .openExisting)
+        Issue.record("unknown schema was accepted")
+    } catch SyncV2StoreError.schemaMismatch {
+        // Expected: attestation rejects before any additive DDL migration.
+    }
+    #expect(try Data(contentsOf: databaseURL) == beforeDatabase)
+    #expect(try sqliteScalarInt(
+        databaseURL: databaseURL,
+        sql: "SELECT COUNT(*) FROM sqlite_schema WHERE name='unknown_schema_marker'"
+    ) == 1)
+}
+
+@Test
+// swiftlint:disable:next function_body_length
+func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async throws {
+    let root = temporaryStoreRoot("legacy-restore-retirement")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let preparedWorkID = WorkID(UUID())
+    let sealedWorkID = WorkID(UUID())
+    var preparedDocument = makeDocument(title: "prepared")
+    let preparedFirst = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: preparedWorkID,
+            document: preparedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    preparedDocument.title = "prepared newer"
+    let preparedSecond = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: preparedWorkID,
+            document: preparedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: preparedFirst.generation
+        ),
+        scope: scopeA
+    )
+    _ = try await store.prepareRestore(
+        V2RestorePreparationRequest(
+            workID: preparedWorkID,
+            selectedSnapshotID: preparedFirst.snapshotID,
+            expectedLocalGeneration: preparedSecond.generation
+        ),
+        scope: scopeA
+    )
+
+    var sealedDocument = makeDocument(title: "sealed")
+    let sealedFirst = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: sealedWorkID,
+            document: sealedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    sealedDocument.title = "sealed newer"
+    let sealedSecond = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: sealedWorkID,
+            document: sealedDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: sealedFirst.generation
+        ),
+        scope: scopeA
+    )
+    let sealedRestore = try await store.prepareRestore(
+        V2RestorePreparationRequest(
+            workID: sealedWorkID,
+            selectedSnapshotID: sealedFirst.snapshotID,
+            expectedLocalGeneration: sealedSecond.generation
+        ),
+        scope: scopeA
+    )
+    let sealedCommand = try restoreCommand(
+        workID: sealedWorkID,
+        source: sealedSecond,
+        selected: sealedFirst.snapshotID,
+        restored: sealedRestore
+    )
+    try await store.seal(
+        sealedCommand,
+        intentID: sealedRestore.checkpoint.intentID,
+        scope: scopeA
+    )
+
+    let databaseURL = await store.databaseURL
+    await store.close()
+    let canonicalData = try SnapshotSyncV2SchemaContract.resourceSQL()
+    let canonical = String(decoding: canonicalData, as: UTF8.self)
+    let transferStart = try #require(canonical.range(of: "CREATE TABLE upload_transfers ("))
+    let transferEnd = try #require(
+        canonical.range(of: "CREATE TABLE remote_receipts (", range: transferStart.upperBound ..< canonical.endIndex)
+    )
+    let canonicalWithoutTransfer = String(canonical[..<transferStart.lowerBound]) +
+        String(canonical[transferEnd.lowerBound...])
+    let legacy = canonicalWithoutTransfer
+        .replacingOccurrences(
+            of: "state IN ('prepared', 'sealed', 'finalized', 'retired')",
+            with: "state IN ('prepared', 'sealed', 'finalized')"
+        )
+        .replacingOccurrences(
+            of: "state IN ('sealed', 'finalized', 'retired')",
+            with: "state IN ('sealed', 'finalized')"
+        )
+        .replacingOccurrences(of: ") OR\n    state = 'retired'", with: ")")
+    let restoreStart = try #require(legacy.range(of: "CREATE TABLE restore_records ("))
+    let restoreEnd = try #require(
+        legacy.range(of: "\nCREATE TABLE snapshot_remote_equivalents", range: restoreStart.upperBound ..< legacy.endIndex)
+    )
+    let legacyRestoreDDL = String(legacy[restoreStart.lowerBound ..< restoreEnd.lowerBound])
+    let oldChecksum = SnapshotSyncV2SchemaContract.checksum(Data(legacy.utf8))
+        .map { String(format: "%02x", $0) }
+        .joined()
+    let rewrite = """
+    BEGIN IMMEDIATE;
+    ALTER TABLE restore_records RENAME TO restore_records_modern;
+    \(legacyRestoreDDL)
+    INSERT INTO restore_records(
+      restore_id,work_id,account_id,selected_snapshot_id,pre_restore_snapshot_id,
+      result_snapshot_id,intent_id,command_id,selected_remote_equivalent_snapshot_id,
+      selected_remote_equivalent_generation,expected_remote_head_snapshot_id,
+      expected_remote_head_generation,state
+    ) SELECT restore_id,work_id,account_id,selected_snapshot_id,pre_restore_snapshot_id,
+      result_snapshot_id,intent_id,command_id,selected_remote_equivalent_snapshot_id,
+      selected_remote_equivalent_generation,expected_remote_head_snapshot_id,
+      expected_remote_head_generation,state FROM restore_records_modern;
+    DROP TABLE restore_records_modern;
+    UPDATE schema_meta SET checksum=X'\(oldChecksum)' WHERE key='schema';
+    COMMIT;
+    """
+    // The rewrite constructs an exact legacy v2 database while preserving all
+    // rows; openExisting must then run the narrow, transactional upgrade.
+    // Keep this direct execution separate from the actor so the old metadata
+    // is present before openExisting performs attestation.
+    guard try sqliteExecutionSucceeded(databaseURL: databaseURL, sql: rewrite) else {
+        Issue.record("legacy schema rewrite failed")
+        return
+    }
+
+    let migrated = try LocalSyncV2Store(root: root, policy: .openExisting)
+    let schema = try await migrated.schemaVersionAndChecksum()
+    #expect(schema.0 == SnapshotSyncV2SchemaContract.version)
+    #expect(schema.1 == SnapshotSyncV2SchemaContract.checksum(Data(canonical.utf8)))
+    let rotated = V2AccountBinding(
+        accountID: bindingA.accountID,
+        accountFence: "legacy-migrated-fence",
+        serverInstanceID: bindingA.serverInstanceID
+    )
+    try await migrated.transitionAccountScopes(from: bindingA, to: rotated)
+    do {
+        let opened = try await migrated.open(workID: preparedWorkID, scope: .bound(rotated))
+        #expect(opened.document?.title == "prepared")
+    } catch {
+        Issue.record("migrated head could not be opened: \(error)")
+    }
+    #expect(try sqliteScalarInt(
+        databaseURL: databaseURL,
+        sql: "SELECT COUNT(*) FROM restore_records WHERE state='retired'"
+    ) == 2)
+    #expect(try await migrated.pendingSealedCommands(scope: scopeA).isEmpty)
 }
 
 @Test

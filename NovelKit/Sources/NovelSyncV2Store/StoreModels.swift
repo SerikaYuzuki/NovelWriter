@@ -54,7 +54,7 @@ public struct V2AccountBinding: Hashable, Sendable {
 public enum V2LocalWorkScope: Hashable, Sendable {
     case unbound
     /// A parked work is local-only but remains distinguishable from a never-
-    /// bound work. Its checkpoint intents are still written as unbound.
+    /// bound work. Parked checkpoints never create an actionable intent.
     case parked
     case bound(V2AccountBinding)
 }

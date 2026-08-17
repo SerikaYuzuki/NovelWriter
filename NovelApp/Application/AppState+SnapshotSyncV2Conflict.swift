@@ -122,10 +122,11 @@ extension AppState {
         using choice: SyncV2ConflictChoice,
         selection: SnapshotSyncV2ConflictSelection
     ) async -> Bool {
-        guard permitsDocumentInteraction,
+        guard permitsDocumentTransitionOperation,
               let application = snapshotSyncV2Application else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -298,7 +299,7 @@ extension AppState {
                       snapshotSession: expectedSnapshotSession
                   ),
                   matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-                  permitsDocumentInteraction,
+                  permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -469,7 +470,7 @@ extension AppState {
               let expectedSnapshotSession = snapshotSyncV2Session,
               expectedSnapshotSession.workID == workID else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScopeToken
-        guard permitsDocumentInteraction,
+        guard permitsDocumentTransitionOperation,
               let application = snapshotSyncV2Application else { return false }
         let expectedDocumentSession = documentSessionToken
         return await documentOperationGate.perform { [weak self] in
@@ -480,6 +481,7 @@ extension AppState {
                       snapshotSession: expectedSnapshotSession
                   ),
                   matchesSnapshotSyncV2AccountScope(expectedAccountScope),
+                  permitsDocumentTransitionOperation,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true

@@ -99,6 +99,15 @@ public extension LocalSyncV2Store {
             UPDATE sealed_commands SET status='sending'
             WHERE command_id=? AND server_instance_id=? AND protocol_epoch=?
               AND account_id=? AND account_fence=? AND status='sealed'
+              AND EXISTS (
+                SELECT 1 FROM account_bindings b
+                WHERE b.work_id=sealed_commands.work_id
+                  AND b.server_instance_id=sealed_commands.server_instance_id
+                  AND b.protocol_epoch=sealed_commands.protocol_epoch
+                  AND b.account_id=sealed_commands.account_id
+                  AND b.account_fence=sealed_commands.account_fence
+                  AND b.state='bound'
+              )
             """,
             [.text(commandID.uuidString.lowercased())] + binding.values
         )
@@ -152,6 +161,9 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
+        guard try commandBindingIsActive(commandID: commandID, binding: binding) else {
+            throw SyncV2StoreError.accountMismatch
+        }
         guard let row = try query(
             """
             SELECT terminal_result,response_status,canonical_response,
@@ -180,6 +192,12 @@ public extension LocalSyncV2Store {
         verifiedPublishInboxID: UUID? = nil
     ) throws {
         guard case let .bound(binding) = scope else {
+            throw SyncV2StoreError.accountMismatch
+        }
+        guard try commandBindingIsActive(
+            commandID: acknowledgement.commandID,
+            binding: binding
+        ) else {
             throw SyncV2StoreError.accountMismatch
         }
         guard let record = try sealedRecord(

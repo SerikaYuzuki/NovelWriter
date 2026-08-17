@@ -6,7 +6,9 @@ import NovelSyncV2Application
 /// macOSのv2作品棚とremote catalogの投影。
 extension AppState {
     private var permitsLibraryWorkOpening: Bool {
-        guard !isDocumentTransitionInProgress, !isTerminationPending else { return false }
+        guard !isDocumentTransitionInProgress,
+              !isTerminationPending,
+              interactiveAuthOperationCount == 0 else { return false }
         switch startupState {
         case .ready, .documentSelection:
             return true
@@ -58,23 +60,35 @@ extension AppState {
         var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap { item -> (WorkID, StartupLibraryWork)? in
             guard item.accountState == .active || item.accountState == .unbound
                 || item.accountState == .parkedDifferentAccount else { return nil }
-            let availability: StartupLibraryWorkAvailability = switch item.availability {
-            case .localOnly: .local
-            case .cached: .cached
-            case .remoteOnly: .remoteOnly
+            let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
+                .parked
+            } else {
+                switch item.availability {
+                case .localOnly: .local
+                case .cached: .cached
+                case .remoteOnly: .remoteOnly
+                }
             }
-            let withConflict = item.remoteProgress == .needsChoice
+            let withConflict = item.accountState != .parkedDifferentAccount &&
+                item.remoteProgress == .needsChoice
+            let remoteProgress: SyncV2RemoteProgress = if item.accountState == .parkedDifferentAccount {
+                .parkedDifferentAccount
+            } else {
+                item.remoteProgress
+            }
             let work = StartupLibraryWork(
                 id: item.workID.rawValue,
                 title: item.title,
                 availability: withConflict ? .conflict : availability,
                 workID: item.workID,
-                remoteProgress: item.remoteProgress
+                remoteProgress: remoteProgress
             )
             return (item.workID, work)
         })
         for remote in snapshotSyncRemoteCatalogItems {
-            if parkedWorkIDs.contains(remote.workID) { continue }
+            if parkedWorkIDs.contains(remote.workID) {
+                continue
+            }
             if let local = worksByID[remote.workID] {
                 let availability: StartupLibraryWorkAvailability = local.availability == .conflict
                     ? .conflict
@@ -163,7 +177,7 @@ extension AppState {
     @discardableResult
     func returnToSnapshotLibrary() async -> Bool {
         guard snapshotSyncV2Application != nil,
-              permitsDocumentChoice else { return false }
+              permitsDocumentTransitionOperation else { return false }
         let returned = await documentOperationGate.perform { [weak self] in
             guard let self,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
@@ -208,6 +222,7 @@ extension AppState {
         }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  permitsLibraryWorkOpening,
                   matchesSnapshotSyncV2AccountScope(accountScope),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }

@@ -14,7 +14,11 @@ public extension SyncV2Application {
         guard (1 ... 500).contains(pageSize) else {
             throw SyncV2ApplicationError.invalidHistoryCursor
         }
-        var state = try HistoryCursor.decode(cursor)
+        let requestScopeGeneration = historyScopeGeneration
+        var state = try HistoryCursor.decode(
+            cursor,
+            expectedScopeGeneration: requestScopeGeneration
+        )
 
         if state.localItems.isEmpty, !state.localFinished {
             do {
@@ -27,6 +31,9 @@ public extension SyncV2Application {
                 state.localItems = page.items.map { HistoryCursor.Entry($0) }
                 state.localCursor = page.nextCursor
                 state.localFinished = page.nextCursor == nil
+                guard historyScopeGeneration == requestScopeGeneration else {
+                    throw SyncV2ApplicationError.invalidHistoryCursor
+                }
             } catch SyncV2ApplicationError.workNotFound {
                 state.localFinished = true
                 state.localAvailable = false
@@ -45,6 +52,11 @@ public extension SyncV2Application {
                 state.remoteItems = page.items.map { HistoryCursor.Entry($0) }
                 state.remoteCursor = page.nextCursor
                 state.remoteFinished = page.nextCursor == nil
+                guard historyScopeGeneration == requestScopeGeneration else {
+                    throw SyncV2ApplicationError.invalidHistoryCursor
+                }
+            } catch let error as SyncV2ApplicationError {
+                throw error
             } catch let failure as SyncV2Failure {
                 state.remoteFinished = true
                 state.remoteAvailable = false
@@ -62,48 +74,58 @@ public extension SyncV2Application {
             }
             throw SyncV2ApplicationError.workNotFound
         }
-
-        let localAvailability: SyncV2HistoryAvailability = state.localAvailable
-            ? .available : .unavailable
-        let onlineAvailability: SyncV2HistoryAvailability = state.remoteAvailable
-            ? .available : .unavailable
-        var local = state.localItems
-        var remote = state.remoteItems
-        var result: [SyncV2HistoryItem] = []
-        while result.count < pageSize, !local.isEmpty || !remote.isEmpty {
-            let takeLocal: Bool = if local.isEmpty {
-                false
-            } else if remote.isEmpty {
-                true
-            } else {
-                HistoryCursor.Entry.order(local[0], before: remote[0])
-            }
-            let entry = takeLocal ? local.removeFirst() : remote.removeFirst()
-            result.append(
-                SyncV2HistoryItem(
-                    occurrenceID: entry.occurrenceID,
-                    snapshotID: entry.snapshotID,
-                    reason: entry.reason,
-                    pinned: entry.pinned,
-                    localGeneration: entry.localGeneration,
-                    createdAt: entry.createdAt,
-                    source: entry.source,
-                    localAvailability: localAvailability,
-                    onlineAvailability: onlineAvailability
-                )
-            )
+        guard historyScopeGeneration == requestScopeGeneration else {
+            throw SyncV2ApplicationError.invalidHistoryCursor
         }
-        state.localItems = local
-        state.remoteItems = remote
-        let nextCursor: String? = state.hasMore ? state.encode() : nil
-        return SyncV2HistoryPage(
-            items: result,
-            nextCursor: nextCursor,
-            localAvailability: localAvailability,
-            onlineAvailability: onlineAvailability,
-            onlineFailure: state.remoteFailure
+
+        return projectHistoryPage(state: &state, pageSize: pageSize)
+    }
+}
+
+private func projectHistoryPage(
+    state: inout HistoryCursor,
+    pageSize: Int
+) -> SyncV2HistoryPage {
+    let localAvailability: SyncV2HistoryAvailability = state.localAvailable
+        ? .available : .unavailable
+    let onlineAvailability: SyncV2HistoryAvailability = state.remoteAvailable
+        ? .available : .unavailable
+    var local = state.localItems
+    var remote = state.remoteItems
+    var result: [SyncV2HistoryItem] = []
+    while result.count < pageSize, !local.isEmpty || !remote.isEmpty {
+        let takeLocal: Bool = if local.isEmpty {
+            false
+        } else if remote.isEmpty {
+            true
+        } else {
+            HistoryCursor.Entry.order(local[0], before: remote[0])
+        }
+        let entry = takeLocal ? local.removeFirst() : remote.removeFirst()
+        result.append(
+            SyncV2HistoryItem(
+                occurrenceID: entry.occurrenceID,
+                snapshotID: entry.snapshotID,
+                reason: entry.reason,
+                pinned: entry.pinned,
+                localGeneration: entry.localGeneration,
+                createdAt: entry.createdAt,
+                source: entry.source,
+                localAvailability: localAvailability,
+                onlineAvailability: onlineAvailability
+            )
         )
     }
+    state.localItems = local
+    state.remoteItems = remote
+    let nextCursor: String? = state.hasMore ? state.encode() : nil
+    return SyncV2HistoryPage(
+        items: result,
+        nextCursor: nextCursor,
+        localAvailability: localAvailability,
+        onlineAvailability: onlineAvailability,
+        onlineFailure: state.remoteFailure
+    )
 }
 
 private struct HistoryCursor: Codable {
@@ -149,6 +171,7 @@ private struct HistoryCursor: Codable {
         }
     }
 
+    let scopeGeneration: UInt64
     var localCursor: String?
     var remoteCursor: String?
     var localItems: [Entry]
@@ -160,6 +183,7 @@ private struct HistoryCursor: Codable {
     var remoteFailure: SyncV2Failure? = nil
 
     enum CodingKeys: String, CodingKey {
+        case scopeGeneration
         case localCursor
         case remoteCursor
         case localItems
@@ -174,9 +198,13 @@ private struct HistoryCursor: Codable {
         !localItems.isEmpty || !remoteItems.isEmpty || !localFinished || !remoteFinished
     }
 
-    static func decode(_ token: String?) throws -> HistoryCursor {
+    static func decode(
+        _ token: String?,
+        expectedScopeGeneration: UInt64
+    ) throws -> HistoryCursor {
         guard let token else {
             return HistoryCursor(
+                scopeGeneration: expectedScopeGeneration,
                 localCursor: nil,
                 remoteCursor: nil,
                 localItems: [],
@@ -189,7 +217,8 @@ private struct HistoryCursor: Codable {
             )
         }
         guard let data = Data(base64Encoded: token),
-              let cursor = try? JSONDecoder().decode(HistoryCursor.self, from: data) else {
+              let cursor = try? JSONDecoder().decode(HistoryCursor.self, from: data),
+              cursor.scopeGeneration == expectedScopeGeneration else {
             throw SyncV2ApplicationError.invalidHistoryCursor
         }
         return cursor

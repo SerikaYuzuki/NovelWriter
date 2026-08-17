@@ -1029,3 +1029,14 @@
   2. exact v2 databaseの再実行は、縮退済みbootstrapと既存role／ACL／identityのread-only attestationだけを行う。既存経路でrole変更、grant、migration、metadata修復を再要求しない。fresh／unknown／legacyの判定はadvisory lock取得後に行い、拒否時はDBを変更しない。
   3. PostgreSQLの63-byte identifier制限に依存せず、長いunique constraint／indexにはauthority migrationで決定的な63-byte以下の名前を明示する。catalog attestationはその完全な名前を要求し、暗黙切り詰め名を成功扱いにしない。Swift／Rustのschema fixtureとmigration bytesは同じ名前を検証する。
 - **詳細**: `SyncServerV2/src/bin/sync_v2_migrator.rs`、`SyncServerV2/src/postgres.rs`、`SyncServerV2/migrations/0001_sync_v2.sql`、`SyncServerV2/migrations/0002_auth_v1.sql`、`docs/sync/v2/deployment.md`を正とする。
+
+## D-084: Snapshot Sync v2のaccount transitionをowner付き停止・再計画境界にする
+
+- **日付**: 2026-08-18 / **状態**: 採択・実装中
+- **内容**:
+  1. sign-out、account switch、cold launch reconciliation、同一AccountIDのfence rotationは、document operation gate内のlocal checkpointとSQLite transitionを、owner付きremote-scheduling suspensionで囲む。transition APIはactive tokenを必須とし、同時に一つだけ実行する。checkpoint／park／quarantine失敗時はtransactionをrollbackし、旧editor／auth／shelfを変更しない。
+  2. 別AccountIDまたは異なるserver namespaceのWorkは暗黙adoptせず、旧bound laneを`parked`として保持する。macOS shelfでは`.parkedDifferentAccount`を明示し、local open／edit／checkpointだけを許可する。catalogの同一WorkIDとはmergeしない。same AccountID＋same serverInstanceID＋same protocolEpochのparked laneだけを再activateできるが、旧Intent／commandを再利用せずcurrent headからfresh intentを作る。同一AccountIDのfence rotationは`quarantined`としてbootstrap／missing／replanから再開する。
+  3. transitionはsealed command、intent、inbox、conflict、pending_keep_both、upload transfer、restore recordを旧bindingごとに同一transactionで停止する。restoreの`prepared`／`sealed`は`retired`へ閉じ、snapshot／history／監査bytesは削除しない。scope-less head／equivalence cacheと旧receiptは新scopeから再利用できず、late ACK／upload completionはactive binding proofなしにlocal head／intentを変更できない。
+  4. workerはWorkごとのowner UUIDを持ち、cancel後の非協力remote応答は新worker slotを消去せず、ACK／failure／UI projectionを適用しない。history/catalog cursorはaccount、server、protocol、fence、session generationの境界を検査する。既存retirement前v2 DBは固定legacy DDLのchecksumをattestしてから、transactionalな`retired` migrationを行い、未知schemaはbyte/catalogを変更せず拒否する。
+- **理由**: 認証応答、remote worker、SQLite scope transitionの到着順をUIだけで管理すると、旧tenantへの送信、旧receiptの新fence適用、同WorkIDの暗黙merge、またはlocal原稿の棚消失が起こり得る。owner付き停止とdurable replanを単一境界にすることで、local-first編集を継続しながらaccount namespaceを越えるremote mutationとデータ損失を防ぐ。
+- **詳細**: 実装契約とschema／migrationは`docs/SNAPSHOT_SYNC_V2.md`、`docs/sync/v2/sqlite.sql`、shared `NovelSyncV2Application`／`NovelSyncV2Store`を正とする。

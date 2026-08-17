@@ -58,6 +58,18 @@ public extension SyncV2Application {
         let projection = try await libraryProvider.library()
         return SyncV2LibraryProjection(items: projection.items.map { item in
             guard let state = states[item.workID] else { return item }
+            if item.accountState == .parkedDifferentAccount {
+                return SyncV2LibraryItem(
+                    workID: item.workID,
+                    title: item.title,
+                    availability: item.availability,
+                    accountState: item.accountState,
+                    localGeneration: item.localGeneration,
+                    remoteHead: item.remoteHead,
+                    conflict: nil,
+                    remoteProgress: .parkedDifferentAccount
+                )
+            }
             let conflict: SyncV2ConflictProjection? = switch state.remoteProgress {
             case .readyForSafeAdoption:
                 nil
