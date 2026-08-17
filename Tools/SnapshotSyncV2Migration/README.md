@@ -22,7 +22,7 @@ ledgerの証拠を使います。受理する分類は`verified`、`verified_can
 `legacy_quarantine_ambiguous_user_touched`です。
 各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。`--expected-work-count`は必須で、今回の監査済みarchiveでは`62`を指定します。
 
-stageのprovenance format v2では、旧SQLiteのwire証拠とpackage read-back後の採用証拠を別の値として記録します。`sourceWireSnapshotID`／`sourceWireSnapshotDigest`／`sourceObjectClosureSHA256`はread-only SQLiteの独立解析から、`adoptionSnapshotID`／`adoptionProjectionDigest`／`inventoryEvidenceSHA256`は`.novelpkg`のread-backから再計算します。`snapshotID`と`projectionDigest`は互換aliasに過ぎず、sourceとadoptionを代用できません。`inventoryEvidenceSHA256`は絶対pathを除いたcanonical JSONで、空ディレクトリを含むpackage treeの全entryを対象にします。
+stageのprovenance format v2では、旧SQLiteのwire証拠とpackage read-back後の採用証拠を別の値として記録します。`sourceWireSnapshotID`／`sourceWireSnapshotDigest`／`sourceProjectionDigest`／`sourceObjectClosureSHA256`はread-only SQLiteの独立解析から、`adoptionSnapshotID`／`adoptionProjectionDigest`／`inventoryEvidenceSHA256`は`.novelpkg`のread-backから再計算します。`sourceProjectionVersion`と`adoptionProjectionVersion`も別々に必須です。`snapshotID`と`projectionDigest`は互換aliasに過ぎず、sourceとadoptionを代用できません。`inventoryEvidenceSHA256`は絶対pathを除いたcanonical JSONで、空ディレクトリを含むpackage treeの全entryを対象にします。source projectionとadoption projectionは異なる正当なdigestであり、builderは両者を比較しません。
 
 v2へcommitするmigration CLIは、stage内のreportだけを信頼しません。stage外の監査済みauthorityを指定し、authorityのcanonical JSON SHA-256とoperator identityを別経路で渡す必要があります。
 
@@ -54,7 +54,7 @@ swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-authorit
 
 builderの出力JSONに含まれる`authorityDigest`と`authorityID`を、adopterのcommit引数へ別経路で渡します。既存のauthority rootや入力と重なる出力root、symlink、書込み可能な入力、直前のdigest変更は拒否されます。
 
-builderはstage report／run／`COMMITTED`／`.state` sidecar／package treeをauthorityの根拠として信頼せず、source SQLiteをimmutable read-onlyで再解析し、WorkID・document ID・source object closure・package adoption snapshot／projection・path-independent inventoryをexact照合します。object/source row issueが1件でもあれば拒否します。出力直前にはclassification、source SQLite、archive manifest、sealed stage treeを再hashします。exporterの最終化は全entryを非書込み（file `0444`／directory `0555`）へsealし、部分sealは失敗扱いです。
+builderはstage report／run／`COMMITTED`／`.state` sidecar／package treeをauthorityの根拠として信頼せず、source SQLiteをimmutable read-onlyで再解析し、WorkID・document ID・source object closure・classification 8列（createdAt/local generation/ack head ID+generation/evidence）・package adoption snapshot／projection・path-independent inventoryをexact照合します。object/source row issueが1件でもあれば拒否します。manifest各entryはrealpath、portable Unicode/casefold path key、filesystem identity（device/inode）を検証し、symlink・hardlink alias・collision・SQLite entry重複を拒否します。出力直前にはclassification、source SQLite、archive manifest、sealed stage treeを再hashします。exporterの最終化は全entryを非書込み（file `0444`／directory `0555`）へsealし、既存COMMITTED stageは内容一致を確認してから明示的に再sealできます。authorityはsibling temporary rootを完全に再hash・sealしてからfinal rootへatomic renameするため、失敗時にpartial finalを残しません。
 
 各作品について次を検証します。
 

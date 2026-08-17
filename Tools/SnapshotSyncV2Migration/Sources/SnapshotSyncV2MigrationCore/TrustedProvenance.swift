@@ -45,9 +45,17 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
     public let provenanceVersion: Int
     public let sourceWireSnapshotID: String?
     public let sourceWireSnapshotDigest: String?
+    public let sourceProjectionDigest: String?
+    public let sourceProjectionVersion: Int?
     public let adoptionSnapshotID: String?
     public let adoptionProjectionDigest: String?
+    public let adoptionProjectionVersion: Int?
     public let sourceObjectClosureSHA256: String?
+    public let classificationCreatedAt: String?
+    public let classificationLocalGeneration: Int?
+    public let classificationHeadSnapshotID: String?
+    public let classificationHeadGeneration: Int?
+    public let classificationEvidence: String?
 
     public init(
         workID: UUID,
@@ -62,9 +70,17 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
         provenanceVersion: Int = 2,
         sourceWireSnapshotID: String? = nil,
         sourceWireSnapshotDigest: String? = nil,
+        sourceProjectionDigest: String? = nil,
+        sourceProjectionVersion: Int? = nil,
         adoptionSnapshotID: String? = nil,
         adoptionProjectionDigest: String? = nil,
-        sourceObjectClosureSHA256: String? = nil
+        adoptionProjectionVersion: Int? = nil,
+        sourceObjectClosureSHA256: String? = nil,
+        classificationCreatedAt: String? = nil,
+        classificationLocalGeneration: Int? = nil,
+        classificationHeadSnapshotID: String? = nil,
+        classificationHeadGeneration: Int? = nil,
+        classificationEvidence: String? = nil
     ) {
         self.workID = workID
         self.disposition = disposition
@@ -78,9 +94,17 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
         self.provenanceVersion = provenanceVersion
         self.sourceWireSnapshotID = sourceWireSnapshotID ?? snapshotID
         self.sourceWireSnapshotDigest = sourceWireSnapshotDigest ?? snapshotID
+        self.sourceProjectionDigest = sourceProjectionDigest
+        self.sourceProjectionVersion = sourceProjectionVersion
         self.adoptionSnapshotID = adoptionSnapshotID ?? snapshotID
         self.adoptionProjectionDigest = adoptionProjectionDigest ?? projectionDigest
+        self.adoptionProjectionVersion = adoptionProjectionVersion
         self.sourceObjectClosureSHA256 = sourceObjectClosureSHA256
+        self.classificationCreatedAt = classificationCreatedAt
+        self.classificationLocalGeneration = classificationLocalGeneration
+        self.classificationHeadSnapshotID = classificationHeadSnapshotID
+        self.classificationHeadGeneration = classificationHeadGeneration
+        self.classificationEvidence = classificationEvidence
     }
 }
 

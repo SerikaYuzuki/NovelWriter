@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NovelCore
 import NovelSync
@@ -388,6 +389,8 @@ struct MigrationTests {
         #expect(FileManager.default.fileExists(atPath: built.authorityURL.path))
         let authorityData = try Data(contentsOf: built.authorityURL)
         #expect(built.authorityDigest == SHA256Digest.hex(authorityData))
+        let authority = try JSONDecoder().decode(MigrationTrustedProvenanceAuthority.self, from: authorityData)
+        #expect(authority.entries.first?.sourceProjectionDigest != authority.entries.first?.adoptionProjectionDigest)
         let account = knownAccount()
         let workID = try WorkID(uuidString: archive.inventory.workID)
         let adoption = MigrationOptions(
@@ -485,6 +488,131 @@ struct MigrationTests {
         await #expect(throws: TrustedProvenanceBuilderError.self) {
             try await builder.build(toctou)
         }
+    }
+
+    @Test
+    func existingCommittedStageResumesAnInterruptedReadOnlySeal() async throws {
+        let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
+            .appendingPathComponent("v2-seal-resume-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workID = UUID()
+        let documentID = UUID()
+        let archiveRoot = root.appendingPathComponent("legacy", isDirectory: true)
+        try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+        let snapshot = try WorkSnapshot(document: NovelDocument(id: documentID, title: "seal resume", chapters: []))
+        let object = try WorkCanonicalJSON.encodeSnapshot(snapshot)
+        let objectID = SHA256Digest.hex(object)
+        let manifest = try makeV1Manifest(workID: workID, objectID: objectID, byteCount: object.count)
+        let snapshotID = SHA256Digest.hex(manifest)
+        let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
+        try makeLegacyDatabase(at: sqliteURL, workID: workID, documentID: documentID, snapshotID: snapshotID, manifest: manifest, objectID: objectID, object: object)
+        let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
+        let ledgerURL = root.appendingPathComponent("classification.csv")
+        try classificationRow(workID: workID, disposition: "verified", snapshotID: snapshotID)
+            .write(to: ledgerURL, atomically: true, encoding: .utf8)
+        let stageURL = root.appendingPathComponent("stage", isDirectory: true)
+        let options = LegacyV1ExportOptions(
+            sourceSQLiteURL: sqliteURL,
+            classificationLedgerURL: ledgerURL,
+            stageRootURL: stageURL,
+            sourceArchiveRootURL: archiveRoot,
+            archiveManifestURL: archiveManifestURL,
+            sourceIsVerifiedArchive: true,
+            expectedWorkCount: 1
+        )
+        let first = try await LegacyV1Exporter().export(options: options)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stageURL.path)
+        let stageItems = FileManager.default.enumerator(at: stageURL, includingPropertiesForKeys: [.isDirectoryKey])
+        while let item = stageItems?.nextObject() as? URL {
+            let isDirectory = try item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+            try FileManager.default.setAttributes([.posixPermissions: isDirectory ? 0o755 : 0o644], ofItemAtPath: item.path)
+        }
+        let second = try await LegacyV1Exporter().export(options: options)
+        #expect(second.entries == first.entries)
+        for relative in ["COMMITTED", "migration-run.json", "migration-ledger.json", ".state/\(workID.uuidString).json"] {
+            #expect(try stageURL.appendingPathComponent(relative).resourceValues(forKeys: [.isWritableKey]).isWritable != true)
+        }
+    }
+
+    @Test
+    func authorityBuilderBindsClassificationColumnsToSQLiteEvidence() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let options = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "classification-binding")
+        try fixture.makeWritableTree(options.stageRootURL)
+        let reportURL = options.stageRootURL.appendingPathComponent("migration-ledger.json")
+        var report = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: reportURL)) as? [String: Any])
+        var entries = try #require(report["entries"] as? [[String: Any]])
+        entries[0]["classificationCreatedAt"] = "2026-08-18T00:00:00Z"
+        report["entries"] = entries
+        try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: reportURL, options: .atomic)
+        let stateURL = options.stageRootURL.appendingPathComponent(".state/\(archive.inventory.workID).json")
+        var state = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
+        state["classificationCreatedAt"] = "2026-08-18T00:00:00Z"
+        try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+        try fixture.makeReadOnly(options.stageRootURL)
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(options)
+        }
+    }
+
+    @Test
+    func authorityBuilderRejectsPortableManifestCollision() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let options = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "manifest-collision")
+        try fixture.makeWritableTree(options.sourceArchiveRootURL)
+        let digest = try SHA256Digest.hex(Data(contentsOf: options.sourceSQLiteURL))
+        try "\(digest)  library.sqlite\n\(digest)  LIBRARY.SQLITE\n".write(to: options.archiveManifestURL, atomically: true, encoding: .utf8)
+        try fixture.makeReadOnly(options.sourceArchiveRootURL)
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(options)
+        }
+    }
+
+    @Test
+    func authorityBuilderRejectsManifestHardlinkAlias() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let options = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "manifest-hardlink")
+        try fixture.makeWritableTree(options.sourceArchiveRootURL)
+        let alias = options.sourceArchiveRootURL.appendingPathComponent("library-alias.sqlite")
+        try FileManager.default.linkItem(at: options.sourceSQLiteURL, to: alias)
+        let digest = try SHA256Digest.hex(Data(contentsOf: options.sourceSQLiteURL))
+        try "\(digest)  library.sqlite\n\(digest)  library-alias.sqlite\n".write(to: options.archiveManifestURL, atomically: true, encoding: .utf8)
+        try fixture.makeReadOnly(options.sourceArchiveRootURL)
+        await #expect(throws: TrustedProvenanceBuilderError.self) {
+            try await TrustedProvenanceBuilder().build(options)
+        }
+    }
+
+    @Test
+    func authorityOutputPublishesAtomicallyAndLeavesRaceOutputUntouched() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let options = try fixture.makeBuilderOptions(archive: archive, stage: trusted, disposition: "verified", outputName: "atomic-race")
+        let builder = TrustedProvenanceBuilder(beforeOutputHook: nil, beforeOutputRenameHook: { finalRoot in
+            try FileManager.default.createDirectory(at: finalRoot, withIntermediateDirectories: false)
+            try Data("preexisting sentinel".utf8).write(to: finalRoot.appendingPathComponent("sentinel"), options: .withoutOverwriting)
+        })
+        do {
+            _ = try await builder.build(options)
+            Issue.record("an output race must fail closed")
+        } catch let error as TrustedProvenanceBuilderError {
+            #expect(error == .outputAlreadyExists)
+        }
+        #expect(try String(contentsOf: options.outputRootURL.appendingPathComponent("sentinel"), encoding: .utf8) == "preexisting sentinel")
+        let siblings = try FileManager.default.contentsOfDirectory(at: options.outputRootURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+        #expect(!siblings.contains(where: { $0.lastPathComponent.hasPrefix(".atomic-race.authority-") && $0.lastPathComponent.hasSuffix(".tmp") }))
     }
 
     @Test
@@ -634,6 +762,7 @@ private struct Fixture {
         let projectionDigest = SHA256Digest.hex(projectionBytes)
         let sourceWireSnapshotID = String(repeating: "d", count: 64)
         let sourceWireSnapshotDigest = sourceWireSnapshotID
+        let sourceProjectionDigest = String(repeating: "f", count: 64)
         let adoptionSnapshotID = archive.encoded.snapshotId.description
         let sourceObjectClosureSHA256 = String(repeating: "e", count: 64)
         let sourceSQLiteDigest = String(repeating: "a", count: 64)
@@ -654,9 +783,14 @@ private struct Fixture {
                 "snapshotID": sourceWireSnapshotID, "outputRelativePath": "verified/\(filenameWorkID).novelpkg",
                 "outcome": "exported", "note": NSNull(), "projectionDigest": projectionDigest,
                 "provenanceVersion": 2, "sourceWireSnapshotID": sourceWireSnapshotID,
-                "sourceWireSnapshotDigest": sourceWireSnapshotDigest, "adoptionSnapshotID": adoptionSnapshotID,
+                "sourceWireSnapshotDigest": sourceWireSnapshotDigest,
+                "sourceProjectionDigest": sourceProjectionDigest, "sourceProjectionVersion": 1,
+                "adoptionSnapshotID": adoptionSnapshotID,
                 "adoptionProjectionDigest": projectionDigest, "inventoryEvidenceSHA256": evidenceDigest,
-                "sourceObjectClosureSHA256": sourceObjectClosureSHA256
+                "adoptionProjectionVersion": 1, "sourceObjectClosureSHA256": sourceObjectClosureSHA256,
+                "classificationCreatedAt": "2026-08-17T00:00:00Z", "classificationLocalGeneration": 1,
+                "classificationHeadSnapshotID": sourceWireSnapshotID, "classificationHeadGeneration": 4,
+                "classificationEvidence": "operator-evidence"
             ]]
         ]
         try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: stage.appendingPathComponent("migration-ledger.json"), options: .atomic)
@@ -669,8 +803,12 @@ private struct Fixture {
         let state: [String: Any] = [
             "sourceDigest": sourceSQLiteDigest, "snapshotID": sourceWireSnapshotID, "projectionDigest": projectionDigest,
             "provenanceVersion": 2, "sourceWireSnapshotID": sourceWireSnapshotID,
-            "sourceWireSnapshotDigest": sourceWireSnapshotDigest, "adoptionSnapshotID": adoptionSnapshotID,
-            "adoptionProjectionDigest": projectionDigest, "inventoryEvidenceSHA256": evidenceDigest
+            "sourceWireSnapshotDigest": sourceWireSnapshotDigest, "sourceProjectionDigest": sourceProjectionDigest,
+            "sourceProjectionVersion": 1, "adoptionSnapshotID": adoptionSnapshotID,
+            "adoptionProjectionDigest": projectionDigest, "adoptionProjectionVersion": 1,
+            "inventoryEvidenceSHA256": evidenceDigest, "classificationCreatedAt": "2026-08-17T00:00:00Z",
+            "classificationLocalGeneration": 1, "classificationHeadSnapshotID": sourceWireSnapshotID,
+            "classificationHeadGeneration": 4, "classificationEvidence": "operator-evidence"
         ]
         try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stage.appendingPathComponent(".state/\(filenameWorkID).json"), options: .atomic)
         try Data("COMMITTED\n".utf8).write(to: stage.appendingPathComponent("COMMITTED"), options: .atomic)
@@ -692,9 +830,17 @@ private struct Fixture {
                 inventoryEvidenceSHA256: evidenceDigest,
                 sourceWireSnapshotID: sourceWireSnapshotID,
                 sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                sourceProjectionDigest: sourceProjectionDigest,
+                sourceProjectionVersion: 1,
                 adoptionSnapshotID: adoptionSnapshotID,
                 adoptionProjectionDigest: projectionDigest,
-                sourceObjectClosureSHA256: sourceObjectClosureSHA256
+                adoptionProjectionVersion: 1,
+                sourceObjectClosureSHA256: sourceObjectClosureSHA256,
+                classificationCreatedAt: "2026-08-17T00:00:00Z",
+                classificationLocalGeneration: 1,
+                classificationHeadSnapshotID: sourceWireSnapshotID,
+                classificationHeadGeneration: 4,
+                classificationEvidence: "operator-evidence"
             )]
         )
         let encoder = JSONEncoder()
@@ -764,9 +910,17 @@ private struct Fixture {
                     provenanceVersion: entry.provenanceVersion,
                     sourceWireSnapshotID: entry.sourceWireSnapshotID,
                     sourceWireSnapshotDigest: entry.sourceWireSnapshotDigest,
+                    sourceProjectionDigest: entry.sourceProjectionDigest,
+                    sourceProjectionVersion: entry.sourceProjectionVersion,
                     adoptionSnapshotID: entry.adoptionSnapshotID,
                     adoptionProjectionDigest: entry.adoptionProjectionDigest,
-                    sourceObjectClosureSHA256: entry.sourceObjectClosureSHA256
+                    adoptionProjectionVersion: entry.adoptionProjectionVersion,
+                    sourceObjectClosureSHA256: entry.sourceObjectClosureSHA256,
+                    classificationCreatedAt: entry.classificationCreatedAt,
+                    classificationLocalGeneration: entry.classificationLocalGeneration,
+                    classificationHeadSnapshotID: entry.classificationHeadSnapshotID,
+                    classificationHeadGeneration: entry.classificationHeadGeneration,
+                    classificationEvidence: entry.classificationEvidence
                 )
             }
         ))
@@ -820,7 +974,7 @@ private struct Fixture {
             try makeWritable(classificationURL)
         }
         let workID = try WorkID(uuidString: archive.inventory.workID)
-        let classification = "\(workID.description),\(disposition),\(sourceSnapshotID),2026-08-17T00:00:00Z,2,\(sourceSnapshotID),4,operator-evidence\n"
+        let classification = "\(workID.description),\(disposition),\(sourceSnapshotID),2026-08-17T00:00:00Z,1,\(sourceSnapshotID),4,operator-evidence\n"
         try classification.write(to: classificationURL, atomically: true, encoding: .utf8)
         let manifestData = try Data(contentsOf: manifestURL)
         let classificationData = try Data(contentsOf: classificationURL)
@@ -878,10 +1032,18 @@ private struct Fixture {
         entries[0]["provenanceVersion"] = 2
         entries[0]["sourceWireSnapshotID"] = sourceRow.sourceWireSnapshotID
         entries[0]["sourceWireSnapshotDigest"] = sourceRow.sourceWireSnapshotDigest
+        entries[0]["sourceProjectionDigest"] = sourceRow.sourceProjectionDigest
+        entries[0]["sourceProjectionVersion"] = sourceRow.sourceProjectionVersion
         entries[0]["adoptionSnapshotID"] = adoption.encoded.snapshotId.description
         entries[0]["adoptionProjectionDigest"] = try SHA256Digest.hex(WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: adoption.model.document)))
+        entries[0]["adoptionProjectionVersion"] = 1
         entries[0]["inventoryEvidenceSHA256"] = try inventoryEvidenceDigest(adoption.inventory)
         entries[0]["sourceObjectClosureSHA256"] = sourceRow.objectClosureDigest
+        entries[0]["classificationCreatedAt"] = sourceRow.sourceCreatedAt
+        entries[0]["classificationLocalGeneration"] = sourceRow.sourceLocalGeneration
+        entries[0]["classificationHeadSnapshotID"] = sourceRow.sourceHeadSnapshotID
+        entries[0]["classificationHeadGeneration"] = sourceRow.sourceHeadGeneration
+        entries[0]["classificationEvidence"] = "operator-evidence"
         report["entries"] = entries
         try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: reportURL, options: .atomic)
         let runURL = stage.appendingPathComponent("migration-run.json")
@@ -899,9 +1061,17 @@ private struct Fixture {
         state["provenanceVersion"] = 2
         state["sourceWireSnapshotID"] = sourceRow.sourceWireSnapshotID
         state["sourceWireSnapshotDigest"] = sourceRow.sourceWireSnapshotDigest
+        state["sourceProjectionDigest"] = sourceRow.sourceProjectionDigest
+        state["sourceProjectionVersion"] = sourceRow.sourceProjectionVersion
         state["adoptionSnapshotID"] = adoption.encoded.snapshotId.description
         state["adoptionProjectionDigest"] = try SHA256Digest.hex(WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: adoption.model.document)))
+        state["adoptionProjectionVersion"] = 1
         state["inventoryEvidenceSHA256"] = try inventoryEvidenceDigest(adoption.inventory)
+        state["classificationCreatedAt"] = sourceRow.sourceCreatedAt
+        state["classificationLocalGeneration"] = sourceRow.sourceLocalGeneration
+        state["classificationHeadSnapshotID"] = sourceRow.sourceHeadSnapshotID
+        state["classificationHeadGeneration"] = sourceRow.sourceHeadGeneration
+        state["classificationEvidence"] = "operator-evidence"
         try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
     }
 

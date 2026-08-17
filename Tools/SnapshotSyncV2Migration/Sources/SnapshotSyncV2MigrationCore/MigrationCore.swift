@@ -108,10 +108,18 @@ private struct VerifiedExportEntry: Decodable, Equatable {
     let provenanceVersion: Int
     let sourceWireSnapshotID: String?
     let sourceWireSnapshotDigest: String?
+    let sourceProjectionDigest: String?
+    let sourceProjectionVersion: Int?
     let adoptionSnapshotID: String?
     let adoptionProjectionDigest: String?
+    let adoptionProjectionVersion: Int?
     let inventoryEvidenceSHA256: String?
     let sourceObjectClosureSHA256: String?
+    let classificationCreatedAt: String?
+    let classificationLocalGeneration: Int?
+    let classificationHeadSnapshotID: String?
+    let classificationHeadGeneration: Int?
+    let classificationEvidence: String?
 }
 
 private struct VerifiedRunState: Decodable, Equatable {
@@ -129,9 +137,17 @@ private struct VerifiedProjectionState: Decodable, Equatable {
     let provenanceVersion: Int
     let sourceWireSnapshotID: String?
     let sourceWireSnapshotDigest: String?
+    let sourceProjectionDigest: String?
+    let sourceProjectionVersion: Int?
     let adoptionSnapshotID: String?
     let adoptionProjectionDigest: String?
+    let adoptionProjectionVersion: Int?
     let inventoryEvidenceSHA256: String?
+    let classificationCreatedAt: String?
+    let classificationLocalGeneration: Int?
+    let classificationHeadSnapshotID: String?
+    let classificationHeadGeneration: Int?
+    let classificationEvidence: String?
 }
 
 private struct VerifiedExportStageAttestation: Equatable {
@@ -597,10 +613,18 @@ public actor MigrationRunner {
               entry.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               entry.sourceWireSnapshotID.map(isDigest) == true,
               entry.sourceWireSnapshotDigest.map(isDigest) == true,
+              entry.sourceProjectionDigest.map(isDigest) == true,
+              entry.sourceProjectionVersion == LegacyV1ProvenanceContract.sourceProjectionVersion,
               entry.adoptionSnapshotID.map(isDigest) == true,
               entry.adoptionProjectionDigest.map(isDigest) == true,
+              entry.adoptionProjectionVersion == LegacyV1ProvenanceContract.adoptionProjectionVersion,
               entry.inventoryEvidenceSHA256.map(isDigest) == true,
               entry.sourceObjectClosureSHA256.map(isDigest) == true,
+              entry.classificationCreatedAt?.isEmpty == false,
+              entry.classificationLocalGeneration != nil,
+              entry.classificationHeadSnapshotID.map(isDigest) == true,
+              entry.classificationHeadGeneration != nil,
+              entry.classificationEvidence?.isEmpty == false,
               report.entries.count(where: { $0.workID == entry.workID }) == 1 else {
             throw MigrationError.exportProvenanceMismatch("verifiedEntry")
         }
@@ -627,9 +651,17 @@ public actor MigrationRunner {
               trustedEntry.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               trustedEntry.sourceWireSnapshotID == entry.sourceWireSnapshotID,
               trustedEntry.sourceWireSnapshotDigest == entry.sourceWireSnapshotDigest,
+              trustedEntry.sourceProjectionDigest == entry.sourceProjectionDigest,
+              trustedEntry.sourceProjectionVersion == entry.sourceProjectionVersion,
               trustedEntry.adoptionSnapshotID == entry.adoptionSnapshotID,
               trustedEntry.adoptionProjectionDigest == entry.adoptionProjectionDigest,
+              trustedEntry.adoptionProjectionVersion == entry.adoptionProjectionVersion,
               trustedEntry.sourceObjectClosureSHA256 == entry.sourceObjectClosureSHA256,
+              trustedEntry.classificationCreatedAt == entry.classificationCreatedAt,
+              trustedEntry.classificationLocalGeneration == entry.classificationLocalGeneration,
+              trustedEntry.classificationHeadSnapshotID == entry.classificationHeadSnapshotID,
+              trustedEntry.classificationHeadGeneration == entry.classificationHeadGeneration,
+              trustedEntry.classificationEvidence == entry.classificationEvidence,
               trustedEntry.inventoryEvidenceSHA256 == evidenceDigest else {
             throw MigrationError.exportProvenanceMismatch("externalAuthorityEntry")
         }
@@ -643,9 +675,17 @@ public actor MigrationRunner {
               state.projectionDigest == entry.projectionDigest,
               state.sourceWireSnapshotID == entry.sourceWireSnapshotID,
               state.sourceWireSnapshotDigest == entry.sourceWireSnapshotDigest,
+              state.sourceProjectionDigest == entry.sourceProjectionDigest,
+              state.sourceProjectionVersion == entry.sourceProjectionVersion,
               state.adoptionSnapshotID == entry.adoptionSnapshotID,
               state.adoptionProjectionDigest == entry.adoptionProjectionDigest,
-              state.inventoryEvidenceSHA256 == entry.inventoryEvidenceSHA256 else {
+              state.adoptionProjectionVersion == entry.adoptionProjectionVersion,
+              state.inventoryEvidenceSHA256 == entry.inventoryEvidenceSHA256,
+              state.classificationCreatedAt == entry.classificationCreatedAt,
+              state.classificationLocalGeneration == entry.classificationLocalGeneration,
+              state.classificationHeadSnapshotID == entry.classificationHeadSnapshotID,
+              state.classificationHeadGeneration == entry.classificationHeadGeneration,
+              state.classificationEvidence == entry.classificationEvidence else {
             throw MigrationError.exportProvenanceMismatch("sidecar")
         }
 
@@ -723,9 +763,17 @@ public actor MigrationRunner {
                       && $0.provenanceVersion == LegacyV1ProvenanceContract.formatVersion
                       && isDigest($0.sourceWireSnapshotID ?? "")
                       && isDigest($0.sourceWireSnapshotDigest ?? "")
+                      && isDigest($0.sourceProjectionDigest ?? "")
+                      && $0.sourceProjectionVersion == LegacyV1ProvenanceContract.sourceProjectionVersion
                       && isDigest($0.adoptionSnapshotID ?? "")
                       && isDigest($0.adoptionProjectionDigest ?? "")
+                      && $0.adoptionProjectionVersion == LegacyV1ProvenanceContract.adoptionProjectionVersion
                       && isDigest($0.sourceObjectClosureSHA256 ?? "")
+                      && $0.classificationCreatedAt?.isEmpty == false
+                      && $0.classificationLocalGeneration != nil
+                      && isDigest($0.classificationHeadSnapshotID ?? "")
+                      && $0.classificationHeadGeneration != nil
+                      && $0.classificationEvidence?.isEmpty == false
               }) else {
             throw MigrationError.exportProvenanceMismatch("authorityFields")
         }

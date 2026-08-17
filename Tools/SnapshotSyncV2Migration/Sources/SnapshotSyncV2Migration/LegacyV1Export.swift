@@ -52,6 +52,21 @@ public enum LegacyV1Disposition: String, Codable, Sendable {
 /// different authorities and must never be compared as interchangeable IDs.
 public enum LegacyV1ProvenanceContract {
     public static let formatVersion = 2
+    /// Source projection is a versioned digest of the legacy wire snapshot ID
+    /// and exact `work/document` object bytes in the read-only v1 SQLite
+    /// closure.  Adoption projection is the canonical digest reconstructed
+    /// from the read-back `.novelpkg`; the two authorities are intentionally
+    /// not interchangeable.
+    public static let sourceProjectionVersion = 1
+    public static let adoptionProjectionVersion = 1
+
+    public static func sourceProjectionDigest(snapshotID: String, documentObject: Data) -> String {
+        var bytes = Data("fuminiwa-v1-source-projection/1\0".utf8)
+        bytes.append(contentsOf: snapshotID.utf8)
+        bytes.append(0)
+        bytes.append(documentObject)
+        return SHA256Hex.digest(bytes)
+    }
 }
 
 public struct LegacyV1SourceEvidenceRow: Codable, Equatable, Sendable {
@@ -60,7 +75,12 @@ public struct LegacyV1SourceEvidenceRow: Codable, Equatable, Sendable {
     public let sourceWireSnapshotID: String
     public let sourceWireSnapshotDigest: String
     public let sourceProjectionDigest: String
+    public let sourceProjectionVersion: Int
     public let objectClosureDigest: String
+    public let sourceCreatedAt: String
+    public let sourceLocalGeneration: Int
+    public let sourceHeadSnapshotID: String
+    public let sourceHeadGeneration: Int
 
     public init(
         workID: UUID,
@@ -68,14 +88,24 @@ public struct LegacyV1SourceEvidenceRow: Codable, Equatable, Sendable {
         sourceWireSnapshotID: String,
         sourceWireSnapshotDigest: String,
         sourceProjectionDigest: String,
-        objectClosureDigest: String
+        objectClosureDigest: String,
+        sourceProjectionVersion: Int = LegacyV1ProvenanceContract.sourceProjectionVersion,
+        sourceCreatedAt: String = "",
+        sourceLocalGeneration: Int = 0,
+        sourceHeadSnapshotID: String = "",
+        sourceHeadGeneration: Int = 0
     ) {
         self.workID = workID
         self.documentID = documentID
         self.sourceWireSnapshotID = sourceWireSnapshotID
         self.sourceWireSnapshotDigest = sourceWireSnapshotDigest
         self.sourceProjectionDigest = sourceProjectionDigest
+        self.sourceProjectionVersion = sourceProjectionVersion
         self.objectClosureDigest = objectClosureDigest
+        self.sourceCreatedAt = sourceCreatedAt
+        self.sourceLocalGeneration = sourceLocalGeneration
+        self.sourceHeadSnapshotID = sourceHeadSnapshotID
+        self.sourceHeadGeneration = sourceHeadGeneration
     }
 }
 
@@ -106,10 +136,18 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
     public let provenanceVersion: Int
     public let sourceWireSnapshotID: String?
     public let sourceWireSnapshotDigest: String?
+    public let sourceProjectionDigest: String?
+    public let sourceProjectionVersion: Int?
     public let adoptionSnapshotID: String?
     public let adoptionProjectionDigest: String?
+    public let adoptionProjectionVersion: Int?
     public let inventoryEvidenceSHA256: String?
     public let sourceObjectClosureSHA256: String?
+    public let classificationCreatedAt: String?
+    public let classificationLocalGeneration: Int?
+    public let classificationHeadSnapshotID: String?
+    public let classificationHeadGeneration: Int?
+    public let classificationEvidence: String?
 
     public init(
         workID: UUID,
@@ -122,10 +160,18 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
         provenanceVersion: Int = LegacyV1ProvenanceContract.formatVersion,
         sourceWireSnapshotID: String? = nil,
         sourceWireSnapshotDigest: String? = nil,
+        sourceProjectionDigest: String? = nil,
+        sourceProjectionVersion: Int? = nil,
         adoptionSnapshotID: String? = nil,
         adoptionProjectionDigest: String? = nil,
+        adoptionProjectionVersion: Int? = nil,
         inventoryEvidenceSHA256: String? = nil,
-        sourceObjectClosureSHA256: String? = nil
+        sourceObjectClosureSHA256: String? = nil,
+        classificationCreatedAt: String? = nil,
+        classificationLocalGeneration: Int? = nil,
+        classificationHeadSnapshotID: String? = nil,
+        classificationHeadGeneration: Int? = nil,
+        classificationEvidence: String? = nil
     ) {
         self.workID = workID
         self.disposition = disposition
@@ -137,10 +183,18 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
         self.provenanceVersion = provenanceVersion
         self.sourceWireSnapshotID = sourceWireSnapshotID ?? snapshotID
         self.sourceWireSnapshotDigest = sourceWireSnapshotDigest ?? snapshotID
+        self.sourceProjectionDigest = sourceProjectionDigest
+        self.sourceProjectionVersion = sourceProjectionVersion
         self.adoptionSnapshotID = adoptionSnapshotID ?? snapshotID
         self.adoptionProjectionDigest = adoptionProjectionDigest ?? projectionDigest
+        self.adoptionProjectionVersion = adoptionProjectionVersion
         self.inventoryEvidenceSHA256 = inventoryEvidenceSHA256
         self.sourceObjectClosureSHA256 = sourceObjectClosureSHA256
+        self.classificationCreatedAt = classificationCreatedAt
+        self.classificationLocalGeneration = classificationLocalGeneration
+        self.classificationHeadSnapshotID = classificationHeadSnapshotID
+        self.classificationHeadGeneration = classificationHeadGeneration
+        self.classificationEvidence = classificationEvidence
     }
 }
 
@@ -335,11 +389,19 @@ public struct LegacyV1Exporter: Sendable {
                 let relative = classification.disposition.directoryName + "/" + work.workID.uuidString + ".novelpkg"
                 let destination = options.stageRootURL.appendingPathComponent(relative)
                 let sourceWireSnapshotDigest = SHA256Hex.digest(snapshot.manifest)
-                let sourceProjectionDigest = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
+                // This is deliberately the source-wire object digest, not the
+                // adoption projection digest.  The latter is recomputed only
+                // from package read-back below and may legitimately differ
+                // when the legacy JSON used a different byte representation.
+                let sourceProjectionDigest = LegacyV1ProvenanceContract.sourceProjectionDigest(
+                    snapshotID: snapshot.snapshotID,
+                    documentObject: documentObject.bytes
+                )
                 guard let sourceEvidenceRow = sourceEvidenceRows[work.workID],
                       sourceEvidenceRow.sourceWireSnapshotID == snapshot.snapshotID,
                       sourceEvidenceRow.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
-                      sourceEvidenceRow.sourceProjectionDigest == sourceProjectionDigest else {
+                      sourceEvidenceRow.sourceProjectionDigest == sourceProjectionDigest,
+                      sourceEvidenceRow.sourceProjectionVersion == LegacyV1ProvenanceContract.sourceProjectionVersion else {
                     throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "independent source evidence mismatch")
                 }
                 let adoption = try await writeIdempotently(
@@ -348,6 +410,10 @@ public struct LegacyV1Exporter: Sendable {
                     sourceDigest: sourceDigest,
                     sourceWireSnapshotID: snapshot.snapshotID,
                     sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                    sourceProjectionDigest: sourceProjectionDigest,
+                    sourceProjectionVersion: LegacyV1ProvenanceContract.sourceProjectionVersion,
+                    adoptionProjectionVersion: LegacyV1ProvenanceContract.adoptionProjectionVersion,
+                    classification: classification,
                     workID: work.workID,
                     stateURL: options.stageRootURL.appendingPathComponent(".state", isDirectory: true)
                         .appendingPathComponent(work.workID.uuidString + ".json")
@@ -364,10 +430,18 @@ public struct LegacyV1Exporter: Sendable {
                         provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
                         sourceWireSnapshotID: snapshot.snapshotID,
                         sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                        sourceProjectionDigest: sourceProjectionDigest,
+                        sourceProjectionVersion: LegacyV1ProvenanceContract.sourceProjectionVersion,
                         adoptionSnapshotID: adoption.snapshotID,
                         adoptionProjectionDigest: adoption.projectionDigest,
+                        adoptionProjectionVersion: LegacyV1ProvenanceContract.adoptionProjectionVersion,
                         inventoryEvidenceSHA256: adoption.inventoryEvidence,
-                        sourceObjectClosureSHA256: sourceEvidenceRow.objectClosureDigest
+                        sourceObjectClosureSHA256: sourceEvidenceRow.objectClosureDigest,
+                        classificationCreatedAt: classification.createdAt,
+                        classificationLocalGeneration: classification.currentSnapshotLocalGeneration,
+                        classificationHeadSnapshotID: classification.headSnapshotID,
+                        classificationHeadGeneration: classification.headGeneration,
+                        classificationEvidence: classification.evidence
                     )
                 )
             } catch {
@@ -649,7 +723,15 @@ public struct LegacyV1Exporter: Sendable {
               Set(report.entries.map(\.workID)).count == report.entries.count,
               Set(report.entries.map(\.workID)) == workIDs,
               Set(report.entries.map(\.workID)) == Set(classifications.keys),
-              report.entries.allSatisfy({ classifications[$0.workID]?.disposition == $0.disposition && $0.outcome == "exported" }),
+              report.entries.allSatisfy({
+                  classifications[$0.workID]?.disposition == $0.disposition &&
+                      classifications[$0.workID]?.createdAt == $0.classificationCreatedAt &&
+                      classifications[$0.workID]?.currentSnapshotLocalGeneration == $0.classificationLocalGeneration &&
+                      classifications[$0.workID]?.headSnapshotID == $0.classificationHeadSnapshotID &&
+                      classifications[$0.workID]?.headGeneration == $0.classificationHeadGeneration &&
+                      classifications[$0.workID]?.evidence == $0.classificationEvidence &&
+                      $0.outcome == "exported"
+              }),
               report.entries.allSatisfy({ $0.outputRelativePath == "\($0.disposition.rawValue)/\($0.workID.uuidString).novelpkg" }) else {
             throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
         }
@@ -658,15 +740,32 @@ public struct LegacyV1Exporter: Sendable {
             guard let entry = report.entries.first(where: { $0.workID == work.workID }),
                   let sourceWireSnapshotID = entry.sourceWireSnapshotID,
                   let sourceWireSnapshotDigest = entry.sourceWireSnapshotDigest,
+                  let sourceProjectionDigest = entry.sourceProjectionDigest,
+                  let sourceProjectionVersion = entry.sourceProjectionVersion,
                   let sourceObjectClosure = entry.sourceObjectClosureSHA256,
+                  let classificationCreatedAt = entry.classificationCreatedAt,
+                  let classificationLocalGeneration = entry.classificationLocalGeneration,
+                  let classificationHeadSnapshotID = entry.classificationHeadSnapshotID,
+                  let classificationHeadGeneration = entry.classificationHeadGeneration,
+                  let classificationEvidence = entry.classificationEvidence,
                   let sourceRow = sourceRows[work.workID] else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
             let source = try database.verifyProjection(for: work)
             guard source.snapshotID == sourceWireSnapshotID,
                   sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotDigest,
+                  sourceProjectionDigest == sourceRow.sourceProjectionDigest,
+                  sourceProjectionVersion == sourceRow.sourceProjectionVersion,
                   sourceObjectClosure == sourceRow.objectClosureDigest,
-                  source.projectionDigest == sourceRow.sourceProjectionDigest else {
+                  classificationCreatedAt == classifications[work.workID]?.createdAt,
+                  classificationLocalGeneration == classifications[work.workID]?.currentSnapshotLocalGeneration,
+                  classificationHeadSnapshotID == classifications[work.workID]?.headSnapshotID,
+                  classificationHeadGeneration == classifications[work.workID]?.headGeneration,
+                  classificationEvidence == classifications[work.workID]?.evidence,
+                  sourceRow.sourceCreatedAt == classificationCreatedAt,
+                  sourceRow.sourceLocalGeneration == classificationLocalGeneration,
+                  sourceRow.sourceHeadSnapshotID == classificationHeadSnapshotID,
+                  sourceRow.sourceHeadGeneration == classificationHeadGeneration else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
         }
@@ -676,8 +775,16 @@ public struct LegacyV1Exporter: Sendable {
             guard let relative = entry.outputRelativePath,
                   let sourceWireSnapshotID = entry.sourceWireSnapshotID,
                   let sourceWireSnapshotDigest = entry.sourceWireSnapshotDigest,
+                  let sourceProjectionDigest = entry.sourceProjectionDigest,
+                  let sourceProjectionVersion = entry.sourceProjectionVersion,
                   let adoptionSnapshotID = entry.adoptionSnapshotID,
                   let adoptionProjectionDigest = entry.adoptionProjectionDigest,
+                  let adoptionProjectionVersion = entry.adoptionProjectionVersion,
+                  let classificationCreatedAt = entry.classificationCreatedAt,
+                  let classificationLocalGeneration = entry.classificationLocalGeneration,
+                  let classificationHeadSnapshotID = entry.classificationHeadSnapshotID,
+                  let classificationHeadGeneration = entry.classificationHeadGeneration,
+                  let classificationEvidence = entry.classificationEvidence,
                   let expectedEvidence = entry.inventoryEvidenceSHA256 else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
@@ -699,15 +806,27 @@ public struct LegacyV1Exporter: Sendable {
                   state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
                   state.sourceWireSnapshotID == sourceWireSnapshotID,
                   state.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                  state.sourceProjectionDigest == sourceProjectionDigest,
+                  state.sourceProjectionVersion == sourceProjectionVersion,
                   state.adoptionSnapshotID == adoptionSnapshotID,
                   state.adoptionProjectionDigest == adoptionProjectionDigest,
+                  state.adoptionProjectionVersion == adoptionProjectionVersion,
                   state.inventoryEvidenceSHA256 == expectedEvidence,
+                  state.classificationCreatedAt == classificationCreatedAt,
+                  state.classificationLocalGeneration == classificationLocalGeneration,
+                  state.classificationHeadSnapshotID == classificationHeadSnapshotID,
+                  state.classificationHeadGeneration == classificationHeadGeneration,
+                  state.classificationEvidence == classificationEvidence,
                   adoption.snapshotID == adoptionSnapshotID,
                   adoption.projectionDigest == adoptionProjectionDigest,
                   inventoryEvidence == expectedEvidence else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
         }
+        // Content was revalidated against the immutable source and package
+        // read-back above.  A previously interrupted seal is therefore safe
+        // to resume; a mismatch fails before any chmod is attempted.
+        try sealStageReadOnly(at: options.stageRootURL)
         return report
     }
 
@@ -771,6 +890,10 @@ public struct LegacyV1Exporter: Sendable {
         sourceDigest: String,
         sourceWireSnapshotID: String,
         sourceWireSnapshotDigest: String,
+        sourceProjectionDigest: String,
+        sourceProjectionVersion: Int,
+        adoptionProjectionVersion: Int,
+        classification: ClassificationRecord,
         workID: UUID,
         stateURL: URL
     ) async throws -> AdoptionEvidence {
@@ -783,7 +906,15 @@ public struct LegacyV1Exporter: Sendable {
                       state.sourceDigest == sourceDigest,
                       state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
                       state.sourceWireSnapshotID == sourceWireSnapshotID,
-                      state.sourceWireSnapshotDigest == sourceWireSnapshotDigest else {
+                      state.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                      state.sourceProjectionDigest == sourceProjectionDigest,
+                      state.sourceProjectionVersion == sourceProjectionVersion,
+                      state.adoptionProjectionVersion == adoptionProjectionVersion,
+                      state.classificationCreatedAt == classification.createdAt,
+                      state.classificationLocalGeneration == classification.currentSnapshotLocalGeneration,
+                      state.classificationHeadSnapshotID == classification.headSnapshotID,
+                      state.classificationHeadGeneration == classification.headGeneration,
+                      state.classificationEvidence == classification.evidence else {
                     throw LegacyV1ExportError.writeFailed("existing package state differs at \(destination.path)")
                 }
                 let existing = try await repository.load(from: destination)
@@ -830,9 +961,17 @@ public struct LegacyV1Exporter: Sendable {
                 provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
                 sourceWireSnapshotID: sourceWireSnapshotID,
                 sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                sourceProjectionDigest: sourceProjectionDigest,
+                sourceProjectionVersion: sourceProjectionVersion,
                 adoptionSnapshotID: adoption.snapshotID,
                 adoptionProjectionDigest: adoption.projectionDigest,
-                inventoryEvidenceSHA256: inventoryEvidence
+                adoptionProjectionVersion: adoptionProjectionVersion,
+                inventoryEvidenceSHA256: inventoryEvidence,
+                classificationCreatedAt: classification.createdAt,
+                classificationLocalGeneration: classification.currentSnapshotLocalGeneration,
+                classificationHeadSnapshotID: classification.headSnapshotID,
+                classificationHeadGeneration: classification.headGeneration,
+                classificationEvidence: classification.evidence
             )
             try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
             return AdoptionEvidence(
@@ -1095,7 +1234,8 @@ private enum ClassificationLedger {
                 createdAt: fields[3],
                 currentSnapshotLocalGeneration: Int(fields[4])!,
                 headSnapshotID: fields[5],
-                headGeneration: Int(fields[6])!
+                headGeneration: Int(fields[6])!,
+                evidence: fields[7]
             )
             guard values.updateValue(record, forKey: workID) == nil else {
                 throw LegacyV1ExportError.duplicateClassification(workID)
@@ -1125,6 +1265,7 @@ private struct ClassificationRecord: Equatable {
     let currentSnapshotLocalGeneration: Int
     let headSnapshotID: String
     let headGeneration: Int
+    let evidence: String
 }
 
 private enum CSV {
@@ -1180,6 +1321,7 @@ private struct ArchiveManifest {
     static func load(from url: URL) throws -> Self {
         let text = try String(contentsOf: url, encoding: .utf8)
         var entries: [String: String] = [:]
+        var portableKeys: [String: String] = [:]
         for rawLine in text.split(whereSeparator: \.isNewline) {
             let line = String(rawLine)
             let fields = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
@@ -1206,6 +1348,12 @@ private struct ArchiveManifest {
             guard entries.updateValue(digest, forKey: path) == nil else {
                 throw LegacyV1ExportError.sourceArchiveManifestMismatch("duplicate manifest path: \(path)")
             }
+            let portableKey = path.precomposedStringWithCanonicalMapping
+                .folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                .lowercased()
+            guard portableKeys.updateValue(path, forKey: portableKey) == nil else {
+                throw LegacyV1ExportError.sourceArchiveManifestMismatch("portable manifest path collision: \(path)")
+            }
         }
         guard !entries.isEmpty else {
             throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest is empty")
@@ -1221,10 +1369,25 @@ private struct ArchiveManifest {
         guard manifestRelative == manifestURL.lastPathComponent else {
             throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest must be a direct child of archive root")
         }
+        var filesystemIdentities: [String: String] = [:]
         for (path, expected) in entries {
             let candidate = root.appendingPathComponent(path)
             try exporter.requireSafeRegularFile(candidate)
-            guard try SHA256Hex.digest(fileAt: candidate) == expected else {
+            let candidatePath = exporter.canonicalPath(candidate)
+            guard candidate.standardizedFileURL.path == candidatePath,
+                  candidatePath == URL(fileURLWithPath: rootPath).appendingPathComponent(path).standardizedFileURL.path else {
+                throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest entry resolves through alias: \(path)")
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: candidatePath)
+            guard let device = (attributes[.systemNumber] as? NSNumber)?.int64Value,
+                  let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value else {
+                throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest entry has no filesystem identity: \(path)")
+            }
+            let identity = "\(device):\(inode)"
+            guard filesystemIdentities.updateValue(path, forKey: identity) == nil else {
+                throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest entry aliases the same file: \(path)")
+            }
+            guard try SHA256Hex.digest(fileAt: URL(fileURLWithPath: candidatePath)) == expected else {
                 throw LegacyV1ExportError.sourceArchiveManifestMismatch("digest mismatch: \(path)")
             }
         }
@@ -1259,9 +1422,17 @@ private struct ProjectionState: Codable {
     let provenanceVersion: Int
     let sourceWireSnapshotID: String
     let sourceWireSnapshotDigest: String
+    let sourceProjectionDigest: String
+    let sourceProjectionVersion: Int
     let adoptionSnapshotID: String
     let adoptionProjectionDigest: String
+    let adoptionProjectionVersion: Int
     let inventoryEvidenceSHA256: String
+    let classificationCreatedAt: String
+    let classificationLocalGeneration: Int
+    let classificationHeadSnapshotID: String
+    let classificationHeadGeneration: Int
+    let classificationEvidence: String
 }
 
 private struct RunState: Codable {
@@ -1547,14 +1718,21 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                   let closureData = try? JSONSerialization.data(withJSONObject: closure, options: [.sortedKeys]) else {
                 continue
             }
-            try rows.append(
+            rows.append(
                 LegacyV1SourceEvidenceRow(
                     workID: work.workID,
                     documentID: work.documentID,
                     sourceWireSnapshotID: snapshot.snapshotID,
                     sourceWireSnapshotDigest: SHA256Hex.digest(snapshot.manifest),
-                    sourceProjectionDigest: SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot)),
-                    objectClosureDigest: SHA256Hex.digest(closureData)
+                    sourceProjectionDigest: LegacyV1ProvenanceContract.sourceProjectionDigest(
+                        snapshotID: snapshot.snapshotID,
+                        documentObject: documentObject.bytes
+                    ),
+                    objectClosureDigest: SHA256Hex.digest(closureData),
+                    sourceCreatedAt: snapshot.createdAt,
+                    sourceLocalGeneration: snapshot.localGeneration,
+                    sourceHeadSnapshotID: work.acknowledgedHeadSnapshotID,
+                    sourceHeadGeneration: work.acknowledgedHeadGeneration
                 )
             )
         }
@@ -1593,9 +1771,12 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
         guard document.id == work.documentID, wireSnapshot.documentID.rawValue == work.documentID else {
             throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "document identity mismatch")
         }
-        return try (
+        return (
             snapshot.snapshotID,
-            SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
+            LegacyV1ProvenanceContract.sourceProjectionDigest(
+                snapshotID: snapshot.snapshotID,
+                documentObject: documentObject.bytes
+            )
         )
     }
 

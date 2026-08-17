@@ -76,12 +76,20 @@ SQLite manifest read independently by the exporter, while
 package read-back that the adopter will commit. `snapshotID` and
 `projectionDigest` remain compatibility aliases only; they cannot substitute
 for either side of the contract. The source row also carries an exact
+`sourceProjectionDigest` (versioned separately from adoption) and
 `sourceObjectClosureSHA256`. `inventoryEvidenceSHA256` is the SHA-256 of the
 canonical path-independent inventory evidence, including regular files,
 directories (including empty directories), byte counts, object IDs, and
 portable-resource metadata. A report, run file, sidecar, or self-generated
 matching digest is never sufficient without this independent source/package
 comparison.
+
+The source and adoption projection digests are independent authorities and
+must not be compared with each other. The builder carries both typed/versioned
+values through the export report, state sidecar, source SQLite evidence, and
+authority entry. It also carries and independently checks all eight literal
+classification columns against the SQLite work/snapshot rows and acknowledged
+heads; a non-empty operator evidence value is retained exactly.
 
 `verified_candidate` is an adoption candidate only. It is never equivalent to
 the authority disposition `verified`; an authority entry with
@@ -101,11 +109,20 @@ path-independent inventory evidence before creating a new authority root.
 The builder never modifies the stage or source archive; an existing or
 overlapping output root, input tamper, or output race fails closed.
 
+Every archive-manifest path is resolved to a realpath and checked for a
+portable Unicode/case-fold collision key and filesystem device/inode identity.
+An alias, hardlink collision, symlink, or duplicate source-SQLite entry is
+rejected. A committed stage whose content still matches the immutable source
+may resume an interrupted read-only seal; a mismatch fails before resealing.
+
 The exporter atomically writes `COMMITTED` only after all works and issue lists
 pass, then seals the complete stage tree read-only (`0444` files and `0555`
 directories). The builder rehashes the report, run, marker, every sidecar and
 package tree, plus the classification CSV, source SQLite, and archive manifest
-again immediately before creating the new authority root. The adopter repeats
+again immediately before creating a sibling temporary authority root. That
+root is fully verified and sealed before an atomic same-filesystem rename to
+the final root; a failed attempt cleans only its owned temporary root and
+leaves a pre-existing final root unchanged. The adopter repeats
 authority and package read-back after its final commit hook and only then opens
 the SQLite commit transaction. A failed or partially writable seal is not an
 authority.

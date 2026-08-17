@@ -69,13 +69,19 @@ public struct TrustedProvenanceBuilderResult: Sendable {
 
 public struct TrustedProvenanceBuilder: Sendable {
     private let beforeOutputHook: (@Sendable () async throws -> Void)?
+    private let beforeOutputRenameHook: (@Sendable (URL) throws -> Void)?
 
     public init() {
         beforeOutputHook = nil
+        beforeOutputRenameHook = nil
     }
 
-    init(beforeOutputHook: (@Sendable () async throws -> Void)?) {
+    init(
+        beforeOutputHook: (@Sendable () async throws -> Void)?,
+        beforeOutputRenameHook: (@Sendable (URL) throws -> Void)? = nil
+    ) {
         self.beforeOutputHook = beforeOutputHook
+        self.beforeOutputRenameHook = beforeOutputRenameHook
     }
 
     public func build(_ options: TrustedProvenanceBuilderOptions) async throws -> TrustedProvenanceBuilderResult {
@@ -112,10 +118,18 @@ public struct TrustedProvenanceBuilder: Sendable {
                   let relativePath = reportEntry.outputRelativePath,
                   let sourceWireSnapshotID = reportEntry.sourceWireSnapshotID,
                   let sourceWireSnapshotDigest = reportEntry.sourceWireSnapshotDigest,
+                  let sourceProjectionDigest = reportEntry.sourceProjectionDigest,
+                  let sourceProjectionVersion = reportEntry.sourceProjectionVersion,
                   let adoptionSnapshotID = reportEntry.adoptionSnapshotID,
                   let adoptionProjectionDigest = reportEntry.adoptionProjectionDigest,
+                  let adoptionProjectionVersion = reportEntry.adoptionProjectionVersion,
                   let inventoryEvidenceSHA256 = reportEntry.inventoryEvidenceSHA256,
-                  let sourceObjectClosureSHA256 = reportEntry.sourceObjectClosureSHA256 else {
+                  let sourceObjectClosureSHA256 = reportEntry.sourceObjectClosureSHA256,
+                  let classificationCreatedAt = reportEntry.classificationCreatedAt,
+                  let classificationLocalGeneration = reportEntry.classificationLocalGeneration,
+                  let classificationHeadSnapshotID = reportEntry.classificationHeadSnapshotID,
+                  let classificationHeadGeneration = reportEntry.classificationHeadGeneration,
+                  let classificationEvidence = reportEntry.classificationEvidence else {
                 throw TrustedProvenanceBuilderError.invalidStage("entry:\(reportEntry.workID.uuidString)")
             }
             let literalDisposition = classification.disposition
@@ -142,21 +156,35 @@ public struct TrustedProvenanceBuilder: Sendable {
             }
             guard sourceWireSnapshotID == sourceRow.sourceWireSnapshotID,
                   sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotDigest,
+                  sourceProjectionDigest == sourceRow.sourceProjectionDigest,
+                  sourceProjectionVersion == sourceRow.sourceProjectionVersion,
                   sourceObjectClosureSHA256 == sourceRow.objectClosureDigest else {
                 throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):sourceRow")
             }
             guard sourceRow.documentID == archive.model.document.id,
-                  sourceRow.sourceProjectionDigest == expectedProjection,
-                  sourceRow.sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotID else {
+                  sourceRow.sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotID,
+                  classification.snapshotID == sourceWireSnapshotID,
+                  classificationCreatedAt == classification.createdAt,
+                  classificationLocalGeneration == classification.currentSnapshotLocalGeneration,
+                  classificationHeadSnapshotID == classification.headSnapshotID,
+                  classificationHeadGeneration == classification.headGeneration,
+                  classificationEvidence == classification.evidence,
+                  classification.createdAt == sourceRow.sourceCreatedAt,
+                  classification.currentSnapshotLocalGeneration == sourceRow.sourceLocalGeneration,
+                  classification.headSnapshotID == sourceRow.sourceHeadSnapshotID,
+                  classification.headGeneration == sourceRow.sourceHeadGeneration else {
                 throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):sourceProjection")
             }
-            guard classification.snapshotID == sourceWireSnapshotID else {
-                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):classificationSnapshot")
+            guard reportEntry.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+                  sourceProjectionVersion == LegacyV1ProvenanceContract.sourceProjectionVersion,
+                  adoptionProjectionVersion == LegacyV1ProvenanceContract.adoptionProjectionVersion else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):evidenceVersion")
             }
             guard adoptionSnapshotID == expectedAdoptionSnapshotID else {
                 throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):adoptionSnapshot")
             }
             guard adoptionProjectionDigest == expectedProjection,
+                  adoptionProjectionVersion == LegacyV1ProvenanceContract.adoptionProjectionVersion,
                   reportEntry.snapshotID == sourceWireSnapshotID,
                   reportEntry.projectionDigest == adoptionProjectionDigest else {
                 throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):projection")
@@ -168,11 +196,19 @@ public struct TrustedProvenanceBuilder: Sendable {
                   state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
                   state.sourceWireSnapshotID == sourceWireSnapshotID,
                   state.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                  state.sourceProjectionDigest == sourceProjectionDigest,
+                  state.sourceProjectionVersion == sourceProjectionVersion,
                   state.adoptionSnapshotID == adoptionSnapshotID,
                   state.adoptionProjectionDigest == adoptionProjectionDigest,
+                  state.adoptionProjectionVersion == adoptionProjectionVersion,
                   state.inventoryEvidenceSHA256 == inventoryEvidenceSHA256,
                   state.snapshotID == sourceWireSnapshotID,
-                  state.projectionDigest == adoptionProjectionDigest else {
+                  state.projectionDigest == adoptionProjectionDigest,
+                  state.classificationCreatedAt == classificationCreatedAt,
+                  state.classificationLocalGeneration == classificationLocalGeneration,
+                  state.classificationHeadSnapshotID == classificationHeadSnapshotID,
+                  state.classificationHeadGeneration == classificationHeadGeneration,
+                  state.classificationEvidence == classificationEvidence else {
                 throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):state")
             }
             let inventoryEvidenceDigest = expectedEvidence
@@ -190,9 +226,17 @@ public struct TrustedProvenanceBuilder: Sendable {
                     provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
                     sourceWireSnapshotID: sourceWireSnapshotID,
                     sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                    sourceProjectionDigest: sourceProjectionDigest,
+                    sourceProjectionVersion: sourceProjectionVersion,
                     adoptionSnapshotID: adoptionSnapshotID,
                     adoptionProjectionDigest: adoptionProjectionDigest,
-                    sourceObjectClosureSHA256: sourceObjectClosureSHA256
+                    adoptionProjectionVersion: adoptionProjectionVersion,
+                    sourceObjectClosureSHA256: sourceObjectClosureSHA256,
+                    classificationCreatedAt: classificationCreatedAt,
+                    classificationLocalGeneration: classificationLocalGeneration,
+                    classificationHeadSnapshotID: classificationHeadSnapshotID,
+                    classificationHeadGeneration: classificationHeadGeneration,
+                    classificationEvidence: classificationEvidence
                 )
             )
         }
@@ -255,10 +299,18 @@ public struct TrustedProvenanceBuilder: Sendable {
         let provenanceVersion: Int
         let sourceWireSnapshotID: String?
         let sourceWireSnapshotDigest: String?
+        let sourceProjectionDigest: String?
+        let sourceProjectionVersion: Int?
         let adoptionSnapshotID: String?
         let adoptionProjectionDigest: String?
+        let adoptionProjectionVersion: Int?
         let inventoryEvidenceSHA256: String?
         let sourceObjectClosureSHA256: String?
+        let classificationCreatedAt: String?
+        let classificationLocalGeneration: Int?
+        let classificationHeadSnapshotID: String?
+        let classificationHeadGeneration: Int?
+        let classificationEvidence: String?
     }
 
     private struct StageRun: Decodable {
@@ -276,14 +328,27 @@ public struct TrustedProvenanceBuilder: Sendable {
         let provenanceVersion: Int
         let sourceWireSnapshotID: String
         let sourceWireSnapshotDigest: String
+        let sourceProjectionDigest: String
+        let sourceProjectionVersion: Int
         let adoptionSnapshotID: String
         let adoptionProjectionDigest: String
+        let adoptionProjectionVersion: Int
         let inventoryEvidenceSHA256: String
+        let classificationCreatedAt: String
+        let classificationLocalGeneration: Int
+        let classificationHeadSnapshotID: String
+        let classificationHeadGeneration: Int
+        let classificationEvidence: String
     }
 
     private struct ClassificationRecord {
         let disposition: String
         let snapshotID: String
+        let createdAt: String
+        let currentSnapshotLocalGeneration: Int
+        let headSnapshotID: String
+        let headGeneration: Int
+        let evidence: String
     }
 
     private func validateArguments(_ options: TrustedProvenanceBuilderOptions) throws {
@@ -383,9 +448,19 @@ public struct TrustedProvenanceBuilder: Sendable {
     private func loadClassifications(_ url: URL) throws -> [UUID: ClassificationRecord] {
         var records: [UUID: ClassificationRecord] = [:]
         let text = try String(contentsOf: url, encoding: .utf8)
-        for rawLine in text.components(separatedBy: .newlines) where !rawLine.isEmpty {
-            let fields = try parseCSV(rawLine)
-            if fields == ["workID", "classification", "currentSnapshotID", "currentSnapshotCreatedAt", "currentSnapshotLocalGeneration", "acknowledgedHeadSnapshotID", "acknowledgedHeadGeneration", "evidence"] {
+        let header = [
+            "workID", "classification", "currentSnapshotID", "currentSnapshotCreatedAt",
+            "currentSnapshotLocalGeneration", "acknowledgedHeadSnapshotID",
+            "acknowledgedHeadGeneration", "evidence"
+        ]
+        for rawLine in text.components(separatedBy: "\n") {
+            var line = rawLine
+            if line.last == "\r" {
+                line.removeLast()
+            }
+            guard !line.isEmpty else { continue }
+            let fields = try parseCSV(line)
+            if fields == header {
                 continue
             }
             guard fields.count == 8 else {
@@ -401,7 +476,22 @@ public struct TrustedProvenanceBuilder: Sendable {
             guard ["verified", "verified_candidate", "quarantine", "legacy_quarantine_test_batch", "needs-review", "needs_review", "legacy_quarantine_ambiguous_user_touched"].contains(fields[1]) else {
                 throw TrustedProvenanceBuilderError.invalidClassification(fields[1])
             }
-            records[workID] = ClassificationRecord(disposition: fields[1], snapshotID: fields[2])
+            guard isDigest(fields[2]),
+                  fields[5] == fields[2],
+                  ISO8601DateFormatter().date(from: fields[3]) != nil,
+                  let localGeneration = Int(fields[4]),
+                  let headGeneration = Int(fields[6]) else {
+                throw TrustedProvenanceBuilderError.invalidClassification("\(fields[0]):evidence")
+            }
+            records[workID] = ClassificationRecord(
+                disposition: fields[1],
+                snapshotID: fields[2],
+                createdAt: fields[3],
+                currentSnapshotLocalGeneration: localGeneration,
+                headSnapshotID: fields[5],
+                headGeneration: headGeneration,
+                evidence: fields[7]
+            )
         }
         return records
     }
@@ -424,31 +514,67 @@ public struct TrustedProvenanceBuilder: Sendable {
 
     private func createAuthorityOutput(data: Data, options: TrustedProvenanceBuilderOptions) throws {
         let fileManager = FileManager.default
-        let parent = options.outputRootURL.deletingLastPathComponent()
+        let finalRoot = options.outputRootURL.standardizedFileURL
+        let parent = finalRoot.deletingLastPathComponent()
         try requireReadOnlyAncestors(parent, label: "outputParent", allowWritableFinal: true)
-        let output = options.outputRootURL.appendingPathComponent("provenance.json")
-        let temporary = options.outputRootURL.appendingPathComponent(".provenance.\(UUID().uuidString).tmp")
+        let temporaryRoot = parent.appendingPathComponent(
+            ".\(finalRoot.lastPathComponent).authority-\(UUID().uuidString).tmp",
+            isDirectory: true
+        )
+        let temporary = temporaryRoot.appendingPathComponent("provenance.json")
+        guard !fileManager.fileExists(atPath: finalRoot.path),
+              !fileManager.fileExists(atPath: temporaryRoot.path) else {
+            throw TrustedProvenanceBuilderError.outputAlreadyExists
+        }
+        var ownsTemporaryRoot = false
         do {
-            try fileManager.createDirectory(at: options.outputRootURL, withIntermediateDirectories: false)
-            try data.write(to: temporary, options: [.atomic])
-            guard !fileManager.fileExists(atPath: output.path) else {
-                throw TrustedProvenanceBuilderError.outputAlreadyExists
+            try fileManager.createDirectory(at: temporaryRoot, withIntermediateDirectories: false)
+            ownsTemporaryRoot = true
+            try data.write(to: temporary, options: [.withoutOverwriting])
+            let readBack = try Data(contentsOf: temporary, options: [.mappedIfSafe])
+            guard readBack == data,
+                  SHA256Digest.hex(readBack) == SHA256Digest.hex(data),
+                  try canonicalJSON(readBack) == readBack else {
+                throw TrustedProvenanceBuilderError.outputWriteFailed("authorityReadBack")
             }
-            try fileManager.moveItem(at: temporary, to: output)
-            try fileManager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: output.path)
-            try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: options.outputRootURL.path)
-            let outputValues = try output.resourceValues(forKeys: [.isRegularFileKey, .isWritableKey, .isSymbolicLinkKey])
-            let rootValues = try options.outputRootURL.resourceValues(forKeys: [.isDirectoryKey, .isWritableKey, .isSymbolicLinkKey])
+            try fileManager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: temporary.path)
+            try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: temporaryRoot.path)
+            let outputValues = try temporary.resourceValues(forKeys: [.isRegularFileKey, .isWritableKey, .isSymbolicLinkKey])
+            let rootValues = try temporaryRoot.resourceValues(forKeys: [.isDirectoryKey, .isWritableKey, .isSymbolicLinkKey])
             guard outputValues.isRegularFile == true, outputValues.isWritable != true,
                   outputValues.isSymbolicLink != true,
                   rootValues.isDirectory == true, rootValues.isWritable != true,
                   rootValues.isSymbolicLink != true else {
                 throw TrustedProvenanceBuilderError.outputWriteFailed("authoritySeal")
             }
+            try beforeOutputRenameHook?(finalRoot)
+            guard !fileManager.fileExists(atPath: finalRoot.path) else {
+                throw TrustedProvenanceBuilderError.outputAlreadyExists
+            }
+            // The temporary root is a sibling on the same filesystem.  A
+            // single rename publishes the already rehashed and sealed tree;
+            // the final path is never a partially-created authority.
+            try fileManager.moveItem(at: temporaryRoot, to: finalRoot)
+            ownsTemporaryRoot = false
         } catch {
-            try? fileManager.removeItem(at: temporary)
+            if ownsTemporaryRoot {
+                cleanupOwnedTemporaryRoot(temporaryRoot)
+            }
+            if let error = error as? TrustedProvenanceBuilderError {
+                throw error
+            }
             throw TrustedProvenanceBuilderError.outputWriteFailed(String(describing: error))
         }
+    }
+
+    private func cleanupOwnedTemporaryRoot(_ root: URL) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: root.path) else { return }
+        let urls = [root] + (fileManager.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
+        for url in urls.reversed() {
+            try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        try? fileManager.removeItem(at: root)
     }
 
     private func requireReadOnlyTree(_ url: URL, label: String) throws {
@@ -516,6 +642,7 @@ public struct TrustedProvenanceBuilder: Sendable {
     ) throws {
         let text = try String(contentsOf: URL(fileURLWithPath: manifestPath), encoding: .utf8)
         var entries: [String: String] = [:]
+        var portableKeys: [String: String] = [:]
         for rawLine in text.split(whereSeparator: \.isNewline) {
             let fields = rawLine.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             guard fields.count == 2 else { throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestLine") }
@@ -531,21 +658,46 @@ public struct TrustedProvenanceBuilder: Sendable {
                   entries.updateValue(digest, forKey: path) == nil else {
                 throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestPath")
             }
+            let portableKey = portablePathKey(path)
+            guard portableKeys.updateValue(path, forKey: portableKey) == nil else {
+                throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestPathCollision:\(path)")
+            }
         }
         guard !entries.isEmpty else { throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestEmpty") }
-        guard entries[sourceSQLiteRelativePath] == sourceSQLiteDigest else {
+        let sourceSQLiteKey = portablePathKey(sourceSQLiteRelativePath)
+        let sourceSQLiteMatches = entries.keys.filter { portablePathKey($0) == sourceSQLiteKey }
+        guard sourceSQLiteMatches.count == 1,
+              sourceSQLiteMatches[0] == sourceSQLiteRelativePath,
+              entries[sourceSQLiteRelativePath] == sourceSQLiteDigest else {
             throw TrustedProvenanceBuilderError.digestMismatch("archiveManifestSourceSQLite")
         }
         let rootURL = URL(fileURLWithPath: rootPath)
-        let expectedPaths = Set(entries.keys.map { rootURL.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path })
+        var filesystemIdentities: [String: String] = [:]
+        var expectedPaths: Set<String> = []
         let manifestRelative = String(manifestPath.dropFirst(rootPath.count + 1))
-        guard manifestRelative == URL(fileURLWithPath: manifestPath).lastPathComponent else {
+        guard manifestPath.hasPrefix(rootPath + "/"),
+              manifestRelative == URL(fileURLWithPath: manifestPath).lastPathComponent else {
             throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestContainment")
         }
         for (path, expectedDigest) in entries {
             let candidate = URL(fileURLWithPath: rootPath).appendingPathComponent(path)
             let candidatePath = try requireReadOnlyFile(candidate, label: "archiveEntry")
-            let bytes = try Data(contentsOf: URL(fileURLWithPath: candidatePath))
+            let realPath = URL(fileURLWithPath: candidatePath).resolvingSymlinksInPath().standardizedFileURL.path
+            guard candidate.standardizedFileURL.path == realPath,
+                  realPath == rootURL.appendingPathComponent(path).standardizedFileURL.path else {
+                throw TrustedProvenanceBuilderError.unsafeInput("archiveEntrySymlink:\(path)")
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: realPath)
+            guard let device = (attributes[.systemNumber] as? NSNumber)?.int64Value,
+                  let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value else {
+                throw TrustedProvenanceBuilderError.unsafeInput("archiveEntryIdentity:\(path)")
+            }
+            let identity = "\(device):\(inode)"
+            guard filesystemIdentities.updateValue(path, forKey: identity) == nil else {
+                throw TrustedProvenanceBuilderError.unsafeInput("archiveEntryAlias:\(path)")
+            }
+            expectedPaths.insert(realPath)
+            let bytes = try Data(contentsOf: URL(fileURLWithPath: realPath))
             guard SHA256Digest.hex(bytes) == expectedDigest else {
                 throw TrustedProvenanceBuilderError.digestMismatch("archiveEntry:\(path)")
             }
@@ -575,6 +727,12 @@ public struct TrustedProvenanceBuilder: Sendable {
 
     private func isDigest(_ value: String) -> Bool {
         value.count == 64 && value.utf8.allSatisfy { ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) }
+    }
+
+    private func portablePathKey(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping
+            .folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
     }
 
     private func pathsOverlap(_ lhs: String, _ rhs: String) -> Bool {
