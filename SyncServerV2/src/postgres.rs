@@ -1,0 +1,664 @@
+use crate::domain::*;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use chrono::Utc;
+use serde_json::Value;
+use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub struct Repository {
+    pub pool: PgPool,
+    pub server_instance_id: String,
+    pub protocol_epoch: i64,
+}
+impl Repository {
+    pub async fn connect(url: &str, server_instance_id: String) -> Result<Self, sqlx::Error> {
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect(url)
+            .await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Ok(Self {
+            pool,
+            server_instance_id,
+            protocol_epoch: PROTOCOL_EPOCH,
+        })
+    }
+    pub fn new(pool: PgPool, server_instance_id: String) -> Self {
+        Self {
+            pool,
+            server_instance_id,
+            protocol_epoch: PROTOCOL_EPOCH,
+        }
+    }
+    async fn scope<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+    ) -> SyncResult<()> {
+        sqlx::query("INSERT INTO sync_v2.account_scopes(account_id,server_instance_id,protocol_epoch,account_fence) VALUES($1,$2,$3,$4) ON CONFLICT(account_id) DO UPDATE SET server_instance_id=EXCLUDED.server_instance_id, protocol_epoch=EXCLUDED.protocol_epoch, account_fence=EXCLUDED.account_fence")
+            .bind(&p.account_id).bind(&p.server_instance_id).bind(p.protocol_epoch).bind(&p.account_fence).execute(&mut **tx).await?;
+        Ok(())
+    }
+    async fn receipt_lookup<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<Option<(i32, Vec<u8>)>> {
+        if let Some(row) = sqlx::query("SELECT command_kind,request_digest,state,response_status,canonical_response FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 FOR UPDATE")
+            .bind(&p.account_id).bind(cmd.command_id).fetch_optional(&mut **tx).await? {
+            let kind: String = row.try_get("command_kind")?;
+            let digest: Vec<u8> = row.try_get("request_digest")?;
+            return replay_receipt(
+                &kind,
+                &digest,
+                cmd.kind.as_str(),
+                &cmd.request_digest,
+                row.try_get::<String, _>("state")? == "completed",
+                row.try_get("response_status").ok(),
+                row.try_get::<Vec<u8>, _>("canonical_response").ok().as_deref(),
+            );
+        }
+        Ok(None)
+    }
+    async fn seal<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<()> {
+        sqlx::query("INSERT INTO sync_v2.sealed_commands(account_id,command_id,work_id,account_fence,command_kind,canonical_request,request_digest,source_snapshot_id,source_generation,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'sending') ON CONFLICT DO NOTHING")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(&p.account_fence).bind(cmd.kind.as_str()).bind(&cmd.canonical_bytes).bind(cmd.request_digest.as_slice()).bind(cmd.source_snapshot_id.as_slice()).bind(cmd.source_generation).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.receipts(account_id,command_id,work_id,command_kind,request_digest,canonical_request,state) VALUES($1,$2,$3,$4,$5,$6,'reserved') ON CONFLICT DO NOTHING")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        Ok(())
+    }
+    async fn complete<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        status: i32,
+        bytes: &[u8],
+    ) -> SyncResult<()> {
+        sqlx::query("UPDATE sync_v2.receipts SET response_status=$3,canonical_response=$4,completed_at=$5,state='completed' WHERE account_id=$1 AND command_id=$2")
+            .bind(&p.account_id).bind(cmd.command_id).bind(status).bind(bytes).bind(Utc::now()).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sync_v2.sealed_commands SET state='completed' WHERE account_id=$1 AND command_id=$2").bind(&p.account_id).bind(cmd.command_id).execute(&mut **tx).await?;
+        Ok(())
+    }
+    fn response(cmd: &SealedCommand, result: &str, extra: Vec<(String, Value)>) -> Vec<u8> {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "commandId".into(),
+            Value::String(cmd.command_id.to_string()),
+        );
+        map.insert(
+            "commandKind".into(),
+            Value::String(cmd.kind.as_str().into()),
+        );
+        map.insert("result".into(), Value::String(result.into()));
+        for (k, v) in extra {
+            map.insert(k, v);
+        }
+        canonical_json(&Value::Object(map)).expect("response is canonical")
+    }
+    pub async fn command(
+        &self,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        if p.protocol_epoch != self.protocol_epoch
+            || p.server_instance_id != self.server_instance_id
+        {
+            return Err(SyncError::ProtocolEpochMismatch);
+        }
+        let mut tx = self.pool.begin().await?;
+        self.scope(&mut tx, p).await?;
+        if let Some(r) = self.receipt_lookup(&mut tx, p, cmd).await? {
+            tx.commit().await?;
+            return Ok(r);
+        }
+        if cmd.kind != CommandKind::CreateWork {
+            self.require_work(&mut tx, p, cmd.work_id).await?;
+        }
+        self.seal(&mut tx, p, cmd).await?;
+        let (status, response) = match cmd.kind {
+            CommandKind::CreateWork => self.create_work(&mut tx, p, cmd).await?,
+            CommandKind::PrepareObject => self.prepare_object(&mut tx, p, cmd).await?,
+            CommandKind::FinalizeObject => self.finalize_object(&mut tx, p, cmd).await?,
+            CommandKind::RegisterSnapshot => self.register_snapshot(&mut tx, p, cmd).await?,
+            CommandKind::Publish => self.publish(&mut tx, p, cmd).await?,
+            CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
+                self.resolve(&mut tx, p, cmd).await?
+            }
+            CommandKind::Restore => self.restore(&mut tx, p, cmd).await?,
+        };
+        self.complete(&mut tx, p, cmd, status, &response).await?;
+        tx.commit().await?;
+        Ok((status, response))
+    }
+    async fn require_work<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        id: Uuid,
+    ) -> SyncResult<()> {
+        let exists = sqlx::query(
+            "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        exists.map(|_| ()).ok_or(SyncError::NotFound)
+    }
+    async fn create_work<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let document =
+            uuid(&c.value["payload"], "documentId").map_err(SyncError::SchemaViolation)?;
+        if sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE")
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_some()
+        {
+            return Err(SyncError::CommandIdReused);
+        }
+        sqlx::query("INSERT INTO sync_v2.works(account_id,work_id,document_id,state) VALUES($1,$2,$3,'bound')").bind(&p.account_id).bind(c.work_id).bind(document).execute(&mut **tx).await?;
+        Ok((
+            201,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("workId".into(), Value::String(c.work_id.to_string())),
+                    ("documentId".into(), Value::String(document.to_string())),
+                ],
+            ),
+        ))
+    }
+    async fn prepare_object<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let object = digest_field(payload, "objectId").map_err(SyncError::SchemaViolation)?;
+        let count = payload
+            .get("byteCount")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("byteCount".into()))?;
+        if sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'").bind(&p.account_id).bind(object.as_slice()).fetch_optional(&mut **tx).await?.is_some() { return Ok((200,Self::response(c,"noChanges",vec![("objectId".into(),Value::String(hex::encode(object)))]))); }
+        let upload = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.upload_capabilities(account_id,upload_id,command_id,work_id,account_fence,object_id,byte_count,state,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'prepared',now()+interval '15 minutes')").bind(&p.account_id).bind(upload).bind(c.command_id).bind(c.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(count).execute(&mut **tx).await?;
+        let capability = upload_capability(&p.account_id, &p.account_fence, upload, c.command_id);
+        Ok((
+            201,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("uploadId".into(), Value::String(upload.to_string())),
+                    ("uploadCapability".into(), Value::String(capability)),
+                    ("objectId".into(), Value::String(hex::encode(object))),
+                ],
+            ),
+        ))
+    }
+    async fn finalize_object<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let object = digest_field(payload, "objectId").map_err(SyncError::SchemaViolation)?;
+        let upload = uuid(payload, "uploadId").map_err(SyncError::SchemaViolation)?;
+        let row=sqlx::query("SELECT object_id,byte_count,state,expires_at FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 AND command_id=$3 FOR UPDATE").bind(&p.account_id).bind(upload).bind(c.command_id).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<String, _>("state")? == "expired" {
+            return Err(SyncError::UploadExpired);
+        }
+        let expected: Vec<u8> = row.try_get("object_id")?;
+        if expected != object {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        let count: i64 = row.try_get("byte_count")?;
+        let blob =
+            sqlx::query("SELECT byte_count,raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1")
+                .bind(object.as_slice())
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or(SyncError::NotFound)?;
+        let actual: i64 = blob.try_get("byte_count")?;
+        let bytes: Vec<u8> = blob.try_get("raw_bytes")?;
+        if actual != count || sha256(&bytes) != object {
+            return Err(SyncError::ObjectDigestMismatch);
+        }
+        sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT DO NOTHING").bind(&p.account_id).bind(object.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sync_v2.upload_capabilities SET state='finalized' WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("objectId".into(), Value::String(hex::encode(object))),
+                    ("byteCount".into(), Value::from(count)),
+                ],
+            ),
+        ))
+    }
+    async fn register_snapshot<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let id = digest_field(payload, "snapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected =
+            digest_field(payload, "manifestBytesDigest").map_err(SyncError::SchemaViolation)?;
+        let text = payload
+            .get("manifestBase64URL")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SyncError::SchemaViolation("manifestBase64URL".into()))?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(text)
+            .map_err(|_| SyncError::InvalidCanonicalBytes)?;
+        if bytes.len() > MAX_MANIFEST_BYTES || sha256(&bytes) != expected || expected != id {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now()) ON CONFLICT DO NOTHING").bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
+        let manifest: Value =
+            serde_json::from_slice(&bytes).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        if manifest.get("workId").and_then(Value::as_str) != Some(c.work_id.to_string().as_str()) {
+            return Err(SyncError::SchemaViolation("manifest.workId".into()));
+        }
+        if let Some(entries) = manifest.get("entries").and_then(Value::as_array) {
+            for entry in entries {
+                let key = entry
+                    .get("entityKey")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| SyncError::SchemaViolation("entry.entityKey".into()))?;
+                let object = digest_field(entry, "objectId").map_err(SyncError::SchemaViolation)?;
+                let count = entry
+                    .get("byteCount")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| SyncError::SchemaViolation("entry.byteCount".into()))?;
+                let content = entry
+                    .get("contentType")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| SyncError::SchemaViolation("entry.contentType".into()))?;
+                if sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'").bind(&p.account_id).bind(object.as_slice()).fetch_optional(&mut **tx).await?.is_none(){return Err(SyncError::NotFound);}
+                sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING").bind(&p.account_id).bind(id.as_slice()).bind(key).bind(object.as_slice()).bind(count).bind(content).execute(&mut **tx).await?;
+            }
+        }
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![("snapshotId".into(), Value::String(hex::encode(id)))],
+            ),
+        ))
+    }
+    async fn publish<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let candidate =
+            digest_field(payload, "candidateSnapshotId").map_err(SyncError::SchemaViolation)?;
+        if sqlx::query(
+            "SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .bind(candidate.as_slice())
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_none()
+        {
+            return Err(SyncError::NotFound);
+        }
+        let row=sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let generation: Option<i64> = row.try_get("head_generation")?;
+        let current: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
+        let expected = &payload["expectedRemoteHead"];
+        let expected_id = if expected.is_null() {
+            None
+        } else {
+            Some(
+                digest_field(expected, "snapshotId")
+                    .map_err(SyncError::SchemaViolation)?
+                    .to_vec(),
+            )
+        };
+        if current != expected_id {
+            let conflict = Uuid::new_v4();
+            let remote = current.clone().unwrap_or_else(|| candidate.to_vec());
+            sqlx::query("INSERT INTO sync_v2.active_conflicts(account_id,conflict_id,work_id,current_revision,source_generation,state) VALUES($1,$2,$3,1,$4,'active')").bind(&p.account_id).bind(conflict).bind(c.work_id).bind(c.source_generation).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.conflict_candidates(account_id,conflict_id,work_id,revision,base_snapshot_id,local_snapshot_id,remote_snapshot_id,source_generation,created_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,now())").bind(&p.account_id).bind(conflict).bind(c.work_id).bind(expected_id.as_deref()).bind(candidate.as_slice()).bind(remote).bind(c.source_generation).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,1,'created',$3,now())").bind(&p.account_id).bind(conflict).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+            return Ok((
+                409,
+                Self::response(
+                    c,
+                    "conflictPending",
+                    vec![
+                        ("conflictId".into(), Value::String(conflict.to_string())),
+                        ("conflictRevision".into(), Value::from(1)),
+                    ],
+                ),
+            ));
+        }
+        let next = generation.unwrap_or(0) + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(candidate.as_slice()).bind(next).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("generation".into(), Value::from(next)),
+                    ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                ],
+            ),
+        ))
+    }
+    async fn resolve<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let conflict = uuid(payload, "conflictId").map_err(SyncError::SchemaViolation)?;
+        let revision = payload
+            .get("conflictRevision")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::SchemaViolation("conflictRevision".into()))?;
+        let row = sqlx::query("SELECT current_revision,source_generation,state FROM sync_v2.active_conflicts WHERE account_id=$1 AND conflict_id=$2 FOR UPDATE")
+            .bind(&p.account_id).bind(conflict).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<String, _>("state")? != "active"
+            || row.try_get::<i64, _>("current_revision")? != revision
+            || row.try_get::<i64, _>("source_generation")? != c.source_generation
+        {
+            return Err(SyncError::StaleConflictRevision);
+        }
+        if c.kind == CommandKind::CloneWork {
+            return self.clone_work(tx, p, c, conflict, revision).await;
+        }
+        let chosen = if c.kind == CommandKind::ResolveDevice {
+            digest_field(payload, "decisionSnapshotId").map_err(SyncError::SchemaViolation)?
+        } else {
+            digest_field(payload, "remoteSnapshotId").map_err(SyncError::SchemaViolation)?
+        };
+        let expected = if c.kind == CommandKind::ResolveDevice {
+            &payload["expectedRemoteHead"]
+        } else {
+            &payload["expectedCurrentSnapshotId"]
+        };
+        let current = sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let generation: i64 = current
+            .try_get::<Option<i64>, _>("head_generation")?
+            .unwrap_or(0);
+        let current_id: Option<Vec<u8>> = current.try_get("head_snapshot_id")?;
+        let expected_id = if expected.is_null() {
+            None
+        } else {
+            Some(
+                digest_field(expected, "snapshotId")
+                    .map_err(SyncError::SchemaViolation)?
+                    .to_vec(),
+            )
+        };
+        if current_id != expected_id {
+            return Err(SyncError::StaleHead);
+        }
+        if sqlx::query(
+            "SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .bind(chosen.as_slice())
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_none()
+        {
+            return Err(SyncError::NotFound);
+        }
+        let next = generation + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(chosen.as_slice()).bind(next).execute(&mut **tx).await?;
+        let occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(chosen.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,$6,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(chosen.as_slice()).bind(c.command_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("conflictId".into(), Value::String(conflict.to_string())),
+                    ("conflictRevision".into(), Value::from(revision)),
+                    ("generation".into(), Value::from(next)),
+                    ("snapshotId".into(), Value::String(hex::encode(chosen))),
+                ],
+            ),
+        ))
+    }
+
+    async fn clone_work<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+        conflict: Uuid,
+        revision: i64,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let new_work = uuid(payload, "newWorkId").map_err(SyncError::SchemaViolation)?;
+        let new_document = uuid(payload, "newDocumentId").map_err(SyncError::SchemaViolation)?;
+        let source_snapshot = digest_field(payload, "localCandidateSnapshotId")
+            .map_err(SyncError::SchemaViolation)?;
+        let expected_head = &payload["expectedOriginalHead"];
+        let original = sqlx::query("SELECT head_generation,head_snapshot_id,document_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let current: Option<Vec<u8>> = original.try_get("head_snapshot_id")?;
+        let expected = if expected_head.is_null() {
+            None
+        } else {
+            Some(
+                digest_field(expected_head, "snapshotId")
+                    .map_err(SyncError::SchemaViolation)?
+                    .to_vec(),
+            )
+        };
+        if current != expected {
+            return Err(SyncError::StaleHead);
+        }
+        if sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+            .bind(&p.account_id)
+            .bind(new_work)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_some()
+        {
+            return Err(SyncError::CommandIdReused);
+        }
+        let source = sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3").bind(&p.account_id).bind(c.work_id).bind(source_snapshot.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        let source_bytes: Vec<u8> = source.try_get("manifest_bytes")?;
+        let mut manifest: Value =
+            serde_json::from_slice(&source_bytes).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        manifest["workId"] = Value::String(new_work.to_string());
+        manifest["parentSnapshotIds"] = Value::Array(Vec::new());
+        if let Some(entries) = manifest.get_mut("entries").and_then(Value::as_array_mut) {
+            for entry in entries {
+                if entry.get("entityKey").and_then(Value::as_str) == Some("work/document") {
+                    let object_id =
+                        digest_field(entry, "objectId").map_err(SyncError::SchemaViolation)?;
+                    let blob = sqlx::query(
+                        "SELECT raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1",
+                    )
+                    .bind(object_id.as_slice())
+                    .fetch_optional(&mut **tx)
+                    .await?
+                    .ok_or(SyncError::NotFound)?;
+                    let mut doc: Value =
+                        serde_json::from_slice(&blob.try_get::<Vec<u8>, _>("raw_bytes")?)
+                            .map_err(|_| SyncError::SnapshotDigestMismatch)?;
+                    doc["documentId"] = Value::String(new_document.to_string());
+                    let doc_bytes =
+                        canonical_json(&doc).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+                    let new_object = sha256(&doc_bytes);
+                    sqlx::query("INSERT INTO sync_v2.global_blobs(object_id,byte_count,raw_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(new_object.as_slice()).bind(doc_bytes.len() as i64).bind(&doc_bytes).execute(&mut **tx).await?;
+                    sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT DO NOTHING").bind(&p.account_id).bind(new_object.as_slice()).execute(&mut **tx).await?;
+                    entry["objectId"] = Value::String(hex::encode(new_object));
+                    entry["byteCount"] = Value::from(doc_bytes.len() as i64);
+                }
+            }
+        }
+        let root_bytes =
+            canonical_json(&manifest).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        let root_id = sha256(&root_bytes);
+        let requested_root =
+            digest_field(payload, "newRootSnapshotId").map_err(SyncError::SchemaViolation)?;
+        if root_id != requested_root {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.works(account_id,work_id,document_id,state,head_snapshot_id,head_generation) VALUES($1,$2,$3,'bound',$4,1)").bind(&p.account_id).bind(new_work).bind(new_document).bind(root_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(&root_bytes).execute(&mut **tx).await?;
+        let original_occurrence = Uuid::new_v4();
+        let clone_occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$4,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,1,$3,$4,$5,'cloneWork','cloneNewWork',now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(c.command_id).bind(c.work_id).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("conflictId".into(), Value::String(conflict.to_string())),
+                    ("conflictRevision".into(), Value::from(revision)),
+                    ("newWorkId".into(), Value::String(new_work.to_string())),
+                    (
+                        "newRootSnapshotId".into(),
+                        Value::String(hex::encode(root_id)),
+                    ),
+                ],
+            ),
+        ))
+    }
+    async fn restore<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let selected =
+            digest_field(payload, "selectedSnapshotId").map_err(SyncError::SchemaViolation)?;
+        let new_id = digest_field(payload, "newSnapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected_current = digest_field(payload, "expectedCurrentSnapshotId")
+            .map_err(SyncError::SchemaViolation)?;
+        let row = sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let generation: i64 = row
+            .try_get::<Option<i64>, _>("head_generation")?
+            .unwrap_or(0);
+        let current: Vec<u8> = row.try_get("head_snapshot_id")?;
+        if current.as_slice() != expected_current.as_slice() {
+            return Err(SyncError::StaleHead);
+        }
+        let selected_row=sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3").bind(&p.account_id).bind(c.work_id).bind(selected.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        let selected_bytes: Vec<u8> = selected_row.try_get("manifest_bytes")?;
+        let mut manifest: Value = serde_json::from_slice(&selected_bytes)
+            .map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        manifest["workId"] = Value::String(c.work_id.to_string());
+        manifest["parentSnapshotIds"] = Value::Array(vec![
+            Value::String(hex::encode(current.as_slice())),
+            Value::String(hex::encode(selected)),
+        ]);
+        let bytes = canonical_json(&manifest).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        if sha256(&bytes) != new_id {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshot_parents(account_id,work_id,snapshot_id,parent_snapshot_id) VALUES($1,$2,$3,$4),($1,$2,$3,$5)").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(current.as_slice()).bind(selected.as_slice()).execute(&mut **tx).await?;
+        let next = generation + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(next).execute(&mut **tx).await?;
+        let occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'restoreBefore',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(current.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.restore_receipts(account_id,command_id,work_id,selected_snapshot_id,pre_restore_snapshot_id,result_snapshot_id) VALUES($1,$2,$3,$4,$5,$6)").bind(&p.account_id).bind(c.command_id).bind(c.work_id).bind(selected.as_slice()).bind(current.as_slice()).bind(new_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,'restore','sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(new_id.as_slice()).bind(c.command_id).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("snapshotId".into(), Value::String(hex::encode(new_id))),
+                    ("generation".into(), Value::from(next)),
+                    (
+                        "protectedRestoreBeforeSnapshotId".into(),
+                        Value::String(hex::encode(current)),
+                    ),
+                ],
+            ),
+        ))
+    }
+    pub async fn upload(
+        &self,
+        p: &AuthenticatedPrincipal,
+        upload_id: Uuid,
+        capability: &str,
+        bytes: &[u8],
+    ) -> SyncResult<()> {
+        if bytes.len() > MAX_OBJECT_BYTES {
+            return Err(SyncError::SizeLimitExceeded);
+        };
+        let row=sqlx::query("SELECT object_id,byte_count,account_fence,state,expires_at,command_id FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload_id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<String, _>("account_fence")? != p.account_fence {
+            return Err(SyncError::UploadCapabilityMismatch);
+        };
+        let command_id: Uuid = row.try_get("command_id")?;
+        if capability != upload_capability(&p.account_id, &p.account_fence, upload_id, command_id) {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        if row.try_get::<String, _>("state")? != "prepared" {
+            return Err(SyncError::UploadExpired);
+        };
+        let object: Vec<u8> = row.try_get("object_id")?;
+        let count: i64 = row.try_get("byte_count")?;
+        if count != bytes.len() as i64 || sha256(bytes).as_slice() != object.as_slice() {
+            return Err(SyncError::ObjectDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.global_blobs(object_id,byte_count,raw_bytes) VALUES($1,$2,$3) ON CONFLICT(object_id) DO UPDATE SET byte_count=EXCLUDED.byte_count,raw_bytes=EXCLUDED.raw_bytes").bind(&object).bind(count).bind(bytes).execute(&self.pool).await?;
+        sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload_id).execute(&self.pool).await?;
+        Ok(())
+    }
+    pub async fn receipt(
+        &self,
+        p: &AuthenticatedPrincipal,
+        id: Uuid,
+    ) -> SyncResult<(String, Vec<u8>, i32)> {
+        let row=sqlx::query("SELECT command_kind,canonical_response,response_status FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 AND state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
+        Ok((
+            row.try_get("command_kind")?,
+            row.try_get("canonical_response")?,
+            row.try_get("response_status")?,
+        ))
+    }
+}

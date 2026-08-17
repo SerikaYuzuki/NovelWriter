@@ -1,0 +1,28 @@
+name: fuminiwa-sync-v2
+services:
+  postgres:
+    image: postgres:16
+    container_name: fuminiwa-sync-v2-postgres
+    environment:
+      POSTGRES_DB: fuminiwa_sync_v2
+      POSTGRES_USER: fuminiwa_sync_v2
+      POSTGRES_PASSWORD: ${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD:?set a v2-only password}
+    volumes:
+      - fuminiwa_sync_v2_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2 -d fuminiwa_sync_v2"]
+  server:
+    build: .
+    container_name: fuminiwa-sync-v2-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://fuminiwa_sync_v2:${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD}@postgres:5432/fuminiwa_sync_v2
+      FUMINIWA_RUNTIME_MODE: ${FUMINIWA_RUNTIME_MODE:-production}
+      FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:-fuminiwa-sync-v2}
+      FUMINIWA_SYNC_V2_BIND: 0.0.0.0:8092
+    ports:
+      - "${FUMINIWA_SYNC_V2_PORT:-8092}:8092"
+volumes:
+  fuminiwa_sync_v2_pgdata:
