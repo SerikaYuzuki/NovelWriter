@@ -1,5 +1,4 @@
 import Foundation
-import NovelAuth
 import SwiftUI
 
 @main
@@ -10,20 +9,13 @@ struct FuminiwaIOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
-        if FuminiwaRuntimeEnvironment.isTestProcess() {
-            let testRoot = FileManager.default.temporaryDirectory
-                .appendingPathComponent(
-                    "FUMINIWA-iOS-TestHost-\(ProcessInfo.processInfo.processIdentifier)",
-                    isDirectory: true
-                )
-            privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation
-                .prepareInjectedLibraryRoot(testRoot)
-        } else {
-            privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
-        }
+        // The shipped @main host is always production.  Test roots and fake
+        // transports are provided by IOSDocumentStore's explicit injected
+        // composition used from the test target; XCTest/environment markers
+        // must never redirect this host to a temporary SQLite database.
+        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
         let store = IOSDocumentStore(
-            userDefaults: FuminiwaRuntimeEnvironment.applicationUserDefaults(),
+            userDefaults: UserDefaults.standard,
             privateWorkingCopyLocation: privateWorkingCopyLocation
         )
         if privateWorkingCopyLocation == nil {

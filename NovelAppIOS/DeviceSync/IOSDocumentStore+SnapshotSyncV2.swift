@@ -37,8 +37,12 @@ extension IOSDocumentStore {
             defer { snapshotSyncV2ConfigurationTask = nil }
             do {
                 let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
-                if environment.isTestProcess {
-                    let key = libraryRoot.standardizedFileURL
+                // Test composition is selected only by an explicitly injected
+                // library root. Never inspect XCTest or process environment
+                // here: the production app must not be able to redirect its
+                // SQLite/transport authority to a temporary test runtime.
+                if let injectedTestRoot {
+                    let key = injectedTestRoot
                     if let cached = Self.testRuntimeApplications[key] {
                         snapshotSyncV2Application = cached
                     } else {

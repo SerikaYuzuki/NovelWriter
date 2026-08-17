@@ -20,9 +20,10 @@ struct RuntimeCompositionTests {
         #expect(environment.isTestProcess)
         #expect(environment.syncServerURL == nil)
 
-        let dependencies = FuminiwaApp.makeDependencies(
+        let configuration = try TestRuntimeConfiguration()
+        let dependencies = FuminiwaApp.makeTestDependencies(
             userDefaults: defaults,
-            processEnvironment: [FuminiwaRuntimeEnvironment.testNetworkDisabledKey: "1"]
+            configuration: configuration
         )
         #expect(dependencies.defaultDocumentDirectoryName == "FUMINIWA-TestHost")
         #expect(dependencies.authSessionCoordinator == nil)
@@ -40,9 +41,10 @@ struct RuntimeCompositionTests {
             .appendingPathComponent("SnapshotSyncV2", isDirectory: true)
             .appendingPathComponent("snapshot-sync-v2.sqlite")
         let before = try sqliteInventory(at: productionStoreURL)
-        let dependencies = FuminiwaApp.makeDependencies(
+        let configuration = try TestRuntimeConfiguration()
+        let dependencies = FuminiwaApp.makeTestDependencies(
             userDefaults: defaults,
-            processEnvironment: [FuminiwaRuntimeEnvironment.testNetworkDisabledKey: "1"]
+            configuration: configuration
         )
         let state = AppState(
             dependencies: dependencies

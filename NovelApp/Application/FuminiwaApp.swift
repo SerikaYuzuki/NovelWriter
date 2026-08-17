@@ -19,9 +19,13 @@ struct FuminiwaApp: App {
     @State private var editorCommandSession: EditorCommandSession
 
     init() {
-        let defaults = FuminiwaRuntimeEnvironment.applicationUserDefaults()
+        // The shipped application is always composed from the production
+        // boundary.  XCTest/environment inspection belongs to an explicit
+        // test composition root and must never change the SQLite or Keychain
+        // authority of this @main entry point.
+        let defaults = UserDefaults.standard
         let editorCommandSession = EditorCommandSession()
-        let dependencies = Self.makeDependencies(
+        let dependencies = Self.makeProductionDependencies(
             userDefaults: defaults,
             editorCommandSession: editorCommandSession
         )
@@ -40,9 +44,45 @@ struct FuminiwaApp: App {
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         processEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppDependencies {
+        _ = processEnvironment
+        makeProductionDependencies(
+            userDefaults: userDefaults,
+            editorCommandSession: editorCommandSession
+        )
+    }
+
+    /// Explicit test composition.  Tests must provide the isolated runtime
+    /// rather than relying on XCTest/environment detection.
+    static func makeTestDependencies(
+        userDefaults: UserDefaults,
+        configuration: TestRuntimeConfiguration,
+        editorCommandSession: EditorCommandSession = EditorCommandSession(),
+        checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil,
+        openOverride: SnapshotSyncV2OpenOverride? = nil
+    ) -> AppDependencies {
+        AppDependencies(
+            userDefaults: userDefaults,
+            defaultDocumentDirectoryName: "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost",
+            editorCommandSession: editorCommandSession,
+            snapshotSyncV2Factory: {
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+            },
+            snapshotSyncV2CheckpointOverride: checkpointOverride,
+            snapshotSyncV2OpenOverride: openOverride
+        )
+    }
+
+    /// Production composition used by the @main application and by any
+    /// non-test host.  It intentionally ignores XCTest/environment markers;
+    /// the only supported runtime here is the production SQLite + Keychain
+    /// boundary.
+    static func makeProductionDependencies(
+        userDefaults: UserDefaults,
+        editorCommandSession: EditorCommandSession = EditorCommandSession()
+    ) -> AppDependencies {
         let environment = FuminiwaRuntimeEnvironment(
             userDefaults: userDefaults,
-            environment: processEnvironment
+            environment: [:]
         )
         let platformGate = MacSyncV2DocumentGate()
         let explicitOrigin = environment.syncServerURL.flatMap { try? ProductionHTTPSOrigin(url: $0) }
@@ -97,10 +137,6 @@ struct FuminiwaApp: App {
         #endif
 
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
-            if environment.isTestProcess {
-                let configuration = try TestRuntimeConfiguration()
-                return try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-            }
             // The production configuration is typed and always receives the
             // Keychain vault plus the macOS gate. The runtime opens SQLite
             // even when the HTTPS lane is unreachable; it reports offline.
@@ -116,9 +152,7 @@ struct FuminiwaApp: App {
 
         return AppDependencies(
             userDefaults: userDefaults,
-            defaultDocumentDirectoryName: environment.isTestProcess
-                ? "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost"
-                : AppBuildFlavor.defaultDocumentDirectoryName,
+            defaultDocumentDirectoryName: AppBuildFlavor.defaultDocumentDirectoryName,
             editorCommandSession: editorCommandSession,
             authSessionCoordinator: authCoordinator,
             appleSignInCoordinator: appleSignInCoordinator,

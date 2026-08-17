@@ -115,6 +115,10 @@ final class IOSDocumentStore {
     @ObservationIgnored let fileManager: FileManager
     @ObservationIgnored let userDefaults: UserDefaults
     @ObservationIgnored let libraryRoot: URL
+    /// Non-nil only when a caller explicitly injects a library root (the
+    /// test composition boundary). The production @main supplies a prepared
+    /// private working-copy location and never enters the test runtime.
+    @ObservationIgnored let injectedTestRoot: URL?
     @ObservationIgnored let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored let clipboardWriter: any IOSPlainTextClipboardWriting
@@ -239,6 +243,7 @@ final class IOSDocumentStore {
             ?? libraryRoot?.standardizedFileURL
             ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
+        injectedTestRoot = libraryRoot?.standardizedFileURL
         snapshotSyncV2DocumentGate = SnapshotSyncV2Runtime.makeProductionDocumentGate()
         authUIState = auth == nil ? .unavailable : .signedOut
         let placeholder = NovelDocument.newDocument()
