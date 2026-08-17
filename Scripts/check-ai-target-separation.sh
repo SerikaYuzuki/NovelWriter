@@ -40,9 +40,9 @@ jq -e '
       select(.value.isa == "PBXNativeTarget") |
       .value.name ] | all(test("Experimental|NovelAI"; "i") | not)) and
   packageProducts($objects; "NovelApp") ==
-    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelLibrary", "NovelLocalStore", "NovelStorage", "NovelSync", "NovelUI"] and
+    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelUI"] and
   packageProducts($objects; "FUMINIWAIOS") ==
-    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelLibrary", "NovelLocalStore", "NovelStorage", "NovelSync", "NovelUI"] and
+    ["EditorKit", "NovelAuth", "NovelAuthApple", "NovelCore", "NovelExport", "NovelStorage", "NovelSyncV2PortableBridge", "NovelSyncV2Runtime", "NovelUI"] and
   packageProducts($objects; "NovelAppTests") == [] and
   packageProducts($objects; "FUMINIWAIOSTests") == []
 ' "$audit_tmp" >/dev/null
