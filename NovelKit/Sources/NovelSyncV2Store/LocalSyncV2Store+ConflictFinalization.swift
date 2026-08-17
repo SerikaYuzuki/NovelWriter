@@ -175,6 +175,8 @@ extension LocalSyncV2Store {
         }
         let inboxID = try conflictInbox(active)
         let graph = try loadInboxGraph(inboxID: inboxID, binding: record.binding)
+        _ = try validateGraph(graph)
+        try validateGraphParents(graph)
         guard let expected = graph.expectedRemoteHead,
               remoteHead.snapshotID == decision,
               remoteHead.generation > expected.generation else {
