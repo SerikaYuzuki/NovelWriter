@@ -64,6 +64,14 @@ extension IOSDocumentStore {
     }
 
     private func copyPrompt(purpose: AIClipboardPromptPurpose, source: AIClipboardPromptSource) {
+        guard startupState == .ready,
+              syncV2ActiveWorkID != nil,
+              !isDocumentTransitionInProgress,
+              !syncV2AccountTransitionInProgress,
+              syncV2KeepBothPendingWorkID == nil else {
+            showPromptFailure(.staleContext)
+            return
+        }
         do {
             let prompt = try AIClipboardPromptBuilder.make(purpose: purpose, source: source)
             guard clipboardWriter.writePlainText(prompt.text) else {

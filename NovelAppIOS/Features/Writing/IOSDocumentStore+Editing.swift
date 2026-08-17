@@ -15,7 +15,7 @@ extension IOSDocumentStore {
     }
 
     func selectChapter(_ chapterID: ChapterID?) {
-        guard chapterID == selectedChapterID || permitsSyncSelectionMutation else { return }
+        guard permitsSyncSelectionMutation else { return }
         selectedChapterID = chapterID
         guard let chapterID else {
             selectedEpisodeID = nil
@@ -38,25 +38,29 @@ extension IOSDocumentStore {
     }
 
     func updateDocumentTitle(_ title: String) {
-        guard document.title != title else { return }
+        guard permitsSyncSelectionMutation,
+              document.title != title else { return }
         document.title = title
         markDocumentChanged()
     }
 
     func updateDocumentSynopsis(_ synopsis: String) {
-        guard document.synopsis != synopsis else { return }
+        guard permitsSyncSelectionMutation,
+              document.synopsis != synopsis else { return }
         document.synopsis = synopsis
         markDocumentChanged()
     }
 
     func updateChapterTitle(_ title: String, chapterID: ChapterID) {
-        guard document.chapters.first(where: { $0.id == chapterID })?.title != title else { return }
+        guard permitsSyncSelectionMutation,
+              document.chapters.first(where: { $0.id == chapterID })?.title != title else { return }
         document.updateTitle(title, for: chapterID)
         markDocumentChanged()
     }
 
     func updateEpisodeTitle(_ title: String, chapterID: ChapterID, episodeID: EpisodeID) {
-        guard document.episode(episodeID)?.episode.title != title else { return }
+        guard permitsSyncSelectionMutation,
+              document.episode(episodeID)?.episode.title != title else { return }
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         markDocumentChanged()
     }
@@ -67,6 +71,7 @@ extension IOSDocumentStore {
         episodeID: EpisodeID,
         expectedEditingToken: IOSEpisodeEditingToken? = nil
     ) {
+        guard permitsSyncSelectionMutation else { return }
         if let expectedEditingToken {
             guard currentEpisodeEditingToken == expectedEditingToken else { return }
         }
@@ -99,11 +104,9 @@ extension IOSDocumentStore {
     }
 
     func deleteEpisodes(at offsets: IndexSet, chapterID: ChapterID) {
-        guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else { return }
+        guard permitsSyncSelectionMutation,
+              let chapter = document.chapters.first(where: { $0.id == chapterID }) else { return }
         let removedIDs = offsets.compactMap { chapter.episodes.indices.contains($0) ? chapter.episodes[$0].id : nil }
-        if removedIDs.contains(where: { $0 == selectedEpisodeID }) {
-            guard permitsSyncSelectionMutation else { return }
-        }
         for episodeID in removedIDs {
             _ = document.removeEpisode(id: episodeID, from: chapterID)
         }
@@ -116,22 +119,29 @@ extension IOSDocumentStore {
     }
 
     func moveChapters(fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsSyncSelectionMutation else { return }
         document.moveChapters(fromOffsets: fromOffsets, toOffset: toOffset)
         markDocumentChanged()
     }
 
     func moveEpisodes(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) {
+        guard permitsSyncSelectionMutation else { return }
         document.moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
         markDocumentChanged()
     }
 
     func updateEpisodeMemo(_ memo: String, chapterID: ChapterID, episodeID: EpisodeID) {
-        guard document.episode(episodeID)?.episode.memo != memo else { return }
+        guard permitsSyncSelectionMutation,
+              document.episode(episodeID)?.episode.memo != memo else { return }
         document.updateEpisodeMemo(memo, for: episodeID, in: chapterID)
         markDocumentChanged()
     }
 
     private var permitsSyncSelectionMutation: Bool {
-        true
+        startupState == .ready
+            && syncV2ActiveWorkID != nil
+            && !isDocumentTransitionInProgress
+            && !syncV2AccountTransitionInProgress
+            && syncV2KeepBothPendingWorkID == nil
     }
 }

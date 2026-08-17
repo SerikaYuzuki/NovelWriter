@@ -33,6 +33,177 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
         }
     }
 
+    @Test("duplicate attachment names fail closed for install and refresh without replacing the editor")
+    func duplicateAttachmentNamesFailClosed() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let original = store.document
+            let duplicateName = "same.pdf"
+            let activeWorkID = try #require(store.syncV2ActiveWorkID)
+            let opened = SyncV2OpenedWork(
+                workID: activeWorkID,
+                document: original,
+                documentCreatedAt: store.documentCreatedAt,
+                attachments: [
+                    SyncAttachment(
+                        attachmentId: UUID(), fileName: duplicateName, bytes: Data("a".utf8)
+                    ),
+                    SyncAttachment(
+                        attachmentId: UUID(), fileName: duplicateName, bytes: Data("b".utf8)
+                    )
+                ],
+                generation: 1,
+                snapshotID: nil
+            )
+
+            #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
+            #expect(store.document == original)
+            #expect(store.attachments.isEmpty)
+            #expect(store.snapshotSyncOutcome == .failed)
+            #expect(store.adoptV2AttachmentRecords(opened.attachments) == false)
+            #expect(store.attachments.isEmpty)
+        }
+    }
+
+    @Test("document transition makes delayed form mutations no-ops until it finishes")
+    func delayedDocumentTransitionFreezesUI() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let original = store.document
+            let editGeneration = store.localEditGeneration
+            let gate = DocumentTransitionTestGate()
+            let task = Task { @MainActor in
+                await store.performDocumentTransition {
+                    await gate.signalStarted()
+                    await gate.waitForRelease()
+                }
+            }
+
+            await gate.waitForStart()
+            #expect(store.isDocumentTransitionInProgress)
+            store.updateDocumentTitle("遅れて届いた作品名")
+            store.updateDocumentSynopsis("遅れて届いたあらすじ")
+            store.addChapter()
+            #expect(store.document == original)
+            #expect(store.localEditGeneration == editGeneration)
+            #expect(store.saveState == .saved)
+            await gate.release()
+            #expect(await task.value)
+            #expect(store.isDocumentTransitionInProgress == false)
+        }
+    }
+
+    @Test("account transition makes delayed document forms no-ops")
+    func accountTransitionFreezesDocumentForms() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let original = store.document
+            let editGeneration = store.localEditGeneration
+
+            store.syncV2AccountTransitionInProgress = true
+            store.updateDocumentTitle("別アカウントへ遅れて届いた作品名")
+            store.updateDocumentSynopsis("別アカウントへ遅れて届いたあらすじ")
+            store.addChapter()
+            store.syncV2AccountTransitionInProgress = false
+
+            #expect(store.document == original)
+            #expect(store.localEditGeneration == editGeneration)
+            #expect(store.saveState == .saved)
+        }
+    }
+
+    @Test("sign-out cancels pending remote-only work")
+    func signOutCancelsRemoteOnlyWork() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let activeWorkID = try #require(store.syncV2ActiveWorkID)
+            let application = try #require(store.snapshotSyncV2Application)
+            store.updateDocumentTitle("サインアウト直前の未保存作品名")
+            let savedBeforePark = store.document
+            #expect(store.saveState == .dirty)
+            store.syncV2LibraryItems = [SyncV2LibraryItem(
+                workID: activeWorkID,
+                title: savedBeforePark.title,
+                availability: .cached,
+                accountState: .active
+            )]
+            let task = Task<Void, Never> { @MainActor in
+                do {
+                    try await Task.sleep(nanoseconds: 10_000_000_000)
+                } catch {}
+            }
+            store.snapshotSyncV2RemoteOnlyOpenTask = task
+            store.snapshotSyncV2RemoteOnlyOpenToken = UUID()
+            let exportRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "FUMINIWA-signout-export-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: exportRoot,
+                withIntermediateDirectories: true
+            )
+            let exportURL = exportRoot.appendingPathComponent("old-account.novelpkg")
+            try Data("old account manuscript".utf8).write(to: exportURL)
+            store.pendingExportRootURL = exportRoot
+            store.pendingExportURL = exportURL
+
+            await store.signOutFromFuminiwa()
+            #expect(store.snapshotSyncV2RemoteOnlyOpenTask == nil)
+            #expect(store.snapshotSyncV2RemoteOnlyOpenToken == nil)
+            #expect(task.isCancelled)
+            #expect(store.syncV2ActiveWorkID == nil)
+            #expect(store.syncV2LibraryItems.isEmpty)
+            #expect(store.pendingExportURL == nil)
+            #expect(FileManager.default.fileExists(atPath: exportRoot.path) == false)
+            let reopened = try await application.openLocal(workID: activeWorkID)
+            #expect(reopened.document?.title == "サインアウト直前の未保存作品名")
+            store.updateDocumentTitle("棚へ戻った後の遅延入力")
+            #expect(store.document == savedBeforePark)
+        }
+    }
+
+    @Test("test-hosted settings and editor views retain the injected defaults store")
+    func hostedViewsUseInjectedDefaults() async throws {
+        try await withEnvironment { environment in
+            let standardAppearance = UserDefaults.standard.string(
+                forKey: IOSAppearance.preferenceKey
+            )
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            let settings = IOSSettingsView(store: store, userDefaults: environment.defaults)
+            let editor = IOSEditorPane(store: store, userDefaults: environment.defaults)
+            #expect(settings.userDefaults === environment.defaults)
+            #expect(editor.userDefaults === environment.defaults)
+            #expect(store.userDefaults === environment.defaults)
+            #expect(
+                UserDefaults.standard.string(forKey: IOSAppearance.preferenceKey)
+                    == standardAppearance
+            )
+        }
+    }
+
     @Test("競合選択は新しいcheckpointやintentを作らない")
     func conflictSelectionDoesNotCheckpointAgain() async throws {
         try await withEnvironment { environment in
@@ -111,7 +282,9 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             #expect(store.syncV2HistoryItems.count(where: { $0.source == .local }) == beforeLocalHistoryCount)
         }
     }
+}
 
+extension IOSSnapshotSyncV2PortableBoundaryTests {
     @Test("import uses manifest createdAt and archives opaque package resources")
     func importUsesPortableMetadataAndArchivesOpaqueResources() async throws {
         try await withEnvironment { environment in
@@ -239,10 +412,6 @@ private struct TestEnvironment {
 
     func releaseApplication() async {
         let key = root.standardizedFileURL
-        if let application = IOSDocumentStore.testRuntimeApplications[key] {
-            try? await application.resumePending()
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
         IOSDocumentStore.testRuntimeApplications.removeValue(forKey: key)
         // Let in-flight actor calls release their SQLite handles before a
         // second composition opens the same isolated database.
@@ -252,11 +421,45 @@ private struct TestEnvironment {
     func cleanup() async {
         let key = root.standardizedFileURL
         await releaseApplication()
-        let configuration = IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: key)
-        if let runtimeRoot = configuration?.localRoot.url {
-            try? FileManager.default.removeItem(at: runtimeRoot)
-        }
-        try? FileManager.default.removeItem(at: root)
+        IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: key)
+        // The application has no explicit worker/SQLite close API. Do not
+        // unlink a database that an actor may still own; unique temporary
+        // roots are reclaimed by the platform after the app-host run.
         defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+private actor DocumentTransitionTestGate {
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func signalStarted() {
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitForStart() async {
+        guard !started else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 }

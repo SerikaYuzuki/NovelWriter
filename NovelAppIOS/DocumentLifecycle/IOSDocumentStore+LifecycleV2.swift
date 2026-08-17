@@ -28,7 +28,11 @@ extension IOSDocumentStore {
             guard let self else { return }
             startupState = .loading
             do {
-                try await reloadLibraryItems()
+                guard try await reloadLibraryItems() else {
+                    startupState = .library
+                    saveState = .saved
+                    return
+                }
                 if let name = userDefaults.string(forKey: Self.lastWorkIDKey),
                    let uuid = UUID(uuidString: name) {
                     _ = await openSnapshotSyncV2(workID: uuid)
@@ -90,6 +94,10 @@ extension IOSDocumentStore {
 
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
+        guard !syncV2AccountTransitionInProgress else { return false }
+        let expectedAccountScope = snapshotSyncV2AccountScope
+        let expectedSession = currentDocumentSessionToken
+        let expectedWorkID = syncV2ActiveWorkID
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
             if accessed {
@@ -100,11 +108,20 @@ extension IOSDocumentStore {
             operationErrorMessage = "読み込める作品パッケージを選択できませんでした。"
             return false
         }
-        guard await configureSnapshotSyncV2() else { return false }
+        guard await configureSnapshotSyncV2(),
+              matchesSnapshotSyncV2OperationSource(
+                  session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
+              ) else { return false }
         return await documentOperationGate.perform { [weak self] in
-            guard let self else { return false }
+            guard let self,
+                  matchesSnapshotSyncV2OperationSource(
+                      session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
+                  ) else { return false }
             return await performDocumentTransition {
-                guard let location = privateWorkingCopyLocation else {
+                guard matchesSnapshotSyncV2OperationSource(
+                    session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
+                ),
+                    let location = privateWorkingCopyLocation else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
                 let sourceAttestation = try IOSPrivateWorkingCopyLocation
@@ -118,10 +135,18 @@ extension IOSDocumentStore {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                     }
                     let portable = try await portableBridge.importExplicitPackage(from: staging)
+                    guard matchesSnapshotSyncV2OperationSource(
+                        session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
+                    ) else {
+                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                    }
                     try IOSPrivateWorkingCopyLocation.revalidate(sourceAttestation)
                     try location.revalidate(stagedAttestation)
                     let loaded = portable.document
                     let syncAttachments = portable.attachments
+                    guard validateV2AttachmentRecords(syncAttachments) else {
+                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                    }
                     let loadedAttachments = syncAttachments.map {
                         Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
                     }
@@ -145,13 +170,16 @@ extension IOSDocumentStore {
                         attachments: syncAttachments,
                         resources: localResources
                     )
-                    guard install(
-                        loaded,
-                        at: libraryRoot,
-                        attachments: loadedAttachments,
-                        rememberRecent: false,
-                        workID: importedWorkID
-                    ) else {
+                    guard matchesSnapshotSyncV2OperationSource(
+                        session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
+                    ),
+                        install(
+                            loaded,
+                            at: libraryRoot,
+                            attachments: loadedAttachments,
+                            rememberRecent: false,
+                            workID: importedWorkID
+                        ) else {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                     }
                     // The package manifest is the explicit portable boundary;
@@ -159,7 +187,9 @@ extension IOSDocumentStore {
                     // authoring metadata.
                     documentCreatedAt = Self.portableDatePrecision(portable.documentCreatedAt)
                     syncV2PortableCreatedAt = portable.documentCreatedAt
-                    adoptV2AttachmentRecords(syncAttachments)
+                    guard adoptV2AttachmentRecords(syncAttachments) else {
+                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                    }
                     syncV2PortableResources = portable.resources
                     archiveImportedPackage(at: staging)
                     startupState = .ready
@@ -229,11 +259,22 @@ extension IOSDocumentStore {
     }
 
     func requestExport() async {
+        guard !syncV2AccountTransitionInProgress,
+              let expectedSession = currentDocumentSessionToken,
+              let expectedWorkID = syncV2ActiveWorkID else { return }
+        let expectedAccountScope = snapshotSyncV2AccountScope
         await documentOperationGate.perform { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  !syncV2AccountTransitionInProgress,
+                  currentDocumentSessionToken == expectedSession,
+                  syncV2ActiveWorkID == expectedWorkID,
+                  snapshotSyncV2AccountScope == expectedAccountScope else { return }
             _ = await performDocumentTransition {
-                guard snapshotSyncV2Application != nil,
-                      syncV2ActiveWorkID != nil,
+                guard !syncV2AccountTransitionInProgress,
+                      currentDocumentSessionToken == expectedSession,
+                      syncV2ActiveWorkID == expectedWorkID,
+                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      snapshotSyncV2Application != nil,
                       let attachments = currentV2Attachments() else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
@@ -242,6 +283,12 @@ extension IOSDocumentStore {
                     isDirectory: true
                 )
                 try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+                var keepsExport = false
+                defer {
+                    if !keepsExport {
+                        try? fileManager.removeItem(at: root)
+                    }
+                }
                 let destination = root.appendingPathComponent(
                     Self.portableExportFilename(for: document.title),
                     isDirectory: true
@@ -256,10 +303,28 @@ extension IOSDocumentStore {
                     resources: exportResources,
                     to: destination
                 )
+                guard !syncV2AccountTransitionInProgress,
+                      currentDocumentSessionToken == expectedSession,
+                      syncV2ActiveWorkID == expectedWorkID,
+                      snapshotSyncV2AccountScope == expectedAccountScope else {
+                    throw SyncV2ApplicationError.invalidRuntimeMode
+                }
                 pendingExportRootURL = root
                 pendingExportURL = destination
+                keepsExport = true
             }
         }
+    }
+
+    private func matchesSnapshotSyncV2OperationSource(
+        session: IOSDocumentSessionToken?,
+        workID: WorkID?,
+        accountScope: IOSSnapshotSyncV2AccountScope
+    ) -> Bool {
+        !syncV2AccountTransitionInProgress
+            && currentDocumentSessionToken == session
+            && syncV2ActiveWorkID == workID
+            && snapshotSyncV2AccountScope == accountScope
     }
 
     func dismissExport() {

@@ -76,6 +76,15 @@ struct AppDocumentSessionToken: Hashable, Sendable {
     var workID: WorkID
 }
 
+/// Captures the authenticated tenant boundary for asynchronous UI work. Token
+/// refreshes keep this scope valid; sign-out, AccountID changes, and fence
+/// rotations advance `generation` and make every older completion stale.
+struct SnapshotSyncV2AccountScopeToken: Hashable, Sendable {
+    let accountID: String?
+    let accountFence: String?
+    let generation: UInt64
+}
+
 /// Existing editor/outline views use this neutral name for a session-bound
 /// value.  It is intentionally the WorkID-backed v2 token; it contains no
 /// package URL or other import/export identity.
@@ -138,12 +147,25 @@ final class AppState {
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
     let snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)?
     let snapshotSyncV2DocumentGate: MacSyncV2DocumentGate?
+    #if FUMINIWA_TEST_COMPOSITION
+    let snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
+    let snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
+    let snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    let snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
+    let snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
+    #endif
 
     @ObservationIgnored var snapshotSyncV2Application: SyncV2Application?
     @ObservationIgnored var snapshotSyncV2Session: NovelSyncV2Application.DocumentSessionToken?
     @ObservationIgnored var snapshotSyncV2ActiveWorkID: WorkID?
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
+    @ObservationIgnored var snapshotSyncV2PortableCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
+    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>?
+    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenToken: UUID?
+    @ObservationIgnored var snapshotSyncV2AutoAdoptionToken: UUID?
+    @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
+    @ObservationIgnored var snapshotSyncV2AccountScopeGeneration: UInt64 = 0
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
@@ -206,6 +228,13 @@ final class AppState {
         appleAuthenticationOrchestrator = dependencies.appleAuthenticationOrchestrator
         snapshotSyncV2Factory = dependencies.snapshotSyncV2Factory
         snapshotSyncV2DocumentGate = dependencies.snapshotSyncV2DocumentGate
+        #if FUMINIWA_TEST_COMPOSITION
+        snapshotSyncV2CheckpointOverride = dependencies.snapshotSyncV2CheckpointOverride
+        snapshotSyncV2OpenOverride = dependencies.snapshotSyncV2OpenOverride
+        snapshotSyncV2OpenLocalOverride = dependencies.snapshotSyncV2OpenLocalOverride
+        snapshotSyncV2CatalogOverride = dependencies.snapshotSyncV2CatalogOverride
+        snapshotSyncV2AfterStagedRemoteOverride = dependencies.snapshotSyncV2AfterStagedRemoteOverride
+        #endif
 
         let placeholder = NovelDocument.newDocument()
         document = placeholder
@@ -225,6 +254,7 @@ final class AppState {
         attachments = []
         snapshotSyncV2Attachments = []
         snapshotSyncV2Resources = []
+        snapshotSyncV2PortableCreatedAt = nil
         attachmentPreviewURLs = [:]
         snapshotSyncLibraryWorks = []
         snapshotSyncRemoteCatalogItems = []

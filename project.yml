@@ -14,6 +14,21 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+# App-hosted unit tests must not launch a production-composed executable.
+# Debug-Test inherits Debug optimization while adding a compile-time
+# composition boundary used only by each scheme's Test action. The Debug-
+# prefix also keeps Swift package dependencies testable under Xcode.
+configs:
+  Debug: debug
+  Debug-Test: debug
+  Release: release
+
+settings:
+  configs:
+    Debug-Test:
+      ENABLE_TESTABILITY: YES
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+
 packages:
   NovelKit:
     path: NovelKit
@@ -22,6 +37,7 @@ packages:
 # keeps Team selection across XcodeGen regeneration without committing a Team ID.
 configFiles:
   Debug: Config/Signing.xcconfig
+  Debug-Test: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
 
 schemes:
@@ -30,19 +46,17 @@ schemes:
       targets:
         NovelApp: all
     test:
+      config: Debug-Test
       targets:
         - name: NovelAppTests
-      environmentVariables:
-        FUMINIWA_TEST_NETWORK_DISABLED: "1"
   FUMINIWAIOS:
     build:
       targets:
         FUMINIWAIOS: all
     test:
+      config: Debug-Test
       targets:
         - name: FUMINIWAIOSTests
-      environmentVariables:
-        FUMINIWA_TEST_NETWORK_DISABLED: "1"
 
 targets:
   NovelApp:
@@ -108,6 +122,9 @@ targets:
         CODE_SIGN_STYLE: Automatic
         # App Sandbox は採用しない(docs/DECISIONS.md D-011)。同期はRust serverへ接続する。
         ENABLE_HARDENED_RUNTIME: YES
+      configs:
+        Debug-Test:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_TEST_COMPOSITION"
   NovelAppTests:
     type: bundle.unit-test
     platform: macOS
@@ -133,6 +150,9 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
+      configs:
+        Debug-Test:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_TEST_COMPOSITION"
   FUMINIWAIOS:
     type: application
     platform: iOS
@@ -199,6 +219,9 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug-Test:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_TEST_COMPOSITION"
   FUMINIWAIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -222,3 +245,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
+      configs:
+        Debug-Test:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_TEST_COMPOSITION"

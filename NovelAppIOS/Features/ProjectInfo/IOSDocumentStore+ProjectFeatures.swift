@@ -251,7 +251,10 @@ extension IOSDocumentStore {
     }
 
     private var permitsProjectFeatureMutation: Bool {
-        startupState == .ready && !isDocumentTransitionInProgress
+        startupState == .ready
+            && syncV2ActiveWorkID != nil
+            && !isDocumentTransitionInProgress
+            && !syncV2AccountTransitionInProgress
     }
 
     private func isCurrentChapterID(_ id: ChapterID?) -> Bool {

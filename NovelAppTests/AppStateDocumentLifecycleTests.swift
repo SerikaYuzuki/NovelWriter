@@ -41,6 +41,83 @@ struct AppStateDocumentLifecycleTests {
         #expect(state.startupState == .ready)
     }
 
+    @Test("import checkpoint失敗時はdirtyな現在作品を保持する")
+    func failedImportedCheckpointKeepsCurrentWork() async throws {
+        let repository = NovelpkgRepository()
+        let sourceURL = temporaryPackageURL("checkpoint-failure")
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let importedTitle = "checkpoint-failure-import"
+        try await repository.save(NovelDocument.newDocument(title: importedTitle), to: sourceURL)
+
+        let state = try makeState(
+            repository: repository,
+            account: TestAccount(accountID: "checkpoint-failure-account", accountFence: "checkpoint-failure-fence"),
+            checkpointOverride: { application, workID, document, reason, createdAt, attachments, resources in
+                guard document.title != importedTitle else {
+                    throw SyncV2ApplicationError.invalidRuntimeMode
+                }
+                return try await application.checkpoint(
+                    workID: workID,
+                    document: document,
+                    reason: reason,
+                    documentCreatedAt: createdAt,
+                    attachments: attachments,
+                    resources: resources
+                )
+            }
+        )
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+        let application = try #require(state.snapshotSyncV2Application)
+        let oldWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let oldSession = state.documentSessionToken
+        state.updateSelectedEpisodeContent("Aのdirty本文")
+
+        #expect(await state.openExternalDocument(at: sourceURL) == false)
+        #expect(state.snapshotSyncV2ActiveWorkID == oldWorkID)
+        #expect(state.documentSessionToken == oldSession)
+        #expect(state.document.selectedEpisodeContentForTest == "Aのdirty本文")
+        #expect(state.startupState == .ready)
+        let reopened = try await application.open(workID: oldWorkID)
+        #expect(reopened.document?.selectedEpisodeContentForTest == "Aのdirty本文")
+    }
+
+    @Test("新規作品のcheckpoint失敗時は現在作品を置換しない")
+    func failedNewWorkCheckpointKeepsCurrentWork() async throws {
+        let state = try makeState(
+            account: TestAccount(accountID: "new-work-failure-account", accountFence: "new-work-failure-fence"),
+            checkpointOverride: { application, workID, document, reason, createdAt, attachments, resources in
+                guard reason != .navigation else {
+                    throw SyncV2ApplicationError.invalidRuntimeMode
+                }
+                return try await application.checkpoint(
+                    workID: workID,
+                    document: document,
+                    reason: reason,
+                    documentCreatedAt: createdAt,
+                    attachments: attachments,
+                    resources: resources
+                )
+            }
+        )
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+        let application = try #require(state.snapshotSyncV2Application)
+        let oldWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let oldSession = state.documentSessionToken
+        state.updateSelectedEpisodeContent("Aのdirty本文")
+        #expect(state.saveState == .unsaved)
+
+        #expect(await state.createNewV2Document() == false)
+        #expect(state.snapshotSyncV2ActiveWorkID == oldWorkID)
+        #expect(state.documentSessionToken == oldSession)
+        #expect(state.document.selectedEpisodeContentForTest == "Aのdirty本文")
+        #expect(state.startupState == .ready)
+
+        let reopened = try await application.open(workID: oldWorkID)
+        #expect(reopened.document?.selectedEpisodeContentForTest == "Aのdirty本文")
+    }
+
     @Test("新規作品はWorkIDを更新しSQLite checkpointだけをawaitする")
     func newWorkSwitchesSession() async throws {
         let state = try makeState()
@@ -167,8 +244,14 @@ struct AppStateDocumentLifecycleTests {
         await state.bootstrap()
         #expect(await state.openExternalDocument(at: sourceURL))
 
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let expectedPortableCreatedAt = try #require(
+            formatter.date(from: "2024-02-29T12:34:56.789Z")
+        )
         let expectedCreatedAt = Date(timeIntervalSince1970: 1_709_210_096)
         #expect(state.snapshotSyncV2DocumentCreatedAt == expectedCreatedAt)
+        #expect(state.snapshotSyncV2PortableCreatedAt == expectedPortableCreatedAt)
         let importedResources = state.snapshotSyncV2Resources
         #expect(importedResources.contains {
             $0.pathComponents == ["orphan.dat"] && $0.bytes == resourceBytes
@@ -187,12 +270,29 @@ struct AppStateDocumentLifecycleTests {
         let reopenedApplication = try await factory()
         let reopened = try await reopenedApplication.open(workID: workID)
         #expect(reopened.documentCreatedAt == expectedCreatedAt)
-        #expect(reopened.resources == importedResources)
+        let mirroredResources = try SyncV2PortableMetadata.resourcesForLocalMirror(
+            importedResources,
+            portableCreatedAt: expectedPortableCreatedAt
+        )
+        #expect(
+            reopened.resources.sorted { $0.pathComponents.lexicographicallyPrecedes($1.pathComponents) }
+                == mirroredResources.sorted { $0.pathComponents.lexicographicallyPrecedes($1.pathComponents) }
+        )
         #expect(reopened.resources.first(where: { $0.pathComponents == ["orphan.dat"] })?.bytes == resourceBytes)
+
+        let reopenedDocument = try #require(reopened.document)
+        state.installV2Document(
+            reopenedDocument,
+            workID: reopened.workID,
+            createdAt: reopened.documentCreatedAt,
+            attachments: reopened.attachments,
+            resources: reopened.resources
+        )
+        #expect(state.snapshotSyncV2PortableCreatedAt == expectedPortableCreatedAt)
 
         try await state.exportDocumentPackage(to: exportedURL)
         let exported = try await state.portableBridge.importExplicitPackage(from: exportedURL)
-        #expect(exported.documentCreatedAt == expectedCreatedAt)
+        #expect(exported.documentCreatedAt == expectedPortableCreatedAt)
         #expect(exported.resources == importedResources)
         #expect(exported.resources.first(where: { $0.pathComponents == ["orphan.dat"] })?.bytes == resourceBytes)
     }
@@ -211,20 +311,21 @@ struct AppStateDocumentLifecycleTests {
 
     private func makeState(
         repository: DocumentRepository = NovelpkgRepository(),
-        account: TestAccount? = nil
+        account: TestAccount? = nil,
+        checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil
     ) throws -> AppState {
         let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.AppStateDocumentLifecycleTests.\(UUID().uuidString)"))
         let configuration = try TestRuntimeConfiguration(account: account)
-        return AppState(
-            dependencies: AppDependencies(
-                repository: repository,
-                userDefaults: defaults,
-                defaultDocumentDirectoryName: "FUMINIWA-TestHost-\(UUID().uuidString)",
-                snapshotSyncV2Factory: {
-                    try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-                }
-            )
+        var dependencies = AppDependencies(
+            repository: repository,
+            userDefaults: defaults,
+            defaultDocumentDirectoryName: "FUMINIWA-TestHost-\(UUID().uuidString)",
+            snapshotSyncV2Factory: {
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+            }
         )
+        dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
+        return AppState(dependencies: dependencies)
     }
 
     private func temporaryPackageURL(_ label: String) -> URL {

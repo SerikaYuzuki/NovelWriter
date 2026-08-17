@@ -14,10 +14,10 @@ struct ContentView: View {
     var body: some View {
         rootContent
             .sheet(isPresented: $showingConflict) {
-                if let conflict = appState.snapshotSyncConflict {
-                    ConflictSheet(conflict: conflict) { choice in
+                if let selection = appState.snapshotSyncV2ConflictSelection {
+                    ConflictSheet(selection: selection) { choice in
                         Task {
-                            if await appState.resolveSnapshotConflict(using: choice) {
+                            if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
                                 showingConflict = false
                             }
                         }
@@ -197,8 +197,10 @@ private struct LibraryPane: View {
 
     private func icon(for work: StartupLibraryWork) -> String {
         switch work.remoteProgress {
-        case .needsChoice, .readyForSafeAdoption:
+        case .needsChoice:
             return "exclamationmark.triangle"
+        case .readyForSafeAdoption:
+            return "arrow.down.circle"
         case .pending, .syncing, .retryable:
             return "arrow.triangle.2.circlepath"
         case .offline:
@@ -219,11 +221,14 @@ private struct LibraryPane: View {
     }
 
     private func color(for work: StartupLibraryWork) -> Color {
-        switch work.availability {
-        case .conflict: .orange
-        case .remoteOnly: .blue
-        case .parked, .excluded: .secondary
-        default: .secondary
+        if case .readyForSafeAdoption = work.remoteProgress {
+            return .blue
+        }
+        return switch work.availability {
+        case .conflict: Color.orange
+        case .remoteOnly: Color.blue
+        case .parked, .excluded: Color.secondary
+        default: Color.secondary
         }
     }
 
@@ -235,8 +240,10 @@ private struct LibraryPane: View {
             return "オフライン・接続時再開"
         case .authenticationRequired:
             return "サインインすると同期します"
-        case .needsChoice, .readyForSafeAdoption:
+        case .needsChoice:
             return "競合・確認が必要"
+        case .readyForSafeAdoption:
+            return "サーバーの版を適用できます"
         case .parkedDifferentAccount, .fenceChanged, .quarantined:
             return "別のアカウントのため保留中"
         case .failed, .receiptMismatch:
@@ -329,7 +336,7 @@ private struct RecoveryPane: View {
 }
 
 private struct ConflictSheet: View {
-    let conflict: SyncV2ConflictProjection
+    let selection: SnapshotSyncV2ConflictSelection
     let choose: (SyncV2ConflictChoice) -> Void
     let cancel: () -> Void
 
@@ -356,8 +363,14 @@ private struct ConflictSheet: View {
 
 #Preview {
     let session = EditorCommandSession()
+    guard let defaults = UserDefaults(suiteName: "jp.fuminiwa.preview") else {
+        preconditionFailure("Unable to create preview defaults")
+    }
     let state = AppState(
-        dependencies: AppDependencies(editorCommandSession: session),
+        dependencies: AppDependencies(
+            userDefaults: defaults,
+            editorCommandSession: session
+        ),
         initialStartupState: .ready
     )
     return ContentView()

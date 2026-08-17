@@ -15,11 +15,15 @@ extension IOSDocumentStore {
 
             guard let application = snapshotSyncV2Application,
                   let workID = syncV2ActiveWorkID else { return false }
+            let expectedAccountScope = snapshotSyncV2AccountScope
             do {
                 let opened = try await application.openLocal(workID: workID)
-                guard validateCurrentDocumentSession(expectedSession) else { return false }
-                replaceV2Attachments(opened.attachments)
-                return true
+                guard !syncV2AccountTransitionInProgress,
+                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      syncV2ActiveWorkID == workID,
+                      opened.workID == workID,
+                      validateCurrentDocumentSession(expectedSession) else { return false }
+                return replaceV2Attachments(opened.attachments)
             } catch {
                 operationErrorMessage = "資料一覧を読み込めませんでした。現在の作品は変更していません。"
                 return false
@@ -34,11 +38,19 @@ extension IOSDocumentStore {
     ) async -> Attachment? {
         await documentOperationGate.perform { [weak self] in
             guard let self,
+                  !syncV2AccountTransitionInProgress,
                   validateCurrentDocumentSession(expectedSession),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: expectedSession) else { return nil }
 
-            guard snapshotSyncV2Application != nil else { return nil }
-            return await importV2Attachment(from: sourceURL, expectedSession: expectedSession)
+            guard snapshotSyncV2Application != nil,
+                  let expectedWorkID = syncV2ActiveWorkID else { return nil }
+            let expectedAccountScope = snapshotSyncV2AccountScope
+            return await importV2Attachment(
+                from: sourceURL,
+                expectedSession: expectedSession,
+                expectedWorkID: expectedWorkID,
+                expectedAccountScope: expectedAccountScope
+            )
         }
     }
 
@@ -50,12 +62,20 @@ extension IOSDocumentStore {
         let attachmentSession = expectedSession
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  !syncV2AccountTransitionInProgress,
                   validateCurrentDocumentSession(attachmentSession),
                   attachments.contains(where: { $0.id == attachment.id }),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: attachmentSession) else { return false }
 
-            guard snapshotSyncV2Application != nil else { return false }
-            return await deleteV2Attachment(attachment, expectedSession: attachmentSession)
+            guard snapshotSyncV2Application != nil,
+                  let expectedWorkID = syncV2ActiveWorkID else { return false }
+            let expectedAccountScope = snapshotSyncV2AccountScope
+            return await deleteV2Attachment(
+                attachment,
+                expectedSession: attachmentSession,
+                expectedWorkID: expectedWorkID,
+                expectedAccountScope: expectedAccountScope
+            )
         }
     }
 
@@ -76,7 +96,8 @@ extension IOSDocumentStore {
         return (try? bytes.write(to: url, options: .atomic)) == nil ? nil : url
     }
 
-    func adoptV2AttachmentRecords(_ values: [SyncAttachment]) {
+    @discardableResult
+    func adoptV2AttachmentRecords(_ values: [SyncAttachment]) -> Bool {
         replaceV2Attachments(values)
     }
 
@@ -104,7 +125,13 @@ extension IOSDocumentStore {
         }
     }
 
-    private func replaceV2Attachments(_ values: [SyncAttachment]) {
+    @discardableResult
+    private func replaceV2Attachments(_ values: [SyncAttachment]) -> Bool {
+        guard validateV2AttachmentRecords(values) else {
+            operationErrorMessage = "資料一覧が壊れているため、作品を変更していません。"
+            snapshotSyncOutcome = .failed
+            return false
+        }
         replaceAttachments(values.map {
             Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
         })
@@ -114,14 +141,29 @@ extension IOSDocumentStore {
         syncV2AttachmentIDs = Dictionary(
             uniqueKeysWithValues: values.map { ($0.fileName, $0.attachmentId) }
         )
+        return true
+    }
+
+    func validateV2AttachmentRecords(_ values: [SyncAttachment]) -> Bool {
+        var fileNames = Set<String>()
+        var attachmentIDs = Set<UUID>()
+        return values.allSatisfy { value in
+            !value.fileName.isEmpty
+                && fileNames.insert(value.fileName).inserted
+                && attachmentIDs.insert(value.attachmentId).inserted
+        }
     }
 
     private func importV2Attachment(
         from sourceURL: URL,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: IOSDocumentSessionToken,
+        expectedWorkID: WorkID,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope
     ) async -> Attachment? {
         guard let application = snapshotSyncV2Application,
-              let workID = syncV2ActiveWorkID,
+              !syncV2AccountTransitionInProgress,
+              syncV2ActiveWorkID == expectedWorkID,
+              snapshotSyncV2AccountScope == expectedAccountScope,
               validateCurrentDocumentSession(expectedSession) else { return nil }
         let accessed = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -130,32 +172,52 @@ extension IOSDocumentStore {
             }
         }
         do {
-            let bytes = try Data(contentsOf: sourceURL)
-            let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
-            let name = uniqueV2AttachmentName(originalName)
-            let value = Attachment(fileName: name, byteCount: Int64(bytes.count))
-            let previousAttachments = attachments
-            let previousPayloads = syncV2AttachmentPayloads
-            let previousIDs = syncV2AttachmentIDs
-            replaceAttachments(previousAttachments + [value])
-            syncV2AttachmentPayloads[name] = bytes
-            syncV2AttachmentIDs[name] = UUID()
-            do {
-                _ = try await application.checkpoint(
-                    workID: workID,
-                    document: document,
-                    reason: .explicit,
-                    documentCreatedAt: documentCreatedAt,
-                    attachments: currentV2AttachmentsOrThrow()
-                )
-            } catch {
-                replaceAttachments(previousAttachments)
-                syncV2AttachmentPayloads = previousPayloads
-                syncV2AttachmentIDs = previousIDs
-                throw error
+            let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                () async throws -> Attachment? in
+                guard !syncV2AccountTransitionInProgress,
+                      syncV2ActiveWorkID == expectedWorkID,
+                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      validateCurrentDocumentSession(expectedSession) else { return nil }
+                let bytes = try Data(contentsOf: sourceURL)
+                let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+                let name = uniqueV2AttachmentName(originalName)
+                let value = Attachment(fileName: name, byteCount: Int64(bytes.count))
+                let previousAttachments = attachments
+                let previousPayloads = syncV2AttachmentPayloads
+                let previousIDs = syncV2AttachmentIDs
+                replaceAttachments(previousAttachments + [value])
+                syncV2AttachmentPayloads[name] = bytes
+                syncV2AttachmentIDs[name] = UUID()
+                do {
+                    _ = try await application.checkpoint(
+                        workID: expectedWorkID,
+                        document: document,
+                        reason: .explicit,
+                        documentCreatedAt: documentCreatedAt,
+                        attachments: currentV2AttachmentsOrThrow()
+                    )
+                } catch {
+                    replaceAttachments(previousAttachments)
+                    syncV2AttachmentPayloads = previousPayloads
+                    syncV2AttachmentIDs = previousIDs
+                    throw error
+                }
+                guard !syncV2AccountTransitionInProgress,
+                      syncV2ActiveWorkID == expectedWorkID,
+                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      validateCurrentDocumentSession(expectedSession) else { return nil }
+                return value
             }
-            saveState = .saved
-            return value
+            switch result {
+            case .saveFailedBeforeOperation:
+                operationErrorMessage = "本文を端末へ保存できないため、資料の取り込みを中止しました。"
+                return nil
+            case let .completed(value, savedAfterOperation):
+                if !savedAfterOperation {
+                    operationErrorMessage = "資料は保存しましたが、途中の本文変更を端末へ保存できませんでした。"
+                }
+                return value
+            }
         } catch {
             operationErrorMessage = "資料を取り込めませんでした。外部の原本は変更していません。"
             return nil
@@ -164,31 +226,57 @@ extension IOSDocumentStore {
 
     private func deleteV2Attachment(
         _ attachment: Attachment,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: IOSDocumentSessionToken,
+        expectedWorkID: WorkID,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope
     ) async -> Bool {
         guard let application = snapshotSyncV2Application,
-              let workID = syncV2ActiveWorkID,
+              !syncV2AccountTransitionInProgress,
+              syncV2ActiveWorkID == expectedWorkID,
+              snapshotSyncV2AccountScope == expectedAccountScope,
               validateCurrentDocumentSession(expectedSession) else { return false }
-        let previousAttachments = attachments
-        let previousPayloads = syncV2AttachmentPayloads
-        let previousIDs = syncV2AttachmentIDs
-        replaceAttachments(attachments.filter { $0.id != attachment.id })
-        syncV2AttachmentPayloads.removeValue(forKey: attachment.fileName)
-        syncV2AttachmentIDs.removeValue(forKey: attachment.fileName)
         do {
-            _ = try await application.checkpoint(
-                workID: workID,
-                document: document,
-                reason: .explicit,
-                documentCreatedAt: documentCreatedAt,
-                attachments: currentV2AttachmentsOrThrow()
-            )
-            saveState = .saved
-            return true
+            let result = try await saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                guard !syncV2AccountTransitionInProgress,
+                      syncV2ActiveWorkID == expectedWorkID,
+                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      validateCurrentDocumentSession(expectedSession) else { return false }
+                let previousAttachments = attachments
+                let previousPayloads = syncV2AttachmentPayloads
+                let previousIDs = syncV2AttachmentIDs
+                replaceAttachments(attachments.filter { $0.id != attachment.id })
+                syncV2AttachmentPayloads.removeValue(forKey: attachment.fileName)
+                syncV2AttachmentIDs.removeValue(forKey: attachment.fileName)
+                do {
+                    _ = try await application.checkpoint(
+                        workID: expectedWorkID,
+                        document: document,
+                        reason: .explicit,
+                        documentCreatedAt: documentCreatedAt,
+                        attachments: currentV2AttachmentsOrThrow()
+                    )
+                } catch {
+                    replaceAttachments(previousAttachments)
+                    syncV2AttachmentPayloads = previousPayloads
+                    syncV2AttachmentIDs = previousIDs
+                    throw error
+                }
+                return !syncV2AccountTransitionInProgress
+                    && syncV2ActiveWorkID == expectedWorkID
+                    && snapshotSyncV2AccountScope == expectedAccountScope
+                    && validateCurrentDocumentSession(expectedSession)
+            }
+            switch result {
+            case .saveFailedBeforeOperation:
+                operationErrorMessage = "本文を端末へ保存できないため、資料の削除を中止しました。"
+                return false
+            case let .completed(didDelete, savedAfterOperation):
+                if didDelete, !savedAfterOperation {
+                    operationErrorMessage = "資料は削除しましたが、途中の本文変更を端末へ保存できませんでした。"
+                }
+                return didDelete
+            }
         } catch {
-            replaceAttachments(previousAttachments)
-            syncV2AttachmentPayloads = previousPayloads
-            syncV2AttachmentIDs = previousIDs
             operationErrorMessage = "資料を削除できませんでした。現在の作品は変更していません。"
             return false
         }

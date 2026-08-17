@@ -68,7 +68,7 @@ extension IOSDocumentStore {
     @discardableResult
     func refreshLibrary() async -> Bool {
         do {
-            try await reloadLibraryItems()
+            guard try await reloadLibraryItems() else { return false }
             // The local shelf is authoritative for launch/open.  Catalog I/O
             // is a deferred projection refresh and never gates the shelf.
             Task { @MainActor [weak self] in
@@ -81,11 +81,35 @@ extension IOSDocumentStore {
         }
     }
 
-    func reloadLibraryItems() async throws {
+    @discardableResult
+    func reloadLibraryItems() async throws -> Bool {
+        guard !syncV2AccountTransitionInProgress else { return false }
         guard let application = snapshotSyncV2Application else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
+        let expectedAccountScope = snapshotSyncV2AccountScope
+        libraryRefreshGeneration &+= 1
+        let refreshGeneration = libraryRefreshGeneration
+        // A local shelf refresh supersedes any older remote page. Its task may
+        // finish, but the generation CAS below prevents it from publishing.
+        syncV2RemoteCatalogIsLoading = false
         let projection = try await application.library()
+        return applySnapshotSyncV2LibraryProjection(
+            projection,
+            expectedAccountScope: expectedAccountScope,
+            refreshGeneration: refreshGeneration
+        )
+    }
+
+    @discardableResult
+    func applySnapshotSyncV2LibraryProjection(
+        _ projection: SyncV2LibraryProjection,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        refreshGeneration: UInt64
+    ) -> Bool {
+        guard !syncV2AccountTransitionInProgress,
+              libraryRefreshGeneration == refreshGeneration,
+              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
         let localItems = exposesAccountScopedSyncV2Items
             ? projection.items
             : projection.items.filter { $0.accountState == .unbound }
@@ -95,6 +119,7 @@ extension IOSDocumentStore {
         )
         libraryItems = []
         verifiedPrivateDocumentIDs = []
+        return true
     }
 
     /// Reads the account-scoped remote catalog page.  The runtime/provider is
@@ -102,36 +127,79 @@ extension IOSDocumentStore {
     /// WorkID/title/head projection for the shelf.
     @discardableResult
     func refreshRemoteCatalog(reset: Bool = true) async -> Bool {
-        guard let application = snapshotSyncV2Application else { return false }
+        guard !syncV2AccountTransitionInProgress,
+              let application = snapshotSyncV2Application else { return false }
         guard !syncV2RemoteCatalogIsLoading else { return false }
-        if reset {
-            syncV2RemoteCatalogCursor = nil
-            syncV2RemoteCatalogItems = []
-        }
+        let expectedAccountScope = snapshotSyncV2AccountScope
+        libraryRefreshGeneration &+= 1
+        let refreshGeneration = libraryRefreshGeneration
+        let cursor = reset ? nil : syncV2RemoteCatalogCursor
+        let existingItems = reset ? [] : syncV2RemoteCatalogItems
         syncV2RemoteCatalogIsLoading = true
         syncV2RemoteCatalogError = nil
-        defer { syncV2RemoteCatalogIsLoading = false }
+        defer {
+            if libraryRefreshGeneration == refreshGeneration {
+                syncV2RemoteCatalogIsLoading = false
+            }
+        }
         do {
             let page = try await application.refreshRemoteCatalog(
-                cursor: syncV2RemoteCatalogCursor,
+                cursor: cursor,
                 pageSize: 100
             )
+            guard !syncV2AccountTransitionInProgress,
+                  libraryRefreshGeneration == refreshGeneration,
+                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             var rows = Dictionary(
-                uniqueKeysWithValues: syncV2RemoteCatalogItems.map { ($0.workID, $0) }
+                uniqueKeysWithValues: existingItems.map { ($0.workID, $0) }
             )
             for item in page.items {
                 rows[item.workID] = item
             }
-            syncV2RemoteCatalogItems = rows.values.sorted {
+            let remoteItems = rows.values.sorted {
                 $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
-            syncV2RemoteCatalogCursor = page.nextCursor
-            try await reloadLibraryItems()
-            return true
+            let projection = try await application.library()
+            return applySnapshotSyncV2RemoteCatalogPage(
+                remoteItems: remoteItems,
+                nextCursor: page.nextCursor,
+                localProjection: projection,
+                expectedAccountScope: expectedAccountScope,
+                refreshGeneration: refreshGeneration
+            )
         } catch {
-            syncV2RemoteCatalogError = error.localizedDescription
+            if !syncV2AccountTransitionInProgress,
+               libraryRefreshGeneration == refreshGeneration,
+               snapshotSyncV2AccountScope == expectedAccountScope {
+                syncV2RemoteCatalogError = error.localizedDescription
+            }
             return false
         }
+    }
+
+    @discardableResult
+    func applySnapshotSyncV2RemoteCatalogPage(
+        remoteItems: [SyncV2RemoteCatalogEntry],
+        nextCursor: String?,
+        localProjection: SyncV2LibraryProjection,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        refreshGeneration: UInt64
+    ) -> Bool {
+        guard !syncV2AccountTransitionInProgress,
+              libraryRefreshGeneration == refreshGeneration,
+              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+        let localItems = exposesAccountScopedSyncV2Items
+            ? localProjection.items
+            : localProjection.items.filter { $0.accountState == .unbound }
+        syncV2RemoteCatalogItems = remoteItems
+        syncV2RemoteCatalogCursor = nextCursor
+        syncV2LibraryItems = mergeRemoteCatalog(
+            into: localItems,
+            catalog: exposesAccountScopedSyncV2Items ? remoteItems : []
+        )
+        libraryItems = []
+        verifiedPrivateDocumentIDs = []
+        return true
     }
 
     @discardableResult
@@ -142,7 +210,13 @@ extension IOSDocumentStore {
 
     @discardableResult
     func refreshSnapshotHistory(for workID: WorkID, reset: Bool = true) async -> Bool {
-        guard let application = snapshotSyncV2Application else { return false }
+        guard !syncV2AccountTransitionInProgress,
+              let application = snapshotSyncV2Application else { return false }
+        let expectedAccountScope = snapshotSyncV2AccountScope
+        historyRefreshGeneration &+= 1
+        let refreshGeneration = historyRefreshGeneration
+        let existingItems = reset || syncV2HistoryWorkID != workID
+            ? [] : syncV2HistoryItems
         if reset || syncV2HistoryWorkID != workID {
             syncV2HistoryItems = []
             syncV2HistoryCursor = nil
@@ -151,22 +225,49 @@ extension IOSDocumentStore {
             syncV2HistoryOnlineAvailability = .unavailable
             syncV2HistoryOnlineFailure = nil
         }
+        let cursor = syncV2HistoryCursor
         do {
             let page = try await application.historyPage(
                 workID: workID,
-                cursor: syncV2HistoryCursor,
+                cursor: cursor,
                 pageSize: 100
             )
-            syncV2HistoryItems.append(contentsOf: page.items)
-            syncV2HistoryCursor = page.nextCursor
-            syncV2HistoryLocalAvailability = page.localAvailability
-            syncV2HistoryOnlineAvailability = page.onlineAvailability
-            syncV2HistoryOnlineFailure = page.onlineFailure
-            return true
+            return applySnapshotSyncV2HistoryPage(
+                page,
+                existingItems: existingItems,
+                workID: workID,
+                expectedAccountScope: expectedAccountScope,
+                refreshGeneration: refreshGeneration
+            )
         } catch {
-            syncV2HistoryOnlineFailure = (error as? SyncV2Failure) ?? .offline
+            if !syncV2AccountTransitionInProgress,
+               historyRefreshGeneration == refreshGeneration,
+               syncV2HistoryWorkID == workID,
+               snapshotSyncV2AccountScope == expectedAccountScope {
+                syncV2HistoryOnlineFailure = (error as? SyncV2Failure) ?? .offline
+            }
             return false
         }
+    }
+
+    @discardableResult
+    func applySnapshotSyncV2HistoryPage(
+        _ page: SyncV2HistoryPage,
+        existingItems: [SyncV2HistoryItem],
+        workID: WorkID,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope,
+        refreshGeneration: UInt64
+    ) -> Bool {
+        guard !syncV2AccountTransitionInProgress,
+              historyRefreshGeneration == refreshGeneration,
+              syncV2HistoryWorkID == workID,
+              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+        syncV2HistoryItems = existingItems + page.items
+        syncV2HistoryCursor = page.nextCursor
+        syncV2HistoryLocalAvailability = page.localAvailability
+        syncV2HistoryOnlineAvailability = page.onlineAvailability
+        syncV2HistoryOnlineFailure = page.onlineFailure
+        return true
     }
 
     func mergeRemoteCatalog(
@@ -220,53 +321,78 @@ extension IOSDocumentStore {
     /// original unbound Work intact.
     @discardableResult
     func cloneActiveWorkIntoSignedInAccount() async -> Bool {
-        guard let application = snapshotSyncV2Application,
+        guard !syncV2AccountTransitionInProgress,
+              let application = snapshotSyncV2Application,
               let sourceWorkID = syncV2ActiveWorkID,
+              let expectedSession = currentDocumentSessionToken,
               syncV2ParkedAccountID == nil,
               case .signedIn = authUIState,
               !syncV2AccountCloneInFlight else { return false }
+        let expectedAccountScope = snapshotSyncV2AccountScope
         syncV2AccountCloneInFlight = true
         defer { syncV2AccountCloneInFlight = false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return false }
-            defer { editorCommandSession.resumeAfterDocumentTransition() }
-            do {
-                switch editorCommandSession.captureActiveCommittedText() {
-                case let .captured(text):
-                    guard let chapterID = selectedChapterID,
-                          let episodeID = selectedEpisodeID else { return false }
-                    updateEpisodeContent(text, chapterID: chapterID, episodeID: episodeID)
-                case .compositionInProgress:
-                    operationErrorMessage = "日本語入力を確定してから、アカウントへ追加してください。"
-                    return false
-                case .notActive:
-                    break
+                  !syncV2AccountTransitionInProgress,
+                  currentDocumentSessionToken == expectedSession,
+                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            var cloned = false
+            let transitioned = await performDocumentTransition {
+                do {
+                    switch editorCommandSession.captureActiveCommittedText() {
+                    case let .captured(text):
+                        guard let chapterID = selectedChapterID,
+                              let episodeID = selectedEpisodeID else { return }
+                        if document.episode(episodeID)?.episode.content != text {
+                            document.updateEpisodeContent(text, for: episodeID, in: chapterID)
+                            localEditGeneration &+= 1
+                            saveCoordinator.markDirty()
+                        }
+                    case .compositionInProgress:
+                        operationErrorMessage = "日本語入力を確定してから、アカウントへ追加してください。"
+                        return
+                    case .notActive:
+                        break
+                    }
+                    guard await saveNow(),
+                          await checkpointSnapshotSyncV2(document, reason: .explicit),
+                          !syncV2AccountTransitionInProgress,
+                          currentDocumentSessionToken == expectedSession,
+                          snapshotSyncV2AccountScope == expectedAccountScope else {
+                        operationErrorMessage = "端末へ保存できないため、アカウントへの追加を中止しました。"
+                        return
+                    }
+                    let clone = try await application.cloneWorkIntoActiveAccount(
+                        sourceWorkID: sourceWorkID,
+                        newWorkID: WorkID(UUID()),
+                        newDocumentID: DocumentID(UUID())
+                    )
+                    guard !syncV2AccountTransitionInProgress,
+                          currentDocumentSessionToken == expectedSession,
+                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                    let opened = try await application.openLocal(workID: clone.newWorkID)
+                    guard !syncV2AccountTransitionInProgress,
+                          currentDocumentSessionToken == expectedSession,
+                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          opened.workID == clone.newWorkID,
+                          let value = opened.document,
+                          installSnapshotSyncV2Opened(opened, value: value) else { return }
+                    let state = await application.uiState(workID: clone.newWorkID)
+                    guard !syncV2AccountTransitionInProgress,
+                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          syncV2ActiveWorkID == clone.newWorkID else { return }
+                    applySnapshotSyncV2State(state)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        _ = await refreshLibrary()
+                        await resumeSnapshotSyncV2()
+                    }
+                    cloned = true
+                } catch {
+                    operationErrorMessage = "作品をこのアカウントへ追加できませんでした。元の端末作品は保持しています。"
                 }
-                guard await saveNow(),
-                      await checkpointSnapshotSyncV2(document, reason: .explicit) else {
-                    operationErrorMessage = "端末へ保存できないため、アカウントへの追加を中止しました。"
-                    return false
-                }
-                let clone = try await application.cloneWorkIntoActiveAccount(
-                    sourceWorkID: sourceWorkID,
-                    newWorkID: WorkID(UUID()),
-                    newDocumentID: DocumentID(UUID())
-                )
-                let opened = try await application.openLocal(workID: clone.newWorkID)
-                guard let value = opened.document else { return false }
-                guard installSnapshotSyncV2Opened(opened, value: value) else { return false }
-                await applySnapshotSyncV2State(application.uiState(workID: clone.newWorkID))
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    _ = await refreshLibrary()
-                    await resumeSnapshotSyncV2()
-                }
-                return true
-            } catch {
-                operationErrorMessage = "作品をこのアカウントへ追加できませんでした。元の端末作品は保持しています。"
-                return false
             }
+            return transitioned && cloned
         }
     }
 }

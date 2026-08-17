@@ -4,6 +4,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 @testable import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import NovelSyncV2Store
 import Testing
@@ -43,6 +44,7 @@ struct SnapshotSyncV2MacTests {
         let configuration = try TestRuntimeConfiguration(account: nil)
         let state = AppState(
             dependencies: AppDependencies(
+                userDefaults: makeIsolatedTestUserDefaults(),
                 snapshotSyncV2Factory: {
                     try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
                 }
@@ -124,120 +126,6 @@ struct SnapshotSyncV2MacTests {
         #expect(synchronized.typedResult == .noChanges || synchronized.typedResult == .queued)
     }
 
-    @Test("all three conflict choices remain explicit")
-    func conflictActionsPreserveThreeChoices() throws {
-        let workID = WorkID(UUID())
-        let conflictID = UUID()
-        let local = try SnapshotID(rawValue: String(repeating: "a", count: 64))
-        let remote = try SnapshotID(rawValue: String(repeating: "b", count: 64))
-        let choices: [SyncV2ConflictChoice] = [.useDevice, .useServer, .keepBoth]
-        let actions = choices.map {
-            SyncV2ConflictAction(
-                workID: workID,
-                conflictID: conflictID,
-                revision: 1,
-                baseSnapshotID: nil,
-                localSnapshotID: local,
-                remoteSnapshotID: remote,
-                sourceGeneration: 1,
-                choice: $0
-            )
-        }
-        #expect(actions.map(\.choice) == choices)
-    }
-
-    @Test("keep-both returned work is installed before the worker wake")
-    @MainActor
-    func keepBothOpenedWorkHandsOffTheEditorBeforeResume() async throws {
-        let fixture = try await makeMacConflictFixture(remoteBehavior: .suspended)
-        let beforeOperations = await fixture.remote.recordedOperations().count
-
-        #expect(await fixture.state.resolveSnapshotConflict(using: .keepBoth))
-        let activeWorkID = try #require(fixture.state.snapshotSyncV2ActiveWorkID)
-        #expect(activeWorkID != fixture.workID)
-        #expect(activeWorkID == fixture.state.documentSessionToken.workID)
-        #expect(fixture.state.document.id != fixture.document.id)
-
-        // The helper wakes the shared worker only after the opened clone has
-        // been installed.  The suspended fake makes the ordering observable
-        // without allowing a remote acknowledgement to race the assertion.
-        try await eventuallyMac {
-            await fixture.remote.recordedOperations().count > beforeOperations
-        }
-        #expect(fixture.state.snapshotSyncV2ActiveWorkID == activeWorkID)
-        await fixture.remote.resumeSuspended()
-    }
-
-    @Test("useServer選択は競合の本文を暗黙checkpointしない")
-    @MainActor
-    func conflictChoiceDoesNotCheckpointEditor() async throws {
-        let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline))
-        let openedBefore = try await fixture.application.open(workID: fixture.workID)
-        let operationsBefore = await fixture.remote.recordedOperations().count
-
-        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
-        let openedAfter = try await fixture.application.open(workID: fixture.workID)
-        #expect(openedAfter.generation == openedBefore.generation)
-        #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
-        #expect(await fixture.remote.recordedOperations().count >= operationsBefore)
-    }
-
-    @Test("dirty競合は本文と世代を保持して選択を保留する")
-    @MainActor
-    func dirtyConflictChoiceLeavesConflictPending() async throws {
-        let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline))
-        let openedBefore = try await fixture.application.open(workID: fixture.workID)
-        let operationsBefore = await fixture.remote.recordedOperations().count
-        fixture.state.markDocumentDirty()
-
-        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer) == false)
-        let openedAfter = try await fixture.application.open(workID: fixture.workID)
-        #expect(openedAfter.generation == openedBefore.generation)
-        #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .unsaved)
-        #expect(fixture.state.operationMessage != nil)
-        #expect(await fixture.remote.recordedOperations().count == operationsBefore)
-        #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict != nil)
-    }
-
-    @Test("競合選択はmodelと異なるeditor本文を保留する")
-    @MainActor
-    func conflictChoiceRejectsEditorCaptureDifferentFromModel() async throws {
-        let fixture = try await makeMacConflictFixture(
-            remoteBehavior: .failure(.offline),
-            committedText: "modelと異なる入力"
-        )
-        let openedBefore = try await fixture.application.open(workID: fixture.workID)
-        let operationsBefore = await fixture.remote.recordedOperations().count
-
-        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer) == false)
-        let openedAfter = try await fixture.application.open(workID: fixture.workID)
-        #expect(openedAfter.generation == openedBefore.generation)
-        #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
-        #expect(fixture.state.operationMessage != nil)
-        #expect(await fixture.remote.recordedOperations().count == operationsBefore)
-        #expect(await fixture.application.uiState(workID: fixture.workID)?.conflict != nil)
-    }
-
-    @Test("editorなしの別セクションではuseServer選択を保留しない")
-    @MainActor
-    func conflictChoiceAllowsInactiveEditorOutsideStructure() async throws {
-        let fixture = try await makeMacConflictFixture(
-            remoteBehavior: .failure(.offline),
-            committedCapture: .notActive
-        )
-        fixture.state.workspaceSelection = WorkspaceSelection(section: .characters)
-        let openedBefore = try await fixture.application.open(workID: fixture.workID)
-
-        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
-        let openedAfter = try await fixture.application.open(workID: fixture.workID)
-        #expect(openedAfter.generation == openedBefore.generation)
-        #expect(openedAfter.document?.title == fixture.document.title)
-        #expect(fixture.state.saveState == .saved)
-    }
-
     @Test("v2 shelf deduplicates WorkID and projects remote-only entries")
     @MainActor
     func libraryProjectionKeepsLocalAndRemoteOnlyDistinct() async throws {
@@ -269,6 +157,100 @@ struct SnapshotSyncV2MacTests {
         #expect(matching.count == 2)
         #expect(matching.first(where: { $0.workID == localWorkID })?.availability == .cached)
         #expect(matching.first(where: { $0.workID == remoteOnlyWorkID })?.availability == .remoteOnly)
+    }
+
+    @Test("remote-only作品の取得待ちは作品一覧のgateを占有しない")
+    @MainActor
+    func remoteOnlyOpenReturnsWithoutBlockingCurrentWork() async throws {
+        let configuration = try TestRuntimeConfiguration()
+        let suspendedOpen = SuspendedRemoteOnlyOpen()
+        let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.SnapshotSyncV2MacTests.remoteOnly.\(UUID().uuidString)"))
+        var dependencies = AppDependencies(
+            userDefaults: defaults,
+            snapshotSyncV2Factory: {
+                try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+            }
+        )
+        dependencies.snapshotSyncV2OpenOverride = { _, workID in
+            await suspendedOpen.open(workID: workID)
+        }
+        let state = AppState(
+            dependencies: dependencies
+        )
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+        let application = try #require(state.snapshotSyncV2Application)
+        let currentWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        let currentDocument = state.document
+        let currentSession = state.documentSessionToken
+
+        let secondWorkID = WorkID(UUID())
+        let secondDocument = NovelDocument.newDocument(title: "取得待ち中に開く別作品")
+        _ = try await application.checkpoint(
+            workID: secondWorkID,
+            document: secondDocument,
+            reason: .migration,
+            documentCreatedAt: Date()
+        )
+        #expect(await state.returnToSnapshotLibrary())
+
+        let remoteOnlyWorkID = WorkID(UUID())
+        state.snapshotSyncRemoteCatalogItems = [
+            SyncV2RemoteCatalogEntry(workID: remoteOnlyWorkID, title: "通信待ち作品", head: nil)
+        ]
+        await state.refreshSnapshotLibrary()
+        let remoteOnly = try #require(
+            state.snapshotSyncLibraryWorks.first(where: { $0.workID == remoteOnlyWorkID })
+        )
+        let secondWork = try #require(
+            state.snapshotSyncLibraryWorks.first(where: { $0.workID == secondWorkID })
+        )
+        #expect(remoteOnly.availability == .remoteOnly)
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        #expect(await state.openLibraryWork(remoteOnly))
+        let elapsed = clock.now - started
+
+        #expect(elapsed < .seconds(1))
+        try await eventuallyMac {
+            await suspendedOpen.isWaiting(for: remoteOnlyWorkID)
+        }
+        #expect(state.startupState.isReady == false)
+        #expect(state.snapshotSyncV2ActiveWorkID == currentWorkID)
+        #expect(state.document == currentDocument)
+        #expect(state.documentSessionToken == currentSession)
+        #expect(state.isDocumentTransitionInProgress == false)
+
+        // A second gate operation remains available while the remote request
+        // is suspended. Installing that local work cancels the stale request.
+        #expect(await state.openLibraryWork(secondWork))
+        #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
+        #expect(state.document.title == secondDocument.title)
+        let secondSession = state.documentSessionToken
+        #expect(await state.addChapterAfterTransition())
+        #expect(state.documentSessionToken == secondSession)
+
+        let delayedRemoteDocument = NovelDocument.newDocument(title: "遅れて届いた作品")
+        await suspendedOpen.resume(
+            returning: SyncV2OpenedWork(
+                workID: remoteOnlyWorkID,
+                document: delayedRemoteDocument,
+                documentCreatedAt: Date(),
+                generation: 1,
+                snapshotID: nil
+            )
+        )
+        try await eventuallyMac {
+            state.snapshotSyncV2RemoteOnlyOpenTask == nil
+        }
+
+        #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
+        #expect(state.documentSessionToken == secondSession)
+        #expect(state.document.title == secondDocument.title)
+        #expect(state.operationMessage == nil)
+        #expect(state.startupState.isReady)
+        #expect(state.isDocumentTransitionInProgress == false)
     }
 
     @Test("platform gate rejects IME and unsaved adoption")
@@ -337,7 +319,31 @@ struct SnapshotSyncV2MacTests {
     }
 }
 
-private struct MacConflictFixture {
+private actor SuspendedRemoteOnlyOpen {
+    private var waitingWorkID: WorkID?
+    private var continuation: CheckedContinuation<SyncV2OpenedWork, Never>?
+
+    func open(workID: WorkID) async -> SyncV2OpenedWork {
+        waitingWorkID = workID
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func isWaiting(for workID: WorkID) -> Bool {
+        waitingWorkID == workID && continuation != nil
+    }
+
+    func resume(returning opened: SyncV2OpenedWork) {
+        waitingWorkID = nil
+        let waiting = continuation
+        continuation = nil
+        waiting?.resume(returning: opened)
+    }
+}
+
+struct MacConflictFixture {
+    let configuration: TestRuntimeConfiguration
     let application: SyncV2Application
     let remote: FakeSyncV2RemoteClient
     let state: AppState
@@ -346,6 +352,7 @@ private struct MacConflictFixture {
     let remoteDocument: NovelDocument
     let projection: SyncV2ConflictProjection
     let inboxID: UUID
+    let serverInbox: SyncV2RemoteInbox
 
     func action(choice: SyncV2ConflictChoice) -> SyncV2ConflictAction {
         SyncV2ConflictAction(
@@ -376,6 +383,7 @@ private struct MacConflictStorage {
     let remoteDocument: NovelDocument
     let projection: SyncV2ConflictProjection
     let inboxID: UUID
+    let serverInbox: SyncV2RemoteInbox
 }
 
 private struct MacConflictDocuments {
@@ -459,6 +467,19 @@ private func makeMacConflictStorage(
         checkpoint: checkpoint,
         inboxID: inboxID
     )
+    let expectedRemoteHead = try SyncV2RemoteHead(
+        snapshotID: remoteSnapshot.encoded.snapshotId,
+        generation: 1
+    )
+    let serverInbox = SyncV2RemoteInbox(
+        inboxID: remoteSnapshot.inboxID,
+        workID: remoteSnapshot.workID,
+        headSnapshotID: remoteSnapshot.encoded.snapshotId,
+        snapshots: [remoteSnapshot.encoded],
+        expectedCurrentSnapshotID: remoteSnapshot.expectedCurrentSnapshotID,
+        expectedLocalGeneration: remoteSnapshot.expectedLocalGeneration,
+        expectedRemoteHead: expectedRemoteHead
+    )
     let candidate = try await store.appendConflict(
         workID: documents.workID,
         baseSnapshotID: nil,
@@ -481,7 +502,8 @@ private func makeMacConflictStorage(
             remoteSnapshotID: candidate.remoteSnapshotID,
             sourceGeneration: candidate.sourceGeneration
         ),
-        inboxID: inboxID
+        inboxID: inboxID,
+        serverInbox: serverInbox
     )
 }
 
@@ -506,28 +528,28 @@ private func makeMacConflictKernel(
 }
 
 @MainActor
-private func makeMacConflictFixture(
+func makeMacConflictFixture(
     remoteBehavior: FakeSyncV2RemoteClient.Behavior,
     committedText: String? = nil,
-    committedCapture: EditorCommittedTextCaptureResult? = nil
+    committedCapture: EditorCommittedTextCaptureResult? = nil,
+    afterStagedRemote: SnapshotSyncV2AfterStagedRemoteOverride? = nil
 ) async throws -> MacConflictFixture {
     let configuration = try TestRuntimeConfiguration()
     let kernel = try await makeMacConflictKernel(configuration: configuration)
     await kernel.remote.setBehaviors([remoteBehavior])
 
     let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.SnapshotSyncV2MacTests.conflict.\(UUID().uuidString)"))
-    let state = AppState(
-        dependencies: AppDependencies(
-            userDefaults: defaults,
-            activeCommittedTextCapture: {
-                committedCapture ?? .captured(
-                    committedText ?? kernel.storage.document.chapters.first?.episodes.first?.content ?? ""
-                )
-            },
-            snapshotSyncV2DocumentGate: MacSyncV2DocumentGate()
-        ),
-        initialStartupState: .ready
+    var dependencies = AppDependencies(
+        userDefaults: defaults,
+        activeCommittedTextCapture: {
+            committedCapture ?? .captured(
+                committedText ?? kernel.storage.document.chapters.first?.episodes.first?.content ?? ""
+            )
+        },
+        snapshotSyncV2DocumentGate: MacSyncV2DocumentGate()
     )
+    dependencies.snapshotSyncV2AfterStagedRemoteOverride = afterStagedRemote
+    let state = AppState(dependencies: dependencies, initialStartupState: .ready)
     state.snapshotSyncV2Application = kernel.application
     state.installV2Document(
         kernel.storage.document,
@@ -536,6 +558,7 @@ private func makeMacConflictFixture(
     )
     state.snapshotSyncV2Session = await kernel.application.beginSession(workID: kernel.storage.workID)
     return MacConflictFixture(
+        configuration: configuration,
         application: kernel.application,
         remote: kernel.remote,
         state: state,
@@ -543,19 +566,28 @@ private func makeMacConflictFixture(
         document: kernel.storage.document,
         remoteDocument: kernel.storage.remoteDocument,
         projection: kernel.storage.projection,
-        inboxID: kernel.storage.inboxID
+        inboxID: kernel.storage.inboxID,
+        serverInbox: kernel.storage.serverInbox
     )
 }
 
-private func eventuallyMac(
+@MainActor
+func eventuallyMac(
     timeout: Duration = .seconds(2),
-    condition: @escaping @Sendable () async throws -> Bool
+    stablePolls: Int = 1,
+    condition: @escaping @MainActor @Sendable () async throws -> Bool
 ) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
+    var consecutiveMatches = 0
     while clock.now < deadline {
         if try await condition() {
-            return
+            consecutiveMatches += 1
+            if consecutiveMatches >= max(stablePolls, 1) {
+                return
+            }
+        } else {
+            consecutiveMatches = 0
         }
         try await Task.sleep(for: .milliseconds(10))
     }

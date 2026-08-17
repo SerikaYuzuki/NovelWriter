@@ -10,7 +10,9 @@ struct DocumentLifecyclePolicyTests {
     @Test("mutationは終了・切替中または古いsessionを拒否する")
     func mutationRequiresCurrentLifecycle() {
         let state = AppState(
-            dependencies: AppDependencies(),
+            dependencies: AppDependencies(
+                userDefaults: makeIsolatedTestUserDefaults()
+            ),
             initialStartupState: .ready
         )
         let session = state.documentSessionToken
@@ -32,7 +34,9 @@ struct DocumentLifecyclePolicyTests {
     @Test("Editor同期は終了要求後でも同じsessionを受け入れ、切替中は拒否する")
     func editorSynchronizationKeepsFinalCallbackBoundary() {
         let state = AppState(
-            dependencies: AppDependencies(),
+            dependencies: AppDependencies(
+                userDefaults: makeIsolatedTestUserDefaults()
+            ),
             initialStartupState: .ready
         )
         let session = state.documentSessionToken

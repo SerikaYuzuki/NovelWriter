@@ -19,16 +19,29 @@ struct FuminiwaApp: App {
     @State private var editorCommandSession: EditorCommandSession
 
     init() {
-        // The shipped application is always composed from the production
-        // boundary.  XCTest/environment inspection belongs to an explicit
-        // test composition root and must never change the SQLite or Keychain
-        // authority of this @main entry point.
-        let defaults = UserDefaults.standard
         let editorCommandSession = EditorCommandSession()
+        #if FUMINIWA_TEST_COMPOSITION
+        let configuration: TestRuntimeConfiguration
+        do {
+            configuration = try TestRuntimeConfiguration()
+        } catch {
+            preconditionFailure("Unable to create the isolated macOS test runtime: \(error)")
+        }
+        guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
+            preconditionFailure("Unable to create the isolated macOS test defaults")
+        }
+        let dependencies = Self.makeTestDependencies(
+            userDefaults: defaults,
+            configuration: configuration,
+            editorCommandSession: editorCommandSession
+        )
+        #else
+        let defaults = UserDefaults.standard
         let dependencies = Self.makeProductionDependencies(
             userDefaults: defaults,
             editorCommandSession: editorCommandSession
         )
+        #endif
         let appState = AppState(dependencies: dependencies)
         _appState = State(initialValue: appState)
         _editorSettings = State(initialValue: EditorSettings(userDefaults: defaults))
@@ -39,18 +52,7 @@ struct FuminiwaApp: App {
         _editorCommandSession = State(initialValue: editorCommandSession)
     }
 
-    static func makeDependencies(
-        userDefaults: UserDefaults,
-        editorCommandSession: EditorCommandSession = EditorCommandSession(),
-        processEnvironment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> AppDependencies {
-        _ = processEnvironment
-        makeProductionDependencies(
-            userDefaults: userDefaults,
-            editorCommandSession: editorCommandSession
-        )
-    }
-
+    #if FUMINIWA_TEST_COMPOSITION
     /// Explicit test composition.  Tests must provide the isolated runtime
     /// rather than relying on XCTest/environment detection.
     static func makeTestDependencies(
@@ -60,17 +62,19 @@ struct FuminiwaApp: App {
         checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil,
         openOverride: SnapshotSyncV2OpenOverride? = nil
     ) -> AppDependencies {
-        AppDependencies(
+        var dependencies = AppDependencies(
             userDefaults: userDefaults,
             defaultDocumentDirectoryName: "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost",
             editorCommandSession: editorCommandSession,
             snapshotSyncV2Factory: {
                 try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-            },
-            snapshotSyncV2CheckpointOverride: checkpointOverride,
-            snapshotSyncV2OpenOverride: openOverride
+            }
         )
+        dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
+        dependencies.snapshotSyncV2OpenOverride = openOverride
+        return dependencies
     }
+    #else
 
     /// Production composition used by the @main application and by any
     /// non-test host.  It intentionally ignores XCTest/environment markers;
@@ -161,6 +165,7 @@ struct FuminiwaApp: App {
             snapshotSyncV2DocumentGate: platformGate
         )
     }
+    #endif
 
     var body: some Scene {
         WindowGroup {

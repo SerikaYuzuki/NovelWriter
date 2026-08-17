@@ -253,8 +253,7 @@ extension AppState {
 
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
         guard expectedSession == nil || expectedSession == documentSessionToken else { return false }
-        await createNewV2Document()
-        return true
+        return await createNewV2Document()
     }
 
     func openDocument(at url: URL, expectedSession: DocumentSessionToken? = nil) async -> Bool {
@@ -270,17 +269,38 @@ extension AppState {
         to destination: URL,
         expectedSession: DocumentSessionToken? = nil
     ) async throws {
-        guard permitsDocumentInteraction,
-              expectedSession == nil || expectedSession == documentSessionToken else {
-            throw CancellationError()
+        let result: Result<Void, Error> = await documentOperationGate.perform { [weak self] in
+            guard let self,
+                  permitsDocumentInteraction,
+                  expectedSession == nil || expectedSession == documentSessionToken,
+                  editorCommandSession.prepareForDocumentTransition() else {
+                return .failure(CancellationError())
+            }
+            defer { editorCommandSession.resumeAfterDocumentTransition() }
+            isDocumentTransitionInProgress = true
+            defer { isDocumentTransitionInProgress = false }
+            let gateSession = documentSessionToken
+            let gateWorkID = currentSnapshotSyncV2WorkID
+            guard await saveNow() else { return .failure(CancellationError()) }
+            guard documentSessionToken == gateSession,
+                  currentSnapshotSyncV2WorkID == gateWorkID,
+                  expectedSession == nil || expectedSession == documentSessionToken else {
+                return .failure(CancellationError())
+            }
+            do {
+                try await portableBridge.exportExplicitPackage(
+                    document: document,
+                    attachments: snapshotSyncV2Attachments,
+                    documentCreatedAt: snapshotSyncV2PortableCreatedAt
+                        ?? snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),
+                    resources: snapshotSyncV2Resources,
+                    to: destination
+                )
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
         }
-        guard await saveNow() else { throw CancellationError() }
-        try await portableBridge.exportExplicitPackage(
-            document: document,
-            attachments: snapshotSyncV2Attachments,
-            documentCreatedAt: snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),
-            resources: snapshotSyncV2Resources,
-            to: destination
-        )
+        try result.get()
     }
 }

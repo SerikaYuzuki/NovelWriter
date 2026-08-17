@@ -2,10 +2,12 @@ import SwiftUI
 
 struct IOSSettingsView: View {
     let store: IOSDocumentStore
+    let userDefaults: UserDefaults
     private let appearanceSections: IOSAppearanceSettingsSections
 
-    init(store: IOSDocumentStore, userDefaults: UserDefaults = .standard) {
+    init(store: IOSDocumentStore, userDefaults: UserDefaults) {
         self.store = store
+        self.userDefaults = userDefaults
         appearanceSections = IOSAppearanceSettingsSections(userDefaults: userDefaults)
     }
 

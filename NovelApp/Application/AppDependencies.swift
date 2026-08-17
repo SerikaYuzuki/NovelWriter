@@ -4,8 +4,50 @@ import NovelAuth
 import NovelAuthApple
 import NovelCore
 import NovelStorage
+import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+
+#if FUMINIWA_TEST_COMPOSITION
+/// Test-only replacement for the local checkpoint boundary. This symbol is
+/// absent from production builds, which always use the shared application
+/// service.
+typealias SnapshotSyncV2CheckpointOverride = @MainActor @Sendable (
+    SyncV2Application,
+    WorkID,
+    NovelDocument,
+    SyncV2CheckpointReason,
+    Date,
+    [SyncAttachment],
+    [PortableResource]?
+) async throws -> SyncV2OperationResult
+
+/// Test-only replacement for the remote-only open boundary. Production leaves
+/// this nil and always delegates to `SyncV2Application.open(workID:)`.
+typealias SnapshotSyncV2OpenOverride = @MainActor @Sendable (
+    SyncV2Application,
+    WorkID
+) async throws -> SyncV2OpenedWork
+
+/// Test-only replacement for a local/cached shelf open. Production always
+/// delegates to `SyncV2Application.openLocal(workID:)`.
+typealias SnapshotSyncV2OpenLocalOverride = @MainActor @Sendable (
+    SyncV2Application,
+    WorkID
+) async throws -> SyncV2OpenedWork
+
+/// Test-only suspension point for verifying that a catalog response cannot
+/// cross an AccountID/fence generation change.
+typealias SnapshotSyncV2CatalogOverride = @MainActor @Sendable (
+    SyncV2Application,
+    String?,
+    Int
+) async throws -> SyncV2RemoteCatalogPage
+
+/// Test-only hook immediately after SQLite applies a verified Inbox and before
+/// macOS is allowed to install the returned document into the editor.
+typealias SnapshotSyncV2AfterStagedRemoteOverride = @MainActor @Sendable () async -> Void
+#endif
 
 /// アプリが使う依存関係の組み立てを担当する(docs/DESIGN.md 5.1)。
 ///
@@ -48,12 +90,19 @@ struct AppDependencies {
     /// never constructs a URL session, SQLite handle, or v1 worker itself.
     let snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)?
     let snapshotSyncV2DocumentGate: MacSyncV2DocumentGate?
+    #if FUMINIWA_TEST_COMPOSITION
+    var snapshotSyncV2CheckpointOverride: SnapshotSyncV2CheckpointOverride?
+    var snapshotSyncV2OpenOverride: SnapshotSyncV2OpenOverride?
+    var snapshotSyncV2OpenLocalOverride: SnapshotSyncV2OpenLocalOverride?
+    var snapshotSyncV2CatalogOverride: SnapshotSyncV2CatalogOverride?
+    var snapshotSyncV2AfterStagedRemoteOverride: SnapshotSyncV2AfterStagedRemoteOverride?
+    #endif
     let portableBridge: SyncV2PortableBridge
 
     init(
         repository: DocumentRepository = NovelpkgRepository(),
         attachmentManager: AttachmentManaging? = nil,
-        userDefaults: UserDefaults = .standard,
+        userDefaults: UserDefaults,
         fileManager: FileManager = .default,
         defaultDocumentDirectoryName: String = AppBuildFlavor.defaultDocumentDirectoryName,
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
@@ -81,6 +130,13 @@ struct AppDependencies {
         self.appleAuthenticationOrchestrator = appleAuthenticationOrchestrator
         self.snapshotSyncV2Factory = snapshotSyncV2Factory
         self.snapshotSyncV2DocumentGate = snapshotSyncV2DocumentGate
+        #if FUMINIWA_TEST_COMPOSITION
+        snapshotSyncV2CheckpointOverride = nil
+        snapshotSyncV2OpenOverride = nil
+        snapshotSyncV2OpenLocalOverride = nil
+        snapshotSyncV2CatalogOverride = nil
+        snapshotSyncV2AfterStagedRemoteOverride = nil
+        #endif
         if let portableBridge {
             self.portableBridge = portableBridge
         } else if let repository = repository as? any PortableDocumentPackageRepository & AttachmentManaging {

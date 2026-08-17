@@ -110,7 +110,7 @@ struct IOSWorkspaceSessionSafetyTests {
     }
 
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> SessionEditorHarness {
-        let host = UIHostingController(rootView: IOSEditorPane(store: store))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds

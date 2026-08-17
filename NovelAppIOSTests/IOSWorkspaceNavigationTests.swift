@@ -8,6 +8,19 @@ import UIKit
 @MainActor
 @Suite("iOS workspace navigation", .serialized)
 struct IOSWorkspaceNavigationTests {
+    @Test("account scope park removes every stale document route")
+    func accountScopeParkReturnsToLibrary() {
+        let session = makeSession(packageName: "account-work.novelpkg")
+        let navigation = IOSWorkspaceNavigationCoordinator()
+        navigation.showProjectHome(for: session)
+        navigation.showWriting(for: session)
+
+        navigation.documentDidBecomeUnavailable()
+
+        #expect(navigation.activeSession == nil)
+        #expect(navigation.path.isEmpty)
+    }
+
     @Test("標準Back相当のpath更新はeditorを破棄する前に同期する")
     func editorPopSynchronizesBeforePathMutation() {
         let session = makeSession(packageName: "work.novelpkg")
@@ -137,7 +150,7 @@ struct IOSWorkspaceNavigationTests {
         let episodeID = try #require(store.selectedEpisodeID)
         let session = try #require(store.currentDocumentSessionToken)
 
-        let host = UIHostingController(rootView: IOSEditorPane(store: store))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds
@@ -192,7 +205,7 @@ struct IOSWorkspaceNavigationTests {
         store.selectChapter(chapterID)
         store.selectEpisode(firstEpisodeID)
 
-        let host = UIHostingController(rootView: IOSEditorPane(store: store))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1024, height: 1366))
         window.rootViewController = host
         host.view.frame = window.bounds

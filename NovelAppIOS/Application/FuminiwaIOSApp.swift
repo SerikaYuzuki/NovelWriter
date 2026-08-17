@@ -1,32 +1,53 @@
 import Foundation
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import SwiftUI
 
 @main
 struct FuminiwaIOSApp: App {
     @State private var store: IOSDocumentStore
-    @AppStorage(IOSAppearance.preferenceKey)
-    private var appearanceRawValue = IOSAppearance.initialRawValue
+    @AppStorage private var appearanceRawValue: String
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // The shipped @main host is always production.  Test roots and fake
-        // transports are provided by IOSDocumentStore's explicit injected
-        // composition used from the test target; XCTest/environment markers
-        // must never redirect this host to a temporary SQLite database.
-        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
+        #if FUMINIWA_TEST_COMPOSITION
+        let configuration: TestRuntimeConfiguration
+        do {
+            configuration = try TestRuntimeConfiguration()
+        } catch {
+            preconditionFailure("Unable to create the isolated iOS test runtime: \(error)")
+        }
+        guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
+            preconditionFailure("Unable to create the isolated iOS test defaults")
+        }
         let store = IOSDocumentStore(
-            userDefaults: UserDefaults.standard,
+            userDefaults: defaults,
+            libraryRoot: configuration.localRoot.url,
+            runtimeComposition: .test(configuration)
+        )
+        #else
+        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
+        let defaults = UserDefaults.standard
+        let store = IOSDocumentStore(
+            userDefaults: defaults,
             privateWorkingCopyLocation: privateWorkingCopyLocation
         )
         if privateWorkingCopyLocation == nil {
             store.failStartupForDeviceSyncSafety()
         }
+        #endif
+        _appearanceRawValue = AppStorage(
+            wrappedValue: IOSAppearance.initialRawValue,
+            IOSAppearance.preferenceKey,
+            store: defaults
+        )
         _store = State(initialValue: store)
     }
 
     var body: some Scene {
         WindowGroup {
             IOSRootView(store: store)
+                .defaultAppStorage(store.userDefaults)
                 .tint(IOSPalette.accent)
                 .preferredColorScheme(
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme

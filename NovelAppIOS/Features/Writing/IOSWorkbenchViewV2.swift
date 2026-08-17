@@ -125,7 +125,7 @@ struct IOSAdaptiveWritingView: View {
                     }
                 }
             } detail: {
-                IOSEditorPane(store: store)
+                IOSEditorPane(store: store, userDefaults: store.userDefaults)
             }
             .navigationSplitViewStyle(.balanced)
             .navigationTitle("執筆")
@@ -209,7 +209,7 @@ struct IOSAdaptiveWritingView: View {
             NavigationSplitView {
                 regularProjectSidebar
             } detail: {
-                IOSSettingsView(store: store)
+                IOSSettingsView(store: store, userDefaults: store.userDefaults)
             }
             .navigationSplitViewStyle(.balanced)
         }
@@ -436,6 +436,15 @@ struct IOSWorkbenchView: View {
         .onAppear {
             if let session = store.currentDocumentSessionToken {
                 navigation.documentDidChange(to: session)
+            } else {
+                navigation.documentDidBecomeUnavailable()
+            }
+        }
+        .onChange(of: store.currentDocumentSessionToken) { _, session in
+            if let session {
+                navigation.documentDidChange(to: session)
+            } else {
+                navigation.documentDidBecomeUnavailable()
             }
         }
         .onChange(of: store.snapshotSyncV2RemoteOnlyReadyWorkID) { _, workID in
@@ -496,8 +505,8 @@ struct IOSWorkbenchView: View {
         case .characters: IOSCharacterFeatureView(store: store)
         case .worldbuilding: IOSWorldbuildingFeatureView(store: store)
         case .references: IOSReferencesFeatureView(store: store)
-        case .settings: IOSSettingsView(store: store)
-        case .editor: IOSEditorPane(store: store)
+        case .settings: IOSSettingsView(store: store, userDefaults: store.userDefaults)
+        case .editor: IOSEditorPane(store: store, userDefaults: store.userDefaults)
         }
     }
 
@@ -521,11 +530,13 @@ struct IOSWorkbenchView: View {
 
 struct IOSEditorPane: View {
     let store: IOSDocumentStore
+    let userDefaults: UserDefaults
     @AppStorage(IOSEditorFontPreference.preferenceKey)
     private var editorFontFamilyRawValue = IOSEditorFontPreference.initialRawValue
 
-    init(store: IOSDocumentStore, userDefaults: UserDefaults = .standard) {
+    init(store: IOSDocumentStore, userDefaults: UserDefaults) {
         self.store = store
+        self.userDefaults = userDefaults
         _editorFontFamilyRawValue = AppStorage(
             wrappedValue: IOSEditorFontPreference.initialRawValue,
             IOSEditorFontPreference.preferenceKey,

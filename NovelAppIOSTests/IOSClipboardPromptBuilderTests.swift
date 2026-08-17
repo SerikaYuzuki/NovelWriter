@@ -1,3 +1,4 @@
+import Foundation
 @testable import FUMINIWAIOS
 import Testing
 
@@ -32,8 +33,11 @@ struct IOSClipboardPromptBuilderTests {
 
     @Test("空本文はclipboardへ書かない")
     func emptySourceDoesNotWriteClipboard() throws {
+        let suiteName = "jp.fuminiwa.ios.clipboard-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let writer = RecordingIOSClipboardWriter()
-        let store = IOSDocumentStore(clipboardWriter: writer)
+        let store = IOSDocumentStore(userDefaults: defaults, clipboardWriter: writer)
         let episodeID = try #require(store.selectedEpisodeID)
 
         store.copySelectionPrompt(
@@ -48,8 +52,11 @@ struct IOSClipboardPromptBuilderTests {
 
     @Test("明示した選択promptだけをclipboardへ1回書く")
     func explicitSelectionWritesExactlyOnce() throws {
+        let suiteName = "jp.fuminiwa.ios.clipboard-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let writer = RecordingIOSClipboardWriter()
-        let store = IOSDocumentStore(clipboardWriter: writer)
+        let store = IOSDocumentStore(userDefaults: defaults, clipboardWriter: writer)
         let episodeID = try #require(store.selectedEpisodeID)
 
         store.copySelectionPrompt(

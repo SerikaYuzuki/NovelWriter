@@ -125,6 +125,11 @@ final class IOSWorkspaceNavigationCoordinator {
         }
     }
 
+    func documentDidBecomeUnavailable() {
+        activeSession = nil
+        path = []
+    }
+
     @discardableResult
     func updatePath(
         _ newPath: [IOSWorkspaceRoute],

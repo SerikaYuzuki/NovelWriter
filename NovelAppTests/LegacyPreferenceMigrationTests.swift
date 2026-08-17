@@ -8,7 +8,11 @@ struct LegacyPreferenceMigrationTests {
     func standardBuildFlavorKeepsLegacyMigrationAndDocumentRoot() {
         #expect(AppBuildFlavor.migratesLegacyPreferences)
         #expect(AppBuildFlavor.defaultDocumentDirectoryName == "FUMINIWA")
-        #expect(AppDependencies().defaultDocumentDirectoryName == "FUMINIWA")
+        #expect(
+            AppDependencies(
+                userDefaults: makeIsolatedTestUserDefaults()
+            ).defaultDocumentDirectoryName == "FUMINIWA"
+        )
     }
 
     @Test("旧製品の許可済み設定を新しいキーへ移行する")

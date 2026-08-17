@@ -2,8 +2,52 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 
 extension AppState {
+    /// A document identity change explicitly retires background UI operations.
+    /// The eventual installer itself must never cancel the Task that owns it.
+    func cancelSnapshotSyncV2BackgroundOperations() {
+        snapshotSyncV2RemoteOnlyOpenToken = nil
+        snapshotSyncV2RemoteOnlyOpenTask?.cancel()
+        snapshotSyncV2RemoteOnlyOpenTask = nil
+        snapshotSyncV2AutoAdoptionToken = nil
+        snapshotSyncAutoAdoptionTask?.cancel()
+        snapshotSyncAutoAdoptionTask = nil
+    }
+
+    private func checkpointSnapshotSyncV2(
+        using application: SyncV2Application,
+        workID: WorkID,
+        document: NovelDocument,
+        reason: SyncV2CheckpointReason,
+        documentCreatedAt: Date,
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource]? = nil
+    ) async throws -> SyncV2OperationResult {
+        #if FUMINIWA_TEST_COMPOSITION
+        if let snapshotSyncV2CheckpointOverride {
+            return try await snapshotSyncV2CheckpointOverride(
+                application,
+                workID,
+                document,
+                reason,
+                documentCreatedAt,
+                attachments,
+                resources
+            )
+        }
+        #endif
+        return try await application.checkpoint(
+            workID: workID,
+            document: document,
+            reason: reason,
+            documentCreatedAt: documentCreatedAt,
+            attachments: attachments,
+            resources: resources
+        )
+    }
+
     /// Snapshot and portable manifests use canonical UTC whole-second anchors.
     /// Keep the value normalized at the app boundary so package fractions or
     /// a fresh `Date()` cannot make a reopened WorkID look like a new anchor.
@@ -42,7 +86,8 @@ extension AppState {
     func checkpointSnapshotSyncV2(
         _ document: NovelDocument,
         reason: SyncV2CheckpointReason = .autosave,
-        resources: [PortableResource]? = nil
+        resources: [PortableResource]? = nil,
+        portableCreatedAt: Date? = nil
     ) async -> Bool {
         guard let application = snapshotSyncV2Application else {
             saveState = .failed
@@ -66,16 +111,31 @@ extension AppState {
                 snapshotSyncV2DocumentCreatedAt ?? Date()
             )
             snapshotSyncV2DocumentCreatedAt = documentCreatedAt
+            let localResources: [PortableResource]?
+            do {
+                localResources = if let resources {
+                    try SyncV2PortableMetadata.resourcesForLocalMirror(
+                        resources,
+                        portableCreatedAt: portableCreatedAt ?? snapshotSyncV2PortableCreatedAt
+                    )
+                } else {
+                    nil
+                }
+            } catch {
+                saveState = .failed
+                return false
+            }
             if snapshotSyncV2Session?.workID != workID {
                 snapshotSyncV2Session = await application.beginSession(workID: workID)
             }
-            _ = try await application.checkpoint(
+            _ = try await checkpointSnapshotSyncV2(
+                using: application,
                 workID: workID,
                 document: document,
                 reason: reason,
                 documentCreatedAt: documentCreatedAt,
                 attachments: snapshotSyncV2Attachments,
-                resources: resources
+                resources: localResources
             )
             saveState = .saved
             await refreshSnapshotSyncV2UIState()
@@ -136,6 +196,10 @@ extension AppState {
             // Re-project terminal worker state after the background wake. The
             // caller has already returned and never waits for the network lane.
             await self?.refreshSnapshotSyncV2UIState()
+            if let progress = self?.snapshotSyncV2UIState?.remoteProgress,
+               case .readyForSafeAdoption = progress {
+                self?.scheduleAutomaticServerAdoption()
+            }
             await self?.refreshSnapshotLibrary()
         }
     }
@@ -156,6 +220,7 @@ extension AppState {
     }
 
     func refreshSnapshotSyncV2UIState() async {
+        let accountScope = snapshotSyncV2AccountScopeToken
         guard let application = snapshotSyncV2Application else {
             snapshotSyncV2UIState = nil
             snapshotSyncConflict = nil
@@ -167,8 +232,14 @@ extension AppState {
             return
         }
         let state = await application.uiState(workID: workID)
+        guard matchesSnapshotSyncV2AccountScope(accountScope),
+              currentSnapshotSyncV2WorkID == workID else { return }
         snapshotSyncV2UIState = state
         snapshotSyncConflict = state?.conflict
+        if let progress = state?.remoteProgress,
+           case .readyForSafeAdoption = progress {
+            scheduleAutomaticServerAdoption()
+        }
     }
 
     func bootstrap(opening: URL? = nil, localFirst _: Bool = true) async {
@@ -199,18 +270,22 @@ extension AppState {
                 .map { WorkID($0) }
             if let workID, let application = snapshotSyncV2Application {
                 do {
-                    let opened = try await application.open(workID: workID)
+                    let opened = try await application.openLocal(workID: workID)
                     guard let openedDocument = opened.document else {
                         startupState = .recovery(.init(message: "保存済みの作品を読み込めませんでした。"))
                         return
                     }
-                    installV2Document(
+                    guard installV2Document(
                         openedDocument,
                         workID: opened.workID,
                         createdAt: opened.documentCreatedAt,
                         attachments: opened.attachments,
-                        resources: opened.resources
-                    )
+                        resources: opened.resources,
+                        expectedWorkID: workID
+                    ) else {
+                        startupState = .recovery(.init(message: "保存済みの作品を検証できませんでした。"))
+                        return
+                    }
                     snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
                     await refreshSnapshotSyncV2UIState()
                 } catch {
@@ -220,7 +295,16 @@ extension AppState {
             } else {
                 let fresh = NovelDocument.newDocument()
                 let freshWorkID = WorkID(UUID())
-                installV2Document(fresh, workID: freshWorkID, createdAt: Date())
+                guard installV2Document(
+                    fresh,
+                    workID: freshWorkID,
+                    createdAt: Date(),
+                    expectedWorkID: freshWorkID,
+                    expectedDocumentID: fresh.id
+                ) else {
+                    startupState = .recovery(.init(message: "新しい作品を検証できませんでした。"))
+                    return
+                }
                 guard await checkpointSnapshotSyncV2(fresh, reason: .migration) else {
                     startupState = .recovery(.init(message: "新しい作品を端末へ保存できませんでした。"))
                     return
@@ -240,38 +324,66 @@ extension AppState {
     @discardableResult
     func openExternalDocument(at url: URL) async -> Bool {
         let isBootstrapImport = !hasCompletedBootstrap && startupState == .loading
-        guard permitsDocumentChoice || isBootstrapImport else { return false }
+        guard let application = snapshotSyncV2Application,
+              permitsDocumentChoice || isBootstrapImport else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
+            cancelSnapshotSyncV2BackgroundOperations()
+            let expectedDocumentSession = documentSessionToken
+            let expectedWorkID = currentSnapshotSyncV2WorkID
+            let expectedSnapshotSession = snapshotSyncV2Session
+            if expectedWorkID != nil, saveState != .saved {
+                guard await saveNow() else { return false }
+            }
             do {
                 // The portable bridge is the only package boundary. Import
                 // chooses a fresh WorkID; the package URL never enters the
                 // ordinary session identity.
                 let imported = try await portableBridge.importExplicitPackage(from: url)
                 let importedWorkID = WorkID(UUID())
-                installV2Document(
+                guard documentSessionToken == expectedDocumentSession,
+                      currentSnapshotSyncV2WorkID == expectedWorkID,
+                      snapshotSyncV2Session == expectedSnapshotSession else { return false }
+                let importedCreatedAt = imported.documentCreatedAt
+                let localResources = try SyncV2PortableMetadata.resourcesForLocalMirror(
+                    imported.resources,
+                    portableCreatedAt: importedCreatedAt
+                )
+                _ = try await checkpointSnapshotSyncV2(
+                    using: application,
+                    workID: importedWorkID,
+                    document: imported.document,
+                    reason: .migration,
+                    documentCreatedAt: Self.normalizedSnapshotSyncV2Date(imported.documentCreatedAt),
+                    attachments: imported.attachments,
+                    resources: localResources
+                )
+                guard documentSessionToken == expectedDocumentSession,
+                      currentSnapshotSyncV2WorkID == expectedWorkID,
+                      snapshotSyncV2Session == expectedSnapshotSession else { return false }
+                guard installV2Document(
                     imported.document,
                     workID: importedWorkID,
                     createdAt: imported.documentCreatedAt,
                     attachments: imported.attachments,
-                    resources: imported.resources
-                )
-                let saved = await checkpointSnapshotSyncV2(
-                    imported.document,
-                    reason: .migration,
-                    resources: imported.resources
-                )
-                if saved {
-                    startupState = .ready
-                    Task { @MainActor [weak self] in
-                        await self?.refreshSnapshotLibrary()
-                    }
+                    resources: localResources,
+                    portableCreatedAt: importedCreatedAt,
+                    expectedWorkID: importedWorkID,
+                    expectedDocumentID: imported.document.id
+                ) else {
+                    externalDocumentOpenErrorMessage = "作品を取り込めませんでした。"
+                    return false
                 }
-                return saved
+                snapshotSyncV2Session = await application.beginSession(workID: importedWorkID)
+                startupState = .ready
+                Task { @MainActor [weak self] in
+                    await self?.refreshSnapshotLibrary()
+                }
+                return true
             } catch {
                 externalDocumentOpenErrorMessage = "作品を取り込めませんでした。"
                 return false
@@ -279,18 +391,31 @@ extension AppState {
         }
     }
 
+    @discardableResult
     func installV2Document(
         _ document: NovelDocument,
         workID: WorkID,
         createdAt: Date,
         attachments: [SyncAttachment] = [],
-        resources: [PortableResource] = []
-    ) {
-        snapshotSyncAutoAdoptionTask?.cancel()
-        snapshotSyncAutoAdoptionTask = nil
+        resources: [PortableResource] = [],
+        portableCreatedAt: Date? = nil,
+        expectedWorkID: WorkID? = nil,
+        expectedDocumentID: UUID? = nil
+    ) -> Bool {
+        guard expectedWorkID == nil || expectedWorkID == workID,
+              expectedDocumentID == nil || expectedDocumentID == document.id else {
+            return false
+        }
+        let portableMirror: (portableCreatedAt: Date?, resources: [PortableResource])
+        do {
+            portableMirror = try SyncV2PortableMetadata.splitLocalMirrorResources(resources)
+        } catch {
+            return false
+        }
         self.document = document
         snapshotSyncV2Attachments = attachments
-        snapshotSyncV2Resources = resources
+        snapshotSyncV2Resources = portableMirror.resources
+        snapshotSyncV2PortableCreatedAt = portableCreatedAt ?? portableMirror.portableCreatedAt
         attachmentPreviewURLs.removeAll()
         self.attachments = attachments.map {
             Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
@@ -313,24 +438,59 @@ extension AppState {
         userDefaults.set(workID.rawValue.uuidString, forKey: "fuminiwa.v2.activeWorkID")
         snapshotSyncV2Session = nil
         saveState = .saved
+        return true
     }
 
-    func createNewV2Document() async {
-        guard permitsDocumentChoice else { return }
-        await documentOperationGate.perform { [weak self] in
+    @discardableResult
+    func createNewV2Document() async -> Bool {
+        guard let application = snapshotSyncV2Application,
+              permitsDocumentChoice else { return false }
+        return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  editorCommandSession.prepareForDocumentTransition() else { return }
+                  editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
+            cancelSnapshotSyncV2BackgroundOperations()
+            let expectedDocumentSession = documentSessionToken
+            let expectedWorkID = currentSnapshotSyncV2WorkID
+            let expectedSnapshotSession = snapshotSyncV2Session
+            if expectedWorkID != nil, saveState != .saved {
+                guard await saveNow() else { return false }
+            }
             let fresh = NovelDocument.newDocument()
             let freshWorkID = WorkID(UUID())
-            installV2Document(fresh, workID: freshWorkID, createdAt: Date())
-            _ = await checkpointSnapshotSyncV2(fresh, reason: .navigation)
+            let freshCreatedAt = Self.normalizedSnapshotSyncV2Date(Date())
+            guard documentSessionToken == expectedDocumentSession,
+                  currentSnapshotSyncV2WorkID == expectedWorkID,
+                  snapshotSyncV2Session == expectedSnapshotSession else { return false }
+            do {
+                _ = try await checkpointSnapshotSyncV2(
+                    using: application,
+                    workID: freshWorkID,
+                    document: fresh,
+                    reason: .navigation,
+                    documentCreatedAt: freshCreatedAt
+                )
+            } catch {
+                return false
+            }
+            guard documentSessionToken == expectedDocumentSession,
+                  currentSnapshotSyncV2WorkID == expectedWorkID,
+                  snapshotSyncV2Session == expectedSnapshotSession else { return false }
+            guard installV2Document(
+                fresh,
+                workID: freshWorkID,
+                createdAt: freshCreatedAt,
+                expectedWorkID: freshWorkID,
+                expectedDocumentID: fresh.id
+            ) else { return false }
+            snapshotSyncV2Session = await application.beginSession(workID: freshWorkID)
             startupState = .ready
             Task { @MainActor [weak self] in
                 await self?.refreshSnapshotLibrary()
             }
+            return true
         }
     }
 
@@ -349,6 +509,7 @@ extension AppState {
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
+            cancelSnapshotSyncV2BackgroundOperations()
             guard await saveNow() else { return false }
             do {
                 let result = try await application.cloneWorkIntoActiveAccount(
@@ -356,15 +517,17 @@ extension AppState {
                     newWorkID: WorkID(UUID()),
                     newDocumentID: DocumentID(UUID())
                 )
-                let opened = try await application.open(workID: result.newWorkID)
+                let opened = try await application.openLocal(workID: result.newWorkID)
                 guard let cloned = opened.document else { return false }
-                installV2Document(
+                guard installV2Document(
                     cloned,
                     workID: opened.workID,
                     createdAt: opened.documentCreatedAt,
                     attachments: opened.attachments,
-                    resources: opened.resources
-                )
+                    resources: opened.resources,
+                    expectedWorkID: result.newWorkID,
+                    expectedDocumentID: result.newDocumentID.rawValue
+                ) else { return false }
                 snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
                 snapshotSyncCurrentWorkAccountState = .active
                 startupState = .ready
