@@ -3,13 +3,27 @@ import Foundation
 import NovelCore
 import NovelStorage
 import NovelSync
-import SnapshotSyncV2Migration
+@testable import SnapshotSyncV2Migration
 import SQLite3
 import Testing
 
 @Test("migration module loads without adopting a live store")
 func migrationModuleLoads() {
     _ = LegacyV1Exporter()
+}
+
+@Test("parses 62 CRLF classification rows without collapsing logical lines")
+func parsesCRLFClassificationRows() throws {
+    let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
+        .appendingPathComponent("classification-crlf-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let ledger = root.appendingPathComponent("classification.csv")
+    let rows = (0 ..< 62).map { _ in
+        classificationRow(workID: UUID(), disposition: "verified")
+    }.joined()
+    try rows.write(to: ledger, atomically: true, encoding: .utf8)
+    #expect(try LegacyV1Exporter().classificationCountForValidation(at: ledger) == 62)
 }
 
 @Test("exports a classified v1 work through NovelStorage and is idempotent")

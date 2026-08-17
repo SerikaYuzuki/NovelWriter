@@ -138,6 +138,10 @@ public enum LegacyV1ExportError: Error, Equatable, Sendable {
 public struct LegacyV1Exporter: Sendable {
     public init() {}
 
+    func classificationCountForValidation(at url: URL) throws -> Int {
+        try ClassificationLedger.load(from: url).count
+    }
+
     /// 全workをWorkID順に処理し、classification ledgerの分類先へstageする。
     /// 同一入力を再実行した場合は、既存packageをlogical read-backして再利用する。
     public func export(options: LegacyV1ExportOptions) async throws -> LegacyV1ExportReport {
@@ -703,17 +707,17 @@ private enum ClassificationLedger {
         guard !text.isEmpty else {
             throw LegacyV1ExportError.malformedClassification(workID: "<empty>", value: "empty CSV")
         }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = text.components(separatedBy: "\n")
         for (index, rawLine) in lines.enumerated() {
-            var line = String(rawLine)
-            if index < lines.count - 1, line.last == "\r" {
+            var line = rawLine
+            if index < lines.count - 1, line.unicodeScalars.last?.value == 13 {
                 line.removeLast()
             }
             guard !line.contains("\r") else {
                 throw LegacyV1ExportError.malformedClassification(workID: "<unknown>", value: "bare or internal CR")
             }
             if line.isEmpty {
-                if index == lines.count - 1, text.hasSuffix("\n") {
+                if index == lines.count - 1, text.unicodeScalars.last?.value == 10 {
                     continue
                 }
                 throw LegacyV1ExportError.malformedClassification(workID: "<empty>", value: "empty CSV row")
@@ -731,7 +735,7 @@ private enum ClassificationLedger {
             guard fields.count == 8 else {
                 throw LegacyV1ExportError.malformedClassification(
                     workID: fields.first ?? "<missing>",
-                    value: "expected exactly 8 columns"
+                    value: "expected exactly 8 columns, actual \(fields.count)"
                 )
             }
             guard let workID = UUID(uuidString: fields[0]) else {
