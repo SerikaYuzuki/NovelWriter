@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "NovelExport", targets: ["NovelExport"]),
         .library(name: "NovelSync", targets: ["NovelSync"]),
         .library(name: "NovelSyncV2", targets: ["NovelSyncV2"]),
+        .library(name: "NovelSyncV2Store", targets: ["NovelSyncV2Store"]),
         .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
         .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
         .library(name: "NovelLocalStore", targets: ["NovelLocalStore"]),
@@ -46,6 +47,11 @@ let package = Package(
         .target(
             name: "NovelSyncV2",
             dependencies: ["NovelCore"]
+        ),
+        .target(
+            name: "NovelSyncV2Store",
+            dependencies: ["NovelCore", "NovelSyncV2", "CSQLite"],
+            resources: [.process("Resources")]
         ),
         // D-076 R5: filesystem journals for the retired Episode/Work
         // protocols are kept in a compatibility target. The target depends
@@ -117,6 +123,10 @@ let package = Package(
         .testTarget(
             name: "NovelSyncV2Tests",
             dependencies: ["NovelSyncV2", "NovelCore"]
+        ),
+        .testTarget(
+            name: "NovelSyncV2StoreTests",
+            dependencies: ["NovelSyncV2Store", "NovelSyncV2", "NovelCore"]
         ),
         .testTarget(
             name: "NovelLibraryTests",
