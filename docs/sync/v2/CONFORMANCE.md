@@ -89,7 +89,7 @@ for fixture, digest_file in [
 response_index = read_json(canonical_root / "responses/response-hashes.json")
 response_models = read_json(canonical_root / "responses/expected-response-models.json")
 assert response_index["schemaVersion"] == 2
-assert len(response_index["responses"]) == 11
+assert len(response_index["responses"]) == 12
 assert {row["commandKind"] for row in response_index["responses"]} == {
     "cloneWork", "createWork", "finalizeObject", "prepareObject", "publish",
     "registerSnapshot", "resolveDevice", "resolveServer", "restore",
@@ -324,6 +324,7 @@ for path_item in openapi["paths"].values():
             assert "default" in operation["responses"]
 assert len(operation_ids) == len(set(operation_ids))
 assert "/v2/uploads/{uploadId}" in openapi["paths"]
+assert "PublishResponse" in openapi["components"]["responses"]
 schemas = openapi["components"]["schemas"]
 assert "CommandResult" not in schemas
 assert schemas["Receipt"]["properties"]["originalResponseStatus"]["enum"] == [200, 201, 409]
@@ -331,7 +332,7 @@ assert "originalResponseStatus" in schemas["Receipt"]["required"]
 assert schemas["Receipt"]["properties"]["originalResult"]["enum"] == ["noChanges", "applied", "conflictPending"]
 for schema_name in [
     "CreateWorkResponse", "PrepareObjectNoChanges", "PrepareObjectApplied",
-    "FinalizeObjectResponse", "RegisterSnapshotResponse", "PublishAppliedResponse",
+    "FinalizeObjectResponse", "RegisterSnapshotResponse", "PublishNoChangesResponse", "PublishAppliedResponse",
     "PublishConflictPendingResponse", "ResolveDeviceResponse", "ResolveServerResponse",
     "CloneWorkResponse", "RestoreResponse",
 ]:
@@ -345,7 +346,7 @@ for path, method, status, response_name in [
     ("/v2/works", "post", "201", "CreateWorkResponse"),
     ("/v2/objects/finalize", "post", "200", "FinalizeObjectResponse"),
     ("/v2/snapshots/register", "post", "200", "RegisterSnapshotResponse"),
-    ("/v2/works/{workId}/publish", "post", "200", "PublishAppliedResponse"),
+    ("/v2/works/{workId}/publish", "post", "200", "PublishResponse"),
     ("/v2/works/{workId}/publish", "post", "409", "PublishConflictPendingResponse"),
     ("/v2/works/{workId}/conflict/resolve", "post", "200", "ConflictResolutionResponse"),
     ("/v2/works/{workId}/restore", "post", "200", "RestoreResponse"),

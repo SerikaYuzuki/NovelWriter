@@ -114,6 +114,7 @@ localCommitted
        |-- readBackVerified -> completed
        |-- lostResponse -> sealed (exact retry)
        |-- fenceMismatch -> quarantined (new bootstrap)
+       |-- candidate already in remote lineage -> noChanges (200)
        |-- divergence -> conflictPending
 conflictPending
   |-- useDevice -> sealed(resolveDevice)

@@ -119,6 +119,7 @@ extension LocalSyncV2Store {
              ("registerSnapshot", .applied),
              ("registerSnapshot", .noChanges),
              ("publish", .applied),
+             ("publish", .noChanges),
              ("resolveDevice", .applied),
              ("resolveServer", .applied),
              ("cloneWork", .applied),
@@ -152,7 +153,9 @@ extension LocalSyncV2Store {
             extras = ["head", "snapshotId"]
         case ("publish", .conflictPending):
             extras = ["conflictId", "conflictRevision", "head", "sourceGeneration"]
-        case ("publish", _):
+        case ("publish", .noChanges):
+            extras = ["generation", "head", "snapshotId"]
+        case ("publish", .applied):
             extras = ["generation", "head", "snapshotId"]
         case ("resolveDevice", _):
             extras = ["conflictId", "conflictRevision", "generation", "head", "snapshotId"]
@@ -229,6 +232,12 @@ extension LocalSyncV2Store {
                       try integer(response, "sourceGeneration") == record.sourceGeneration,
                       try integer(response, "conflictRevision") > 0,
                       try UUID(uuidString: string(response, "conflictId")) != nil else {
+                    throw SyncV2StoreError.invalidAcknowledgement
+                }
+            } else if result == .noChanges {
+                guard let head,
+                      try integer(response, "generation") == head.generation,
+                      try string(response, "snapshotId") == payload.snapshot("candidateSnapshotId").rawValue else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
             } else {

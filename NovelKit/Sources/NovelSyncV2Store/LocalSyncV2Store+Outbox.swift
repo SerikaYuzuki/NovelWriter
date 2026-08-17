@@ -159,7 +159,8 @@ public extension LocalSyncV2Store {
 
     func acknowledge(
         _ acknowledgement: V2CommandAcknowledgement,
-        scope: V2LocalWorkScope
+        scope: V2LocalWorkScope,
+        verifiedPublishInboxID: UUID? = nil
     ) throws {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
@@ -188,11 +189,53 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         try inTransaction {
+            if decoded.result == .noChanges, record.commandKind == "publish" {
+                guard let verifiedPublishInboxID else {
+                    throw SyncV2StoreError.invalidAcknowledgement
+                }
+                try validatePublishNoChangesGraph(
+                    inboxID: verifiedPublishInboxID,
+                    record: record,
+                    acknowledgement: decoded,
+                    binding: binding
+                )
+            }
             try persistTerminalAcknowledgement(
                 decoded,
                 record: record,
                 binding: binding
             )
         }
+    }
+}
+
+private extension LocalSyncV2Store {
+    func validatePublishNoChangesGraph(
+        inboxID: UUID,
+        record: V2SealedCommandRecord,
+        acknowledgement: DecodedCommandAcknowledgement,
+        binding: V2AccountBinding
+    ) throws {
+        guard acknowledgement.result == .noChanges,
+              let remoteHead = acknowledgement.remoteHead else {
+            throw SyncV2StoreError.invalidAcknowledgement
+        }
+        let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
+        guard try inboxState(inboxID: inboxID, binding: binding) == "verified",
+              graph.workID == record.workID,
+              graph.headSnapshotID == remoteHead.snapshotID,
+              graph.expectedRemoteHead == remoteHead,
+              graph.expectedRemoteHead?.generation == remoteHead.generation else {
+            throw SyncV2StoreError.invalidAcknowledgement
+        }
+        let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
+        let payload = try command.payloadDictionary()
+        let candidate = try payload.snapshot("candidateSnapshotId")
+        guard candidate == record.sourceSnapshotID,
+              try graphHead(graph, containsAncestor: candidate) else {
+            throw SyncV2StoreError.invalidAcknowledgement
+        }
+        _ = try validateGraph(graph)
+        try validateGraphParents(graph)
     }
 }

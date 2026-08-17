@@ -186,7 +186,11 @@ extension LocalSyncV2Store {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
         case .applied, .noChanges:
-            if ["publish", "restore"].contains(record.commandKind) {
+            if record.commandKind == "publish", acknowledgement.result == .noChanges {
+                guard acknowledgement.remoteHead != nil else {
+                    throw SyncV2StoreError.invalidAcknowledgement
+                }
+            } else if ["publish", "restore"].contains(record.commandKind) {
                 let localSnapshot = try receiptLocalSnapshot(record)
                 guard let remoteHead = acknowledgement.remoteHead,
                       remoteHead.snapshotID == localSnapshot else {
@@ -296,12 +300,14 @@ extension LocalSyncV2Store {
         guard let intent = try query(
             """
             SELECT source_snapshot_id,source_generation,status
-            FROM sync_intents WHERE intent_id=? AND work_id=?
+            FROM sync_intents
+            WHERE intent_id=? AND work_id=? AND server_instance_id=?
+              AND protocol_epoch=? AND account_id=? AND account_fence=?
             """,
             [
                 .text(intentID.uuidString.lowercased()),
                 .text(record.workID.description)
-            ]
+            ] + record.binding.values
         ).first,
             let intentSnapshot = intent[0].blob,
             let intentGeneration = intent[1].int64,
@@ -313,12 +319,14 @@ extension LocalSyncV2Store {
             UPDATE sync_intents SET status='acknowledged'
             WHERE intent_id=? AND work_id=? AND source_snapshot_id=?
               AND source_generation=? AND status='sealed'
+              AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
             """,
             [
                 .text(intentID.uuidString.lowercased()),
                 .text(record.workID.description),
                 .blob(intentSnapshot), .int(intentGeneration)
-            ]
+            ] + record.binding.values
         )
         guard try changes() == 1 else {
             throw SyncV2StoreError.invalidAcknowledgement

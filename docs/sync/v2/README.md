@@ -26,7 +26,7 @@ the exact artifacts here. Code behavior never silently overrides this contract.
 - `openapi.yaml`: v2 resource, cursor, receipt, and typed-result surface.
 - command responses are closed by command kind: `createWork`,
   `prepareObject` (`noChanges`/`applied`), `finalizeObject`,
-  `registerSnapshot`, `publish` (`applied`/`conflictPending`),
+  `registerSnapshot`, `publish` (`noChanges`/`applied`/`conflictPending`),
   `resolveDevice`, `resolveServer`, `cloneWork`, and `restore`. There is no
   generic `CommandResult`; `parked`/`retryable` are nonterminal errors and
   never carry a receipt.

@@ -184,12 +184,13 @@ extension LocalSyncV2Store {
             """
             UPDATE conflicts SET state='resolved'
             WHERE work_id=? AND conflict_id=? AND current_revision=?
-              AND state='active'
+              AND state='active' AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
             """,
             [
                 .text(record.workID.description),
                 .text(conflictID.uuidString.lowercased()), .int(revision)
-            ]
+            ] + record.binding.values
         )
         guard try changes() == 1 else {
             throw SyncV2StoreError.staleConflictAction

@@ -236,7 +236,7 @@ paths:
         - { $ref: '#/components/parameters/AccountFence' }
       requestBody: { required: true, content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: './command.schema.json#/$defs/publish' } } } }
       responses:
-        '200': { $ref: '#/components/responses/PublishAppliedResponse' }
+        '200': { $ref: '#/components/responses/PublishResponse' }
         '409': { $ref: '#/components/responses/PublishConflictPendingResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/FenceMismatch' }
@@ -501,6 +501,22 @@ components:
         receipt: { $ref: '#/components/schemas/CommandReceipt' }
         result: { const: applied }
         snapshotId: { $ref: '#/components/schemas/Digest' }
+    PublishNoChangesResponse:
+      type: object
+      additionalProperties: false
+      required: [commandId, commandKind, generation, head, receipt, result, snapshotId]
+      properties:
+        commandId: { $ref: '#/components/schemas/UUID' }
+        commandKind: { const: publish }
+        generation: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        head: { $ref: '#/components/schemas/Head' }
+        receipt: { $ref: '#/components/schemas/CommandReceipt' }
+        result: { const: noChanges }
+        snapshotId: { $ref: '#/components/schemas/Digest', description: Exact candidate snapshot ID; head may be a descendant. }
+    PublishResponse:
+      oneOf:
+        - { $ref: '#/components/schemas/PublishNoChangesResponse' }
+        - { $ref: '#/components/schemas/PublishAppliedResponse' }
     PublishConflictPendingResponse:
       type: object
       additionalProperties: false
@@ -668,8 +684,11 @@ components:
       description: Receipt-idempotent registerSnapshot response; status is 200.
       content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/RegisterSnapshotResponse' } } }
     PublishAppliedResponse:
-      description: Receipt-idempotent publish success response; status is 200.
-      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishAppliedResponse' } } }
+      description: Receipt-idempotent publish response; status is 200 for applied or noChanges.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishResponse' } } }
+    PublishResponse:
+      description: Receipt-idempotent publish response; status is 200 for applied or noChanges.
+      content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishResponse' } } }
     PublishConflictPendingResponse:
       description: Receipt-idempotent publish divergence response; status is 409 and does not overwrite the remote head.
       content: { application/vnd.fuminiwa.sync.v2+jcs: { schema: { $ref: '#/components/schemas/PublishConflictPendingResponse' } } }

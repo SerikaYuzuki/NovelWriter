@@ -530,6 +530,8 @@ extension LocalSyncV2Store {
         expectedConflict: V2ServerResolutionRequest?,
         binding: V2AccountBinding
     ) throws {
+        _ = try validateGraph(graph)
+        try validateGraphParents(graph)
         let inboxID = graph.inboxID.uuidString.lowercased()
         guard try inboxState(inboxID: graph.inboxID, binding: binding) == "verified",
               let current = try scopedWorkRow(
@@ -592,26 +594,30 @@ extension LocalSyncV2Store {
                 """
                 UPDATE sync_intents SET status='parked'
                 WHERE work_id=? AND source_snapshot_id=?
-                  AND source_generation=? AND status IN ('pending','sealed')
+                  AND source_generation=? AND status='pending'
+                  AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
                 """,
                 [
                     .text(graph.workID.description),
                     .blob(expectedConflict.localSnapshotID.bytes),
                     .int(expectedConflict.sourceGeneration)
-                ]
+                ] + binding.values
             )
             try exec(
                 """
                 UPDATE conflicts SET state='resolved'
                 WHERE work_id=? AND conflict_id=? AND current_revision=?
                   AND source_generation=? AND state='active'
+                  AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
                 """,
                 [
                     .text(graph.workID.description),
                     .text(expectedConflict.conflictID.uuidString.lowercased()),
                     .int(expectedConflict.revision),
                     .int(expectedConflict.sourceGeneration)
-                ]
+                ] + binding.values
             )
             guard try changes() == 1 else {
                 throw SyncV2StoreError.staleConflictAction
@@ -649,6 +655,8 @@ extension LocalSyncV2Store {
         request: V2ServerResolutionRequest,
         binding: V2AccountBinding
     ) throws {
+        _ = try validateGraph(graph)
+        try validateGraphParents(graph)
         guard graph.workID == request.workID,
               graph.headSnapshotID == request.remoteSnapshotID,
               graph.expectedCurrentSnapshotID == request.localSnapshotID,
@@ -708,25 +716,29 @@ extension LocalSyncV2Store {
             """
             UPDATE sync_intents SET status='parked'
             WHERE work_id=? AND source_snapshot_id=? AND source_generation=?
-              AND status IN ('pending','sealed')
+              AND status='pending'
+              AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
             """,
             [
                 .text(request.workID.description),
                 .blob(request.localSnapshotID.bytes),
                 .int(request.sourceGeneration)
-            ]
+            ] + binding.values
         )
         try exec(
             """
             UPDATE conflicts SET state='resolved'
             WHERE work_id=? AND conflict_id=? AND current_revision=?
               AND source_generation=? AND state='active'
+              AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=?
             """,
             [
                 .text(request.workID.description),
                 .text(request.conflictID.uuidString.lowercased()),
                 .int(request.revision), .int(request.sourceGeneration)
-            ]
+            ] + binding.values
         )
         guard try changes() == 1 else {
             throw SyncV2StoreError.staleConflictAction

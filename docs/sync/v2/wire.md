@@ -32,7 +32,10 @@ additionally returns `staleConflictAction` before sealing a command.
 `notFoundInAccount` is deliberately indistinguishable for a foreign account
 and an absent resource.
 
-A publish divergence returns a receipted `conflictPending` result, preserves
+A publish candidate already present in the current remote lineage returns a
+receipted `noChanges` result with the current remote `head`/`generation` and
+the exact candidate `snapshotId`; it is a successful fast-forward acknowledgement,
+not a conflict. A publish divergence returns a receipted `conflictPending` result, preserves
 the candidate, appends an immutable conflict revision, and advances the
 work's single active-conflict projection. It never mutates a prior revision
 and never means “overwrite the server”. Every candidate persists its sealed
@@ -88,6 +91,7 @@ are allowed.
 | `prepareObject` / 201 / `applied` | `expiresAt`, `objectId`, `uploadCapability`, `uploadId` |
 | `finalizeObject` / 200 / `applied` | `byteCount`, `head`, `objectId` |
 | `registerSnapshot` / 200 / `noChanges` or `applied` | `head`, `snapshotId` |
+| `publish` / 200 / `noChanges` | `generation`, `head`, `snapshotId` (candidate) |
 | `publish` / 200 / `applied` | `generation`, `head`, `snapshotId` |
 | `publish` / 409 / `conflictPending` | `conflictId`, `conflictRevision`, `head`, `sourceGeneration` |
 | `resolveDevice` / 200 / `applied` | `conflictId`, `conflictRevision`, `generation`, `head`, `snapshotId` |
@@ -118,6 +122,14 @@ resource, and resulting head read-back. `originalResult` is limited to
 `noChanges`, `applied`, or `conflictPending`; the base64url value is the exact
 stored response body, not a reserialization. A command is complete locally
 only when every required predicate, including `headMatched`, is true.
+For `publish`/`noChanges`, the client must additionally identify the verified
+Inbox batch containing the remote graph. The batch must be account/fence
+bound, its head and generation must equal the response, and its closed parent
+graph must prove that the sealed candidate is equal to or an ancestor of that
+head. Receipt JSON alone is not sufficient. A valid acknowledgement records
+the receipt and exact remote head, clears only the sealed source Intent, and
+never injects the remote graph into the active editor; newer local edits remain
+pending for the normal safe-boundary Inbox path.
 For a command that must not advance a head, `headMatched` proves the observed
 head remained at the command's expected value; it is never omitted.
 

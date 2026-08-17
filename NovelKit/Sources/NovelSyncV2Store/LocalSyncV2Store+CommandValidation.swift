@@ -156,13 +156,21 @@ extension LocalSyncV2Store {
         generation: Int64,
         kind: String
     ) throws {
+        let binding = V2AccountBinding(
+            accountID: context.command.binding.accountId,
+            accountFence: context.command.binding.accountFence,
+            serverInstanceID: context.command.binding.serverInstanceId,
+            protocolEpoch: context.command.binding.protocolEpoch
+        )
         guard let intentID = context.intentID,
               let intent = try query(
                   """
                   SELECT work_id,source_snapshot_id,source_generation,kind,status
-                  FROM sync_intents WHERE intent_id=?
+                  FROM sync_intents
+                  WHERE intent_id=? AND server_instance_id=? AND protocol_epoch=?
+                    AND account_id=? AND account_fence=?
                   """,
-                  [.text(intentID.uuidString.lowercased())]
+                  [.text(intentID.uuidString.lowercased())] + binding.values
               ).first,
               intent[0].text == context.workID.description,
               intent[1].blob == snapshotID.bytes,
@@ -226,6 +234,18 @@ extension LocalSyncV2Store {
     }
 
     private func validatePublish(_ context: CommandValidationContext) throws {
+        let binding = V2AccountBinding(
+            accountID: context.command.binding.accountId,
+            accountFence: context.command.binding.accountFence,
+            serverInstanceID: context.command.binding.serverInstanceId,
+            protocolEpoch: context.command.binding.protocolEpoch
+        )
+        guard try activeConflictRow(
+            workID: context.workID,
+            binding: binding
+        ) == nil else {
+            throw SyncV2StoreError.staleConflictAction
+        }
         try requireCurrent(
             context,
             snapshotID: context.command.sourceSnapshotId,
@@ -475,9 +495,10 @@ extension LocalSyncV2Store {
                   [.text(workID.description)]
               ).first,
               let oldGeneration = row[1].int64 else { return }
-        guard newHead.generation >= oldGeneration else {
-            throw SyncV2StoreError.invalidRemoteHead
-        }
+        // A delayed receipt may be older than the already acknowledged head.
+        // It remains valid for its exact command/intent, but must not regress
+        // the stored remote head. Equal-generation forks are still rejected.
+        guard newHead.generation >= oldGeneration else { return }
         if newHead.generation == oldGeneration,
            row[0].blob != newHead.snapshotID.bytes {
             throw SyncV2StoreError.invalidRemoteHead
@@ -487,16 +508,39 @@ extension LocalSyncV2Store {
     func receiptLocalSnapshot(_ record: V2SealedCommandRecord) throws -> SnapshotID {
         guard let intentID = record.intentID else { return record.sourceSnapshotID }
         guard let bytes = try query(
-            "SELECT source_snapshot_id FROM sync_intents WHERE intent_id=? AND work_id=?",
+            """
+            SELECT source_snapshot_id FROM sync_intents
+            WHERE intent_id=? AND work_id=? AND server_instance_id=?
+              AND protocol_epoch=? AND account_id=? AND account_fence=?
+            """,
             [
                 .text(intentID.uuidString.lowercased()),
                 .text(record.workID.description)
-            ]
+            ] + record.binding.values
         ).first?[0].blob else { throw SyncV2StoreError.invalidAcknowledgement }
         return try SnapshotID(rawValue: bytes.hexString)
     }
 
     func applyRemoteHead(_ head: V2RemoteHead, workID: WorkID) throws {
+        if let row = try query(
+            """
+            SELECT acknowledged_head_snapshot_id,acknowledged_head_generation
+            FROM works WHERE work_id=?
+            """,
+            [.text(workID.description)]
+        ).first {
+            if let oldGeneration = row[1].int64 {
+                if head.generation < oldGeneration {
+                    return
+                }
+                if head.generation == oldGeneration {
+                    guard row[0].blob == head.snapshotID.bytes else {
+                        throw SyncV2StoreError.invalidRemoteHead
+                    }
+                    return
+                }
+            }
+        }
         try exec(
             """
             UPDATE works SET acknowledged_head_snapshot_id=?,

@@ -5,6 +5,83 @@ import NovelSyncV2Store
 import Testing
 
 @Test
+func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent() async throws {
+    let root = temporaryStoreRoot("publish-lineage-nochanges")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let document = makeDocument(title: "candidate")
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let checkpoint = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    let command = try publishCommand(workID: workID, checkpoint: checkpoint)
+    try await store.seal(command, intentID: checkpoint.intentID, scope: scopeA)
+    var remoteDocument = document
+    remoteDocument.title = "remote descendant"
+    let remote = try encodeSnapshot(
+        workID: workID,
+        document: remoteDocument,
+        parents: [checkpoint.snapshotID]
+    )
+    let graph = try V2RemoteSnapshotGraph(
+        workID: workID,
+        headSnapshotID: remote.snapshotId,
+        snapshots: [remote],
+        expectedCurrentSnapshotID: checkpoint.snapshotID,
+        expectedLocalGeneration: checkpoint.generation,
+        expectedRemoteHead: V2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
+    )
+    try await store.stageRemoteGraph(graph, scope: scopeA)
+    try await store.verifyInbox(inboxID: graph.inboxID, scope: scopeA)
+    let acknowledgement = try commandAcknowledgement(
+        command,
+        result: .noChanges,
+        head: graph.expectedRemoteHead
+    )
+    do {
+        try await store.acknowledge(acknowledgement, scope: scopeA)
+        Issue.record("publish noChanges accepted without a verified Inbox graph")
+    } catch SyncV2StoreError.invalidAcknowledgement {}
+    #expect(try await store.pendingSealedCommands(scope: scopeA).count == 1)
+    #expect(try await store.pendingIntents(scope: scopeA).count == 1)
+
+    try await store.acknowledge(
+        acknowledgement,
+        scope: scopeA,
+        verifiedPublishInboxID: graph.inboxID
+    )
+    try await store.acknowledge(
+        acknowledgement,
+        scope: scopeA,
+        verifiedPublishInboxID: graph.inboxID
+    )
+    #expect(try await store.pendingSealedCommands(scope: scopeA).isEmpty)
+    #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
+    #expect(try await store.receiptReadback(commandID: command.commandId, scope: scopeA)?.result == .noChanges)
+}
+
+@Test
+func normalPublishCannotBeSealedWhileConflictIsActive() async throws {
+    let root = temporaryStoreRoot("publish-active-conflict")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let fixture = try await createConflict(store: store, workID: workID)
+    let command = try publishCommand(workID: workID, checkpoint: fixture.localCheckpoint)
+    do {
+        try await store.seal(command, intentID: fixture.localCheckpoint.intentID, scope: scopeA)
+        Issue.record("normal publish sealed while an active conflict existed")
+    } catch SyncV2StoreError.staleConflictAction {}
+    #expect(try await store.pendingSealedCommands(scope: scopeA).isEmpty)
+}
+
+@Test
 func sealedSendingCommandReopensWithExactIdentityAndBytes() async throws {
     let root = temporaryStoreRoot("sealed-restart")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -327,6 +404,51 @@ func oldAcknowledgementPreservesNewerEditAndIntent() async throws {
     #expect(opened.summary.currentSnapshotID == newer.snapshotID)
     #expect(pending.count == 1)
     #expect(pending[0].sourceSnapshotID == newer.snapshotID)
+}
+
+@Test
+func delayedOlderReceiptAcknowledgesExactIntentWithoutRegressingHead() async throws {
+    let root = temporaryStoreRoot("older-receipt-head")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    var document = makeDocument(title: "one")
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let first = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    let firstCommand = try publishCommand(workID: workID, checkpoint: first)
+    try await store.seal(firstCommand, intentID: first.intentID, scope: scopeA)
+    document.title = "two"
+    let second = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: first.generation
+        ),
+        scope: scopeA
+    )
+    #expect(try sqliteExecutionSucceeded(
+        databaseURL: root.appendingPathComponent("snapshot-sync-v2.sqlite"),
+        sql: "UPDATE works SET acknowledged_head_snapshot_id=X'\(second.snapshotID.rawValue)', acknowledged_head_generation=2 WHERE work_id='\(workID.description)'"
+    ))
+    try await store.acknowledge(
+        commandAcknowledgement(
+            firstCommand,
+            head: V2RemoteHead(snapshotID: first.snapshotID, generation: 1)
+        ),
+        scope: scopeA
+    )
+    let summary = try await store.open(workID: workID, scope: scopeA).summary
+    #expect(summary.acknowledgedHeadGeneration == 2)
+    #expect(summary.currentSnapshotID == second.snapshotID)
+    #expect(try await store.pendingSealedCommands(scope: scopeA).isEmpty)
 }
 
 @Test
