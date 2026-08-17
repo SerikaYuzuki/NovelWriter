@@ -51,7 +51,10 @@ struct MigrationTests {
     func stagedCheckpointResumesAfterStoreReopen() async throws {
         let fixture = try Fixture.make()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let (inventory, model, encoded) = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let inventory = archive.inventory
+        let model = archive.model
+        let encoded = archive.encoded
         let target = fixture.root.appendingPathComponent("target")
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         let store = try LocalSyncV2Store(root: target, policy: .createNew)
@@ -59,7 +62,7 @@ struct MigrationTests {
         _ = try await store.recordMigrationDiscovered(migrationID: migrationID, sourceKind: "novelpkg", sourceDigest: decodeHex(inventory.sourceDigest), evidenceBytes: inventory.registryEvidence)
         _ = try await store.recordMigrationBackupExported(migrationID: migrationID, exportBackupMarker: "export:\(inventory.sourceDigest)", evidenceBytes: inventory.registryEvidence)
         let workID = try WorkID(uuidString: inventory.workID)
-        let staging = V2MigrationStagingInput(migrationID: migrationID, proposedWorkID: workID, proposedDocumentID: DocumentID(model.document.id), snapshotID: encoded.snapshotId, manifestBytes: encoded.manifestBytes, objects: encoded.objects)
+        let staging = V2MigrationStagingInput(migrationID: migrationID, proposedWorkID: workID, proposedDocumentID: DocumentID(model.document.id), snapshotID: encoded.snapshotId, manifestBytes: encoded.manifestBytes, objects: encoded.objects, resources: archive.portableResources)
         _ = try await store.stageMigration(staging)
         let account = V2AccountBinding(accountID: "acct_known", accountFence: String(repeating: "f", count: 64), serverInstanceID: "server")
         _ = try await store.verifyMigration(migrationID: migrationID, accountID: account.accountID, evidenceBytes: inventory.registryEvidence)
@@ -76,7 +79,9 @@ struct MigrationTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let target = fixture.root.appendingPathComponent("target", isDirectory: true)
         let inventory = try await MigrationRunner().run(MigrationOptions(sourceURL: fixture.source, targetRoot: target)).inventory
-        let (_, model, encoded) = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let model = archive.model
+        let encoded = archive.encoded
         let decoded = try SnapshotCodec.decode(manifestBytes: encoded.manifestBytes, objects: encoded.objects)
         #expect(decoded.document == model.document)
         #expect(decoded.documentCreatedAt == model.documentCreatedAt)
@@ -85,6 +90,11 @@ struct MigrationTests {
         let first = try await MigrationRunner().run(options)
         #expect(first.state == V2MigrationLedgerState.committed)
         #expect(!first.noChanges)
+        let store = try LocalSyncV2Store(root: target, policy: .openExisting)
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let opened = try await store.open(workID: workID, scope: .bound(account.binding))
+        #expect(opened.resources == archive.portableResources)
+        await store.close()
         let replay = try await MigrationRunner().run(MigrationOptions(sourceURL: fixture.source, targetRoot: target, commit: true, expectedSourceDigest: inventory.sourceDigest, verifiedMarker: "verified-marker", account: account, resume: true))
         #expect(replay.state == V2MigrationLedgerState.committed)
         #expect(replay.noChanges)
@@ -133,6 +143,9 @@ private struct Fixture {
         let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         try manifestData.write(to: source.appendingPathComponent("manifest.json"), options: .withoutOverwriting)
         try Data("本文".utf8).write(to: source.appendingPathComponent("episodes").appendingPathComponent("\(episodeID.uuidString.lowercased()).md"))
+        let resources = source.appendingPathComponent("resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        try Data("opaque resource".utf8).write(to: resources.appendingPathComponent("cover.txt"))
         return Fixture(root: root, source: source, documentID: documentID)
     }
 }

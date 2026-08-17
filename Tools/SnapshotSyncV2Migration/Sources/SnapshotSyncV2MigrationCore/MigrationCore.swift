@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelStorage
 import NovelSyncV2
+import NovelSyncV2PortableBridge
 import NovelSyncV2Store
 
 public enum MigrationError: Error, Equatable, Sendable {
@@ -17,7 +18,6 @@ public enum MigrationError: Error, Equatable, Sendable {
     case productionRootRejected
     case invalidWorkID
     case invalidCreatedAt
-    case unsupportedPortableResources
     case sourceChangedDuringRead
     case invalidBindingFile
     case quarantined(String)
@@ -76,7 +76,7 @@ public struct SourceInventory: Codable, Equatable, Sendable {
     public let fileCount: Int
     public let byteCount: Int64
     public let registryEvidence: Data
-    public let portableResources: [PortableResource]
+    public let portableResources: [MigrationPortableResource]
 
     public init(
         sourceKind: String,
@@ -88,7 +88,7 @@ public struct SourceInventory: Codable, Equatable, Sendable {
         fileCount: Int,
         byteCount: Int64,
         registryEvidence: Data,
-        portableResources: [PortableResource] = []
+        portableResources: [MigrationPortableResource] = []
     ) {
         self.sourceKind = sourceKind
         self.sourceURL = sourceURL
@@ -103,7 +103,7 @@ public struct SourceInventory: Codable, Equatable, Sendable {
     }
 }
 
-public struct PortableResource: Codable, Equatable, Sendable {
+public struct MigrationPortableResource: Codable, Equatable, Sendable {
     public let path: String
     public let kind: String
     public let byteCount: Int64
@@ -118,6 +118,25 @@ public struct PortableResource: Codable, Equatable, Sendable {
         self.digest = digest
         self.objectID = objectID
         self.emptyDirectory = emptyDirectory
+    }
+}
+
+public struct ArchiveReadResult: Sendable {
+    public let inventory: SourceInventory
+    public let model: SnapshotModel
+    public let encoded: EncodedSnapshot
+    public let portableResources: [NovelCore.PortableResource]
+
+    public init(
+        inventory: SourceInventory,
+        model: SnapshotModel,
+        encoded: EncodedSnapshot,
+        portableResources: [NovelCore.PortableResource]
+    ) {
+        self.inventory = inventory
+        self.model = model
+        self.encoded = encoded
+        self.portableResources = portableResources
     }
 }
 
@@ -138,7 +157,7 @@ public struct MigrationRunResult: Sendable {
 public struct ArchiveReader: Sendable {
     public init() {}
 
-    public func inventoryAsync(sourceURL: URL, proposedWorkID: WorkID? = nil) async throws -> (SourceInventory, SnapshotModel, EncodedSnapshot) {
+    public func inventoryAsync(sourceURL: URL, proposedWorkID: WorkID? = nil) async throws -> ArchiveReadResult {
         try validateSourceRoot(sourceURL)
         let before = try digestRoot(sourceURL)
         let files = try readFiles(sourceURL)
@@ -164,6 +183,17 @@ public struct ArchiveReader: Sendable {
                 throw MigrationError.sourceChangedDuringRead
             }
         }
+        let portableImport: SyncV2PortableImport
+        do {
+            portableImport = try await SyncV2PortableBridge().importExplicitPackage(from: sourceURL)
+        } catch {
+            throw MigrationError.invalidSource("portableBridge:(error)")
+        }
+        guard portableImport.document == document,
+              portableImport.documentCreatedAt == createdAt,
+              portableImport.attachments == attachments else {
+            throw MigrationError.invalidSource("portableBridgeMismatch")
+        }
         let model = SnapshotModel(workId: workID, document: document, documentCreatedAt: createdAt, attachments: attachments)
         let encoded: EncodedSnapshot
         do {
@@ -172,20 +202,31 @@ public struct ArchiveReader: Sendable {
         } catch {
             throw MigrationError.invalidSource("snapshotValidation:\(error)")
         }
-        let resources = portableResources(files: files)
+        let resources = portableImport.resources.map { resource in
+            MigrationPortableResource(
+                path: resource.pathComponents.joined(separator: "/"),
+                kind: resource.kind.rawValue,
+                byteCount: Int64(resource.bytes?.count ?? 0),
+                digest: resource.bytes.map { SHA256Digest.hex($0) } ?? SHA256Digest.hex(Data()),
+                objectID: resource.bytes.map { ObjectID(data: $0).description },
+                emptyDirectory: resource.kind == .directory
+            )
+        }
         guard try digestRoot(sourceURL) == sourceDigest else { throw MigrationError.sourceChangedDuringRead }
         let evidence = try evidenceBytes(sourceURL: sourceURL, sourceDigest: sourceDigest, manifest: manifest, files: files, workID: workID, encoded: encoded, resources: resources)
-        return (
-            SourceInventory(
-                sourceKind: "novelpkg", sourceURL: sourceURL.standardizedFileURL.path,
-                sourceDigest: sourceDigest.hex, workID: workID.description,
-                documentID: document.id.uuidString.lowercased(),
-                createdAt: makeISO8601().string(from: createdAt),
-                fileCount: files.count, byteCount: files.reduce(0) { $0 + Int64($1.data.count) },
-                registryEvidence: evidence, portableResources: resources
-            ),
-            model,
-            encoded
+        let inventory = SourceInventory(
+            sourceKind: "novelpkg", sourceURL: sourceURL.standardizedFileURL.path,
+            sourceDigest: sourceDigest.hex, workID: workID.description,
+            documentID: document.id.uuidString.lowercased(),
+            createdAt: makeISO8601().string(from: createdAt),
+            fileCount: files.count, byteCount: files.reduce(0) { $0 + Int64($1.data.count) },
+            registryEvidence: evidence, portableResources: resources
+        )
+        return ArchiveReadResult(
+            inventory: inventory,
+            model: model,
+            encoded: encoded,
+            portableResources: portableImport.resources
         )
     }
 }
@@ -198,10 +239,13 @@ public actor MigrationRunner {
     }
 
     public func run(_ options: MigrationOptions) async throws -> MigrationRunResult {
-        let (inventory, model, encoded) = try await reader.inventoryAsync(
+        let archive = try await reader.inventoryAsync(
             sourceURL: options.sourceURL,
             proposedWorkID: options.workID
         )
+        let inventory = archive.inventory
+        let model = archive.model
+        let encoded = archive.encoded
         try validateTargetRoot(options.targetRoot, sourceURL: options.sourceURL)
         guard let expected = options.expectedSourceDigest else {
             guard !options.commit else { throw MigrationError.sourceDigestMismatch }
@@ -243,7 +287,8 @@ public actor MigrationRunner {
             proposedDocumentID: DocumentID(model.document.id),
             snapshotID: encoded.snapshotId,
             manifestBytes: encoded.manifestBytes,
-            objects: encoded.objects
+            objects: encoded.objects,
+            resources: archive.portableResources
         )
         var ledger = discovered
         if ledger.state == .discovered {
@@ -290,8 +335,6 @@ public actor MigrationRunner {
             "unknownAccount"
         } else if options.verifiedMarker?.isEmpty != false {
             "commitRequiresVerifiedMarker"
-        } else if !inventory.portableResources.isEmpty {
-            "unsupportedPortableResources"
         } else {
             nil
         }
@@ -485,25 +528,7 @@ private extension ArchiveReader {
         try digest(files: readFiles(root))
     }
 
-    func portableResources(files: [SourceFile]) -> [PortableResource] {
-        files.compactMap { file in
-            let modeled = file.path == "manifest.json"
-                || (file.path.hasPrefix("episodes/") && file.path.hasSuffix(".md"))
-                || (file.path.hasPrefix("attachments/") && !file.isDirectory)
-                || (file.isDirectory && (file.path == "episodes" || file.path == "attachments"))
-            guard !modeled else { return nil }
-            let digest = Data(hex: SHA256Digest.hex(file.data)).hex
-            return PortableResource(
-                path: file.path,
-                kind: file.isDirectory ? "directory" : "file",
-                byteCount: Int64(file.data.count), digest: digest,
-                objectID: file.isDirectory ? nil : ObjectID(data: file.data).description,
-                emptyDirectory: file.isDirectory && !files.contains { !$0.isDirectory && $0.path.hasPrefix(file.path + "/") }
-            )
-        }
-    }
-
-    func evidenceBytes(sourceURL: URL, sourceDigest: Data, manifest: SourceManifest, files: [SourceFile], workID: WorkID, encoded: EncodedSnapshot, resources: [PortableResource]) throws -> Data {
+    func evidenceBytes(sourceURL: URL, sourceDigest: Data, manifest: SourceManifest, files: [SourceFile], workID: WorkID, encoded: EncodedSnapshot, resources: [MigrationPortableResource]) throws -> Data {
         let value: [String: Any] = [
             "sourceKind": "novelpkg", "sourcePath": sourceURL.standardizedFileURL.path,
             "sourceDigest": sourceDigest.hex, "workId": workID.description,

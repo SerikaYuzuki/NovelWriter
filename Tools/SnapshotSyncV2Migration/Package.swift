@@ -32,6 +32,7 @@ let package = Package(
                 .product(name: "NovelCore", package: "NovelKit"),
                 .product(name: "NovelStorage", package: "NovelKit"),
                 .product(name: "NovelSyncV2", package: "NovelKit"),
+                .product(name: "NovelSyncV2PortableBridge", package: "NovelKit"),
                 .product(name: "NovelSyncV2Store", package: "NovelKit")
             ]
         ),

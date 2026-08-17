@@ -52,6 +52,7 @@ public struct V2MigrationStagingInput: Sendable {
     public let snapshotID: SnapshotID
     public let manifestBytes: Data
     public let objects: [ObjectID: Data]
+    public let resources: [PortableResource]
 
     public init(
         migrationID: UUID,
@@ -59,7 +60,8 @@ public struct V2MigrationStagingInput: Sendable {
         proposedDocumentID: DocumentID,
         snapshotID: SnapshotID,
         manifestBytes: Data,
-        objects: [ObjectID: Data]
+        objects: [ObjectID: Data],
+        resources: [PortableResource] = []
     ) {
         self.migrationID = migrationID
         self.proposedWorkID = proposedWorkID
@@ -67,6 +69,7 @@ public struct V2MigrationStagingInput: Sendable {
         self.snapshotID = snapshotID
         self.manifestBytes = manifestBytes
         self.objects = objects
+        self.resources = resources
     }
 }
 
@@ -409,6 +412,10 @@ public extension LocalSyncV2Store {
                     work[0].text == request.staging.proposedDocumentID.description,
                     work[1].blob == request.staging.snapshotID.bytes,
                     work[2].int64 == 1,
+                    try portableResourcesEqual(
+                        workID: request.staging.proposedWorkID,
+                        resources: request.staging.resources
+                    ),
                     try !(query(
                         "SELECT 1 FROM history_occurrences WHERE work_id=? AND snapshot_id=? AND reason=? AND pinned=1 AND local_generation=1",
                         [.text(request.staging.proposedWorkID.description), .blob(request.staging.snapshotID.bytes), .text(V2CheckpointReason.migration.rawValue)]
@@ -472,6 +479,10 @@ public extension LocalSyncV2Store {
                 scope: .bound(request.binding)
             )
             try insertEncoded(encoded, workID: request.staging.proposedWorkID)
+            try replacePortableResources(
+                workID: request.staging.proposedWorkID,
+                resources: request.staging.resources
+            )
             try exec(
                 "UPDATE works SET current_snapshot_id=?,local_generation=1 WHERE work_id=? AND local_generation=0",
                 [.blob(encoded.snapshotIDBytes), .text(request.staging.proposedWorkID.description)]
