@@ -224,7 +224,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
     };
     let string_value = || {
         closed_object(value, &["value"], &["value"], key)?;
-        if !value.get("value").is_some_and(Value::is_string) {
+        if value
+            .get("value")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.len() > 1_048_576)
+        {
             return Err(SyncError::SchemaViolation(key.into()));
         }
         Ok(())
@@ -237,11 +241,21 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             key,
         )?;
         uuid_value(value.get("documentId"))?;
-        if value
+        let created_at = value
             .get("documentCreatedAt")
             .and_then(Value::as_str)
-            .is_none()
-        {
+            .ok_or_else(|| SyncError::SchemaViolation(key.into()))?;
+        let timestamp_ok = created_at.len() == 20
+            && [4, 7, 10, 13, 16, 19].into_iter().all(|index| {
+                matches!(index, 10) && created_at.as_bytes()[index] == b'T'
+                    || matches!(index, 19) && created_at.as_bytes()[index] == b'Z'
+                    || matches!(index, 4 | 7) && created_at.as_bytes()[index] == b'-'
+                    || matches!(index, 13 | 16) && created_at.as_bytes()[index] == b':'
+            })
+            && created_at.bytes().enumerate().all(|(index, byte)| {
+                [4, 7, 10, 13, 16, 19].contains(&index) || byte.is_ascii_digit()
+            });
+        if !timestamp_ok {
             return Err(SyncError::SchemaViolation(key.into()));
         }
         return Ok(());
@@ -306,9 +320,40 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             key,
         )?;
         uuid_value(value.get("id"))?;
-        if value.get("name").and_then(Value::as_str).is_none()
-            || value.get("kana").and_then(Value::as_str).is_none()
-            || value.get("memo").and_then(Value::as_str).is_none()
+        if ["name", "kana", "memo"].iter().any(|name| {
+            value
+                .get(*name)
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.len() > 1_048_576)
+        }) {
+            return Err(SyncError::SchemaViolation(key.into()));
+        }
+        for name in [
+            "age",
+            "appearance",
+            "background",
+            "firstPerson",
+            "gender",
+            "personality",
+            "role",
+            "secondPerson",
+            "speechStyle",
+        ] {
+            if !value.get(name).is_some_and(|field| {
+                field.is_null() || field.as_str().is_some_and(|text| text.len() <= 1_048_576)
+            }) {
+                return Err(SyncError::SchemaViolation(key.into()));
+            }
+        }
+        let color = value
+            .get("colorHex")
+            .ok_or_else(|| SyncError::SchemaViolation(key.into()))?;
+        if !color.is_null()
+            && !color.as_str().is_some_and(|text| {
+                text.len() == 7
+                    && text.as_bytes()[0] == b'#'
+                    && text.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+            })
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -322,8 +367,14 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             key,
         )?;
         uuid_value(value.get("id"))?;
-        if value.get("title").and_then(Value::as_str).is_none()
-            || value.get("memo").and_then(Value::as_str).is_none()
+        if value
+            .get("title")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.len() > 1_048_576)
+            || value
+                .get("memo")
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -357,8 +408,14 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         )?;
         uuid_value(value.get("id"))?;
         if !value.get("isResolved").is_some_and(Value::is_boolean)
-            || value.get("note").and_then(Value::as_str).is_none()
-            || value.get("title").and_then(Value::as_str).is_none()
+            || value
+                .get("note")
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.len() > 1_048_576)
+            || value
+                .get("title")
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -379,8 +436,14 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             key,
         )?;
         uuid_value(value.get("id"))?;
-        if value.get("content").and_then(Value::as_str).is_none()
-            || value.get("title").and_then(Value::as_str).is_none()
+        if value
+            .get("content")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.len() > 1_048_576)
+            || value
+                .get("title")
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -394,8 +457,14 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             key,
         )?;
         uuid_value(value.get("attachmentId"))?;
-        if value.get("byteCount").and_then(Value::as_i64).is_none()
-            || value.get("fileName").and_then(Value::as_str).is_none()
+        if value
+            .get("byteCount")
+            .and_then(Value::as_i64)
+            .is_none_or(|count| !(0..=MAX_OBJECT_BYTES as i64).contains(&count))
+            || value
+                .get("fileName")
+                .and_then(Value::as_str)
+                .is_none_or(|name| name.is_empty() || name.len() > 255)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }

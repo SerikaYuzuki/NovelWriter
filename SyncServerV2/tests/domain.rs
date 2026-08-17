@@ -1,6 +1,6 @@
 use axum::http::{HeaderMap, HeaderValue};
 use fuminiwa_sync_server_v2::{
-    application::{binding_matches, parse_command, strict_json},
+    application::{binding_matches, parse_command, strict_json, validate_entity_payload},
     auth::{authenticate, RuntimeMode},
     domain::{canonical_json, replay_receipt, sha256},
     AuthenticatedPrincipal,
@@ -152,4 +152,39 @@ fn receipt_replay_returns_the_exact_stored_response_or_rejects_reuse() {
         ),
         Err(fuminiwa_sync_server_v2::SyncError::CommandIdReused)
     ));
+}
+
+#[test]
+fn entity_validator_enforces_schema_and_portable_references() {
+    let character = json!({
+        "age": null,
+        "appearance": null,
+        "background": null,
+        "colorHex": "#C0392B",
+        "firstPerson": "俺",
+        "gender": null,
+        "id": "00000000-0000-4000-8000-000000000103",
+        "kana": "りゅうび",
+        "memo": "主人公",
+        "name": "劉備",
+        "personality": null,
+        "role": "主役",
+        "secondPerson": null,
+        "speechStyle": null
+    });
+    assert!(
+        validate_entity_payload("character/00000000-0000-4000-8000-000000000103", &character)
+            .is_ok()
+    );
+    let mut invalid = character.clone();
+    invalid["colorHex"] = json!("red");
+    assert!(
+        validate_entity_payload("character/00000000-0000-4000-8000-000000000103", &invalid)
+            .is_err()
+    );
+    let invalid_timestamp = json!({
+        "documentCreatedAt": "2026-08-16T00:00:00+09:00",
+        "documentId": "00000000-0000-4000-8000-000000000003"
+    });
+    assert!(validate_entity_payload("work/document", &invalid_timestamp).is_err());
 }

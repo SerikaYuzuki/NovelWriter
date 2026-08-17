@@ -375,6 +375,23 @@ impl Repository {
                 entity_values.insert(entry.entity_key.clone(), parsed);
             }
         }
+        for (key, value) in &entity_values {
+            let parts: Vec<_> = key.split('/').collect();
+            let expected_id = match parts.as_slice() {
+                [kind, id]
+                    if matches!(*kind, "character" | "plot-card" | "flag" | "world-note") =>
+                {
+                    Some((id, "id"))
+                }
+                ["attachment", id, "metadata"] => Some((id, "attachmentId")),
+                _ => None,
+            };
+            if let Some((expected, field)) = expected_id {
+                if value.get(field).and_then(Value::as_str) != Some(expected) {
+                    return Err(SyncError::LineageViolation);
+                }
+            }
+        }
         let mut expected_keys: HashSet<String> = [
             "work/document",
             "work/title",
@@ -402,11 +419,17 @@ impl Repository {
                         .collect()
                 })
         };
-        for chapter in ids_for("work/chapter-order", &entity_values)? {
+        let chapter_ids = ids_for("work/chapter-order", &entity_values)?;
+        let chapter_set: HashSet<_> = chapter_ids.iter().cloned().collect();
+        let mut episode_owners = HashSet::new();
+        for chapter in chapter_ids {
             let prefix = format!("chapter/{chapter}");
             expected_keys.insert(format!("{prefix}/title"));
             expected_keys.insert(format!("{prefix}/episode-order"));
             for episode in ids_for(&format!("{prefix}/episode-order"), &entity_values)? {
+                if !episode_owners.insert(episode.clone()) {
+                    return Err(SyncError::LineageViolation);
+                }
                 let ep = format!("episode/{episode}");
                 expected_keys.insert(format!("{ep}/title"));
                 expected_keys.insert(format!("{ep}/body"));
@@ -433,6 +456,23 @@ impl Repository {
             || expected_keys.len() != entries.len()
         {
             return Err(SyncError::LineageViolation);
+        }
+        for (key, value) in &entity_values {
+            if (key.starts_with("plot-card/") || key.starts_with("flag/"))
+                && value
+                    .get("plantedChapterId")
+                    .or_else(|| value.get("chapterId"))
+                    .or_else(|| value.get("resolvedChapterId"))
+                    .is_some()
+            {
+                for field in ["chapterId", "plantedChapterId", "resolvedChapterId"] {
+                    if let Some(chapter) = value.get(field).and_then(Value::as_str) {
+                        if !chapter_set.contains(chapter) {
+                            return Err(SyncError::LineageViolation);
+                        }
+                    }
+                }
+            }
         }
         for id in ids_for("work/attachment-order", &entity_values)? {
             let metadata = entity_values
