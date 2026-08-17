@@ -48,6 +48,8 @@ fn runtime_attestation_forbids_migration_objects_and_ddl() {
         "nspowner",
         "typowner",
         "proowner",
+        "pg_database",
+        "current_database()",
         "verify_migration_owner_attestation",
     ] {
         assert!(
@@ -57,4 +59,45 @@ fn runtime_attestation_forbids_migration_objects_and_ddl() {
     }
     assert!(postgres.contains("fuminiwa_sync_v2_runtime"));
     assert!(postgres.contains("MIGRATION_OWNER_ROLE"));
+    assert!(postgres.contains("GRANT USAGE ON SEQUENCE"));
+    assert!(postgres.contains("runtime sequence privileges are not USAGE-only"));
+    assert!(postgres.contains("cardinality(a.attacl)"));
+    assert!(postgres.contains("'public','CREATE'"));
+}
+
+#[test]
+fn opt_in_role_split_gate_covers_positive_negative_and_unchanged_paths() {
+    let runner = fs::read_to_string("src/bin/sync_v2_role_split_runner.rs")
+        .expect("role-split PostgreSQL runner");
+    for marker in [
+        "FUMINIWA_V2_ROLE_SPLIT_TEST_DATABASE_URL",
+        "run_concurrent_migrators",
+        "exercise_runtime_dml",
+        "exercise_runtime_denials",
+        "verify_unknown_database_rejection",
+        "verify_legacy_database_rejection",
+        "catalog_fingerprint",
+        "canonical_target_identity",
+        "assert_distinct_connected_targets",
+        "SELECT setval",
+        "SELECT last_value",
+    ] {
+        assert!(
+            runner.contains(marker),
+            "missing role-split gate marker: {marker}"
+        );
+    }
+    assert!(!runner.contains("CREATE TABLE IF NOT EXISTS public.role_split_unknown_marker"));
+    assert!(!runner.contains("CREATE SCHEMA IF NOT EXISTS sync_v2"));
+}
+
+#[test]
+fn fresh_bootstrap_lock_and_role_inventory_are_scoped() {
+    let migrator = fs::read_to_string("src/bin/sync_v2_migrator.rs").expect("v2 migrator");
+    assert!(migrator.contains("attest_bootstrap_session"));
+    assert!(migrator.contains("v2 bootstrap role flags are not exact"));
+    assert!(migrator.contains("let mut bootstrap_session = lock.acquire"));
+    assert!(migrator.contains("MIGRATION_OWNER_ROLE, RUNTIME_ROLE"));
+    assert!(!migrator.contains("migration_lock"));
+    assert!(migrator.contains("final v2 role bootstrap identity read-back failed"));
 }

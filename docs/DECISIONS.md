@@ -1014,3 +1014,9 @@
 - **内容**: 新しいrole-split Compose projectだけが、fresh v2 databaseでbootstrap roleから migration owner と runtime roleを作成する。migration ownerだけがSQLx migration、`_sqlx_migrations`、`server_meta`／`deployment_binding` bootstrap、runtime ACL grantを実行し、runtime roleは必要なschema USAGE、table DML、sequence `USAGE, SELECT, UPDATE`だけを持つ。runtime serverはmigrationを実行せず、role flags、所有権、database/schema DDL、migration table、exact ACL、server marker、deployment bindingをread-backしてから起動する。
 - **安全境界**: 既存のsingle-role／legacy／partial／mixed volumeは自動ALTER、ownership rewrite、GRANT、REVOKE、DROPの対象にしない。exact role-split v2だけは再実行をread-only attestationとして許可し、現staging volumeは別のversioned non-destructive operator migrationとrollback evidenceが揃うまで保持する。新Composeは既存volumeと異なるrole-split volume名を使う。
 - **詳細**: `docs/sync/v2/deployment.md`、`docs/sync/v2/auth-boundary.md`、`SyncServerV2/docker-compose.yml`、`SyncServerV2/src/bin/sync_v2_migrator.rs`を正とする。
+
+## D-082: Snapshot Sync v2のruntime sequence権限をUSAGE-onlyにする
+
+- **日付**: 2026-08-18 / **状態**: D-081を部分撤回・Production read-back Gate前
+- **内容**: Rust server sourceにsequenceの`currval`、`setval`、`last_value`参照はなく、runtime roleは必要なsequenceに`USAGE`だけを持つ。D-081の`USAGE, SELECT, UPDATE`というsequence grant記述と実装を撤回し、`SELECT`／`UPDATE`をruntimeへ与えない。PostgreSQLにsequenceの独立した`EXECUTE`権限はないため、insert時のnextval利用に必要な最小権限を`USAGE`とする。
+- **検証**: runtime attestationは全sequenceで`USAGE=true`かつ`SELECT=false`／`UPDATE=false`をread-backし、実PostgreSQL opt-in gateは`last_value`／`setval`を拒否する。D-081のmigration owner、schema/table DML、ownership、column ACL、既存volume非破壊境界は維持する。

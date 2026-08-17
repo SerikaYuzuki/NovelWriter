@@ -6,8 +6,8 @@ v2 PostgreSQL volume implements those tables in the separately namespaced
 `auth_v1` schema and implements sync content in `sync_v2`. The checked-in
 Compose revision uses a dedicated migration owner and runtime role. The runtime
 role is granted only the exact `auth_v1`/`sync_v2` table DML, read-only
-`server_meta`/`deployment_binding`, and PostgreSQL sequence `USAGE, SELECT,
-UPDATE`; it has no migration-table, schema/database DDL, ownership,
+`server_meta`/`deployment_binding`, and PostgreSQL sequence `USAGE` only; it
+has no migration-table, schema/database DDL, ownership,
 role-membership, or superuser capability. The one-shot migrator is the only
 process allowed to run SQLx migrations or bootstrap deployment metadata. The
 server performs read-only role/ACL and metadata attestation before serving

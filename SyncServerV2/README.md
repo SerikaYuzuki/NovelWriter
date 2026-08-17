@@ -33,8 +33,13 @@ is bootstrapped with `fuminiwa_sync_v2_migrator` (DDL/migration owner) and
 read back before the server is allowed to start. The server itself never runs
 SQLx migrations and starts only after read-only catalog, role/ACL, schema
 marker, and deployment-binding verification. Runtime PostgreSQL sequence
-access is the PostgreSQL `USAGE, SELECT, UPDATE` privilege set; PostgreSQL has
-no separate sequence `EXECUTE` privilege.
+access is `USAGE` only on the required sequences. The source does not use
+`currval`, `setval`, or `last_value`; PostgreSQL has no separate sequence
+`EXECUTE` privilege, so `USAGE` is the least privilege needed for inserts.
+The locked bootstrap session is separately attested as the fixed bootstrap
+administrator, target-database owner, and expected role flags; fresh role
+preflight counts only the two application roles because the bootstrap role is
+already present by PostgreSQL image initialization.
 
 On an already-initialized exact v2 database, a repeated migrator invocation is
 read-only and succeeds only when the role/ACL attestation is already exact. A
@@ -122,6 +127,39 @@ network or fixed LAN endpoint is contacted. The guard rejects private-LAN
 hosts, legacy/production/staging database names, names without the test marker,
 and any database that already has non-system tables. Never point it at v1, a
 development/staging authority, or a production volume.
+
+The role-split gate is a separate opt-in PostgreSQL run. Provision three
+separately named, disposable databases whose names begin with
+`fuminiwa_v2_role_split_test_`: one empty fresh database, one database where an
+operator-created unknown table is present, and one database containing only a
+legacy/single-role `sync_v2.server_meta` marker. Supply their URLs and the
+three password-file paths through the `FUMINIWA_V2_ROLE_SPLIT_*` environment
+names in `.env.example`; never put credential values in this repository. Build
+both binaries before running the gate:
+
+```sh
+cargo build --manifest-path SyncServerV2/Cargo.toml --offline \
+  --bin sync_v2_migrator --bin sync_v2_role_split_runner
+FUMINIWA_V2_ROLE_SPLIT_TEST_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_test_fresh_<uuid>' \
+FUMINIWA_V2_ROLE_SPLIT_UNKNOWN_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_test_unknown_<uuid>' \
+FUMINIWA_V2_ROLE_SPLIT_SINGLE_ROLE_DATABASE_URL='postgres://.../fuminiwa_v2_role_split_test_legacy_<uuid>' \
+FUMINIWA_V2_ROLE_SPLIT_SERVER_INSTANCE_ID='<lowercase-uuid>' \
+FUMINIWA_V2_ROLE_SPLIT_BOOTSTRAP_PASSWORD_FILE='/secure/v2/bootstrap-password' \
+FUMINIWA_V2_ROLE_SPLIT_MIGRATION_PASSWORD_FILE='/secure/v2/migration-password' \
+FUMINIWA_V2_ROLE_SPLIT_RUNTIME_PASSWORD_FILE='/secure/v2/runtime-password' \
+FUMINIWA_V2_MIGRATOR_BIN='SyncServerV2/target/debug/sync_v2_migrator' \
+  SyncServerV2/target/debug/sync_v2_role_split_runner
+```
+
+The runner does not create or drop databases, roles, schemas, containers, or
+volumes. Missing variables print `NO-GO` and exit 2. It runs two concurrent
+fresh migrators, verifies convergence and repeat read-only fingerprints,
+exercises allowed runtime DML, rejects runtime database/schema/public CREATE,
+TEMP, migration-table/column access, sequence `last_value`/`setval`, and
+confirms unknown/legacy rejection leaves catalog fingerprints unchanged. The
+unknown-object and legacy-marker databases must already be operator-provisioned;
+the runner performs no setup writes to those targets and returns `NO-GO` when
+their required marker is absent.
 
 For a disposable PostgreSQL database, create a separate v2-only Compose
 project and volume; do not use the staging project or its volume. For example,

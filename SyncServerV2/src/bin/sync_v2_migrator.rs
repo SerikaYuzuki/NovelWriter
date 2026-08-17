@@ -13,7 +13,7 @@ use fuminiwa_sync_server_v2::postgres::{
 };
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
-    PgPool,
+    Acquire, PgConnection, PgPool, Row,
 };
 use std::{env, error::Error, fs};
 
@@ -38,13 +38,26 @@ async fn main() -> Result<()> {
         &required("FUMINIWA_SYNC_V2_BOOTSTRAP_PASSWORD_FILE")?,
     )
     .await?;
+    let mut admin = admin_pool.acquire().await?;
     let current_user: String = sqlx::query_scalar("SELECT current_user")
-        .fetch_one(&admin_pool)
+        .fetch_one(&mut *admin)
         .await?;
     if current_user != BOOTSTRAP_ROLE {
         return Err("database bootstrap connection is not the v2 bootstrap role".into());
     }
-    let identity = Repository::inspect_database_identity(&admin_pool).await?;
+    let lock =
+        sqlx::postgres::PgAdvisoryLock::with_key(sqlx::postgres::PgAdvisoryLockKey::IntPair(
+            DATABASE_IDENTITY_LOCK_KEY_1,
+            DATABASE_IDENTITY_LOCK_KEY_2,
+        ));
+    // Keep this bootstrap session and lock alive through role creation,
+    // migration-owner DDL, runtime grants, and both final attestations. The
+    // migration connection deliberately does not acquire this lock: the
+    // bootstrap session is the single deployment-wide serialization point.
+    let mut bootstrap_session = lock.acquire(&mut admin).await?;
+    attest_bootstrap_session(&mut bootstrap_session).await?;
+    let identity =
+        Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?;
     match identity {
         DatabaseIdentity::SnapshotSyncV2 => {
             // Never repair an existing volume implicitly. The only permitted
@@ -62,6 +75,11 @@ async fn main() -> Result<()> {
             Repository::verify_migration_owner_attestation(&migration_pool).await?;
             Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE)
                 .await?;
+            if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
+                != DatabaseIdentity::SnapshotSyncV2
+            {
+                return Err("v2 role bootstrap read-back changed the database identity".into());
+            }
             println!("Snapshot Sync v2 role bootstrap already attested; no changes made");
             return Ok(());
         }
@@ -71,7 +89,7 @@ async fn main() -> Result<()> {
     let role_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pg_roles WHERE rolname = ANY($1::text[])")
             .bind(vec![MIGRATION_OWNER_ROLE, RUNTIME_ROLE])
-            .fetch_one(&admin_pool)
+            .fetch_one(&mut *bootstrap_session)
             .await?;
     if role_count != 0 {
         return Err("fresh v2 database has a partial role bootstrap; refusing repair".into());
@@ -79,25 +97,21 @@ async fn main() -> Result<()> {
     let migration_password = read_secret("FUMINIWA_SYNC_V2_MIGRATION_PASSWORD_FILE")?;
     let runtime_password = read_secret("FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_FILE")?;
 
-    let mut admin = admin_pool.acquire().await?;
-    let lock =
-        sqlx::postgres::PgAdvisoryLock::with_key(sqlx::postgres::PgAdvisoryLockKey::IntPair(
-            DATABASE_IDENTITY_LOCK_KEY_1,
-            DATABASE_IDENTITY_LOCK_KEY_2,
-        ));
-    let _lock_guard = lock.acquire(&mut admin).await?;
-    // Re-check under the deployment-wide lock before creating either role.
-    if Repository::inspect_database_identity(&admin_pool).await? != DatabaseIdentity::Fresh {
+    // Re-check under the same locked bootstrap session before creating either
+    // role; no pool checkout can bypass this TOCTOU boundary.
+    if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
+        != DatabaseIdentity::Fresh
+    {
         return Err("v2 database changed during bootstrap preflight".into());
     }
     let database = required("FUMINIWA_SYNC_V2_POSTGRES_DB")?;
-    if database != "fuminiwa_sync_v2" {
-        return Err("v2 bootstrap refuses a database outside fuminiwa_sync_v2".into());
-    }
-    let mut role_tx = admin_pool.begin().await?;
+    validate_database_name(&database)?;
+    let mut role_tx = (&mut *bootstrap_session).begin().await?;
     create_login_role(&mut role_tx, MIGRATION_OWNER_ROLE, &migration_password).await?;
     create_login_role(&mut role_tx, RUNTIME_ROLE, &runtime_password).await?;
-    sqlx::query("REVOKE CREATE, TEMPORARY ON DATABASE \"fuminiwa_sync_v2\" FROM PUBLIC")
+    let revoke_public_database =
+        format!("REVOKE CREATE, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC");
+    sqlx::query(&revoke_public_database)
         .execute(&mut *role_tx)
         .await?;
     let revoke_database =
@@ -116,38 +130,29 @@ async fn main() -> Result<()> {
     sqlx::query("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
         .execute(&mut *role_tx)
         .await?;
+    let revoke_public_runtime = format!("REVOKE CREATE ON SCHEMA public FROM {runtime_user}");
+    sqlx::query(&revoke_public_runtime)
+        .execute(&mut *role_tx)
+        .await?;
     sqlx::query("GRANT USAGE, CREATE ON SCHEMA public TO fuminiwa_sync_v2_migrator")
         .execute(&mut *role_tx)
         .await?;
     role_tx.commit().await?;
-    drop(_lock_guard);
-    drop(admin);
-    drop(admin_pool);
 
     let migration_pool = connect(
         MIGRATION_OWNER_ROLE,
         &required("FUMINIWA_SYNC_V2_MIGRATION_PASSWORD_FILE")?,
     )
     .await?;
-    let mut migration_connection = migration_pool.acquire().await?;
-    let migration_lock =
-        sqlx::postgres::PgAdvisoryLock::with_key(sqlx::postgres::PgAdvisoryLockKey::IntPair(
-            DATABASE_IDENTITY_LOCK_KEY_1,
-            DATABASE_IDENTITY_LOCK_KEY_2,
-        ));
-    let _migration_lock = migration_lock.acquire(&mut migration_connection).await?;
     sqlx::migrate!("./migrations").run(&migration_pool).await?;
     Repository::bootstrap_server_meta(&migration_pool, &server_instance_id).await?;
     Repository::apply_runtime_grants(&migration_pool, RUNTIME_ROLE).await?;
     Repository::verify_migration_owner_attestation(&migration_pool).await?;
-    if Repository::inspect_database_identity(&migration_pool).await?
+    if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
         != DatabaseIdentity::SnapshotSyncV2
     {
         return Err("migration owner did not produce the exact v2 database contract".into());
     }
-    drop(_migration_lock);
-    drop(migration_connection);
-    drop(migration_pool);
 
     let runtime_pool = connect(
         RUNTIME_ROLE,
@@ -155,6 +160,11 @@ async fn main() -> Result<()> {
     )
     .await?;
     Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE).await?;
+    if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
+        != DatabaseIdentity::SnapshotSyncV2
+    {
+        return Err("final v2 role bootstrap identity read-back failed".into());
+    }
     println!("Snapshot Sync v2 fresh bootstrap and runtime ACL attestation passed");
     Ok(())
 }
@@ -195,6 +205,62 @@ async fn connect(role: &str, password_file: &str) -> Result<PgPool> {
 
 fn required(name: &str) -> Result<String> {
     env::var(name).map_err(|_| format!("{name} is required").into())
+}
+
+async fn attest_bootstrap_session(connection: &mut PgConnection) -> Result<()> {
+    let role = sqlx::query(
+        "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                r.rolcanlogin, r.rolreplication, r.rolbypassrls
+         FROM pg_roles r WHERE r.rolname=current_user",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let current_user: String = role.try_get("current_user")?;
+    if current_user != BOOTSTRAP_ROLE
+        || !role.try_get::<bool, _>("rolsuper")?
+        || !role.try_get::<bool, _>("rolcreaterole")?
+        || !role.try_get::<bool, _>("rolcreatedb")?
+        || !role.try_get::<bool, _>("rolcanlogin")?
+        || role.try_get::<bool, _>("rolreplication")?
+        || !role.try_get::<bool, _>("rolbypassrls")?
+    {
+        return Err("v2 bootstrap role flags are not exact".into());
+    }
+    let is_database_owner: bool = sqlx::query_scalar(
+        "SELECT d.datdba = r.oid
+         FROM pg_database d
+         JOIN pg_roles r ON r.oid=d.datdba
+         WHERE d.datname=current_database() AND r.rolname=current_user",
+    )
+    .fetch_optional(&mut *connection)
+    .await?
+    .unwrap_or(false);
+    if !is_database_owner {
+        return Err("v2 bootstrap role must own the target database".into());
+    }
+    for privilege in ["CONNECT", "CREATE"] {
+        let allowed: bool =
+            sqlx::query_scalar("SELECT has_database_privilege(current_user,current_database(),$1)")
+                .bind(privilege)
+                .fetch_one(&mut *connection)
+                .await?;
+        if !allowed {
+            return Err(format!("v2 bootstrap role lacks database {privilege}").into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_database_name(database: &str) -> Result<()> {
+    if database.is_empty()
+        || database.len() > 63
+        || !database.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+    {
+        return Err("v2 database name must be a lowercase PostgreSQL identifier".into());
+    }
+    Ok(())
 }
 
 fn read_secret(name: &str) -> Result<String> {

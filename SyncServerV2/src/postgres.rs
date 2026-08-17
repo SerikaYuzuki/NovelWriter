@@ -496,13 +496,24 @@ impl Repository {
         let memberships: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_auth_members m
              JOIN pg_roles member ON member.oid=m.member
-             WHERE member.rolname=current_user",
+             JOIN pg_roles granted ON granted.oid=m.roleid
+             WHERE member.rolname=current_user OR granted.rolname=current_user",
         )
         .fetch_one(&mut *connection)
         .await?;
         if memberships != 0 {
             return Err(sqlx::Error::Protocol(
                 "runtime role must not inherit a role membership".into(),
+            ));
+        }
+        let can_connect: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CONNECT')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if !can_connect {
+            return Err(sqlx::Error::Protocol(
+                "runtime role lacks database CONNECT authority".into(),
             ));
         }
         for privilege in ["CREATE", "TEMPORARY"] {
@@ -517,6 +528,17 @@ impl Repository {
                     "runtime role has a prohibited database privilege".into(),
                 ));
             }
+        }
+        let runtime_is_database_owner: bool = sqlx::query_scalar(
+            "SELECT d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+             FROM pg_database d WHERE d.datname=current_database()",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if runtime_is_database_owner {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own the v2 database".into(),
+            ));
         }
         for schema in ["auth_v1", "sync_v2"] {
             let usage: bool =
@@ -535,6 +557,15 @@ impl Repository {
                 ));
             }
         }
+        let public_schema_create: bool =
+            sqlx::query_scalar("SELECT has_schema_privilege(current_user,'public','CREATE')")
+                .fetch_one(&mut *connection)
+                .await?;
+        if public_schema_create {
+            return Err(sqlx::Error::Protocol(
+                "runtime role has CREATE on the public schema".into(),
+            ));
+        }
         let owned_objects: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_class c
              JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -550,21 +581,21 @@ impl Repository {
         }
         let owned_namespaces: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_namespace n
-             WHERE n.nspname IN ('auth_v1','sync_v2')
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
                AND n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
         )
         .fetch_one(&mut *connection)
         .await?;
         let owned_types: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
-             WHERE n.nspname IN ('auth_v1','sync_v2')
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
                AND t.typowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
         )
         .fetch_one(&mut *connection)
         .await?;
         let owned_routines: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-             WHERE n.nspname IN ('auth_v1','sync_v2')
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
                AND p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
         )
         .fetch_one(&mut *connection)
@@ -572,6 +603,22 @@ impl Repository {
         if owned_namespaces != 0 || owned_types != 0 || owned_routines != 0 {
             return Err(sqlx::Error::Protocol(
                 "runtime role must not own schemas, types, or routines".into(),
+            ));
+        }
+        let column_acl_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_attribute a
+             JOIN pg_class c ON c.oid=a.attrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE a.attnum > 0 AND NOT a.attisdropped
+               AND (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND COALESCE(cardinality(a.attacl),0) <> 0",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if column_acl_count != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime v2 tables contain column-level ACLs".into(),
             ));
         }
 
@@ -648,18 +695,25 @@ impl Repository {
             }
         }
         for (schema, sequence) in SEQUENCE_NAMES {
-            for privilege in ["USAGE", "SELECT", "UPDATE"] {
-                let allowed: bool =
-                    sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,$2)")
-                        .bind(format!("{schema}.{sequence}"))
-                        .bind(privilege)
-                        .fetch_one(&mut *connection)
-                        .await?;
-                if !allowed {
-                    return Err(sqlx::Error::Protocol(
-                        "runtime sequence privileges are incomplete".into(),
-                    ));
-                }
+            let usage: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'USAGE')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let select: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'SELECT')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let update: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'UPDATE')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if !usage || select || update {
+                return Err(sqlx::Error::Protocol(
+                    "runtime sequence privileges are not USAGE-only".into(),
+                ));
             }
         }
         Ok(())
@@ -694,7 +748,8 @@ impl Repository {
         let memberships: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_auth_members m
              JOIN pg_roles member ON member.oid=m.member
-             WHERE member.rolname=current_user",
+             JOIN pg_roles granted ON granted.oid=m.roleid
+             WHERE member.rolname=current_user OR granted.rolname=current_user",
         )
         .fetch_one(&mut *connection)
         .await?;
@@ -703,14 +758,34 @@ impl Repository {
                 "migration owner must not inherit a role membership".into(),
             ));
         }
+        let has_database_connect: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CONNECT')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
         let can_create_database_objects: bool = sqlx::query_scalar(
             "SELECT has_database_privilege(current_user,current_database(),'CREATE')",
         )
         .fetch_one(&mut *connection)
         .await?;
-        if !can_create_database_objects {
+        let has_database_temp: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'TEMPORARY')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let migration_is_database_owner: bool = sqlx::query_scalar(
+            "SELECT d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+             FROM pg_database d WHERE d.datname=current_database()",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if !has_database_connect
+            || !can_create_database_objects
+            || has_database_temp
+            || migration_is_database_owner
+        {
             return Err(sqlx::Error::Protocol(
-                "migration owner lacks database CREATE authority".into(),
+                "migration owner database privileges are not exact".into(),
             ));
         }
         for schema in ["auth_v1", "sync_v2"] {
@@ -733,6 +808,15 @@ impl Repository {
                 ));
             }
         }
+        let public_create: bool =
+            sqlx::query_scalar("SELECT has_schema_privilege(current_user,'public','CREATE')")
+                .fetch_one(&mut *connection)
+                .await?;
+        if !public_create {
+            return Err(sqlx::Error::Protocol(
+                "migration owner lacks public schema CREATE authority".into(),
+            ));
+        }
         let class_owner_mismatch: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
              WHERE (n.nspname IN ('auth_v1','sync_v2')
@@ -743,14 +827,15 @@ impl Repository {
         .await?;
         let type_owner_mismatch: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
-             WHERE n.nspname IN ('auth_v1','sync_v2')
+             WHERE (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND t.typname='_sqlx_migrations'))
                AND t.typowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
         )
         .fetch_one(&mut *connection)
         .await?;
         let routine_owner_mismatch: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-             WHERE n.nspname IN ('auth_v1','sync_v2')
+             WHERE (n.nspname IN ('auth_v1','sync_v2') OR n.nspname='public')
                AND p.proowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
         )
         .fetch_one(&mut *connection)
@@ -758,6 +843,22 @@ impl Repository {
         if class_owner_mismatch != 0 || type_owner_mismatch != 0 || routine_owner_mismatch != 0 {
             return Err(sqlx::Error::Protocol(
                 "migration owner does not own the exact v2 objects".into(),
+            ));
+        }
+        let column_acl_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_attribute a
+             JOIN pg_class c ON c.oid=a.attrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE a.attnum > 0 AND NOT a.attisdropped
+               AND (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND COALESCE(cardinality(a.attacl),0) <> 0",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if column_acl_count != 0 {
+            return Err(sqlx::Error::Protocol(
+                "v2 tables contain column-level ACLs".into(),
             ));
         }
         Ok(())
@@ -915,6 +1016,12 @@ impl Repository {
         Self::inspect_database_identity_connection(&mut connection).await
     }
 
+    pub async fn inspect_database_identity_on_connection(
+        connection: &mut PgConnection,
+    ) -> Result<DatabaseIdentity, sqlx::Error> {
+        Self::inspect_database_identity_connection(connection).await
+    }
+
     async fn inspect_database_identity_connection(
         connection: &mut PgConnection,
     ) -> Result<DatabaseIdentity, sqlx::Error> {
@@ -1057,8 +1164,11 @@ impl Repository {
         }
         for (schema, sequence) in SEQUENCE_NAMES {
             let statement = format!(
-                "GRANT USAGE, SELECT, UPDATE ON SEQUENCE {schema}.{sequence} TO {runtime_role}"
+                "REVOKE SELECT, UPDATE ON SEQUENCE {schema}.{sequence} FROM {runtime_role}"
             );
+            sqlx::query(&statement).execute(&mut *tx).await?;
+            let statement =
+                format!("GRANT USAGE ON SEQUENCE {schema}.{sequence} TO {runtime_role}");
             sqlx::query(&statement).execute(&mut *tx).await?;
         }
         tx.commit().await?;

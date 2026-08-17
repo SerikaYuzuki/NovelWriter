@@ -23,15 +23,17 @@ The v2 Compose revision uses three isolated database roles:
   `server_meta` and `deployment_binding`, and grants the audited runtime ACL.
 - `fuminiwa_sync_v2_runtime` is the server login. It has `USAGE` on
   `auth_v1`/`sync_v2`, exact table DML (with read-only `server_meta` and
-  `deployment_binding`), and `USAGE, SELECT, UPDATE` on required sequences.
+  `deployment_binding`), and `USAGE` only on required sequences. The source
+  never uses `currval`, `setval`, or `last_value`, so sequence `SELECT` and
+  `UPDATE` are prohibited.
   It has no database/schema CREATE, object ownership, migration-table access,
   role membership, or superuser/createdb/createrole/bypass-RLS capability.
 
 The server opens its pool only as `fuminiwa_sync_v2_runtime`; it never invokes
 SQLx migrations or writes deployment metadata. Startup performs catalog
 identity, role/ACL, exact marker, and binding read-back. PostgreSQL has no
-separate sequence `EXECUTE` privilege, so the sequence grant is the exact
-PostgreSQL equivalent required for inserts.
+  separate sequence `EXECUTE` privilege; `USAGE` is the exact minimum
+  PostgreSQL privilege required for the server's nextval-backed inserts.
 
 Fresh bootstrap is the only path that creates roles or applies grants. A
 re-run against an exact v2 volume is read-only and succeeds only when the
@@ -53,6 +55,24 @@ server_meta/binding bootstrap, grants, and final attestation. The runtime does
 not need that lock for DDL coordination because it lacks DDL authority; it
 performs a read-only inventory and metadata check after the migrator service
 has completed successfully.
+
+Before that inventory, the locked bootstrap session is attested separately:
+`current_user` must be `fuminiwa_sync_v2_bootstrap`, its bootstrap flags must be
+the expected administrator flags, and it must own the target database with
+`CONNECT`/`CREATE`. Fresh role-count preflight counts only the migration-owner
+and runtime roles; the bootstrap role is expected to already exist and is
+validated by this separate session attestation.
+
+`sync_v2_role_split_runner` is the opt-in PostgreSQL gate for this boundary.
+It requires three separately provisioned disposable databases and password-file
+paths, runs concurrent fresh migrators, repeats the migrator while comparing
+catalog fingerprints, exercises allowed runtime DML, attempts denied database/
+schema/public/TEMP/column/migration-table/sequence operations, and verifies
+unknown or legacy rejection without catalog changes. Missing gate variables
+are an explicit `NO-GO`; the runner never creates or drops databases, roles,
+schemas, containers, or volumes. The unknown-object and legacy-marker targets
+must already be provisioned by the operator; missing markers are `NO-GO`, and
+the runner performs no setup writes to those existing targets.
 
 ## Existing v2 volume upgrade (operator-controlled)
 
