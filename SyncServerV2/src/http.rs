@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{rejection::BytesRejection, DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::Response,
     routing::{get, post, put},
@@ -25,18 +25,22 @@ pub struct AppState {
 fn error_response(error: SyncError) -> Response {
     let status = match error {
         SyncError::Unauthorized => StatusCode::UNAUTHORIZED,
-        SyncError::AccountFenceMismatch => StatusCode::FORBIDDEN,
-        SyncError::NotFound => StatusCode::NOT_FOUND,
-        SyncError::CommandIdReused | SyncError::StaleHead | SyncError::StaleConflictRevision => {
-            StatusCode::CONFLICT
+        SyncError::AccountFenceMismatch | SyncError::UploadCapabilityMismatch => {
+            StatusCode::FORBIDDEN
         }
+        SyncError::ProtocolEpochMismatch => StatusCode::UPGRADE_REQUIRED,
+        SyncError::NotFound => StatusCode::NOT_FOUND,
+        SyncError::CommandIdReused
+        | SyncError::StaleHead
+        | SyncError::StaleConflictRevision
+        | SyncError::UploadExpired => StatusCode::CONFLICT,
         SyncError::InvalidCanonicalBytes
         | SyncError::SchemaViolation(_)
         | SyncError::ObjectDigestMismatch
         | SyncError::SnapshotDigestMismatch
         | SyncError::LineageViolation
         | SyncError::SizeLimitExceeded => StatusCode::UNPROCESSABLE_ENTITY,
-        _ => StatusCode::BAD_REQUEST,
+        SyncError::Retryable | SyncError::Database(_) => StatusCode::SERVICE_UNAVAILABLE,
     };
     let code = match &error {
         SyncError::InvalidCanonicalBytes => "invalidCanonicalBytes",
@@ -56,10 +60,11 @@ fn error_response(error: SyncError) -> Response {
         SyncError::SizeLimitExceeded => "sizeLimitExceeded",
         SyncError::Retryable | SyncError::Database(_) => "retryable",
     };
-    let retryable = matches!(error, SyncError::Retryable);
+    let retryable = matches!(error, SyncError::Retryable | SyncError::Database(_));
     let value = serde_json::json!({"error": code,"result":if retryable {"retryable"} else {"parked"},"retryable":retryable});
-    let bytes = crate::domain::canonical_json(&value)
-        .unwrap_or_else(|_| br#"{"error":"retryable"}"#.to_vec());
+    let bytes = crate::domain::canonical_json(&value).unwrap_or_else(|_| {
+        br#"{"error":"retryable","result":"retryable","retryable":true}"#.to_vec()
+    });
     Response::builder()
         .status(status)
         .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
@@ -67,8 +72,9 @@ fn error_response(error: SyncError) -> Response {
         .unwrap()
 }
 fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response {
-    let bytes = crate::domain::canonical_json(&value)
-        .unwrap_or_else(|_| b"{\"error\":\"retryable\"}".to_vec());
+    let bytes = crate::domain::canonical_json(&value).unwrap_or_else(|_| {
+        br#"{"error":"retryable","result":"retryable","retryable":true}"#.to_vec()
+    });
     Response::builder()
         .status(status)
         .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
@@ -102,10 +108,12 @@ fn decode_cursor(encoded: &str) -> SyncResult<serde_json::Value> {
 }
 
 fn page_size(params: &HashMap<String, String>) -> SyncResult<i64> {
-    let value = params
-        .get("pageSize")
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(DEFAULT_PAGE_SIZE);
+    let value = match params.get("pageSize") {
+        Some(value) => value
+            .parse::<i64>()
+            .map_err(|_| SyncError::SchemaViolation("pageSize".into()))?,
+        None => DEFAULT_PAGE_SIZE,
+    };
     if !(1..=MAX_PAGE_SIZE).contains(&value) {
         return Err(SyncError::SchemaViolation("pageSize".into()));
     }
@@ -146,46 +154,110 @@ fn cursor_scope(
         .get("highWater")
         .and_then(serde_json::Value::as_i64)
         .ok_or_else(|| SyncError::SchemaViolation("cursor.highWater".into()))?;
+    if high < 1 {
+        return Err(SyncError::SchemaViolation("cursor.highWater".into()));
+    }
     let last = value
         .get("last")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
+        .filter(|last| !last.is_empty())
+        .ok_or_else(|| SyncError::SchemaViolation("cursor.last".into()))?
         .to_owned();
     Ok((high, last))
 }
+
 #[allow(clippy::result_large_err)]
-fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrincipal, Response> {
-    let principal = authenticate(
+fn authenticated(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<AuthenticatedPrincipal, Response> {
+    authenticate(
         headers,
         state.runtime_mode,
         &state.repo.server_instance_id,
         "fixture-fence",
     )
-    .map_err(error_response)?;
-    if headers
-        .get("x-fuminiwa-server-instance")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v != principal.server_instance_id)
-    {
+    .map_err(error_response)
+}
+
+#[allow(clippy::result_large_err)]
+fn required_header<'a>(
+    headers: &'a HeaderMap,
+    name: &str,
+    max_length: usize,
+    error: SyncError,
+) -> Result<&'a str, Response> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && value.len() <= max_length)
+        .ok_or_else(|| error_response(error))
+}
+
+#[allow(clippy::result_large_err)]
+fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrincipal, Response> {
+    let principal = authenticated(headers, state)?;
+    let server_instance = required_header(
+        headers,
+        "x-fuminiwa-server-instance",
+        128,
+        SyncError::AccountFenceMismatch,
+    )?;
+    if server_instance != principal.server_instance_id {
         return Err(error_response(SyncError::AccountFenceMismatch));
     }
-    if headers
-        .get("x-fuminiwa-account-fence")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v != principal.account_fence)
-    {
+    let account_fence = required_header(
+        headers,
+        "x-fuminiwa-account-fence",
+        256,
+        SyncError::AccountFenceMismatch,
+    )?;
+    if account_fence != principal.account_fence {
         return Err(error_response(SyncError::AccountFenceMismatch));
     }
-    if headers
-        .get("x-fuminiwa-protocol-epoch")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v != principal.protocol_epoch.to_string())
-    {
+    let protocol_epoch = required_header(
+        headers,
+        "x-fuminiwa-protocol-epoch",
+        8,
+        SyncError::ProtocolEpochMismatch,
+    )?;
+    if protocol_epoch.parse::<i64>().ok() != Some(principal.protocol_epoch) {
         return Err(error_response(SyncError::ProtocolEpochMismatch));
     }
     Ok(principal)
 }
-async fn command(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Response {
+
+#[allow(clippy::result_large_err)]
+fn capabilities_principal(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<AuthenticatedPrincipal, Response> {
+    required_header(
+        headers,
+        "x-fuminiwa-client-version",
+        64,
+        SyncError::SchemaViolation("x-fuminiwa-client-version".into()),
+    )?;
+    authenticated(headers, state)
+}
+
+#[allow(clippy::result_large_err)]
+fn body_or_error(body: Result<Bytes, BytesRejection>) -> Result<Bytes, Response> {
+    body.map_err(|_| error_response(SyncError::SizeLimitExceeded))
+}
+
+const MAX_COMMAND_BODY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_MISSING_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+async fn command(
+    headers: HeaderMap,
+    state: State<AppState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body_or_error(body) {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     command_inner(headers, state, body, None).await
 }
 async fn command_inner(
@@ -194,6 +266,9 @@ async fn command_inner(
     body: Bytes,
     route_work_id: Option<Uuid>,
 ) -> Response {
+    if body.len() > MAX_COMMAND_BODY_BYTES {
+        return error_response(SyncError::SizeLimitExceeded);
+    }
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -220,36 +295,72 @@ async fn command_inner(
     }
 }
 async fn routed_command(
-    Path(work_id): Path<Uuid>,
+    Path(work_id): Path<String>,
     headers: HeaderMap,
     state: State<AppState>,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    let work_id = match parse_uuid_path(&work_id) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let body = match body_or_error(body) {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     command_inner(headers, state, body, Some(work_id)).await
 }
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v2/capabilities", get(capabilities))
-        .route("/v2/works", get(list_works).post(command))
+        .route(
+            "/v2/works",
+            get(list_works)
+                .post(command)
+                .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
         .route("/v2/works/:work_id/head", get(head))
         .route("/v2/works/:work_id/history", get(history))
         .route("/v2/snapshots/:snapshot_id/manifest", get(manifest))
         .route("/v2/objects/:object_id", get(object))
-        .route("/v2/objects/missing", post(missing_objects))
-        .route("/v2/objects/prepare", post(command))
-        .route("/v2/objects/finalize", post(command))
-        .route("/v2/uploads/:upload_id", put(upload))
-        .route("/v2/snapshots/register", post(command))
-        .route("/v2/works/:work_id/publish", post(routed_command))
+        .route(
+            "/v2/objects/missing",
+            post(missing_objects).layer(DefaultBodyLimit::max(MAX_MISSING_BODY_BYTES)),
+        )
+        .route(
+            "/v2/objects/prepare",
+            post(command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
+        .route(
+            "/v2/objects/finalize",
+            post(command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
+        .route(
+            "/v2/uploads/:upload_id",
+            put(upload).layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES)),
+        )
+        .route(
+            "/v2/snapshots/register",
+            post(command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
+        .route(
+            "/v2/works/:work_id/publish",
+            post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
         .route("/v2/works/:work_id/conflict", get(conflict))
-        .route("/v2/works/:work_id/conflict/resolve", post(routed_command))
-        .route("/v2/works/:work_id/restore", post(routed_command))
+        .route(
+            "/v2/works/:work_id/conflict/resolve",
+            post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
+        .route(
+            "/v2/works/:work_id/restore",
+            post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
+        )
         .route("/v2/receipts/:command_id", get(receipt))
-        .layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES))
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {
-    let p = match principal(&headers, &state) {
+    let p = match capabilities_principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -277,14 +388,18 @@ async fn list_works(
             Err(error) => return error_response(error),
         };
         let page = match cursor.get("pageSize").and_then(serde_json::Value::as_i64) {
-            Some(value) => value,
+            Some(value) if (1..=MAX_PAGE_SIZE).contains(&value) => value,
             None => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
+            _ => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
         };
         if params.contains_key("pageSize") && page != requested_page {
             return error_response(SyncError::SchemaViolation("cursor.pageSize".into()));
         }
         match cursor_scope(&cursor, "works", &p, page, None) {
-            Ok((high, last)) => (high, last, page),
+            Ok((high, last)) => match Uuid::parse_str(&last) {
+                Ok(last_work) if last_work.to_string() == last => (high, last, page),
+                _ => return error_response(SyncError::SchemaViolation("cursor.last".into())),
+            },
             Err(error) => return error_response(error),
         }
     } else {
@@ -300,23 +415,81 @@ async fn list_works(
         };
         (high, String::new(), requested_page)
     };
-    let rows=sqlx::query("SELECT DISTINCT ON (c.work_id) c.work_id,c.head_generation,c.head_snapshot_id,c.title,c.tombstoned FROM sync_v2.catalog_events c WHERE c.account_id=$1 AND c.event_id <= $2 AND c.work_id::text > $3 ORDER BY c.work_id,c.event_id DESC LIMIT $4").bind(&p.account_id).bind(high_water).bind(&last).bind(page).fetch_all(&state.repo.pool).await;
+    if params.contains_key("cursor") {
+        let current_high = match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(event_id) FROM sync_v2.catalog_events WHERE account_id=$1",
+        )
+        .bind(&p.account_id)
+        .fetch_one(&state.repo.pool)
+        .await
+        {
+            Ok(value) => value.unwrap_or(0),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        if high_water > current_high {
+            return error_response(SyncError::SchemaViolation("cursor.highWater".into()));
+        }
+    }
+    let rows = sqlx::query(
+        "WITH latest AS (
+             SELECT DISTINCT ON (work_id)
+                    work_id,head_generation,head_snapshot_id,title,tombstoned
+             FROM sync_v2.catalog_events
+             WHERE account_id=$1 AND event_id <= $2
+             ORDER BY work_id,event_id DESC
+         )
+         SELECT work_id,head_generation,head_snapshot_id,title
+         FROM latest
+         WHERE work_id::text > $3 AND tombstoned=false
+         ORDER BY work_id
+         LIMIT $4",
+    )
+    .bind(&p.account_id)
+    .bind(high_water)
+    .bind(&last)
+    .bind(page + 1)
+    .fetch_all(&state.repo.pool)
+    .await;
     match rows {
-        Ok(rows) => {
-            let last_work = rows
-                .last()
-                .and_then(|row| row.try_get::<Uuid, _>("work_id").ok())
-                .map(|value| value.to_string());
-            let items:Vec<_>=rows.into_iter().filter_map(|r| {
-                let work_id = r.try_get::<Uuid,_>("work_id").ok()?;
-                let generation = r.try_get::<Option<i64>,_>("head_generation").ok().flatten()?;
-                let snapshot = r.try_get::<Vec<u8>,_>("head_snapshot_id").ok()?;
-                let title = r.try_get::<String,_>("title").ok()?;
-                if r.try_get::<bool,_>("tombstoned").ok()? { return None; }
-                Some(serde_json::json!({"workId":work_id,"title":title,"head":{"generation":generation,"snapshotId":hex::encode(snapshot)}}))
-            }).collect();
-            let next_cursor = if items.len() as i64 == page {
-                last_work.and_then(|last| encode_cursor(serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"works","highWater":high_water,"last":last,"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("works")})).ok())
+        Ok(mut rows) => {
+            let has_more = rows.len() as i64 > page;
+            if has_more {
+                rows.truncate(page as usize);
+            }
+            let mut items = Vec::with_capacity(rows.len());
+            let mut last_work = None;
+            for row in rows {
+                let work_id = match row.try_get::<Uuid, _>("work_id") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let generation = match row.try_get::<Option<i64>, _>("head_generation") {
+                    Ok(Some(value)) => value,
+                    Ok(None) => return error_response(SyncError::Retryable),
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let snapshot = match row.try_get::<Option<Vec<u8>>, _>("head_snapshot_id") {
+                    Ok(Some(value)) if value.len() == 32 => value,
+                    Ok(_) => return error_response(SyncError::Retryable),
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let title = match row.try_get::<String, _>("title") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                last_work = Some(work_id.to_string());
+                items.push(serde_json::json!({"workId":work_id,"title":title,"head":{"generation":generation,"snapshotId":hex::encode(snapshot)}}));
+            }
+            let next_cursor = if has_more {
+                match last_work {
+                    Some(last) => match encode_cursor(
+                        serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"works","highWater":high_water,"last":last,"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("works")}),
+                    ) {
+                        Ok(cursor) => Some(cursor),
+                        Err(error) => return error_response(error),
+                    },
+                    None => return error_response(SyncError::Retryable),
+                }
             } else {
                 None
             };
@@ -328,7 +501,11 @@ async fn list_works(
         Err(e) => error_response(SyncError::Database(e)),
     }
 }
-async fn head(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>) -> Response {
+async fn head(Path(work): Path<String>, headers: HeaderMap, state: State<AppState>) -> Response {
+    let work = match parse_uuid_path(&work) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -336,7 +513,21 @@ async fn head(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>
     let row=sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
-            let value=r.try_get::<Option<i64>,_>("head_generation").ok().flatten().map(|g|serde_json::json!({"generation":g,"snapshotId":hex::encode(r.try_get::<Vec<u8>,_>("head_snapshot_id").unwrap_or_default())}));
+            let generation = match r.try_get::<Option<i64>, _>("head_generation") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let snapshot = match r.try_get::<Option<Vec<u8>>, _>("head_snapshot_id") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let value = match (generation, snapshot) {
+                (None, None) => serde_json::Value::Null,
+                (Some(generation), Some(snapshot)) if snapshot.len() == 32 => {
+                    serde_json::json!({"generation":generation,"snapshotId":hex::encode(snapshot)})
+                }
+                _ => return error_response(SyncError::Retryable),
+            };
             canonical_response(
                 StatusCode::OK,
                 serde_json::json!({"head":value,"result":"noChanges"}),
@@ -347,11 +538,15 @@ async fn head(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>
     }
 }
 async fn history(
-    Path(work): Path<Uuid>,
+    Path(work): Path<String>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     state: State<AppState>,
 ) -> Response {
+    let work = match parse_uuid_path(&work) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -378,15 +573,16 @@ async fn history(
             Err(error) => return error_response(error),
         };
         let page = match cursor.get("pageSize").and_then(serde_json::Value::as_i64) {
-            Some(value) => value,
+            Some(value) if (1..=MAX_PAGE_SIZE).contains(&value) => value,
             None => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
+            _ => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
         };
         if params.contains_key("pageSize") && page != requested_page {
             return error_response(SyncError::SchemaViolation("cursor.pageSize".into()));
         }
         match cursor_scope(&cursor, "history", &p, page, Some(work)) {
             Ok((high, last)) => match last.parse::<i64>() {
-                Ok(last) if last >= 0 => (high, last, page),
+                Ok(last) if last > 0 => (high, last, page),
                 _ => return error_response(SyncError::SchemaViolation("cursor.last".into())),
             },
             Err(error) => return error_response(error),
@@ -405,20 +601,78 @@ async fn history(
         };
         (high, 0, requested_page)
     };
-    let rows=sqlx::query("SELECT occurrence_id,snapshot_id,reason,pinned,created_at,event_id FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 AND event_id <= $3 AND event_id > $4 ORDER BY event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page).fetch_all(&state.repo.pool).await;
+    if params.contains_key("cursor") {
+        let current_high = match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(event_id) FROM sync_v2.history WHERE account_id=$1 AND work_id=$2",
+        )
+        .bind(&p.account_id)
+        .bind(work)
+        .fetch_one(&state.repo.pool)
+        .await
+        {
+            Ok(value) => value.unwrap_or(0),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        if high_water > current_high || last >= high_water {
+            return error_response(SyncError::SchemaViolation("cursor.highWater".into()));
+        }
+    }
+    let rows=sqlx::query("SELECT occurrence_id,snapshot_id,reason,pinned,created_at,event_id FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 AND event_id <= $3 AND event_id > $4 ORDER BY event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page + 1).fetch_all(&state.repo.pool).await;
     match rows {
-        Ok(rows) => canonical_response(StatusCode::OK, {
-            let last_event = rows
-                .last()
-                .and_then(|row| row.try_get::<i64, _>("event_id").ok());
-            let items = rows.into_iter().filter_map(|r| Some(serde_json::json!({"occurrenceId":r.try_get::<Uuid,_>("occurrence_id").ok()?,"snapshotId":hex::encode(r.try_get::<Vec<u8>,_>("snapshot_id").ok()?),"reason":r.try_get::<String,_>("reason").ok()? ,"pinned":r.try_get::<bool,_>("pinned").ok()?,"createdAt":r.try_get::<chrono::DateTime<chrono::Utc>,_>("created_at").ok()?.to_rfc3339()}))).collect::<Vec<_>>();
-            let next_cursor = if items.len() as i64 == page {
-                last_event.and_then(|last| encode_cursor(serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"history","highWater":high_water,"last":last.to_string(),"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("history"),"workId":work})).ok())
+        Ok(mut rows) => {
+            let has_more = rows.len() as i64 > page;
+            if has_more {
+                rows.truncate(page as usize);
+            }
+            let mut items = Vec::with_capacity(rows.len());
+            let mut last_event = None;
+            for row in rows {
+                let occurrence_id = match row.try_get::<Uuid, _>("occurrence_id") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let snapshot = match row.try_get::<Vec<u8>, _>("snapshot_id") {
+                    Ok(value) if value.len() == 32 => value,
+                    Ok(_) => return error_response(SyncError::Retryable),
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let reason = match row.try_get::<String, _>("reason") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let pinned = match row.try_get::<bool, _>("pinned") {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                let created_at = match row.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                {
+                    Ok(value) => value,
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                last_event = match row.try_get::<i64, _>("event_id") {
+                    Ok(value) => Some(value),
+                    Err(error) => return error_response(SyncError::Database(error)),
+                };
+                items.push(serde_json::json!({"occurrenceId":occurrence_id,"snapshotId":hex::encode(snapshot),"reason":reason,"pinned":pinned,"createdAt":created_at.to_rfc3339()}));
+            }
+            let next_cursor = if has_more {
+                match last_event {
+                    Some(last) => match encode_cursor(
+                        serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"history","highWater":high_water,"last":last.to_string(),"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("history"),"workId":work}),
+                    ) {
+                        Ok(cursor) => Some(cursor),
+                        Err(error) => return error_response(error),
+                    },
+                    None => return error_response(SyncError::Retryable),
+                }
             } else {
                 None
             };
-            serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"})
-        }),
+            canonical_response(
+                StatusCode::OK,
+                serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"}),
+            )
+        }
         Err(e) => error_response(SyncError::Database(e)),
     }
 }
@@ -438,10 +692,20 @@ async fn manifest(
     let row=sqlx::query("SELECT manifest_bytes,manifest_digest FROM sync_v2.snapshots WHERE account_id=$1 AND snapshot_id=$2").bind(&p.account_id).bind(id.as_slice()).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
-            let bytes: Vec<u8> = r.try_get("manifest_bytes").unwrap_or_default();
+            let bytes: Vec<u8> = match r.try_get("manifest_bytes") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let digest: Vec<u8> = match r.try_get("manifest_digest") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            if digest.as_slice() != id.as_slice() || sha256(&bytes) != id {
+                return error_response(SyncError::Retryable);
+            }
             canonical_response(
                 StatusCode::OK,
-                serde_json::json!({"manifestBase64URL":URL_SAFE_NO_PAD.encode(bytes),"manifestBytesDigest":hex::encode(r.try_get::<Vec<u8>,_>("manifest_digest").unwrap_or_default()),"snapshotId":hex::encode(id),"result":"noChanges"}),
+                serde_json::json!({"manifestBase64URL":URL_SAFE_NO_PAD.encode(bytes),"manifestBytesDigest":hex::encode(digest),"snapshotId":hex::encode(id),"result":"noChanges"}),
             )
         }
         Ok(None) => error_response(SyncError::NotFound),
@@ -473,7 +737,16 @@ async fn object(
         Err(e) => error_response(e),
     }
 }
-async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Response {
+async fn missing_objects(
+    headers: HeaderMap,
+    state: State<AppState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body_or_error(body) {
+        Ok(body) if body.len() <= MAX_MISSING_BODY_BYTES => body,
+        Ok(_) => return error_response(SyncError::SizeLimitExceeded),
+        Err(response) => return response,
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -482,7 +755,11 @@ async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes
         Ok(v) => v,
         Err(e) => return error_response(e),
     };
-    if canonical_json(&value).ok().as_deref() != Some(body.as_ref()) {
+    let canonical = match canonical_json(&value) {
+        Ok(bytes) => bytes,
+        Err(_) => return error_response(SyncError::InvalidCanonicalBytes),
+    };
+    if canonical.as_slice() != body.as_ref() {
         return error_response(SyncError::SchemaViolation("missing objects request".into()));
     }
     if value
@@ -511,14 +788,17 @@ async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes
     if value.get("workId").and_then(serde_json::Value::as_str) != Some(work.to_string().as_str()) {
         return error_response(SyncError::SchemaViolation("workId".into()));
     }
-    if !sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
-        .bind(&p.account_id)
-        .bind(work)
-        .fetch_optional(&state.repo.pool)
-        .await
-        .map(|value| value.is_some())
-        .unwrap_or(false)
-    {
+    let work_exists =
+        match sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+            .bind(&p.account_id)
+            .bind(work)
+            .fetch_optional(&state.repo.pool)
+            .await
+        {
+            Ok(value) => value.is_some(),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+    if !work_exists {
         return error_response(SyncError::NotFound);
     }
     let Some(ids) = value.get("objectIds").and_then(serde_json::Value::as_array) else {
@@ -568,11 +848,19 @@ async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes
         .unwrap()
 }
 async fn upload(
-    Path(upload): Path<Uuid>,
+    Path(upload): Path<String>,
     headers: HeaderMap,
     state: State<AppState>,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    let upload = match parse_uuid_path(&upload) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let body = match body_or_error(body) {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -592,7 +880,15 @@ async fn upload(
         Err(e) => error_response(e),
     }
 }
-async fn conflict(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>) -> Response {
+async fn conflict(
+    Path(work): Path<String>,
+    headers: HeaderMap,
+    state: State<AppState>,
+) -> Response {
+    let work = match parse_uuid_path(&work) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -611,10 +907,40 @@ async fn conflict(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppSt
     }
     let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
-        Ok(Some(r)) => canonical_response(
-            StatusCode::OK,
-            serde_json::json!({"conflict":{"baseSnapshotId":r.try_get::<Option<Vec<u8>>,_>("base_snapshot_id").ok().flatten().map(hex::encode),"conflictId":r.try_get::<Uuid,_>("conflict_id").ok(),"localSnapshotId":hex::encode(r.try_get::<Vec<u8>,_>("local_snapshot_id").unwrap_or_default()),"remoteSnapshotId":hex::encode(r.try_get::<Vec<u8>,_>("remote_snapshot_id").unwrap_or_default()),"revision":r.try_get::<i64,_>("current_revision").ok(),"sourceGeneration":r.try_get::<i64,_>("source_generation").ok(),"workId":work},"result":"noChanges"}),
-        ),
+        Ok(Some(r)) => {
+            let base = match r.try_get::<Option<Vec<u8>>, _>("base_snapshot_id") {
+                Ok(Some(value)) if value.len() == 32 => Some(hex::encode(value)),
+                Ok(None) => None,
+                Ok(Some(_)) => return error_response(SyncError::Retryable),
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let conflict_id = match r.try_get::<Uuid, _>("conflict_id") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let local = match r.try_get::<Vec<u8>, _>("local_snapshot_id") {
+                Ok(value) if value.len() == 32 => value,
+                Ok(_) => return error_response(SyncError::Retryable),
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let remote = match r.try_get::<Vec<u8>, _>("remote_snapshot_id") {
+                Ok(value) if value.len() == 32 => value,
+                Ok(_) => return error_response(SyncError::Retryable),
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let revision = match r.try_get::<i64, _>("current_revision") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            let source_generation = match r.try_get::<i64, _>("source_generation") {
+                Ok(value) => value,
+                Err(error) => return error_response(SyncError::Database(error)),
+            };
+            canonical_response(
+                StatusCode::OK,
+                serde_json::json!({"conflict":{"baseSnapshotId":base,"conflictId":conflict_id,"localSnapshotId":hex::encode(local),"remoteSnapshotId":hex::encode(remote),"revision":revision,"sourceGeneration":source_generation,"workId":work},"result":"noChanges"}),
+            )
+        }
         Ok(None) => canonical_response(
             StatusCode::OK,
             serde_json::json!({"conflict":null,"result":"noChanges"}),
@@ -622,20 +948,79 @@ async fn conflict(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppSt
         Err(e) => error_response(SyncError::Database(e)),
     }
 }
-async fn receipt(Path(id): Path<Uuid>, headers: HeaderMap, state: State<AppState>) -> Response {
+async fn receipt(Path(id): Path<String>, headers: HeaderMap, state: State<AppState>) -> Response {
+    let id = match parse_uuid_path(&id) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
     };
     match state.repo.receipt(&p, id).await {
         Ok((kind, work_id, request_digest, bytes, _status)) => {
-            let original = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
-            let result = original
-                .as_ref()
-                .and_then(|value| value.get("result"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::Value::String("retryable".into()));
-            let read_back = original.as_ref().and_then(|value| value.get("receipt").and_then(|receipt| receipt.get("readBack"))).cloned().unwrap_or_else(|| serde_json::json!({"accountMatched":false,"commandDigestMatched":false,"headMatched":false,"resourceMatched":false,"stateMatched":false}));
+            if request_digest.len() != 32 {
+                return error_response(SyncError::Retryable);
+            }
+            let original = match strict_json(&bytes) {
+                Ok(value) => value,
+                Err(_) => return error_response(SyncError::Retryable),
+            };
+            let recanonical = match canonical_json(&original) {
+                Ok(value) => value,
+                Err(_) => return error_response(SyncError::Retryable),
+            };
+            if recanonical != bytes {
+                return error_response(SyncError::Retryable);
+            }
+            let result = match original.get("result").and_then(serde_json::Value::as_str) {
+                Some(
+                    value @ ("noChanges" | "applied" | "conflictPending" | "parked" | "retryable"),
+                ) => serde_json::Value::String(value.into()),
+                _ => return error_response(SyncError::Retryable),
+            };
+            let embedded_receipt = match original.get("receipt") {
+                Some(value) => value,
+                None => return error_response(SyncError::Retryable),
+            };
+            let expected_digest = hex::encode(&request_digest);
+            if embedded_receipt.as_object().map(serde_json::Map::len) != Some(5)
+                || embedded_receipt
+                    .get("commandId")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(id.to_string().as_str())
+                || embedded_receipt
+                    .get("commandKind")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(kind.as_str())
+                || embedded_receipt
+                    .get("workId")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(work_id.to_string().as_str())
+                || embedded_receipt
+                    .get("requestDigest")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(expected_digest.as_str())
+            {
+                return error_response(SyncError::Retryable);
+            }
+            let read_back = match embedded_receipt.get("readBack").filter(|read_back| {
+                read_back.as_object().map(serde_json::Map::len) == Some(5)
+                    && [
+                        "accountMatched",
+                        "commandDigestMatched",
+                        "headMatched",
+                        "resourceMatched",
+                        "stateMatched",
+                    ]
+                    .iter()
+                    .all(|key| {
+                        read_back.get(key).and_then(serde_json::Value::as_bool) == Some(true)
+                    })
+            }) {
+                Some(value) => value.clone(),
+                None => return error_response(SyncError::Retryable),
+            };
             canonical_response(
                 StatusCode::OK,
                 serde_json::json!({"commandId":id,"commandKind":kind,"workId":work_id,"requestDigest":hex::encode(request_digest),"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"originalResult":result,"readBack":read_back,"result":"noChanges"}),
@@ -646,4 +1031,12 @@ async fn receipt(Path(id): Path<Uuid>, headers: HeaderMap, state: State<AppState
 }
 fn decode_digest(value: &str) -> Result<[u8; 32], SyncError> {
     crate::domain::decode_digest(value).map_err(|_| SyncError::NotFound)
+}
+
+fn parse_uuid_path(value: &str) -> Result<Uuid, SyncError> {
+    let parsed = Uuid::parse_str(value).map_err(|_| SyncError::NotFound)?;
+    if parsed.to_string() != value {
+        return Err(SyncError::NotFound);
+    }
+    Ok(parsed)
 }
