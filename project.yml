@@ -51,6 +51,24 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: NovelApp
+        excludes:
+          # Snapshot Sync v2 is the only macOS live sync composition. The
+          # retired Device/Note/Work/Cloud paths remain in the checkout for
+          # migration evidence, but are not part of FUMINIWA.
+          - DeviceSync
+          - Application/AppState+SnapshotSync.swift
+          - DocumentLifecycle/AppState+Lifecycle.swift
+          - DocumentLifecycle/AppState+LifecycleObservers.swift
+          - DocumentLifecycle/AppState+Persistence.swift
+          - Library
+          # The product workbench and feature modules remain live.  The
+          # builder is shared from NovelApp/AIClipboardPrompt.swift so the
+          # macOS target does not compile a second copy from the historical
+          # feature path.
+          - Features/Writing/AIClipboardPrompt.swift
+          # Package snapshot presenters belong to the retired URL authority;
+          # v2 history/restore is provided by AppState+SnapshotSyncV2.
+          - Features/ProjectInfo/AppState+Snapshots.swift
     dependencies:
       - package: NovelKit
         product: NovelCore
@@ -63,15 +81,13 @@ targets:
       - package: NovelKit
         product: NovelExport
       - package: NovelKit
-        product: NovelSync
-      - package: NovelKit
-        product: NovelLibrary
-      - package: NovelKit
-        product: NovelLocalStore
-      - package: NovelKit
         product: NovelAuth
       - package: NovelKit
         product: NovelAuthApple
+      - package: NovelKit
+        product: NovelSyncV2Runtime
+      - package: NovelKit
+        product: NovelSyncV2PortableBridge
     settings:
       base:
         PRODUCT_NAME: FUMINIWA
@@ -98,12 +114,23 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: NovelAppTests
+        excludes:
+          # Retired v1 sync-only tests. Their fixtures remain in the checkout;
+          # the live target is covered by SnapshotSyncV2MacTests and the
+          # product lifecycle/feature tests below.
+          - AppStateSnapshotSyncConflictResolutionTests.swift
+          - NoteSyncConflictResolutionViewTests.swift
+          - SnapshotSyncConflictProjectionTests.swift
+          - StartupCloudLibraryViewTests.swift
+          - StartupLibraryProjectionTests.swift
+          - WorkConflictResolutionViewTests.swift
     dependencies:
       - target: NovelApp
     settings:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA.app/Contents/MacOS/FUMINIWA"
         BUNDLE_LOADER: "$(TEST_HOST)"
   FUMINIWAIOS:
@@ -114,9 +141,30 @@ targets:
       - path: NovelAppIOS
         excludes:
           - Info.plist
-      - path: NovelApp/Features/Writing/AIClipboardPrompt.swift
+          # Retired iOS CloudKit / entity-sync live paths.  The files remain
+          # in the checkout for migration and fixture recovery, but are not
+          # part of the normal FUMINIWAIOS target after v2 cutover.
+          - DeviceSync/Conflict
+          - DeviceSync/Legacy
+          - DeviceSync/Note
+          - DeviceSync/Runtime
+          - DeviceSync/IOSDocumentStore+SnapshotSync.swift
+          - Library/IOSCloudLibraryModels.swift
+          - Library/IOSDocumentStore+CloudLibrary.swift
+          - Library/IOSDocumentStore+CloudLibraryMutations.swift
+          - Library/IOSDocumentStore+CloudLibraryOpen.swift
+          - Library/IOSDocumentStore+Library.swift
+          - Library/IOSLibraryView.swift
+          - Library/IOSProjectHomeView.swift
+          - Platform/iOS/IOSWorkChrome.swift
+          - DocumentLifecycle/IOSDocumentStore+Lifecycle.swift
+          - Features/ProjectInfo/IOSDocumentStore+Snapshots.swift
+          - Features/ProjectInfo/IOSSnapshotSheet.swift
+          - Features/Writing/IOSWorkbenchView.swift
+          - Features/Writing/IOSWritingView.swift
+          - Features/Settings/IOSSettingsView.swift
+      - path: NovelApp/AIClipboardPrompt.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
-      - path: NovelApp/DeviceSync/Note/DeviceSyncLog.swift
     dependencies:
       - package: NovelKit
         product: NovelCore
@@ -129,15 +177,13 @@ targets:
       - package: NovelKit
         product: NovelExport
       - package: NovelKit
-        product: NovelSync
-      - package: NovelKit
-        product: NovelLibrary
-      - package: NovelKit
-        product: NovelLocalStore
-      - package: NovelKit
         product: NovelAuth
       - package: NovelKit
         product: NovelAuthApple
+      - package: NovelKit
+        product: NovelSyncV2Runtime
+      - package: NovelKit
+        product: NovelSyncV2PortableBridge
     settings:
       base:
         PRODUCT_NAME: FUMINIWA
@@ -159,6 +205,14 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: NovelAppIOSTests
+        excludes:
+          # These tests exercise the retired package/CloudKit/Note/Work live
+          # paths.  Their fixtures remain in the checkout for migration, but
+          # the v2 target tests SQLite authority and its safe boundary.
+          - IOSDocumentStoreTests.swift
+          - IOSDocumentLibraryTests.swift
+          - IOSNoteSyncConflictResolutionViewTests.swift
+          - IOSWorkConflictResolutionViewTests.swift
     dependencies:
       - target: FUMINIWAIOS
     settings:

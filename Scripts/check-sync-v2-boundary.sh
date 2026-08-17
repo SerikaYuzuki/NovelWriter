@@ -14,6 +14,7 @@ fail() {
 
 required=(
   "NovelKit/Sources/NovelSyncV2Runtime/SnapshotSyncV2Runtime.swift"
+  "NovelKit/Sources/NovelSyncV2PortableBridge/SyncV2PortableBridge.swift"
   "NovelKit/Sources/NovelSyncV2Application/RuntimeMode.swift"
   "NovelKit/Sources/NovelSyncV2Store/LocalSyncV2Store.swift"
   "SyncServerV2/src/http.rs"
@@ -55,6 +56,8 @@ for target in NovelApp FUMINIWAIOS; do
   [[ -n "$block" ]] || fail "project.yml target is missing: $target"
   grep -Fq 'product: NovelSyncV2Runtime' <<<"$block" \
     || fail "$target does not link NovelSyncV2Runtime"
+  grep -Fq 'product: NovelSyncV2PortableBridge' <<<"$block" \
+    || fail "$target does not link NovelSyncV2PortableBridge"
   if grep -Eq 'product: (NovelSync|NovelSyncLegacy|NovelSyncV2Store|NovelSyncV2Application)[[:space:]]*$' <<<"$block"; then
     fail "$target links a non-composed sync product directly"
   fi
