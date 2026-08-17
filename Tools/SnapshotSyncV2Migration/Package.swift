@@ -31,6 +31,7 @@ let package = Package(
             dependencies: [
                 .product(name: "NovelCore", package: "NovelKit"),
                 .product(name: "NovelStorage", package: "NovelKit"),
+                .product(name: "NovelSync", package: "NovelKit"),
                 .product(name: "NovelSyncV2", package: "NovelKit"),
                 .product(name: "NovelSyncV2PortableBridge", package: "NovelKit"),
                 .product(name: "NovelSyncV2Store", package: "NovelKit")

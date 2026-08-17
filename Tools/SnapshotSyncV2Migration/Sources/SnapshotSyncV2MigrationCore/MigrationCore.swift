@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelStorage
+import NovelSync
 import NovelSyncV2
 import NovelSyncV2PortableBridge
 import NovelSyncV2Store
@@ -21,6 +22,8 @@ public enum MigrationError: Error, Equatable, Sendable {
     case sourceChangedDuringRead
     case invalidBindingFile
     case quarantined(String)
+    case untrustedExportStage(String)
+    case exportProvenanceMismatch(String)
 }
 
 public struct MigrationAccountBinding: Equatable, Sendable {
@@ -64,6 +67,54 @@ public struct MigrationOptions: Sendable {
         self.workID = workID
         self.resume = resume
     }
+}
+
+/// The export report is intentionally decoded again by the adoption tool.  The
+/// exporter and the adopter are separate products; sharing an in-memory report
+/// would make a changed or hand-written stage indistinguishable from the
+/// exporter output.
+private struct VerifiedExportReport: Decodable, Equatable {
+    let formatVersion: Int
+    let exportID: UUID
+    let sourceSQLiteSHA256: String
+    let sourceArchiveManifestSHA256: String
+    let classificationLedgerSHA256: String
+    let entries: [VerifiedExportEntry]
+}
+
+private struct VerifiedExportEntry: Decodable, Equatable {
+    let workID: UUID
+    let disposition: String
+    let snapshotID: String?
+    let outputRelativePath: String?
+    let outcome: String
+    let projectionDigest: String?
+}
+
+private struct VerifiedRunState: Decodable, Equatable {
+    let exportID: UUID
+    let sourceDigest: String
+    let archiveManifestDigest: String
+    let classificationLedgerDigest: String
+    let status: String
+}
+
+private struct VerifiedProjectionState: Decodable, Equatable {
+    let sourceDigest: String
+    let snapshotID: String?
+    let projectionDigest: String?
+}
+
+private struct VerifiedExportStageAttestation: Equatable {
+    let exportID: UUID
+    let workID: UUID
+    let sourceSQLiteDigest: String
+    let archiveManifestDigest: String
+    let classificationDigest: String
+    let reportDigest: String
+    let runDigest: String
+    let markerDigest: String
+    let sidecarDigest: String
 }
 
 public struct SourceInventory: Codable, Equatable, Sendable {
@@ -246,6 +297,14 @@ public actor MigrationRunner {
         let inventory = archive.inventory
         let model = archive.model
         let encoded = archive.encoded
+        if options.commit, options.workID == nil {
+            throw MigrationError.invalidWorkID
+        }
+        let initialStageAttestation: VerifiedExportStageAttestation? = if options.commit {
+            try attestVerifiedExportStage(sourceURL: options.sourceURL, archive: archive)
+        } else {
+            nil
+        }
         try validateTargetRoot(options.targetRoot, sourceURL: options.sourceURL)
         guard let expected = options.expectedSourceDigest else {
             guard !options.commit else { throw MigrationError.sourceDigestMismatch }
@@ -311,6 +370,11 @@ public actor MigrationRunner {
                   let verifiedMarker = options.verifiedMarker, !verifiedMarker.isEmpty else {
                 throw MigrationError.accountRequired
             }
+            _ = try await revalidatedArchive(
+                sourceURL: options.sourceURL,
+                initial: archive,
+                initialAttestation: initialStageAttestation
+            )
             let replay = try await store.commitMigration(
                 V2MigrationCommitRequest(
                     staging: staging,
@@ -350,6 +414,16 @@ public actor MigrationRunner {
             accountID: account.binding.accountID,
             evidenceBytes: inventory.registryEvidence
         )
+
+        // The export tree is an immutable trust boundary.  Re-read both the
+        // package and its provenance immediately before the SQLite transaction
+        // so a package, ledger, marker, or sidecar changed during this run is
+        // never adopted from the bytes that happened to be read earlier.
+        _ = try await revalidatedArchive(
+            sourceURL: options.sourceURL,
+            initial: archive,
+            initialAttestation: initialStageAttestation
+        )
         let result = try await store.commitMigration(
             V2MigrationCommitRequest(
                 staging: staging,
@@ -362,6 +436,142 @@ public actor MigrationRunner {
         )
         _ = ledger
         return MigrationRunResult(inventory: inventory, state: .committed, noChanges: result.noChanges)
+    }
+
+    private func revalidatedArchive(
+        sourceURL: URL,
+        initial: ArchiveReadResult,
+        initialAttestation: VerifiedExportStageAttestation?
+    ) async throws -> ArchiveReadResult {
+        guard let initialAttestation else {
+            throw MigrationError.untrustedExportStage("missingInitialAttestation")
+        }
+        let workID = try WorkID(uuidString: initial.inventory.workID)
+        let final = try await reader.inventoryAsync(
+            sourceURL: sourceURL,
+            proposedWorkID: workID
+        )
+        guard final.inventory.sourceDigest == initial.inventory.sourceDigest,
+              final.inventory.workID == initial.inventory.workID,
+              final.inventory.documentID == initial.inventory.documentID,
+              final.encoded.manifestBytes == initial.encoded.manifestBytes,
+              final.encoded.objects == initial.encoded.objects,
+              final.model.document == initial.model.document,
+              final.model.documentCreatedAt == initial.model.documentCreatedAt,
+              try attestVerifiedExportStage(sourceURL: sourceURL, archive: final) == initialAttestation else {
+            throw MigrationError.sourceChangedDuringRead
+        }
+        return final
+    }
+
+    private func attestVerifiedExportStage(
+        sourceURL: URL,
+        archive: ArchiveReadResult
+    ) throws -> VerifiedExportStageAttestation {
+        let fileManager = FileManager.default
+        let package = sourceURL.standardizedFileURL
+        let packageParent = package.deletingLastPathComponent()
+        let stageRoot = packageParent.deletingLastPathComponent()
+        guard package.pathExtension == "novelpkg",
+              packageParent.lastPathComponent == "verified",
+              isSafePath(package), isSafePath(stageRoot) else {
+            throw MigrationError.untrustedExportStage("packagePath")
+        }
+
+        let reportURL = stageRoot.appendingPathComponent("migration-ledger.json")
+        let runURL = stageRoot.appendingPathComponent("migration-run.json")
+        let markerURL = stageRoot.appendingPathComponent("COMMITTED")
+        let reportData = try trustedRegularFile(reportURL, fileManager: fileManager)
+        let runData = try trustedRegularFile(runURL, fileManager: fileManager)
+        let markerData = try trustedRegularFile(markerURL, fileManager: fileManager)
+        guard markerData == Data("COMMITTED\n".utf8) else {
+            throw MigrationError.untrustedExportStage("committedMarker")
+        }
+        let report = try decode(VerifiedExportReport.self, data: reportData, reason: "ledger")
+        let run = try decode(VerifiedRunState.self, data: runData, reason: "runState")
+        guard report.formatVersion == 1,
+              run.status == "committed",
+              run.exportID == report.exportID,
+              isDigest(report.sourceSQLiteSHA256),
+              isDigest(report.sourceArchiveManifestSHA256),
+              isDigest(report.classificationLedgerSHA256),
+              run.sourceDigest == report.sourceSQLiteSHA256,
+              run.archiveManifestDigest == report.sourceArchiveManifestSHA256,
+              run.classificationLedgerDigest == report.classificationLedgerSHA256 else {
+            throw MigrationError.exportProvenanceMismatch("runOrLedger")
+        }
+
+        let logicalWorkID = try WorkID(uuidString: archive.inventory.workID)
+        guard let entry = report.entries.first(where: { $0.workID.uuidString.lowercased() == logicalWorkID.description }),
+              entry.disposition == "verified",
+              entry.outcome == "exported",
+              entry.outputRelativePath == "verified/\(entry.workID.uuidString).novelpkg",
+              entry.outputRelativePath == package.path.replacingOccurrences(of: stageRoot.path + "/", with: ""),
+              entry.snapshotID.map(isDigest) == true,
+              entry.projectionDigest.map(isDigest) == true,
+              report.entries.count(where: { $0.workID == entry.workID }) == 1 else {
+            throw MigrationError.exportProvenanceMismatch("verifiedEntry")
+        }
+        guard logicalWorkID.description == entry.workID.uuidString.lowercased() else {
+            throw MigrationError.exportProvenanceMismatch("workID")
+        }
+
+        let stateURL = stageRoot.appendingPathComponent(".state/\(entry.workID.uuidString).json")
+        let stateData = try trustedRegularFile(stateURL, fileManager: fileManager)
+        let state = try decode(VerifiedProjectionState.self, data: stateData, reason: "sidecar")
+        guard state.sourceDigest == report.sourceSQLiteSHA256,
+              state.snapshotID == entry.snapshotID,
+              state.projectionDigest == entry.projectionDigest else {
+            throw MigrationError.exportProvenanceMismatch("sidecar")
+        }
+
+        let projection = try SHA256Digest.hex(
+            WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: archive.model.document))
+        )
+        guard projection == entry.projectionDigest else {
+            throw MigrationError.exportProvenanceMismatch("packageProjection")
+        }
+        return VerifiedExportStageAttestation(
+            exportID: report.exportID,
+            workID: entry.workID,
+            sourceSQLiteDigest: report.sourceSQLiteSHA256,
+            archiveManifestDigest: report.sourceArchiveManifestSHA256,
+            classificationDigest: report.classificationLedgerSHA256,
+            reportDigest: SHA256Digest.hex(reportData),
+            runDigest: SHA256Digest.hex(runData),
+            markerDigest: SHA256Digest.hex(markerData),
+            sidecarDigest: SHA256Digest.hex(stateData)
+        )
+    }
+
+    private func trustedRegularFile(_ url: URL, fileManager: FileManager) throws -> Data {
+        guard isSafePath(url), fileManager.fileExists(atPath: url.path) else {
+            throw MigrationError.untrustedExportStage("missing:\(url.lastPathComponent)")
+        }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw MigrationError.untrustedExportStage("unsafe:\(url.lastPathComponent)")
+        }
+        return try Data(contentsOf: url, options: [.mappedIfSafe])
+    }
+
+    private func isSafePath(_ url: URL) -> Bool {
+        let standardized = url.standardizedFileURL
+        return standardized.path == url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private func isDigest(_ value: String) -> Bool {
+        value.count == 64 && value.utf8.allSatisfy { byte in
+            (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+        }
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, data: Data, reason: String) throws -> T {
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            throw MigrationError.exportProvenanceMismatch("\(reason):\(error)")
+        }
     }
 
     private func validateTargetRoot(_ target: URL, sourceURL: URL) throws {

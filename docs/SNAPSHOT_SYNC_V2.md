@@ -173,11 +173,14 @@ divergence, not an overwrite instruction.
 ## 7. Migration and release gates
 
 Legacy processing separates verified Export backup projection from v2
-adoption. The current migration tool may prove only the former. A separate
-adoption phase reads that immutable artifact, stages a v2 database, verifies
-bytes, logical model and account scope, then writes a distinct adoption marker.
-Unknown account scope is quarantined. Neither phase deletes, rewrites, or
-automatically uploads the archive, and the live app cannot invoke its reader.
+adoption. The current migration tool may prove only the former. The implemented
+adoption phase reads that immutable artifact, stages a new client SQLite
+database, verifies bytes, logical model and account scope, then writes a
+distinct adoption marker. Unknown account scope is quarantined. Neither phase
+deletes, rewrites, or automatically uploads the archive, and the live app
+cannot invoke its reader. Direct PostgreSQL/operator adoption is not
+implemented and remains NO-GO; an adopted client Work reaches the server only
+through the normal authenticated create/upload/register/publish wire path.
 
 Before v2 is enabled, Swift and Rust independent harnesses must agree on all
 canonical bytes, SHA-256 IDs, schema failures, command digests, account

@@ -7,8 +7,10 @@ Migration has two separate products and success boundaries:
    `Tools/SnapshotSyncV2Migration` work is this phase only; its success never
    means a Work was adopted into v2.
 2. **v2 adoption** consumes a verified backup artifact, stages a new v2
-   Work/Snapshot/object closure, verifies the logical model/account scope, and
-   writes a separate adoption marker transaction.
+   Work/Snapshot/object closure in the client SQLite store, verifies the
+   logical model/account scope, and writes a separate adoption marker
+   transaction. This client adoption path is the only implemented cutover
+   path.
 
 Both are explicit, offline, resumable operations. The live v2 runtime never
 opens the archive reader. Each source is represented in `migration_ledger`
@@ -57,20 +59,22 @@ quarantine behavior until a separate remote-resource contract is adopted.
   WorkID/first Snapshot and adoption marker in one SQLite transaction, then
   later publishes through `createWork` -> object prepare/upload/finalize ->
   register -> publish;
-- **operator-only PostgreSQL adoption** revalidates the closure and adds the
-  server Work, objects, first Snapshot/head/history/catalog rows and adoption
-  marker in one PostgreSQL transaction. It does not call `createWork`, because
-  the Work is already present, and it is not reachable from the live HTTP API.
+- **operator-only PostgreSQL adoption** is not implemented and is not reachable
+  from the live HTTP API. The server must not be populated by a direct
+  migration runner; after client SQLite adoption, the normal authenticated
+  `createWork` -> object prepare/upload/finalize -> register -> publish wire
+  path is the only server onboarding path. Direct PostgreSQL adoption remains
+  NO-GO until a separately reviewed operator contract exists.
 
-The SQLite and PostgreSQL ledgers/staging tables belong to these distinct
-target runs; a single run never commits both. In either case the original work
-is not rebound or deleted, and staging itself is never live authority.
+The SQLite ledger/staging tables belong to the client adoption run and are not
+server authority. The original work is not rebound or deleted, and staging is
+never live authority.
 
 `account_id` remains nullable until independently verified. An unknown or
 ambiguous account can only enter `quarantined`; it cannot be committed,
 uploaded, or inferred from title/path/device/login timing.
 
-The adoption marker is written only after SQLite/PostgreSQL transaction commit
-and BLOB read-back. On crash, an uncommitted marker is retried from staging or
+The adoption marker is written only after the SQLite transaction commit and
+BLOB read-back. On crash, an uncommitted marker is retried from staging or
 moved to quarantine; it is never treated as imported merely because files
 exist. A failed migration cannot create an empty replacement database.
