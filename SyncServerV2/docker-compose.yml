@@ -6,9 +6,11 @@ services:
     environment:
       POSTGRES_DB: fuminiwa_sync_v2
       POSTGRES_USER: fuminiwa_sync_v2
-      POSTGRES_PASSWORD: ${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD:?set a v2-only password}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
     volumes:
       - fuminiwa_sync_v2_pgdata:/var/lib/postgresql/data
+    secrets:
+      - postgres-password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fuminiwa_sync_v2 -d fuminiwa_sync_v2"]
   server:
@@ -18,10 +20,14 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://fuminiwa_sync_v2:${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD}@postgres:5432/fuminiwa_sync_v2
       FUMINIWA_RUNTIME_MODE: production
       FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:?set a v2-only lowercase UUID}
       FUMINIWA_SYNC_V2_BIND: 0.0.0.0:8092
+      FUMINIWA_SYNC_V2_POSTGRES_HOST: postgres
+      FUMINIWA_SYNC_V2_POSTGRES_PORT: 5432
+      FUMINIWA_SYNC_V2_POSTGRES_DB: fuminiwa_sync_v2
+      FUMINIWA_SYNC_V2_POSTGRES_USER: fuminiwa_sync_v2
+      FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
       FUMINIWA_AUTH_VAULT_KEY_VERSION: ${FUMINIWA_AUTH_VAULT_KEY_VERSION:?set the active vault key version}
       FUMINIWA_AUTH_VAULT_KEY_FILE: /run/secrets/auth-vault-key
       FUMINIWA_AUTH_SUBJECT_HMAC_KEY_FILE: /run/secrets/auth-subject-hmac-key
@@ -36,7 +42,24 @@ services:
       - ${FUMINIWA_AUTH_SUBJECT_HMAC_KEY_HOST_PATH:?set subject HMAC key file path}:/run/secrets/auth-subject-hmac-key:ro
       - ${FUMINIWA_AUTH_TOKEN_HMAC_KEY_HOST_PATH:?set token HMAC key file path}:/run/secrets/auth-token-hmac-key:ro
       - ${FUMINIWA_APPLE_PRIVATE_KEY_HOST_PATH:?set Apple p8 file path}:/run/secrets/apple-sign-in-key.p8:ro
+    secrets:
+      - postgres-password
+  edge:
+    image: caddy:2.8-alpine
+    container_name: fuminiwa-sync-v2-edge
+    depends_on:
+      server:
+        condition: service_started
     ports:
-      - "${FUMINIWA_SYNC_V2_PORT:-8092}:8092"
+      - "${FUMINIWA_SYNC_V2_PORT:-8092}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - fuminiwa_sync_v2_caddy_data:/data
+      - fuminiwa_sync_v2_caddy_config:/config
 volumes:
   fuminiwa_sync_v2_pgdata:
+  fuminiwa_sync_v2_caddy_data:
+  fuminiwa_sync_v2_caddy_config:
+secrets:
+  postgres-password:
+    file: ${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE:?set a password file path}

@@ -149,6 +149,25 @@ pub trait AuthRepository: Send + Sync {
         operation_id: &OperationId,
         request_digest: [u8; 32],
     ) -> Result<(), AuthError>;
+    async fn mark_provider_exchange_terminal(
+        &self,
+        challenge_id: &ChallengeId,
+        operation_id: &OperationId,
+        request_digest: [u8; 32],
+        code: &str,
+        status: u16,
+    ) -> Result<(), AuthError>;
+    async fn mark_provider_failure(
+        &self,
+        challenge_id: &ChallengeId,
+        operation_id: &OperationId,
+        request_digest: [u8; 32],
+        code: &str,
+        status: u16,
+    ) -> Result<(), AuthError> {
+        let _ = (challenge_id, operation_id, request_digest, code, status);
+        Err(AuthError::InvalidRequest)
+    }
     async fn mark_provider_result_known(
         &self,
         challenge_id: &ChallengeId,
@@ -376,20 +395,39 @@ impl<R: AuthRepository> AuthApplication<R> {
                             .await?;
                         return Err(AuthError::ProviderExchangeIndeterminate);
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        let (code, status) = match error {
+                            AuthError::InvalidExternalIdentity => ("providerIdentityInvalid", 422),
+                            AuthError::ProviderNotAllowed => ("providerNotAllowed", 403),
+                            AuthError::InvalidRequest => ("providerRequestRejected", 400),
+                            _ => return Err(error),
+                        };
+                        self.repository
+                            .mark_provider_exchange_terminal(
+                                &request.challenge_id,
+                                &request.operation_id,
+                                request.request_digest,
+                                code,
+                                status,
+                            )
+                            .await?;
+                        return Err(error);
+                    }
                 };
                 let identity =
                     match VerifiedExternalIdentity::bind_apple(evidence, &challenge, now_unix) {
                         Ok(value) => value,
-                        Err(_) => {
+                        Err(error) => {
                             self.repository
-                                .mark_provider_exchange_indeterminate(
+                                .mark_provider_exchange_terminal(
                                     &request.challenge_id,
                                     &request.operation_id,
                                     request.request_digest,
+                                    "providerIdentityInvalid",
+                                    422,
                                 )
                                 .await?;
-                            return Err(AuthError::ProviderExchangeIndeterminate);
+                            return Err(error);
                         }
                     };
                 let durable = DurableVerifiedIdentity::from(&identity);

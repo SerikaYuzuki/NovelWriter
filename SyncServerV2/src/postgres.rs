@@ -6,7 +6,7 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use serde_json::Value;
-use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
+use sqlx::{postgres::{PgConnectOptions, PgPoolOptions}, PgPool, Postgres, Row, Transaction};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -25,6 +25,51 @@ pub struct Repository {
     pub protocol_epoch: i64,
 }
 impl Repository {
+    pub async fn connect_from_environment(
+        server_instance_id: String,
+    ) -> Result<Self, sqlx::Error> {
+        let host = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_HOST")
+            .unwrap_or_else(|_| "postgres".to_string());
+        let port = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PORT")
+            .unwrap_or_else(|_| "5432".to_string())
+            .parse::<u16>()
+            .map_err(|_| sqlx::Error::Configuration("invalid PostgreSQL port".into()))?;
+        let database = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_DB")
+            .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
+        let username = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_USER")
+            .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
+        let password_file = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE")
+            .map_err(|_| sqlx::Error::Configuration("PostgreSQL password file is required".into()))?;
+        let password = std::fs::read_to_string(password_file)
+            .map_err(|error| sqlx::Error::Configuration(error.to_string().into()))?
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if password.is_empty() {
+            return Err(sqlx::Error::Configuration(
+                "PostgreSQL password file is empty".into(),
+            ));
+        }
+        let options = PgConnectOptions::new()
+            .host(&host)
+            .port(port)
+            .database(&database)
+            .username(&username)
+            .password(&password);
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect_with(options)
+            .await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Self::verify_server_meta(&pool, &server_instance_id).await?;
+        let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
+        Ok(Self {
+            pool,
+            object_store,
+            server_instance_id,
+            protocol_epoch: PROTOCOL_EPOCH,
+        })
+    }
+
     pub async fn connect(url: &str, server_instance_id: String) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(10)
@@ -162,12 +207,14 @@ impl Repository {
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
         cmd: &SealedCommand,
+        status: i32,
         response_bytes: &[u8],
     ) -> SyncResult<()> {
         let response = strict_json(response_bytes)?;
         if canonical_json(&response).map_err(|_| SyncError::Retryable)? != response_bytes {
             return Err(SyncError::Retryable);
         }
+        Self::validate_response_contract(cmd, status, &response)?;
         let receipt = response
             .get("receipt")
             .and_then(Value::as_object)
@@ -176,7 +223,9 @@ impl Repository {
             .get("readBack")
             .and_then(Value::as_object)
             .ok_or(SyncError::Retryable)?;
-        if receipt.get("commandId").and_then(Value::as_str)
+        if receipt.len() != 5
+            || read_back.len() != 5
+            || receipt.get("commandId").and_then(Value::as_str)
             != Some(cmd.command_id.to_string().as_str())
             || receipt.get("commandKind").and_then(Value::as_str) != Some(cmd.kind.as_str())
             || receipt.get("workId").and_then(Value::as_str)
@@ -215,6 +264,158 @@ impl Repository {
         self.verify_response_head(tx, p, cmd, &response).await?;
         self.verify_command_resource(tx, p, cmd, &response).await
     }
+
+    fn validate_response_contract(
+        cmd: &SealedCommand,
+        status: i32,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let result = response
+            .get("result")
+            .and_then(Value::as_str)
+            .ok_or(SyncError::Retryable)?;
+        if !matches!(result, "noChanges" | "applied" | "conflictPending") {
+            return Err(SyncError::Retryable);
+        }
+        let expected_status = match (cmd.kind, result) {
+            (CommandKind::CreateWork, "applied") => Some(201),
+            (CommandKind::PrepareObject, "noChanges") => Some(200),
+            (CommandKind::PrepareObject, "applied") => Some(201),
+            (CommandKind::FinalizeObject, "applied")
+            | (CommandKind::RegisterSnapshot, "noChanges" | "applied")
+            | (CommandKind::ResolveDevice, "applied")
+            | (CommandKind::ResolveServer, "applied")
+            | (CommandKind::CloneWork, "applied")
+            | (CommandKind::Restore, "applied") => Some(200),
+            (CommandKind::Publish, "applied") => Some(200),
+            (CommandKind::Publish, "conflictPending") => Some(409),
+            _ => None,
+        };
+        if expected_status != Some(status) {
+            return Err(SyncError::Retryable);
+        }
+        let allowed = match (cmd.kind, result) {
+            (CommandKind::CreateWork, "applied") => [
+                "commandId",
+                "commandKind",
+                "documentId",
+                "head",
+                "receipt",
+                "result",
+                "workId",
+            ]
+            .as_slice(),
+            (CommandKind::PrepareObject, "noChanges") => {
+                ["commandId", "commandKind", "receipt", "result"].as_slice()
+            }
+            (CommandKind::PrepareObject, "applied") => [
+                "commandId",
+                "commandKind",
+                "expiresAt",
+                "objectId",
+                "receipt",
+                "result",
+                "uploadCapability",
+                "uploadId",
+            ]
+            .as_slice(),
+            (CommandKind::FinalizeObject, "applied") => [
+                "byteCount",
+                "commandId",
+                "commandKind",
+                "head",
+                "objectId",
+                "receipt",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::RegisterSnapshot, "noChanges" | "applied") => [
+                "commandId",
+                "commandKind",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::Publish, "applied") => [
+                "commandId",
+                "commandKind",
+                "generation",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::Publish, "conflictPending") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "receipt",
+                "result",
+                "sourceGeneration",
+            ]
+            .as_slice(),
+            (CommandKind::ResolveDevice, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "generation",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::ResolveServer, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "receipt",
+                "remoteGeneration",
+                "remoteSnapshotId",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::CloneWork, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "newRootSnapshotId",
+                "newWorkId",
+                "receipt",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::Restore, "applied") => [
+                "commandId",
+                "commandKind",
+                "generation",
+                "head",
+                "protectedRestoreBeforeSnapshotId",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            _ => return Err(SyncError::Retryable),
+        };
+        let object = response.as_object().ok_or(SyncError::Retryable)?;
+        if object.keys().any(|key| !allowed.contains(&key.as_str()))
+            || allowed.iter().any(|key| !object.contains_key(*key))
+        {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
     async fn verify_response_head<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -245,6 +446,26 @@ impl Repository {
         let snapshot: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
         let generation: Option<i64> = row.try_get("head_generation")?;
         if expected.is_null() {
+            // finalizeObject and registerSnapshot deliberately use a null head
+            // sentinel: neither command can advance the Work head. Their
+            // no-op proof is the absence of a head event for this command, not
+            // an assertion that the Work itself still has a null head.
+            if matches!(
+                cmd.kind,
+                CommandKind::FinalizeObject | CommandKind::RegisterSnapshot
+            ) {
+                let advanced: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM sync_v2.head_events WHERE account_id=$1 AND command_id=$2)",
+                )
+                .bind(&p.account_id)
+                .bind(cmd.command_id)
+                .fetch_one(&mut **tx)
+                .await?;
+                if advanced {
+                    return Err(SyncError::Retryable);
+                }
+                return Ok(());
+            }
             if snapshot.is_some() || generation.is_some() {
                 return Err(SyncError::Retryable);
             }
@@ -501,27 +722,6 @@ impl Repository {
             ("snapshotId".into(), Value::String(hex::encode(snapshot_id))),
         ])
     }
-    async fn current_head_value<'a>(
-        &self,
-        tx: &mut Transaction<'a, Postgres>,
-        p: &AuthenticatedPrincipal,
-        work_id: Uuid,
-    ) -> SyncResult<Value> {
-        let row = sqlx::query(
-            "SELECT head_snapshot_id,head_generation FROM sync_v2.works WHERE account_id=$1 AND work_id=$2",
-        )
-        .bind(&p.account_id)
-        .bind(work_id)
-        .fetch_one(&mut **tx)
-        .await?;
-        let snapshot: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
-        let generation: Option<i64> = row.try_get("head_generation")?;
-        match (snapshot, generation) {
-            (None, None) => Ok(Value::Null),
-            (Some(snapshot), Some(generation)) => Ok(Self::head_value(&snapshot, generation)),
-            _ => Err(SyncError::Retryable),
-        }
-    }
     async fn append_catalog_event<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -610,7 +810,8 @@ impl Repository {
             }
             CommandKind::Restore => self.restore(&mut tx, p, cmd).await?,
         };
-        self.verify_read_back(&mut tx, p, cmd, &response).await?;
+        self.verify_read_back(&mut tx, p, cmd, status, &response)
+            .await?;
         self.complete(&mut tx, p, cmd, status, &response).await?;
         self.verify_completed_receipt(&mut tx, p, cmd, status, &response)
             .await?;
@@ -753,7 +954,6 @@ impl Repository {
         }
         sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT(account_id,object_id) DO UPDATE SET state='available'").bind(&p.account_id).bind(object.as_slice()).execute(&mut **tx).await?;
         sqlx::query("UPDATE sync_v2.upload_capabilities SET state='finalized' WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload).execute(&mut **tx).await?;
-        let head = self.current_head_value(tx, p, c.work_id).await?;
         Ok((
             200,
             Self::response(
@@ -762,7 +962,9 @@ impl Repository {
                 vec![
                     ("objectId".into(), Value::String(hex::encode(object))),
                     ("byteCount".into(), Value::from(count)),
-                    ("head".into(), head),
+                    // Null is the closed response sentinel for this command;
+                    // finalizing an object never advances a Work head.
+                    ("head".into(), Value::Null),
                 ],
             ),
         ))
@@ -953,13 +1155,12 @@ impl Repository {
         if document_id != work_document {
             return Err(SyncError::LineageViolation);
         }
-        let head = self.current_head_value(tx, p, c.work_id).await?;
         if let Some(existing) = sqlx::query("SELECT work_id,manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND snapshot_id=$2 FOR UPDATE")
             .bind(&p.account_id).bind(id.as_slice()).fetch_optional(&mut **tx).await? {
             let work: Uuid = existing.try_get("work_id")?;
             let old: Vec<u8> = existing.try_get("manifest_bytes")?;
             if work != c.work_id || old != bytes { return Err(SyncError::SnapshotDigestMismatch); }
-            return Ok((200, Self::response(c, "noChanges", vec![("snapshotId".into(), Value::String(hex::encode(id))), ("head".into(), head)])));
+            return Ok((200, Self::response(c, "noChanges", vec![("snapshotId".into(), Value::String(hex::encode(id))), ("head".into(), Value::Null)])));
         }
         sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())")
             .bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
@@ -993,7 +1194,9 @@ impl Repository {
                 "applied",
                 vec![
                     ("snapshotId".into(), Value::String(hex::encode(id))),
-                    ("head".into(), head),
+                    // Null is the closed response sentinel for this command;
+                    // registering a Snapshot never advances a Work head.
+                    ("head".into(), Value::Null),
                 ],
             ),
         ))

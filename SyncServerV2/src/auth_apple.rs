@@ -4,7 +4,7 @@
 //! identity tokens are redacted by type and never reach application logging.
 
 use crate::auth_domain::{
-    digest_request, AppleIdentityEvidence, AppleProvider, AuthError, ChallengeClaim, CredentialId,
+    digest_request, AppleIdentityEvidence, AppleProvider, AuthError, ChallengeClaim,
     CredentialVault, OperationId, ProviderConfigId, VerifiedProviderCredential, APPLE_ISSUER,
     APPLE_PROVIDER_CONFIG,
 };
@@ -25,6 +25,15 @@ const MAC_AUDIENCE: &str = "dev.serikayuzuki.fuminiwa";
 const IOS_AUDIENCE: &str = "dev.serikayuzuki.fuminiwa.ios";
 const MAX_PROVIDER_BODY_BYTES: usize = 128 * 1024;
 const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppleS2SNotification {
+    pub notification_type: String,
+    pub subject: String,
+    pub jti: String,
+    pub audience: String,
+    pub issued_at_unix: i64,
+}
 
 #[derive(Clone)]
 pub struct AppleClientSecretSigner {
@@ -128,6 +137,23 @@ pub struct AppleTokenResponse {
     pub refresh_token: String,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub struct AppleRevokeRequest {
+    pub client_id: String,
+    pub client_secret: String,
+    pub token: String,
+}
+impl std::fmt::Debug for AppleRevokeRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppleRevokeRequest")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
 impl std::fmt::Debug for AppleTokenResponse {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -145,6 +171,7 @@ pub trait AppleTransport: Send + Sync {
         &self,
         request: &AppleTokenRequest,
     ) -> Result<AppleTokenResponse, AuthError>;
+    async fn revoke_credential(&self, request: &AppleRevokeRequest) -> Result<(), AuthError>;
 }
 
 #[derive(Clone)]
@@ -210,6 +237,30 @@ impl AppleTransport for ProductionAppleTransport {
             refresh_token: wire.refresh_token,
         })
     }
+
+    async fn revoke_credential(&self, request: &AppleRevokeRequest) -> Result<(), AuthError> {
+        let response = self
+            .client
+            .post("https://appleid.apple.com/auth/revoke")
+            .form(&[
+                ("client_id", request.client_id.as_str()),
+                ("client_secret", request.client_secret.as_str()),
+                ("token", request.token.as_str()),
+                ("token_type_hint", "refresh_token"),
+            ])
+            .send()
+            .await
+            .map_err(|_| AuthError::ProviderExchangeIndeterminate)?;
+        let status = response.status();
+        let _ = bounded_body(response).await?;
+        if status.is_success() {
+            Ok(())
+        } else if status.is_server_error() {
+            Err(AuthError::ProviderExchangeIndeterminate)
+        } else {
+            Err(AuthError::InvalidExternalIdentity)
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -235,6 +286,68 @@ impl<T, V> ProductionAppleProvider<T, V> {
             jwks: Arc::new(RwLock::new(None)),
         }
     }
+
+    pub async fn verify_s2s_notification(
+        &self,
+        token: &str,
+        now_unix: i64,
+    ) -> Result<AppleS2SNotification, AuthError>
+    where
+        T: AppleTransport,
+    {
+        if token.is_empty() || token.len() > 65_536 {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let header = decode_header(token).map_err(|_| AuthError::InvalidExternalIdentity)?;
+        if header.alg != Algorithm::RS256 {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let kid = header.kid.ok_or(AuthError::InvalidExternalIdentity)?;
+        let key = self.decoding_key(&kid).await?;
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&[APPLE_ISSUER]);
+        validation.set_audience(&[MAC_AUDIENCE, IOS_AUDIENCE]);
+        validation.leeway = MAX_CLOCK_SKEW_SECONDS as u64;
+        validation.set_required_spec_claims(&["iss", "aud", "iat", "jti", "sub"]);
+        let claims = decode::<AppleS2SNotificationClaims>(token, &key, &validation)
+            .map_err(|_| AuthError::InvalidExternalIdentity)?
+            .claims;
+        if claims.iss != APPLE_ISSUER
+            || claims.subject.is_empty()
+            || claims.subject.len() > 512
+            || claims.jti.is_empty()
+            || claims.jti.len() > 512
+            || claims.issued_at < now_unix - MAX_CLOCK_SKEW_SECONDS
+            || claims.issued_at > now_unix + MAX_CLOCK_SKEW_SECONDS
+            || !matches!(
+                claims.notification_type.as_str(),
+                "CONSENT_REVOKED" | "ACCOUNT_DELETE" | "EMAIL_ENABLED" | "EMAIL_DISABLED"
+            )
+        {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        Ok(AppleS2SNotification {
+            notification_type: claims.notification_type,
+            subject: claims.subject,
+            jti: claims.jti,
+            audience: claims.aud,
+            issued_at_unix: claims.issued_at,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppleS2SNotificationClaims {
+    #[serde(rename = "notificationType")]
+    notification_type: String,
+    #[serde(rename = "sub")]
+    subject: String,
+    jti: String,
+    aud: String,
+    iss: String,
+    #[serde(rename = "iat")]
+    issued_at: i64,
 }
 
 #[async_trait]
@@ -304,13 +417,29 @@ impl<T: AppleTransport, V: CredentialVault + Clone> AppleProvider
 
     async fn revoke(
         &self,
-        _credential_id: &CredentialId,
-        _audience: &str,
+        credential: &VerifiedProviderCredential,
         _operation_id: &OperationId,
     ) -> Result<(), AuthError> {
-        // Provider revocation needs a repository-owned credential generation;
-        // it is intentionally not exposed by the sign-in adapter.
-        Err(AuthError::InvalidRequest)
+        let token = self
+            .vault
+            .open(
+                "apple_provider_refresh_v1",
+                &credential.vault_context,
+                &credential.encrypted_refresh_token,
+            )
+            .await?;
+        let token = std::str::from_utf8(&token).map_err(|_| AuthError::Vault)?;
+        if token.is_empty() || token.len() > 4096 {
+            return Err(AuthError::Vault);
+        }
+        let now = Utc::now().timestamp();
+        self.transport
+            .revoke_credential(&AppleRevokeRequest {
+                client_id: self.signer.client_id(&credential.audience)?.into(),
+                client_secret: self.signer.sign(&credential.audience, now)?,
+                token: token.into(),
+            })
+            .await
     }
 }
 
@@ -522,6 +651,10 @@ mod tests {
             _request: &AppleTokenRequest,
         ) -> Result<AppleTokenResponse, AuthError> {
             panic!("token endpoint must not be called by a JWKS test")
+        }
+
+        async fn revoke_credential(&self, _request: &AppleRevokeRequest) -> Result<(), AuthError> {
+            panic!("revoke endpoint must not be called by a JWKS test")
         }
     }
 

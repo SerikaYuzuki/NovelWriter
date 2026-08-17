@@ -556,6 +556,7 @@ impl fmt::Debug for SealedSecret {
 
 #[async_trait]
 pub trait CredentialVault: Send + Sync {
+    fn active_key_version(&self) -> i32;
     async fn seal(
         &self,
         purpose: &str,
@@ -591,8 +592,7 @@ pub trait AppleProvider: Send + Sync {
     ) -> Result<AppleIdentityEvidence, AuthError>;
     async fn revoke(
         &self,
-        credential_id: &CredentialId,
-        audience: &str,
+        credential: &VerifiedProviderCredential,
         operation_id: &OperationId,
     ) -> Result<(), AuthError>;
 }

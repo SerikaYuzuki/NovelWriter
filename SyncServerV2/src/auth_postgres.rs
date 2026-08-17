@@ -4,6 +4,7 @@
 //! changing it.  This repository never joins sync_v2 and never returns raw
 //! provider credentials or subject material.
 
+use crate::auth_apple::AppleS2SNotification;
 use crate::auth_application::{
     AuthRepository, ChallengeResult, NewChallenge, RefreshOutcome, SecurityTransition,
 };
@@ -16,6 +17,12 @@ use serde_json::to_value;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use uuid::Uuid;
+
+fn random_fence() -> Result<[u8; 32], AuthError> {
+    let mut value = [0_u8; 32];
+    getrandom::getrandom(&mut value).map_err(|_| AuthError::Vault)?;
+    Ok(value)
+}
 
 #[derive(Clone)]
 pub struct AuthPostgresRepository {
@@ -42,6 +49,86 @@ impl AuthPostgresRepository {
             token_hmac_key: Arc::new(token_hmac_key),
             server_instance_id: server_instance_id.into(),
         })
+    }
+
+    pub async fn record_apple_notification(
+        &self,
+        notification: &AppleS2SNotification,
+        subject_lookup: &[u8],
+        request_digest: [u8; 32],
+    ) -> Result<(), AuthError> {
+        let event_key = token_hmac(
+            self.token_hmac_key.as_ref(),
+            "apple-s2s-jti-v1",
+            &notification.jti,
+        )?;
+        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+        let existing = sqlx::query("SELECT request_digest FROM auth_v1.provider_notification_receipts WHERE provider_config_id=$1 AND event_key_version=1 AND event_key_hmac=$2 FOR UPDATE")
+            .bind(APPLE_PROVIDER_CONFIG)
+            .bind(&event_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+        if let Some(row) = existing {
+            let stored: Vec<u8> = row.try_get("request_digest").map_err(Self::map_db)?;
+            if stored.as_slice() != request_digest {
+                return Err(AuthError::OperationIdReused);
+            }
+            tx.commit().await.map_err(Self::map_db)?;
+            return Ok(());
+        }
+        let identity = sqlx::query("SELECT identity_id,account_id FROM auth_v1.external_identities WHERE provider_config_id=$1 AND exact_issuer=$2 AND subject_lookup_hmac=$3 AND state='active' FOR UPDATE")
+            .bind(APPLE_PROVIDER_CONFIG)
+            .bind(APPLE_ISSUER)
+            .bind(subject_lookup)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+        let (account_id, outcome) = if let Some(identity) = identity {
+            let identity_id: Uuid = identity.try_get("identity_id").map_err(Self::map_db)?;
+            let account_id: String = identity.try_get("account_id").map_err(Self::map_db)?;
+            let account = sqlx::query(
+                "SELECT account_id FROM auth_v1.accounts WHERE account_id=$1 FOR UPDATE",
+            )
+            .bind(&account_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+            let account_id: String = account.try_get("account_id").map_err(Self::map_db)?;
+            let latest: Option<i64> = sqlx::query_scalar("SELECT max(event_issued_at) FROM auth_v1.provider_notification_receipts WHERE provider_config_id=$1 AND account_id=$2")
+                .bind(APPLE_PROVIDER_CONFIG)
+                .bind(&account_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(Self::map_db)?;
+            if latest.is_some_and(|value| value > notification.issued_at_unix) {
+                (Some(account_id), "staleAfterReauthentication")
+            } else {
+                let destructive = matches!(
+                    notification.notification_type.as_str(),
+                    "CONSENT_REVOKED" | "ACCOUNT_DELETE"
+                );
+                if destructive {
+                    let fence = random_fence()?;
+                    sqlx::query("UPDATE auth_v1.accounts SET auth_epoch=auth_epoch+1,fence=$2,state=CASE WHEN $3 THEN 'deletionPending' ELSE state END,updated_at=now() WHERE account_id=$1")
+                    .bind(&account_id).bind(fence).bind(notification.notification_type == "ACCOUNT_DELETE")
+                    .execute(&mut *tx).await.map_err(Self::map_db)?;
+                    sqlx::query("UPDATE auth_v1.auth_sessions SET state='reauthRequired' WHERE account_id=$1 AND state='active'")
+                    .bind(&account_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+                    sqlx::query("UPDATE auth_v1.provider_credentials SET state='revokeRetryPending' WHERE identity_id=$1 AND state='active'")
+                    .bind(identity_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+                }
+                (Some(account_id), "applied")
+            }
+        } else {
+            (None, "unknownIdentity")
+        };
+        sqlx::query("INSERT INTO auth_v1.provider_notification_receipts(provider_config_id,event_key_version,event_key_hmac,request_digest,event_kind,event_issued_at,outcome,account_id) VALUES($1,1,$2,$3,$4,$5,$6,$7)")
+            .bind(APPLE_PROVIDER_CONFIG).bind(&event_key).bind(request_digest.as_slice())
+            .bind(&notification.notification_type).bind(notification.issued_at_unix).bind(outcome)
+            .bind(account_id)
+            .execute(&mut *tx).await.map_err(Self::map_db)?;
+        tx.commit().await.map_err(Self::map_db)
     }
     fn hmac(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
         token_hmac(self.token_hmac_key.as_ref(), purpose, token)
@@ -126,6 +213,123 @@ impl AuthPostgresRepository {
     }
     fn fence() -> Result<Vec<u8>, AuthError> {
         Ok(Self::random_bytes_32()?.to_vec())
+    }
+
+    /// Rewrap every encrypted auth row with the active vault key. The ledger is
+    /// deliberately updated in the same transaction as each ciphertext write,
+    /// so a process kill leaves a pending row that can be resumed safely.
+    pub async fn rewrap_vault(&self) -> Result<(), AuthError> {
+        let active = self.vault.active_key_version();
+        let rows = sqlx::query(
+            "SELECT 'auth_operations' AS source_table, o.operation_id::text AS entity_id, o.operation_id::text AS row_id,
+                    o.response_key_version AS key_version, o.response_purpose AS purpose,
+                    o.response_ciphertext AS ciphertext
+               FROM auth_v1.auth_operations o
+               LEFT JOIN auth_v1.vault_rewrap_ledger l ON l.table_name='auth_operations' AND l.row_id=o.operation_id::text
+              WHERE o.response_ciphertext IS NOT NULL AND (o.response_key_version<>$1 OR l.state='pending')
+             UNION ALL
+             SELECT 'auth_challenges', c.challenge_id::text, c.challenge_id::text, c.provider_result_key_version,
+                    c.provider_result_purpose, c.provider_result_ciphertext
+               FROM auth_v1.auth_challenges c
+               LEFT JOIN auth_v1.vault_rewrap_ledger l ON l.table_name='auth_challenges' AND l.row_id=c.challenge_id::text
+              WHERE c.provider_result_ciphertext IS NOT NULL AND (c.provider_result_key_version<>$1 OR l.state='pending')
+             UNION ALL
+             SELECT 'external_identity_secrets', s.identity_id::text, s.vault_context, s.key_version,
+                    s.purpose, s.ciphertext
+               FROM auth_v1.external_identity_secrets s
+               LEFT JOIN auth_v1.vault_rewrap_ledger l ON l.table_name='external_identity_secrets' AND l.row_id=s.vault_context
+              WHERE s.key_version<>$1 OR l.state='pending'
+             UNION ALL
+             SELECT 'provider_credentials', p.credential_id::text, p.vault_context, p.key_version,
+                    p.purpose, p.ciphertext
+               FROM auth_v1.provider_credentials p
+               LEFT JOIN auth_v1.vault_rewrap_ledger l ON l.table_name='provider_credentials' AND l.row_id=p.vault_context
+              WHERE p.key_version<>$1 OR l.state='pending'
+             UNION ALL
+             SELECT 'session_refresh_receipts', r.operation_id::text, r.operation_id::text, r.response_key_version,
+                    r.response_purpose, r.response_ciphertext
+               FROM auth_v1.session_refresh_receipts r
+               LEFT JOIN auth_v1.vault_rewrap_ledger l ON l.table_name='session_refresh_receipts' AND l.row_id=r.operation_id::text
+              WHERE r.response_key_version<>$1 OR l.state='pending'",
+        )
+        .bind(active)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Self::map_db)?;
+        for row in rows {
+            let source_table: String = row.try_get("source_table").map_err(Self::map_db)?;
+            let entity_id: String = row.try_get("entity_id").map_err(Self::map_db)?;
+            let row_id: String = row.try_get("row_id").map_err(Self::map_db)?;
+            let old_version: i32 = row.try_get("key_version").map_err(Self::map_db)?;
+            let purpose: String = row.try_get("purpose").map_err(Self::map_db)?;
+            let ciphertext: Vec<u8> = row.try_get("ciphertext").map_err(Self::map_db)?;
+            let old_secret = SealedSecret {
+                key_version: old_version,
+                ciphertext,
+            };
+            let plaintext = self.vault.open(&purpose, &row_id, &old_secret).await?;
+            let replacement = if old_version == active {
+                old_secret
+            } else {
+                let replacement = self.vault.seal(&purpose, &row_id, &plaintext).await?;
+                self.vault.open(&purpose, &row_id, &replacement).await?;
+                SealedSecret {
+                    key_version: replacement.key_version,
+                    ciphertext: replacement.ciphertext,
+                }
+            };
+            let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+            sqlx::query(
+                "INSERT INTO auth_v1.vault_rewrap_ledger(table_name,row_id,old_key_version,new_key_version,state,attempts,last_error)
+                 VALUES($1,$2,$3,$4,'pending',1,NULL)
+                 ON CONFLICT(table_name,row_id) DO UPDATE SET old_key_version=EXCLUDED.old_key_version,new_key_version=EXCLUDED.new_key_version,state='pending',attempts=auth_v1.vault_rewrap_ledger.attempts+1,last_error=NULL,updated_at=now()",
+            )
+            .bind(&source_table)
+            .bind(&row_id)
+            .bind(old_version)
+            .bind(active)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+            let changed = match source_table.as_str() {
+                "auth_operations" => sqlx::query("UPDATE auth_v1.auth_operations SET response_ciphertext=$2,response_key_version=$3 WHERE operation_id=$1")
+                    .bind(Self::uuid(&entity_id)?).bind(&replacement.ciphertext).bind(replacement.key_version).execute(&mut *tx).await.map_err(Self::map_db)?,
+                "auth_challenges" => sqlx::query("UPDATE auth_v1.auth_challenges SET provider_result_ciphertext=$2,provider_result_key_version=$3 WHERE challenge_id=$1")
+                    .bind(Self::uuid(&entity_id)?).bind(&replacement.ciphertext).bind(replacement.key_version).execute(&mut *tx).await.map_err(Self::map_db)?,
+                "external_identity_secrets" => sqlx::query("UPDATE auth_v1.external_identity_secrets SET ciphertext=$2,key_version=$3,updated_at=now() WHERE identity_id=$1")
+                    .bind(Self::uuid(&entity_id)?).bind(&replacement.ciphertext).bind(replacement.key_version).execute(&mut *tx).await.map_err(Self::map_db)?,
+                "provider_credentials" => sqlx::query("UPDATE auth_v1.provider_credentials SET ciphertext=$2,key_version=$3 WHERE credential_id=$1")
+                    .bind(Self::uuid(&entity_id)?).bind(&replacement.ciphertext).bind(replacement.key_version).execute(&mut *tx).await.map_err(Self::map_db)?,
+                "session_refresh_receipts" => sqlx::query("UPDATE auth_v1.session_refresh_receipts SET response_ciphertext=$2,response_key_version=$3 WHERE operation_id=$1")
+                    .bind(Self::uuid(&entity_id)?).bind(&replacement.ciphertext).bind(replacement.key_version).execute(&mut *tx).await.map_err(Self::map_db)?,
+                _ => return Err(AuthError::Vault),
+            };
+            if changed.rows_affected() != 1 {
+                return Err(AuthError::Vault);
+            }
+            let readback = match source_table.as_str() {
+                "auth_operations" => sqlx::query("SELECT response_ciphertext AS ciphertext,response_key_version AS key_version FROM auth_v1.auth_operations WHERE operation_id=$1")
+                    .bind(Self::uuid(&entity_id)?).fetch_one(&mut *tx).await.map_err(Self::map_db)?,
+                "auth_challenges" => sqlx::query("SELECT provider_result_ciphertext AS ciphertext,provider_result_key_version AS key_version FROM auth_v1.auth_challenges WHERE challenge_id=$1")
+                    .bind(Self::uuid(&entity_id)?).fetch_one(&mut *tx).await.map_err(Self::map_db)?,
+                "external_identity_secrets" => sqlx::query("SELECT ciphertext,key_version FROM auth_v1.external_identity_secrets WHERE identity_id=$1")
+                    .bind(Self::uuid(&entity_id)?).fetch_one(&mut *tx).await.map_err(Self::map_db)?,
+                "provider_credentials" => sqlx::query("SELECT ciphertext,key_version FROM auth_v1.provider_credentials WHERE credential_id=$1")
+                    .bind(Self::uuid(&entity_id)?).fetch_one(&mut *tx).await.map_err(Self::map_db)?,
+                "session_refresh_receipts" => sqlx::query("SELECT response_ciphertext AS ciphertext,response_key_version AS key_version FROM auth_v1.session_refresh_receipts WHERE operation_id=$1")
+                    .bind(Self::uuid(&entity_id)?).fetch_one(&mut *tx).await.map_err(Self::map_db)?,
+                _ => return Err(AuthError::Vault),
+            };
+            let readback_secret = SealedSecret {
+                ciphertext: readback.try_get("ciphertext").map_err(Self::map_db)?,
+                key_version: readback.try_get("key_version").map_err(Self::map_db)?,
+            };
+            self.vault.open(&purpose, &row_id, &readback_secret).await?;
+            sqlx::query("UPDATE auth_v1.vault_rewrap_ledger SET state='completed',updated_at=now(),last_error=NULL WHERE table_name=$1 AND row_id=$2")
+                .bind(&source_table).bind(&row_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+            tx.commit().await.map_err(Self::map_db)?;
+        }
+        Ok(())
     }
 }
 
@@ -544,11 +748,13 @@ impl AuthRepository for AuthPostgresRepository {
         Ok(result)
     }
 
-    async fn mark_provider_exchange_indeterminate(
+    async fn mark_provider_failure(
         &self,
         challenge_id: &ChallengeId,
         operation_id: &OperationId,
         request_digest: [u8; 32],
+        code: &str,
+        status: u16,
     ) -> Result<(), AuthError> {
         let id = Self::uuid(challenge_id.as_str().trim_start_matches("challenge_"))?;
         let op = Self::uuid(operation_id.as_str())?;
@@ -587,7 +793,7 @@ impl AuthRepository for AuthPostgresRepository {
         }
         let response = canonical_wire(&ExchangeFailureReceipt {
             challenge_id: challenge_id.clone(),
-            code: "providerExchangeIndeterminate".into(),
+            code: code.into(),
             operation_id: operation_id.clone(),
             recovery_action: "interactiveAppleSignIn".into(),
             request_id: Uuid::new_v4().to_string(),
@@ -598,16 +804,48 @@ impl AuthRepository for AuthPostgresRepository {
             .vault
             .seal("auth_receipt_v1", operation_id.as_str(), &response)
             .await?;
-        sqlx::query("UPDATE auth_v1.auth_operations SET state='completed',response_status=502,response_digest=$2,response_ciphertext=$3,response_key_version=$4,response_purpose='auth_receipt_v1',completed_at=now() WHERE operation_id=$1")
+        sqlx::query("UPDATE auth_v1.auth_operations SET state='completed',response_status=$5,response_digest=$2,response_ciphertext=$3,response_key_version=$4,response_purpose='auth_receipt_v1',completed_at=now() WHERE operation_id=$1")
             .bind(op)
             .bind(response_digest.as_slice())
             .bind(sealed.ciphertext)
             .bind(sealed.key_version)
+            .bind(i32::from(status))
             .execute(&mut *tx)
             .await
             .map_err(Self::map_db)?;
         tx.commit().await.map_err(Self::map_db)?;
         Ok(())
+    }
+
+    async fn mark_provider_exchange_indeterminate(
+        &self,
+        challenge_id: &ChallengeId,
+        operation_id: &OperationId,
+        request_digest: [u8; 32],
+    ) -> Result<(), AuthError> {
+        self.mark_provider_failure(
+            challenge_id,
+            operation_id,
+            request_digest,
+            "providerExchangeIndeterminate",
+            502,
+        )
+        .await
+    }
+
+    async fn mark_provider_exchange_terminal(
+        &self,
+        challenge_id: &ChallengeId,
+        operation_id: &OperationId,
+        request_digest: [u8; 32],
+        code: &str,
+        status: u16,
+    ) -> Result<(), AuthError> {
+        if code.is_empty() || code.len() > 64 || !(400..500).contains(&status) {
+            return Err(AuthError::InvalidRequest);
+        }
+        self.mark_provider_failure(challenge_id, operation_id, request_digest, code, status)
+            .await
     }
 
     async fn mark_provider_result_known(
@@ -856,7 +1094,38 @@ impl AuthRepository for AuthPostgresRepository {
             sqlx::query("INSERT INTO auth_v1.accounts(account_id,tenant_id,state,auth_epoch,fence) VALUES($1,$2,'active',1,$3)").bind(account.as_str()).bind(tenant.as_str()).bind(&fence).execute(&mut *tx).await.map_err(Self::map_db)?;
             let iid = Uuid::new_v4();
             sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state) VALUES($1,$2,$3,$4,1,$5,'active')").bind(iid).bind(account.as_str()).bind(config).bind(identity.exact_issuer()).bind(&subject_lookup).execute(&mut *tx).await.map_err(Self::map_db)?;
-            sqlx::query("INSERT INTO auth_v1.external_identity_secrets(identity_id,key_version,purpose,ciphertext) VALUES($1,$2,'external_identity_subject_v1',$3)").bind(iid).bind(subject_secret.key_version).bind(subject_secret.ciphertext).execute(&mut *tx).await.map_err(Self::map_db)?;
+            let subject_plaintext = self
+                .vault
+                .open(
+                    "external_identity_subject_v1",
+                    challenge_id.as_str(),
+                    &subject_secret,
+                )
+                .await?;
+            let subject_context = crate::auth_vault::canonical_row_context(
+                "external_identity_secrets",
+                &iid.to_string(),
+                account.as_str(),
+                &iid.to_string(),
+                config,
+                audience,
+            )?;
+            let sealed_subject = self
+                .vault
+                .seal(
+                    "external_identity_subject_v1",
+                    &subject_context,
+                    &subject_plaintext,
+                )
+                .await?;
+            sqlx::query("INSERT INTO auth_v1.external_identity_secrets(identity_id,key_version,purpose,ciphertext,vault_context) VALUES($1,$2,'external_identity_subject_v1',$3,$4)")
+                .bind(iid)
+                .bind(sealed_subject.key_version)
+                .bind(sealed_subject.ciphertext)
+                .bind(subject_context)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::map_db)?;
             (account, tenant, 1, fence, iid)
         };
         if let Some(credential) = identity.provider_credential() {
@@ -871,6 +1140,31 @@ impl AuthRepository for AuthPostgresRepository {
                 .map_err(Self::map_db)?;
             let previous_generation: i64 = previous.try_get("generation").map_err(Self::map_db)?;
             let generation = previous_generation + 1;
+            let credential_id = Uuid::new_v4();
+            let credential_plaintext = self
+                .vault
+                .open(
+                    "apple_provider_refresh_v1",
+                    &credential.vault_context,
+                    &credential.encrypted_refresh_token,
+                )
+                .await?;
+            let credential_context = crate::auth_vault::canonical_row_context(
+                "provider_credentials",
+                &credential_id.to_string(),
+                account_id.as_str(),
+                &identity_id.to_string(),
+                config,
+                &credential.audience,
+            )?;
+            let sealed_credential = self
+                .vault
+                .seal(
+                    "apple_provider_refresh_v1",
+                    &credential_context,
+                    &credential_plaintext,
+                )
+                .await?;
             sqlx::query("UPDATE auth_v1.provider_credentials SET state='superseded' WHERE identity_id=$1 AND original_audience=$2 AND state='active'")
                 .bind(identity_id)
                 .bind(&credential.audience)
@@ -878,13 +1172,13 @@ impl AuthRepository for AuthPostgresRepository {
                 .await
                 .map_err(Self::map_db)?;
             sqlx::query("INSERT INTO auth_v1.provider_credentials(credential_id,identity_id,original_audience,vault_context,credential_generation,key_version,ciphertext,state) VALUES($1,$2,$3,$4,$5,$6,$7,'active')")
-                .bind(Uuid::new_v4())
+                .bind(credential_id)
                 .bind(identity_id)
                 .bind(&credential.audience)
-                .bind(&credential.vault_context)
+                .bind(&credential_context)
                 .bind(generation)
-                .bind(credential.encrypted_refresh_token.key_version)
-                .bind(&credential.encrypted_refresh_token.ciphertext)
+                .bind(sealed_credential.key_version)
+                .bind(&sealed_credential.ciphertext)
                 .execute(&mut *tx)
                 .await
                 .map_err(Self::map_db)?;

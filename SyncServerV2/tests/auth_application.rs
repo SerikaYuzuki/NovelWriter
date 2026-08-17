@@ -23,6 +23,10 @@ struct FakeVault {
 }
 #[async_trait]
 impl CredentialVault for FakeVault {
+    fn active_key_version(&self) -> i32 {
+        7
+    }
+
     async fn seal(
         &self,
         purpose: &str,
@@ -109,8 +113,7 @@ impl AppleProvider for FakeProvider {
     }
     async fn revoke(
         &self,
-        _credential_id: &CredentialId,
-        _audience: &str,
+        _credential: &VerifiedProviderCredential,
         _operation_id: &OperationId,
     ) -> Result<(), AuthError> {
         Ok(())
@@ -317,6 +320,31 @@ impl AuthRepository for FakeRepo {
                 request_digest: digest,
                 response_bytes: b"{\"code\":\"providerExchangeIndeterminate\"}".to_vec(),
                 status: 502,
+                session_grant: None,
+            },
+        );
+        Ok(())
+    }
+    async fn mark_provider_exchange_terminal(
+        &self,
+        id: &ChallengeId,
+        operation_id: &OperationId,
+        digest: [u8; 32],
+        code: &str,
+        status: u16,
+    ) -> Result<(), AuthError> {
+        let mut s = self.0.lock().unwrap();
+        s.phase = Some(ChallengePhase::Terminal);
+        s.challenge.as_mut().unwrap().phase = ChallengePhase::Terminal;
+        s.receipts.insert(
+            operation_id.to_string(),
+            AuthReceipt {
+                operation_id: operation_id.clone(),
+                command_kind: EXCHANGE_APPLE_COMMAND.into(),
+                request_digest: digest,
+                response_bytes: format!("{{\"challengeId\":\"{}\",\"code\":\"{}\"}}", id, code)
+                    .into_bytes(),
+                status,
                 session_grant: None,
             },
         );
@@ -897,6 +925,11 @@ async fn provider_evidence_must_match_exact_audience_and_nonce_without_credentia
         } else {
             provider.nonce_override = Some(vec![0x77; 32]);
         }
+        let expected_error = if mismatch == "audience" {
+            AuthError::ProviderNotAllowed
+        } else {
+            AuthError::InvalidRequest
+        };
         assert_eq!(
             app.exchange_apple_from_wire(
                 &exchange,
@@ -907,7 +940,7 @@ async fn provider_evidence_must_match_exact_audience_and_nonce_without_credentia
             )
             .await
             .unwrap_err(),
-            AuthError::ProviderExchangeIndeterminate
+            expected_error
         );
         let state = repo.0.lock().unwrap();
         assert!(state.account.is_none());

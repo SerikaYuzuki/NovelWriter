@@ -13,7 +13,6 @@ use uuid::Uuid;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let _mode = RuntimeMode::production_from_environment()?;
-    let database_url = std::env::var("DATABASE_URL")?;
     let server_instance_id = production_server_instance()?;
 
     // Parse every Production auth dependency before opening PostgreSQL. A
@@ -25,7 +24,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apple_signer = AppleClientSecretSigner::from_environment()?;
     let apple_transport = ProductionAppleTransport::new()?;
 
-    let repository = Repository::connect(&database_url, server_instance_id.clone()).await?;
+    let repository = Repository::connect_from_environment(server_instance_id.clone()).await?;
+    let auth_repository = fuminiwa_sync_server_v2::auth_postgres::AuthPostgresRepository::new(
+        repository.pool.clone(),
+        Arc::new(vault.clone()),
+        token_hmac_key,
+        server_instance_id.clone(),
+    )?;
+    auth_repository.rewrap_vault().await?;
     ProductionAuthService::ensure_apple_provider_config(&repository.pool).await?;
     let auth_service = Arc::new(ProductionAuthService::new(
         repository.pool.clone(),

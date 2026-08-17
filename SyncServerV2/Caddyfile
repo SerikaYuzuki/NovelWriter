@@ -1,0 +1,8 @@
+{
+    auto_https disable_redirects
+}
+
+:443 {
+    tls internal
+    reverse_proxy server:8092
+}

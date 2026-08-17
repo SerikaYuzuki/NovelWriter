@@ -89,6 +89,13 @@ pub trait AuthHttpService: Send + Sync {
         refresh_token: String,
         body: &[u8],
     ) -> Result<AuthResponse, AuthApiError>;
+    async fn apple_notification(
+        &self,
+        _body: &[u8],
+        _now_unix: i64,
+    ) -> Result<AuthResponse, AuthApiError> {
+        Err(AuthApiError::from(AuthError::InvalidRequest))
+    }
     async fn me(&self, access_token: &str) -> Result<AuthResponse, AuthApiError>;
 }
 
@@ -110,6 +117,10 @@ impl AuthHttpState {
 pub fn router(state: AuthHttpState) -> Router {
     Router::new()
         .route("/v1/auth/capabilities", get(capabilities))
+        .route(
+            "/v1/auth/apple/notifications",
+            post(apple_notification).layer(DefaultBodyLimit::max(MAX_AUTH_BODY_BYTES)),
+        )
         .route(
             "/v1/auth/challenges",
             post(create_challenge).layer(DefaultBodyLimit::max(MAX_AUTH_BODY_BYTES)),
@@ -255,6 +266,23 @@ async fn revoke(
     };
     service_response(
         state.service.revoke(token, &body).await,
+        ErrorScope::Operation,
+    )
+}
+
+async fn apple_notification(
+    State(state): State<AuthHttpState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body {
+        Ok(body) => body,
+        Err(_) => return error_response(AuthError::InvalidRequest.into(), ErrorScope::Operation),
+    };
+    service_response(
+        state
+            .service
+            .apple_notification(&body, Utc::now().timestamp())
+            .await,
         ErrorScope::Operation,
     )
 }

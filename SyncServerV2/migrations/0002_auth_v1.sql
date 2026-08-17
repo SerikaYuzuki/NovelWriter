@@ -164,6 +164,7 @@ CREATE TABLE auth_v1.provider_notification_receipts (
     event_key_hmac BYTEA NOT NULL CHECK(octet_length(event_key_hmac)=32),
     request_digest BYTEA NOT NULL CHECK(octet_length(request_digest)=32),
     event_kind TEXT NOT NULL,
+    event_issued_at BIGINT NOT NULL DEFAULT 0,
     outcome TEXT NOT NULL CHECK(outcome IN ('applied','emailStateOnly','unknownIdentity','staleAfterReauthentication','transientIndeterminate','rejectedDigestMismatch')),
     account_id TEXT REFERENCES auth_v1.accounts(account_id),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -181,3 +182,15 @@ CREATE TABLE auth_v1.auth_events (
 CREATE INDEX auth_sessions_account_idx ON auth_v1.auth_sessions(account_id);
 CREATE INDEX external_identities_account_idx ON auth_v1.external_identities(account_id);
 CREATE INDEX provider_credentials_identity_audience_idx ON auth_v1.provider_credentials(identity_id,original_audience);
+
+CREATE TABLE auth_v1.vault_rewrap_ledger (
+    table_name TEXT NOT NULL CHECK (table_name IN ('auth_operations','auth_challenges','external_identity_secrets','provider_credentials','session_refresh_receipts')),
+    row_id TEXT NOT NULL,
+    old_key_version INTEGER NOT NULL CHECK (old_key_version > 0),
+    new_key_version INTEGER NOT NULL CHECK (new_key_version > 0),
+    state TEXT NOT NULL CHECK (state IN ('pending','completed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY(table_name,row_id)
+);

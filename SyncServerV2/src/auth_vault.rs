@@ -10,7 +10,7 @@ use aes_gcm::{
 };
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path, sync::Arc};
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 8] = b"FMAEV001";
@@ -22,6 +22,7 @@ const HEADER_BYTES: usize = MAGIC.len() + NONCE_BYTES * 2 + WRAPPED_DEK_BYTES;
 pub struct AesGcmCredentialVault {
     key_version: i32,
     kek: [u8; 32],
+    keyring: Arc<BTreeMap<i32, [u8; 32]>>,
 }
 
 impl AesGcmCredentialVault {
@@ -29,7 +30,27 @@ impl AesGcmCredentialVault {
         if key_version < 1 {
             return Err(AuthError::Vault);
         }
-        Ok(Self { key_version, kek })
+        Ok(Self {
+            key_version,
+            kek,
+            keyring: Arc::new(BTreeMap::from([(key_version, kek)])),
+        })
+    }
+
+    pub fn with_keyring(
+        key_version: i32,
+        kek: [u8; 32],
+        mut keyring: BTreeMap<i32, [u8; 32]>,
+    ) -> Result<Self, AuthError> {
+        if key_version < 1 {
+            return Err(AuthError::Vault);
+        }
+        keyring.insert(key_version, kek);
+        Ok(Self {
+            key_version,
+            kek,
+            keyring: Arc::new(keyring),
+        })
     }
 
     pub fn from_environment() -> Result<Self, AuthError> {
@@ -37,15 +58,31 @@ impl AesGcmCredentialVault {
             .map_err(|_| AuthError::Vault)?
             .parse::<i32>()
             .map_err(|_| AuthError::Vault)?;
-        Self::new(
-            version,
-            secret_key_from_environment("FUMINIWA_AUTH_VAULT_KEY")?,
-        )
+        let active = secret_key_from_environment("FUMINIWA_AUTH_VAULT_KEY")?;
+        let mut keyring = BTreeMap::new();
+        if let Some(path) = std::env::var_os("FUMINIWA_AUTH_VAULT_KEYRING_FILE") {
+            let raw = fs::read(path).map_err(|_| AuthError::Vault)?;
+            let values: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_slice(&raw).map_err(|_| AuthError::Vault)?;
+            for (version_text, encoded) in values {
+                let version = version_text.parse::<i32>().map_err(|_| AuthError::Vault)?;
+                let encoded = encoded.as_str().ok_or(AuthError::Vault)?;
+                let bytes = URL_SAFE_NO_PAD
+                    .decode(encoded)
+                    .map_err(|_| AuthError::Vault)?;
+                keyring.insert(version, bytes.try_into().map_err(|_| AuthError::Vault)?);
+            }
+        }
+        Self::with_keyring(version, active, keyring)
     }
 }
 
 #[async_trait]
 impl CredentialVault for AesGcmCredentialVault {
+    fn active_key_version(&self) -> i32 {
+        self.key_version
+    }
+
     async fn seal(
         &self,
         purpose: &str,
@@ -99,9 +136,10 @@ impl CredentialVault for AesGcmCredentialVault {
         secret: &SealedSecret,
     ) -> Result<Vec<u8>, AuthError> {
         validate_context(purpose, row_id)?;
-        if secret.key_version != self.key_version
-            || secret.ciphertext.len() < HEADER_BYTES + 16
-            || &secret.ciphertext[..MAGIC.len()] != MAGIC
+        let Some(kek) = self.keyring.get(&secret.key_version) else {
+            return Err(AuthError::Vault);
+        };
+        if secret.ciphertext.len() < HEADER_BYTES + 16 || &secret.ciphertext[..MAGIC.len()] != MAGIC
         {
             return Err(AuthError::Vault);
         }
@@ -115,7 +153,7 @@ impl CredentialVault for AesGcmCredentialVault {
         let encrypted = &secret.ciphertext[body_start..];
 
         let wrap_aad = aad(b"FUMINIWA-AUTH-VAULT-WRAP-V1", purpose, row_id)?;
-        let dek_bytes = cipher(&self.kek)?.decrypt(
+        let dek_bytes = cipher(kek)?.decrypt(
             Nonce::from_slice(wrap_nonce),
             Payload {
                 msg: wrapped,
@@ -180,6 +218,33 @@ pub fn secret_key_from_environment(prefix: &str) -> Result<[u8; 32], AuthError> 
     decoded.try_into().map_err(|_| AuthError::Vault)
 }
 
+/// Builds the closed, length-prefixed context used as the vault row binding.
+/// The encoded value is opaque to callers but authenticates table kind, row
+/// identity and the provider/account scope that owns the secret.
+pub fn canonical_row_context(
+    table: &str,
+    row_id: &str,
+    account_id: &str,
+    identity_id: &str,
+    provider_config_id: &str,
+    audience: &str,
+) -> Result<String, AuthError> {
+    let mut bytes = b"FUMINIWA-AUTH-ROW-CONTEXT-V1".to_vec();
+    for part in [
+        table,
+        row_id,
+        account_id,
+        identity_id,
+        provider_config_id,
+        audience,
+    ] {
+        let length = u32::try_from(part.len()).map_err(|_| AuthError::Vault)?;
+        bytes.extend_from_slice(&length.to_be_bytes());
+        bytes.extend_from_slice(part.as_bytes());
+    }
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
 fn read_secret_file(path: &Path) -> Result<String, AuthError> {
     if !path.is_absolute() {
         return Err(AuthError::Vault);
@@ -230,6 +295,59 @@ mod tests {
         sealed.key_version = 2;
         assert_eq!(
             vault.open("receipt", "row", &sealed).await,
+            Err(AuthError::Vault)
+        );
+    }
+
+    #[tokio::test]
+    async fn dual_decrypts_old_version_and_writes_active_version() {
+        let old = AesGcmCredentialVault::new(1, [1; 32]).unwrap();
+        let old_secret = old.seal("receipt", "row", b"secret").await.unwrap();
+        let mut old_keys = BTreeMap::new();
+        old_keys.insert(1, [1; 32]);
+        let rotated = AesGcmCredentialVault::with_keyring(2, [2; 32], old_keys).unwrap();
+        assert_eq!(rotated.active_key_version(), 2);
+        assert_eq!(
+            rotated.open("receipt", "row", &old_secret).await.unwrap(),
+            b"secret"
+        );
+        let fresh = rotated.seal("receipt", "row", b"secret").await.unwrap();
+        assert_eq!(fresh.key_version, 2);
+        assert_eq!(
+            rotated.open("receipt", "row", &fresh).await.unwrap(),
+            b"secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_row_context_rejects_identity_or_audience_swap() {
+        let vault = AesGcmCredentialVault::new(1, [3; 32]).unwrap();
+        let first = canonical_row_context(
+            "provider_credentials",
+            "credential-a",
+            "account-a",
+            "identity-a",
+            "apple-primary-fuminiwa-v1",
+            "dev.serikayuzuki.fuminiwa",
+        )
+        .unwrap();
+        let second = canonical_row_context(
+            "provider_credentials",
+            "credential-b",
+            "account-a",
+            "identity-a",
+            "apple-primary-fuminiwa-v1",
+            "dev.serikayuzuki.fuminiwa.ios",
+        )
+        .unwrap();
+        let secret = vault
+            .seal("apple_provider_refresh_v1", &first, b"provider-refresh")
+            .await
+            .unwrap();
+        assert_eq!(
+            vault
+                .open("apple_provider_refresh_v1", &second, &secret)
+                .await,
             Err(AuthError::Vault)
         );
     }

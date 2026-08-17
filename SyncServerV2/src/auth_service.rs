@@ -5,9 +5,9 @@ use crate::{
     auth_apple::{AppleClientSecretSigner, ProductionAppleProvider, ProductionAppleTransport},
     auth_application::{AuthApplication, AuthRepository, HmacSecretHasher},
     auth_domain::{
-        AuthError, AuthenticatedPrincipal, CHALLENGE_LIFETIME_SECONDS, CREATE_CHALLENGE_COMMAND,
-        EXCHANGE_APPLE_COMMAND, REFRESH_TOKEN_LIFETIME_SECONDS, REVOKE_SESSION_COMMAND,
-        ROTATE_REFRESH_COMMAND,
+        AuthError, AuthenticatedPrincipal, SecretHasher, CHALLENGE_LIFETIME_SECONDS,
+        CREATE_CHALLENGE_COMMAND, EXCHANGE_APPLE_COMMAND, REFRESH_TOKEN_LIFETIME_SECONDS,
+        REVOKE_SESSION_COMMAND, ROTATE_REFRESH_COMMAND,
     },
     auth_http::{AuthApiError, AuthHttpService, AuthResponse},
     auth_postgres::AuthPostgresRepository,
@@ -105,6 +105,42 @@ impl ProductionAuthService {
             .map_err(|error| AuthError::Database(error.to_string()))
     }
 
+    pub async fn process_apple_notification(
+        &self,
+        body: &[u8],
+        now_unix: i64,
+    ) -> Result<(), AuthError> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Envelope {
+            payload: String,
+        }
+        let envelope: Envelope =
+            serde_json::from_slice(body).map_err(|_| AuthError::InvalidRequest)?;
+        let notification = self
+            .apple
+            .verify_s2s_notification(&envelope.payload, now_unix)
+            .await?;
+        let config =
+            crate::auth_domain::ProviderConfigId::new(crate::auth_domain::APPLE_PROVIDER_CONFIG)?;
+        let lookup = self
+            .hasher
+            .subject_lookup(
+                &config,
+                crate::auth_domain::APPLE_ISSUER,
+                &notification.subject,
+            )
+            .await?;
+        self.application
+            .repository
+            .record_apple_notification(
+                &notification,
+                &lookup,
+                crate::auth_domain::digest_request(body),
+            )
+            .await
+    }
+
     fn parsed(kind: &str, body: &[u8]) -> Result<ParsedAuthCommand, AuthApiError> {
         parse_auth_command(kind, body).map_err(AuthApiError::from)
     }
@@ -140,6 +176,17 @@ impl AccessAuthenticator for ProductionAuthService {
 
 #[async_trait]
 impl AuthHttpService for ProductionAuthService {
+    async fn apple_notification(
+        &self,
+        body: &[u8],
+        now_unix: i64,
+    ) -> Result<AuthResponse, AuthApiError> {
+        self.process_apple_notification(body, now_unix)
+            .await
+            .map_err(AuthApiError::from)?;
+        Ok(AuthResponse::new(204, b"{}".to_vec()))
+    }
+
     async fn create_challenge(
         &self,
         body: &[u8],

@@ -29,6 +29,10 @@ struct ScenarioVault {
 
 #[async_trait]
 impl CredentialVault for ScenarioVault {
+    fn active_key_version(&self) -> i32 {
+        7
+    }
+
     async fn seal(
         &self,
         purpose: &str,
@@ -103,8 +107,7 @@ impl AppleProvider for ScenarioAppleProvider {
 
     async fn revoke(
         &self,
-        _credential_id: &CredentialId,
-        _audience: &str,
+        _credential: &VerifiedProviderCredential,
         _operation_id: &OperationId,
     ) -> Result<(), AuthError> {
         Ok(())
