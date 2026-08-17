@@ -17,6 +17,7 @@ public struct LegacyV1ExportOptions: Sendable {
     public let sourceArchiveRootURL: URL
     public let archiveManifestURL: URL
     public let sourceIsVerifiedArchive: Bool
+    public let expectedWorkCount: Int
 
     public init(
         sourceSQLiteURL: URL,
@@ -24,7 +25,8 @@ public struct LegacyV1ExportOptions: Sendable {
         stageRootURL: URL,
         sourceArchiveRootURL: URL,
         archiveManifestURL: URL,
-        sourceIsVerifiedArchive: Bool
+        sourceIsVerifiedArchive: Bool,
+        expectedWorkCount: Int
     ) {
         self.sourceSQLiteURL = sourceSQLiteURL
         self.classificationLedgerURL = classificationLedgerURL
@@ -32,6 +34,7 @@ public struct LegacyV1ExportOptions: Sendable {
         self.sourceArchiveRootURL = sourceArchiveRootURL
         self.archiveManifestURL = archiveManifestURL
         self.sourceIsVerifiedArchive = sourceIsVerifiedArchive
+        self.expectedWorkCount = expectedWorkCount
     }
 }
 
@@ -76,6 +79,7 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
     public let sourceArchiveManifestPath: String
     public let sourceArchiveManifestSHA256: String
     public let classificationLedgerSHA256: String
+    public let sourceWorkCount: Int
     public let generatedAt: String
     public let attachmentsPolicy: String
     public let objectVerificationIssues: [String]
@@ -88,6 +92,7 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
         sourceArchiveManifestPath: String,
         sourceArchiveManifestSHA256: String,
         classificationLedgerSHA256: String = "",
+        sourceWorkCount: Int = 0,
         generatedAt: String,
         attachmentsPolicy: String,
         objectVerificationIssues: [String],
@@ -100,6 +105,7 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
         self.sourceArchiveManifestPath = sourceArchiveManifestPath
         self.sourceArchiveManifestSHA256 = sourceArchiveManifestSHA256
         self.classificationLedgerSHA256 = classificationLedgerSHA256
+        self.sourceWorkCount = sourceWorkCount
         self.generatedAt = generatedAt
         self.attachmentsPolicy = attachmentsPolicy
         self.objectVerificationIssues = objectVerificationIssues
@@ -120,6 +126,7 @@ public enum LegacyV1ExportError: Error, Equatable, Sendable {
     case stageOverlapsSource
     case stageNotEmpty(URL)
     case sourceSidecarPresent(URL)
+    case workCountMismatch(expected: Int, actual: Int)
     case malformedClassification(workID: String, value: String)
     case duplicateClassification(UUID)
     case missingClassification(UUID)
@@ -142,6 +149,9 @@ public struct LegacyV1Exporter: Sendable {
         let database = try ReadOnlyV1Database(url: options.sourceSQLiteURL)
         defer { database.close() }
         let works = try database.works()
+        guard options.expectedWorkCount > 0, works.count == options.expectedWorkCount else {
+            throw LegacyV1ExportError.workCountMismatch(expected: options.expectedWorkCount, actual: works.count)
+        }
         let sourceRowIssues = try database.malformedWorkRows()
         let workIDs = Set(works.map(\.workID))
         if let extra = classifications.keys.first(where: { !workIDs.contains($0) }) {
@@ -155,12 +165,15 @@ public struct LegacyV1Exporter: Sendable {
                 throw LegacyV1ExportError.missingClassification(work.workID)
             }
         }
+        try database.verifySourceEvidence(works: works, classifications: classifications)
         if let existing = try await existingCommittedStage(
             options: options,
             evidence: evidence,
             classifications: classifications,
             classificationDigest: classificationDigest,
-            workIDs: workIDs
+            workIDs: workIDs,
+            database: database,
+            works: works
         ) {
             return existing
         }
@@ -190,7 +203,7 @@ public struct LegacyV1Exporter: Sendable {
             }
 
             do {
-                guard let snapshot = try database.snapshot(id: work.currentSnapshotID) else {
+                guard let snapshot = try database.snapshot(id: work.currentSnapshotID, workID: work.workID) else {
                     throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "current snapshot is missing")
                 }
                 let expected = SHA256Hex.digest(snapshot.manifest)
@@ -229,7 +242,7 @@ public struct LegacyV1Exporter: Sendable {
                     throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "document identity mismatch")
                 }
 
-                let relative = classification.directoryName + "/" + work.workID.uuidString + ".novelpkg"
+                let relative = classification.disposition.directoryName + "/" + work.workID.uuidString + ".novelpkg"
                 let destination = options.stageRootURL.appendingPathComponent(relative)
                 let projectionDigest = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
                 try await writeIdempotently(
@@ -244,7 +257,7 @@ public struct LegacyV1Exporter: Sendable {
                 entries.append(
                     LegacyV1ExportEntry(
                         workID: work.workID,
-                        disposition: classification,
+                        disposition: classification.disposition,
                         snapshotID: snapshot.snapshotID,
                         outputRelativePath: relative,
                         outcome: "exported",
@@ -256,7 +269,7 @@ public struct LegacyV1Exporter: Sendable {
                 entries.append(
                     LegacyV1ExportEntry(
                         workID: work.workID,
-                        disposition: classification,
+                        disposition: classification.disposition,
                         snapshotID: nil,
                         outputRelativePath: nil,
                         outcome: "blocked",
@@ -272,6 +285,7 @@ public struct LegacyV1Exporter: Sendable {
             sourceArchiveManifestPath: options.archiveManifestURL.path,
             sourceArchiveManifestSHA256: evidence.archiveManifestDigest,
             classificationLedgerSHA256: classificationDigest,
+            sourceWorkCount: works.count,
             generatedAt: ISO8601DateFormatter().string(from: Date()),
             attachmentsPolicy: "SQLite v1 contains no attachment or opaque-resource payload; no automatic reconstruction is performed. Preserve the raw read-only archive.",
             objectVerificationIssues: objectIssues,
@@ -288,6 +302,13 @@ public struct LegacyV1Exporter: Sendable {
         }
         let finalDigest = try SHA256Hex.digest(fileAt: options.sourceSQLiteURL)
         guard finalDigest == sourceDigest else { throw LegacyV1ExportError.sourceChanged }
+        let finalEvidence = try validateInput(options)
+        let finalClassificationDigest = try SHA256Hex.digest(fileAt: options.classificationLedgerURL)
+        guard finalEvidence.sourceDigest == sourceDigest,
+              finalEvidence.archiveManifestDigest == evidence.archiveManifestDigest,
+              finalClassificationDigest == classificationDigest else {
+            throw LegacyV1ExportError.sourceChanged
+        }
         try writeRunState(
             exportID: report.exportID,
             sourceDigest: report.sourceSQLiteSHA256,
@@ -334,6 +355,23 @@ public struct LegacyV1Exporter: Sendable {
             let sidecar = URL(fileURLWithPath: options.sourceSQLiteURL.path + suffix)
             if fileManager.fileExists(atPath: sidecar.path) {
                 throw LegacyV1ExportError.sourceSidecarPresent(sidecar)
+            }
+        }
+        let journal = URL(fileURLWithPath: options.sourceSQLiteURL.path + "-journal")
+        if fileManager.fileExists(atPath: journal.path) {
+            throw LegacyV1ExportError.sourceSidecarPresent(journal)
+        }
+        let archiveEnumerator = fileManager.enumerator(
+            at: options.sourceArchiveRootURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        )
+        while let item = archiveEnumerator?.nextObject() as? URL {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isSymbolicLink != true else { throw LegacyV1ExportError.unsafeArchivePath(item) }
+            if values.isRegularFile == true,
+               item.lastPathComponent.hasSuffix("-journal") || item.lastPathComponent.contains("-mj") {
+                throw LegacyV1ExportError.sourceSidecarPresent(item)
             }
         }
         let archiveManifest = try ArchiveManifest.load(from: options.archiveManifestURL)
@@ -428,9 +466,11 @@ public struct LegacyV1Exporter: Sendable {
     private func existingCommittedStage(
         options: LegacyV1ExportOptions,
         evidence: ArchiveEvidence,
-        classifications: [UUID: LegacyV1Disposition],
+        classifications: [UUID: ClassificationRecord],
         classificationDigest: String,
-        workIDs: Set<UUID>
+        workIDs: Set<UUID>,
+        database: ReadOnlyV1Database,
+        works: [LegacyWork]
     ) async throws -> LegacyV1ExportReport? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: options.stageRootURL.path) else { return nil }
@@ -459,10 +499,26 @@ public struct LegacyV1Exporter: Sendable {
               report.sourceSQLiteSHA256 == evidence.sourceDigest,
               report.sourceArchiveManifestSHA256 == evidence.archiveManifestDigest,
               report.classificationLedgerSHA256 == classificationDigest,
+              report.sourceWorkCount == works.count,
+              report.sourceWorkCount == workIDs.count,
+              Set(report.entries.map(\.workID)).count == report.entries.count,
               Set(report.entries.map(\.workID)) == workIDs,
               Set(report.entries.map(\.workID)) == Set(classifications.keys),
-              report.entries.allSatisfy({ classifications[$0.workID] == $0.disposition && $0.outcome == "exported" }) else {
+              report.entries.allSatisfy({ classifications[$0.workID]?.disposition == $0.disposition && $0.outcome == "exported" }),
+              report.entries.allSatisfy({ $0.outputRelativePath == "\($0.disposition.rawValue)/\($0.workID.uuidString).novelpkg" }) else {
             throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
+        }
+        try database.verifySourceEvidence(works: works, classifications: classifications)
+        for work in works {
+            guard let entry = report.entries.first(where: { $0.workID == work.workID }),
+                  let projection = entry.projectionDigest,
+                  let snapshotID = entry.snapshotID else {
+                throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
+            }
+            let source = try database.verifyProjection(for: work)
+            guard source.snapshotID == snapshotID, source.projectionDigest == projection else {
+                throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
+            }
         }
         try validateStageInventory(report: report, root: options.stageRootURL)
         let repository = NovelpkgRepository()
@@ -640,14 +696,24 @@ private extension JSONEncoder {
     }
 }
 
-private struct ClassificationLedger {
-    let values: [UUID: LegacyV1Disposition]
-
-    static func load(from url: URL) throws -> [UUID: LegacyV1Disposition] {
+private enum ClassificationLedger {
+    static func load(from url: URL) throws -> [UUID: ClassificationRecord] {
         let text = try String(contentsOf: url, encoding: .utf8)
-        var values: [UUID: LegacyV1Disposition] = [:]
-        for line in text.split(whereSeparator: \ .isNewline) {
-            let fields = CSV.parse(String(line))
+        var values: [UUID: ClassificationRecord] = [:]
+        let lines = text.components(separatedBy: .newlines)
+        for (index, line) in lines.enumerated() {
+            if line.isEmpty {
+                if index == lines.count - 1 {
+                    continue
+                }
+                throw LegacyV1ExportError.malformedClassification(workID: "<empty>", value: "empty CSV row")
+            }
+            let fields: [String]
+            do {
+                fields = try CSV.parse(line)
+            } catch {
+                throw LegacyV1ExportError.malformedClassification(workID: "<unknown>", value: "unclosed quote")
+            }
             let knownHeader = ["workId", "classification", "snapshotId", "createdAt", "generation", "headSnapshotId", "pinned", "evidence"]
             if fields == knownHeader {
                 continue
@@ -667,7 +733,23 @@ private struct ClassificationLedger {
             guard let disposition = disposition(value: fields[1]) else {
                 throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: fields[1])
             }
-            guard values.updateValue(disposition, forKey: workID) == nil else {
+            guard fields[2].count == 64,
+                  fields[2].utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) }),
+                  fields[5] == fields[2],
+                  ISO8601DateFormatter().date(from: fields[3]) != nil,
+                  Int(fields[4]) != nil,
+                  Int(fields[6]) == 0 || Int(fields[6]) == 1 else {
+                throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: "invalid evidence columns")
+            }
+            let record = ClassificationRecord(
+                disposition: disposition,
+                snapshotID: fields[2],
+                createdAt: fields[3],
+                generation: Int(fields[4])!,
+                headSnapshotID: fields[5],
+                pinned: Int(fields[6])!
+            )
+            guard values.updateValue(record, forKey: workID) == nil else {
                 throw LegacyV1ExportError.duplicateClassification(workID)
             }
         }
@@ -688,8 +770,17 @@ private struct ClassificationLedger {
     }
 }
 
+private struct ClassificationRecord: Equatable {
+    let disposition: LegacyV1Disposition
+    let snapshotID: String
+    let createdAt: String
+    let generation: Int
+    let headSnapshotID: String
+    let pinned: Int
+}
+
 private enum CSV {
-    static func parse(_ line: String) -> [String] {
+    static func parse(_ line: String) throws -> [String] {
         var result: [String] = []
         var field = ""
         var quoted = false
@@ -712,15 +803,22 @@ private enum CSV {
             }
             index = line.index(after: index)
         }
+        guard !quoted else { throw CSVError.unclosedQuote }
         result.append(field)
         return result
     }
+}
+
+private enum CSVError: Error {
+    case unclosedQuote
 }
 
 private struct LegacyWork {
     let workID: UUID
     let documentID: UUID
     let currentSnapshotID: String
+    let createdAt: String
+    let generation: Int
 }
 
 private struct ArchiveEvidence {
@@ -824,6 +922,7 @@ private struct LegacySnapshot {
     let snapshotID: String
     let manifest: Data
     let manifestModel: LegacyV1Manifest
+    let pinned: Int
 }
 
 private struct LegacyV1Manifest: Decodable {
@@ -965,16 +1064,22 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     func works() throws -> [LegacyWork] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id FROM works ORDER BY work_id") { statement in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, document_created_at, local_generation FROM works ORDER BY work_id") { statement in
             guard let work = text(statement, 0), let workID = UUID(uuidString: work),
                   let document = text(statement, 1), let documentID = UUID(uuidString: document),
                   let snapshot = text(statement, 2), !snapshot.isEmpty else { return nil }
-            return LegacyWork(workID: workID, documentID: documentID, currentSnapshotID: snapshot)
+            return LegacyWork(
+                workID: workID,
+                documentID: documentID,
+                currentSnapshotID: snapshot,
+                createdAt: text(statement, 3) ?? "",
+                generation: Int(sqlite3_column_int64(statement, 4))
+            )
         }
     }
 
     func malformedWorkRows() throws -> [String] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id FROM works ORDER BY work_id") { statement in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, document_created_at, local_generation FROM works ORDER BY work_id") { statement in
             let work = text(statement, 0) ?? "<null>"
             let document = text(statement, 1) ?? "<null>"
             let snapshot = text(statement, 2) ?? "<null>"
@@ -988,8 +1093,8 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
         }
     }
 
-    func snapshot(id: String) throws -> LegacySnapshot? {
-        try one(sql: "SELECT snapshot_id, manifest FROM snapshots WHERE snapshot_id = ?", bind: id) { statement in
+    func snapshot(id: String, workID: UUID) throws -> LegacySnapshot? {
+        try one(sql: "SELECT snapshot_id, manifest, pinned FROM snapshots WHERE snapshot_id = ? AND work_id = ?", binds: [id, workID.uuidString.lowercased()]) { statement in
             guard let snapshotID = text(statement, 0), let manifest = data(statement, 1) else { return nil }
             let manifestModel: LegacyV1Manifest
             do {
@@ -997,12 +1102,68 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
             } catch {
                 throw LegacyV1DecodeError.nonCanonical(String(describing: error))
             }
-            return LegacySnapshot(snapshotID: snapshotID, manifest: manifest, manifestModel: manifestModel)
+            return LegacySnapshot(
+                snapshotID: snapshotID,
+                manifest: manifest,
+                manifestModel: manifestModel,
+                pinned: Int(sqlite3_column_int(statement, 2))
+            )
         }
     }
 
+    func verifySourceEvidence(works: [LegacyWork], classifications: [UUID: ClassificationRecord]) throws {
+        for work in works {
+            guard let classification = classifications[work.workID],
+                  classification.snapshotID == work.currentSnapshotID,
+                  classification.headSnapshotID == work.currentSnapshotID,
+                  classification.createdAt == work.createdAt,
+                  classification.generation == work.generation,
+                  let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID),
+                  classification.pinned == snapshot.pinned else {
+                throw LegacyV1ExportError.malformedClassification(
+                    workID: work.workID.uuidString,
+                    value: "classification evidence does not match source"
+                )
+            }
+        }
+    }
+
+    func verifyProjection(for work: LegacyWork) throws -> (snapshotID: String, projectionDigest: String) {
+        guard let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID) else {
+            throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "current snapshot is missing")
+        }
+        guard SHA256Hex.digest(snapshot.manifest) == snapshot.snapshotID else {
+            throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "snapshot digest does not match snapshot ID")
+        }
+        guard snapshot.manifestModel.workID == work.workID,
+              snapshot.manifestModel.entries.count(where: { $0.entityKey == "work/document" }) == 1 else {
+            throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "manifest work identity or document entry is invalid")
+        }
+        for entry in snapshot.manifestModel.entries {
+            guard let object = try object(id: entry.objectID),
+                  object.byteCount == entry.byteCount,
+                  SHA256Hex.digest(object.bytes) == entry.objectID else {
+                throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "referenced object is invalid: (entry.objectID)")
+            }
+        }
+        guard let documentEntry = snapshot.manifestModel.entries.first(where: { $0.entityKey == "work/document" }),
+              documentEntry.contentType == "application/json",
+              let documentObject = try object(id: documentEntry.objectID) else {
+            throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "work/document object is missing")
+        }
+        let wireSnapshot = try WorkCanonicalJSON.decodeSnapshot(documentObject.bytes)
+        let document = try wireSnapshot.materializedDocument()
+        guard document.id == work.documentID, wireSnapshot.documentID.rawValue == work.documentID else {
+            throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "document identity mismatch")
+        }
+        return try (
+            snapshot.snapshotID,
+            SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
+        )
+    }
+
     func object(id: String) throws -> LegacyObject? {
-        try one(sql: "SELECT object_id, byte_count, bytes FROM objects WHERE object_id = ?", bind: id) { statement in
+        try one(sql: "SELECT object_id, byte_count, bytes FROM objects WHERE object_id = ?", binds: [id]) { statement in
             guard let objectID = text(statement, 0), let bytes = data(statement, 2) else { return nil }
             return LegacyObject(objectID: objectID, byteCount: sqlite3_column_int64(statement, 1), bytes: bytes)
         }
@@ -1028,28 +1189,36 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
         }
         defer { sqlite3_finalize(statement) }
         var result: [T] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            if let value = try decode(statement) {
-                result.append(value)
+        while true {
+            let step = sqlite3_step(statement)
+            if step == SQLITE_ROW {
+                if let value = try decode(statement) {
+                    result.append(value)
+                }
+            } else if step == SQLITE_DONE {
+                break
+            } else {
+                throw LegacyV1ExportError.sqliteQueryFailed(String(cString: sqlite3_errmsg(handle)))
             }
-        }
-        guard sqlite3_errcode(handle) == SQLITE_OK
-            || sqlite3_errcode(handle) == SQLITE_ROW
-            || sqlite3_errcode(handle) == SQLITE_DONE else {
-            throw LegacyV1ExportError.sqliteQueryFailed(String(cString: sqlite3_errmsg(handle)))
         }
         return result
     }
 
-    private func one<T>(sql: String, bind: String, _ decode: (OpaquePointer) throws -> T?) throws -> T? {
+    private func one<T>(sql: String, binds: [String], _ decode: (OpaquePointer) throws -> T?) throws -> T? {
         guard let handle else { throw LegacyV1ExportError.sqliteOpenFailed("database closed") }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
             throw LegacyV1ExportError.sqliteQueryFailed(String(cString: sqlite3_errmsg(handle)))
         }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, bind, -1, SQLITE_TRANSIENT)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        for (index, bind) in binds.enumerated() {
+            sqlite3_bind_text(statement, Int32(index + 1), bind, -1, SQLITE_TRANSIENT)
+        }
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_ROW || result == SQLITE_DONE else {
+            throw LegacyV1ExportError.sqliteQueryFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+        guard result == SQLITE_ROW else { return nil }
         return try decode(statement)
     }
 
@@ -1059,8 +1228,11 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     private func data(_ statement: OpaquePointer, _ index: Int32) -> Data? {
+        guard sqlite3_column_type(statement, index) == SQLITE_BLOB else { return nil }
+        let count = Int(sqlite3_column_bytes(statement, index))
+        guard count > 0 else { return Data() }
         guard let value = sqlite3_column_blob(statement, index) else { return nil }
-        return Data(bytes: value, count: Int(sqlite3_column_bytes(statement, index)))
+        return Data(bytes: value, count: count)
     }
 }
 

@@ -8,6 +8,7 @@ macOS専用の移行ツールです。入力SQLiteはread-onlyで開き、出力
 ```sh
 swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-export \
   --source-is-verified-archive \
+  --expected-work-count 62 \
   /path/to/legacy-v1.sqlite \
   /path/to/classification.csv \
   /path/to/new-stage-root \
@@ -15,11 +16,11 @@ swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-export \
   /path/to/legacy-archive-root/sha256-manifest.txt
 ```
 
-classification CSVの最初の2列は`workID,classification`です。分類はタイトルから推測せず、
+classification CSVは8列（`workID,classification,snapshotID,createdAt,generation,headSnapshotID,pinned,evidence`）です。分類はタイトルから推測せず、
 ledgerの証拠を使います。受理する分類は`verified`、`verified_candidate`、`quarantine`、
 `legacy_quarantine_test_batch`、`needs-review`、`needs_review`、
-`legacy_quarantine_ambiguous_user_touched`です。旧inventoryでverifiedをWorkID自身で表す
-形式も受理します。各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。
+`legacy_quarantine_ambiguous_user_touched`です。
+各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。`--expected-work-count`は必須で、今回の監査済みarchiveでは`62`を指定します。
 
 各作品について次を検証します。
 

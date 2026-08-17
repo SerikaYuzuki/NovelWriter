@@ -6,17 +6,22 @@ struct SnapshotSyncV2Export {
     static func main() async {
         do {
             let arguments = Array(CommandLine.arguments.dropFirst())
-            guard arguments.count == 6, arguments[0] == "--source-is-verified-archive" else {
+            guard arguments.count == 8,
+                  arguments[0] == "--source-is-verified-archive",
+                  arguments[1] == "--expected-work-count",
+                  let expectedWorkCount = Int(arguments[2]),
+                  expectedWorkCount > 0 else {
                 throw UsageError()
             }
             let report = try await LegacyV1Exporter().export(
                 options: LegacyV1ExportOptions(
-                    sourceSQLiteURL: URL(fileURLWithPath: arguments[1]),
-                    classificationLedgerURL: URL(fileURLWithPath: arguments[2]),
-                    stageRootURL: URL(fileURLWithPath: arguments[3], isDirectory: true),
-                    sourceArchiveRootURL: URL(fileURLWithPath: arguments[4], isDirectory: true),
-                    archiveManifestURL: URL(fileURLWithPath: arguments[5]),
-                    sourceIsVerifiedArchive: true
+                    sourceSQLiteURL: URL(fileURLWithPath: arguments[3]),
+                    classificationLedgerURL: URL(fileURLWithPath: arguments[4]),
+                    stageRootURL: URL(fileURLWithPath: arguments[5], isDirectory: true),
+                    sourceArchiveRootURL: URL(fileURLWithPath: arguments[6], isDirectory: true),
+                    archiveManifestURL: URL(fileURLWithPath: arguments[7]),
+                    sourceIsVerifiedArchive: true,
+                    expectedWorkCount: expectedWorkCount
                 )
             )
             let exported = report.entries.count(where: { $0.outcome == "exported" })
@@ -36,5 +41,5 @@ struct SnapshotSyncV2Export {
 }
 
 private struct UsageError: Error {
-    let message = "usage: snapshot-sync-v2-export --source-is-verified-archive <legacy-v1.sqlite> <classification.csv> <stage-root> <archive-root> <sha256-manifest>"
+    let message = "usage: snapshot-sync-v2-export --source-is-verified-archive --expected-work-count <count> <legacy-v1.sqlite> <classification.csv> <stage-root> <archive-root> <sha256-manifest>"
 }

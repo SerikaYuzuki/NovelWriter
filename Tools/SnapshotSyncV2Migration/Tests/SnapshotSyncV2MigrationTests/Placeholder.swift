@@ -44,7 +44,7 @@ func exportsClassifiedWork() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try classificationRow(workID: workID, disposition: "verified_candidate").write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "verified_candidate", snapshotID: snapshotID).write(to: ledgerURL, atomically: true, encoding: .utf8)
     let stageURL = root.appendingPathComponent("stage", isDirectory: true)
     let options = LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
@@ -52,7 +52,8 @@ func exportsClassifiedWork() async throws {
         stageRootURL: stageURL,
         sourceArchiveRootURL: archiveRoot,
         archiveManifestURL: archiveManifestURL,
-        sourceIsVerifiedArchive: true
+        sourceIsVerifiedArchive: true,
+        expectedWorkCount: 1
     )
 
     let first = try await LegacyV1Exporter().export(options: options)
@@ -76,7 +77,7 @@ func exportsClassifiedWork() async throws {
     #expect(second.entries == first.entries)
     #expect(FileManager.default.fileExists(atPath: packageURL.path))
 
-    try classificationRow(workID: workID, disposition: "needs-review").write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "needs-review", snapshotID: snapshotID).write(to: ledgerURL, atomically: true, encoding: .utf8)
     do {
         _ = try await LegacyV1Exporter().export(options: options)
         Issue.record("a committed stage with different provenance must not be reused")
@@ -148,7 +149,8 @@ private func optionsWithStage(_ options: LegacyV1ExportOptions, _ stage: URL) ->
         stageRootURL: stage,
         sourceArchiveRootURL: options.sourceArchiveRootURL,
         archiveManifestURL: options.archiveManifestURL,
-        sourceIsVerifiedArchive: options.sourceIsVerifiedArchive
+        sourceIsVerifiedArchive: options.sourceIsVerifiedArchive,
+        expectedWorkCount: options.expectedWorkCount
     )
 }
 
@@ -178,14 +180,15 @@ func blocksInvalidManifest() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try classificationRow(workID: workID, disposition: "needs-review").write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "needs-review", snapshotID: String(repeating: "0", count: 64)).write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
         stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
         sourceArchiveRootURL: archiveRoot,
         archiveManifestURL: archiveManifestURL,
-        sourceIsVerifiedArchive: true
+        sourceIsVerifiedArchive: true,
+        expectedWorkCount: 1
     ))
     #expect(report.entries.first?.outcome == "blocked")
     #expect(report.entries.first?.outputRelativePath == nil)
@@ -218,14 +221,15 @@ func blocksReferencedObjectFailure() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try classificationRow(workID: workID, disposition: "verified").write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "verified", snapshotID: SHA256.hash(data: v1Manifest).hex).write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
         stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
         sourceArchiveRootURL: archiveRoot,
         archiveManifestURL: archiveManifestURL,
-        sourceIsVerifiedArchive: true
+        sourceIsVerifiedArchive: true,
+        expectedWorkCount: 1
     ))
     #expect(report.entries.first?.outcome == "blocked")
     #expect(report.entries.first?.note?.contains("referenced object is invalid") == true)
@@ -258,14 +262,15 @@ func blocksMissingReferencedObject() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try classificationRow(workID: workID, disposition: "quarantine").write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "quarantine", snapshotID: SHA256.hash(data: v1Manifest).hex).write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
         stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
         sourceArchiveRootURL: archiveRoot,
         archiveManifestURL: archiveManifestURL,
-        sourceIsVerifiedArchive: true
+        sourceIsVerifiedArchive: true,
+        expectedWorkCount: 1
     ))
     #expect(report.entries.first?.outcome == "blocked")
     #expect(report.entries.first?.note?.contains("referenced object is missing") == true)
@@ -286,8 +291,8 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
     return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
 }
 
-private func classificationRow(workID: UUID, disposition: String) -> String {
-    "\(workID.uuidString),\(disposition),snapshot,2026-08-17T00:00:00Z,1,snapshot,1,evidence\n"
+private func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
+    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,1,\(snapshotID),0,evidence\n"
 }
 
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
