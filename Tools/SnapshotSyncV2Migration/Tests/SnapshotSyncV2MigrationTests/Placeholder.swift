@@ -3,8 +3,8 @@ import Foundation
 import NovelCore
 import NovelStorage
 import NovelSync
-import SQLite3
 import SnapshotSyncV2Migration
+import SQLite3
 import Testing
 
 @Test("migration module loads without adopting a live store")
@@ -21,32 +21,38 @@ func exportsClassifiedWork() async throws {
 
     let workID = UUID()
     let documentID = UUID()
+    let archiveRoot = root.appendingPathComponent("legacy", isDirectory: true)
+    try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
     let snapshot = try WorkSnapshot(document: NovelDocument(
         id: documentID,
         title: "証拠で分類する作品",
         chapters: [Chapter(title: "第一章", content: "本文", memo: "メモ")]
     ))
     let manifest = try WorkCanonicalJSON.encodeSnapshot(snapshot)
-    let snapshotID = SHA256.hash(data: manifest).hex
-    let object = Data("opaque-test-object".utf8)
-    let objectID = SHA256.hash(data: object).hex
-    let sqliteURL = root.appendingPathComponent("legacy.sqlite")
+    let objectID = SHA256.hash(data: manifest).hex
+    let v1Manifest = try makeV1Manifest(workID: workID, objectID: objectID, byteCount: manifest.count)
+    let snapshotID = SHA256.hash(data: v1Manifest).hex
+    let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
     try makeLegacyDatabase(
         at: sqliteURL,
         workID: workID,
         documentID: documentID,
         snapshotID: snapshotID,
-        manifest: manifest,
+        manifest: v1Manifest,
         objectID: objectID,
-        object: object
+        object: manifest
     )
+    let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
     try "\(workID.uuidString),verified_candidate\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
     let stageURL = root.appendingPathComponent("stage", isDirectory: true)
     let options = LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
-        stageRootURL: stageURL
+        stageRootURL: stageURL,
+        sourceArchiveRootURL: archiveRoot,
+        archiveManifestURL: archiveManifestURL,
+        sourceIsVerifiedArchive: true
     )
 
     let first = try await LegacyV1Exporter().export(options: options)
@@ -56,13 +62,15 @@ func exportsClassifiedWork() async throws {
         snapshotID: snapshotID,
         outputRelativePath: "verified/\(workID.uuidString).novelpkg",
         outcome: "exported",
-        note: "attachments and opaque resources are not present in v1 SQLite; raw archive is authoritative"
+        note: "attachments and opaque resources are not present in v1 SQLite; raw archive is authoritative",
+        projectionDigest: SHA256.hash(data: manifest).hex
     )])
     let packageURL = stageURL.appendingPathComponent("verified/\(workID.uuidString).novelpkg")
     let readBack = try await NovelpkgRepository().load(from: packageURL)
     #expect(try WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: readBack)) == manifest)
     #expect(first.objectVerificationIssues.isEmpty)
     #expect(FileManager.default.fileExists(atPath: stageURL.appendingPathComponent("migration-ledger.json").path))
+    #expect(FileManager.default.fileExists(atPath: stageURL.appendingPathComponent("COMMITTED").path))
 
     let second = try await LegacyV1Exporter().export(options: options)
     #expect(second.entries == first.entries)
@@ -77,27 +85,139 @@ func blocksInvalidManifest() async throws {
     defer { try? FileManager.default.removeItem(at: root) }
     let workID = UUID()
     let documentID = UUID()
+    let archiveRoot = root.appendingPathComponent("legacy", isDirectory: true)
+    try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
     let snapshot = try WorkSnapshot(document: NovelDocument(id: documentID, title: "壊れたdigest", chapters: []))
     let manifest = try WorkCanonicalJSON.encodeSnapshot(snapshot)
-    let sqliteURL = root.appendingPathComponent("legacy.sqlite")
+    let objectID = SHA256.hash(data: manifest).hex
+    let v1Manifest = try makeV1Manifest(workID: workID, objectID: objectID, byteCount: manifest.count)
+    let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
     try makeLegacyDatabase(
         at: sqliteURL,
         workID: workID,
         documentID: documentID,
         snapshotID: String(repeating: "0", count: 64),
-        manifest: manifest,
-        objectID: nil,
-        object: nil
+        manifest: v1Manifest,
+        objectID: objectID,
+        object: manifest
     )
+    let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
     try "\(workID.uuidString),needs-review\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
-        stageRootURL: root.appendingPathComponent("stage", isDirectory: true)
+        stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
+        sourceArchiveRootURL: archiveRoot,
+        archiveManifestURL: archiveManifestURL,
+        sourceIsVerifiedArchive: true
     ))
     #expect(report.entries.first?.outcome == "blocked")
     #expect(report.entries.first?.outputRelativePath == nil)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("stage/COMMITTED").path))
+}
+
+@Test("blocks a missing or mismatched referenced document object")
+func blocksReferencedObjectFailure() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("v2-export-object-failure-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = UUID()
+    let documentID = UUID()
+    let archiveRoot = root.appendingPathComponent("legacy", isDirectory: true)
+    try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+    let snapshot = try WorkSnapshot(document: NovelDocument(id: documentID, title: "参照object", chapters: []))
+    let documentBytes = try WorkCanonicalJSON.encodeSnapshot(snapshot)
+    let objectID = SHA256.hash(data: documentBytes).hex
+    let v1Manifest = try makeV1Manifest(workID: workID, objectID: objectID, byteCount: documentBytes.count)
+    let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
+    try makeLegacyDatabase(
+        at: sqliteURL,
+        workID: workID,
+        documentID: documentID,
+        snapshotID: SHA256.hash(data: v1Manifest).hex,
+        manifest: v1Manifest,
+        objectID: objectID,
+        object: Data("not-the-document".utf8)
+    )
+    let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
+    let ledgerURL = root.appendingPathComponent("classification.csv")
+    try "\(workID.uuidString),verified\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
+        sourceSQLiteURL: sqliteURL,
+        classificationLedgerURL: ledgerURL,
+        stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
+        sourceArchiveRootURL: archiveRoot,
+        archiveManifestURL: archiveManifestURL,
+        sourceIsVerifiedArchive: true
+    ))
+    #expect(report.entries.first?.outcome == "blocked")
+    #expect(report.entries.first?.note?.contains("referenced object is invalid") == true)
+}
+
+@Test("blocks a missing referenced object")
+func blocksMissingReferencedObject() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("v2-export-object-missing-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = UUID()
+    let documentID = UUID()
+    let archiveRoot = root.appendingPathComponent("legacy", isDirectory: true)
+    try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+    let documentBytes = try WorkCanonicalJSON.encodeSnapshot(
+        WorkSnapshot(document: NovelDocument(id: documentID, title: "欠落object", chapters: []))
+    )
+    let objectID = SHA256.hash(data: documentBytes).hex
+    let v1Manifest = try makeV1Manifest(workID: workID, objectID: objectID, byteCount: documentBytes.count)
+    let sqliteURL = archiveRoot.appendingPathComponent("library.sqlite")
+    try makeLegacyDatabase(
+        at: sqliteURL,
+        workID: workID,
+        documentID: documentID,
+        snapshotID: SHA256.hash(data: v1Manifest).hex,
+        manifest: v1Manifest,
+        objectID: nil,
+        object: nil
+    )
+    let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
+    let ledgerURL = root.appendingPathComponent("classification.csv")
+    try "\(workID.uuidString),quarantine\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
+        sourceSQLiteURL: sqliteURL,
+        classificationLedgerURL: ledgerURL,
+        stageRootURL: root.appendingPathComponent("stage", isDirectory: true),
+        sourceArchiveRootURL: archiveRoot,
+        archiveManifestURL: archiveManifestURL,
+        sourceIsVerifiedArchive: true
+    ))
+    #expect(report.entries.first?.outcome == "blocked")
+    #expect(report.entries.first?.note?.contains("referenced object is missing") == true)
+}
+
+private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) throws -> Data {
+    let value: [String: Any] = [
+        "entries": [[
+            "byteCount": byteCount,
+            "contentType": "application/json",
+            "entityKey": "work/document",
+            "objectId": objectID
+        ]],
+        "parentSnapshotIds": [],
+        "schemaVersion": 1,
+        "workId": workID.uuidString.uppercased()
+    ]
+    return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+}
+
+private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
+    let digest = try SHA256.hash(data: Data(contentsOf: sqliteURL)).hex
+    let manifestURL = root.appendingPathComponent("sha256-manifest.txt")
+    try "\(digest)  ./\(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: sqliteURL.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: manifestURL.path)
+    return manifestURL
 }
 
 private func makeLegacyDatabase(
@@ -170,5 +290,7 @@ private enum FixtureError: Error {
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 private extension SHA256.Digest {
-    var hex: String { map { String(format: "%02x", $0) }.joined() }
+    var hex: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
 }

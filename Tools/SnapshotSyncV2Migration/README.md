@@ -7,9 +7,12 @@ macOS専用の移行ツールです。入力SQLiteはread-onlyで開き、出力
 
 ```sh
 swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-export \
+  --source-is-verified-archive \
   /path/to/legacy-v1.sqlite \
   /path/to/classification.csv \
-  /path/to/new-stage-root
+  /path/to/new-stage-root \
+  /path/to/legacy-archive-root \
+  /path/to/legacy-archive-root/sha256-manifest.txt
 ```
 
 classification CSVの最初の2列は`workID,classification`です。分類はタイトルから推測せず、
@@ -27,5 +30,12 @@ ledgerの証拠を使います。受理する分類は`verified`、`verified_can
 - v1 object全行のbyte count／SHA-256（問題はledgerへ記録）
 
 添付やopaque resourceはv1 SQLiteに含まれないため自動補完しません。raw archiveを別途
-read-only保全し、生成ledgerにその事実を記録します。既存stage packageが同じ論理作品なら
-read-backして再利用するため、同じ入力で再実行できます。
+read-only保全し、生成ledgerにその事実を記録します。packageは開ける作品内容のportable
+projectionであり、旧DBの履歴・添付・opaque resourceの完全な代替ではありません。
+
+入力archive root、SQLite、SHA-256 manifestはregular file／非symlink／非書込であること、
+SQLiteのdigestがmanifestに記録されていること、stage rootがarchive root外であることを
+要求します。開始時と終了時にSQLite digestを再確認します。stageには`migration-run.json`、
+Workごとの`.state/` sidecar、最後に全件成功したときだけ`COMMITTED` markerを書きます。
+markerがないstageは採用対象ではありません。既存stage packageはsource digest、snapshot
+ID、projection digestのsidecarが一致する場合だけread-backして再利用します。
