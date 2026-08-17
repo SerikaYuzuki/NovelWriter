@@ -359,7 +359,10 @@ extension IOSDocumentStore {
             guard let self else { return }
             do {
                 guard try await vault.loadPendingRevoke() != nil else { return }
-                try await coordinator.signOut()
+                // Replay only the durable revoke operation. Calling signOut
+                // here could revoke a newer session that was committed after
+                // the original offline sign-out.
+                try await coordinator.resumePendingRevoke()
                 if authSession == nil {
                     authUIState = .signedOut
                 }

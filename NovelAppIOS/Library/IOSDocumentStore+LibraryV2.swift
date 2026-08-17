@@ -85,6 +85,18 @@ extension IOSDocumentStore {
             !isSyncV2AccountTransitionActive
     }
 
+    /// Local history remains available for a parked/signed-out Work.  This
+    /// is intentionally separate from `canExplicitlySyncCurrentWork`: the
+    /// latter gates account-scoped remote work, while history can be read from
+    /// the local SQLite lane without an active account.
+    var canRefreshSnapshotHistory: Bool {
+        snapshotSyncV2Application != nil &&
+            startupState == .ready &&
+            syncV2ActiveWorkID != nil &&
+            !isDocumentTransitionInProgress &&
+            !isSyncV2AccountTransitionActive
+    }
+
     var isCurrentWorkParked: Bool {
         guard let workID = syncV2ActiveWorkID else { return false }
         return syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
@@ -250,7 +262,6 @@ extension IOSDocumentStore {
     @discardableResult
     func refreshSnapshotHistory(for workID: WorkID, reset: Bool = true) async -> Bool {
         guard !isSyncV2AccountTransitionActive,
-              !isCurrentWorkParked,
               let application = snapshotSyncV2Application else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
         historyRefreshGeneration &+= 1

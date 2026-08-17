@@ -125,7 +125,7 @@ struct IOSProjectHomeView: View {
                                 }
                             }
                         }
-                        .disabled(!store.canExplicitlySyncCurrentWork)
+                        .disabled(!store.canRefreshSnapshotHistory)
                     }
                 }
                 Button("履歴を更新") {
@@ -137,7 +137,7 @@ struct IOSProjectHomeView: View {
                         }
                     }
                 }
-                .disabled(!store.canExplicitlySyncCurrentWork)
+                .disabled(!store.canRefreshSnapshotHistory)
                 Text("復元は端末のSQLite履歴へ予約され、通信はバックグラウンドで再開します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -146,7 +146,7 @@ struct IOSProjectHomeView: View {
         }
         .navigationTitle("作品ホーム")
         .task {
-            if let workID = store.syncV2ActiveWorkID, store.canExplicitlySyncCurrentWork {
+            if let workID = store.syncV2ActiveWorkID, store.canRefreshSnapshotHistory {
                 _ = await store.refreshSnapshotHistory(for: workID, reset: true)
             }
         }

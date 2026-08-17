@@ -264,38 +264,6 @@ struct IOSSnapshotSyncV2Tests {
         #expect(store.document.title == "復元前の版")
     }
 
-    @Test("sign-outは旧accountのremote shelf/conflict/historyをparkする")
-    func signOutIsolatesAccountProjection() async {
-        let environment = makeEnvironment()
-        defer { environment.cleanup() }
-        let store = IOSDocumentStore(
-            userDefaults: environment.defaults,
-            libraryRoot: environment.root
-        )
-        await store.bootstrap()
-        let workID = WorkID(UUID())
-        let snapshot = SnapshotID(data: Data("snapshot".utf8))
-        store.syncV2LibraryItems = [SyncV2LibraryItem(
-            workID: workID,
-            title: "旧アカウント",
-            availability: .cached,
-            accountState: .active
-        )]
-        store.syncV2RemoteCatalogItems = [
-            SyncV2RemoteCatalogEntry(workID: workID, title: "旧アカウント", head: nil)
-        ]
-        store.snapshotSyncConflict = SyncV2ConflictProjection(
-            conflictID: UUID(), revision: 1, baseSnapshotID: nil,
-            localSnapshotID: snapshot, remoteSnapshotID: snapshot,
-            sourceGeneration: 1
-        )
-        await store.signOutFromFuminiwa()
-        #expect(store.syncV2LibraryItems.isEmpty)
-        #expect(store.syncV2RemoteCatalogItems.isEmpty)
-        #expect(store.snapshotSyncConflict == nil)
-        #expect(store.snapshotSyncState == nil)
-    }
-
     @Test("unbound workはsign-out後も残り、sign-in後の明示clone対象になる")
     func signOutPreservesUnboundWorkForExplicitClone() async throws {
         let environment = makeEnvironment()
@@ -380,6 +348,123 @@ struct IOSSnapshotSyncV2Tests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         Issue.record("test worker did not reach the offline terminal state")
+    }
+}
+
+@MainActor
+extension IOSSnapshotSyncV2Tests {
+    @Test("sign-outは旧accountのremote shelf/conflict/historyをparkする")
+    func signOutIsolatesAccountProjection() async {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        let workID = WorkID(UUID())
+        let snapshot = SnapshotID(data: Data("snapshot".utf8))
+        store.syncV2LibraryItems = [SyncV2LibraryItem(
+            workID: workID,
+            title: "旧アカウント",
+            availability: .cached,
+            accountState: .active
+        )]
+        store.syncV2RemoteCatalogItems = [
+            SyncV2RemoteCatalogEntry(workID: workID, title: "旧アカウント", head: nil)
+        ]
+        store.snapshotSyncConflict = SyncV2ConflictProjection(
+            conflictID: UUID(), revision: 1, baseSnapshotID: nil,
+            localSnapshotID: snapshot, remoteSnapshotID: snapshot,
+            sourceGeneration: 1
+        )
+        await store.signOutFromFuminiwa()
+        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
+        #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
+        #expect(store.syncV2RemoteCatalogItems.isEmpty)
+        #expect(store.snapshotSyncConflict == nil)
+        #expect(store.snapshotSyncState == nil)
+    }
+
+    @Test("parked作品はlocal履歴をページングし、通信なしで復元できる")
+    func parkedWorkRetainsLocalHistoryAndRestore() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        #expect(await store.configureSnapshotSyncV2())
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let application = try #require(store.snapshotSyncV2Application)
+        let workID = try #require(store.syncV2ActiveWorkID)
+        var value = store.document
+        var firstSnapshotID: SnapshotID?
+        let createdAt = store.documentCreatedAt
+
+        // More than the iOS page size creates a real local cursor. Direct
+        // application checkpoints keep this fixture focused on SQLite and do
+        // not make the UI's debounce timing part of the history contract.
+        for index in 0 ..< 105 {
+            value.title = "parked-\(index)"
+            let result = try await application.checkpoint(
+                workID: workID,
+                document: value,
+                reason: .explicit,
+                documentCreatedAt: createdAt
+            )
+            if index == 0,
+               case let .saved(_, snapshotID) = result.state.localDurability {
+                firstSnapshotID = snapshotID
+            }
+        }
+        store.document = value
+        store.saveState = .saved
+        #expect(firstSnapshotID != nil)
+        // The isolated test composition has no AuthSessionCoordinator, so
+        // its signed-out UI projection intentionally hides active rows. Seed
+        // the pre-sign-out account row explicitly; the durable runtime still
+        // owns the SQLite binding and performs the actual park transaction.
+        store.syncV2LibraryItems = [SyncV2LibraryItem(
+            workID: workID,
+            title: value.title,
+            availability: .cached,
+            accountState: .active
+        )]
+
+        await store.signOutFromFuminiwa()
+        #expect(store.isCurrentWorkParked)
+        #expect(store.canRefreshSnapshotHistory)
+        #expect(store.canRestoreLocalSnapshot)
+
+        let runtimeConfiguration = try #require(
+            IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL]
+        )
+        let remoteOperationsBeforeHistory = await runtimeConfiguration.remote.recordedOperations().count
+        #expect(await store.refreshSnapshotHistory(for: workID))
+        let firstPageCount = store.syncV2HistoryItems.count
+        #expect(firstPageCount > 0)
+        #expect(store.syncV2HistoryLocalAvailability == .available)
+        #expect(store.syncV2HistoryOnlineAvailability == .unavailable)
+        #expect(store.syncV2HistoryCursor != nil)
+        #expect(
+            await runtimeConfiguration.remote.recordedOperations().count
+                == remoteOperationsBeforeHistory
+        )
+
+        #expect(await store.refreshSnapshotHistory(for: workID, reset: false))
+        #expect(store.syncV2HistoryItems.count > firstPageCount)
+        #expect(store.syncV2HistoryCursor == nil)
+        #expect(
+            await runtimeConfiguration.remote.recordedOperations().count
+                == remoteOperationsBeforeHistory
+        )
+
+        let selectedSnapshotID = try #require(firstSnapshotID)
+        #expect(await store.restoreSnapshotSyncV2(snapshotID: selectedSnapshotID.rawValue))
+        #expect(store.document.title == "parked-0")
     }
 }
 
