@@ -28,3 +28,40 @@ fn fence_requires_opaque_256_bit_value_and_positive_epoch() {
     assert!(AccountFence::new(0, vec![0; 32]).is_err());
     assert!(AccountFence::new(1, vec![0; 31]).is_err());
 }
+
+#[test]
+fn apple_credentials_are_partitioned_by_original_audience() {
+    let mac = VerifiedProviderCredential {
+        audience: "dev.serikayuzuki.fuminiwa".into(),
+        encrypted_refresh_token: SealedSecret {
+            key_version: 3,
+            ciphertext: b"mac-ciphertext".to_vec(),
+        },
+    };
+    let ios = VerifiedProviderCredential {
+        audience: "dev.serikayuzuki.fuminiwa.ios".into(),
+        encrypted_refresh_token: SealedSecret {
+            key_version: 3,
+            ciphertext: b"ios-ciphertext".to_vec(),
+        },
+    };
+    assert_ne!(mac.audience, ios.audience);
+    assert_ne!(
+        mac.encrypted_refresh_token.ciphertext,
+        ios.encrypted_refresh_token.ciphertext
+    );
+}
+
+#[test]
+fn auth_schema_has_no_plaintext_provider_secret_columns() {
+    let sql = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/0002_auth_v1.sql"
+    ))
+    .unwrap();
+    assert!(!sql.contains("subject TEXT"));
+    assert!(!sql.contains("authorization_code TEXT"));
+    assert!(!sql.contains("refresh_token TEXT"));
+    assert!(sql.contains("subject_lookup_hmac BYTEA"));
+    assert!(sql.contains("response_ciphertext BYTEA"));
+}

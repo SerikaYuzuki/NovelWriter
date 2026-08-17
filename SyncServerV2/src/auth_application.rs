@@ -20,6 +20,7 @@ pub struct NewChallenge {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChallengeResult {
     pub challenge_id: ChallengeId,
     pub operation_id: OperationId,
@@ -57,6 +58,7 @@ pub struct RefreshOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SecurityTransition {
     pub account_auth_epoch: i64,
     pub account_fence: Vec<u8>,
@@ -203,6 +205,15 @@ impl<R: AuthRepository> AuthApplication<R> {
         if challenge.operation_id != request.operation_id {
             return Err(AuthError::OperationIdReused);
         }
+        if challenge.expires_at_unix <= now_unix {
+            return Err(AuthError::ChallengeExpired);
+        }
+        if challenge.phase == ChallengePhase::ProviderCallStarted {
+            self.repository
+                .mark_provider_exchange_indeterminate(&request.challenge_id)
+                .await?;
+            return Err(AuthError::ProviderExchangeIndeterminate);
+        }
         if challenge.phase == ChallengePhase::Terminal
             || challenge.phase == ChallengePhase::ProviderResultKnown
         {
@@ -247,11 +258,17 @@ impl<R: AuthRepository> AuthApplication<R> {
                 &identity.subject,
             )
             .await?;
-        let subject_bytes = format!(
-            "{}\0{}\0{}",
-            identity.provider_config_id, identity.exact_issuer, identity.subject
-        )
-        .into_bytes();
+        let mut subject_bytes = b"FUMINIWA-EXTERNAL-IDENTITY-V1".to_vec();
+        for value in [
+            identity.provider_config_id.as_str(),
+            identity.exact_issuer.as_str(),
+            identity.subject.as_str(),
+        ] {
+            let length =
+                u32::try_from(value.len()).map_err(|_| AuthError::InvalidExternalIdentity)?;
+            subject_bytes.extend_from_slice(&length.to_be_bytes());
+            subject_bytes.extend_from_slice(value.as_bytes());
+        }
         let subject_secret = vault
             .seal(
                 "external_identity_subject_v1",
@@ -329,8 +346,19 @@ fn decode_grant_receipt(receipt: &AuthReceipt) -> Result<SessionGrant, AuthError
 
 /// A test-only hasher. Production composition must inject an HMAC-backed
 /// implementation; this type is not exported from the HTTP runtime.
-#[derive(Clone, Default)]
-pub struct FixtureHasher;
+#[derive(Clone)]
+pub struct FixtureHasher {
+    pub subject_lookup_key: [u8; 32],
+    pub token_key: [u8; 32],
+}
+impl Default for FixtureHasher {
+    fn default() -> Self {
+        Self {
+            subject_lookup_key: [0x11; 32],
+            token_key: [0x22; 32],
+        }
+    }
+}
 #[async_trait]
 impl SecretHasher for FixtureHasher {
     async fn subject_lookup(
@@ -339,20 +367,10 @@ impl SecretHasher for FixtureHasher {
         issuer: &str,
         subject: &str,
     ) -> Result<Vec<u8>, AuthError> {
-        let mut bytes = b"FUMINIWA-EXTERNAL-IDENTITY-LOOKUP-V1".to_vec();
-        for value in [provider_config.as_str(), issuer, subject] {
-            let length =
-                u32::try_from(value.len()).map_err(|_| AuthError::InvalidExternalIdentity)?;
-            bytes.extend_from_slice(&length.to_be_bytes());
-            bytes.extend_from_slice(value.as_bytes());
-        }
-        Ok(digest_request(&bytes).to_vec())
+        subject_lookup_hmac(&self.subject_lookup_key, provider_config, issuer, subject)
     }
     async fn token_verifier(&self, purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
-        let mut bytes = purpose.as_bytes().to_vec();
-        bytes.push(0);
-        bytes.extend_from_slice(token.as_bytes());
-        Ok(digest_request(&bytes).to_vec())
+        token_hmac(&self.token_key, purpose, token)
     }
 }
 

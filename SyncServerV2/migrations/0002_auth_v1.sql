@@ -36,6 +36,7 @@ CREATE TABLE auth_v1.external_identities (
 CREATE TABLE auth_v1.external_identity_secrets (
     identity_id UUID PRIMARY KEY REFERENCES auth_v1.external_identities(identity_id),
     key_version INTEGER NOT NULL CHECK (key_version > 0),
+    purpose TEXT NOT NULL DEFAULT 'external_identity_subject_v1',
     ciphertext BYTEA NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -45,6 +46,7 @@ CREATE TABLE auth_v1.provider_credentials (
     original_audience TEXT NOT NULL,
     credential_generation BIGINT NOT NULL CHECK (credential_generation > 0),
     key_version INTEGER NOT NULL CHECK (key_version > 0),
+    purpose TEXT NOT NULL DEFAULT 'apple_provider_refresh_v1',
     ciphertext BYTEA NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active','superseded','revokeRetryPending','revoked')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -60,6 +62,8 @@ CREATE TABLE auth_v1.auth_operations (
     state TEXT NOT NULL CHECK (state IN ('reserved','completed','failed')),
     response_status INTEGER,
     response_ciphertext BYTEA,
+    response_key_version INTEGER,
+    response_purpose TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
     UNIQUE(operation_id, command_kind, request_digest)
@@ -76,6 +80,8 @@ CREATE TABLE auth_v1.auth_challenges (
     lease_until TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     provider_result_ciphertext BYTEA,
+    provider_result_key_version INTEGER,
+    provider_result_purpose TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE auth_v1.auth_sessions (
@@ -122,6 +128,8 @@ CREATE TABLE auth_v1.session_refresh_receipts (
     presented_token_hmac BYTEA NOT NULL CHECK (octet_length(presented_token_hmac)=32),
     request_digest BYTEA NOT NULL CHECK (octet_length(request_digest)=32),
     response_ciphertext BYTEA NOT NULL,
+    response_key_version INTEGER NOT NULL,
+    response_purpose TEXT NOT NULL,
     response_status INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL

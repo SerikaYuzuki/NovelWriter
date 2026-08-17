@@ -5,6 +5,7 @@
 //! receives an `AuthenticatedPrincipal` issued by the auth application.
 
 use async_trait::async_trait;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fmt, str::FromStr};
@@ -17,6 +18,9 @@ pub const APPLE_ISSUER: &str = "https://appleid.apple.com";
 pub const ACCESS_TOKEN_LIFETIME_SECONDS: i64 = 900;
 pub const REFRESH_TOKEN_LIFETIME_SECONDS: i64 = 7_776_000;
 pub const CHALLENGE_LIFETIME_SECONDS: i64 = 300;
+pub const TOKEN_HMAC_KEY_VERSION: i32 = 1;
+pub const SUBJECT_LOOKUP_KEY_VERSION: i32 = 1;
+type HmacSha256 = Hmac<Sha256>;
 
 macro_rules! opaque_id {
     ($name:ident) => {
@@ -128,6 +132,7 @@ impl VerifiedExternalIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthenticatedPrincipal {
     pub account_id: AccountId,
     pub tenant_id: TenantId,
@@ -231,9 +236,12 @@ pub struct ChallengeClaim {
     pub state_hash: Vec<u8>,
     pub nonce_hash: Vec<u8>,
     pub phase: ChallengePhase,
+    pub lease_until_unix: i64,
+    pub expires_at_unix: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionGrant {
     pub principal: AuthenticatedPrincipal,
     pub access_token: String,
@@ -310,6 +318,34 @@ pub trait AppleProvider: Send + Sync {
 
 pub fn digest_request(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
+}
+
+pub fn token_hmac(key: &[u8; 32], purpose: &str, token: &str) -> Result<Vec<u8>, AuthError> {
+    let mut mac = HmacSha256::new_from_slice(key).map_err(|_| AuthError::Vault)?;
+    mac.update(b"FUMINIWA-TOKEN-V1");
+    let purpose_len = u32::try_from(purpose.len()).map_err(|_| AuthError::InvalidRequest)?;
+    let token_len = u32::try_from(token.len()).map_err(|_| AuthError::InvalidRequest)?;
+    mac.update(&purpose_len.to_be_bytes());
+    mac.update(purpose.as_bytes());
+    mac.update(&token_len.to_be_bytes());
+    mac.update(token.as_bytes());
+    Ok(mac.finalize().into_bytes().to_vec())
+}
+
+pub fn subject_lookup_hmac(
+    key: &[u8; 32],
+    provider_config: &ProviderConfigId,
+    issuer: &str,
+    subject: &str,
+) -> Result<Vec<u8>, AuthError> {
+    let mut mac = HmacSha256::new_from_slice(key).map_err(|_| AuthError::Vault)?;
+    mac.update(b"FUMINIWA-EXTERNAL-IDENTITY-LOOKUP-V1");
+    for value in [provider_config.as_str(), issuer, subject] {
+        let length = u32::try_from(value.len()).map_err(|_| AuthError::InvalidExternalIdentity)?;
+        mac.update(&length.to_be_bytes());
+        mac.update(value.as_bytes());
+    }
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
