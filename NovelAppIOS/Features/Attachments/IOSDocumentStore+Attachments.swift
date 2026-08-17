@@ -16,7 +16,7 @@ extension IOSDocumentStore {
             guard let application = snapshotSyncV2Application,
                   let workID = syncV2ActiveWorkID else { return false }
             do {
-                let opened = try await application.open(workID: workID)
+                let opened = try await application.openLocal(workID: workID)
                 guard validateCurrentDocumentSession(expectedSession) else { return false }
                 replaceV2Attachments(opened.attachments)
                 return true

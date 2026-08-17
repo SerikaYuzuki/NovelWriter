@@ -9,6 +9,30 @@ import Testing
 
 @MainActor
 struct IOSSnapshotSyncV2PortableBoundaryTests {
+    @Test("opened value mismatch fails closed without replacing the active editor")
+    func openedValueMismatchKeepsActiveEditor() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let original = store.document
+            let opened = SyncV2OpenedWork(
+                workID: WorkID(UUID()),
+                document: NovelDocument.newDocument(title: "別の本文"),
+                documentCreatedAt: Date(),
+                generation: 1,
+                snapshotID: nil
+            )
+
+            #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
+            #expect(store.document == original)
+            #expect(store.syncV2ActiveWorkID != opened.workID)
+        }
+    }
+
     @Test("競合選択は新しいcheckpointやintentを作らない")
     func conflictSelectionDoesNotCheckpointAgain() async throws {
         try await withEnvironment { environment in
@@ -48,7 +72,39 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             )
             store.snapshotSyncConflict = conflict
 
-            #expect(await store.resolveSnapshotSyncV2Conflict(using: .useServer) == false)
+            let displayedSelection = try #require(
+                store.snapshotSyncV2DisplayedConflictSelection
+            )
+            #expect(
+                await store.resolveSnapshotSyncV2Conflict(
+                    using: .useServer,
+                    expectedSelection: displayedSelection
+                ) == false
+            )
+
+            let newerConflict = SyncV2ConflictProjection(
+                conflictID: UUID(),
+                revision: conflict.revision + 1,
+                baseSnapshotID: conflict.baseSnapshotID,
+                localSnapshotID: conflict.localSnapshotID,
+                remoteSnapshotID: conflict.remoteSnapshotID,
+                sourceGeneration: conflict.sourceGeneration
+            )
+            store.snapshotSyncState = SyncUIState(
+                workID: workID,
+                localDurability: beforeState.localDurability,
+                remoteProgress: .needsChoice,
+                conflict: newerConflict,
+                lastTypedResult: .conflictPending
+            )
+            store.snapshotSyncConflict = newerConflict
+            #expect(
+                await store.resolveSnapshotSyncV2Conflict(
+                    using: .useServer,
+                    expectedSelection: displayedSelection
+                ) == false
+            )
+            #expect(store.snapshotSyncConflict == newerConflict)
             let afterState = await application.uiState(workID: workID)
             #expect(afterState?.localDurability == beforeState.localDurability)
             #expect(await store.refreshSnapshotHistory(for: workID))

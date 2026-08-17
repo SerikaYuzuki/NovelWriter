@@ -23,6 +23,16 @@ func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
 }
 
 extension IOSDocumentStore {
+    /// Retires asynchronous remote-only work before a new document operation
+    /// can change the session. The task itself must not clear a newer task's
+    /// owner slot from its defer block.
+    func cancelSnapshotSyncV2BackgroundOperations() {
+        snapshotSyncV2RemoteOnlyOpenToken = nil
+        snapshotSyncV2RemoteOnlyOpenTask?.cancel()
+        snapshotSyncV2RemoteOnlyOpenTask = nil
+        snapshotSyncV2RemoteOnlyReadyWorkID = nil
+    }
+
     @discardableResult
     func configureSnapshotSyncV2() async -> Bool {
         if snapshotSyncV2Application != nil {
@@ -240,7 +250,7 @@ extension IOSDocumentStore {
                 )
                 let opened = try await application.applyStagedRemote(at: boundary)
                 guard let value = opened.document else { return false }
-                installSnapshotSyncV2Opened(opened, value: value)
+                guard installSnapshotSyncV2Opened(opened, value: value) else { return false }
                 await applySnapshotSyncV2State(application.uiState(workID: opened.workID))
                 return true
             } catch {
@@ -253,6 +263,7 @@ extension IOSDocumentStore {
     @discardableResult
     func openSnapshotSyncV2(workID: UUID) async -> Bool {
         guard let application = snapshotSyncV2Application else { return false }
+        cancelSnapshotSyncV2BackgroundOperations()
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
             var didOpen = false
@@ -261,9 +272,9 @@ extension IOSDocumentStore {
                     // `performDocumentTransition` first confirms IME input and
                     // flushes a dirty editor through the local SQLite
                     // checkpoint.  It never wakes or awaits the remote worker.
-                    let opened = try await application.open(workID: WorkID(workID))
+                    let opened = try await application.openLocal(workID: WorkID(workID))
                     guard let value = opened.document else { return }
-                    installSnapshotSyncV2Opened(opened, value: value)
+                    guard installSnapshotSyncV2Opened(opened, value: value) else { return }
                     await applySnapshotSyncV2State(application.uiState(workID: opened.workID))
                     didOpen = true
                 } catch {
@@ -272,6 +283,68 @@ extension IOSDocumentStore {
             }
             return transitioned && didOpen
         }
+    }
+
+    /// Opens a remote-only catalog row without making the current editor wait
+    /// for HTTP. Download/verification is performed in the application layer;
+    /// only the final, session-checked install crosses the document gate.
+    /// Returning true means the request was accepted, not that remote bytes
+    /// have already become the active editor.
+    @discardableResult
+    func startRemoteOnlySnapshotSyncV2Open(workID: WorkID) async -> Bool {
+        guard let application = snapshotSyncV2Application,
+              syncV2LibraryItems.contains(where: { $0.workID == workID }),
+              snapshotSyncV2RemoteOnlyOpenTask == nil else { return false }
+        let expectedSession = currentDocumentSessionToken
+        let operationToken = UUID()
+        snapshotSyncV2RemoteOnlyOpenToken = operationToken
+        snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
+            defer {
+                if let self,
+                   snapshotSyncV2RemoteOnlyOpenToken == operationToken {
+                    snapshotSyncV2RemoteOnlyOpenToken = nil
+                    snapshotSyncV2RemoteOnlyOpenTask = nil
+                }
+            }
+            do {
+                let opened = try await application.open(workID: workID)
+                guard !Task.isCancelled,
+                      let self,
+                      snapshotSyncV2RemoteOnlyOpenToken == operationToken else { return }
+                _ = await documentOperationGate.perform { [weak self] in
+                    guard let self,
+                          snapshotSyncV2RemoteOnlyOpenToken == operationToken,
+                          currentDocumentSessionToken == expectedSession,
+                          syncV2LibraryItems.contains(where: { $0.workID == workID }) else {
+                        return false
+                    }
+                    var installed = false
+                    let transitioned = await performDocumentTransition {
+                        guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
+                              currentDocumentSessionToken == expectedSession,
+                              let value = opened.document else {
+                            throw SyncV2ApplicationError.workNotFound
+                        }
+                        guard installSnapshotSyncV2Opened(opened, value: value) else {
+                            throw SyncV2ApplicationError.invalidRuntimeMode
+                        }
+                        let state = await application.uiState(workID: opened.workID)
+                        applySnapshotSyncV2State(state)
+                        snapshotSyncV2RemoteOnlyReadyWorkID = opened.workID
+                        installed = true
+                    }
+                    return transitioned && installed
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      snapshotSyncV2RemoteOnlyOpenToken == operationToken,
+                      currentDocumentSessionToken == expectedSession else { return }
+                operationErrorMessage = "作品を取得できませんでした。接続が戻ると再試行できます。"
+            }
+        }
+        return true
     }
 
     @discardableResult
@@ -292,9 +365,9 @@ extension IOSDocumentStore {
                     workID: activeWorkID, snapshotID: snapshotID
                 )
                 applySnapshotSyncV2State(result.state)
-                let opened = try await app.open(workID: activeWorkID)
+                let opened = try await app.openLocal(workID: activeWorkID)
                 guard let value = opened.document else { return false }
-                installSnapshotSyncV2Opened(opened, value: value)
+                guard installSnapshotSyncV2Opened(opened, value: value) else { return false }
                 await refreshSnapshotSyncV2Projection(workID: activeWorkID)
                 return true
             } catch {
@@ -305,7 +378,10 @@ extension IOSDocumentStore {
     }
 
     @discardableResult
-    func resolveSnapshotSyncV2Conflict(using choice: SyncV2ConflictChoice) async -> Bool {
+    func resolveSnapshotSyncV2Conflict(
+        using choice: SyncV2ConflictChoice,
+        expectedSelection: IOSSnapshotSyncV2ConflictSelection
+    ) async -> Bool {
         guard let app = snapshotSyncV2Application,
               startupState == .ready,
               let activeWorkID = syncV2ActiveWorkID,
@@ -317,6 +393,7 @@ extension IOSDocumentStore {
             guard let self,
                   currentDocumentSessionToken == expectedSession,
                   localEditGeneration == expectedEditGeneration,
+                  selectionMatchesCurrentConflict(expectedSelection),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
 
@@ -359,7 +436,9 @@ extension IOSDocumentStore {
                         operationErrorMessage = "両方を保持する作品を安全に開けませんでした。"
                         return false
                     }
-                    installSnapshotSyncV2Opened(opened, value: value)
+                    guard installSnapshotSyncV2Opened(opened, value: value) else {
+                        return false
+                    }
                     await applySnapshotSyncV2State(app.uiState(workID: opened.workID))
                 } else {
                     applySnapshotSyncV2State(result.state)
@@ -397,6 +476,17 @@ extension IOSDocumentStore {
                 return false
             }
         }
+    }
+
+    private func selectionMatchesCurrentConflict(
+        _ selection: IOSSnapshotSyncV2ConflictSelection
+    ) -> Bool {
+        selection.workID == syncV2ActiveWorkID
+            && selection.session == currentDocumentSessionToken
+            && selection.editGeneration <= localEditGeneration
+            && selection.accountID == authSession?.accountID
+            && selection.accountFence == authSession?.accountFence
+            && selection.conflict == snapshotSyncConflict
     }
 
     private func makeSnapshotSyncV2ConflictAction(
@@ -438,9 +528,8 @@ extension IOSDocumentStore {
               let state = snapshotSyncState,
               state.workID == workID,
               state.conflict == conflict,
-              case let .saved(generation, snapshotID) = state.localDurability,
-              generation == conflict.sourceGeneration,
-              snapshotID == conflict.localSnapshotID else {
+              case let .saved(generation, _) = state.localDurability,
+              generation >= conflict.sourceGeneration else {
             operationErrorMessage = "競合情報が古くなりました。最新の状態を確認してから再選択してください。"
             return nil
         }
@@ -451,20 +540,24 @@ extension IOSDocumentStore {
             revision: conflict.revision, baseSnapshotID: conflict.baseSnapshotID,
             localSnapshotID: conflict.localSnapshotID, remoteSnapshotID: conflict.remoteSnapshotID,
             sourceGeneration: conflict.sourceGeneration, choice: choice,
+            commandID: conflict.commandID,
             newWorkID: newWorkID, newDocumentID: newDocumentID
         )
     }
 
+    @discardableResult
     func installSnapshotSyncV2Opened(
         _ opened: SyncV2OpenedWork,
         value: NovelDocument
-    ) {
-        guard let portableMirror = try? SyncV2PortableMetadata.splitLocalMirrorResources(
-            opened.resources
-        ) else {
+    ) -> Bool {
+        guard opened.document == value,
+              opened.documentCreatedAt.timeIntervalSince1970.isFinite,
+              let portableMirror = try? SyncV2PortableMetadata.splitLocalMirrorResources(
+                  opened.resources
+              ) else {
             operationErrorMessage = "portable metadataが壊れているため、作品を開けませんでした。"
             snapshotSyncOutcome = .failed
-            return
+            return false
         }
         document = value
         syncV2ActiveWorkID = opened.workID
@@ -492,6 +585,7 @@ extension IOSDocumentStore {
         startupState = .ready
         saveState = .saved
         applySnapshotSyncV2State(snapshotSyncState)
+        return true
     }
 
     func applySnapshotSyncV2State(_ state: SyncUIState?) {

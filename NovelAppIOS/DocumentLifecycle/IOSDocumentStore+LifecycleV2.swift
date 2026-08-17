@@ -125,12 +125,32 @@ extension IOSDocumentStore {
                     let loadedAttachments = syncAttachments.map {
                         Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
                     }
+                    let importedWorkID = WorkID(UUID())
+                    let localResources = try SyncV2PortableMetadata.resourcesForLocalMirror(
+                        portable.resources,
+                        portableCreatedAt: portable.documentCreatedAt
+                    )
+                    // Build the imported Work in SQLite before changing the
+                    // active editor. If this checkpoint fails, the current
+                    // session remains untouched and the staged package is
+                    // retained for recovery/archive.
+                    guard let application = snapshotSyncV2Application else {
+                        throw SyncV2ApplicationError.invalidRuntimeMode
+                    }
+                    _ = try await application.checkpoint(
+                        workID: importedWorkID,
+                        document: loaded,
+                        reason: .migration,
+                        documentCreatedAt: Self.portableDatePrecision(portable.documentCreatedAt),
+                        attachments: syncAttachments,
+                        resources: localResources
+                    )
                     guard install(
                         loaded,
                         at: libraryRoot,
                         attachments: loadedAttachments,
                         rememberRecent: false,
-                        workID: WorkID(UUID())
+                        workID: importedWorkID
                     ) else {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                     }
@@ -141,13 +161,6 @@ extension IOSDocumentStore {
                     syncV2PortableCreatedAt = portable.documentCreatedAt
                     adoptV2AttachmentRecords(syncAttachments)
                     syncV2PortableResources = portable.resources
-                    guard await checkpointSnapshotSyncV2(
-                        loaded,
-                        reason: .migration,
-                        resources: portable.resources
-                    ) else {
-                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
-                    }
                     archiveImportedPackage(at: staging)
                     startupState = .ready
                     saveState = .saved
@@ -216,38 +229,36 @@ extension IOSDocumentStore {
     }
 
     func requestExport() async {
-        do {
-            guard snapshotSyncV2Application != nil,
-                  syncV2ActiveWorkID != nil,
-                  await saveNow() else {
-                throw SyncV2ApplicationError.invalidRuntimeMode
+        await documentOperationGate.perform { [weak self] in
+            guard let self else { return }
+            _ = await performDocumentTransition {
+                guard snapshotSyncV2Application != nil,
+                      syncV2ActiveWorkID != nil,
+                      let attachments = currentV2Attachments() else {
+                    throw SyncV2ApplicationError.invalidRuntimeMode
+                }
+                let root = fileManager.temporaryDirectory.appendingPathComponent(
+                    "FUMINIWA-Export-\(UUID())",
+                    isDirectory: true
+                )
+                try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+                let destination = root.appendingPathComponent(
+                    Self.portableExportFilename(for: document.title),
+                    isDirectory: true
+                )
+                let exportResources = try SyncV2PortableMetadata.resourcesForExport(
+                    syncV2PortableResources
+                )
+                try await portableBridge.exportExplicitPackage(
+                    document: document,
+                    attachments: attachments,
+                    documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
+                    resources: exportResources,
+                    to: destination
+                )
+                pendingExportRootURL = root
+                pendingExportURL = destination
             }
-            let root = fileManager.temporaryDirectory.appendingPathComponent(
-                "FUMINIWA-Export-\(UUID())",
-                isDirectory: true
-            )
-            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-            let destination = root.appendingPathComponent(
-                Self.portableExportFilename(for: document.title),
-                isDirectory: true
-            )
-            guard let attachments = currentV2Attachments() else {
-                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
-            }
-            let exportResources = try SyncV2PortableMetadata.resourcesForExport(
-                syncV2PortableResources
-            )
-            try await portableBridge.exportExplicitPackage(
-                document: document,
-                attachments: attachments,
-                documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
-                resources: exportResources,
-                to: destination
-            )
-            pendingExportRootURL = root
-            pendingExportURL = destination
-        } catch {
-            operationErrorMessage = "作品を書き出せませんでした。\n\(error.localizedDescription)"
         }
     }
 

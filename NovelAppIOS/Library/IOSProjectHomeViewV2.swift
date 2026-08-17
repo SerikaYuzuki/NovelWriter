@@ -43,18 +43,25 @@ struct IOSProjectHomeView: View {
                     Text("解決方法を選ぶと、選択したSyncV2操作を端末のSQLiteへ予約します。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach([
-                        SyncV2ConflictChoice.useDevice,
-                        .useServer,
-                        .keepBoth
-                    ], id: \.rawValue) { choice in
-                        Button(conflictChoiceTitle(choice)) {
-                            Task { _ = await store.resolveSnapshotSyncV2Conflict(using: choice) }
+                    if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
+                        ForEach([
+                            SyncV2ConflictChoice.useDevice,
+                            .useServer,
+                            .keepBoth
+                        ], id: \.rawValue) { choice in
+                            Button(conflictChoiceTitle(choice)) {
+                                Task {
+                                    _ = await store.resolveSnapshotSyncV2Conflict(
+                                        using: choice,
+                                        expectedSelection: displayedSelection
+                                    )
+                                }
+                            }
+                            .disabled(store.isExplicitSyncInFlight)
+                            Text(conflictChoiceDescription(choice))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(store.isExplicitSyncInFlight)
-                        Text(conflictChoiceDescription(choice))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {

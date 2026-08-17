@@ -202,17 +202,16 @@ extension IOSDocumentStore {
     @discardableResult
     func openPrivateDocument(id: IOSPrivateDocumentID) async -> Bool {
         if snapshotSyncV2Application != nil, let workID = id.workID {
+            if syncV2LibraryItems.first(where: { $0.workID == workID })?.availability == .remoteOnly {
+                return await startRemoteOnlySnapshotSyncV2Open(workID: workID)
+            }
             return await openSnapshotSyncV2(workID: workID.rawValue)
         }
         return false
     }
 
     func openRemoteOnly(workID: WorkID) async -> Bool {
-        let opened = await openSnapshotSyncV2(workID: workID.rawValue)
-        if opened {
-            try? await reloadLibraryItems()
-        }
-        return opened
+        await startRemoteOnlySnapshotSyncV2Open(workID: workID)
     }
 
     /// Explicitly promotes an unbound local Work into the signed-in account.
@@ -254,9 +253,9 @@ extension IOSDocumentStore {
                     newWorkID: WorkID(UUID()),
                     newDocumentID: DocumentID(UUID())
                 )
-                let opened = try await application.open(workID: clone.newWorkID)
+                let opened = try await application.openLocal(workID: clone.newWorkID)
                 guard let value = opened.document else { return false }
-                installSnapshotSyncV2Opened(opened, value: value)
+                guard installSnapshotSyncV2Opened(opened, value: value) else { return false }
                 await applySnapshotSyncV2State(application.uiState(workID: clone.newWorkID))
                 Task { @MainActor [weak self] in
                     guard let self else { return }

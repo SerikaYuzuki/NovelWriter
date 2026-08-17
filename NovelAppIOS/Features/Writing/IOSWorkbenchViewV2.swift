@@ -438,6 +438,12 @@ struct IOSWorkbenchView: View {
                 navigation.documentDidChange(to: session)
             }
         }
+        .onChange(of: store.snapshotSyncV2RemoteOnlyReadyWorkID) { _, workID in
+            guard workID != nil,
+                  let session = store.currentDocumentSessionToken else { return }
+            navigation.showProjectHome(for: session)
+            store.snapshotSyncV2RemoteOnlyReadyWorkID = nil
+        }
     }
 
     private var path: Binding<[IOSWorkspaceRoute]> {
@@ -498,6 +504,7 @@ struct IOSWorkbenchView: View {
     private func openRemote(_ id: WorkID) {
         Task {
             guard await store.openRemoteOnly(workID: id),
+                  store.syncV2ActiveWorkID == id,
                   let session = store.currentDocumentSessionToken else { return }
             navigation.showProjectHome(for: session)
         }
