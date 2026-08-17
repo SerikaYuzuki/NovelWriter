@@ -120,7 +120,10 @@ private extension InMemorySyncV2RuntimeState {
         commandID: String,
         remoteHead: NullableHead
     ) throws -> Data {
-        let newWorkID = WorkID(UUID())
+        guard let newWorkID = action.newWorkID,
+              let newDocumentID = action.newDocumentID else {
+            throw SyncV2Failure.fatal(.invalidLocalState)
+        }
         let newRoot = SnapshotID(data: Data(
             (intent.snapshotID.rawValue + newWorkID.description).utf8
         ))
@@ -133,7 +136,7 @@ private extension InMemorySyncV2RuntimeState {
                 conflictRevision: action.revision,
                 expectedOriginalHead: remoteHead,
                 localCandidateSnapshotId: action.localSnapshotID.rawValue,
-                newDocumentId: UUID().uuidString.lowercased(),
+                newDocumentId: newDocumentID.description,
                 newRootSnapshotId: newRoot.rawValue,
                 newWorkId: newWorkID.description,
                 sourceWorkId: workID.description

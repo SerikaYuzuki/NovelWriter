@@ -80,7 +80,8 @@ extension IOSDocumentStore {
     @discardableResult
     func checkpointSnapshotSyncV2(
         _ value: NovelDocument,
-        reason: SyncV2CheckpointReason = .autosave
+        reason: SyncV2CheckpointReason = .autosave,
+        resources: [PortableResource]? = nil
     ) async -> Bool {
         guard let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return false }
@@ -94,7 +95,8 @@ extension IOSDocumentStore {
             let result = try await application.checkpoint(
                 workID: workID, document: value, reason: reason,
                 documentCreatedAt: documentCreatedAt,
-                attachments: syncAttachments
+                attachments: syncAttachments,
+                resources: resources
             )
             snapshotSyncOutcome = result.typedResult == .noChanges ? .idle : .pending
             saveState = .saved
@@ -274,51 +276,27 @@ extension IOSDocumentStore {
     func resolveSnapshotSyncV2Conflict(using choice: SyncV2ConflictChoice) async -> Bool {
         guard let app = snapshotSyncV2Application,
               startupState == .ready,
-              let activeWorkID = syncV2ActiveWorkID else { return false }
+              let activeWorkID = syncV2ActiveWorkID,
+              let expectedSession = currentDocumentSessionToken else { return false }
+        let expectedEditGeneration = localEditGeneration
         isSnapshotSyncInFlight = true
         defer { isSnapshotSyncInFlight = false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  currentDocumentSessionToken == expectedSession,
+                  localEditGeneration == expectedEditGeneration,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
 
-            // Freeze the same session that supplied the conflict.  Commit any
-            // active editor text locally before creating the action; this is a
-            // SQLite checkpoint only and never waits for the remote worker.
-            switch editorCommandSession.captureActiveCommittedText() {
-            case let .captured(text):
-                guard let chapterID = selectedChapterID,
-                      let episodeID = selectedEpisodeID else { return false }
-                updateEpisodeContent(text, chapterID: chapterID, episodeID: episodeID)
-            case .compositionInProgress:
-                operationErrorMessage = "日本語入力を確定してから、競合を解決してください。"
-                return false
-            case .notActive: break
-            }
-            guard await saveNow(),
-                  await checkpointSnapshotSyncV2(document, reason: .conflictResolution) else {
-                operationErrorMessage = "現在の本文を端末へ保存できないため、競合を解決できません。"
-                return false
-            }
-
             do {
-                // The conflict projection was already verified and rendered
-                // from the durable local inbox.  Re-reading the server here
-                // would make the button a network wait and could pair the
-                // choice with a newer revision.
-                guard let conflict = snapshotSyncConflict,
-                      let expectedSession = currentDocumentSessionToken else { return false }
-                let expectedEditGeneration = localEditGeneration
-                let workID = activeWorkID
-                let newWorkID = choice == .keepBoth ? WorkID(UUID()) : nil
-                let newDocumentID = choice == .keepBoth ? DocumentID(UUID()) : nil
-                let action = SyncV2ConflictAction(
-                    workID: workID, conflictID: conflict.conflictID,
-                    revision: conflict.revision, baseSnapshotID: conflict.baseSnapshotID,
-                    localSnapshotID: conflict.localSnapshotID, remoteSnapshotID: conflict.remoteSnapshotID,
-                    sourceGeneration: conflict.sourceGeneration, choice: choice,
-                    newWorkID: newWorkID, newDocumentID: newDocumentID
-                )
+                guard let action = makeSnapshotSyncV2ConflictAction(
+                    using: choice,
+                    workID: activeWorkID,
+                    expectedSession: expectedSession,
+                    expectedEditGeneration: expectedEditGeneration
+                ) else { return false }
+                let workID = action.workID
+                let newWorkID = action.newWorkID
                 // Keep-both changes the editor's ownership immediately after
                 // local preparation.  Stop writes to the source WorkID before
                 // the worker can be resumed; otherwise an edit made while the
@@ -389,6 +367,62 @@ extension IOSDocumentStore {
         }
     }
 
+    private func makeSnapshotSyncV2ConflictAction(
+        using choice: SyncV2ConflictChoice,
+        workID: WorkID,
+        expectedSession: IOSDocumentSessionToken,
+        expectedEditGeneration: UInt64
+    ) -> SyncV2ConflictAction? {
+        // Conflict selection is a local prepare only.  Do not checkpoint
+        // here: doing so creates a newer intent and makes the displayed
+        // conflict stale while the user is choosing an action.  The editor
+        // must already be saved; a dirty editor is sent back to the normal
+        // save boundary and must select the conflict again.
+        switch editorCommandSession.captureActiveCommittedText() {
+        case let .captured(text):
+            guard let episodeID = selectedEpisodeID,
+                  document.episode(episodeID)?.episode.content == text else {
+                operationErrorMessage = "未保存の変更があります。保存後に競合を再選択してください。"
+                return nil
+            }
+        case .compositionInProgress:
+            operationErrorMessage = "日本語入力を確定してから、競合を解決してください。"
+            return nil
+        case .notActive: break
+        }
+
+        guard saveState == .saved,
+              currentDocumentSessionToken == expectedSession,
+              localEditGeneration == expectedEditGeneration else {
+            operationErrorMessage = "未保存の変更があります。保存後に競合を再選択してください。"
+            return nil
+        }
+
+        // The conflict projection was already verified and rendered from the
+        // durable local inbox. Re-reading the server here would make the
+        // button a network wait and could pair the choice with a newer
+        // revision.
+        guard let conflict = snapshotSyncConflict,
+              let state = snapshotSyncState,
+              state.workID == workID,
+              state.conflict == conflict,
+              case let .saved(generation, snapshotID) = state.localDurability,
+              generation == conflict.sourceGeneration,
+              snapshotID == conflict.localSnapshotID else {
+            operationErrorMessage = "競合情報が古くなりました。最新の状態を確認してから再選択してください。"
+            return nil
+        }
+        let newWorkID = choice == .keepBoth ? WorkID(UUID()) : nil
+        let newDocumentID = choice == .keepBoth ? DocumentID(UUID()) : nil
+        return SyncV2ConflictAction(
+            workID: workID, conflictID: conflict.conflictID,
+            revision: conflict.revision, baseSnapshotID: conflict.baseSnapshotID,
+            localSnapshotID: conflict.localSnapshotID, remoteSnapshotID: conflict.remoteSnapshotID,
+            sourceGeneration: conflict.sourceGeneration, choice: choice,
+            newWorkID: newWorkID, newDocumentID: newDocumentID
+        )
+    }
+
     func installSnapshotSyncV2Opened(
         _ opened: SyncV2OpenedWork,
         value: NovelDocument
@@ -408,6 +442,7 @@ extension IOSDocumentStore {
         syncV2AttachmentIDs = Dictionary(
             uniqueKeysWithValues: opened.attachments.map { ($0.fileName, $0.attachmentId) }
         )
+        syncV2PortableResources = opened.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
         syncV2KeepBothPendingWorkID = nil
         selectedChapterID = value.chapters.first?.id

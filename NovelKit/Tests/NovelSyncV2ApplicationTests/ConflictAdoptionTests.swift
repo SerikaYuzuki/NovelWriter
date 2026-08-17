@@ -101,6 +101,55 @@ struct ConflictAdoptionTests {
         await fixture.remote.resumeSuspended()
     }
 
+    @Test("keep-both reserves clone publishing until source clone is acknowledged")
+    func keepBothClonePublishesAfterSourceAck() async throws {
+        let fixture = try await ConflictFixture.make(
+            resolutionChoice: .keepBoth,
+            resolutionReply: .applied()
+        )
+
+        let result = try await fixture.app.resolveConflict(
+            workID: fixture.workID,
+            action: fixture.action(choice: .keepBoth)
+        )
+        let clone = try #require(result.openedWork)
+        _ = try await fixture.app.checkpoint(
+            workID: clone.workID,
+            document: applicationTestDocument(
+                id: clone.document?.id ?? UUID(),
+                title: "複製側の先行編集"
+            ),
+            reason: .autosave,
+            documentCreatedAt: clone.documentCreatedAt
+        )
+
+        // Editing the reserved clone must never race the source cloneWork.
+        #expect(await fixture.remote.recordedOperations().count == 1)
+        try await fixture.app.resumePending()
+        try await eventually {
+            await fixture.remote.recordedOperations().count == 2
+        }
+        let afterSource = await fixture.remote.recordedOperations()
+        #expect(commandKind(afterSource[1]) == .cloneWork)
+        if case let .command(cloneCommand) = afterSource[1],
+           let canonical = String(data: cloneCommand.command.canonicalBytes, encoding: .utf8) {
+            #expect(canonical.contains(clone.workID.description))
+        } else {
+            Issue.record("cloneWork command was not recorded")
+        }
+        #expect(afterSource.count == 2)
+
+        // The clone lane is unlocked by the source ACK, but is not implicitly
+        // sent from inside that ACK.  A later wake sends the saved edit.
+        try await fixture.app.resumePending()
+        try await eventually {
+            await fixture.remote.recordedOperations().count == 3
+        }
+        let afterClone = await fixture.remote.recordedOperations()
+        #expect(commandKind(afterClone[2]) == .publish)
+        #expect(try await fixture.state.open(workID: clone.workID).document?.title == "複製側の先行編集")
+    }
+
     @Test("use server stays pending until safe gated adoption")
     func useServerRequiresSafeAdoption() async throws {
         let fixture = try await ConflictFixture.makeForServerAdoption()

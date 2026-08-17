@@ -58,7 +58,11 @@ extension IOSDocumentStore {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
                 document = value
-                documentCreatedAt = Date()
+                // Portable manifests retain millisecond precision. Keep the
+                // in-memory anchor at that precision too, so an explicit
+                // export can round-trip the current work date byte-for-byte
+                // through ISO8601 without reintroducing filesystem time.
+                documentCreatedAt = Self.portableDatePrecision(Date())
                 let workID = WorkID(UUID())
                 syncV2ActiveWorkID = workID
                 syncV2KeepBothPendingWorkID = nil
@@ -70,6 +74,7 @@ extension IOSDocumentStore {
                 replaceAttachments([])
                 syncV2AttachmentPayloads = [:]
                 syncV2AttachmentIDs = [:]
+                syncV2PortableResources = []
                 selectedChapterID = value.chapters.first?.id
                 selectedEpisodeID = value.chapters.first?.episodes.first?.id
                 advanceDocumentSessionGeneration()
@@ -107,9 +112,6 @@ extension IOSDocumentStore {
                     let loadedAttachments = syncAttachments.map {
                         Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
                     }
-                    let importedCreatedAt = (try? staging.resourceValues(
-                        forKeys: [.creationDateKey]
-                    ).creationDate) ?? Date()
                     guard install(
                         loaded,
                         at: libraryRoot,
@@ -119,9 +121,17 @@ extension IOSDocumentStore {
                     ) else {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                     }
-                    documentCreatedAt = importedCreatedAt
+                    // The package manifest is the explicit portable boundary;
+                    // filesystem timestamps are not document identity or
+                    // authoring metadata.
+                    documentCreatedAt = portable.documentCreatedAt
                     adoptV2AttachmentRecords(syncAttachments)
-                    guard await checkpointSnapshotSyncV2(loaded, reason: .migration) else {
+                    syncV2PortableResources = portable.resources
+                    guard await checkpointSnapshotSyncV2(
+                        loaded,
+                        reason: .migration,
+                        resources: portable.resources
+                    ) else {
                         throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                     }
                     archiveImportedPackage(at: staging)
@@ -211,6 +221,8 @@ extension IOSDocumentStore {
             try await portableBridge.exportExplicitPackage(
                 document: document,
                 attachments: attachments,
+                documentCreatedAt: documentCreatedAt,
+                resources: syncV2PortableResources,
                 to: destination
             )
             pendingExportRootURL = root
@@ -251,6 +263,7 @@ extension IOSDocumentStore {
         replaceAttachments(attachments)
         syncV2AttachmentPayloads = [:]
         syncV2AttachmentIDs = [:]
+        syncV2PortableResources = []
         selectedChapterID = value.chapters.first?.id
         selectedEpisodeID = value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()
@@ -276,5 +289,9 @@ extension IOSDocumentStore {
         let clean = title.unicodeScalars.map { forbidden.contains($0) ? "_" : String($0) }.joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return "\(clean.isEmpty ? "新規作品" : String(clean.prefix(80))).novelpkg"
+    }
+
+    private static func portableDatePrecision(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded(.down) / 1000)
     }
 }

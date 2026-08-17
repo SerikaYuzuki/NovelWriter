@@ -23,6 +23,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         var document: NovelDocument
         let documentCreatedAt: Date
         var attachments: [SyncAttachment]
+        var resources: [PortableResource]
+        var keepBothReserved: Bool
         var generation: Int64
         var snapshotID: SnapshotID
         var encoded: [SnapshotID: EncodedSnapshot]
@@ -63,7 +65,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
                 throw SyncV2Failure.fatal(.invalidLocalState)
             }
             if work.document == capture.document,
-               attachmentsEqual(work.attachments, capture.attachments) {
+               attachmentsEqual(work.attachments, capture.attachments),
+               capture.resources.map({ work.resources == $0 }) ?? true {
                 return SyncV2LocalCheckpoint(
                     snapshotID: work.snapshotID,
                     generation: work.generation,
@@ -74,6 +77,9 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             let encoded = try encode(capture, parent: work.snapshotID)
             work.document = capture.document
             work.attachments = capture.attachments
+            if let resources = capture.resources {
+                work.resources = resources
+            }
             work.generation += 1
             work.snapshotID = encoded.snapshotId
             work.encoded[encoded.snapshotId] = encoded
@@ -112,6 +118,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             document: capture.document,
             documentCreatedAt: capture.documentCreatedAt,
             attachments: capture.attachments,
+            resources: capture.resources ?? [],
+            keepBothReserved: false,
             generation: 1,
             snapshotID: encoded.snapshotId,
             encoded: [encoded.snapshotId: encoded],
@@ -198,6 +206,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
                 document: cloneDocument,
                 documentCreatedAt: work.documentCreatedAt,
                 attachments: work.attachments,
+                resources: work.resources,
+                keepBothReserved: true,
                 generation: 1,
                 snapshotID: clone.snapshotId,
                 encoded: [clone.snapshotId: clone],
@@ -395,6 +405,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             document: model.document,
             documentCreatedAt: model.documentCreatedAt,
             attachments: model.attachments,
+            resources: [],
+            keepBothReserved: false,
             generation: 1,
             snapshotID: encoded.snapshotId,
             encoded: [encoded.snapshotId: encoded],
@@ -415,6 +427,7 @@ public extension InMemorySyncV2RuntimeState {
         if let command = commands[workID]?.first {
             return .command(command.command)
         }
+        guard works[workID]?.keepBothReserved != true else { return .idle }
         guard let intent = works[workID]?.intents.first else { return .idle }
         guard let account else {
             return .blocked(.authenticationRequired)
@@ -432,7 +445,8 @@ public extension InMemorySyncV2RuntimeState {
 
     func pendingWorkIDs() -> [WorkID] {
         Array(Set(works.keys.filter { workID in
-            !(commands[workID] ?? []).isEmpty || !(works[workID]?.intents.isEmpty ?? true)
+            (!(commands[workID] ?? []).isEmpty || !(works[workID]?.intents.isEmpty ?? true)) &&
+                works[workID]?.keepBothReserved != true
         }))
     }
 
@@ -503,6 +517,9 @@ public extension InMemorySyncV2RuntimeState {
             }
             work.conflict = conflict
         } else if case let .conflict(action) = linkedIntent.kind {
+            if action.choice == .keepBoth, let cloneWorkID = action.newWorkID {
+                works[cloneWorkID]?.keepBothReserved = false
+            }
             if action.choice == .useServer, let inboxID = verifiedInboxID {
                 pendingAdoptions[workID] = SyncV2PendingAdoption(
                     workID: workID,
@@ -640,6 +657,7 @@ private extension InMemorySyncV2RuntimeState {
             document: work.document,
             documentCreatedAt: work.documentCreatedAt,
             attachments: work.attachments,
+            resources: work.resources,
             generation: work.generation,
             snapshotID: work.snapshotID
         )
