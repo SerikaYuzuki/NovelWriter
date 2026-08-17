@@ -47,9 +47,12 @@ public extension SyncV2Application {
                 result: .queued
             )
             // Preparation (including keep-both clone creation) is complete
-            // before this wake.  A stalled transport therefore cannot race
-            // the local editor switch or put the clone at risk.
-            scheduleWorker(for: workID)
+            // before this wake.  Keep-both deliberately leaves the source
+            // lane asleep so the caller can switch its editor first; the
+            // caller resumes pending work after the local hand-off.
+            if effectiveAction.choice != .keepBoth {
+                scheduleWorker(for: workID)
+            }
             return SyncV2OperationResult(
                 state: state,
                 typedResult: .queued,

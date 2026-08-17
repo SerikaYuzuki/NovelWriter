@@ -27,6 +27,9 @@ struct ConflictAdoptionTests {
             workID: fixture.workID,
             action: fixture.action(choice: choice)
         )
+        if choice == .keepBoth {
+            try await fixture.app.resumePending()
+        }
         try await eventually {
             await fixture.remote.recordedOperations().count == 2
         }
@@ -79,6 +82,7 @@ struct ConflictAdoptionTests {
         #expect(clone.document?.id != sourceBefore.document?.id)
         #expect(clone.document?.title == sourceBefore.document?.title)
         #expect(try await fixture.state.open(workID: clone.workID).document?.id == clone.document?.id)
+        #expect(await fixture.remote.recordedOperations().count == 1)
 
         // A transport that never returns cannot prevent editing the clone.
         _ = try await fixture.app.checkpoint(
@@ -92,6 +96,8 @@ struct ConflictAdoptionTests {
         )
         #expect(try await fixture.state.open(workID: fixture.workID).document?.title == sourceBefore.document?.title)
         #expect(try await fixture.state.open(workID: clone.workID).document?.title == "複製側の追記")
+        try await fixture.app.resumePending()
+        try await eventually { await fixture.remote.recordedOperations().count == 2 }
         await fixture.remote.resumeSuspended()
     }
 
