@@ -1,32 +1,41 @@
 import NovelSyncV2
 
 public extension SyncV2Application {
+    /// Opens only the durable local state.
+    ///
+    /// This is the launch/editor boundary: it never consults the catalog or
+    /// downloads a remote-only work. Remote-only fallback belongs exclusively
+    /// to `open(workID:)`, which is an explicit remote-capable operation.
+    func openLocal(workID: WorkID) async throws -> SyncV2OpenedWork {
+        let opened = try await kernel.open(workID: workID)
+        recordOpened(opened)
+        let activeConflict = try await kernel.activeConflict(workID: workID)
+        let adoption = try await kernel.pendingAdoption(workID: workID)
+        if let adoption {
+            setState(
+                workID: workID,
+                localDurability: durability(for: opened),
+                remoteProgress: .readyForSafeAdoption(
+                    inboxID: adoption.inboxID
+                ),
+                result: .adoptionPending
+            )
+        } else if let conflict = activeConflict {
+            setState(
+                workID: workID,
+                localDurability: durability(for: opened),
+                remoteProgress: .needsChoice,
+                result: .conflictPending,
+                conflict: .set(conflict)
+            )
+        }
+        scheduleWorker(for: workID)
+        return opened
+    }
+
     func open(workID: WorkID) async throws -> SyncV2OpenedWork {
         do {
-            let opened = try await kernel.open(workID: workID)
-            recordOpened(opened)
-            let activeConflict = try await kernel.activeConflict(workID: workID)
-            let adoption = try await kernel.pendingAdoption(workID: workID)
-            if let adoption {
-                setState(
-                    workID: workID,
-                    localDurability: durability(for: opened),
-                    remoteProgress: .readyForSafeAdoption(
-                        inboxID: adoption.inboxID
-                    ),
-                    result: .adoptionPending
-                )
-            } else if let conflict = activeConflict {
-                setState(
-                    workID: workID,
-                    localDurability: durability(for: opened),
-                    remoteProgress: .needsChoice,
-                    result: .conflictPending,
-                    conflict: .set(conflict)
-                )
-            }
-            scheduleWorker(for: workID)
-            return opened
+            return try await openLocal(workID: workID)
         } catch SyncV2ApplicationError.workNotFound {
             guard runtimeIdentity != .preview else {
                 throw SyncV2ApplicationError.workNotFound
