@@ -648,11 +648,23 @@ private struct ClassificationLedger {
         var values: [UUID: LegacyV1Disposition] = [:]
         for line in text.split(whereSeparator: \ .isNewline) {
             let fields = CSV.parse(String(line))
-            guard fields.count >= 2, let workID = UUID(uuidString: fields[0]) else { continue }
-            if fields[0].lowercased() == "workid" {
+            let knownHeader = ["workId", "classification", "snapshotId", "createdAt", "generation", "headSnapshotId", "pinned", "evidence"]
+            if fields == knownHeader {
                 continue
             }
-            guard let disposition = disposition(for: fields[0], value: fields[1]) else {
+            guard fields.count == 8 else {
+                throw LegacyV1ExportError.malformedClassification(
+                    workID: fields.first ?? "<missing>",
+                    value: "expected exactly 8 columns"
+                )
+            }
+            guard let workID = UUID(uuidString: fields[0]) else {
+                throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: "invalid UUID")
+            }
+            guard fields.dropFirst().allSatisfy({ !$0.isEmpty }) else {
+                throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: "evidence column is empty")
+            }
+            guard let disposition = disposition(value: fields[1]) else {
                 throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: fields[1])
             }
             guard values.updateValue(disposition, forKey: workID) == nil else {
@@ -662,9 +674,9 @@ private struct ClassificationLedger {
         return values
     }
 
-    private static func disposition(for workID: String, value: String) -> LegacyV1Disposition? {
+    private static func disposition(value: String) -> LegacyV1Disposition? {
         switch value {
-        case "verified", "verified_candidate", workID:
+        case "verified", "verified_candidate":
             .verified
         case "quarantine", "legacy_quarantine_test_batch":
             .quarantine
@@ -733,7 +745,10 @@ private struct ArchiveManifest {
                   digest.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102) }) else {
                 throw LegacyV1ExportError.sourceArchiveManifestMismatch("digest is not lowercase 64-hex")
             }
-            let path = String(fields[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            var path = String(fields[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if path.hasPrefix("./") {
+                path.removeFirst(2)
+            }
             guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\") else {
                 throw LegacyV1ExportError.sourceArchiveManifestMismatch("manifest path is not relative")
             }

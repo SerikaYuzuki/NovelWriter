@@ -44,7 +44,7 @@ func exportsClassifiedWork() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try "\(workID.uuidString),verified_candidate\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "verified_candidate").write(to: ledgerURL, atomically: true, encoding: .utf8)
     let stageURL = root.appendingPathComponent("stage", isDirectory: true)
     let options = LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
@@ -76,7 +76,7 @@ func exportsClassifiedWork() async throws {
     #expect(second.entries == first.entries)
     #expect(FileManager.default.fileExists(atPath: packageURL.path))
 
-    try "\(workID.uuidString),needs-review\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "needs-review").write(to: ledgerURL, atomically: true, encoding: .utf8)
     do {
         _ = try await LegacyV1Exporter().export(options: options)
         Issue.record("a committed stage with different provenance must not be reused")
@@ -103,7 +103,7 @@ func exportsClassifiedWork() async throws {
     }
     try FileManager.default.removeItem(at: walURL)
 
-    let sourceFileDigest = SHA256.hash(data: try Data(contentsOf: sqliteURL)).hex
+    let sourceFileDigest = try SHA256.hash(data: Data(contentsOf: sqliteURL)).hex
     try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: archiveManifestURL.path)
     try "\(sourceFileDigest)  ../library.sqlite\n".write(to: archiveManifestURL, atomically: true, encoding: .utf8)
     do {
@@ -118,6 +118,26 @@ func exportsClassifiedWork() async throws {
         Issue.record("duplicate manifest paths must be rejected")
     } catch let error as LegacyV1ExportError {
         #expect(String(describing: error).contains("sourceArchiveManifestMismatch"))
+    }
+    try "\(sourceFileDigest)  ./library.sqlite\n".write(to: archiveManifestURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: archiveManifestURL.path)
+    let malformedRows = [
+        "not-a-uuid,verified,snapshot,date,1,snapshot,1,evidence\n",
+        classificationRow(workID: workID, disposition: "unknown"),
+        "\(workID.uuidString),verified\n",
+        classificationRow(workID: workID, disposition: "verified") + classificationRow(workID: workID, disposition: "verified")
+    ]
+    for (index, row) in malformedRows.enumerated() {
+        try row.write(to: ledgerURL, atomically: true, encoding: .utf8)
+        do {
+            _ = try await LegacyV1Exporter().export(options: optionsWithStage(options, root.appendingPathComponent("classification-invalid-\(index)")))
+            Issue.record("malformed classification row must be rejected")
+        } catch let error as LegacyV1ExportError {
+            #expect(
+                String(describing: error).contains("malformedClassification") ||
+                    String(describing: error).contains("duplicateClassification")
+            )
+        }
     }
 }
 
@@ -158,7 +178,7 @@ func blocksInvalidManifest() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try "\(workID.uuidString),needs-review\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "needs-review").write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
@@ -198,7 +218,7 @@ func blocksReferencedObjectFailure() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try "\(workID.uuidString),verified\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "verified").write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
@@ -238,7 +258,7 @@ func blocksMissingReferencedObject() async throws {
     )
     let archiveManifestURL = try makeArchiveManifest(root: archiveRoot, sqliteURL: sqliteURL)
     let ledgerURL = root.appendingPathComponent("classification.csv")
-    try "\(workID.uuidString),quarantine\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    try classificationRow(workID: workID, disposition: "quarantine").write(to: ledgerURL, atomically: true, encoding: .utf8)
     let report = try await LegacyV1Exporter().export(options: LegacyV1ExportOptions(
         sourceSQLiteURL: sqliteURL,
         classificationLedgerURL: ledgerURL,
@@ -266,10 +286,14 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
     return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
 }
 
+private func classificationRow(workID: UUID, disposition: String) -> String {
+    "\(workID.uuidString),\(disposition),snapshot,2026-08-17T00:00:00Z,1,snapshot,1,evidence\n"
+}
+
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
     let digest = try SHA256.hash(data: Data(contentsOf: sqliteURL)).hex
     let manifestURL = root.appendingPathComponent("sha256-manifest.txt")
-    try "\(digest)  \(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
+    try "\(digest)  ./\(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: sqliteURL.path)
     try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: manifestURL.path)
     return manifestURL
