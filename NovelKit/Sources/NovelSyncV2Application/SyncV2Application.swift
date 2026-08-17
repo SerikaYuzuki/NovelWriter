@@ -5,10 +5,18 @@ import NovelSyncV2
 public struct SyncV2OperationResult: Sendable {
     public let state: SyncUIState
     public let typedResult: SyncV2TypedResult
+    /// A local work prepared as part of the operation (currently keep-both).
+    /// The caller can switch its editor without another remote round-trip.
+    public let openedWork: SyncV2OpenedWork?
 
-    public init(state: SyncUIState, typedResult: SyncV2TypedResult) {
+    public init(
+        state: SyncUIState,
+        typedResult: SyncV2TypedResult,
+        openedWork: SyncV2OpenedWork? = nil
+    ) {
         self.state = state
         self.typedResult = typedResult
+        self.openedWork = openedWork
     }
 }
 

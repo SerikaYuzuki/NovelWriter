@@ -62,6 +62,39 @@ struct ConflictAdoptionTests {
         #expect(after.snapshotID != before.snapshotID)
     }
 
+    @Test("keep-both installs and returns the clone before transport completes")
+    func keepBothSwitchIsLocalFirst() async throws {
+        let fixture = try await ConflictFixture.make(
+            resolutionChoice: .keepBoth,
+            resolutionReply: .suspendThenFailure(.offline)
+        )
+        let sourceBefore = try await fixture.state.open(workID: fixture.workID)
+
+        let result = try await fixture.app.resolveConflict(
+            workID: fixture.workID,
+            action: fixture.action(choice: .keepBoth)
+        )
+        let clone = try #require(result.openedWork)
+        #expect(clone.workID != fixture.workID)
+        #expect(clone.document?.id != sourceBefore.document?.id)
+        #expect(clone.document?.title == sourceBefore.document?.title)
+        #expect(try await fixture.state.open(workID: clone.workID).document?.id == clone.document?.id)
+
+        // A transport that never returns cannot prevent editing the clone.
+        _ = try await fixture.app.checkpoint(
+            workID: clone.workID,
+            document: applicationTestDocument(
+                id: clone.document?.id ?? UUID(),
+                title: "複製側の追記"
+            ),
+            reason: .autosave,
+            documentCreatedAt: clone.documentCreatedAt
+        )
+        #expect(try await fixture.state.open(workID: fixture.workID).document?.title == sourceBefore.document?.title)
+        #expect(try await fixture.state.open(workID: clone.workID).document?.title == "複製側の追記")
+        await fixture.remote.resumeSuspended()
+    }
+
     @Test("use server stays pending until safe gated adoption")
     func useServerRequiresSafeAdoption() async throws {
         let fixture = try await ConflictFixture.makeForServerAdoption()

@@ -145,6 +145,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 )
                 return SyncV2Preparation(intentID: prepared.intentID, noChanges: prepared.noChanges)
             case .keepBoth:
+                let newWorkID = action.newWorkID ?? WorkID(UUID())
+                let newDocumentID = action.newDocumentID ?? DocumentID(UUID())
                 let prepared = try await store.prepareKeepBothResolution(
                     V2KeepBothPreparationRequest(
                         workID: action.workID,
@@ -153,12 +155,23 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                         sourceGeneration: action.sourceGeneration,
                         localSnapshotID: action.localSnapshotID,
                         remoteSnapshotID: action.remoteSnapshotID,
-                        newWorkID: action.newWorkID ?? WorkID(UUID()),
-                        newDocumentID: action.newDocumentID ?? DocumentID(UUID())
+                        newWorkID: newWorkID,
+                        newDocumentID: newDocumentID
                     ),
                     scope: localScope
                 )
-                return SyncV2Preparation(intentID: prepared.intentID, noChanges: false)
+                // The store transaction has already installed the clone.  A
+                // local open here gives the application the exact bytes to
+                // hand to the editor before it wakes the source worker.
+                let clone = try await store.open(
+                    workID: newWorkID,
+                    scope: localScope
+                )
+                return SyncV2Preparation(
+                    intentID: prepared.intentID,
+                    noChanges: false,
+                    preparedWorkID: clone.summary.workID
+                )
             }
         } catch SyncV2ApplicationError.staleConflictAction {
             throw SyncV2ApplicationError.staleConflictAction

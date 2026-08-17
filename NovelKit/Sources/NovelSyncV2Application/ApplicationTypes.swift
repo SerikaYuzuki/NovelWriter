@@ -135,10 +135,17 @@ public struct SyncV2RestoreRequest: Hashable, Sendable {
 public struct SyncV2Preparation: Hashable, Sendable {
     public let intentID: UUID?
     public let noChanges: Bool
+    /// Set when preparation atomically created a local destination work.
+    public let preparedWorkID: WorkID?
 
-    public init(intentID: UUID?, noChanges: Bool) {
+    public init(
+        intentID: UUID?,
+        noChanges: Bool,
+        preparedWorkID: WorkID? = nil
+    ) {
         self.intentID = intentID
         self.noChanges = noChanges
+        self.preparedWorkID = preparedWorkID
     }
 }
 

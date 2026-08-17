@@ -158,6 +158,74 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
               work.snapshotID == action.localSnapshotID else {
             throw SyncV2ApplicationError.staleConflictAction
         }
+        if action.choice == .keepBoth {
+            guard let newWorkID = action.newWorkID,
+                  let newDocumentID = action.newDocumentID,
+                  newWorkID != action.workID else {
+                throw SyncV2ApplicationError.staleConflictAction
+            }
+            if let existing = works[newWorkID] {
+                guard existing.document.id == newDocumentID.rawValue else {
+                    throw SyncV2ApplicationError.staleConflictAction
+                }
+                if let existingIntent = work.intents.first(where: {
+                    guard case let .conflict(existingAction) = $0.kind else { return false }
+                    return existingAction.conflictID == action.conflictID &&
+                        existingAction.choice == .keepBoth
+                }) {
+                    return SyncV2Preparation(
+                        intentID: existingIntent.id,
+                        noChanges: false,
+                        preparedWorkID: newWorkID
+                    )
+                }
+                throw SyncV2ApplicationError.staleConflictAction
+            }
+            var cloneDocument = work.document
+            cloneDocument.id = newDocumentID.rawValue
+            let clone = try SnapshotCodec.encode(
+                SnapshotModel(
+                    workId: newWorkID,
+                    document: cloneDocument,
+                    documentCreatedAt: work.documentCreatedAt,
+                    attachments: work.attachments
+                ),
+                parents: []
+            )
+            works[newWorkID] = Work(
+                document: cloneDocument,
+                documentCreatedAt: work.documentCreatedAt,
+                attachments: work.attachments,
+                generation: 1,
+                snapshotID: clone.snapshotId,
+                encoded: [clone.snapshotId: clone],
+                intents: [],
+                conflict: nil,
+                history: [
+                    SyncV2LocalHistoryOccurrence(
+                        occurrenceID: UUID(),
+                        snapshotID: clone.snapshotId,
+                        reason: SyncV2CheckpointReason.keepBoth.rawValue,
+                        pinned: false,
+                        localGeneration: 1,
+                        createdAt: Date()
+                    )
+                ]
+            )
+            let intent = Intent(
+                id: UUID(),
+                snapshotID: work.snapshotID,
+                generation: work.generation,
+                kind: .conflict(action)
+            )
+            work.intents.append(intent)
+            works[action.workID] = work
+            return SyncV2Preparation(
+                intentID: intent.id,
+                noChanges: false,
+                preparedWorkID: newWorkID
+            )
+        }
         if action.choice == .useDevice {
             let decision = try SnapshotCodec.encode(
                 SnapshotModel(
