@@ -35,11 +35,16 @@ fn error_response(error: SyncError) -> Response {
         }
         _ => StatusCode::BAD_REQUEST,
     };
-    (
-        status,
-        axum::Json(serde_json::json!({"error":error.to_string()})),
-    )
-        .into_response()
+    let code = error.to_string();
+    let retryable = matches!(error, SyncError::Retryable);
+    let value = serde_json::json!({"error": code,"result":if retryable {"retryable"} else {"parked"},"retryable":retryable});
+    let bytes = crate::domain::canonical_json(&value)
+        .unwrap_or_else(|_| br#"{"error":"retryable"}"#.to_vec());
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
+        .body(axum::body::Body::from(bytes))
+        .unwrap()
 }
 fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response {
     let bytes = crate::domain::canonical_json(&value)
@@ -83,6 +88,14 @@ fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrinc
     Ok(principal)
 }
 async fn command(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Response {
+    command_inner(headers, state, body, None).await
+}
+async fn command_inner(
+    headers: HeaderMap,
+    state: State<AppState>,
+    body: Bytes,
+    route_work_id: Option<Uuid>,
+) -> Response {
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
@@ -91,6 +104,9 @@ async fn command(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Res
         Ok(v) => v,
         Err(e) => return error_response(e),
     };
+    if route_work_id.is_some_and(|route| route != cmd.work_id) {
+        return error_response(SyncError::NotFound);
+    }
     if !binding_matches(&cmd.value, &p) {
         return error_response(SyncError::AccountFenceMismatch);
     };
@@ -105,6 +121,14 @@ async fn command(headers: HeaderMap, state: State<AppState>, body: Bytes) -> Res
         Err(e) => error_response(e),
     }
 }
+async fn routed_command(
+    Path(work_id): Path<Uuid>,
+    headers: HeaderMap,
+    state: State<AppState>,
+    body: Bytes,
+) -> Response {
+    command_inner(headers, state, body, Some(work_id)).await
+}
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v2/capabilities", get(capabilities))
@@ -118,10 +142,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v2/objects/finalize", post(command))
         .route("/v2/uploads/:upload_id", put(upload))
         .route("/v2/snapshots/register", post(command))
-        .route("/v2/works/:work_id/publish", post(command))
+        .route("/v2/works/:work_id/publish", post(routed_command))
         .route("/v2/works/:work_id/conflict", get(conflict))
-        .route("/v2/works/:work_id/conflict/resolve", post(command))
-        .route("/v2/works/:work_id/restore", post(command))
+        .route("/v2/works/:work_id/conflict/resolve", post(routed_command))
+        .route("/v2/works/:work_id/restore", post(routed_command))
         .route("/v2/receipts/:command_id", get(receipt))
         .with_state(state)
 }
@@ -343,10 +367,19 @@ async fn receipt(Path(id): Path<Uuid>, headers: HeaderMap, state: State<AppState
         Err(e) => return e,
     };
     match state.repo.receipt(&p, id).await {
-        Ok((kind, bytes, status)) => canonical_response(
-            StatusCode::OK,
-            serde_json::json!({"commandId":id,"commandKind":kind,"responseStatus":status,"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"result":"noChanges"}),
-        ),
+        Ok((kind, work_id, request_digest, bytes, status)) => {
+            let original = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+            let result = original
+                .as_ref()
+                .and_then(|value| value.get("result"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::String("retryable".into()));
+            let read_back = original.as_ref().and_then(|value| value.get("receipt").and_then(|receipt| receipt.get("readBack"))).cloned().unwrap_or_else(|| serde_json::json!({"accountMatched":false,"commandDigestMatched":false,"headMatched":false,"resourceMatched":false,"stateMatched":false}));
+            canonical_response(
+                StatusCode::OK,
+                serde_json::json!({"commandId":id,"commandKind":kind,"workId":work_id,"requestDigest":hex::encode(request_digest),"responseStatus":status,"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"originalResult":result,"readBack":read_back,"result":"noChanges"}),
+            )
+        }
         Err(e) => error_response(e),
     }
 }

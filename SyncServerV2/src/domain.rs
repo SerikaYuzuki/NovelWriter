@@ -192,6 +192,8 @@ pub enum SyncError {
     ObjectDigestMismatch,
     #[error("snapshotDigestMismatch")]
     SnapshotDigestMismatch,
+    #[error("lineageViolation")]
+    LineageViolation,
     #[error("uploadCapabilityMismatch")]
     UploadCapabilityMismatch,
     #[error("uploadExpired")]
