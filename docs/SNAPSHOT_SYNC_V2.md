@@ -19,12 +19,21 @@ components are physically separated from v1:
   CloudKit path. A missing or invalid v2 database is a startup error, not an
   empty-database fallback.
 
-The development volume is `fuminiwa_sync_v2_pgdata`. Initial server object
+The development volume is `fuminiwa-sync-v2-data`. Initial server object
 bytes are PostgreSQL `BYTEA`. The Rust domain depends on an `ObjectStore`
 trait; `PostgresObjectStore` is the only v2 implementation and a future S3
 adapter requires a new deployment migration/gate. No external CAS root or
 object Docker volume is part of this contract. The client never connects to
 PostgreSQL or an object store directly.
+
+Before SQLx migrations run, the server performs a fail-closed database
+identity check. It permits a genuinely fresh database (PostgreSQL system
+objects and SQLx's own `_sqlx_migrations` bookkeeping do not count as user
+data) or an existing database whose `sync_v2.server_meta` contains the exact
+v2 namespace, protocol, schema, and DDL contract markers. A legacy, partial,
+nonempty, or otherwise unrecognized user schema is rejected before migration
+can create, alter, or seed anything. The guard is also required when opening
+an already-migrated current v2 database.
 
 The v2 media type is `application/vnd.fuminiwa.sync.v2+jcs`. Every accepted
 JSON body is already RFC 8785 JCS UTF-8. The server stores the exact accepted

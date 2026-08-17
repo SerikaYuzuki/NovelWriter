@@ -232,3 +232,11 @@ fn sync_migration_is_byte_identical_to_the_audited_contract() {
         include_bytes!("../../docs/sync/v2/postgres.sql")
     );
 }
+
+#[test]
+fn compose_uses_the_canonical_v2_postgres_volume_name() {
+    let compose = include_str!("../docker-compose.yml");
+    assert!(compose.contains("- fuminiwa-sync-v2-data:/var/lib/postgresql/data"));
+    assert!(compose.contains("  fuminiwa-sync-v2-data:\n    name: fuminiwa-sync-v2-data"));
+    assert!(!compose.contains("fuminiwa_sync_v2_pgdata"));
+}

@@ -25,6 +25,14 @@ the compose network; only Caddy's LAN staging TLS port (default `8443`) is
 published. `tls internal` is intentionally staging-only and requires trusting
 the generated Caddy local CA on each test device.
 
+Before SQLx migrations run, startup checks the database identity. A genuinely
+fresh database (apart from PostgreSQL system objects and SQLx's own
+`_sqlx_migrations` bookkeeping) or an existing database with the exact v2
+`sync_v2.server_meta` markers is accepted. Legacy, partial, nonempty, or
+unrecognized user schemas are rejected before migration can mutate them; the
+rejection path is read-only. This guard also permits an already-migrated v2
+database to restart normally.
+
 The server image runs as the non-root `fuminiwa` user with a read-only root
 filesystem, a small `tmpfs` at `/tmp`, all Linux capabilities dropped, and
 `no-new-privileges`. Caddy uses read-only root storage with only its explicit

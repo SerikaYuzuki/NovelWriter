@@ -7,7 +7,7 @@ data authorities:
 
 ```text
 API prefix:       /v2
-PostgreSQL volume fuminiwa_sync_v2_pgdata
+PostgreSQL volume fuminiwa-sync-v2-data
 auth schema:      auth_v1 (separate schema namespace)
 sync schema:      sync_v2 (separate schema namespace)
 object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
@@ -21,7 +21,12 @@ include role grants and authenticated read-back before that claim is restored.
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks
 the v2 schema checksum/protocol epoch or points at a known v1 volume/schema.
-The live service never runs an archive migration automatically.
+The live service never runs an archive migration automatically. Before
+running SQLx migrations, startup accepts only a genuinely fresh database or
+an existing exact v2 `sync_v2.server_meta` marker (with SQLx's own migration
+bookkeeping allowed). Legacy, partial, nonempty, and unrecognized user
+schemas fail closed, and the guard is read-only so a rejection leaves the
+database unchanged.
 
 `PostgresObjectStore` is the only initial `ObjectStore` implementation. A
 future S3 adapter requires a new versioned deployment manifest, data-copy plus

@@ -26,6 +26,42 @@ const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
 const MAX_LINEAGE_NODES: i64 = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatabaseIdentity {
+    Fresh,
+    SnapshotSyncV2,
+}
+
+fn classify_database_identity(
+    server_meta_exists: bool,
+    server_meta: &[(String, String)],
+    user_objects: &[String],
+) -> Result<DatabaseIdentity, &'static str> {
+    let exact_marker = [
+        ("namespace", SERVER_NAMESPACE),
+        ("protocol_epoch", "2"),
+        ("schema_version", SCHEMA_VERSION),
+        ("ddl_contract_marker", DDL_CONTRACT_MARKER),
+    ];
+    let marker_matches = server_meta_exists
+        && server_meta.len() == exact_marker.len()
+        && exact_marker.iter().all(|(key, value)| {
+            server_meta
+                .iter()
+                .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
+        });
+    if marker_matches {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    if server_meta_exists {
+        return Err("database has a non-v2 or incomplete sync_v2.server_meta marker");
+    }
+    if user_objects.is_empty() {
+        return Ok(DatabaseIdentity::Fresh);
+    }
+    Err("database has unrecognized user schema or data")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SnapshotRelation {
     Ancestor,
     NotAncestor,
@@ -73,6 +109,7 @@ impl Repository {
             .max_connections(10)
             .connect_with(options)
             .await?;
+        Self::verify_database_identity(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
@@ -89,6 +126,7 @@ impl Repository {
             .max_connections(10)
             .connect(url)
             .await?;
+        Self::verify_database_identity(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
@@ -99,6 +137,71 @@ impl Repository {
             protocol_epoch: PROTOCOL_EPOCH,
         })
     }
+
+    /// Refuse to let SQLx migrations inspect or mutate an existing authority.
+    /// A database is accepted only when it is genuinely empty (apart from
+    /// SQLx's own migration bookkeeping) or already carries the exact v2
+    /// marker.  In particular, a legacy-looking `sync_v2` table is not a
+    /// migration starting point: it is rejected before any migration runs.
+    async fn verify_database_identity(pool: &PgPool) -> Result<(), sqlx::Error> {
+        let server_meta_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('sync_v2.server_meta') IS NOT NULL")
+                .fetch_one(pool)
+                .await?;
+        let server_meta = if server_meta_exists {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT key,value FROM sync_v2.server_meta ORDER BY key",
+            )
+            .fetch_all(pool)
+            .await?
+        } else {
+            Vec::new()
+        };
+
+        // `public` exists in every normal PostgreSQL database.  Ignore only
+        // SQLx's bookkeeping relation; every other user schema/relation is
+        // evidence that this is not a fresh database.  The v2 marker path is
+        // checked first, so a fully migrated v2 database remains accepted.
+        let user_objects: Vec<String> = sqlx::query_scalar(
+            "SELECT n.nspname
+             FROM pg_namespace n
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
+               AND n.nspname NOT LIKE 'pg_toast%'
+             UNION ALL
+             SELECT n.nspname || '.' || c.relname
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema','public')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND c.relkind NOT IN ('i','I')
+             UNION ALL
+             SELECT n.nspname || '.' || c.relname
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public'
+               AND c.relname <> '_sqlx_migrations'
+               AND c.relkind NOT IN ('i','I')
+             UNION ALL
+             SELECT n.nspname || '.' || p.proname
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname='public'
+             UNION ALL
+             SELECT n.nspname || '.' || t.typname
+             FROM pg_type t
+             JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname='public'
+               AND t.typtype IN ('c','d','e','r')
+               AND left(t.typname,1) <> '_'
+             ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await?;
+        classify_database_identity(server_meta_exists, &server_meta, &user_objects)
+            .map_err(|message| sqlx::Error::Protocol(message.into()))?;
+        Ok(())
+    }
+
     async fn verify_server_meta(
         pool: &PgPool,
         server_instance_id: &str,
@@ -2405,5 +2508,57 @@ mod create_work_lock_key_tests {
         assert!(!first.as_bytes().contains(&0));
         assert_ne!(first, second);
         assert_eq!(first, "3:a:b:6e2081b1-a097-4fa6-89f8-27621b658509");
+    }
+}
+
+#[cfg(test)]
+mod database_identity_tests {
+    use super::{
+        classify_database_identity, DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION,
+        SERVER_NAMESPACE,
+    };
+
+    fn exact_marker() -> Vec<(String, String)> {
+        vec![
+            ("namespace".into(), SERVER_NAMESPACE.into()),
+            ("protocol_epoch".into(), "2".into()),
+            ("schema_version".into(), SCHEMA_VERSION.into()),
+            ("ddl_contract_marker".into(), DDL_CONTRACT_MARKER.into()),
+        ]
+    }
+
+    #[test]
+    fn accepts_genuinely_fresh_database() {
+        assert_eq!(
+            classify_database_identity(false, &[], &[]),
+            Ok(DatabaseIdentity::Fresh)
+        );
+    }
+
+    #[test]
+    fn accepts_exact_v2_marker_with_sqlx_metadata_and_schema_objects() {
+        assert_eq!(
+            classify_database_identity(
+                true,
+                &exact_marker(),
+                &[
+                    "sync_v2.server_meta".into(),
+                    "public._sqlx_migrations".into()
+                ]
+            ),
+            Ok(DatabaseIdentity::SnapshotSyncV2)
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_lookalike_marker() {
+        let mut marker = exact_marker();
+        marker[0].1 = "legacy-sync".into();
+        assert!(classify_database_identity(true, &marker, &[]).is_err());
+    }
+
+    #[test]
+    fn rejects_nonempty_unrecognized_database() {
+        assert!(classify_database_identity(false, &[], &["public.legacy_rows".into()]).is_err());
     }
 }

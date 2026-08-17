@@ -170,6 +170,75 @@ async fn require_empty_database(url: &str) -> ScenarioResult<()> {
     )
 }
 
+async fn exercise_database_identity_guard(url: &str) -> ScenarioResult<()> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+
+    // A legacy-looking server_meta must be rejected before SQLx can create or
+    // alter any v2 table, and the existing marker/data must remain intact.
+    sqlx::query("CREATE SCHEMA sync_v2").execute(&pool).await?;
+    sqlx::query("CREATE TABLE sync_v2.server_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO sync_v2.server_meta(key,value) VALUES ('namespace','legacy-sync-v1')")
+        .execute(&pool)
+        .await?;
+    let before: (i64, String) =
+        sqlx::query_as("SELECT COUNT(*)::BIGINT, COALESCE(MIN(value),'') FROM sync_v2.server_meta")
+            .fetch_one(&pool)
+            .await?;
+    ensure(
+        Repository::connect(url, SERVER_INSTANCE.into())
+            .await
+            .is_err(),
+        "legacy-looking sync_v2 marker was accepted before migration",
+    )?;
+    let after: (i64, String) =
+        sqlx::query_as("SELECT COUNT(*)::BIGINT, COALESCE(MIN(value),'') FROM sync_v2.server_meta")
+            .fetch_one(&pool)
+            .await?;
+    ensure(
+        before == after,
+        "identity rejection mutated the legacy marker",
+    )?;
+    sqlx::query("DROP SCHEMA sync_v2 CASCADE")
+        .execute(&pool)
+        .await?;
+
+    // A nonempty public schema without a v2 marker is also not a migration
+    // target.  The sentinel proves the guard did not truncate or rewrite it.
+    sqlx::query("CREATE TABLE public.legacy_sync_v2_rows (sentinel TEXT NOT NULL)")
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO public.legacy_sync_v2_rows(sentinel) VALUES ('keep-me')")
+        .execute(&pool)
+        .await?;
+    let before: String = sqlx::query_scalar(
+        "SELECT sentinel FROM public.legacy_sync_v2_rows WHERE sentinel='keep-me'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    ensure(
+        Repository::connect(url, SERVER_INSTANCE.into())
+            .await
+            .is_err(),
+        "nonempty unrecognized database was accepted before migration",
+    )?;
+    let after: String = sqlx::query_scalar(
+        "SELECT sentinel FROM public.legacy_sync_v2_rows WHERE sentinel='keep-me'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    ensure(
+        before == after,
+        "identity rejection mutated legacy user data",
+    )?;
+    sqlx::query("DROP TABLE public.legacy_sync_v2_rows")
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    Ok(())
+}
+
 async fn create_work(
     repo: &Repository,
     principal: &AuthenticatedPrincipal,
@@ -1471,6 +1540,7 @@ async fn exercise_catalog_commit_race(
 
 pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioContext> {
     require_empty_database(url).await?;
+    exercise_database_identity_guard(url).await?;
     let repo = Repository::connect(url, SERVER_INSTANCE.into()).await?;
     let marker: String =
         sqlx::query_scalar("SELECT value FROM sync_v2.server_meta WHERE key='ddl_contract_marker'")

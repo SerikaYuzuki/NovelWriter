@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: fuminiwa_sync_v2
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
     volumes:
-      - fuminiwa_sync_v2_pgdata:/var/lib/postgresql/data
+      - fuminiwa-sync-v2-data:/var/lib/postgresql/data
     secrets:
       - postgres-password
     healthcheck:
@@ -127,7 +127,7 @@ services:
     networks:
       - fuminiwa-sync-v2-net
 volumes:
-  fuminiwa_sync_v2_pgdata:
+  fuminiwa-sync-v2-data:
     name: fuminiwa-sync-v2-data
   fuminiwa_sync_v2_caddy_data:
     name: fuminiwa-sync-v2-caddy-data
