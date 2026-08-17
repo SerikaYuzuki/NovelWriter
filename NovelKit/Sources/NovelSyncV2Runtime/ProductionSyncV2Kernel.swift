@@ -405,6 +405,10 @@ private extension ProductionSyncV2Kernel {
                         workID: summary.workID,
                         scope: localScope
                     )
+                    let adoption = try await store.pendingServerAdoption(
+                        workID: summary.workID,
+                        scope: localScope
+                    )
                     let conflict = try await self.activeConflict(workID: summary.workID)
                     let pending = try await store.pendingIntents(
                         scope: localScope,
@@ -419,7 +423,9 @@ private extension ProductionSyncV2Kernel {
                     case .unbound:
                         []
                     }
-                    let progress: SyncV2RemoteProgress = if conflict != nil {
+                    let progress: SyncV2RemoteProgress = if let adoption {
+                        .readyForSafeAdoption(inboxID: adoption.inboxID)
+                    } else if conflict != nil {
                         .needsChoice
                     } else if case .unbound = localScope, !pending.isEmpty {
                         .authenticationRequired
@@ -434,7 +440,7 @@ private extension ProductionSyncV2Kernel {
                         availability: .localOnly,
                         accountState: accountState,
                         localGeneration: summary.localGeneration,
-                        conflict: conflict,
+                        conflict: adoption == nil ? conflict : nil,
                         remoteProgress: progress
                     )
                 }

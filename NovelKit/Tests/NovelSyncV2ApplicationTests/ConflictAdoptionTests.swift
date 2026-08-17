@@ -166,10 +166,14 @@ struct ConflictAdoptionTests {
         )
         let preAdoption = try await fixture.app.open(workID: fixture.workID)
         let projected = await fixture.app.uiState(workID: fixture.workID)
+        let shelf = try await fixture.app.library()
+        let shelfItem = try #require(shelf.items.first { $0.workID == fixture.workID })
 
         #expect(preAdoption.document?.title == "端末版")
-        #expect(projected?.conflict != nil)
+        #expect(projected?.conflict == nil)
         #expect(projected?.remoteProgress == .readyForSafeAdoption(inboxID: pending.inboxID))
+        #expect(shelfItem.conflict == nil)
+        #expect(shelfItem.remoteProgress == .readyForSafeAdoption(inboxID: pending.inboxID))
 
         let session = await fixture.app.beginSession(workID: fixture.workID)
         let token = try await fixture.app.documentGateToken(for: session)

@@ -18,7 +18,8 @@ public extension SyncV2Application {
                 remoteProgress: .readyForSafeAdoption(
                     inboxID: adoption.inboxID
                 ),
-                result: .adoptionPending
+                result: .adoptionPending,
+                conflict: .clear
             )
         } else if let conflict = activeConflict {
             setState(
@@ -57,6 +58,12 @@ public extension SyncV2Application {
         let projection = try await libraryProvider.library()
         return SyncV2LibraryProjection(items: projection.items.map { item in
             guard let state = states[item.workID] else { return item }
+            let conflict: SyncV2ConflictProjection? = switch state.remoteProgress {
+            case .readyForSafeAdoption:
+                nil
+            default:
+                state.conflict ?? item.conflict
+            }
             return SyncV2LibraryItem(
                 workID: item.workID,
                 title: item.title,
@@ -64,7 +71,7 @@ public extension SyncV2Application {
                 accountState: item.accountState,
                 localGeneration: item.localGeneration,
                 remoteHead: item.remoteHead,
-                conflict: state.conflict ?? item.conflict,
+                conflict: conflict,
                 remoteProgress: state.remoteProgress
             )
         })
@@ -76,7 +83,8 @@ public extension SyncV2Application {
                 workID: workID,
                 localDurability: states[workID]?.localDurability ?? .unsaved,
                 remoteProgress: .readyForSafeAdoption(inboxID: adoption.inboxID),
-                result: .adoptionPending
+                result: .adoptionPending,
+                conflict: .clear
             )
             return SyncV2OperationResult(
                 state: state,

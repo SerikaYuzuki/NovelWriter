@@ -437,7 +437,18 @@ public extension InMemorySyncV2RuntimeState {
 public extension InMemorySyncV2RuntimeState {
     func library() -> SyncV2LibraryProjection {
         SyncV2LibraryProjection(items: works.map { workID, work in
-            SyncV2LibraryItem(
+            if let adoption = pendingAdoptions[workID] {
+                return SyncV2LibraryItem(
+                    workID: workID,
+                    title: work.document.title,
+                    availability: .localOnly,
+                    accountState: account == nil ? .unbound : .active,
+                    localGeneration: work.generation,
+                    conflict: nil,
+                    remoteProgress: .readyForSafeAdoption(inboxID: adoption.inboxID)
+                )
+            }
+            return SyncV2LibraryItem(
                 workID: workID,
                 title: work.document.title,
                 availability: .localOnly,

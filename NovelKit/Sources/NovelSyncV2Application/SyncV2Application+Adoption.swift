@@ -73,12 +73,14 @@ public extension SyncV2Application {
         // in between those hops (especially after restart).  Project the
         // durable fact here as well so the UI never reports a stale syncing
         // state while a safe adoption is already available.
-        if states[workID]?.remoteProgress != .readyForSafeAdoption(inboxID: pending.inboxID) {
+        if states[workID]?.remoteProgress != .readyForSafeAdoption(inboxID: pending.inboxID)
+            || states[workID]?.conflict != nil {
             setState(
                 workID: workID,
                 localDurability: states[workID]?.localDurability ?? .unsaved,
                 remoteProgress: .readyForSafeAdoption(inboxID: pending.inboxID),
-                result: .adoptionPending
+                result: .adoptionPending,
+                conflict: .clear
             )
         }
         return pending

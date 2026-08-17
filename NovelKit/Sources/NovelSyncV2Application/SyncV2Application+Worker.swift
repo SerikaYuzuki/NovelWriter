@@ -235,7 +235,7 @@ extension SyncV2Application {
                 ) else { throw SyncV2Failure.receiptMismatch }
                 result = .adoptionPending
                 progress = .readyForSafeAdoption(inboxID: adoption.inboxID)
-                conflict = .retain
+                conflict = .clear
             } else {
                 result = .sent
                 progress = .idle
@@ -248,7 +248,7 @@ extension SyncV2Application {
                 ) else { throw SyncV2Failure.receiptMismatch }
                 result = .adoptionPending
                 progress = .readyForSafeAdoption(inboxID: adoption.inboxID)
-                conflict = .retain
+                conflict = .clear
             } else {
                 result = .noChanges
                 progress = .noChanges
@@ -265,7 +265,7 @@ extension SyncV2Application {
             if let adoption = try await kernel.pendingAdoption(workID: workID) {
                 result = .adoptionPending
                 progress = .readyForSafeAdoption(inboxID: adoption.inboxID)
-                conflict = .retain
+                conflict = .clear
             } else {
                 result = .conflictPending
                 progress = .needsChoice
