@@ -52,7 +52,9 @@ extension AppState {
             } while cursor != nil
             guard matchesSnapshotSyncV2AccountScope(accountScope),
                   currentSnapshotSyncV2WorkID == workID,
-                  documentSessionToken == documentSession else { return }
+                  documentSessionToken == documentSession else {
+                return
+            }
             snapshotSyncHistory = items
         } catch {
             snapshotSyncHistory = []
