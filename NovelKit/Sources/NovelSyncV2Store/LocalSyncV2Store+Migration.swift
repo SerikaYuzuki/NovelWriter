@@ -230,10 +230,7 @@ public extension LocalSyncV2Store {
                   current.state == .backupExported || current.state == .staged else {
                 throw SyncV2StoreError.staleCAS
             }
-            if let existing = try query(
-                "SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,state FROM migration_staging_batches WHERE migration_id=?",
-                [.text(input.migrationID.uuidString.lowercased())]
-            ).first {
+            if let existing = try migrationStagingBatch(migrationID: input.migrationID) {
                 guard existing[0].text == input.proposedWorkID.description,
                       existing[1].text == input.proposedDocumentID.description,
                       existing[2].blob == input.snapshotID.bytes,
@@ -243,33 +240,7 @@ public extension LocalSyncV2Store {
                 try attestMigrationStagingObjects(migrationID: input.migrationID, objects: input.objects)
                 return current
             }
-            try exec(
-                """
-                INSERT INTO migration_staging_batches(
-                  migration_id,proposed_work_id,proposed_document_id,
-                  snapshot_id,manifest_bytes,state
-                ) VALUES(?,?,?,?,?,'staged')
-                """,
-                [
-                    .text(input.migrationID.uuidString.lowercased()),
-                    .text(input.proposedWorkID.description),
-                    .text(input.proposedDocumentID.description),
-                    .blob(input.snapshotID.bytes), .blob(input.manifestBytes)
-                ]
-            )
-            for (objectID, bytes) in input.objects {
-                try exec(
-                    """
-                    INSERT INTO migration_staging_objects(
-                      migration_id,object_id,byte_count,bytes
-                    ) VALUES(?,?,?,?)
-                    """,
-                    [
-                        .text(input.migrationID.uuidString.lowercased()),
-                        .blob(objectID.bytes), .int(Int64(bytes.count)), .blob(bytes)
-                    ]
-                )
-            }
+            try insertMigrationStaging(input)
             try exec(
                 "UPDATE migration_ledger SET state='staged' WHERE migration_id=?",
                 [.text(input.migrationID.uuidString.lowercased())]
@@ -301,7 +272,8 @@ public extension LocalSyncV2Store {
             ).first, batch[0].text == "staged" || batch[0].text == "verified" else {
                 throw SyncV2StoreError.staleCAS
             }
-            try attestMigrationStagingObjects(migrationID: migrationID, objects: migrationStagingObjects(migrationID: migrationID))
+            let storedObjects = try migrationStagingObjects(migrationID: migrationID)
+            try attestMigrationStagingObjects(migrationID: migrationID, objects: storedObjects)
             if current.state == .verified {
                 guard current.accountID == accountID else { throw SyncV2StoreError.accountMismatch }
                 return current
@@ -314,7 +286,11 @@ public extension LocalSyncV2Store {
                 [.text(accountID), .blob(evidenceBytes), .text(migrationID.uuidString.lowercased())]
             )
             try exec(
-                "UPDATE migration_staging_batches SET verified_account_id=?,state='verified' WHERE migration_id=? AND state='staged'",
+                """
+                UPDATE migration_staging_batches
+                SET verified_account_id=?,state='verified'
+                WHERE migration_id=? AND state='staged'
+                """,
                 [.text(accountID), .text(migrationID.uuidString.lowercased())]
             )
             guard try changes() == 1,
@@ -324,198 +300,49 @@ public extension LocalSyncV2Store {
             return updated
         }
     }
-
-    @discardableResult
-    func quarantineMigration(
-        migrationID: UUID,
-        reason: String,
-        evidenceBytes: Data
-    ) throws -> V2MigrationLedgerEntry {
-        guard !reason.isEmpty, !evidenceBytes.isEmpty else { throw SyncV2StoreError.invalidSnapshot }
-        return try inTransaction {
-            guard let current = try migrationLedgerEntry(migrationID: migrationID) else {
-                throw SyncV2StoreError.workNotFound
-            }
-            if current.state == .quarantined {
-                return current
-            }
-            guard current.state != .committed else { throw SyncV2StoreError.staleCAS }
-            try exec(
-                """
-                UPDATE migration_ledger
-                SET state='quarantined',quarantined_from_state=?,evidence_bytes=?
-                WHERE migration_id=?
-                """,
-                [
-                    .text(current.state.rawValue), .blob(evidenceBytes),
-                    .text(migrationID.uuidString.lowercased())
-                ]
-            )
-            try exec(
-                "UPDATE migration_staging_batches SET state='quarantined' WHERE migration_id=?",
-                [.text(migrationID.uuidString.lowercased())]
-            )
-            try exec(
-                "INSERT INTO quarantine_records(quarantine_id,account_id,reason,evidence_bytes,created_at) VALUES(?,?,?,?,?)",
-                [
-                    .text(UUID().uuidString.lowercased()), current.accountID.map(SQLiteValue.text) ?? .null,
-                    .text(reason), .blob(evidenceBytes), .text(Self.now())
-                ]
-            )
-            guard let updated = try migrationLedgerEntry(migrationID: migrationID) else {
-                throw SyncV2StoreError.sqlite("migration quarantine")
-            }
-            return updated
-        }
-    }
-
-    func commitMigration(
-        _ request: V2MigrationCommitRequest
-    ) throws -> V2MigrationCommitResult {
-        guard request.expectedSourceDigest.count == 32,
-              !request.verifiedMarker.isEmpty else {
-            throw SyncV2StoreError.accountMismatch
-        }
-        return try inTransaction {
-            guard let ledger = try migrationLedgerEntry(migrationID: request.staging.migrationID),
-                  ledger.sourceDigest == request.expectedSourceDigest else {
-                throw SyncV2StoreError.accountMismatch
-            }
-            if ledger.state == .committed {
-                guard ledger.adoptionMarker == request.verifiedMarker,
-                      ledger.accountID == request.binding.accountID else {
-                    throw SyncV2StoreError.staleCAS
-                }
-                let stagedObjects = try migrationStagingObjects(migrationID: request.staging.migrationID)
-                try attestMigrationStagingObjects(migrationID: request.staging.migrationID, objects: request.staging.objects)
-                guard let batch = try query(
-                    "SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,state,verified_account_id FROM migration_staging_batches WHERE migration_id=?",
-                    [.text(request.staging.migrationID.uuidString.lowercased())]
-                ).first,
-                    batch[0].text == request.staging.proposedWorkID.description,
-                    batch[1].text == request.staging.proposedDocumentID.description,
-                    batch[2].blob == request.staging.snapshotID.bytes,
-                    batch[3].blob == request.staging.manifestBytes,
-                    batch[4].text == "verified",
-                    batch[5].text == request.binding.accountID,
-                    let replayManifest = batch[3].blob,
-                    let replayModel = try? SnapshotCodec.decode(manifestBytes: replayManifest, objects: stagedObjects),
-                    replayModel.workId == request.staging.proposedWorkID,
-                    DocumentID(replayModel.document.id) == request.staging.proposedDocumentID,
-                    replayModel.document == request.document,
-                    replayModel.documentCreatedAt == request.documentCreatedAt,
-                    try bindingIsActive(workID: request.staging.proposedWorkID, binding: request.binding),
-                    let work = try query(
-                        "SELECT document_id,current_snapshot_id,local_generation FROM works WHERE work_id=?",
-                        [.text(request.staging.proposedWorkID.description)]
-                    ).first,
-                    work[0].text == request.staging.proposedDocumentID.description,
-                    work[1].blob == request.staging.snapshotID.bytes,
-                    work[2].int64 == 1,
-                    try portableResourcesEqual(
-                        workID: request.staging.proposedWorkID,
-                        resources: request.staging.resources
-                    ),
-                    try !(query(
-                        "SELECT 1 FROM history_occurrences WHERE work_id=? AND snapshot_id=? AND reason=? AND pinned=1 AND local_generation=1",
-                        [.text(request.staging.proposedWorkID.description), .blob(request.staging.snapshotID.bytes), .text(V2CheckpointReason.migration.rawValue)]
-                    ).isEmpty),
-                    try !(query(
-                        "SELECT 1 FROM sync_intents WHERE work_id=? AND source_snapshot_id=? AND source_generation=1 AND kind='checkpoint' AND status='pending' AND scope_kind='bound' AND server_instance_id=? AND protocol_epoch=? AND account_id=? AND account_fence=?",
-                        [.text(request.staging.proposedWorkID.description), .blob(request.staging.snapshotID.bytes)] + request.binding.values
-                    ).isEmpty) else {
-                    throw SyncV2StoreError.staleCAS
-                }
-                return V2MigrationCommitResult(
-                    workID: request.staging.proposedWorkID,
-                    snapshotID: request.staging.snapshotID,
-                    noChanges: true
-                )
-            }
-            guard ledger.state == .verified,
-                  ledger.accountID == request.binding.accountID,
-                  ledger.exportBackupMarker != nil,
-                  let batch = try query(
-                      "SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,state,verified_account_id FROM migration_staging_batches WHERE migration_id=?",
-                      [.text(request.staging.migrationID.uuidString.lowercased())]
-                  ).first,
-                  batch[0].text == request.staging.proposedWorkID.description,
-                  batch[1].text == request.staging.proposedDocumentID.description,
-                  batch[2].blob == request.staging.snapshotID.bytes,
-                  batch[3].blob == request.staging.manifestBytes,
-                  batch[4].text == "verified",
-                  batch[5].text == request.binding.accountID else {
-                throw SyncV2StoreError.staleCAS
-            }
-            let stagedObjects = try migrationStagingObjects(migrationID: request.staging.migrationID)
-            try attestMigrationStagingObjects(migrationID: request.staging.migrationID, objects: request.staging.objects)
-            let encoded = try EncodedSnapshot(
-                manifest: SnapshotValidator.validate(manifestBytes: batch[3].blob ?? Data()),
-                manifestBytes: batch[3].blob ?? Data(),
-                objects: stagedObjects
-            )
-            guard encoded.manifest.workId == request.staging.proposedWorkID,
-                  encoded.snapshotId == request.staging.snapshotID,
-                  encoded.manifest.entries.contains(where: { $0.entityKey == "work/document" }),
-                  DocumentID(request.document.id) == request.staging.proposedDocumentID else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-            guard try !workExists(workID: request.staging.proposedWorkID) else {
-                throw SyncV2StoreError.workNotFound
-            }
-            try SnapshotValidator.validateObjects(encoded)
-            let decoded = try SnapshotCodec.decode(manifestBytes: encoded.manifestBytes, objects: encoded.objects)
-            guard decoded.workId == request.staging.proposedWorkID,
-                  DocumentID(decoded.document.id) == request.staging.proposedDocumentID,
-                  decoded.document == request.document,
-                  decoded.documentCreatedAt == request.documentCreatedAt else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-            try insertWork(
-                workID: request.staging.proposedWorkID,
-                documentID: request.staging.proposedDocumentID,
-                documentCreatedAt: Self.iso8601(decoded.documentCreatedAt),
-                lane: .normal,
-                scope: .bound(request.binding)
-            )
-            try insertEncoded(encoded, workID: request.staging.proposedWorkID)
-            try replacePortableResources(
-                workID: request.staging.proposedWorkID,
-                resources: request.staging.resources
-            )
-            try exec(
-                "UPDATE works SET current_snapshot_id=?,local_generation=1 WHERE work_id=? AND local_generation=0",
-                [.blob(encoded.snapshotIDBytes), .text(request.staging.proposedWorkID.description)]
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
-            try insertHistory(
-                workID: request.staging.proposedWorkID,
-                snapshotID: encoded.snapshotId,
-                reason: V2CheckpointReason.migration.rawValue,
-                pinned: true,
-                generation: 1
-            )
-            _ = try upsertCheckpointIntent(
-                workID: request.staging.proposedWorkID,
-                snapshotID: encoded.snapshotId,
-                generation: 1,
-                scope: .bound(request.binding)
-            )
-            try exec(
-                "UPDATE migration_ledger SET adoption_marker=?,state='committed' WHERE migration_id=? AND state='verified'",
-                [.text(request.verifiedMarker), .text(request.staging.migrationID.uuidString.lowercased())]
-            )
-            guard try changes() == 1 else { throw SyncV2StoreError.staleCAS }
-            return V2MigrationCommitResult(
-                workID: request.staging.proposedWorkID,
-                snapshotID: encoded.snapshotId,
-                noChanges: false
-            )
-        }
-    }
 }
 
-private extension LocalSyncV2Store {
+extension LocalSyncV2Store {
+    private func migrationStagingBatch(migrationID: UUID) throws -> [SQLiteValue]? {
+        try query(
+            """
+            SELECT proposed_work_id,proposed_document_id,snapshot_id,manifest_bytes,state
+            FROM migration_staging_batches WHERE migration_id=?
+            """,
+            [.text(migrationID.uuidString.lowercased())]
+        ).first
+    }
+
+    private func insertMigrationStaging(_ input: V2MigrationStagingInput) throws {
+        try exec(
+            """
+            INSERT INTO migration_staging_batches(
+              migration_id,proposed_work_id,proposed_document_id,
+              snapshot_id,manifest_bytes,state
+            ) VALUES(?,?,?,?,?,'staged')
+            """,
+            [
+                .text(input.migrationID.uuidString.lowercased()),
+                .text(input.proposedWorkID.description),
+                .text(input.proposedDocumentID.description),
+                .blob(input.snapshotID.bytes), .blob(input.manifestBytes)
+            ]
+        )
+        for (objectID, bytes) in input.objects {
+            try exec(
+                """
+                INSERT INTO migration_staging_objects(
+                  migration_id,object_id,byte_count,bytes
+                ) VALUES(?,?,?,?)
+                """,
+                [
+                    .text(input.migrationID.uuidString.lowercased()),
+                    .blob(objectID.bytes), .int(Int64(bytes.count)), .blob(bytes)
+                ]
+            )
+        }
+    }
+
     func migrationStagingObjects(migrationID: UUID) throws -> [ObjectID: Data] {
         let rows = try query(
             "SELECT object_id,byte_count,bytes FROM migration_staging_objects WHERE migration_id=? ORDER BY object_id",
@@ -543,7 +370,7 @@ private extension LocalSyncV2Store {
         }
     }
 
-    static func migrationLedgerEntry(_ row: [SQLiteValue]) -> V2MigrationLedgerEntry {
+    private static func migrationLedgerEntry(_ row: [SQLiteValue]) -> V2MigrationLedgerEntry {
         let state = V2MigrationLedgerState(rawValue: row[8].text ?? "")!
         return V2MigrationLedgerEntry(
             migrationID: UUID(uuidString: row[0].text ?? "")!,
