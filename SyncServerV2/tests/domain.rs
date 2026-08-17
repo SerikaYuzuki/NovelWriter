@@ -188,3 +188,17 @@ fn entity_validator_enforces_schema_and_portable_references() {
     });
     assert!(validate_entity_payload("work/document", &invalid_timestamp).is_err());
 }
+
+#[test]
+fn sync_migration_contains_fail_closed_server_identity() {
+    let migration = include_str!("../migrations/0001_sync_v2.sql");
+    for marker in [
+        "fuminiwa-snapshot-sync-v2",
+        "('protocol_epoch','2')",
+        "('schema_version','2')",
+        "631b0fed89a0031f33c9ac86b75695309c276d354d31e78b4a0db4eeb39c4657",
+        "('deployment_id','unbound')",
+    ] {
+        assert!(migration.contains(marker), "missing server marker {marker}");
+    }
+}

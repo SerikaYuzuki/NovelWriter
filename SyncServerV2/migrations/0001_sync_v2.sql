@@ -1,5 +1,11 @@
 CREATE SCHEMA IF NOT EXISTS sync_v2;
 CREATE TABLE sync_v2.server_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+INSERT INTO sync_v2.server_meta(key,value) VALUES
+  ('namespace','fuminiwa-snapshot-sync-v2'),
+  ('protocol_epoch','2'),
+  ('schema_version','2'),
+  ('schema_checksum','631b0fed89a0031f33c9ac86b75695309c276d354d31e78b4a0db4eeb39c4657'),
+  ('deployment_id','unbound');
 CREATE TABLE sync_v2.account_scopes(account_id TEXT PRIMARY KEY,server_instance_id TEXT NOT NULL,protocol_epoch BIGINT NOT NULL,account_fence TEXT NOT NULL);
 CREATE TABLE sync_v2.works(account_id TEXT NOT NULL REFERENCES sync_v2.account_scopes(account_id),work_id UUID NOT NULL,document_id UUID NOT NULL,state TEXT NOT NULL,head_snapshot_id BYTEA,head_generation BIGINT,PRIMARY KEY(account_id,work_id));
 CREATE TABLE sync_v2.global_blobs(object_id BYTEA PRIMARY KEY,byte_count BIGINT NOT NULL,raw_bytes BYTEA NOT NULL);
