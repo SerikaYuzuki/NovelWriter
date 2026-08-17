@@ -53,10 +53,43 @@ async fn get(
     (status, headers, body)
 }
 
+async fn post_resolution(context: &ScenarioContext, account_id: &str) -> (StatusCode, Vec<u8>) {
+    let app = router(AppState {
+        repo: Arc::new(context.repo.clone()),
+        runtime_mode: RuntimeMode::Test,
+    });
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/v2/works/{}/conflict/resolve",
+            context.rejected_resolution.work_id
+        ))
+        .body(Body::from(
+            context.rejected_resolution.canonical_bytes.clone(),
+        ))
+        .unwrap();
+    *request.headers_mut() = headers(account_id);
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, body)
+}
+
 async fn verify_http_contract(context: &ScenarioContext) {
     let account_a = context.account_a.account_id.as_str();
     let account_b = context.account_b.account_id.as_str();
     let missing = Uuid::new_v4();
+
+    let (stale_resolution_status, stale_resolution_body) =
+        post_resolution(context, account_a).await;
+    assert_eq!(stale_resolution_status, StatusCode::CONFLICT);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stale_resolution_body).unwrap()["error"],
+        "staleConflictRevision"
+    );
 
     let (foreign_status, _, foreign_body) = get(
         context,
@@ -257,7 +290,7 @@ async fn verify_http_contract(context: &ScenarioContext) {
 async fn postgres_and_http_scenarios_are_opt_in() {
     let Ok(url) = std::env::var("FUMINIWA_V2_TEST_DATABASE_URL") else {
         eprintln!(
-            "SKIP: set FUMINIWA_V2_TEST_DATABASE_URL to a newly-created empty PostgreSQL database"
+            "SKIP: set FUMINIWA_V2_TEST_DATABASE_URL to an externally provisioned, newly-created empty fuminiwa_v2_test PostgreSQL database"
         );
         return;
     };
@@ -266,4 +299,19 @@ async fn postgres_and_http_scenarios_are_opt_in() {
         .expect("Snapshot Sync v2 PostgreSQL scenario failed");
     verify_http_contract(&context).await;
     context.repo.pool.close().await;
+}
+
+#[test]
+fn integration_url_requires_an_isolated_sync_test_database() {
+    assert!(support::validate_test_database_url(
+        "postgres://postgres:secret@postgres-test/fuminiwa_v2_test_1234"
+    )
+    .is_ok());
+    for rejected in [
+        "postgres://postgres:secret@192.168.11.5/fuminiwa_v2_test_1234",
+        "postgres://postgres:secret@postgres-test/fuminiwa_sync_v2",
+        "postgres://postgres:secret@postgres-test/fuminiwa_v2_test_staging",
+    ] {
+        assert!(support::validate_test_database_url(rejected).is_err());
+    }
 }

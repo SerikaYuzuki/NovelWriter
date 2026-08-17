@@ -382,7 +382,7 @@ async fn list_works(
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    let (high_water, last, page) = if let Some(encoded) = params.get("cursor") {
+    let cursor_page = if let Some(encoded) = params.get("cursor") {
         let cursor = match decode_cursor(encoded) {
             Ok(value) => value,
             Err(error) => return error_response(error),
@@ -397,30 +397,30 @@ async fn list_works(
         }
         match cursor_scope(&cursor, "works", &p, page, None) {
             Ok((high, last)) => match Uuid::parse_str(&last) {
-                Ok(last_work) if last_work.to_string() == last => (high, last, page),
+                Ok(last_work) if last_work.to_string() == last => Some((high, last, page)),
                 _ => return error_response(SyncError::SchemaViolation("cursor.last".into())),
             },
             Err(error) => return error_response(error),
         }
     } else {
-        let high = match sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(event_id) FROM sync_v2.catalog_events WHERE account_id=$1",
-        )
-        .bind(&p.account_id)
-        .fetch_one(&state.repo.pool)
-        .await
-        {
-            Ok(value) => value.unwrap_or(0),
-            Err(error) => return error_response(SyncError::Database(error)),
-        };
-        (high, String::new(), requested_page)
+        None
     };
-    if params.contains_key("cursor") {
+    let mut tx = match state.repo.pool.begin().await {
+        Ok(value) => value,
+        Err(error) => return error_response(SyncError::Database(error)),
+    };
+    if let Err(error) = sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+    {
+        return error_response(SyncError::Database(error));
+    }
+    let (high_water, last, page) = if let Some((high_water, last, page)) = cursor_page {
         let current_high = match sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MAX(event_id) FROM sync_v2.catalog_events WHERE account_id=$1",
         )
         .bind(&p.account_id)
-        .fetch_one(&state.repo.pool)
+        .fetch_one(&mut *tx)
         .await
         {
             Ok(value) => value.unwrap_or(0),
@@ -429,8 +429,21 @@ async fn list_works(
         if high_water > current_high {
             return error_response(SyncError::SchemaViolation("cursor.highWater".into()));
         }
-    }
-    let rows = sqlx::query(
+        (high_water, last, page)
+    } else {
+        let high_water = match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(event_id) FROM sync_v2.catalog_events WHERE account_id=$1",
+        )
+        .bind(&p.account_id)
+        .fetch_one(&mut *tx)
+        .await
+        {
+            Ok(value) => value.unwrap_or(0),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        (high_water, String::new(), requested_page)
+    };
+    let mut rows = match sqlx::query(
         "WITH latest AS (
              SELECT DISTINCT ON (work_id)
                     work_id,head_generation,head_snapshot_id,title,tombstoned
@@ -448,58 +461,60 @@ async fn list_works(
     .bind(high_water)
     .bind(&last)
     .bind(page + 1)
-    .fetch_all(&state.repo.pool)
-    .await;
-    match rows {
-        Ok(mut rows) => {
-            let has_more = rows.len() as i64 > page;
-            if has_more {
-                rows.truncate(page as usize);
-            }
-            let mut items = Vec::with_capacity(rows.len());
-            let mut last_work = None;
-            for row in rows {
-                let work_id = match row.try_get::<Uuid, _>("work_id") {
-                    Ok(value) => value,
-                    Err(error) => return error_response(SyncError::Database(error)),
-                };
-                let generation = match row.try_get::<Option<i64>, _>("head_generation") {
-                    Ok(Some(value)) => value,
-                    Ok(None) => return error_response(SyncError::Retryable),
-                    Err(error) => return error_response(SyncError::Database(error)),
-                };
-                let snapshot = match row.try_get::<Option<Vec<u8>>, _>("head_snapshot_id") {
-                    Ok(Some(value)) if value.len() == 32 => value,
-                    Ok(_) => return error_response(SyncError::Retryable),
-                    Err(error) => return error_response(SyncError::Database(error)),
-                };
-                let title = match row.try_get::<String, _>("title") {
-                    Ok(value) => value,
-                    Err(error) => return error_response(SyncError::Database(error)),
-                };
-                last_work = Some(work_id.to_string());
-                items.push(serde_json::json!({"workId":work_id,"title":title,"head":{"generation":generation,"snapshotId":hex::encode(snapshot)}}));
-            }
-            let next_cursor = if has_more {
-                match last_work {
-                    Some(last) => match encode_cursor(
-                        serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"works","highWater":high_water,"last":last,"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("works")}),
-                    ) {
-                        Ok(cursor) => Some(cursor),
-                        Err(error) => return error_response(error),
-                    },
-                    None => return error_response(SyncError::Retryable),
-                }
-            } else {
-                None
-            };
-            canonical_response(
-                StatusCode::OK,
-                serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"}),
-            )
-        }
-        Err(e) => error_response(SyncError::Database(e)),
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => return error_response(SyncError::Database(error)),
+    };
+    if let Err(error) = tx.commit().await {
+        return error_response(SyncError::Database(error));
     }
+    let has_more = rows.len() as i64 > page;
+    if has_more {
+        rows.truncate(page as usize);
+    }
+    let mut items = Vec::with_capacity(rows.len());
+    let mut last_work = None;
+    for row in rows {
+        let work_id = match row.try_get::<Uuid, _>("work_id") {
+            Ok(value) => value,
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        let generation = match row.try_get::<Option<i64>, _>("head_generation") {
+            Ok(Some(value)) => value,
+            Ok(None) => return error_response(SyncError::Retryable),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        let snapshot = match row.try_get::<Option<Vec<u8>>, _>("head_snapshot_id") {
+            Ok(Some(value)) if value.len() == 32 => value,
+            Ok(_) => return error_response(SyncError::Retryable),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        let title = match row.try_get::<String, _>("title") {
+            Ok(value) => value,
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        last_work = Some(work_id.to_string());
+        items.push(serde_json::json!({"workId":work_id,"title":title,"head":{"generation":generation,"snapshotId":hex::encode(snapshot)}}));
+    }
+    let next_cursor = if has_more {
+        match last_work {
+            Some(last) => match encode_cursor(
+                serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"works","highWater":high_water,"last":last,"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("works")}),
+            ) {
+                Ok(cursor) => Some(cursor),
+                Err(error) => return error_response(error),
+            },
+            None => return error_response(SyncError::Retryable),
+        }
+    } else {
+        None
+    };
+    canonical_response(
+        StatusCode::OK,
+        serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"}),
+    )
 }
 async fn head(Path(work): Path<String>, headers: HeaderMap, state: State<AppState>) -> Response {
     let work = match parse_uuid_path(&work) {

@@ -3,9 +3,9 @@ use fuminiwa_sync_server_v2::{
     application::{binding_matches, parse_command, strict_json, validate_entity_payload},
     auth::{authenticate, RuntimeMode},
     domain::{canonical_json, replay_receipt, sha256},
-    AuthenticatedPrincipal,
+    AuthenticatedPrincipal, SyncError,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[test]
 fn jcs_sorts_object_keys_and_is_byte_stable() {
@@ -32,6 +32,34 @@ fn command_accepts_only_exact_canonical_bytes() {
     let mut with_space = bytes.clone();
     with_space.push(b' ');
     assert!(parse_command(&with_space).is_err());
+}
+
+#[test]
+fn resolve_server_seal_requires_one_exact_local_state() {
+    let exact =
+        include_bytes!("../../docs/sync/v2/fixtures/canonical/commands/resolve-server.json");
+    assert!(parse_command(exact).is_ok());
+    let original: Value = serde_json::from_slice(exact).unwrap();
+    for mutation in [
+        (
+            "expectedCurrentSnapshotId",
+            json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        (
+            "preAdoptionSnapshotId",
+            json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ),
+        ("expectedLocalGeneration", json!(9)),
+    ] {
+        let mut changed = original.clone();
+        changed["payload"][mutation.0] = mutation.1;
+        let bytes = canonical_json(&changed).unwrap();
+        assert!(matches!(
+            parse_command(&bytes),
+            Err(SyncError::SchemaViolation(field))
+                if field == "resolveServer.sealedLocalState"
+        ));
+    }
 }
 
 #[test]

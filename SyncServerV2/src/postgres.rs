@@ -530,6 +530,17 @@ impl Repository {
         generation: i64,
         snapshot_id: &[u8],
     ) -> SyncResult<()> {
+        // Identity values are allocated before commit. Serialize catalog
+        // writers per account so an older uncommitted event cannot appear
+        // after a cursor has captured a later high-water value.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(
+                 hashtextextended('sync_v2_catalog:' || $1, 0)
+             )",
+        )
+        .bind(&p.account_id)
+        .execute(&mut **tx)
+        .await?;
         let row = sqlx::query("SELECT b.raw_bytes FROM sync_v2.snapshot_entries e JOIN sync_v2.account_objects a ON a.account_id=e.account_id AND a.object_id=e.object_id JOIN sync_v2.global_blobs b ON b.object_id=e.object_id WHERE e.account_id=$1 AND e.snapshot_id=$2 AND e.entity_key='work/title' AND a.state='available'")
             .bind(&p.account_id)
             .bind(snapshot_id)
@@ -1101,9 +1112,10 @@ impl Repository {
         if row.try_get::<Uuid, _>("work_id")? != c.work_id {
             return Err(SyncError::NotFound);
         }
+        let active_source_generation = row.try_get::<i64, _>("source_generation")?;
         if row.try_get::<String, _>("state")? != "active"
             || row.try_get::<i64, _>("current_revision")? != revision
-            || row.try_get::<i64, _>("source_generation")? != c.source_generation
+            || active_source_generation != c.source_generation
         {
             return Err(SyncError::StaleConflictRevision);
         }
@@ -1162,19 +1174,20 @@ impl Repository {
         if c.kind == CommandKind::ResolveServer {
             let expected_current = digest_field(payload, "expectedCurrentSnapshotId")
                 .map_err(SyncError::SchemaViolation)?;
+            let pre_adoption = digest_field(payload, "preAdoptionSnapshotId")
+                .map_err(SyncError::SchemaViolation)?;
             let expected_generation = payload
                 .get("expectedLocalGeneration")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| SyncError::SchemaViolation("expectedLocalGeneration".into()))?;
-            if digest_field(payload, "preAdoptionSnapshotId")
-                .map_err(SyncError::SchemaViolation)?
-                .as_slice()
-                != conflict_local.as_slice()
+            if expected_generation != c.source_generation
+                || expected_generation != active_source_generation
+                || expected_current != c.source_snapshot_id
+                || expected_current != pre_adoption
+                || pre_adoption.as_slice() != conflict_local.as_slice()
+                || chosen.as_slice() != conflict_remote.as_slice()
             {
                 return Err(SyncError::StaleConflictRevision);
-            }
-            if expected_generation < 1 {
-                return Err(SyncError::SchemaViolation("expectedLocalGeneration".into()));
             }
             // The server head remains the selected remote branch. We only pin
             // the local candidate and resolve the active conflict; the client
@@ -1552,7 +1565,7 @@ impl Repository {
             .as_slice()
             .try_into()
             .map_err(|_| SyncError::ObjectDigestMismatch)?;
-        self.object_store.put(&object_id, bytes).await?;
+        self.object_store.put(&mut tx, &object_id, bytes).await?;
         if state == "prepared" {
             sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2 AND state='prepared'")
                 .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;

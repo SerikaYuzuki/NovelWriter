@@ -28,6 +28,7 @@ pub struct ScenarioContext {
     pub root_snapshot: [u8; 32],
     pub object_id: [u8; 32],
     pub receipt_id: Uuid,
+    pub rejected_resolution: SealedCommand,
 }
 
 #[derive(Deserialize)]
@@ -115,11 +116,44 @@ fn fixture_root() -> PathBuf {
         .join("docs/sync/v2/fixtures/canonical")
 }
 
-async fn require_empty_database(url: &str) -> ScenarioResult<()> {
+pub fn validate_test_database_url(url: &str) -> ScenarioResult<()> {
+    let lower = url.to_ascii_lowercase();
     ensure(
-        !url.contains("192.168.") && !url.contains("SyncServer") && !url.contains("syncserver"),
-        "NO-GO: integration database URL must not target LAN or the legacy server",
+        lower.starts_with("postgres://") || lower.starts_with("postgresql://"),
+        "NO-GO: integration database URL must be PostgreSQL",
     )?;
+    let without_scheme = lower
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .ok_or_else(|| failure("NO-GO: integration database URL has no authority"))?;
+    let (authority, path) = without_scheme
+        .split_once('/')
+        .ok_or_else(|| failure("NO-GO: integration database URL has no database name"))?;
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let database = path
+        .split(['?', '#'])
+        .next()
+        .filter(|value| !value.is_empty() && !value.contains('/'))
+        .ok_or_else(|| failure("NO-GO: integration database URL has no database name"))?;
+    let private_172 = (16..=31).any(|octet| host.starts_with(&format!("172.{octet}.")));
+    ensure(
+        !host.starts_with("192.168.") && !host.starts_with("10.") && !private_172,
+        "NO-GO: integration database URL must not target a private LAN host",
+    )?;
+    ensure(
+        database == "fuminiwa_v2_test" || database.starts_with("fuminiwa_v2_test_"),
+        "NO-GO: integration database name must carry the fuminiwa_v2_test marker",
+    )?;
+    ensure(
+        !["legacy", "production", "prod", "staging", "syncserver"]
+            .iter()
+            .any(|marker| database.contains(marker)),
+        "NO-GO: integration database name resembles an existing authority",
+    )
+}
+
+async fn require_empty_database(url: &str) -> ScenarioResult<()> {
+    validate_test_database_url(url)?;
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM information_schema.tables
@@ -554,6 +588,90 @@ async fn resolve_server_and_restore(
         head.0 == restored_id && head.1 == graph.remote_generation + 1,
         "restore did not advance exact head",
     )
+}
+
+async fn resolution_state(
+    repo: &Repository,
+    principal: &AuthenticatedPrincipal,
+    graph: &WorkGraph,
+) -> ScenarioResult<(String, i64, i64, Vec<u8>, i64, i64, i64, i64)> {
+    sqlx::query_as(
+        "SELECT a.state,a.current_revision,a.source_generation,
+                w.head_snapshot_id,w.head_generation,
+                (SELECT COUNT(*) FROM sync_v2.history h
+                 WHERE h.account_id=a.account_id AND h.work_id=a.work_id),
+                (SELECT COUNT(*) FROM sync_v2.receipts r
+                 WHERE r.account_id=a.account_id AND r.work_id=a.work_id),
+                (SELECT COUNT(*) FROM sync_v2.conflict_events e
+                 WHERE e.account_id=a.account_id AND e.conflict_id=a.conflict_id)
+         FROM sync_v2.active_conflicts a
+         JOIN sync_v2.works w ON w.account_id=a.account_id AND w.work_id=a.work_id
+         WHERE a.account_id=$1 AND a.conflict_id=$2",
+    )
+    .bind(&principal.account_id)
+    .bind(graph.conflict_id)
+    .fetch_one(&repo.pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn reject_mismatched_server_resolutions(
+    repo: &Repository,
+    principal: &AuthenticatedPrincipal,
+    graph: &WorkGraph,
+) -> ScenarioResult<SealedCommand> {
+    let make = |source_snapshot_id, source_generation, local, remote| {
+        command(
+            principal,
+            Uuid::new_v4(),
+            CommandKind::ResolveServer,
+            graph.work_id,
+            source_snapshot_id,
+            source_generation,
+            json!({
+                "conflictId":graph.conflict_id,
+                "conflictRevision":graph.conflict_revision,
+                "expectedCurrentSnapshotId":hex::encode(local),
+                "expectedLocalGeneration":source_generation,
+                "preAdoptionSnapshotId":hex::encode(local),
+                "remoteSnapshotId":hex::encode(remote),
+                "workId":graph.work_id
+            }),
+        )
+    };
+    let generation_mismatch = make(
+        graph.local,
+        graph.conflict_source_generation + 1,
+        graph.local,
+        graph.remote,
+    )?;
+    let local_mismatch = make(
+        graph.root,
+        graph.conflict_source_generation,
+        graph.root,
+        graph.remote,
+    )?;
+    let remote_mismatch = make(
+        graph.local,
+        graph.conflict_source_generation,
+        graph.local,
+        graph.root,
+    )?;
+    let before = resolution_state(repo, principal, graph).await?;
+    for rejected in [&generation_mismatch, &local_mismatch, &remote_mismatch] {
+        ensure(
+            matches!(
+                repo.command(principal, rejected).await,
+                Err(SyncError::StaleConflictRevision)
+            ),
+            "useServer mismatch was not rejected as staleConflictRevision",
+        )?;
+        ensure(
+            resolution_state(repo, principal, graph).await? == before,
+            "rejected useServer changed conflict/head/history/receipt state",
+        )?;
+    }
+    Ok(local_mismatch)
 }
 
 async fn resolve_device(
@@ -1000,6 +1118,137 @@ async fn exercise_migration_markers(url: &str, repo: &Repository) -> ScenarioRes
     Ok(())
 }
 
+async fn exercise_catalog_commit_race(
+    repo: &Repository,
+    principal: &AuthenticatedPrincipal,
+    work_id: Uuid,
+) -> ScenarioResult<()> {
+    let mut slow = repo.pool.begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(
+             hashtextextended('sync_v2_catalog:' || $1, 0)
+         )",
+    )
+    .bind(&principal.account_id)
+    .execute(&mut *slow)
+    .await?;
+    let slow_event: i64 = sqlx::query_scalar(
+        "INSERT INTO sync_v2.catalog_events(
+             account_id,work_id,event_kind,head_generation,head_snapshot_id,
+             title,tombstoned,created_at
+         )
+         SELECT account_id,work_id,'tombstone',head_generation,head_snapshot_id,
+                '',true,now()
+         FROM sync_v2.works WHERE account_id=$1 AND work_id=$2
+         RETURNING event_id",
+    )
+    .bind(&principal.account_id)
+    .bind(work_id)
+    .fetch_one(&mut *slow)
+    .await?;
+
+    let pool = repo.pool.clone();
+    let account = principal.account_id.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let mut later = tokio::spawn(async move {
+        let mut tx = pool.begin().await?;
+        let _ = started_tx.send(());
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(
+                 hashtextextended('sync_v2_catalog:' || $1, 0)
+             )",
+        )
+        .bind(&account)
+        .execute(&mut *tx)
+        .await?;
+        let event: i64 = sqlx::query_scalar(
+            "INSERT INTO sync_v2.catalog_events(
+                 account_id,work_id,event_kind,head_generation,head_snapshot_id,
+                 title,tombstoned,created_at
+             )
+             SELECT account_id,work_id,'upsert',head_generation,head_snapshot_id,
+                    'race-upsert',false,now()
+             FROM sync_v2.works WHERE account_id=$1 AND work_id=$2
+             RETURNING event_id",
+        )
+        .bind(&account)
+        .bind(work_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok::<i64, sqlx::Error>(event)
+    });
+    started_rx.await?;
+    tokio::task::yield_now().await;
+    ensure(
+        !later.is_finished(),
+        "later catalog writer bypassed the per-account commit-order lock",
+    )?;
+
+    let mut reader = repo.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *reader)
+        .await?;
+    let high_water: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(event_id),0) FROM sync_v2.catalog_events
+         WHERE account_id=$1",
+    )
+    .bind(&principal.account_id)
+    .fetch_one(&mut *reader)
+    .await?;
+    ensure(
+        high_water < slow_event,
+        "reader observed an uncommitted catalog identity",
+    )?;
+    let sorted_page_sql = "WITH latest AS (
+             SELECT DISTINCT ON (work_id) work_id,tombstoned
+             FROM sync_v2.catalog_events
+             WHERE account_id=$1 AND event_id <= $2
+             ORDER BY work_id,event_id DESC
+         )
+         SELECT work_id FROM latest
+         WHERE tombstoned=false AND work_id::text <= $3
+         ORDER BY work_id";
+    let page_before_commit: Vec<Uuid> = sqlx::query_scalar(sorted_page_sql)
+        .bind(&principal.account_id)
+        .bind(high_water)
+        .bind(work_id.to_string())
+        .fetch_all(&mut *reader)
+        .await?;
+    ensure(
+        page_before_commit.contains(&work_id),
+        "race fixture WorkID was absent before the late tombstone",
+    )?;
+    slow.commit().await?;
+    let later_event = (&mut later).await??;
+    ensure(
+        later_event > slow_event,
+        "catalog writer commit order did not preserve identity order",
+    )?;
+
+    let page_in_same_snapshot: Vec<Uuid> = sqlx::query_scalar(sorted_page_sql)
+        .bind(&principal.account_id)
+        .bind(high_water)
+        .bind(work_id.to_string())
+        .fetch_all(&mut *reader)
+        .await?;
+    reader.commit().await?;
+    ensure(
+        page_in_same_snapshot == page_before_commit,
+        "late identity changed the repeatable-read WorkID-sorted page",
+    )?;
+    let page_from_cursor: Vec<Uuid> = sqlx::query_scalar(sorted_page_sql)
+        .bind(&principal.account_id)
+        .bind(high_water)
+        .bind(work_id.to_string())
+        .fetch_all(&repo.pool)
+        .await?;
+    ensure(
+        page_from_cursor == page_before_commit,
+        "cursor high-water admitted a later-committed event into WorkID order",
+    )
+}
+
 pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioContext> {
     require_empty_database(url).await?;
     let repo = Repository::connect(url, SERVER_INSTANCE.into()).await?;
@@ -1038,15 +1287,37 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
     let (dedup_object_id, object_bytes) =
         first_object.ok_or_else(|| failure("no fixture objects"))?;
     let private_object_id = private_object.ok_or_else(|| failure("only one fixture object"))?;
+    let mut idempotent_tx = repo.pool.begin().await?;
     repo.object_store
-        .put(&dedup_object_id, &object_bytes)
+        .put(&mut idempotent_tx, &dedup_object_id, &object_bytes)
         .await?;
+    idempotent_tx.commit().await?;
+    let mut mismatch_tx = repo.pool.begin().await?;
     ensure(
         matches!(
-            repo.object_store.put(&dedup_object_id, b"different").await,
+            repo.object_store
+                .put(&mut mismatch_tx, &dedup_object_id, b"different")
+                .await,
             Err(SyncError::ObjectDigestMismatch)
         ),
         "immutable object store accepted mismatched bytes",
+    )?;
+    mismatch_tx.rollback().await?;
+    let rolled_back_bytes = b"object-store-outer-rollback";
+    let rolled_back_id = sha256(rolled_back_bytes);
+    let mut failpoint_tx = repo.pool.begin().await?;
+    repo.object_store
+        .put(&mut failpoint_tx, &rolled_back_id, rolled_back_bytes)
+        .await?;
+    failpoint_tx.rollback().await?;
+    let partial_blob: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.global_blobs WHERE object_id=$1)")
+            .bind(rolled_back_id.as_slice())
+            .fetch_one(&repo.pool)
+            .await?;
+    ensure(
+        !partial_blob,
+        "ObjectStore committed bytes outside the caller transaction",
     )?;
     exercise_upload_expiry(&repo, &account_a, primary_work).await?;
 
@@ -1059,6 +1330,7 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         repo.command(&account_a, &publish_command).await? == (status, publish_response.clone()),
         "lost ACK replay was not exact",
     )?;
+    exercise_catalog_commit_race(&repo, &account_a, primary_work).await?;
     let restarted = Repository::connect(url, SERVER_INSTANCE.into()).await?;
     ensure(
         restarted.command(&account_a, &publish_command).await? == (status, publish_response),
@@ -1119,6 +1391,8 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         false,
     )
     .await?;
+    let rejected_resolution =
+        reject_mismatched_server_resolutions(&repo, &account_a, &active_graph).await?;
     let foreign_work = exercise_account_isolation(
         &repo,
         &account_a,
@@ -1131,6 +1405,17 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
     .await?;
     exercise_migration_markers(url, &repo).await?;
 
+    // Test-only catalog setup mirrors the repository writer lock; production
+    // mutations append catalog events only through Repository.
+    let mut tombstone_tx = repo.pool.begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(
+             hashtextextended('sync_v2_catalog:' || $1, 0)
+         )",
+    )
+    .bind(&account_a.account_id)
+    .execute(&mut *tombstone_tx)
+    .await?;
     sqlx::query(
         "INSERT INTO sync_v2.catalog_events(
              account_id,work_id,event_kind,head_generation,head_snapshot_id,title,tombstoned,created_at
@@ -1140,8 +1425,9 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
     )
     .bind(&account_a.account_id)
     .bind(primary_work)
-    .execute(&repo.pool)
+    .execute(&mut *tombstone_tx)
     .await?;
+    tombstone_tx.commit().await?;
 
     Ok(ScenarioContext {
         repo,
@@ -1154,5 +1440,6 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         root_snapshot,
         object_id: private_object_id,
         receipt_id: create_command.command_id,
+        rejected_resolution,
     })
 }

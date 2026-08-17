@@ -955,6 +955,22 @@ pub fn parse_command(body: &[u8]) -> SyncResult<SealedCommand> {
     if binding.get("protocolEpoch").and_then(Value::as_i64) != Some(PROTOCOL_EPOCH) {
         return Err(SyncError::ProtocolEpochMismatch);
     }
+    if kind == CommandKind::ResolveServer {
+        let expected_current = canonical_digest(payload, "expectedCurrentSnapshotId")?;
+        let pre_adoption = canonical_digest(payload, "preAdoptionSnapshotId")?;
+        let expected_generation = payload
+            .get("expectedLocalGeneration")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("expectedLocalGeneration".into()))?;
+        if expected_current != pre_adoption
+            || expected_current != source_snapshot_id
+            || expected_generation != source_generation
+        {
+            return Err(SyncError::SchemaViolation(
+                "resolveServer.sealedLocalState".into(),
+            ));
+        }
+    }
     Ok(SealedCommand {
         command_id,
         kind,

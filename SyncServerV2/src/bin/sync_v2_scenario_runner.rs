@@ -7,7 +7,7 @@ async fn main() {
         Ok(value) => value,
         Err(_) => {
             eprintln!(
-                "NO-GO: FUMINIWA_V2_TEST_DATABASE_URL must name a newly-created empty PostgreSQL database"
+                "NO-GO: FUMINIWA_V2_TEST_DATABASE_URL must name an externally provisioned, newly-created empty fuminiwa_v2_test PostgreSQL database"
             );
             std::process::exit(2);
         }

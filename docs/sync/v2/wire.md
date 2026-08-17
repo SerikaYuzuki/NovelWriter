@@ -45,11 +45,17 @@ generation.
 
 `GET /v2/works?cursor=` returns `{items,nextCursor}` sorted by lowercase
 WorkID. Its opaque cursor seals protocol epoch, AccountID, AccountFence,
-the first page's catalog-event high-water mark, last lowercase WorkID, page
-size (default 100, maximum 500), and query digest. The server projects the
-latest non-tombstoned `catalog_events` row per WorkID at or below that
-high-water mark, never the mutable current row. A continuation request omits
-`pageSize` or repeats the sealed value. A cursor from another account,
+the first page's catalog-event high-water mark, last emitted lowercase WorkID,
+page size (default 100, maximum 500), and query digest. `highWater` is the
+greatest event ID visible at the first page's repeatable-read, read-only
+transaction snapshot; the page query uses that same snapshot. Catalog writers
+are serialized per AccountID before allocating identity values, so an event
+that commits later cannot have an ID at or below an already issued high-water
+mark. Every continuation projects the latest non-tombstoned `catalog_events`
+row per WorkID with `event_id <= highWater` and `work_id > last`, never the
+mutable current row. `last` is a position in this WorkID-sorted projection,
+not an event ID. A continuation request omits `pageSize` or repeats the sealed
+value. A cursor from another account,
 fence, endpoint, or query returns `accountFenceMismatch`/`schemaViolation`
 before lookup. `GET /v2/works/{workId}/history?cursor=` seals the same scope
 plus WorkID, first-page history-event high-water mark, and last event ID.
