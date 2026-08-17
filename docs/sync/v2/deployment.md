@@ -55,10 +55,14 @@ identifier, and secret exist only in `docker-compose.provision.yml` under the
 explicit `provision` profile. For a newly-created volume, merge that file and
 run `docker compose --profile provision run --rm bootstrap-admin` once before
 starting the normal migrator/server graph. Its SQL verifies the expected OID-10
-superuser, fixed database identity, absence of every v2 role, and an empty user
-schema/object inventory inside one transaction protected by the deployment
-advisory lock; an exact-v2, legacy, or unknown target fails before role creation
-and rolls back without catalog change. If provisioning is omitted, fresh
+superuser, fixed database identity, absence of every user-created role, and an
+empty user catalog inside one transaction protected by the deployment advisory
+lock. The catalog guard scans every OID-bearing PostgreSQL catalog at the
+`FirstNormalObjectId` boundary and separately checks mutable catalogs without
+OIDs, default database/public-schema ACLs, role membership, and role/database
+settings. An exact-v2, legacy, role-only, or catalog-object-only unknown target
+fails before role creation and rolls back without catalog change. If
+provisioning is omitted, fresh
 PostgreSQL initialization and the migrator fail closed. Normal startup and
 exact-v2 restart use only `docker-compose.yml`; the official OID-10 identifier
 and secret are absent from the rendered graph, cannot be mounted or contacted,

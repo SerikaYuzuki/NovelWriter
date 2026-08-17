@@ -27,9 +27,12 @@ The `bootstrap-admin` one-shot, official PostgreSQL initialization role name,
 and its password live only in `docker-compose.provision.yml`; they are not
 part of the normal startup graph. The one-shot validates the exact OID-10
 initialization authority, fixed target database, and empty user catalog in one
-transaction under the deployment advisory lock before creating any role.
-Pointing it at an exact-v2, legacy, or otherwise non-fresh database aborts with
-zero catalog changes. If the provision file/profile is omitted on a fresh
+transaction under the deployment advisory lock before creating any role. The
+fresh check covers user roles, every OID-bearing catalog, mutable OID-less
+catalog state, database/public-schema ACLs, and role/database settings.
+Pointing it at an exact-v2, legacy, role-only, catalog-object-only, or otherwise
+non-fresh database aborts with zero catalog changes. If the provision
+file/profile is omitted on a fresh
 volume, PostgreSQL itself and the migrator both fail closed. On an exact-v2
 restart, use only `docker-compose.yml`: the official PostgreSQL initialization
 identifier and secret are absent from the rendered graph and cannot be
