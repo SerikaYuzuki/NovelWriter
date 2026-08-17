@@ -23,13 +23,23 @@ docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
   -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split up --build -d
 ```
 
-The `bootstrap-admin` one-shot and PostgreSQL initialization password live
-only in `docker-compose.provision.yml`; they are not part of the normal
-startup graph. If the provision file/profile is omitted on a fresh volume,
-PostgreSQL itself and the migrator both fail closed. On an exact-v2 restart,
-use only `docker-compose.yml`: the official PostgreSQL initialization secret
-is neither present in the rendered graph nor mounted/contacted, and the
-migrator uses only the permanent bootstrap role for read-only attestation.
+The `bootstrap-admin` one-shot, official PostgreSQL initialization role name,
+and its password live only in `docker-compose.provision.yml`; they are not
+part of the normal startup graph. The one-shot validates the exact OID-10
+initialization authority, fixed target database, and empty user catalog in one
+transaction under the deployment advisory lock before creating any role.
+Pointing it at an exact-v2, legacy, or otherwise non-fresh database aborts with
+zero catalog changes. If the provision file/profile is omitted on a fresh
+volume, PostgreSQL itself and the migrator both fail closed. On an exact-v2
+restart, use only `docker-compose.yml`: the official PostgreSQL initialization
+identifier and secret are absent from the rendered graph and cannot be
+mounted/contacted; the migrator uses only the permanent bootstrap role for
+read-only attestation.
+
+The one-shot runs as the same fixed numeric `10001:10001` identity as the v2
+server image. Its admin-password bind mount must therefore be the mode-`0400`
+runtime copy produced by `prepare-runtime-secrets.sh`; making an operator
+source secret world-readable is not an accepted workaround.
 
 The only database volume is `fuminiwa-sync-v2-role-split-data`; Caddy also has two
 edge-state volumes (`fuminiwa-sync-v2-role-split-caddy-data` and

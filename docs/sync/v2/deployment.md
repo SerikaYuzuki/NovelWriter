@@ -50,15 +50,22 @@ re-requests role DDL or grants. Legacy, single-role, mixed, partial, or
 unknown databases fail closed; the migrator never auto-ALTERs, rewrites
 ownership, or grants privileges on an existing volume.
 
-The `bootstrap-admin` Compose service and official PostgreSQL initialization
-secret exist only in `docker-compose.provision.yml` under the explicit
-`provision` profile. For a newly-created volume, merge that file and run
-`docker compose --profile provision run --rm bootstrap-admin` once before
-starting the normal migrator/server graph. If that step is omitted, fresh
+The `bootstrap-admin` Compose service, official PostgreSQL initialization role
+identifier, and secret exist only in `docker-compose.provision.yml` under the
+explicit `provision` profile. For a newly-created volume, merge that file and
+run `docker compose --profile provision run --rm bootstrap-admin` once before
+starting the normal migrator/server graph. Its SQL verifies the expected OID-10
+superuser, fixed database identity, absence of every v2 role, and an empty user
+schema/object inventory inside one transaction protected by the deployment
+advisory lock; an exact-v2, legacy, or unknown target fails before role creation
+and rolls back without catalog change. If provisioning is omitted, fresh
 PostgreSQL initialization and the migrator fail closed. Normal startup and
-exact-v2 restart use only `docker-compose.yml`; the official OID-10 secret is
-absent from the rendered graph, cannot be mounted or contacted, and the
-migrator uses only the permanent bootstrap read-back path.
+exact-v2 restart use only `docker-compose.yml`; the official OID-10 identifier
+and secret are absent from the rendered graph, cannot be mounted or contacted,
+and the migrator uses only the permanent bootstrap read-back path.
+The one-shot process uses fixed uid/gid `10001:10001`, so its password mount is
+the mode-`0400` runtime copy prepared for that identity, not a world-readable
+operator source file.
 
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks

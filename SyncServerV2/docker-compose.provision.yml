@@ -1,6 +1,7 @@
 services:
   postgres:
     environment:
+      POSTGRES_USER: fuminiwa_sync_v2_postgres_init
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-init-password
     secrets:
       - postgres-init-password
@@ -9,6 +10,7 @@ services:
   bootstrap-admin:
     image: postgres:16
     container_name: fuminiwa-sync-v2-role-split-bootstrap-admin
+    user: "10001:10001"
     profiles:
       - provision
     depends_on:
@@ -23,9 +25,13 @@ services:
         case "$$admin_password" in
           ''|*[!A-Za-z0-9_-]*) echo 'bootstrap-admin password must use the fixed safe grammar' >&2; exit 65 ;;
         esac;
+        postgres_init_password=$$(cat /run/secrets/postgres-init-password);
+        case "$$postgres_init_password" in
+          ''|*[!A-Za-z0-9_-]*) echo 'postgres init password must use the fixed safe grammar' >&2; exit 65 ;;
+        esac;
         printf '%s\n' "\\set bootstrap_admin_password $$admin_password" > "$$script";
         cat /run/bootstrap-admin.sql >> "$$script";
-        PGPASSWORD=$$(cat /run/secrets/postgres-init-password)
+        PGPASSWORD="$$postgres_init_password"
         psql --host=postgres --port=5432 --username=fuminiwa_sync_v2_postgres_init
         --dbname=fuminiwa_sync_v2 --set=ON_ERROR_STOP=1
         --file="$$script";

@@ -11,6 +11,10 @@ fn compose_bootstraps_role_split_before_runtime() {
     assert!(compose.contains("fuminiwa_sync_v2_runtime"));
     assert!(!compose.contains("bootstrap-admin:"));
     assert!(!compose.contains("postgres-init-password"));
+    assert!(!compose.contains("fuminiwa_sync_v2_postgres_init"));
+    assert!(!compose
+        .lines()
+        .any(|line| line.trim_start().starts_with("POSTGRES_USER:")));
     assert!(compose.contains("pg_isready -U fuminiwa_sync_v2_bootstrap -d fuminiwa_sync_v2"));
     assert!(provision.contains("bootstrap-admin:"));
     let bootstrap_admin = provision
@@ -21,6 +25,11 @@ fn compose_bootstraps_role_split_before_runtime() {
         .next()
         .expect("bootstrap-admin service body");
     assert!(bootstrap_admin.contains("profiles:") && bootstrap_admin.contains("provision"));
+    assert!(bootstrap_admin.contains("user: \"10001:10001\""));
+    assert!(bootstrap_admin.contains("postgres_init_password=$$(cat"));
+    assert!(bootstrap_admin.contains("postgres init password must use the fixed safe grammar"));
+    assert!(bootstrap_admin.contains("PGPASSWORD=\"$$postgres_init_password\""));
+    assert!(!bootstrap_admin.contains("PGPASSWORD=$$(cat"));
     assert!(bootstrap_admin
         .contains(r#"printf '%s\n' "\\set bootstrap_admin_password $$admin_password""#));
     assert!(!bootstrap_admin.contains("%s\\n' \"$$admin_password\""));
@@ -32,7 +41,7 @@ fn compose_bootstraps_role_split_before_runtime() {
         .next()
         .expect("migrator service body");
     assert!(!migrator.contains("bootstrap-admin:"));
-    assert!(compose.contains("fuminiwa_sync_v2_postgres_init"));
+    assert!(provision.contains("POSTGRES_USER: fuminiwa_sync_v2_postgres_init"));
     assert!(provision.contains("POSTGRES_PASSWORD_FILE: /run/secrets/postgres-init-password"));
     assert!(provision.contains("pg_isready -U fuminiwa_sync_v2_postgres_init -d fuminiwa_sync_v2"));
     assert!(provision.contains("FUMINIWA_SYNC_V2_POSTGRES_INIT_PASSWORD_HOST_PATH"));
@@ -41,6 +50,43 @@ fn compose_bootstraps_role_split_before_runtime() {
     assert!(!compose.contains("POSTGRES_USER: fuminiwa_sync_v2\n"));
     assert!(compose.contains("FUMINIWA_SYNC_V2_MIGRATION_PASSWORD_HOST_PATH"));
     assert!(compose.contains("FUMINIWA_SYNC_V2_RUNTIME_PASSWORD_HOST_PATH"));
+}
+
+#[test]
+fn bootstrap_admin_provisioning_is_transactional_and_fresh_only() {
+    let script = fs::read_to_string("scripts/bootstrap-admin.sql").expect("bootstrap-admin SQL");
+    let begin = script.find("BEGIN;").expect("transaction begin");
+    let lock = script
+        .find("pg_advisory_xact_lock")
+        .expect("transaction advisory lock");
+    let guard = script.find("DO $bootstrap_guard$").expect("fresh guard");
+    let create = script
+        .find("CREATE ROLE fuminiwa_sync_v2_bootstrap_admin")
+        .expect("role creation");
+    let commit = script.rfind("COMMIT;").expect("transaction commit");
+    assert!(begin < lock && lock < guard && guard < create && create < commit);
+    for marker in [
+        "current_database() <> 'fuminiwa_sync_v2'",
+        "current_user <> 'fuminiwa_sync_v2_postgres_init'",
+        "current_setting('is_superuser') <> 'on'",
+        "AND oid = 10",
+        "FROM pg_database",
+        "FROM pg_roles",
+        "FROM pg_namespace",
+        "FROM pg_class",
+        "FROM pg_type",
+        "FROM pg_proc",
+        "FROM pg_extension",
+        "RAISE EXCEPTION 'bootstrap-admin target database is not fresh'",
+        "\\set ON_ERROR_STOP on",
+    ] {
+        assert!(
+            script.contains(marker),
+            "missing fresh-only guard: {marker}"
+        );
+    }
+    assert!(!script.contains("WHERE NOT EXISTS"));
+    assert!(!script.contains("pg_advisory_unlock"));
 }
 
 #[test]

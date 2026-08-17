@@ -5,7 +5,6 @@ services:
     container_name: fuminiwa-sync-v2-role-split-postgres
     environment:
       POSTGRES_DB: fuminiwa_sync_v2
-      POSTGRES_USER: fuminiwa_sync_v2_postgres_init
     volumes:
       - fuminiwa-sync-v2-role-split-data:/var/lib/postgresql/data
     healthcheck:
