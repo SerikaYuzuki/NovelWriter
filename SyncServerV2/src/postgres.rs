@@ -507,6 +507,40 @@ impl Repository {
             _ => Err(SyncError::Retryable),
         }
     }
+    async fn append_catalog_event<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        generation: i64,
+        snapshot_id: &[u8],
+    ) -> SyncResult<()> {
+        let row = sqlx::query("SELECT b.raw_bytes FROM sync_v2.snapshot_entries e JOIN sync_v2.account_objects a ON a.account_id=e.account_id AND a.object_id=e.object_id JOIN sync_v2.global_blobs b ON b.object_id=e.object_id WHERE e.account_id=$1 AND e.snapshot_id=$2 AND e.entity_key='work/title' AND a.state='available'")
+            .bind(&p.account_id)
+            .bind(snapshot_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let title_bytes: Vec<u8> = row.try_get("raw_bytes")?;
+        let title_value = strict_json(&title_bytes)?;
+        if canonical_json(&title_value).map_err(|_| SyncError::InvalidCanonicalBytes)?
+            != title_bytes
+        {
+            return Err(SyncError::InvalidCanonicalBytes);
+        }
+        let title = title_value
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SyncError::SchemaViolation("work/title".into()))?;
+        sqlx::query("INSERT INTO sync_v2.catalog_events(account_id,work_id,event_kind,head_generation,head_snapshot_id,title,tombstoned,created_at) VALUES($1,$2,'upsert',$3,$4,$5,false,now())")
+            .bind(&p.account_id)
+            .bind(work_id)
+            .bind(generation)
+            .bind(snapshot_id)
+            .bind(title)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
     pub async fn command(
         &self,
         p: &AuthenticatedPrincipal,
@@ -519,6 +553,13 @@ impl Repository {
         }
         let mut tx = self.pool.begin().await?;
         self.scope(&mut tx, p).await?;
+        if cmd.kind == CommandKind::CreateWork {
+            let lock_key = format!("{}\0{}", p.account_id, cmd.work_id);
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(lock_key)
+                .execute(&mut *tx)
+                .await?;
+        }
         if let Some(r) = self.receipt_lookup(&mut tx, p, cmd).await? {
             tx.commit().await?;
             return Ok(r);
@@ -1005,17 +1046,11 @@ impl Repository {
         }
         let next = generation.unwrap_or(0) + 1;
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(candidate.as_slice()).bind(next).execute(&mut **tx).await?;
-        let title = sqlx::query("SELECT b.raw_bytes FROM sync_v2.snapshot_entries e JOIN sync_v2.account_objects ao ON ao.account_id=e.account_id AND ao.object_id=e.object_id JOIN sync_v2.global_blobs b ON b.object_id=e.object_id WHERE e.account_id=$1 AND e.snapshot_id=$2 AND e.entity_key='work/title' AND ao.state='available'")
-            .bind(&p.account_id).bind(candidate.as_slice()).fetch_optional(&mut **tx).await?
-            .and_then(|row| row.try_get::<Vec<u8>, _>("raw_bytes").ok())
-            .and_then(|bytes| strict_json(&bytes).ok())
-            .and_then(|value| value.get("value").and_then(Value::as_str).map(str::to_owned))
-            .unwrap_or_default();
         let occurrence = Uuid::new_v4();
         sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
             .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
-        sqlx::query("INSERT INTO sync_v2.catalog_events(account_id,work_id,event_kind,head_generation,head_snapshot_id,title,tombstoned,created_at) VALUES($1,$2,'upsert',$3,$4,$5,false,now())")
-            .bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(title).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
+            .await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
         Ok((
             200,
@@ -1206,6 +1241,8 @@ impl Repository {
         let occurrence = Uuid::new_v4();
         sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(chosen.as_slice()).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,$6,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(chosen.as_slice()).bind(c.command_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, chosen.as_slice())
+            .await?;
         sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
         Ok((
@@ -1335,6 +1372,8 @@ impl Repository {
         let clone_occurrence = Uuid::new_v4();
         sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$4,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,1,$3,$4,$5,'cloneWork','cloneNewWork',now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(c.command_id).bind(c.work_id).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, new_work, 1, root_id.as_slice())
+            .await?;
         sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
         Ok((
@@ -1419,11 +1458,12 @@ impl Repository {
         if selected_entries.len() != result_entries.len() {
             return Err(SyncError::LineageViolation);
         }
+        let selected_keys = selected_entries
+            .iter()
+            .map(|row| row.try_get::<String, _>("entity_key"))
+            .collect::<Result<Vec<_>, _>>()?;
         for entry in result_entries {
-            if !selected_entries.iter().any(|row| {
-                row.try_get::<String, _>("entity_key").ok().as_deref()
-                    == Some(entry.entity_key.as_str())
-            }) {
+            if !selected_keys.contains(&entry.entity_key) {
                 return Err(SyncError::LineageViolation);
             }
             sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6)")
@@ -1436,6 +1476,8 @@ impl Repository {
         sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'restoreBefore',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(current.as_slice()).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.restore_receipts(account_id,command_id,work_id,selected_snapshot_id,pre_restore_snapshot_id,result_snapshot_id) VALUES($1,$2,$3,$4,$5,$6)").bind(&p.account_id).bind(c.command_id).bind(c.work_id).bind(selected.as_slice()).bind(current.as_slice()).bind(new_id.as_slice()).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,'restore','sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(new_id.as_slice()).bind(c.command_id).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, new_id.as_slice())
+            .await?;
         Ok((
             200,
             Self::response(
@@ -1478,13 +1520,8 @@ impl Repository {
             tx.commit().await?;
             return Err(SyncError::UploadExpired);
         }
-        if row.try_get::<String, _>("state")? == "uploaded"
-            || row.try_get::<String, _>("state")? == "finalized"
-        {
-            tx.commit().await?;
-            return Ok(());
-        }
-        if row.try_get::<String, _>("state")? != "prepared" {
+        let state: String = row.try_get("state")?;
+        if !matches!(state.as_str(), "prepared" | "uploaded" | "finalized") {
             return Err(SyncError::UploadExpired);
         };
         let object: Vec<u8> = row.try_get("object_id")?;
@@ -1497,8 +1534,10 @@ impl Repository {
             .try_into()
             .map_err(|_| SyncError::ObjectDigestMismatch)?;
         self.object_store.put(&object_id, bytes).await?;
-        sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2")
-            .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
+        if state == "prepared" {
+            sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2 AND state='prepared'")
+                .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
