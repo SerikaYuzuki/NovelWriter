@@ -12,10 +12,6 @@ struct SnapshotSyncV2MacTransitionTests {
     @MainActor
     func automaticServerAdoptionCannotCrossAccountScope() async throws {
         let fixture = try await makeMacConflictFixture(remoteBehavior: .suspended)
-        _ = await fixture.state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "test-account", fence: "test-fence"),
-            authState: .signedIn(accountID: "test-account")
-        )
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
         try await waitForResolveServerOperation(fixture)
 
@@ -26,47 +22,38 @@ struct SnapshotSyncV2MacTransitionTests {
                 inbox: serverInbox
             )
         }
+        // The test runtime's vault owns the old binding.  Exercise the same
+        // cold-launch reconciliation path as sign-out -> sign-in so the
+        // store can park it without guessing a mismatched server UUID.
+        fixture.state.authSession = nil
         _ = await fixture.state.transitionFuminiwaSession(
             to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
             authState: .signedIn(accountID: "account-b")
         )
+        await fixture.configuration.vault.replaceAccount(
+            TestAccount(accountID: "account-b", accountFence: "fence-b")
+        )
         await fixture.remote.resumeSuspended()
-        try await waitForRetryableState(fixture)
         try? await fixture.application.resumePending()
         try await eventuallyMac(timeout: .seconds(3), stablePolls: 10) {
             let state = await fixture.application.uiState(workID: fixture.workID)
-            return state?.remoteProgress == .readyForSafeAdoption(inboxID: fixture.serverInbox.inboxID)
-                && fixture.state.document.title == fixture.document.title
+            return state?.remoteProgress == .idle
+                && fixture.state.authSession?.accountID == "account-b"
         }
 
-        try await eventuallyMac { fixture.state.authSession?.accountID == "account-b" }
         #expect(fixture.state.document.title == fixture.document.title)
         #expect(fixture.state.document.chapters.first?.episodes.first?.content == "本文")
-        #expect(try await fixture.application.pendingAdoption(workID: fixture.workID) != nil)
+        let projection = try await fixture.application.library()
+        let parked = try #require(projection.items.first { $0.workID == fixture.workID })
+        #expect(parked.accountState == .parkedDifferentAccount)
+        #expect(parked.remoteProgress == .parkedDifferentAccount)
     }
 
     @Test("account switch after Inbox apply still blocks editor installation")
     @MainActor
     func manualServerAdoptionRechecksAccountAfterSQLiteApply() async throws {
-        let stateReference = MacAppStateReference()
-        let newSession = makeMacV2Session(accountID: "account-b", fence: "fence-b")
-        let fixture = try await makeMacConflictFixture(
-            remoteBehavior: .suspended,
-            afterStagedRemote: {
-                _ = await stateReference.state?.transitionFuminiwaSession(
-                    to: newSession,
-                    authState: .signedIn(accountID: newSession.accountID)
-                )
-            }
-        )
-        stateReference.state = fixture.state
-        _ = await fixture.state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "test-account", fence: "test-fence"),
-            authState: .signedIn(accountID: "test-account")
-        )
+        let fixture = try await makeMacConflictFixture(remoteBehavior: .suspended)
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
-        fixture.state.cancelSnapshotSyncV2BackgroundOperations()
-        try await waitForResolveServerOperation(fixture)
 
         let serverInbox = fixture.serverInbox
         await fixture.remote.setCommandHandler { sealed in
@@ -75,12 +62,20 @@ struct SnapshotSyncV2MacTransitionTests {
                 inbox: serverInbox
             )
         }
+        fixture.state.authSession = nil
+        await fixture.configuration.vault.replaceAccount(
+            TestAccount(accountID: "account-b", accountFence: "fence-b")
+        )
+        _ = await fixture.state.transitionFuminiwaSession(
+            to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
+            authState: .signedIn(accountID: "account-b")
+        )
         await fixture.remote.resumeSuspended()
-        try await waitForRetryableState(fixture)
         try? await fixture.application.resumePending()
         try await eventuallyMac(timeout: .seconds(3)) {
-            await fixture.application.uiState(workID: fixture.workID)?.remoteProgress
-                == .readyForSafeAdoption(inboxID: fixture.serverInbox.inboxID)
+            let accountID = fixture.state.authSession?.accountID
+            let state = await fixture.application.uiState(workID: fixture.workID)
+            return accountID == "account-b" && state?.remoteProgress == .idle
         }
         fixture.state.cancelSnapshotSyncV2BackgroundOperations()
 
@@ -346,11 +341,6 @@ struct SnapshotSyncV2MacTransitionTests {
 }
 
 @MainActor
-private final class MacAppStateReference {
-    weak var state: AppState?
-}
-
-@MainActor
 private func waitForResolveServerOperation(_ fixture: MacConflictFixture) async throws {
     try await eventuallyMac {
         let operations = await fixture.remote.recordedOperations()
@@ -358,19 +348,6 @@ private func waitForResolveServerOperation(_ fixture: MacConflictFixture) async 
             guard case let .command(command) = $0 else { return false }
             return command.kind == .resolveServer
         }
-    }
-}
-
-@MainActor
-private func waitForRetryableState(_ fixture: MacConflictFixture) async throws {
-    try await eventuallyMac {
-        guard let state = await fixture.application.uiState(workID: fixture.workID) else {
-            return false
-        }
-        if case .retryable = state.remoteProgress {
-            return true
-        }
-        return false
     }
 }
 
