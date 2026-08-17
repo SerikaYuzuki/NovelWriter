@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "NovelSyncV2Store", targets: ["NovelSyncV2Store"]),
         .library(name: "NovelSyncV2Application", targets: ["NovelSyncV2Application"]),
         .library(name: "NovelSyncV2Runtime", targets: ["NovelSyncV2Runtime"]),
+        .library(name: "NovelSyncV2PortableBridge", targets: ["NovelSyncV2PortableBridge"]),
         .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
         .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
         .library(name: "NovelLocalStore", targets: ["NovelLocalStore"]),
@@ -68,6 +69,13 @@ let package = Package(
                 "NovelSyncV2Application",
                 "NovelAuth"
             ]
+        ),
+        // Explicit-only bridge between validated `.novelpkg` transfer and
+        // the v2 snapshot projection. The live v2 application/runtime never
+        // depends on NovelStorage, preserving SQLite as sole authority.
+        .target(
+            name: "NovelSyncV2PortableBridge",
+            dependencies: ["NovelCore", "NovelStorage", "NovelSyncV2"]
         ),
         // D-076 R5: filesystem journals for the retired Episode/Work
         // protocols are kept in a compatibility target. The target depends
@@ -154,6 +162,10 @@ let package = Package(
                 "NovelCore",
                 "NovelAuth"
             ]
+        ),
+        .testTarget(
+            name: "NovelSyncV2PortableBridgeTests",
+            dependencies: ["NovelSyncV2PortableBridge", "NovelStorage", "NovelSyncV2", "NovelCore"]
         ),
         .testTarget(
             name: "NovelLibraryTests",

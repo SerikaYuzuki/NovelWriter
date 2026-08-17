@@ -20,6 +20,23 @@ public struct Attachment: Identifiable, Sendable, Equatable {
     }
 }
 
+/// A fully read, validated attachment at the explicit portable boundary.
+///
+/// The package URL and package-internal path are intentionally absent. Storage
+/// implementations own filesystem validation and return only this opaque value
+/// to callers such as the Snapshot Sync v2 bridge.
+public struct PortableAttachmentPayload: Sendable, Equatable {
+    public let fileName: String
+    public let byteCount: Int64
+    public let bytes: Data
+
+    public init(fileName: String, bytes: Data) {
+        self.fileName = fileName
+        self.bytes = bytes
+        byteCount = Int64(bytes.count)
+    }
+}
+
 /// 資料添付の保存層操作を抽象化するプロトコル。
 ///
 /// `DocumentRepository` とは独立させ、App 側が保存形式の内部構造を直接触らない

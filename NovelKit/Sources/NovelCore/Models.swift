@@ -322,6 +322,11 @@ public protocol PortableDocumentPackageRepository: DocumentCopyingRepository {
     /// package 全体の filesystem 境界と既知 document payload を検証して読み込む。
     func validatePortablePackage(at url: URL) async throws -> NovelDocument
 
+    /// Validates and reads every attachment as an opaque portable payload.
+    /// Filesystem paths, symlinks, collisions, and byte-count checks stay in
+    /// the storage implementation rather than crossing into App or sync code.
+    func readValidatedAttachments(in url: URL) async throws -> [PortableAttachmentPayload]
+
     /// sibling temporary package を完全検証してから destination へ atomic に採用する。
     func saveValidatedCopy(
         _ doc: NovelDocument,
