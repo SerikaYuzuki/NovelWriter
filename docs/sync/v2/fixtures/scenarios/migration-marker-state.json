@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "name": "migration-marker-state-correspondence",
+  "cases": [
+    {"state":"discovered","exportBackupMarker":null,"adoptionMarker":null,"accepted":true},
+    {"state":"backupExported","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":true},
+    {"state":"staged","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":true},
+    {"state":"verified","accountId":"account-a","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":true},
+    {"state":"committed","accountId":"account-a","exportBackupMarker":"backup-1","adoptionMarker":"adopt-1","accepted":true},
+    {"state":"backupExported","exportBackupMarker":null,"adoptionMarker":null,"accepted":false},
+    {"state":"committed","accountId":"account-a","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":false},
+    {"state":"quarantined","quarantinedFromState":"discovered","exportBackupMarker":null,"adoptionMarker":null,"accepted":true},
+    {"state":"quarantined","quarantinedFromState":"staged","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":true},
+    {"state":"quarantined","quarantinedFromState":"verified","accountId":"account-a","exportBackupMarker":"backup-1","adoptionMarker":null,"accepted":true}
+  ],
+  "expect": {"invalidRowsRejectedByDDL":true,"committedRequiresBothMarkers":true,"quarantineRetainsReachedBackupMarker":true}
+}

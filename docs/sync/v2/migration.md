@@ -20,6 +20,16 @@ discovered -> backupExported -> staged -> verified -> committed
                          `-> quarantined
 ```
 
+The ledger encodes marker/state correspondence rather than relying on runner
+convention. `discovered` has neither marker. `backupExported`, `staged`, and
+`verified` require a non-empty `export_backup_marker` and forbid an adoption
+marker. `committed` requires both non-empty markers. `quarantined` requires
+`quarantined_from_state`, never has an adoption marker, and retains the export
+marker exactly when its origin was `backupExported`, `staged`, or `verified`;
+a quarantine originating at `discovered` has no export marker. A quarantine
+from `verified` also retains its verified AccountID. Empty strings do not
+satisfy any marker requirement.
+
 `staged` copies exact manifest/object bytes to
 `migration_staging_batches`/`migration_staging_objects` without changing the
 source. Those tables intentionally have no FK to authoritative Work,

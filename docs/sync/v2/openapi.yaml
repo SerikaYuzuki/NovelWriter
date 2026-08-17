@@ -452,13 +452,14 @@ components:
     Conflict:
       type: object
       additionalProperties: false
-      required: [baseSnapshotId, conflictId, localSnapshotId, remoteSnapshotId, revision, workId]
+      required: [baseSnapshotId, conflictId, localSnapshotId, remoteSnapshotId, revision, sourceGeneration, workId]
       properties:
         baseSnapshotId: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
         conflictId: { $ref: '#/components/schemas/UUID' }
         localSnapshotId: { $ref: '#/components/schemas/Digest' }
         remoteSnapshotId: { $ref: '#/components/schemas/Digest' }
         revision: { type: integer, minimum: 1 }
+        sourceGeneration: { type: integer, minimum: 1, maximum: 9007199254740991 }
         workId: { $ref: '#/components/schemas/UUID' }
     ConflictResponse:
       type: object
@@ -470,7 +471,7 @@ components:
     ReadBackPredicate:
       type: object
       additionalProperties: false
-      required: [accountMatched, commandDigestMatched, resourceMatched, stateMatched]
+      required: [accountMatched, commandDigestMatched, headMatched, resourceMatched, stateMatched]
       properties:
         accountMatched: { type: boolean }
         commandDigestMatched: { type: boolean }
@@ -480,16 +481,17 @@ components:
     CommandReceipt:
       type: object
       additionalProperties: false
-      required: [commandId, commandKind, readBack, requestDigest]
+      required: [commandId, commandKind, readBack, requestDigest, workId]
       properties:
         commandId: { $ref: '#/components/schemas/UUID' }
         commandKind: { type: string }
         readBack: { $ref: '#/components/schemas/ReadBackPredicate' }
         requestDigest: { $ref: '#/components/schemas/Digest' }
+        workId: { $ref: '#/components/schemas/UUID' }
     Receipt:
       type: object
       additionalProperties: false
-      required: [canonicalResponseBase64URL, commandId, commandKind, originalResult, readBack, requestDigest, result]
+      required: [canonicalResponseBase64URL, commandId, commandKind, originalResult, readBack, requestDigest, result, workId]
       properties:
         canonicalResponseBase64URL: { $ref: '#/components/schemas/Base64URL', maxLength: 44739244 }
         commandId: { $ref: '#/components/schemas/UUID' }
@@ -498,6 +500,7 @@ components:
         readBack: { $ref: '#/components/schemas/ReadBackPredicate' }
         requestDigest: { $ref: '#/components/schemas/Digest' }
         result: { const: noChanges }
+        workId: { $ref: '#/components/schemas/UUID' }
     CommandResult:
       type: object
       additionalProperties: false

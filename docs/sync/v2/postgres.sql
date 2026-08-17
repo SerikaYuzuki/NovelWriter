@@ -23,6 +23,7 @@ CREATE TABLE sync_v2.works (
   state TEXT NOT NULL CHECK (state IN ('bound', 'quarantined')),
   head_snapshot_id BYTEA,
   head_generation BIGINT CHECK (head_generation IS NULL OR head_generation > 0),
+  CHECK ((head_snapshot_id IS NULL) = (head_generation IS NULL)),
   PRIMARY KEY (account_id, work_id)
 );
 
@@ -111,6 +112,7 @@ CREATE TABLE sync_v2.upload_capabilities (
 CREATE TABLE sync_v2.receipts (
   account_id TEXT NOT NULL REFERENCES sync_v2.account_scopes(account_id),
   command_id UUID NOT NULL,
+  work_id UUID NOT NULL,
   command_kind TEXT NOT NULL CHECK (command_kind IN (
     'createWork', 'prepareObject', 'finalizeObject', 'registerSnapshot', 'publish',
     'resolveDevice', 'resolveServer', 'cloneWork', 'restore'
@@ -122,12 +124,17 @@ CREATE TABLE sync_v2.receipts (
   completed_at TIMESTAMPTZ,
   state TEXT NOT NULL CHECK (state IN ('reserved', 'completed')),
   PRIMARY KEY (account_id, command_id),
+  UNIQUE (account_id, work_id, command_id),
+  UNIQUE (account_id, work_id, command_id, command_kind),
   CHECK (
     (state = 'reserved' AND response_status IS NULL AND
       canonical_response IS NULL AND completed_at IS NULL) OR
     (state = 'completed' AND response_status IS NOT NULL AND
       canonical_response IS NOT NULL AND completed_at IS NOT NULL)
-  )
+  ),
+  FOREIGN KEY (account_id, work_id)
+    REFERENCES sync_v2.works(account_id, work_id)
+    DEFERRABLE INITIALLY DEFERRED
 );
 CREATE TABLE sync_v2.sealed_commands (
   account_id TEXT NOT NULL REFERENCES sync_v2.account_scopes(account_id),
@@ -144,16 +151,18 @@ CREATE TABLE sync_v2.sealed_commands (
   source_generation BIGINT NOT NULL CHECK (source_generation > 0),
   state TEXT NOT NULL CHECK (state IN ('sealed', 'sending', 'completed', 'quarantined', 'conflictPending', 'parked')),
   PRIMARY KEY (account_id, command_id),
+  UNIQUE (account_id, work_id, command_id),
+  UNIQUE (account_id, work_id, command_id, command_kind),
   FOREIGN KEY (account_id, work_id) REFERENCES sync_v2.works(account_id, work_id)
 );
 ALTER TABLE sync_v2.upload_capabilities
   ADD CONSTRAINT upload_capability_sealed_command_fk
-  FOREIGN KEY (account_id, command_id)
-  REFERENCES sync_v2.sealed_commands(account_id, command_id);
+  FOREIGN KEY (account_id, work_id, command_id)
+  REFERENCES sync_v2.sealed_commands(account_id, work_id, command_id);
 ALTER TABLE sync_v2.receipts
   ADD CONSTRAINT receipt_sealed_command_fk
-  FOREIGN KEY (account_id, command_id)
-  REFERENCES sync_v2.sealed_commands(account_id, command_id)
+  FOREIGN KEY (account_id, work_id, command_id, command_kind)
+  REFERENCES sync_v2.sealed_commands(account_id, work_id, command_id, command_kind)
   DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE sync_v2.active_conflicts (
@@ -161,6 +170,7 @@ CREATE TABLE sync_v2.active_conflicts (
   conflict_id UUID NOT NULL,
   work_id UUID NOT NULL,
   current_revision BIGINT NOT NULL CHECK (current_revision > 0),
+  source_generation BIGINT NOT NULL CHECK (source_generation > 0),
   state TEXT NOT NULL CHECK (state IN ('active', 'resolved')),
   PRIMARY KEY (account_id, conflict_id),
   UNIQUE (account_id, work_id, conflict_id),
@@ -176,9 +186,11 @@ CREATE TABLE sync_v2.conflict_candidates (
   base_snapshot_id BYTEA,
   local_snapshot_id BYTEA NOT NULL,
   remote_snapshot_id BYTEA NOT NULL,
+  source_generation BIGINT NOT NULL CHECK (source_generation > 0),
   pinned BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (account_id, conflict_id, revision),
+  UNIQUE (account_id, conflict_id, revision, source_generation),
   FOREIGN KEY (account_id, work_id, conflict_id)
     REFERENCES sync_v2.active_conflicts(account_id, work_id, conflict_id),
   FOREIGN KEY (account_id, work_id, base_snapshot_id)
@@ -190,8 +202,8 @@ CREATE TABLE sync_v2.conflict_candidates (
 );
 ALTER TABLE sync_v2.active_conflicts
   ADD CONSTRAINT active_conflict_current_revision_fk
-  FOREIGN KEY (account_id, conflict_id, current_revision)
-  REFERENCES sync_v2.conflict_candidates(account_id, conflict_id, revision)
+  FOREIGN KEY (account_id, conflict_id, current_revision, source_generation)
+  REFERENCES sync_v2.conflict_candidates(account_id, conflict_id, revision, source_generation)
   DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE sync_v2.conflict_events (
   account_id TEXT NOT NULL,
@@ -239,8 +251,8 @@ CREATE TABLE sync_v2.restore_receipts (
     REFERENCES sync_v2.snapshots(account_id, work_id, snapshot_id),
   FOREIGN KEY (account_id, work_id, result_snapshot_id)
     REFERENCES sync_v2.snapshots(account_id, work_id, snapshot_id),
-  FOREIGN KEY (account_id, command_id)
-    REFERENCES sync_v2.receipts(account_id, command_id)
+  FOREIGN KEY (account_id, work_id, command_id)
+    REFERENCES sync_v2.receipts(account_id, work_id, command_id)
 );
 CREATE TABLE sync_v2.head_events (
   account_id TEXT NOT NULL,
@@ -249,13 +261,22 @@ CREATE TABLE sync_v2.head_events (
   generation BIGINT NOT NULL CHECK (generation > 0),
   snapshot_id BYTEA NOT NULL,
   command_id UUID NOT NULL,
+  command_work_id UUID NOT NULL,
+  command_kind TEXT NOT NULL,
+  command_scope TEXT NOT NULL CHECK (command_scope IN ('sameWork', 'cloneNewWork')),
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (account_id, event_id),
   UNIQUE (account_id, work_id, generation),
+  CHECK (
+    (command_scope = 'sameWork' AND command_work_id = work_id) OR
+    (command_scope = 'cloneNewWork' AND command_work_id <> work_id AND
+      command_kind = 'cloneWork')
+  ),
   FOREIGN KEY (account_id, work_id) REFERENCES sync_v2.works(account_id, work_id),
   FOREIGN KEY (account_id, work_id, snapshot_id)
     REFERENCES sync_v2.snapshots(account_id, work_id, snapshot_id),
-  FOREIGN KEY (account_id, command_id) REFERENCES sync_v2.receipts(account_id, command_id)
+  FOREIGN KEY (account_id, command_work_id, command_id, command_kind)
+    REFERENCES sync_v2.receipts(account_id, work_id, command_id, command_kind)
 );
 CREATE TABLE sync_v2.catalog_events (
   account_id TEXT NOT NULL,
@@ -294,10 +315,37 @@ CREATE TABLE sync_v2.migration_ledger (
   source_digest BYTEA NOT NULL,
   export_backup_marker TEXT,
   adoption_marker TEXT,
+  quarantined_from_state TEXT CHECK (quarantined_from_state IN (
+    'discovered', 'backupExported', 'staged', 'verified'
+  )),
   evidence_bytes BYTEA NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('discovered', 'backupExported', 'staged', 'verified', 'committed', 'quarantined')),
   UNIQUE (source_kind, source_digest),
-  CHECK (account_id IS NOT NULL OR state IN ('discovered', 'backupExported', 'staged', 'quarantined'))
+  CHECK (account_id IS NOT NULL OR state IN ('discovered', 'backupExported', 'staged', 'quarantined')),
+  CHECK (
+    (state = 'discovered' AND export_backup_marker IS NULL AND
+      adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state IN ('backupExported', 'staged', 'verified') AND
+      export_backup_marker IS NOT NULL AND
+      length(export_backup_marker) BETWEEN 1 AND 512 AND
+      adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state = 'committed' AND export_backup_marker IS NOT NULL AND
+      adoption_marker IS NOT NULL AND
+      length(export_backup_marker) BETWEEN 1 AND 512 AND
+      length(adoption_marker) BETWEEN 1 AND 512 AND
+      quarantined_from_state IS NULL) OR
+    (state = 'quarantined' AND adoption_marker IS NULL AND
+      quarantined_from_state IS NOT NULL AND (
+        (quarantined_from_state = 'discovered' AND export_backup_marker IS NULL) OR
+        (quarantined_from_state IN ('backupExported', 'staged', 'verified') AND
+          export_backup_marker IS NOT NULL AND
+          length(export_backup_marker) BETWEEN 1 AND 512)
+      ))
+  ),
+  CHECK (
+    state <> 'quarantined' OR quarantined_from_state <> 'verified' OR
+    account_id IS NOT NULL
+  )
 );
 
 -- Offline adoption staging is deliberately outside the authoritative Work,
@@ -349,3 +397,9 @@ CREATE INDEX snapshot_history_cursor ON sync_v2.history(account_id, work_id, eve
 -- snapshot and publish routes require the account-scoped Work row.
 -- document_id is intentionally not unique: importing the same portable
 -- package twice creates two independent WorkIDs without remote deduplication.
+-- receipts always retain work_id and are constrained to the same scoped
+-- sealed command. createWork alone reserves that receipt before the Work row;
+-- both FKs are deferred and the same transaction must insert the Work and
+-- sealed command before completion. cloneWork remains scoped to its source
+-- Work; a new-Work head event uses command_scope=cloneNewWork plus the source
+-- command_work_id and a receipt constrained to command_kind=cloneWork.

@@ -100,7 +100,9 @@ the active work identity.
 
 Each state-changing request is a sealed command. Before its first network byte,
 SQLite commits `commandId`, `commandKind`, exact canonical request bytes,
-`requestDigest`, binding, source generation, source Snapshot, and retry state.
+`requestDigest`, WorkID, binding, source generation, source Snapshot, and retry
+state. The server receipt persists the same AccountID/WorkID/command identity;
+read-back requires every predicate, including the expected head, to match.
 After sending, those fields are immutable. A lost response retries the exact
 command; a changed request gets a new command ID.
 
@@ -226,9 +228,11 @@ WorkID/new DocumentID, no cross-work parent, and exact digest equality with the
 sealed `newRootSnapshotId`.
 
 `active_conflicts.work_id` is unique. Repeated divergence appends an immutable
-candidate row and increments `revision`; it never mutates an earlier candidate
-or creates a second active UI item. The UI includes the revision in its sealed
-choice command.
+candidate row with its positive source generation and increments `revision`;
+the current Conflict projection stores the same generation as the selected
+candidate. It never mutates an earlier candidate or creates a second active UI
+item. The UI includes revision and source generation in its sealed choice
+command.
 
 ## 10. Runtime, migration, and auth boundaries
 

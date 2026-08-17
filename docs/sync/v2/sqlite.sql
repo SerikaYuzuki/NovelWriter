@@ -21,6 +21,10 @@ CREATE TABLE works (
     (local_generation = 0 AND current_snapshot_id IS NULL) OR
     (local_generation > 0 AND current_snapshot_id IS NOT NULL)
   ),
+  CHECK (
+    (acknowledged_head_snapshot_id IS NULL) =
+    (acknowledged_head_generation IS NULL)
+  ),
   FOREIGN KEY (work_id, current_snapshot_id)
     REFERENCES snapshots(work_id, snapshot_id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -117,12 +121,14 @@ CREATE TABLE sealed_commands (
   canonical_response BLOB CHECK (length(canonical_response) <= 33554432),
   receipt_verified INTEGER NOT NULL DEFAULT 0 CHECK (receipt_verified IN (0, 1)),
   UNIQUE (account_id, command_id),
+  UNIQUE (account_id, work_id, command_id),
   FOREIGN KEY (work_id, account_id) REFERENCES account_bindings(work_id, account_id),
   FOREIGN KEY (work_id, source_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   CHECK ((response_status IS NULL) = (canonical_response IS NULL))
 );
 CREATE TABLE remote_receipts (
   account_id TEXT NOT NULL,
+  work_id TEXT NOT NULL,
   command_id TEXT NOT NULL,
   command_kind TEXT NOT NULL CHECK (command_kind IN (
     'createWork', 'prepareObject', 'finalizeObject', 'registerSnapshot', 'publish',
@@ -133,8 +139,9 @@ CREATE TABLE remote_receipts (
   canonical_response BLOB NOT NULL CHECK (length(canonical_response) <= 33554432),
   read_back_verified INTEGER NOT NULL CHECK (read_back_verified IN (0, 1)),
   PRIMARY KEY (account_id, command_id),
-  FOREIGN KEY (account_id, command_id)
-    REFERENCES sealed_commands(account_id, command_id)
+  UNIQUE (account_id, work_id, command_id),
+  FOREIGN KEY (account_id, work_id, command_id)
+    REFERENCES sealed_commands(account_id, work_id, command_id)
 );
 
 -- Inbox bytes are never authoritative until the whole closure is verified and
@@ -174,10 +181,11 @@ CREATE TABLE conflicts (
   conflict_id TEXT PRIMARY KEY,
   work_id TEXT NOT NULL REFERENCES works(work_id),
   current_revision INTEGER NOT NULL CHECK (current_revision > 0),
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
   state TEXT NOT NULL CHECK (state IN ('active', 'resolved')),
   UNIQUE (work_id, conflict_id),
-  FOREIGN KEY (conflict_id, current_revision)
-    REFERENCES conflict_candidates(conflict_id, revision)
+  FOREIGN KEY (conflict_id, current_revision, source_generation)
+    REFERENCES conflict_candidates(conflict_id, revision, source_generation)
     DEFERRABLE INITIALLY DEFERRED
 );
 CREATE UNIQUE INDEX one_active_conflict_per_work
@@ -190,8 +198,10 @@ CREATE TABLE conflict_candidates (
   local_snapshot_id BLOB NOT NULL,
   remote_snapshot_id BLOB NOT NULL,
   remote_inbox_id TEXT NOT NULL,
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
   pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
   PRIMARY KEY (conflict_id, revision),
+  UNIQUE (conflict_id, revision, source_generation),
   FOREIGN KEY (work_id, conflict_id) REFERENCES conflicts(work_id, conflict_id),
   FOREIGN KEY (work_id, base_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, local_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
@@ -212,8 +222,8 @@ CREATE TABLE restore_records (
   FOREIGN KEY (work_id, selected_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, pre_restore_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, result_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
-  FOREIGN KEY (account_id, command_id)
-    REFERENCES sealed_commands(account_id, command_id)
+  FOREIGN KEY (account_id, work_id, command_id)
+    REFERENCES sealed_commands(account_id, work_id, command_id)
 );
 
 CREATE TABLE migration_ledger (
@@ -223,10 +233,37 @@ CREATE TABLE migration_ledger (
   source_digest BLOB NOT NULL,
   export_backup_marker TEXT,
   adoption_marker TEXT,
+  quarantined_from_state TEXT CHECK (quarantined_from_state IN (
+    'discovered', 'backupExported', 'staged', 'verified'
+  )),
   evidence_bytes BLOB NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('discovered', 'backupExported', 'staged', 'verified', 'committed', 'quarantined')),
   UNIQUE (source_kind, source_digest),
-  CHECK (account_id IS NOT NULL OR state IN ('discovered', 'backupExported', 'staged', 'quarantined'))
+  CHECK (account_id IS NOT NULL OR state IN ('discovered', 'backupExported', 'staged', 'quarantined')),
+  CHECK (
+    (state = 'discovered' AND export_backup_marker IS NULL AND
+      adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state IN ('backupExported', 'staged', 'verified') AND
+      export_backup_marker IS NOT NULL AND
+      length(export_backup_marker) BETWEEN 1 AND 512 AND
+      adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state = 'committed' AND export_backup_marker IS NOT NULL AND
+      adoption_marker IS NOT NULL AND
+      length(export_backup_marker) BETWEEN 1 AND 512 AND
+      length(adoption_marker) BETWEEN 1 AND 512 AND
+      quarantined_from_state IS NULL) OR
+    (state = 'quarantined' AND adoption_marker IS NULL AND
+      quarantined_from_state IS NOT NULL AND (
+        (quarantined_from_state = 'discovered' AND export_backup_marker IS NULL) OR
+        (quarantined_from_state IN ('backupExported', 'staged', 'verified') AND
+          export_backup_marker IS NOT NULL AND
+          length(export_backup_marker) BETWEEN 1 AND 512)
+      ))
+  ),
+  CHECK (
+    state <> 'quarantined' OR quarantined_from_state <> 'verified' OR
+    account_id IS NOT NULL
+  )
 );
 -- Offline adoption staging intentionally has no FK to works, snapshots,
 -- account_bindings, or objects. Verified adoption copies a complete closure
@@ -262,6 +299,12 @@ CREATE TABLE quarantine_records (
 CREATE INDEX sync_intents_pending ON sync_intents(work_id, status, source_generation);
 CREATE INDEX sealed_commands_pending ON sealed_commands(work_id, status);
 CREATE INDEX inbox_by_work ON inbox_batches(work_id, state);
+
+-- Every remote receipt is constrained to the same account/work/command as its
+-- sealed command. A cloneWork receipt remains on the source Work; installing
+-- the returned new Work is a separately verified catalog/inbox adoption and
+-- cannot relabel that receipt. createWork is sealed only after the local Work
+-- and account binding exist, so no local FK exception is required.
 
 -- Atomic checkpoint transition (one BEGIN IMMEDIATE transaction):
 -- 1. verify works.local_generation == expected_generation;

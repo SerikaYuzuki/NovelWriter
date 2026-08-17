@@ -19,7 +19,8 @@ SyncUIState {
 ```
 
 Every sheet action carries `workID`, `conflictID`, `revision`, both branch IDs,
-and source generation. The kernel compares all values with the current
+and the mandatory positive source generation persisted on that exact conflict
+candidate/current projection. The kernel compares all values with the current
 projection before it creates a command. A sheet from another work or older
 revision returns typed `staleConflictAction`; it performs zero SQLite mutation
 and zero network bytes. Only a current action seals a new command, after which

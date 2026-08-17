@@ -11,6 +11,7 @@ python3 - <<'PY'
 import base64
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import yaml
@@ -249,6 +250,17 @@ for path_item in openapi["paths"].values():
 assert len(operation_ids) == len(set(operation_ids))
 assert "/v2/uploads/{uploadId}" in openapi["paths"]
 assert openapi["components"]["schemas"]["CommandResult"]["properties"]["receipt"]["$ref"].endswith("/CommandReceipt")
+schemas = openapi["components"]["schemas"]
+assert "headMatched" in schemas["ReadBackPredicate"]["required"]
+assert "sourceGeneration" in schemas["Conflict"]["required"]
+assert schemas["Conflict"]["properties"]["sourceGeneration"]["minimum"] == 1
+assert "workId" in schemas["CommandReceipt"]["required"]
+assert "workId" in schemas["Receipt"]["required"]
+
+conflict_scenario = read_json(root / "fixtures/scenarios/conflict-three-choice.json")
+assert conflict_scenario["initial"]["sourceGeneration"] > 0
+assert all(event["sourceGeneration"] > 0 for event in conflict_scenario["events"])
+assert conflict_scenario["expect"]["sourceGeneration"] == conflict_scenario["events"][-1]["sourceGeneration"]
 
 postgres = (root / "postgres.sql").read_text()
 tenant_tables = {
@@ -285,8 +297,93 @@ for required in [
     "migration_staging_batches",
     "migration_staging_objects",
     "'createWork', 'prepareObject'",
+    "CHECK ((head_snapshot_id IS NULL) = (head_generation IS NULL))",
+    "UNIQUE (account_id, work_id, command_id, command_kind)",
+    "FOREIGN KEY (account_id, work_id, command_id)",
+    "source_generation BIGINT NOT NULL CHECK (source_generation > 0)",
+    "quarantined_from_state TEXT",
+    "export_backup_marker IS NOT NULL",
+    "adoption_marker IS NOT NULL",
+    "command_scope = 'cloneNewWork'",
 ]:
     assert required in postgres, required
+
+sqlite = (root / "sqlite.sql").read_text()
+for required in [
+    "(acknowledged_head_snapshot_id IS NULL) =",
+    "(acknowledged_head_generation IS NULL)",
+    "UNIQUE (account_id, work_id, command_id)",
+    "REFERENCES sealed_commands(account_id, work_id, command_id)",
+    "source_generation INTEGER NOT NULL CHECK (source_generation > 0)",
+    "quarantined_from_state TEXT",
+    "export_backup_marker IS NOT NULL",
+    "adoption_marker IS NOT NULL",
+]:
+    assert required in sqlite, required
+
+db = sqlite3.connect(":memory:")
+db.executescript(sqlite)
+
+
+def ledger(values):
+    db.execute(
+        """INSERT INTO migration_ledger(
+        migration_id, account_id, source_kind, source_digest,
+        export_backup_marker, adoption_marker, quarantined_from_state,
+        evidence_bytes, state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        values,
+    )
+
+
+valid_ledger_rows = [
+    ("m1", None, "v1", b"1", None, None, None, b"e", "discovered"),
+    ("m2", None, "v1", b"2", "backup", None, None, b"e", "backupExported"),
+    ("m3", "account-a", "v1", b"3", "backup", None, None, b"e", "verified"),
+    ("m4", "account-a", "v1", b"4", "backup", "adopt", None, b"e", "committed"),
+    ("m5", None, "v1", b"5", None, None, "discovered", b"e", "quarantined"),
+    ("m6", None, "v1", b"6", "backup", None, "staged", b"e", "quarantined"),
+]
+for row in valid_ledger_rows:
+    ledger(row)
+db.commit()
+
+
+def rejected(statement, parameters):
+    try:
+        db.execute(statement, parameters)
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        return
+    raise AssertionError(parameters)
+
+
+insert_ledger = """INSERT INTO migration_ledger(
+migration_id, account_id, source_kind, source_digest,
+export_backup_marker, adoption_marker, quarantined_from_state,
+evidence_bytes, state
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+for row in [
+    ("x1", None, "v1", b"x1", None, None, None, b"e", "backupExported"),
+    ("x2", "account-a", "v1", b"x2", "backup", None, None, b"e", "committed"),
+    ("x3", None, "v1", b"x3", "backup", "adopt", None, b"e", "staged"),
+    ("x4", None, "v1", b"x4", None, None, "staged", b"e", "quarantined"),
+    ("x5", None, "v1", b"x5", "backup", None, "verified", b"e", "quarantined"),
+]:
+    rejected(insert_ledger, row)
+
+db.execute(
+    "INSERT INTO works(work_id, document_id, document_created_at) VALUES (?, ?, ?)",
+    ("work-ok", "doc-ok", "2026-08-17T00:00:00Z"),
+)
+db.commit()
+rejected(
+    """INSERT INTO works(
+    work_id, document_id, document_created_at, acknowledged_head_snapshot_id
+    ) VALUES (?, ?, ?, ?)""",
+    ("work-bad", "doc-bad", "2026-08-17T00:00:00Z", bytes(32)),
+)
 
 print("v2 JSON/schema/hash/OpenAPI/DDL static checks passed")
 PY

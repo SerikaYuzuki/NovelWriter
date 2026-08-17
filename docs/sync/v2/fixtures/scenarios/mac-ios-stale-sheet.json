@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "name": "mac-and-ios-reject-stale-conflict-sheet-identically",
-  "initial": {"sheetRevision":1,"currentRevision":2,"conflictId":"00000000-0000-4000-8000-000000000030"},
+  "initial": {"sheetRevision":1,"sheetSourceGeneration":7,"currentRevision":2,"currentSourceGeneration":8,"conflictId":"00000000-0000-4000-8000-000000000030"},
   "events": [
     {"type":"tapConflictChoice","platform":"macOS","choice":"useServer"},
     {"type":"tapConflictChoice","platform":"iOS","choice":"useServer"}

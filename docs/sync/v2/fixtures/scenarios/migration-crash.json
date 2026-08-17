@@ -7,6 +7,6 @@
     {"type": "processKill"},
     {"type": "restart"}
   ],
-  "expect": {"state": "staged", "exportBackupStillVerified": true, "adoptionSucceeded": false, "sourceModified": false, "v2WorkCreated": false, "emptyDatabaseFallback": false},
+  "expect": {"state": "staged", "exportBackupMarkerRequired": true, "adoptionMarker": null, "exportBackupStillVerified": true, "adoptionSucceeded": false, "sourceModified": false, "v2WorkCreated": false, "emptyDatabaseFallback": false},
   "commitRequires": ["sourceDigest", "exportBackupMarker", "objectReadBack", "schemaVerified", "accountScopeVerified", "transactionCommitted", "adoptionMarkerFsync"]
 }

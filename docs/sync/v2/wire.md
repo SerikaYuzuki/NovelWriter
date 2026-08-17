@@ -12,8 +12,10 @@ these before resource lookup.
 ## Receipt and digest
 
 The server computes SHA-256 over the exact accepted canonical command bytes and
-stores `(account_id, command_id, command_kind, digest, response)` in the v2
-receipt table. Exact retries return the same response. Reusing a command ID
+stores `(account_id, work_id, command_id, command_kind, digest, response)` in
+the v2 receipt table. Receipt identity remains `(AccountID, commandId)`, while
+the stored WorkID must equal the sealed payload/route scope. Exact retries
+return the same response. Reusing a command ID
 with another kind or bytes returns `commandIdReused`; a different request gets
 a new ID. Transport errors, 401/403, and fence/version errors do not create a
 success receipt.
@@ -33,7 +35,11 @@ and an absent resource.
 A publish divergence returns a receipted `conflictPending` result, preserves
 the candidate, appends an immutable conflict revision, and advances the
 work's single active-conflict projection. It never mutates a prior revision
-and never means “overwrite the server”.
+and never means “overwrite the server”. Every candidate persists its sealed
+`sourceGeneration > 0`; the active Conflict record persists the generation of
+its current revision. The OpenAPI response and shared Mac/iOS projection carry
+that exact value, so a revision cannot be shown or resolved with another
+generation.
 
 ## Resource and cursor contract
 
@@ -75,7 +81,9 @@ or digest mismatch, and stores the decoded bytes in `BYTEA`; it never hashes
 the base64 text or a parsed/JSONB reserialization. `GET /v2/receipts/{id}`
 returns the exact canonical response bytes plus predicates proving account,
 command digest, resource, and resulting head read-back. A command is complete
-locally only when every required predicate is true.
+locally only when every required predicate, including `headMatched`, is true.
+For a command that must not advance a head, `headMatched` proves the observed
+head remained at the command's expected value; it is never omitted.
 
 A mutating response carries a finite `CommandReceipt` summary, not a base64
 copy of the response containing itself. The server stores those exact response
@@ -86,7 +94,8 @@ self-referential encoding.
 Every mutating route derives scope from AuthenticatedPrincipal, requires the
 body binding to equal that scope, and rejects a route WorkID different from the
 closed payload WorkID. Receipt identity is `(AccountID, commandId)`; reusing a
-command ID with a different kind or bytes is always `commandIdReused`.
+command ID with a different kind, WorkID, or bytes is always
+`commandIdReused`.
 
 A Work's first remote publication starts with the sealed `createWork` command
 at `POST /v2/works`. It atomically creates only an account-scoped, null-head
@@ -111,7 +120,14 @@ semantics:
   local-generation CAS. It creates no new local Intent for the selected remote
   bytes;
 - `keepBoth` creates the new WorkID root, both heads, resolved conflict, and
-  receipt in one PostgreSQL transaction. The original Work remains unchanged.
+receipt in one PostgreSQL transaction. The original Work remains unchanged.
+
+The `cloneWork` sealed command and receipt remain scoped to `sourceWorkId`.
+The new Work's head event stores `commandWorkId = sourceWorkId` and the closed
+`cloneNewWork` scope; this is the only head-event WorkID mismatch and is valid
+only when the referenced receipt kind is `cloneWork`. `createWork` reserves a
+receipt before its Work row exists using deferred Work/command constraints,
+then inserts the null-head Work before completion; it emits no head event.
 
 For `keepBoth`, `localCandidateSnapshotId` is an already registered Snapshot
 of `sourceWorkId`. The server deterministically constructs the clone root by
