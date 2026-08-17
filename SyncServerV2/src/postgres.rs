@@ -191,7 +191,6 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "active_conflicts_account_id_work_id_conflict_id_key",
                 "one_active_conflict_per_account_work",
                 "conflict_candidates_pkey",
-                "conflict_candidates_account_id_conflict_id_revision_key",
                 "conflict_candidates_conflict_revision_generation_key",
                 "conflict_events_pkey",
                 "history_pkey",
