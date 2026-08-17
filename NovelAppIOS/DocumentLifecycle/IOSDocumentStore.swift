@@ -191,7 +191,7 @@ final class IOSDocumentStore {
         let placeholder = NovelDocument.newDocument()
         document = placeholder
         documentCreatedAt = Date()
-        documentURL = root.appendingPathComponent("\(placeholder.id.uuidString).novelpkg", isDirectory: true)
+        documentURL = root.appendingPathComponent(placeholder.id.uuidString, isDirectory: true)
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         if location == nil {
