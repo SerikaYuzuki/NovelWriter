@@ -145,3 +145,11 @@ address, so the internally issued leaf certificate contains the exact LAN IP
 used by macOS and iOS. Trusting the Caddy staging CA is a separate test-device
 setup step; do not weaken certificate validation in the app. Keep the server's
 `8092` port unexposed from the host.
+
+The non-installing export and verification procedure is documented in
+[`docs/SNAPSHOT_SYNC_V2_STAGING.md`](../docs/SNAPSHOT_SYNC_V2_STAGING.md).
+Run [`Scripts/export-sync-v2-staging-ca.sh`](../Scripts/export-sync-v2-staging-ca.sh)
+to export only the public root, print its SHA-256 fingerprint, verify the leaf
+SAN `IP Address:192.168.11.5`, and read back `/v1/auth/capabilities` using
+`curl --cacert`. The script never uses `-k` and never installs trust; macOS and
+iOS trust are explicit, manual opt-in steps.
