@@ -3,6 +3,7 @@ import NovelAuth
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 
 private struct AutoAdoptionExpectation: Sendable {
@@ -99,11 +100,27 @@ extension IOSDocumentStore {
                 saveState = .failed
                 return false
             }
+            let localResources: [PortableResource]?
+            do {
+                localResources = if let resources {
+                    try SyncV2PortableMetadata.resourcesForLocalMirror(
+                        resources,
+                        portableCreatedAt: syncV2PortableCreatedAt
+                    )
+                } else {
+                    nil
+                }
+            } catch {
+                operationErrorMessage = "portable metadataを安全に保存できないため、端末への保存を中止しました。"
+                snapshotSyncOutcome = .failed
+                saveState = .failed
+                return false
+            }
             let result = try await application.checkpoint(
                 workID: workID, document: value, reason: reason,
                 documentCreatedAt: documentCreatedAt,
                 attachments: syncAttachments,
-                resources: resources
+                resources: localResources
             )
             snapshotSyncOutcome = result.typedResult == .noChanges ? .idle : .pending
             saveState = .saved
@@ -438,6 +455,13 @@ extension IOSDocumentStore {
         _ opened: SyncV2OpenedWork,
         value: NovelDocument
     ) {
+        guard let portableMirror = try? SyncV2PortableMetadata.splitLocalMirrorResources(
+            opened.resources
+        ) else {
+            operationErrorMessage = "portable metadataが壊れているため、作品を開けませんでした。"
+            snapshotSyncOutcome = .failed
+            return
+        }
         document = value
         syncV2ActiveWorkID = opened.workID
         documentCreatedAt = opened.documentCreatedAt
@@ -453,7 +477,8 @@ extension IOSDocumentStore {
         syncV2AttachmentIDs = Dictionary(
             uniqueKeysWithValues: opened.attachments.map { ($0.fileName, $0.attachmentId) }
         )
-        syncV2PortableResources = opened.resources
+        syncV2PortableCreatedAt = portableMirror.portableCreatedAt
+        syncV2PortableResources = portableMirror.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
         syncV2KeepBothPendingWorkID = nil
         selectedChapterID = value.chapters.first?.id

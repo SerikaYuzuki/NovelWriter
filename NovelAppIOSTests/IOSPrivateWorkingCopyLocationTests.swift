@@ -217,6 +217,126 @@ struct IOSPrivateWorkingCopyLocationTests {
         #expect(adoptedPackages.isEmpty)
     }
 
+    @Test("portable copyはsourceとstagingのtree差し替えを受理しない")
+    func portableCopyAttestationRejectsSourceAndStagingReplacement() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let fileManager = FileManager.default
+        let location = try makeLocation(in: environment.root)
+        let source = environment.root
+            .appendingPathComponent("attested-source.novelpkg", isDirectory: true)
+        try await NovelpkgRepository().save(
+            NovelDocument.newDocument(title: "attestation"),
+            to: source
+        )
+
+        let sourceAttestation = try IOSPrivateWorkingCopyLocation
+            .attestExplicitPackageSource(source)
+        let staging = try location.stagingDestination()
+        try fileManager.copyItem(at: source, to: staging)
+        let stagingAttestation = try location.attestStagingPackage(at: staging)
+        #expect(stagingAttestation.treeDigest == sourceAttestation.treeDigest)
+
+        let manifestURL = source.appendingPathComponent("manifest.json")
+        var changedManifest = try Data(contentsOf: manifestURL)
+        changedManifest.append(Data(" ".utf8))
+        try changedManifest.write(to: manifestURL, options: .atomic)
+        #expect(throws: IOSPrivateWorkingCopyLocationError.unsafeRoot) {
+            try IOSPrivateWorkingCopyLocation.revalidate(sourceAttestation)
+        }
+
+        let stagingMutation = staging.appendingPathComponent(
+            "staging-replacement.bin",
+            isDirectory: false
+        )
+        try Data("changed staging".utf8).write(to: stagingMutation, options: .atomic)
+        #expect(throws: IOSPrivateWorkingCopyLocationError.unsafeRoot) {
+            try location.revalidate(stagingAttestation)
+        }
+        #expect(fileManager.fileExists(atPath: source.path))
+        #expect(fileManager.fileExists(atPath: staging.path))
+    }
+
+    @Test("portable copy中のsource差し替えはfail-closedし原本を保持する")
+    func portableCopyReplacementDuringCopyFailsClosed() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let baseFileManager = FileManager.default
+        let source = environment.root
+            .appendingPathComponent("copy-race-source.novelpkg", isDirectory: true)
+        let replacement = environment.root
+            .appendingPathComponent("copy-race-replacement.novelpkg", isDirectory: true)
+        let preservedOriginal = environment.root
+            .appendingPathComponent("copy-race-original-preserved.novelpkg", isDirectory: true)
+        try await NovelpkgRepository().save(
+            NovelDocument.newDocument(title: "原本"),
+            to: source
+        )
+        try await NovelpkgRepository().save(
+            NovelDocument.newDocument(title: "差し替え"),
+            to: replacement
+        )
+        let sourceAttestation = try IOSPrivateWorkingCopyLocation
+            .attestExplicitPackageSource(source)
+        let fileManager = SourceReplacingFileManager(
+            source: source,
+            replacement: replacement,
+            preservedOriginal: preservedOriginal
+        )
+        let libraryRoot = environment.root.appendingPathComponent(
+            "private-library",
+            isDirectory: true
+        )
+        let store = IOSDocumentStore(
+            fileManager: fileManager,
+            userDefaults: environment.defaults,
+            libraryRoot: libraryRoot
+        )
+        await store.bootstrap()
+
+        #expect(await !store.importPackage(from: source))
+        #expect(fileManager.didReplaceSource)
+        #expect(store.syncV2ActiveWorkID == nil)
+        #expect(store.syncV2LibraryItems.isEmpty)
+        #expect(baseFileManager.fileExists(atPath: source.path))
+        #expect(baseFileManager.fileExists(atPath: preservedOriginal.path))
+        let preservedAttestation = try IOSPrivateWorkingCopyLocation
+            .attestExplicitPackageSource(preservedOriginal)
+        #expect(preservedAttestation.treeDigest == sourceAttestation.treeDigest)
+        #expect(throws: IOSPrivateWorkingCopyLocationError.unsafeRoot) {
+            try IOSPrivateWorkingCopyLocation.revalidate(sourceAttestation)
+        }
+        let activeItems = try baseFileManager.contentsOfDirectory(
+            at: store.libraryRoot,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!activeItems.contains { $0.pathExtension == "novelpkg" })
+    }
+
+    @Test("portable package内部のchild symlinkはcopy前に拒否する")
+    func portablePackageChildSymlinkIsRejectedBeforeCopy() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let fileManager = FileManager.default
+        let source = environment.root
+            .appendingPathComponent("child-symlink.novelpkg", isDirectory: true)
+        let outside = environment.root.appendingPathComponent("outside.txt")
+        try await NovelpkgRepository().save(
+            NovelDocument.newDocument(title: "symlink"),
+            to: source
+        )
+        try Data("outside".utf8).write(to: outside, options: .atomic)
+        try fileManager.createSymbolicLink(
+            at: source.appendingPathComponent("linked.txt"),
+            withDestinationURL: outside
+        )
+
+        #expect(throws: IOSPrivateWorkingCopyLocationError.unsafeRoot) {
+            _ = try IOSPrivateWorkingCopyLocation.attestExplicitPackageSource(source)
+        }
+        #expect(fileManager.fileExists(atPath: source.path))
+    }
+
     private func makeLocation(in sandbox: URL) throws -> IOSPrivateWorkingCopyLocation {
         let trustedBase = sandbox.appendingPathComponent("sandbox", isDirectory: true)
         try FileManager.default.createDirectory(at: trustedBase, withIntermediateDirectories: true)
@@ -239,6 +359,28 @@ struct IOSPrivateWorkingCopyLocationTests {
             defaults: defaults,
             suiteName: suiteName
         )
+    }
+}
+
+private final class SourceReplacingFileManager: FileManager {
+    private let source: URL
+    private let replacement: URL
+    private let preservedOriginal: URL
+    private(set) var didReplaceSource = false
+
+    init(source: URL, replacement: URL, preservedOriginal: URL) {
+        self.source = source.standardizedFileURL
+        self.replacement = replacement.standardizedFileURL
+        self.preservedOriginal = preservedOriginal.standardizedFileURL
+        super.init()
+    }
+
+    override func copyItem(at srcURL: URL, to dstURL: URL) throws {
+        try super.copyItem(at: srcURL, to: dstURL)
+        guard srcURL.standardizedFileURL == source, !didReplaceSource else { return }
+        try super.moveItem(at: source, to: preservedOriginal)
+        try super.copyItem(at: replacement, to: source)
+        didReplaceSource = true
     }
 }
 

@@ -23,6 +23,13 @@ final class IOSPrivateWorkingCopyLocation: @unchecked Sendable {
     struct StagingAttestation: Equatable, Sendable {
         let url: URL
         fileprivate let identity: Identity
+        let treeDigest: String
+    }
+
+    struct ExplicitPackageAttestation: Equatable, Sendable {
+        let url: URL
+        fileprivate let identity: Identity
+        let treeDigest: String
     }
 
     fileprivate struct Identity: Equatable, Sendable {
@@ -167,7 +174,9 @@ extension IOSPrivateWorkingCopyLocation {
     /// root/inode attestation used for installed works cannot protect them.
     /// Rejecting symlink components here keeps `copyItem` and the bridge from
     /// ever following an attacker-controlled package alias.
-    static func validateExplicitPackageSource(_ packageURL: URL) throws {
+    static func attestExplicitPackageSource(
+        _ packageURL: URL
+    ) throws -> ExplicitPackageAttestation {
         let requested = packageURL.standardizedFileURL
         guard requested.isFileURL,
               isValidPortablePackageName(requested.lastPathComponent),
@@ -176,6 +185,26 @@ extension IOSPrivateWorkingCopyLocation {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         try validateExternalPathComponents(for: requested)
+        let (identity, treeDigest) = try Self.attestTree(at: requested)
+        return ExplicitPackageAttestation(
+            url: requested,
+            identity: identity,
+            treeDigest: treeDigest
+        )
+    }
+
+    static func validateExplicitPackageSource(_ packageURL: URL) throws {
+        _ = try attestExplicitPackageSource(packageURL)
+    }
+
+    static func revalidate(
+        _ attestation: ExplicitPackageAttestation
+    ) throws {
+        let current = try attestExplicitPackageSource(attestation.url)
+        guard current.identity == attestation.identity,
+              current.treeDigest == attestation.treeDigest else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
     }
 }
 
@@ -315,9 +344,9 @@ extension IOSPrivateWorkingCopyLocation {
         guard requested.path == expected.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        let packageIdentity = try attestDirectory(at: requested)
+        let packageIdentity = try Self.attestDirectory(at: requested)
         try validateFixedRoot()
-        guard try attestDirectory(at: requested) == packageIdentity else {
+        guard try Self.attestDirectory(at: requested) == packageIdentity else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         return PackageAttestation(id: id, url: requested, identity: packageIdentity)
@@ -333,12 +362,18 @@ extension IOSPrivateWorkingCopyLocation {
         guard requested.path == expected.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        let packageIdentity = try attestDirectory(at: requested)
+        let (packageIdentity, treeDigest) = try Self.attestTree(at: requested)
         try validateFixedRoot()
-        guard try attestDirectory(at: requested) == packageIdentity else {
+        let current = try Self.attestTree(at: requested)
+        guard current.0 == packageIdentity,
+              current.1 == treeDigest else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        return StagingAttestation(url: requested, identity: packageIdentity)
+        return StagingAttestation(
+            url: requested,
+            identity: packageIdentity,
+            treeDigest: treeDigest
+        )
     }
 
     func attestMovedPackage(
@@ -362,7 +397,8 @@ extension IOSPrivateWorkingCopyLocation {
 
     func revalidate(_ attestation: StagingAttestation) throws {
         let current = try attestStagingPackage(at: attestation.url)
-        guard current.identity == attestation.identity else {
+        guard current.identity == attestation.identity,
+              current.treeDigest == attestation.treeDigest else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
     }
@@ -417,8 +453,8 @@ private extension IOSPrivateWorkingCopyLocation {
         return candidate
     }
 
-    private func attestDirectory(at url: URL) throws -> Identity {
-        guard let initial = try Self.pathStatus(url),
+    private static func attestDirectory(at url: URL) throws -> Identity {
+        guard let initial = try pathStatus(url),
               initial.st_mode & S_IFMT == S_IFDIR,
               url.resolvingSymlinksInPath().standardizedFileURL.path == url.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
@@ -430,6 +466,53 @@ private extension IOSPrivateWorkingCopyLocation {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         return initialIdentity
+    }
+
+    private static func attestTree(at url: URL) throws -> (Identity, String) {
+        let initial = try attestDirectory(at: url)
+        let digest = try computeTreeDigest(at: url)
+        guard let final = try pathStatus(url),
+              final.st_mode & S_IFMT == S_IFDIR,
+              identity(final) == initial else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        return (initial, digest)
+    }
+
+    private static func computeTreeDigest(at root: URL) throws -> String {
+        let fileManager = FileManager.default
+        var records = [String](arrayLiteral: "D\u{0}")
+
+        func visit(_ directory: URL, relativePath: String) throws {
+            let children = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: []
+            ).sorted { $0.lastPathComponent.utf8.lexicographicallyPrecedes($1.lastPathComponent.utf8) }
+            for child in children {
+                let relative = relativePath.isEmpty
+                    ? child.lastPathComponent
+                    : "\(relativePath)/\(child.lastPathComponent)"
+                guard let status = try pathStatus(child) else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+                switch status.st_mode & S_IFMT {
+                case S_IFDIR:
+                    records.append("D\u{0}\(relative)\n")
+                    try visit(child, relativePath: relative)
+                case S_IFREG:
+                    let bytes = try Data(contentsOf: child, options: .mappedIfSafe)
+                    records.append(
+                        "F\u{0}\(relative)\u{0}\(bytes.count)\u{0}\(SHA256Digest.hex(bytes))\n"
+                    )
+                default:
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+            }
+        }
+
+        try visit(root, relativePath: "")
+        return SHA256Digest.hex(Data(records.joined().utf8))
     }
 
     private static func validateRelativeComponents(

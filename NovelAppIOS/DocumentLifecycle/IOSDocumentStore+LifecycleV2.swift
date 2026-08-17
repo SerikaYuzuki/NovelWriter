@@ -74,6 +74,7 @@ extension IOSDocumentStore {
                 syncV2AttachmentPayloads = [:]
                 syncV2AttachmentIDs = [:]
                 syncV2PortableResources = []
+                syncV2PortableCreatedAt = nil
                 selectedChapterID = value.chapters.first?.id
                 selectedEpisodeID = value.chapters.first?.episodes.first?.id
                 advanceDocumentSessionGeneration()
@@ -106,10 +107,19 @@ extension IOSDocumentStore {
                 guard let location = privateWorkingCopyLocation else {
                     throw IOSPrivateWorkingCopyLocationError.unsafeRoot
                 }
+                let sourceAttestation = try IOSPrivateWorkingCopyLocation
+                    .attestExplicitPackageSource(sourceURL)
                 let staging = try location.stagingDestination()
                 do {
                     try fileManager.copyItem(at: sourceURL, to: staging)
+                    let stagedAttestation = try location.attestStagingPackage(at: staging)
+                    try IOSPrivateWorkingCopyLocation.revalidate(sourceAttestation)
+                    guard stagedAttestation.treeDigest == sourceAttestation.treeDigest else {
+                        throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                    }
                     let portable = try await portableBridge.importExplicitPackage(from: staging)
+                    try IOSPrivateWorkingCopyLocation.revalidate(sourceAttestation)
+                    try location.revalidate(stagedAttestation)
                     let loaded = portable.document
                     let syncAttachments = portable.attachments
                     let loadedAttachments = syncAttachments.map {
@@ -128,6 +138,7 @@ extension IOSDocumentStore {
                     // filesystem timestamps are not document identity or
                     // authoring metadata.
                     documentCreatedAt = Self.portableDatePrecision(portable.documentCreatedAt)
+                    syncV2PortableCreatedAt = portable.documentCreatedAt
                     adoptV2AttachmentRecords(syncAttachments)
                     syncV2PortableResources = portable.resources
                     guard await checkpointSnapshotSyncV2(
@@ -223,11 +234,14 @@ extension IOSDocumentStore {
             guard let attachments = currentV2Attachments() else {
                 throw IOSPrivateWorkingCopyLocationError.unsafeRoot
             }
+            let exportResources = try SyncV2PortableMetadata.resourcesForExport(
+                syncV2PortableResources
+            )
             try await portableBridge.exportExplicitPackage(
                 document: document,
                 attachments: attachments,
-                documentCreatedAt: documentCreatedAt,
-                resources: syncV2PortableResources,
+                documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
+                resources: exportResources,
                 to: destination
             )
             pendingExportRootURL = root
@@ -269,6 +283,7 @@ extension IOSDocumentStore {
         syncV2AttachmentPayloads = [:]
         syncV2AttachmentIDs = [:]
         syncV2PortableResources = []
+        syncV2PortableCreatedAt = nil
         selectedChapterID = value.chapters.first?.id
         selectedEpisodeID = value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()

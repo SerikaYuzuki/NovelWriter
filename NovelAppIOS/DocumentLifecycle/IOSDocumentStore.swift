@@ -136,6 +136,10 @@ final class IOSDocumentStore {
     /// store. It is only populated by explicit import/open and is never read
     /// from a package during ordinary document lifecycle operations.
     @ObservationIgnored var syncV2PortableResources: [PortableResource] = []
+    /// Exact fractional `createdAt` from the portable manifest.  The
+    /// Snapshot v2 `documentCreatedAt` remains the UTC whole-second wire
+    /// anchor; this value is only used by the explicit package export path.
+    @ObservationIgnored var syncV2PortableCreatedAt: Date?
     @ObservationIgnored var verifiedPrivateDocumentIDs: Set<IOSPrivateDocumentID> = []
     @ObservationIgnored var libraryRefreshGeneration: UInt64 = 0
 

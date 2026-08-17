@@ -100,6 +100,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
                 await store.bootstrap()
                 #expect(await store.importPackage(from: source))
                 #expect(store.documentCreatedAt == expectedCanonicalCreatedAt)
+                #expect(store.syncV2PortableCreatedAt == expectedCreatedAt)
                 #expect(store.syncV2PortableResources == expectedResources)
                 importedWorkID = try #require(store.syncV2ActiveWorkID)
             }
@@ -116,14 +117,18 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
                 await reopenedStore.bootstrap()
                 #expect(await reopenedStore.openSnapshotSyncV2(workID: importedWorkID.rawValue))
                 #expect(reopenedStore.documentCreatedAt == expectedCanonicalCreatedAt)
+                #expect(reopenedStore.syncV2PortableCreatedAt == expectedCreatedAt)
                 #expect(reopenedStore.syncV2PortableResources == expectedResources)
 
                 await reopenedStore.requestExport()
                 let exported = try #require(reopenedStore.pendingExportURL)
                 let exportedPortable = try await SyncV2PortableBridge()
                     .importExplicitPackage(from: exported)
-                #expect(exportedPortable.documentCreatedAt == expectedCanonicalCreatedAt)
+                #expect(exportedPortable.documentCreatedAt == expectedCreatedAt)
                 #expect(exportedPortable.resources == expectedResources)
+                #expect(!exportedPortable.resources.contains {
+                    $0.pathComponents == SyncV2PortableMetadata.localCreatedAtPath
+                })
                 reopenedStore.dismissExport()
             }
 

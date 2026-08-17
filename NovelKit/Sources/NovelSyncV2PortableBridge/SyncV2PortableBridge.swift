@@ -28,6 +28,75 @@ public struct SyncV2PortableImport: Sendable {
     }
 }
 
+/// Local-only metadata which keeps a portable manifest's exact creation
+/// instant beside the v2 SQLite mirror without putting fractional precision
+/// into the Snapshot wire anchor.  The resource is never exported as a
+/// package item; it is only a durable app-private mirror row.
+public enum SyncV2PortableMetadata {
+    public static let localCreatedAtPath = [
+        ".fuminiwa",
+        "snapshot-sync-v2",
+        "portable-created-at"
+    ]
+
+    /// Adds the exact portable instant to the local resource mirror.  Callers
+    /// pass ordinary package resources here; a pre-existing reserved path is
+    /// rejected so an external package cannot impersonate local metadata.
+    public static func resourcesForLocalMirror(
+        _ resources: [PortableResource],
+        portableCreatedAt: Date?
+    ) throws -> [PortableResource] {
+        guard !resources.contains(where: { $0.pathComponents == localCreatedAtPath }) else {
+            throw SyncV2PortableBridgeError.invalidPackage
+        }
+        guard let portableCreatedAt else { return resources }
+        let seconds = String(portableCreatedAt.timeIntervalSince1970)
+        guard portableCreatedAt.timeIntervalSince1970.isFinite else {
+            throw SyncV2PortableBridgeError.invalidPackage
+        }
+        return resources + [
+            PortableResource(
+                pathComponents: localCreatedAtPath,
+                kind: .regularFile,
+                bytes: Data(seconds.utf8)
+            )
+        ]
+    }
+
+    /// Splits local-only metadata from the resource mirror returned by
+    /// SQLite.  An invalid or duplicated marker is treated as corruption,
+    /// rather than silently losing the portable creation instant.
+    public static func splitLocalMirrorResources(
+        _ resources: [PortableResource]
+    ) throws -> (portableCreatedAt: Date?, resources: [PortableResource]) {
+        let metadata = resources.filter { $0.pathComponents == localCreatedAtPath }
+        guard metadata.count <= 1 else {
+            throw SyncV2PortableBridgeError.invalidPackage
+        }
+        guard let marker = metadata.first else {
+            return (nil, resources)
+        }
+        guard marker.kind == .regularFile,
+              let bytes = marker.bytes,
+              let string = String(data: bytes, encoding: .utf8),
+              let seconds = Double(string),
+              seconds.isFinite else {
+            throw SyncV2PortableBridgeError.invalidPackage
+        }
+        return (
+            Date(timeIntervalSince1970: seconds),
+            resources.filter { $0.pathComponents != localCreatedAtPath }
+        )
+    }
+
+    /// Removes the local marker before writing the explicit portable package.
+    public static func resourcesForExport(
+        _ resources: [PortableResource]
+    ) throws -> [PortableResource] {
+        try splitLocalMirrorResources(resources).resources
+    }
+}
+
 /// Errors raised by the explicit v2 portable boundary.
 public enum SyncV2PortableBridgeError: Error, Equatable, Sendable {
     case invalidPackage
@@ -159,6 +228,7 @@ public struct SyncV2PortableBridge: Sendable {
     ) async throws {
         try validateDestination(destinationURL)
         try validateAttachmentValues(attachments)
+        let exportResources = try SyncV2PortableMetadata.resourcesForExport(resources)
 
         let fileManager = FileManager.default
         let stagingRoot = fileManager.temporaryDirectory
@@ -204,7 +274,7 @@ public struct SyncV2PortableBridge: Sendable {
                 from: stagingURL,
                 to: destinationURL,
                 createdAt: documentCreatedAt ?? staged.documentCreatedAt,
-                resources: resources
+                resources: exportResources
             )
 
             let exported = try await importExplicitPackage(from: destinationURL)
@@ -213,7 +283,7 @@ public struct SyncV2PortableBridge: Sendable {
                 document: document,
                 documentCreatedAt: documentCreatedAt ?? staged.documentCreatedAt,
                 attachments: attachments,
-                resources: resources
+                resources: exportResources
             )
         } catch let error as SyncV2PortableBridgeError {
             throw error
