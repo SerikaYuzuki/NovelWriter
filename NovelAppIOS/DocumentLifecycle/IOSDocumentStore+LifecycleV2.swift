@@ -56,40 +56,27 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               await configureSnapshotSyncV2() else { return false }
         let value = NovelDocument.newDocument()
+        let candidateWorkID = WorkID(UUID())
+        let candidateCreatedAt = Self.portableDatePrecision(Date())
         return await documentOperationGate.perform { [weak self] in
-            guard let self, !isSyncV2AccountTransitionActive else { return false }
+            guard let self,
+                  !isSyncV2AccountTransitionActive,
+                  let application = snapshotSyncV2Application else { return false }
+            let expectedSession = currentDocumentSessionToken
+            let expectedWorkID = syncV2ActiveWorkID
+            let expectedAccountScope = snapshotSyncV2AccountScope
             return await performDocumentTransition {
-                guard !isSyncV2AccountTransitionActive,
-                      snapshotSyncV2Application != nil else {
-                    throw SyncV2ApplicationError.invalidRuntimeMode
-                }
-                document = value
-                // Snapshot Sync v2 and the portable bridge use UTC whole
-                // seconds for the document anchor. Normalize at creation so
-                // the SQLite value remains stable across every reopen/export.
-                documentCreatedAt = Self.portableDatePrecision(Date())
-                let workID = WorkID(UUID())
-                syncV2ActiveWorkID = workID
-                syncV2KeepBothPendingWorkID = nil
-                // WorkID + SQLite is the normal identity.  `documentURL` is
-                // not a per-work working copy and no WorkID directory is
-                // created for a normal new document.
-                documentURL = libraryRoot.standardizedFileURL
-                userDefaults.set(workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
-                replaceAttachments([])
-                syncV2AttachmentPayloads = [:]
-                syncV2AttachmentIDs = [:]
-                syncV2PortableResources = []
-                syncV2PortableCreatedAt = nil
-                selectedChapterID = value.chapters.first?.id
-                selectedEpisodeID = value.chapters.first?.episodes.first?.id
-                advanceDocumentSessionGeneration()
-                advanceEditorContentGeneration()
-                startupState = .ready
-                guard await checkpointSnapshotSyncV2(value, reason: .explicit) else {
-                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
-                }
-                saveState = .saved
+                try await checkpointAndInstallNewDocument(
+                    value,
+                    context: IOSNewDocumentCheckpointContext(
+                        candidateWorkID: candidateWorkID,
+                        candidateCreatedAt: candidateCreatedAt,
+                        application: application,
+                        expectedSession: expectedSession,
+                        expectedWorkID: expectedWorkID,
+                        expectedAccountScope: expectedAccountScope
+                    )
+                )
             }
         }
     }
@@ -344,13 +331,16 @@ extension IOSDocumentStore {
         at url: URL,
         attachments: [Attachment],
         rememberRecent: Bool = true,
-        workID: WorkID? = nil
+        workID: WorkID? = nil,
+        createdAt: Date? = nil
     ) -> Bool {
         if snapshotSyncV2Application != nil, workID == nil {
             return false
         }
         document = value
-        documentCreatedAt = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+        documentCreatedAt = createdAt
+            ?? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
+            ?? Date()
         documentURL = snapshotSyncV2Application == nil
             ? url.standardizedFileURL
             : libraryRoot.standardizedFileURL

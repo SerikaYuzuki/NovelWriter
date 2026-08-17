@@ -15,6 +15,15 @@ extension IOSDocumentStore {
     ) async -> Bool {
         guard let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return false }
+        let expectedSession = currentDocumentSessionToken
+        let expectedAccountScope = snapshotSyncV2AccountScope
+        let matchesExpectedSource: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !isSyncV2RemoteAccountTransitionActive
+                && currentDocumentSessionToken == expectedSession
+                && syncV2ActiveWorkID == workID
+                && snapshotSyncV2AccountScope == expectedAccountScope
+        }
         do {
             guard let syncAttachments = currentV2Attachments() else {
                 operationErrorMessage = "資料の本文を読み込めないため、端末への保存を中止しました。"
@@ -44,10 +53,17 @@ extension IOSDocumentStore {
                 attachments: syncAttachments,
                 resources: localResources
             )
-            snapshotSyncOutcome = result.typedResult == .noChanges ? .idle : .pending
+            // A checkpoint result is already the local durable projection,
+            // including pending/offline worker state.  Publish it before the
+            // worker can move on so ProjectHome and the editor share wording.
+            // The source CAS prevents a late result from a previous session or
+            // account fence from repainting the current work.
+            guard matchesExpectedSource() else { return false }
+            applySnapshotSyncV2State(result.state)
             saveState = .saved
             return true
         } catch {
+            guard matchesExpectedSource() else { return false }
             snapshotSyncOutcome = .failed
             saveState = .failed
             return false
