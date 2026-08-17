@@ -116,6 +116,7 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.previewReadOnly
         }
         try await kernel.parkAccountScope(workID: workID, binding: binding)
+        await planner.invalidateCaches(for: [workID])
         historyScopeGeneration &+= 1
         cancelWorker(for: workID)
         states[workID] = SyncUIState(
@@ -139,6 +140,7 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.previewReadOnly
         }
         try await kernel.rebindAccountScope(workID: workID, from: old, to: new)
+        await planner.invalidateCaches(for: [workID])
         historyScopeGeneration &+= 1
         cancelWorker(for: workID)
         states[workID] = SyncUIState(
@@ -176,6 +178,7 @@ public actor SyncV2Application {
             .union(workerOwners.keys)
             .union(states.keys)
             .union(sessions.keys)
+        await planner.invalidateCaches(for: affectedWorkIDs)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)
             states[workID] = SyncUIState(

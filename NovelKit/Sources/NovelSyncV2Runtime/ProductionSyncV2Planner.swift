@@ -6,9 +6,30 @@ import NovelSyncV2Store
 actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     private let store: LocalSyncV2Store
     private let scope: any SyncV2ScopeResolver
-    private var uploaded: [WorkID: Set<ObjectID>] = [:]
-    private var remoteReady: [WorkID: Set<ObjectID>] = [:]
-    private var transfers: [WorkID: [ObjectID: SyncV2UploadTransfer]] = [:]
+    /// Immutable object presence is reusable only in this exact account,
+    /// server, protocol, fence, and Work namespace. It is separate from a
+    /// command's upload capability session.
+    private struct RemoteObjectPresenceKey: Hashable, Sendable {
+        let binding: V2AccountBinding
+        let workID: WorkID
+        let objectID: ObjectID
+    }
+
+    /// Upload capabilities belong to one prepare command and one intent. A
+    /// later generation may contain the same ObjectID, but must not reuse its
+    /// uploadID or capability.
+    private struct TransferSessionKey: Hashable, Sendable {
+        let binding: V2AccountBinding
+        let workID: WorkID
+        let sourceGeneration: Int64
+        let sourceSnapshotID: SnapshotID
+        let intentID: UUID
+        let objectID: ObjectID
+        let commandID: UUID
+    }
+
+    private var remoteObjectPresence: Set<RemoteObjectPresenceKey> = []
+    private var transfers: [TransferSessionKey: SyncV2UploadTransfer] = [:]
 
     init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
         self.store = store
@@ -20,11 +41,18 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         return try await store.pendingWorkIDs(scope: .bound(binding))
     }
 
+    func invalidateCaches(for workIDs: Set<WorkID>) async {
+        guard !workIDs.isEmpty else { return }
+        transfers = transfers.filter { !workIDs.contains($0.key.workID) }
+        remoteObjectPresence = remoteObjectPresence.filter { !workIDs.contains($0.workID) }
+    }
+
     /// The planner is a single ordered state machine; keep its branch ordering
     /// explicit so sealed command replay cannot be reordered by helpers.
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan {
         let localScope = try await scope.existingScope(workID: workID)
         guard case .bound = localScope else {
+            await invalidateCaches(for: [workID])
             let pending = try await store.pendingIntents(scope: localScope, workID: workID)
             return pending.isEmpty ? .idle : .blocked(.authenticationRequired)
         }
@@ -138,7 +166,11 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         ) {
             return upload
         }
-        let ready = progress.finalized.union(remoteReady[workID, default: []])
+        let ready = progress.finalized.union(
+            remoteObjectPresence
+                .filter { $0.binding == view.binding && $0.workID == workID }
+                .map(\.objectID)
+        )
         if ready.count < progress.prepared.count {
             guard let object = progress.prepared.subtracting(ready).first else {
                 return .blocked(.fatal(.invalidLocalState))
@@ -147,7 +179,11 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
                 kind: "finalizeObject",
                 objectID: object,
                 view: view,
-                uploadID: transfers[workID]?[object]?.uploadID
+                uploadID: currentTransfer(
+                    for: object,
+                    view: view,
+                    records: currentRecords
+                )?.uploadID
             )
             try await store.seal(command, scope: localScope)
             return .command(command)
@@ -190,14 +226,30 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             switch record.commandKind {
             case "prepareObject":
                 let object = try objectID(record)
-                if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope),
-                   transfer.lifecycle == "prepared", transfer.expiresAt <= Date() {
-                    continue
+                if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope) {
+                    if transfer.lifecycle == "prepared", transfer.expiresAt <= Date() {
+                        continue
+                    }
+                    if transfer.lifecycle == "acknowledged" {
+                        remoteObjectPresence.insert(
+                            RemoteObjectPresenceKey(
+                                binding: view.binding,
+                                workID: workID,
+                                objectID: transfer.objectID
+                            )
+                        )
+                    }
                 }
                 prepared.insert(object)
                 if let receipt = try await store.receiptReadback(commandID: record.commandID, scope: localScope),
                    receipt.result == .noChanges {
-                    remoteReady[workID, default: []].insert(object)
+                    remoteObjectPresence.insert(
+                        RemoteObjectPresenceKey(
+                            binding: view.binding,
+                            workID: workID,
+                            objectID: object
+                        )
+                    )
                 }
             case "finalizeObject":
                 try finalized.insert(objectID(record))
@@ -219,21 +271,62 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     ) async throws -> SyncV2CommandPlan? {
         let candidates = view.snapshot.manifest.entries.map(\.objectId).filter {
             progress.prepared.contains($0) && !progress.finalized.contains($0) &&
-                !uploaded[workID, default: []].contains($0) &&
-                !remoteReady[workID, default: []].contains($0)
+                !remoteObjectPresence.contains(
+                    RemoteObjectPresenceKey(
+                        binding: view.binding,
+                        workID: workID,
+                        objectID: $0
+                    )
+                )
         }
         guard let target = candidates.first else { return nil }
-        if let transfer = transfers[workID]?[target], !uploaded[workID, default: []].contains(target) {
-            return .upload(transfer)
-        }
         guard let prepare = records.reversed().first(where: {
             $0.commandKind == "prepareObject" && (try? objectID($0)) == target
-        }),
-            let transfer = try await makeTransfer(from: prepare, view: view) else {
+        }) else {
             return nil
         }
-        transfers[workID, default: [:]][target] = transfer
+        let sessionKey = transferSessionKey(
+            for: prepare,
+            objectID: target,
+            view: view
+        )
+        if let transfer = transfers[sessionKey] {
+            return .upload(transfer)
+        }
+        guard let transfer = try await makeTransfer(from: prepare, view: view) else {
+            return nil
+        }
+        transfers[sessionKey] = transfer
         return .upload(transfer)
+    }
+
+    private func currentTransfer(
+        for objectID: ObjectID,
+        view: V2ImmutableTransferView,
+        records: [V2SealedCommandRecord]
+    ) -> SyncV2UploadTransfer? {
+        guard let prepare = records.reversed().first(where: {
+            $0.commandKind == "prepareObject" && (try? self.objectID($0)) == objectID
+        }) else { return nil }
+        return transfers[
+            transferSessionKey(for: prepare, objectID: objectID, view: view)
+        ]
+    }
+
+    private func transferSessionKey(
+        for record: V2SealedCommandRecord,
+        objectID: ObjectID,
+        view: V2ImmutableTransferView
+    ) -> TransferSessionKey {
+        TransferSessionKey(
+            binding: view.binding,
+            workID: view.workID,
+            sourceGeneration: view.pendingIntent.sourceGeneration,
+            sourceSnapshotID: view.pendingIntent.sourceSnapshotID,
+            intentID: view.pendingIntent.intentID,
+            objectID: objectID,
+            commandID: record.commandID
+        )
     }
 
     private func planActiveTail(
@@ -347,15 +440,28 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     }
 
     func acknowledgeUpload(_ completion: SyncV2UploadCompletion) async throws {
-        if let workID = transfers.first(where: { $0.value.values.contains { $0.transferID == completion.transferID } })?.key {
-            uploaded[workID, default: []].insert(completion.objectID)
-            let localScope = try await scope.existingScope(workID: workID)
-            try await store.acknowledgeUploadTransfer(
-                transferID: completion.transferID,
-                byteCount: completion.acknowledgedByteCount,
-                scope: localScope
-            )
+        guard let entry = transfers.first(where: {
+            $0.value.transferID == completion.transferID
+        }) else { return }
+        let key = entry.key
+        let localScope = try await scope.existingScope(workID: key.workID)
+        // Scope validation precedes all cache mutation. A late completion from
+        // a parked/old fence may not seed the new account's object presence.
+        guard case let .bound(binding) = localScope, binding == key.binding else {
+            return
         }
+        try await store.acknowledgeUploadTransfer(
+            transferID: completion.transferID,
+            byteCount: completion.acknowledgedByteCount,
+            scope: localScope
+        )
+        remoteObjectPresence.insert(
+            RemoteObjectPresenceKey(
+                binding: key.binding,
+                workID: key.workID,
+                objectID: completion.objectID
+            )
+        )
     }
 }
 
@@ -533,7 +639,14 @@ private extension ProductionSyncV2Planner {
         let objectID = try objectID(record)
         if let stored = try await store.uploadTransfer(commandID: record.commandID, scope: .bound(view.binding)) {
             if stored.lifecycle == "acknowledged" {
-                uploaded[view.workID, default: []].insert(stored.objectID)
+                remoteObjectPresence.insert(
+                    RemoteObjectPresenceKey(
+                        binding: view.binding,
+                        workID: view.workID,
+                        objectID: stored.objectID
+                    )
+                )
+                return nil
             }
             return SyncV2UploadTransfer(
                 transferID: stored.transferID,

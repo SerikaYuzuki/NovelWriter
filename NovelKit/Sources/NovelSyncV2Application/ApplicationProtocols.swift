@@ -40,12 +40,17 @@ public protocol SyncV2CommandPlanner: Sendable {
         verifiedInboxID: UUID?
     ) async throws
     func acknowledgeUpload(_ completion: SyncV2UploadCompletion) async throws
+    /// Invalidates process-local planning caches after a durable account or
+    /// Work transition. The default keeps lightweight/fake planners compatible.
+    func invalidateCaches(for workIDs: Set<WorkID>) async
 }
 
 public extension SyncV2CommandPlanner {
     func pendingWorkIDs() async throws -> [WorkID] {
         []
     }
+
+    func invalidateCaches(for _: Set<WorkID>) async {}
 }
 
 /// A closed semantic client. Its production adapter performs the typed v2
