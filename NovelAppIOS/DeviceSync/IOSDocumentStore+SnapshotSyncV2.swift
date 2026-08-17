@@ -446,7 +446,7 @@ extension IOSDocumentStore {
         return adopted
     }
 
-    private func installSnapshotSyncV2Opened(
+    func installSnapshotSyncV2Opened(
         _ opened: SyncV2OpenedWork,
         value: NovelDocument
     ) {
@@ -476,7 +476,7 @@ extension IOSDocumentStore {
         applySnapshotSyncV2State(snapshotSyncState)
     }
 
-    private func applySnapshotSyncV2State(_ state: SyncUIState?) {
+    func applySnapshotSyncV2State(_ state: SyncUIState?) {
         snapshotSyncState = state
         snapshotSyncConflict = state?.conflict
         guard let state else { return }

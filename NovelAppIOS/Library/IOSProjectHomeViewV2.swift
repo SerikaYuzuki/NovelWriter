@@ -162,6 +162,6 @@ struct IOSProjectHomeView: View {
             ? "端末履歴あり" : "端末履歴なし"
         let online = store.syncV2HistoryOnlineAvailability == .available
             ? "サーバー履歴あり" : "サーバー履歴は未取得"
-        return "(local)・(online)"
+        return "\(local)・\(online)"
     }
 }
