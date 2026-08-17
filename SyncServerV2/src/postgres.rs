@@ -179,6 +179,32 @@ impl Repository {
         }
         Ok(())
     }
+
+    /// Check the persisted account binding without creating it.  Mutating
+    /// commands call `scope` inside their transaction; read-only endpoints
+    /// must perform this check before looking up any Work/object/receipt so a
+    /// rotated fence cannot continue to expose the old account projection.
+    pub async fn check_scope(&self, p: &AuthenticatedPrincipal) -> SyncResult<()> {
+        if let Some(row) = sqlx::query(
+            "SELECT server_instance_id,protocol_epoch,account_fence
+             FROM sync_v2.account_scopes WHERE account_id=$1",
+        )
+        .bind(&p.account_id)
+        .fetch_optional(&self.pool)
+        .await?
+        {
+            let instance: String = row.try_get("server_instance_id")?;
+            let epoch: i64 = row.try_get("protocol_epoch")?;
+            let fence: String = row.try_get("account_fence")?;
+            if instance != p.server_instance_id
+                || epoch != p.protocol_epoch
+                || fence != p.account_fence
+            {
+                return Err(SyncError::AccountFenceMismatch);
+            }
+        }
+        Ok(())
+    }
     async fn receipt_lookup<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -868,7 +894,11 @@ impl Repository {
         id: Uuid,
     ) -> SyncResult<()> {
         let exists = sqlx::query(
-            "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE",
+            // Quarantined works are parked local state, not an addressable
+            // remote resource.  Treat them exactly like an absent Work so a
+            // stale/fenced command cannot continue through a previously
+            // sealed capability.
+            "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound' FOR UPDATE",
         )
         .bind(&p.account_id)
         .bind(id)
@@ -1379,7 +1409,7 @@ impl Repository {
         let generation: Option<i64> = row.try_get("head_generation")?;
         let current: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
         let expected = &payload["expectedRemoteHead"];
-        let (expected_id, _expected_generation) = if expected.is_null() {
+        let (expected_id, expected_generation) = if expected.is_null() {
             (None, None)
         } else {
             let id = digest_field(expected, "snapshotId")
@@ -1393,6 +1423,31 @@ impl Repository {
                 })?;
             (Some(id), Some(gen))
         };
+        if let (Some(expected_id), Some(expected_generation)) =
+            (expected_id.as_deref(), expected_generation)
+        {
+            // A snapshot digest alone is not a head version.  Require the
+            // exact generation/snapshot pair to have been emitted as a
+            // scoped head event before accepting ancestry.  Otherwise a
+            // caller could replay an old generation with a newer (or
+            // unrelated) snapshot and still pass the ID-only lineage test.
+            let pair_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sync_v2.head_events
+                     WHERE account_id=$1 AND work_id=$2
+                       AND generation=$3 AND snapshot_id=$4
+                 )",
+            )
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .bind(expected_generation)
+            .bind(expected_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if !pair_exists {
+                return Err(SyncError::LineageViolation);
+            }
+        }
         // A non-null expected head must be an actual ancestor of the
         // candidate. This prevents a stale client from inventing a common
         // base merely because its expected generation happens to differ.
@@ -1873,7 +1928,12 @@ impl Repository {
                     let doc_bytes =
                         canonical_json(&doc).map_err(|_| SyncError::SnapshotDigestMismatch)?;
                     let new_object = sha256(&doc_bytes);
-                    sqlx::query("INSERT INTO sync_v2.global_blobs(object_id,byte_count,raw_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(new_object.as_slice()).bind(doc_bytes.len() as i64).bind(&doc_bytes).execute(&mut **tx).await?;
+                    // Keep transformed clone bytes behind the ObjectStore
+                    // transaction boundary as well.  Direct writes here
+                    // would bypass an S3/object-store adapter's caller-tx
+                    // contract and could leave bytes committed if a later
+                    // clone step rolls back.
+                    self.object_store.put(tx, &new_object, &doc_bytes).await?;
                     sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT DO NOTHING").bind(&p.account_id).bind(new_object.as_slice()).execute(&mut **tx).await?;
                     entry["objectId"] = Value::String(hex::encode(new_object));
                     entry["byteCount"] = Value::from(doc_bytes.len() as i64);

@@ -227,6 +227,11 @@ async fn principal(
     if protocol_epoch.parse::<i64>().ok() != Some(principal.protocol_epoch) {
         return Err(error_response(SyncError::ProtocolEpochMismatch));
     }
+    state
+        .repo
+        .check_scope(&principal)
+        .await
+        .map_err(error_response)?;
     Ok(principal)
 }
 
@@ -280,12 +285,15 @@ async fn command_inner(
         Ok(v) => v,
         Err(e) => return error_response(e),
     };
-    if route_work_id.is_some_and(|route| route != cmd.work_id) {
-        return error_response(SyncError::NotFound);
-    }
     if !binding_matches(&cmd.value, &p) {
         return error_response(SyncError::AccountFenceMismatch);
     };
+    // Check the authenticated command binding before even comparing a route
+    // resource.  A caller must not be able to use a mismatched route/body
+    // pair to probe the route's WorkID before its principal is established.
+    if route_work_id.is_some_and(|route| route != cmd.work_id) {
+        return error_response(SyncError::NotFound);
+    }
     match state.repo.command(&p, &cmd).await {
         Ok((status, bytes)) => Response::builder()
             .status(
