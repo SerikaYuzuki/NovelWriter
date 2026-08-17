@@ -52,7 +52,23 @@ struct SnapshotSyncV2MacTransitionTests {
     @Test("account switch after Inbox apply still blocks editor installation")
     @MainActor
     func manualServerAdoptionRechecksAccountAfterSQLiteApply() async throws {
-        let fixture = try await makeMacConflictFixture(remoteBehavior: .suspended)
+        let stateReference = MacAppStateReference()
+        let newSession = makeMacV2Session(accountID: "account-b", fence: "fence-b")
+        let fixture = try await makeMacConflictFixture(
+            remoteBehavior: .suspended,
+            afterStagedRemote: {
+                await stateReference.vault?.replaceAccount(
+                    TestAccount(accountID: newSession.accountID, accountFence: newSession.accountFence)
+                )
+                // Do not re-enter the document gate from the post-apply hook.
+                // This injects the stale account proof immediately before the
+                // editor install CAS and exercises the production guard.
+                stateReference.state?.authSession = newSession
+                stateReference.state?.authUIState = .signedIn(accountID: newSession.accountID)
+            }
+        )
+        stateReference.state = fixture.state
+        stateReference.vault = fixture.configuration.vault
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
 
         let serverInbox = fixture.serverInbox
@@ -62,20 +78,13 @@ struct SnapshotSyncV2MacTransitionTests {
                 inbox: serverInbox
             )
         }
-        fixture.state.authSession = nil
-        await fixture.configuration.vault.replaceAccount(
-            TestAccount(accountID: "account-b", accountFence: "fence-b")
-        )
-        _ = await fixture.state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
-            authState: .signedIn(accountID: "account-b")
-        )
         await fixture.remote.resumeSuspended()
         try? await fixture.application.resumePending()
         try await eventuallyMac(timeout: .seconds(3)) {
-            let accountID = fixture.state.authSession?.accountID
-            let state = await fixture.application.uiState(workID: fixture.workID)
-            return accountID == "account-b" && state?.remoteProgress == .idle
+            // Staging leaves the conflict visible until the editor-side CAS
+            // runs.  The account mutation is the synchronization point here;
+            // requiring idle would hide the post-apply fencing assertion.
+            fixture.state.authSession?.accountID == "account-b"
         }
         fixture.state.cancelSnapshotSyncV2BackgroundOperations()
 
@@ -303,10 +312,6 @@ struct SnapshotSyncV2MacTransitionTests {
         let originalDocument = fixture.state.document
         let originalWorkID = try #require(fixture.state.currentSnapshotSyncV2WorkID)
         let originalSession = fixture.state.documentSessionToken
-        _ = await fixture.state.transitionFuminiwaSession(
-            to: makeMacV2Session(accountID: "account-a", fence: "fence-a"),
-            authState: .signedIn(accountID: "account-a")
-        )
         _ = try await fixture.application.checkpoint(
             workID: originalWorkID,
             document: originalDocument,
@@ -319,6 +324,10 @@ struct SnapshotSyncV2MacTransitionTests {
         let accountSwitch = Task { @MainActor () -> Bool in
             for _ in 0 ..< 100 {
                 if fixture.state.isDocumentTransitionInProgress {
+                    fixture.state.authSession = nil
+                    await fixture.configuration.vault.replaceAccount(
+                        TestAccount(accountID: "account-b", accountFence: "fence-b")
+                    )
                     _ = await fixture.state.transitionFuminiwaSession(
                         to: makeMacV2Session(accountID: "account-b", fence: "fence-b"),
                         authState: .signedIn(accountID: "account-b")
@@ -338,6 +347,12 @@ struct SnapshotSyncV2MacTransitionTests {
         #expect(fixture.state.documentSessionToken != originalSession)
         #expect(fixture.state.document == originalDocument)
     }
+}
+
+@MainActor
+private final class MacAppStateReference {
+    weak var state: AppState?
+    var vault: TestSyncV2Vault?
 }
 
 @MainActor
