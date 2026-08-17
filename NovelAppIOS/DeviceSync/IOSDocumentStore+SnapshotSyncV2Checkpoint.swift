@@ -19,8 +19,7 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         let matchesExpectedSource: () -> Bool = { [weak self] in
             guard let self else { return false }
-            return !isSyncV2RemoteAccountTransitionActive
-                && currentDocumentSessionToken == expectedSession
+            return currentDocumentSessionToken == expectedSession
                 && syncV2ActiveWorkID == workID
                 && snapshotSyncV2AccountScope == expectedAccountScope
         }

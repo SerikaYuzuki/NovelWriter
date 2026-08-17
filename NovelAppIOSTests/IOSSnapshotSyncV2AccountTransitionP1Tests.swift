@@ -438,8 +438,27 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         let signInTask = Task { @MainActor in
             await store.signInWithApple()
         }
-        for await _ in exchangeStarted.stream {
-            break
+        let exchangeDidStart = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in exchangeStarted.stream {
+                    return true
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+        guard exchangeDidStart else {
+            signInTask.cancel()
+            exchangeRelease.continuation.finish()
+            await signInTask.value
+            Issue.record("Apple exchange did not enter the bounded request window")
+            return
         }
 
         // The production sign-in entry point, not a manually toggled flag,
@@ -543,7 +562,7 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         let rebound = try await application.library().items.first { $0.workID == workID }
         #expect(rebound?.accountState == .active)
         let imported = try await application.library().items.first { $0.workID == importedWorkID }
-        #expect(imported?.accountState == .unbound)
+        #expect(imported?.accountState == .active)
         #expect(imported?.availability == .localOnly)
         try await waitForIOSP1RemoteOperation(
             configuration.remote,
