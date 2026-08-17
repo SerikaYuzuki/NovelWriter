@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 const SERVER_NAMESPACE: &str = "fuminiwa-snapshot-sync-v2";
 const SCHEMA_VERSION: &str = "2";
-const SCHEMA_CHECKSUM: &str = "631b0fed89a0031f33c9ac86b75695309c276d354d31e78b4a0db4eeb39c4657";
+const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r2";
 
 #[derive(Clone)]
 pub struct Repository {
@@ -40,14 +40,20 @@ impl Repository {
             protocol_epoch: PROTOCOL_EPOCH,
         })
     }
-    async fn verify_server_meta(pool: &PgPool, deployment_id: &str) -> Result<(), sqlx::Error> {
-        if deployment_id.is_empty() || deployment_id == "unbound" {
+    async fn verify_server_meta(
+        pool: &PgPool,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        if server_instance_id.is_empty()
+            || server_instance_id.len() > 128
+            || server_instance_id == "unbound"
+        {
             return Err(sqlx::Error::Protocol(
-                "invalid Snapshot Sync v2 deployment id".into(),
+                "invalid Snapshot Sync v2 server instance id".into(),
             ));
         }
         let mut tx = pool.begin().await?;
-        let rows = sqlx::query("SELECT key,value FROM sync_v2.server_meta FOR UPDATE")
+        let rows = sqlx::query("SELECT key,value FROM sync_v2.server_meta ORDER BY key FOR UPDATE")
             .fetch_all(&mut *tx)
             .await?;
         let metadata: HashMap<String, String> = rows
@@ -58,7 +64,7 @@ impl Repository {
             ("namespace", SERVER_NAMESPACE),
             ("protocol_epoch", "2"),
             ("schema_version", SCHEMA_VERSION),
-            ("schema_checksum", SCHEMA_CHECKSUM),
+            ("ddl_contract_marker", DDL_CONTRACT_MARKER),
         ] {
             if metadata.get(key).map(String::as_str) != Some(expected) {
                 return Err(sqlx::Error::Protocol(format!(
@@ -66,25 +72,31 @@ impl Repository {
                 )));
             }
         }
-        let stored_deployment = metadata
-            .get("deployment_id")
-            .ok_or_else(|| sqlx::Error::Protocol("missing v2 deployment_id".into()))?;
-        if stored_deployment == "unbound" {
-            let updated = sqlx::query(
-                "UPDATE sync_v2.server_meta SET value=$1 WHERE key='deployment_id' AND value='unbound'",
-            )
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-            if updated.rows_affected() != 1 {
+        if metadata.len() != 4 {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 server_meta contains an unknown marker".into(),
+            ));
+        }
+        let binding = sqlx::query(
+            "SELECT server_instance_id FROM sync_v2.deployment_binding
+             WHERE singleton=true FOR UPDATE",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(binding) = binding {
+            if binding.try_get::<String, _>("server_instance_id")? != server_instance_id {
                 return Err(sqlx::Error::Protocol(
-                    "Snapshot Sync v2 deployment bind lost".into(),
+                    "Snapshot Sync v2 server instance id mismatch".into(),
                 ));
             }
-        } else if stored_deployment != deployment_id {
-            return Err(sqlx::Error::Protocol(
-                "Snapshot Sync v2 deployment id mismatch".into(),
-            ));
+        } else {
+            sqlx::query(
+                "INSERT INTO sync_v2.deployment_binding(singleton,server_instance_id,bound_at)
+                 VALUES(true,$1,now())",
+            )
+            .bind(server_instance_id)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())

@@ -194,11 +194,19 @@ fn sync_migration_contains_fail_closed_server_identity() {
     let migration = include_str!("../migrations/0001_sync_v2.sql");
     for marker in [
         "fuminiwa-snapshot-sync-v2",
-        "('protocol_epoch','2')",
-        "('schema_version','2')",
-        "631b0fed89a0031f33c9ac86b75695309c276d354d31e78b4a0db4eeb39c4657",
-        "('deployment_id','unbound')",
+        "('protocol_epoch', '2')",
+        "('schema_version', '2')",
+        "('ddl_contract_marker', 'snapshot-sync-v2-postgres-r2')",
+        "CREATE TABLE sync_v2.deployment_binding",
     ] {
         assert!(migration.contains(marker), "missing server marker {marker}");
     }
+}
+
+#[test]
+fn sync_migration_is_byte_identical_to_the_audited_contract() {
+    assert_eq!(
+        include_bytes!("../migrations/0001_sync_v2.sql"),
+        include_bytes!("../../docs/sync/v2/postgres.sql")
+    );
 }

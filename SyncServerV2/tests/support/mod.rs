@@ -977,15 +977,20 @@ async fn exercise_migration_markers(url: &str, repo: &Repository) -> ScenarioRes
             .is_err(),
         "repository accepted the wrong deployment id",
     )?;
-    sqlx::query("UPDATE sync_v2.server_meta SET value='crash-marker' WHERE key='schema_checksum'")
-        .execute(&repo.pool)
-        .await?;
+    sqlx::query(
+        "UPDATE sync_v2.server_meta SET value='crash-marker' WHERE key='ddl_contract_marker'",
+    )
+    .execute(&repo.pool)
+    .await?;
     let rejected = Repository::connect(url, SERVER_INSTANCE.into())
         .await
         .is_err();
-    sqlx::query("UPDATE sync_v2.server_meta SET value='631b0fed89a0031f33c9ac86b75695309c276d354d31e78b4a0db4eeb39c4657' WHERE key='schema_checksum'")
-        .execute(&repo.pool)
-        .await?;
+    sqlx::query(
+        "UPDATE sync_v2.server_meta SET value='snapshot-sync-v2-postgres-r2'
+         WHERE key='ddl_contract_marker'",
+    )
+    .execute(&repo.pool)
+    .await?;
     ensure(
         rejected,
         "repository accepted a crash-corrupted migration marker",

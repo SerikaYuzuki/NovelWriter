@@ -10,6 +10,19 @@ CREATE TABLE sync_v2.server_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+INSERT INTO sync_v2.server_meta(key, value) VALUES
+  ('namespace', 'fuminiwa-snapshot-sync-v2'),
+  ('protocol_epoch', '2'),
+  ('schema_version', '2'),
+  ('ddl_contract_marker', 'snapshot-sync-v2-postgres-r2');
+-- The deployment identity is intentionally not a static migration value.
+-- Repository startup inserts the expected environment-provided instance once
+-- into this singleton table, then rejects every mismatch fail-closed.
+CREATE TABLE sync_v2.deployment_binding (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  server_instance_id TEXT NOT NULL CHECK (length(server_instance_id) BETWEEN 1 AND 128),
+  bound_at TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE sync_v2.account_scopes (
   account_id TEXT PRIMARY KEY,
   server_instance_id TEXT NOT NULL,
