@@ -633,7 +633,7 @@ async fn receipt(Path(id): Path<Uuid>, headers: HeaderMap, state: State<AppState
         Err(e) => return e,
     };
     match state.repo.receipt(&p, id).await {
-        Ok((kind, work_id, request_digest, bytes, status)) => {
+        Ok((kind, work_id, request_digest, bytes, _status)) => {
             let original = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
             let result = original
                 .as_ref()
@@ -643,7 +643,7 @@ async fn receipt(Path(id): Path<Uuid>, headers: HeaderMap, state: State<AppState
             let read_back = original.as_ref().and_then(|value| value.get("receipt").and_then(|receipt| receipt.get("readBack"))).cloned().unwrap_or_else(|| serde_json::json!({"accountMatched":false,"commandDigestMatched":false,"headMatched":false,"resourceMatched":false,"stateMatched":false}));
             canonical_response(
                 StatusCode::OK,
-                serde_json::json!({"commandId":id,"commandKind":kind,"workId":work_id,"requestDigest":hex::encode(request_digest),"responseStatus":status,"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"originalResult":result,"readBack":read_back,"result":"noChanges"}),
+                serde_json::json!({"commandId":id,"commandKind":kind,"workId":work_id,"requestDigest":hex::encode(request_digest),"canonicalResponseBase64URL":URL_SAFE_NO_PAD.encode(bytes),"originalResult":result,"readBack":read_back,"result":"noChanges"}),
             )
         }
         Err(e) => error_response(e),
