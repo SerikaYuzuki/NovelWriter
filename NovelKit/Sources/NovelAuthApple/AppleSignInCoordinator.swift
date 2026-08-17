@@ -21,12 +21,13 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
     }
 
     public func authorize(using challenge: AuthChallenge) async throws -> AppleAuthorizationPayload {
-        guard challenge.provider == .apple, challenge.expiresAt > Date() else {
+        guard challenge.provider == .apple, challenge.flow == "native", challenge.requestedScopes.isEmpty,
+              challenge.expiresAt > Date(), !challenge.state.isEmpty, !challenge.nonce.isEmpty else {
             throw AuthError.challengeExpired
         }
         let provider = ASAuthorizationAppleIDProvider()
         let request = provider.createRequest()
-        request.requestedScopes = [.fullName, .email]
+        request.requestedScopes = []
         request.state = challenge.state
         request.nonce = challenge.nonce
         let controller = ASAuthorizationController(authorizationRequests: [request])
@@ -97,3 +98,91 @@ public struct AppleAuthorizationPayload: Sendable {
         self.identityToken = identityToken
     }
 }
+
+/// Separate provider-only boundary for Apple's credential-state API.  The
+/// handle is never part of FUMINIWA session/binding state or a sync request.
+public protocol AppleCredentialStateHandleVault: Sendable {
+    func load(providerConfigurationID: String) async throws -> String?
+    func save(_ userHandle: String, providerConfigurationID: String) async throws
+    func remove(providerConfigurationID: String) async throws
+}
+
+public actor InMemoryAppleCredentialStateHandleVault: AppleCredentialStateHandleVault {
+    private var values: [String: String] = [:]
+    public init() {}
+    public func load(providerConfigurationID: String) async throws -> String? {
+        values[providerConfigurationID]
+    }
+
+    public func save(_ userHandle: String, providerConfigurationID: String) async throws {
+        values[providerConfigurationID] = userHandle
+    }
+
+    public func remove(providerConfigurationID: String) async throws {
+        values[providerConfigurationID] = nil
+    }
+}
+
+#if canImport(Security)
+import Security
+
+/// Production Apple user-handle storage.  This item is intentionally a
+/// separate Keychain service and is never part of the FUMINIWA token record.
+public actor KeychainAppleCredentialStateHandleVault: AppleCredentialStateHandleVault {
+    private let service: String
+
+    public init(service: String = "jp.fuminiwa.apple-credential-state") {
+        self.service = service
+    }
+
+    public func load(providerConfigurationID: String) async throws -> String? {
+        var query = baseQuery(providerConfigurationID: providerConfigurationID)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+            throw AppleCredentialStateVaultError.status(status)
+        }
+        return value
+    }
+
+    public func save(_ userHandle: String, providerConfigurationID: String) async throws {
+        guard !userHandle.isEmpty, let data = userHandle.data(using: .utf8) else {
+            throw AppleCredentialStateVaultError.invalidHandle
+        }
+        let query = baseQuery(providerConfigurationID: providerConfigurationID)
+        let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else { throw AppleCredentialStateVaultError.status(updateStatus) }
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        guard addStatus == errSecSuccess else { throw AppleCredentialStateVaultError.status(addStatus) }
+    }
+
+    public func remove(providerConfigurationID: String) async throws {
+        let status = SecItemDelete(baseQuery(providerConfigurationID: providerConfigurationID) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw AppleCredentialStateVaultError.status(status) }
+    }
+
+    private func baseQuery(providerConfigurationID: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: providerConfigurationID
+        ]
+    }
+}
+
+public enum AppleCredentialStateVaultError: Error, Equatable, Sendable {
+    case status(OSStatus)
+    case invalidHandle
+}
+#endif
