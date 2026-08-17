@@ -15,6 +15,7 @@ struct RestorePreparedMaterial {
     let intentID: UUID
     let restoreID: UUID
     let nextGeneration: Int64
+    let expectedRemoteHead: V2RemoteHead?
 }
 
 extension LocalSyncV2Store {
@@ -69,6 +70,7 @@ extension LocalSyncV2Store {
                 newDocumentID: request.newDocumentID,
                 newRootSnapshotID: prepared.clone.snapshotId,
                 sourceGeneration: request.sourceGeneration,
+                expectedOriginalHead: prepared.originalHead,
                 state: "prepared"
             )
         }
@@ -115,6 +117,10 @@ extension LocalSyncV2Store {
                   latest[3].blob == prepared.currentBytes else {
                 throw SyncV2StoreError.staleCAS
             }
+            guard try acknowledgedHead(workID: request.workID) ==
+                prepared.expectedRemoteHead else {
+                throw SyncV2StoreError.staleCAS
+            }
             try insertEncoded(prepared.result, workID: request.workID)
             try insertHistory(
                 workID: request.workID,
@@ -147,7 +153,8 @@ extension LocalSyncV2Store {
                     generation: prepared.nextGeneration,
                     intentID: prepared.intentID,
                     noChanges: false
-                )
+                ),
+                expectedRemoteHead: prepared.expectedRemoteHead
             )
         }
     }
@@ -197,8 +204,10 @@ extension LocalSyncV2Store {
               restore_id,work_id,account_id,selected_snapshot_id,
               pre_restore_snapshot_id,result_snapshot_id,intent_id,
               selected_remote_equivalent_snapshot_id,
-              selected_remote_equivalent_generation,state
-            ) VALUES(?,?,?,?,?,?,?,?,?, 'prepared')
+              selected_remote_equivalent_generation,
+              expected_remote_head_snapshot_id,
+              expected_remote_head_generation,state
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?, 'prepared')
             """,
             [
                 .text(prepared.restoreID.uuidString.lowercased()),
@@ -207,7 +216,11 @@ extension LocalSyncV2Store {
                 .blob(prepared.result.snapshotIDBytes),
                 .text(prepared.intentID.uuidString.lowercased()),
                 equivalent?[0].blob.map(SQLiteValue.blob) ?? .null,
-                equivalent?[1].int64.map(SQLiteValue.int) ?? .null
+                equivalent?[1].int64.map(SQLiteValue.int) ?? .null,
+                prepared.expectedRemoteHead.map {
+                    .blob($0.snapshotID.bytes)
+                } ?? .null,
+                prepared.expectedRemoteHead.map { .int($0.generation) } ?? .null
             ]
         )
     }

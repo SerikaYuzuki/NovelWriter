@@ -168,17 +168,18 @@ public extension LocalSyncV2Store {
             ),
             parents: parents
         )
-        if let current = parents.first {
-            let previous = try loadEncoded(workID: request.workID, snapshotID: current)
-            if previous.manifest.entries == encoded.manifest.entries,
-               previous.objects == encoded.objects {
-                return try V2CheckpointResult(
-                    snapshotID: current,
-                    generation: request.expectedGeneration,
-                    intentID: latestPendingIntentID(workID: request.workID, scope: scope),
-                    noChanges: true
-                )
-            }
+        if let current = parents.first,
+           try checkpointContentMatches(
+               workID: request.workID,
+               current: current,
+               candidate: encoded
+           ) {
+            return try commitNoChangeCheckpoint(
+                request,
+                scope: scope,
+                current: current,
+                anchor: anchor
+            )
         }
 
         return try inTransaction {
@@ -216,7 +217,7 @@ public extension LocalSyncV2Store {
                 workID: request.workID,
                 snapshotID: encoded.snapshotId,
                 reason: request.reason.rawValue,
-                pinned: false,
+                pinned: request.reason.protectsOccurrence,
                 generation: next
             )
             let lane = V2SyncLane(rawValue: current[6].text ?? "")
@@ -387,6 +388,28 @@ public extension LocalSyncV2Store {
                   AND state IN ('staged','verified')
                 """,
                 [.text(disposition), .text(workID.description)] + old.values
+            )
+            try exec(
+                """
+                UPDATE conflicts SET state=?
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=? AND state='active'
+                """,
+                [.text(disposition), .text(workID.description)] + old.values
+            )
+            try exec(
+                """
+                UPDATE pending_keep_both SET state=?
+                WHERE source_work_id=? AND conflict_id IN (
+                  SELECT conflict_id FROM conflicts
+                  WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                    AND account_id=? AND account_fence=? AND state=?
+                ) AND state IN ('prepared','sealed')
+                """,
+                [
+                    .text(disposition), .text(workID.description),
+                    .text(workID.description)
+                ] + old.values + [.text(disposition)]
             )
             if disposition == "quarantined" {
                 try insertBinding(workID: workID, binding: new)

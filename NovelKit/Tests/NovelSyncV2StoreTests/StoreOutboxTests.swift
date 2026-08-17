@@ -116,13 +116,25 @@ func transferAcknowledgementNeverClearsCheckpointIntent() async throws {
         checkpoint: checkpoint
     )
     try await store.seal(command, scope: scopeA)
-    let acknowledgement = V2CommandAcknowledgement(
+    do {
+        try await store.acknowledge(
+            commandAcknowledgement(command, status: 200),
+            scope: scopeA
+        )
+        Issue.record("createWork accepted a non-contract success status")
+    } catch SyncV2StoreError.invalidAcknowledgement {}
+    do {
+        try await store.acknowledge(
+            commandAcknowledgement(command, status: 201, result: .noChanges),
+            scope: scopeA
+        )
+        Issue.record("createWork accepted a non-contract terminal result")
+    } catch SyncV2StoreError.invalidAcknowledgement {}
+    #expect(try await store.receiptReadback(
         commandID: command.commandId,
-        responseStatus: 200,
-        canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-        result: .applied,
-        predicates: verifiedPredicates
-    )
+        scope: scopeA
+    ) == nil)
+    let acknowledgement = try commandAcknowledgement(command, status: 201)
     try await store.acknowledge(acknowledgement, scope: scopeA)
     try await store.acknowledge(acknowledgement, scope: scopeA)
     #expect(try await store.pendingIntents(scope: scopeA).count == 1)
@@ -135,7 +147,7 @@ func transferAcknowledgementNeverClearsCheckpointIntent() async throws {
 }
 
 @Test
-func parkedAcknowledgementReplaysFromItsExactReceipt() async throws {
+func parkedAcknowledgementCannotCompleteAReceipt() async throws {
     let root = temporaryStoreRoot("parked-ack")
     defer { try? FileManager.default.removeItem(at: root) }
     let workID = WorkID(UUID())
@@ -156,20 +168,20 @@ func parkedAcknowledgementReplaysFromItsExactReceipt() async throws {
         checkpoint: checkpoint
     )
     try await store.seal(command, scope: scopeA)
-    let acknowledgement = V2CommandAcknowledgement(
-        commandID: command.commandId,
-        responseStatus: 409,
-        canonicalResponse: Data("{\"result\":\"parked\"}".utf8),
-        result: .parked,
-        predicates: verifiedPredicates
+    let acknowledgement = try commandAcknowledgement(
+        command,
+        status: 409,
+        result: .parked
     )
-    try await store.acknowledge(acknowledgement, scope: scopeA)
-    try await store.acknowledge(acknowledgement, scope: scopeA)
-    let receipt = try await store.receiptReadback(
+    do {
+        try await store.acknowledge(acknowledgement, scope: scopeA)
+        Issue.record("local parked result completed a remote receipt")
+    } catch SyncV2StoreError.invalidAcknowledgement {}
+    #expect(try await store.receiptReadback(
         commandID: command.commandId,
         scope: scopeA
-    )
-    #expect(receipt?.result == .parked)
+    ) == nil)
+    #expect(try await store.pendingSealedCommands(scope: scopeA).count == 1)
     #expect(try await store.pendingIntents(scope: scopeA).count == 1)
 }
 
@@ -195,18 +207,16 @@ func incompleteReadbackCannotCompleteAndRemoteHeadIsMonotonic() async throws {
         store: store,
         command: firstCommand
     )
-    let incomplete = try V2CommandAcknowledgement(
-        commandID: firstCommand.commandId,
-        responseStatus: 200,
-        canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-        result: .applied,
+    let incomplete = try commandAcknowledgement(
+        firstCommand,
+        head: V2RemoteHead(snapshotID: first.snapshotID, generation: 7),
         predicates: V2ReadBackPredicates(
-            commandMatched: true,
-            digestMatched: true,
+            accountMatched: true,
+            commandDigestMatched: true,
             resourceMatched: true,
-            headMatched: false
-        ),
-        remoteHead: V2RemoteHead(snapshotID: first.snapshotID, generation: 7)
+            headMatched: false,
+            stateMatched: true
+        )
     )
     do {
         try await store.acknowledge(incomplete, scope: scopeA)
@@ -217,13 +227,9 @@ func incompleteReadbackCannotCompleteAndRemoteHeadIsMonotonic() async throws {
         scope: scopeA
     ) == nil)
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: firstCommand.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: V2RemoteHead(snapshotID: first.snapshotID, generation: 7)
+        commandAcknowledgement(
+            firstCommand,
+            head: V2RemoteHead(snapshotID: first.snapshotID, generation: 7)
         ),
         scope: scopeA
     )
@@ -247,13 +253,9 @@ func incompleteReadbackCannotCompleteAndRemoteHeadIsMonotonic() async throws {
     try await store.seal(secondCommand, intentID: second.intentID, scope: scopeA)
     do {
         try await store.acknowledge(
-            V2CommandAcknowledgement(
-                commandID: secondCommand.commandId,
-                responseStatus: 200,
-                canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-                result: .applied,
-                predicates: verifiedPredicates,
-                remoteHead: V2RemoteHead(
+            commandAcknowledgement(
+                secondCommand,
+                head: V2RemoteHead(
                     snapshotID: second.snapshotID,
                     generation: 7
                 )
@@ -277,14 +279,7 @@ private func assertMismatchedPublishHeadRejected(
     )
     do {
         try await store.acknowledge(
-            V2CommandAcknowledgement(
-                commandID: command.commandId,
-                responseStatus: 200,
-                canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-                result: .applied,
-                predicates: verifiedPredicates,
-                remoteHead: wrongHead
-            ),
+            commandAcknowledgement(command, head: wrongHead),
             scope: scopeA
         )
         Issue.record("publish receipt accepted a different remote snapshot")
@@ -320,13 +315,9 @@ func oldAcknowledgementPreservesNewerEditAndIntent() async throws {
         scope: scopeA
     )
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: command.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: V2RemoteHead(snapshotID: first.snapshotID, generation: 1)
+        commandAcknowledgement(
+            command,
+            head: V2RemoteHead(snapshotID: first.snapshotID, generation: 1)
         ),
         scope: scopeA
     )

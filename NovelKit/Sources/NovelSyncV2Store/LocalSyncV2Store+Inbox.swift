@@ -177,7 +177,9 @@ extension LocalSyncV2Store {
     func validateGraph(_ graph: V2RemoteSnapshotGraph) throws -> GraphAnchor {
         guard !graph.snapshots.isEmpty,
               graph.snapshots.map(\.snapshotId).contains(graph.headSnapshotID),
-              Set(graph.snapshots.map(\.snapshotId)).count == graph.snapshots.count else {
+              Set(graph.snapshots.map(\.snapshotId)).count == graph.snapshots.count,
+              let expectedRemoteHead = graph.expectedRemoteHead,
+              expectedRemoteHead.snapshotID == graph.headSnapshotID else {
             throw SyncV2StoreError.invalidSnapshot
         }
         var anchor: GraphAnchor?

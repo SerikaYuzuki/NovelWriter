@@ -166,12 +166,13 @@ CREATE TABLE remote_receipts (
   response_status INTEGER NOT NULL CHECK (response_status BETWEEN 100 AND 599),
   canonical_response BLOB NOT NULL CHECK (length(canonical_response) <= 33554432),
   terminal_result TEXT NOT NULL CHECK (terminal_result IN (
-    'applied', 'noChanges', 'conflictPending', 'parked'
+    'applied', 'noChanges', 'conflictPending'
   )),
-  command_matched INTEGER NOT NULL CHECK (command_matched IN (0, 1)),
-  digest_matched INTEGER NOT NULL CHECK (digest_matched IN (0, 1)),
+  account_matched INTEGER NOT NULL CHECK (account_matched IN (0, 1)),
+  command_digest_matched INTEGER NOT NULL CHECK (command_digest_matched IN (0, 1)),
   resource_matched INTEGER NOT NULL CHECK (resource_matched IN (0, 1)),
   head_matched INTEGER NOT NULL CHECK (head_matched IN (0, 1)),
+  state_matched INTEGER NOT NULL CHECK (state_matched IN (0, 1)),
   remote_head_snapshot_id BLOB,
   remote_head_generation INTEGER CHECK (
     remote_head_generation IS NULL OR remote_head_generation > 0
@@ -185,8 +186,8 @@ CREATE TABLE remote_receipts (
   FOREIGN KEY (account_id, work_id, command_id)
     REFERENCES sealed_commands(account_id, work_id, command_id),
   CHECK (
-    command_matched = 1 AND digest_matched = 1 AND
-    resource_matched = 1 AND head_matched = 1
+    account_matched = 1 AND command_digest_matched = 1 AND
+    resource_matched = 1 AND head_matched = 1 AND state_matched = 1
   ),
   CHECK ((remote_head_snapshot_id IS NULL) = (remote_head_generation IS NULL)),
   CHECK ((clone_head_snapshot_id IS NULL) = (clone_head_generation IS NULL))
@@ -259,10 +260,21 @@ CREATE TABLE inbox_closure (
 CREATE TABLE conflicts (
   conflict_id TEXT PRIMARY KEY,
   work_id TEXT NOT NULL REFERENCES works(work_id),
+  server_instance_id TEXT NOT NULL,
+  protocol_epoch INTEGER NOT NULL CHECK (protocol_epoch > 0),
+  account_id TEXT NOT NULL,
+  account_fence TEXT NOT NULL,
   current_revision INTEGER NOT NULL CHECK (current_revision > 0),
   source_generation INTEGER NOT NULL CHECK (source_generation > 0),
-  state TEXT NOT NULL CHECK (state IN ('active', 'resolved')),
+  state TEXT NOT NULL CHECK (
+    state IN ('active', 'resolved', 'quarantined', 'parked')
+  ),
   UNIQUE (work_id, conflict_id),
+  FOREIGN KEY (
+    work_id, server_instance_id, protocol_epoch, account_id, account_fence
+  ) REFERENCES account_bindings(
+    work_id, server_instance_id, protocol_epoch, account_id, account_fence
+  ),
   FOREIGN KEY (conflict_id, current_revision, source_generation)
     REFERENCES conflict_candidates(conflict_id, revision, source_generation)
     DEFERRABLE INITIALLY DEFERRED
@@ -287,6 +299,15 @@ CREATE TABLE conflict_candidates (
   FOREIGN KEY (work_id, remote_snapshot_id, remote_inbox_id)
     REFERENCES inbox_batches(work_id, snapshot_id, inbox_id)
 );
+CREATE UNIQUE INDEX conflict_candidate_identity_with_base
+  ON conflict_candidates(
+    conflict_id,base_snapshot_id,local_snapshot_id,remote_snapshot_id,
+    source_generation
+  ) WHERE base_snapshot_id IS NOT NULL;
+CREATE UNIQUE INDEX conflict_candidate_identity_without_base
+  ON conflict_candidates(
+    conflict_id,local_snapshot_id,remote_snapshot_id,source_generation
+  ) WHERE base_snapshot_id IS NULL;
 -- conflict_candidates are append-only. The local repository may update only
 -- conflicts.current_revision/state and must reject UPDATE/DELETE of an older
 -- candidate in its conformance tests.
@@ -304,6 +325,11 @@ CREATE TABLE restore_records (
     selected_remote_equivalent_generation IS NULL OR
     selected_remote_equivalent_generation > 0
   ),
+  expected_remote_head_snapshot_id BLOB,
+  expected_remote_head_generation INTEGER CHECK (
+    expected_remote_head_generation IS NULL OR
+    expected_remote_head_generation BETWEEN 1 AND 9007199254740991
+  ),
   state TEXT NOT NULL CHECK (state IN ('prepared', 'sealed', 'finalized')),
   FOREIGN KEY (work_id, selected_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (work_id, pre_restore_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
@@ -314,6 +340,10 @@ CREATE TABLE restore_records (
   CHECK (
     (selected_remote_equivalent_snapshot_id IS NULL) =
     (selected_remote_equivalent_generation IS NULL)
+  ),
+  CHECK (
+    (expected_remote_head_snapshot_id IS NULL) =
+    (expected_remote_head_generation IS NULL)
   ),
   CHECK (
     (state = 'prepared' AND command_id IS NULL) OR
@@ -344,7 +374,9 @@ CREATE TABLE pending_keep_both (
   expected_original_head_generation INTEGER NOT NULL
     CHECK (expected_original_head_generation > 0),
   command_id TEXT UNIQUE,
-  state TEXT NOT NULL CHECK (state IN ('prepared', 'sealed', 'finalized')),
+  state TEXT NOT NULL CHECK (
+    state IN ('prepared', 'sealed', 'finalized', 'quarantined', 'parked')
+  ),
   created_at TEXT NOT NULL,
   FOREIGN KEY (source_work_id, conflict_id)
     REFERENCES conflicts(work_id, conflict_id),
@@ -353,9 +385,11 @@ CREATE TABLE pending_keep_both (
   FOREIGN KEY (new_work_id, new_root_snapshot_id)
     REFERENCES snapshots(work_id, snapshot_id),
   FOREIGN KEY (command_id) REFERENCES sealed_commands(command_id),
+  UNIQUE (source_work_id, conflict_id),
   CHECK (
     (state = 'prepared' AND command_id IS NULL) OR
-    (state IN ('sealed', 'finalized') AND command_id IS NOT NULL)
+    (state IN ('sealed', 'finalized') AND command_id IS NOT NULL) OR
+    state IN ('quarantined', 'parked')
   )
 );
 CREATE TABLE binding_transitions (

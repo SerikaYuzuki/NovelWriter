@@ -161,6 +161,32 @@ func inboxVerificationRejectsBatchManifestThatDiffersFromHeadBytes() async throw
 }
 
 @Test
+func inboxRejectsRemoteHeadThatDoesNotNameGraphHead() async throws {
+    let root = temporaryStoreRoot("inbox-head-binding")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let encoded = try encodeSnapshot(
+        workID: workID,
+        document: makeDocument(title: "remote")
+    )
+    let otherSnapshot = try SnapshotID(rawValue: String(repeating: "b", count: 64))
+    let graph = try V2RemoteSnapshotGraph(
+        workID: workID,
+        headSnapshotID: encoded.snapshotId,
+        snapshots: [encoded],
+        expectedCurrentSnapshotID: nil,
+        expectedLocalGeneration: 0,
+        expectedRemoteHead: V2RemoteHead(snapshotID: otherSnapshot, generation: 1)
+    )
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    do {
+        try await store.stageRemoteGraph(graph, scope: scopeA)
+        Issue.record("graph head and remote head were not bound")
+    } catch SyncV2StoreError.invalidSnapshot {}
+    #expect(try await store.listWorks(scope: scopeA).isEmpty)
+}
+
+@Test
 func conflictRedeliveryIsIdempotentAcrossInboxIDs() async throws {
     let root = temporaryStoreRoot("conflict-dedupe")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -235,14 +261,7 @@ func useServerReceiptPinsLocalInstallsRemoteAndCreatesNoIntent() async throws {
     )
     try await store.seal(command, scope: scopeA)
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: command.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: fixture.remoteHead
-        ),
+        commandAcknowledgement(command, head: fixture.remoteHead),
         scope: scopeA
     )
     let opened = try await store.open(workID: workID, scope: scopeA)
@@ -280,14 +299,7 @@ func useServerReceiptAdvancesBaselineWithoutOverwritingNewerEdit() async throws 
     )
 
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: command.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: fixture.remoteHead
-        ),
+        commandAcknowledgement(command, head: fixture.remoteHead),
         scope: scopeA
     )
 
@@ -357,13 +369,9 @@ func useDeviceReceiptDoesNotLoseEditsTypedAfterResolutionStarted() async throws 
         scope: scopeA
     )
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: command.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: V2RemoteHead(
+        commandAcknowledgement(
+            command,
+            head: V2RemoteHead(
                 snapshotID: decision.snapshotID,
                 generation: fixture.remoteHead.generation + 1
             )

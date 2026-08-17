@@ -83,13 +83,9 @@ func restorePinsCurrentUsesTwoParentsAndAckPreservesNewerEdit() async throws {
         scope: scopeA
     )
     try await store.acknowledge(
-        V2CommandAcknowledgement(
-            commandID: command.commandId,
-            responseStatus: 200,
-            canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-            result: .applied,
-            predicates: verifiedPredicates,
-            remoteHead: V2RemoteHead(
+        commandAcknowledgement(
+            command,
+            head: V2RemoteHead(
                 snapshotID: restored.checkpoint.snapshotID,
                 generation: 5
             )
@@ -193,7 +189,6 @@ private func verifyKeepBothAfterRestart(
     let root = context.root
     let sourceWorkID = context.sourceWorkID
     let newWorkID = context.newWorkID
-    let fixture = context.fixture
     let reservation = context.reservation
     let command = context.command
     let cloneCheckpoint = context.cloneCheckpoint
@@ -212,14 +207,9 @@ private func verifyKeepBothAfterRestart(
 
     do {
         try await reopened.acknowledge(
-            V2CommandAcknowledgement(
-                commandID: command.commandId,
-                responseStatus: 200,
-                canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-                result: .applied,
-                predicates: verifiedPredicates,
-                remoteHead: fixture.remoteHead,
-                cloneRemoteHead: V2RemoteHead(
+            commandAcknowledgement(
+                command,
+                head: V2RemoteHead(
                     snapshotID: cloneCheckpoint.snapshotID,
                     generation: 1
                 )
@@ -227,21 +217,16 @@ private func verifyKeepBothAfterRestart(
             scope: scopeA
         )
         Issue.record("stale clone head finalized reservation")
-    } catch SyncV2StoreError.staleConflictAction {}
+    } catch SyncV2StoreError.invalidAcknowledgement {}
     #expect(try await reopened.keepBothReservation(
         sourceWorkID: sourceWorkID,
         newWorkID: newWorkID,
         scope: scopeA
     )?.state == "sealed")
 
-    let acknowledgement = try V2CommandAcknowledgement(
-        commandID: command.commandId,
-        responseStatus: 200,
-        canonicalResponse: Data("{\"result\":\"applied\"}".utf8),
-        result: .applied,
-        predicates: verifiedPredicates,
-        remoteHead: fixture.remoteHead,
-        cloneRemoteHead: V2RemoteHead(
+    let acknowledgement = try commandAcknowledgement(
+        command,
+        head: V2RemoteHead(
             snapshotID: reservation.newRootSnapshotID,
             generation: 1
         )

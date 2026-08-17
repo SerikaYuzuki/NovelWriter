@@ -79,6 +79,17 @@ public enum V2CheckpointReason: String, Codable, Sendable {
     case keepBoth
 }
 
+extension V2CheckpointReason {
+    var protectsOccurrence: Bool {
+        switch self {
+        case .explicit, .navigation, .close, .migration:
+            true
+        case .autosave, .restore, .conflictResolution, .keepBoth:
+            false
+        }
+    }
+}
+
 public struct V2OpenResult: Sendable {
     public let summary: V2WorkSummary
     public let document: NovelDocument?
@@ -133,11 +144,13 @@ public struct V2HistoryOccurrence: Hashable, Sendable {
 }
 
 public struct V2RemoteHead: Hashable, Sendable {
+    public static let maximumGeneration: Int64 = 9_007_199_254_740_991
+
     public let snapshotID: SnapshotID
     public let generation: Int64
 
     public init(snapshotID: SnapshotID, generation: Int64) throws {
-        guard generation > 0 else {
+        guard generation > 0, generation <= Self.maximumGeneration else {
             throw SyncV2StoreError.invalidRemoteHead
         }
         self.snapshotID = snapshotID
@@ -320,6 +333,7 @@ public struct V2KeepBothReservation: Hashable, Sendable {
     public let newDocumentID: DocumentID
     public let newRootSnapshotID: SnapshotID
     public let sourceGeneration: Int64
+    public let expectedOriginalHead: V2RemoteHead
     public let state: String
 }
 
@@ -342,6 +356,7 @@ public struct V2RestorePreparationRequest: Sendable {
 public struct V2RestorePreparationResult: Sendable {
     public let restoreID: UUID?
     public let checkpoint: V2CheckpointResult
+    public let expectedRemoteHead: V2RemoteHead?
 }
 
 public enum V2SealedCommandLifecycle: String, Hashable, Sendable {
@@ -375,53 +390,42 @@ public enum V2CommandTerminalResult: String, Hashable, Sendable {
 }
 
 public struct V2ReadBackPredicates: Hashable, Sendable {
-    public let commandMatched: Bool
-    public let digestMatched: Bool
+    public let accountMatched: Bool
+    public let commandDigestMatched: Bool
     public let resourceMatched: Bool
     public let headMatched: Bool
+    public let stateMatched: Bool
 
     public init(
-        commandMatched: Bool,
-        digestMatched: Bool,
+        accountMatched: Bool,
+        commandDigestMatched: Bool,
         resourceMatched: Bool,
-        headMatched: Bool
+        headMatched: Bool,
+        stateMatched: Bool
     ) {
-        self.commandMatched = commandMatched
-        self.digestMatched = digestMatched
+        self.accountMatched = accountMatched
+        self.commandDigestMatched = commandDigestMatched
         self.resourceMatched = resourceMatched
         self.headMatched = headMatched
+        self.stateMatched = stateMatched
     }
 
     public var allVerified: Bool {
-        commandMatched && digestMatched && resourceMatched && headMatched
+        accountMatched && commandDigestMatched && resourceMatched &&
+            headMatched && stateMatched
     }
 }
 
 public struct V2CommandAcknowledgement: Sendable {
     public let commandID: UUID
-    public let responseStatus: Int
-    public let canonicalResponse: Data
-    public let result: V2CommandTerminalResult
-    public let predicates: V2ReadBackPredicates
-    public let remoteHead: V2RemoteHead?
-    public let cloneRemoteHead: V2RemoteHead?
+    public let canonicalReceiptEnvelope: Data
 
     public init(
         commandID: UUID,
-        responseStatus: Int,
-        canonicalResponse: Data,
-        result: V2CommandTerminalResult,
-        predicates: V2ReadBackPredicates,
-        remoteHead: V2RemoteHead? = nil,
-        cloneRemoteHead: V2RemoteHead? = nil
+        canonicalReceiptEnvelope: Data
     ) {
         self.commandID = commandID
-        self.responseStatus = responseStatus
-        self.canonicalResponse = canonicalResponse
-        self.result = result
-        self.predicates = predicates
-        self.remoteHead = remoteHead
-        self.cloneRemoteHead = cloneRemoteHead
+        self.canonicalReceiptEnvelope = canonicalReceiptEnvelope
     }
 }
 

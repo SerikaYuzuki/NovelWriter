@@ -138,7 +138,8 @@ public extension LocalSyncV2Store {
         guard let row = try query(
             """
             SELECT terminal_result,response_status,canonical_response,
-                   command_matched,digest_matched,resource_matched,head_matched,
+                   account_matched,command_digest_matched,resource_matched,
+                   head_matched,state_matched,
                    remote_head_snapshot_id,remote_head_generation,
                    clone_head_snapshot_id,clone_head_generation
             FROM remote_receipts
@@ -163,39 +164,32 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
-        try CanonicalJSON.validate(acknowledgement.canonicalResponse)
         guard let record = try sealedRecord(
             commandID: acknowledgement.commandID,
             binding: binding
         ) else { throw SyncV2StoreError.invalidCommand }
+        let decoded = try decodeAcknowledgement(
+            acknowledgement,
+            record: record
+        )
 
         if let existing = try receiptReadback(
             commandID: acknowledgement.commandID,
             scope: scope
         ) {
-            try validateDuplicateReceipt(existing, acknowledgement: acknowledgement)
+            try validateDuplicateReceipt(existing, acknowledgement: decoded)
             return
         }
         guard [.sealed, .sending, .conflictPending].contains(record.lifecycle) else {
             throw SyncV2StoreError.invalidLifecycle
         }
 
-        if acknowledgement.result == .retryable {
-            try requeueRetryableAcknowledgement(
-                acknowledgement,
-                record: record,
-                binding: binding
-            )
-            return
-        }
-        guard acknowledgement.responseStatus >= 100,
-              acknowledgement.responseStatus <= 599,
-              acknowledgement.predicates.allVerified else {
+        guard decoded.predicates.allVerified else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         try inTransaction {
             try persistTerminalAcknowledgement(
-                acknowledgement,
+                decoded,
                 record: record,
                 binding: binding
             )

@@ -42,6 +42,74 @@ func checkpointIsAtomicReopensAndNoOpSucceeds() async throws {
 }
 
 @Test
+func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
+    let root = temporaryStoreRoot("checkpoint-no-op-occurrence")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let document = makeDocument(title: "no-op")
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let first = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    let autosave = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: first.generation
+        ),
+        scope: scopeA
+    )
+    #expect(autosave.noChanges)
+    #expect(try await store.historyCount(workID: workID, scope: scopeA) == 1)
+
+    let explicit = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: first.generation,
+            reason: .explicit
+        ),
+        scope: scopeA
+    )
+    #expect(explicit.noChanges)
+    #expect(explicit.snapshotID == first.snapshotID)
+    #expect(explicit.generation == first.generation)
+    #expect(explicit.intentID == first.intentID)
+    let history = try await store.history(workID: workID, scope: scopeA)
+    #expect(history.count == 2)
+    #expect(history.last?.snapshotID == first.snapshotID)
+    #expect(history.last?.localGeneration == first.generation)
+    #expect(history.last?.reason == V2CheckpointReason.explicit.rawValue)
+    #expect(history.last?.pinned == true)
+    #expect(try await store.pendingIntents(scope: scopeA).map(\.intentID) == [
+        first.intentID
+    ])
+
+    do {
+        _ = try await store.checkpoint(
+            V2CheckpointRequest(
+                workID: workID,
+                document: document,
+                documentCreatedAt: testDate,
+                expectedGeneration: 0,
+                reason: .explicit
+            ),
+            scope: scopeA
+        )
+        Issue.record("stale no-op checkpoint added an occurrence")
+    } catch SyncV2StoreError.generationMismatch {}
+    #expect(try await store.historyCount(workID: workID, scope: scopeA) == 2)
+}
+
+@Test
 func failedCheckpointLeavesHeadAndIntentUnchanged() async throws {
     let root = temporaryStoreRoot("atomic-failure")
     defer { try? FileManager.default.removeItem(at: root) }

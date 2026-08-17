@@ -2,6 +2,15 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 
+struct ConflictAppendMaterial {
+    let workID: WorkID
+    let baseSnapshotID: SnapshotID?
+    let localSnapshotID: SnapshotID
+    let remote: V2RemoteSnapshot
+    let sourceGeneration: Int64
+    let binding: V2AccountBinding
+}
+
 public extension LocalSyncV2Store {
     func appendConflict(
         workID: WorkID,
@@ -22,74 +31,16 @@ public extension LocalSyncV2Store {
         }
         try stageRemote(remote, scope: scope)
         try verifyInbox(inboxID: remote.inboxID, scope: scope)
-        if let active = try activeConflict(workID: workID, scope: scope),
-           active.baseSnapshotID == baseSnapshotID,
-           active.localSnapshotID == localSnapshotID,
-           active.remoteSnapshotID == remote.encoded.snapshotId,
-           active.sourceGeneration == sourceGeneration {
-            return active
-        }
-
+        let material = ConflictAppendMaterial(
+            workID: workID,
+            baseSnapshotID: baseSnapshotID,
+            localSnapshotID: localSnapshotID,
+            remote: remote,
+            sourceGeneration: sourceGeneration,
+            binding: binding
+        )
         return try inTransaction {
-            let activeRow = try activeConflictRow(workID: workID, binding: binding)
-            let conflictID = activeRow?[0].text.flatMap(UUID.init(uuidString:)) ?? UUID()
-            let revision = (activeRow?[1].int64 ?? 0) + 1
-            if activeRow == nil {
-                try exec(
-                    """
-                    INSERT INTO conflicts(
-                      conflict_id,work_id,current_revision,source_generation,state
-                    ) VALUES(?,?,?,?, 'active')
-                    """,
-                    [
-                        .text(conflictID.uuidString.lowercased()),
-                        .text(workID.description), .int(revision),
-                        .int(sourceGeneration)
-                    ]
-                )
-            } else {
-                try exec(
-                    """
-                    UPDATE conflicts SET current_revision=?,source_generation=?
-                    WHERE conflict_id=? AND work_id=? AND state='active'
-                    """,
-                    [
-                        .int(revision), .int(sourceGeneration),
-                        .text(conflictID.uuidString.lowercased()),
-                        .text(workID.description)
-                    ]
-                )
-                guard try changes() == 1 else {
-                    throw SyncV2StoreError.staleConflictAction
-                }
-            }
-            try exec(
-                """
-                INSERT INTO conflict_candidates(
-                  conflict_id,work_id,revision,base_snapshot_id,
-                  local_snapshot_id,remote_snapshot_id,remote_inbox_id,
-                  source_generation,pinned
-                ) VALUES(?,?,?,?,?,?,?,?,0)
-                """,
-                [
-                    .text(conflictID.uuidString.lowercased()),
-                    .text(workID.description), .int(revision),
-                    baseSnapshotID.map { .blob($0.bytes) } ?? .null,
-                    .blob(localSnapshotID.bytes),
-                    .blob(remote.encoded.snapshotIDBytes),
-                    .text(remote.inboxID.uuidString.lowercased()),
-                    .int(sourceGeneration)
-                ]
-            )
-            return V2ConflictCandidate(
-                conflictID: conflictID,
-                revision: revision,
-                workID: workID,
-                baseSnapshotID: baseSnapshotID,
-                localSnapshotID: localSnapshotID,
-                remoteSnapshotID: remote.encoded.snapshotId,
-                sourceGeneration: sourceGeneration
-            )
+            try commitConflictDelivery(material, scope: scope)
         }
     }
 
@@ -127,12 +78,24 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
-        try validateDeviceRequest(request, binding: binding)
+        _ = try requireConflict(
+            workID: request.workID,
+            conflictID: request.conflictID,
+            revision: request.revision,
+            generation: request.sourceGeneration,
+            local: request.localSnapshotID,
+            remote: request.remoteSnapshotID,
+            scope: scope
+        )
         let graph = try loadInboxGraph(inboxID: request.inboxID, binding: binding)
         guard graph.headSnapshotID == request.remoteSnapshotID,
               graph.expectedRemoteHead == request.remoteHead,
               request.remoteHead.snapshotID == request.remoteSnapshotID,
               try inboxState(inboxID: request.inboxID, binding: binding) == "verified" else { throw SyncV2StoreError.staleConflictAction }
+        if let prepared = try preparedDeviceResolution(request, scope: scope) {
+            return prepared
+        }
+        try validateDeviceRequest(request, binding: binding)
         let local = try loadEncoded(
             workID: request.workID,
             snapshotID: request.localSnapshotID
@@ -206,6 +169,15 @@ public extension LocalSyncV2Store {
             remote: request.remoteSnapshotID,
             scope: scope
         )
+        if let existing = try loadKeepBothReservation(
+            sourceWorkID: request.workID,
+            conflictID: request.conflictID
+        ) {
+            guard existing.sourceGeneration == request.sourceGeneration else {
+                throw SyncV2StoreError.staleConflictAction
+            }
+            return existing
+        }
         if let existing = try loadKeepBothReservation(
             sourceWorkID: request.workID,
             newWorkID: request.newWorkID
@@ -282,7 +254,8 @@ public extension LocalSyncV2Store {
         guard let row = try query(
             """
             SELECT reservation_id,new_document_id,new_root_snapshot_id,
-                   source_generation,state
+                   source_generation,expected_original_head_snapshot_id,
+                   expected_original_head_generation,state
             FROM pending_keep_both
             WHERE source_work_id=? AND new_work_id=?
             """,
@@ -292,7 +265,8 @@ public extension LocalSyncV2Store {
             let document = row[1].text,
             let root = row[2].blob,
             let generation = row[3].int64,
-            let state = row[4].text else { return nil }
+            let expected = try Self.head(snapshot: row[4].blob, generation: row[5].int64),
+            let state = row[6].text else { return nil }
         return try V2KeepBothReservation(
             reservationID: reservation,
             sourceWorkID: sourceWorkID,
@@ -300,7 +274,28 @@ public extension LocalSyncV2Store {
             newDocumentID: DocumentID(uuidString: document),
             newRootSnapshotID: SnapshotID(rawValue: root.hexString),
             sourceGeneration: generation,
+            expectedOriginalHead: expected,
             state: state
+        )
+    }
+
+    internal func loadKeepBothReservation(
+        sourceWorkID: WorkID,
+        conflictID: UUID
+    ) throws -> V2KeepBothReservation? {
+        guard let newWork = try query(
+            """
+            SELECT new_work_id FROM pending_keep_both
+            WHERE source_work_id=? AND conflict_id=?
+            """,
+            [
+                .text(sourceWorkID.description),
+                .text(conflictID.uuidString.lowercased())
+            ]
+        ).first?[0].text else { return nil }
+        return try loadKeepBothReservation(
+            sourceWorkID: sourceWorkID,
+            newWorkID: WorkID(uuidString: newWork)
         )
     }
 
@@ -308,6 +303,9 @@ public extension LocalSyncV2Store {
         _ request: V2RestorePreparationRequest,
         scope: V2LocalWorkScope
     ) throws -> V2RestorePreparationResult {
+        if let prepared = try preparedRestore(request, scope: scope) {
+            return prepared
+        }
         guard let current = try scopedWorkRow(workID: request.workID, scope: scope),
               current[2].int64 == request.expectedLocalGeneration,
               let currentBytes = current[3].blob else {
@@ -325,7 +323,8 @@ public extension LocalSyncV2Store {
                         scope: scope
                     ),
                     noChanges: true
-                )
+                ),
+                expectedRemoteHead: acknowledgedHead(workID: request.workID)
             )
         }
         let selected = try loadEncoded(
@@ -349,7 +348,8 @@ public extension LocalSyncV2Store {
                 result: result,
                 intentID: UUID(),
                 restoreID: UUID(),
-                nextGeneration: request.expectedLocalGeneration + 1
+                nextGeneration: request.expectedLocalGeneration + 1,
+                expectedRemoteHead: acknowledgedHead(workID: request.workID)
             )
         )
     }

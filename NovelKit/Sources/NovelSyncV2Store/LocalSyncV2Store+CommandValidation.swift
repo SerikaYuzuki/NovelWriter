@@ -248,11 +248,6 @@ extension LocalSyncV2Store {
 
     private func validateResolveDevice(_ context: CommandValidationContext) throws {
         let decision = try context.payload.snapshot("decisionSnapshotId")
-        try requireCurrent(
-            context,
-            snapshotID: decision,
-            generation: context.command.sourceGeneration + 1
-        )
         try requireIntent(
             context,
             snapshotID: decision,
@@ -268,6 +263,20 @@ extension LocalSyncV2Store {
             workID: context.workID,
             local: context.command.sourceSnapshotId
         )
+        let binding = try activeBinding(workID: context.workID)
+        guard let active = try activeConflict(
+            workID: context.workID,
+            scope: .bound(binding)
+        ),
+            try snapshotParents(
+                workID: context.workID,
+                snapshotID: decision,
+                scope: .bound(binding)
+            ) == [active.localSnapshotID, active.remoteSnapshotID].sorted(by: {
+                $0.rawValue < $1.rawValue
+            }) else {
+            throw SyncV2StoreError.invalidCommand
+        }
         try validateConflictExpectedHead(context.payload, workID: context.workID)
     }
 
@@ -294,11 +303,6 @@ extension LocalSyncV2Store {
     }
 
     private func validateCloneWork(_ context: CommandValidationContext) throws {
-        try requireCurrent(
-            context,
-            snapshotID: context.command.sourceSnapshotId,
-            generation: context.command.sourceGeneration
-        )
         let newWorkID = try WorkID(uuidString: context.payload.uuid("newWorkId"))
         guard try context.payload.snapshot("localCandidateSnapshotId") ==
             context.command.sourceSnapshotId,
@@ -328,11 +332,6 @@ extension LocalSyncV2Store {
     private func validateRestore(_ context: CommandValidationContext) throws {
         let result = try context.payload.snapshot("newSnapshotId")
         let selected = try context.payload.snapshot("selectedSnapshotId")
-        try requireCurrent(
-            context,
-            snapshotID: result,
-            generation: context.command.sourceGeneration + 1
-        )
         try requireIntent(
             context,
             snapshotID: result,
@@ -343,15 +342,12 @@ extension LocalSyncV2Store {
             context.command.sourceSnapshotId,
             (context.payload["expectedLocalGeneration"] as? NSNumber)?.int64Value ==
             context.command.sourceGeneration,
-            try expectedHeadMatchesWork(
-                payload: context.payload,
-                key: "expectedRemoteHead",
-                workID: context.workID
-            ),
             let intentID = context.intentID,
-            try !query(
+            let restore = try query(
                 """
-                SELECT 1 FROM restore_records
+                SELECT expected_remote_head_snapshot_id,
+                       expected_remote_head_generation
+                FROM restore_records
                 WHERE intent_id=? AND result_snapshot_id=?
                   AND pre_restore_snapshot_id=? AND selected_snapshot_id=?
                   AND state='prepared'
@@ -361,7 +357,13 @@ extension LocalSyncV2Store {
                     .blob(result.bytes), .blob(context.command.sourceSnapshotId.bytes),
                     .blob(selected.bytes)
                 ]
-            ).isEmpty else { throw SyncV2StoreError.invalidCommand }
+            ).first,
+            try Self.head(
+                snapshot: restore[0].blob,
+                generation: restore[1].int64
+            ) == context.payload.remoteHead("expectedRemoteHead") else {
+            throw SyncV2StoreError.invalidCommand
+        }
     }
 
     func validateConflictPayload(_ payload: [String: Any], workID: WorkID) throws {
@@ -515,7 +517,7 @@ extension LocalSyncV2Store {
     }
 
     func insertReceipt(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord,
         binding: V2AccountBinding
     ) throws {
@@ -524,10 +526,11 @@ extension LocalSyncV2Store {
             INSERT INTO remote_receipts(
               account_id,work_id,command_id,command_kind,request_digest,
               response_status,canonical_response,terminal_result,
-              command_matched,digest_matched,resource_matched,head_matched,
+              account_matched,command_digest_matched,resource_matched,
+              head_matched,state_matched,
               remote_head_snapshot_id,remote_head_generation,
               clone_head_snapshot_id,clone_head_generation
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             [
                 .text(binding.accountID), .text(record.workID.description),
@@ -536,10 +539,11 @@ extension LocalSyncV2Store {
                 .int(Int64(acknowledgement.responseStatus)),
                 .blob(acknowledgement.canonicalResponse),
                 .text(acknowledgement.result.rawValue),
-                .int(acknowledgement.predicates.commandMatched ? 1 : 0),
-                .int(acknowledgement.predicates.digestMatched ? 1 : 0),
+                .int(acknowledgement.predicates.accountMatched ? 1 : 0),
+                .int(acknowledgement.predicates.commandDigestMatched ? 1 : 0),
                 .int(acknowledgement.predicates.resourceMatched ? 1 : 0),
                 .int(acknowledgement.predicates.headMatched ? 1 : 0),
+                .int(acknowledgement.predicates.stateMatched ? 1 : 0),
                 acknowledgement.remoteHead.map { .blob($0.snapshotID.bytes) } ?? .null,
                 acknowledgement.remoteHead.map { .int($0.generation) } ?? .null,
                 acknowledgement.cloneRemoteHead.map {
@@ -563,13 +567,14 @@ extension LocalSyncV2Store {
             responseStatus: Int(status),
             canonicalResponse: response,
             predicates: V2ReadBackPredicates(
-                commandMatched: row[3].int64 == 1,
-                digestMatched: row[4].int64 == 1,
+                accountMatched: row[3].int64 == 1,
+                commandDigestMatched: row[4].int64 == 1,
                 resourceMatched: row[5].int64 == 1,
-                headMatched: row[6].int64 == 1
+                headMatched: row[6].int64 == 1,
+                stateMatched: row[7].int64 == 1
             ),
-            remoteHead: head(snapshot: row[7].blob, generation: row[8].int64),
-            cloneRemoteHead: head(snapshot: row[9].blob, generation: row[10].int64)
+            remoteHead: head(snapshot: row[8].blob, generation: row[9].int64),
+            cloneRemoteHead: head(snapshot: row[10].blob, generation: row[11].int64)
         )
     }
 

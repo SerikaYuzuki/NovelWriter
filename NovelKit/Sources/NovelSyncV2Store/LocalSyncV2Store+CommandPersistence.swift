@@ -117,29 +117,9 @@ extension LocalSyncV2Store {
         guard try changes() == 1 else { throw SyncV2StoreError.invalidCommand }
     }
 
-    func requeueRetryableAcknowledgement(
-        _ acknowledgement: V2CommandAcknowledgement,
-        record: V2SealedCommandRecord,
-        binding: V2AccountBinding
-    ) throws {
-        guard record.lifecycle == .sealed || record.lifecycle == .sending else {
-            throw SyncV2StoreError.invalidLifecycle
-        }
-        try exec(
-            """
-            UPDATE sealed_commands SET status='sealed'
-            WHERE command_id=? AND server_instance_id=? AND protocol_epoch=?
-              AND account_id=? AND account_fence=?
-              AND status IN ('sealed','sending')
-            """,
-            [.text(acknowledgement.commandID.uuidString.lowercased())] +
-                binding.values
-        )
-    }
-
     func validateDuplicateReceipt(
         _ existing: V2ReceiptReadback,
-        acknowledgement: V2CommandAcknowledgement
+        acknowledgement: DecodedCommandAcknowledgement
     ) throws {
         guard existing.result == acknowledgement.result,
               existing.responseStatus == acknowledgement.responseStatus,
@@ -152,7 +132,7 @@ extension LocalSyncV2Store {
     }
 
     func persistTerminalAcknowledgement(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord,
         binding: V2AccountBinding
     ) throws {
@@ -185,7 +165,7 @@ extension LocalSyncV2Store {
     }
 
     private func validateAcknowledgementShape(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord
     ) throws {
         guard record.commandKind == "cloneWork" || acknowledgement.cloneRemoteHead == nil else {
@@ -223,7 +203,7 @@ extension LocalSyncV2Store {
     }
 
     private func applyResolutionReceipt(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord,
         successful: Bool
     ) throws {
@@ -255,7 +235,7 @@ extension LocalSyncV2Store {
     }
 
     private func applyRemoteReceiptHead(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord,
         successful: Bool
     ) throws {
@@ -283,7 +263,7 @@ extension LocalSyncV2Store {
     }
 
     private func persistCommandTerminalState(
-        _ acknowledgement: V2CommandAcknowledgement,
+        _ acknowledgement: DecodedCommandAcknowledgement,
         record _: V2SealedCommandRecord,
         binding: V2AccountBinding
     ) throws {

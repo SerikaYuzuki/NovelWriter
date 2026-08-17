@@ -17,9 +17,11 @@ extension LocalSyncV2Store {
                    k.remote_inbox_id
             FROM conflicts c JOIN conflict_candidates k
               ON k.conflict_id=c.conflict_id AND k.revision=c.current_revision
-            WHERE c.work_id=? AND c.state='active'
+            WHERE c.work_id=? AND c.server_instance_id=?
+              AND c.protocol_epoch=? AND c.account_id=? AND c.account_fence=?
+              AND c.state='active'
             """,
-            [.text(workID.description)]
+            [.text(workID.description)] + binding.values
         ).first
     }
 
