@@ -227,7 +227,7 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("value")
             .and_then(Value::as_str)
-            .is_none_or(|text| text.len() > 1_048_576)
+            .map_or(true, |text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -324,7 +324,7 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             value
                 .get(*name)
                 .and_then(Value::as_str)
-                .is_none_or(|text| text.len() > 1_048_576)
+                .map_or(true, |text| text.len() > 1_048_576)
         }) {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -370,11 +370,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("title")
             .and_then(Value::as_str)
-            .is_none_or(|text| text.len() > 1_048_576)
+            .map_or(true, |text| text.len() > 1_048_576)
             || value
                 .get("memo")
                 .and_then(Value::as_str)
-                .is_none_or(|text| text.len() > 1_048_576)
+                .map_or(true, |text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -411,11 +411,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             || value
                 .get("note")
                 .and_then(Value::as_str)
-                .is_none_or(|text| text.len() > 1_048_576)
+                .map_or(true, |text| text.len() > 1_048_576)
             || value
                 .get("title")
                 .and_then(Value::as_str)
-                .is_none_or(|text| text.len() > 1_048_576)
+                .map_or(true, |text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -439,11 +439,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("content")
             .and_then(Value::as_str)
-            .is_none_or(|text| text.len() > 1_048_576)
+            .map_or(true, |text| text.len() > 1_048_576)
             || value
                 .get("title")
                 .and_then(Value::as_str)
-                .is_none_or(|text| text.len() > 1_048_576)
+                .map_or(true, |text| text.len() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -460,11 +460,13 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("byteCount")
             .and_then(Value::as_i64)
-            .is_none_or(|count| !(0..=MAX_OBJECT_BYTES as i64).contains(&count))
+            .map_or(true, |count| {
+                !(0..=MAX_OBJECT_BYTES as i64).contains(&count)
+            })
             || value
                 .get("fileName")
                 .and_then(Value::as_str)
-                .is_none_or(|name| name.is_empty() || name.len() > 255)
+                .map_or(true, |name| name.is_empty() || name.len() > 255)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
