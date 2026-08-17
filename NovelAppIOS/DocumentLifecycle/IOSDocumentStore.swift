@@ -3,9 +3,9 @@ import Foundation
 import NovelAuth
 import NovelAuthApple
 import NovelCore
-import NovelStorage
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 import Observation
 
@@ -42,7 +42,14 @@ struct IOSEditorContentKey: Hashable {
 @Observable
 final class IOSDocumentStore {
     static let lastDocumentNameKey = "FUMINIWAIOS.lastDocumentName"
+    /// v2 reopens by WorkID.  The legacy package-recent key remains available
+    /// for explicit import/export compatibility, but is never the v2 identity.
+    static let lastWorkIDKey = "FUMINIWAIOS.lastWorkID"
     private static let autosaveDebounceNanoseconds: UInt64 = 2_000_000_000
+    /// Test stores created with the same injected root share one isolated
+    /// SQLite composition, so reopen tests exercise persistence rather than a
+    /// second unrelated UUID database. Production never consults this cache.
+    static var testRuntimeApplications: [URL: SyncV2Application] = [:]
 
     var document: NovelDocument
     var documentCreatedAt: Date
@@ -56,6 +63,7 @@ final class IOSDocumentStore {
     var isNavigationDepartureInProgress = false
     private(set) var documentSessionGeneration: UInt64 = 0
     private(set) var editorContentGeneration: UInt64 = 0
+    private(set) var localEditGeneration: UInt64 = 0
     var isImporterPresented = false
     var pendingExportURL: URL?
     var promptCopyNotice: IOSPromptCopyNotice?
@@ -68,10 +76,36 @@ final class IOSDocumentStore {
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
     var syncV2LibraryItems: [SyncV2LibraryItem] = []
+    var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
+    var syncV2RemoteCatalogCursor: String?
+    var syncV2RemoteCatalogIsLoading = false
+    var syncV2RemoteCatalogError: String?
+    /// Local SQLite and remote occurrences share one history projection.  A
+    /// SnapshotID is not a deduplication key: the same snapshot can have a
+    /// different local/remote restore authority.
+    var syncV2HistoryItems: [SyncV2HistoryItem] = []
+    var syncV2HistoryCursor: String?
+    var syncV2HistoryWorkID: WorkID?
+    var syncV2HistoryLocalAvailability: SyncV2HistoryAvailability = .unavailable
+    var syncV2HistoryOnlineAvailability: SyncV2HistoryAvailability = .unavailable
+    var syncV2HistoryOnlineFailure: SyncV2Failure?
+    /// A signed-out store keeps local SQLite data intact but parks the former
+    /// account's remote projection and active sync status.
+    var syncV2ParkedAccountID: String?
+    /// WorkID is the sync identity; NovelDocument.id is only its payload
+    /// anchor and may differ after import, remote open, keep-both, or clone.
+    var syncV2ActiveWorkID: WorkID?
+    var syncV2AccountCloneInFlight = false
+    /// Keep-both reserves a second WorkID before the remote acknowledgement.
+    /// Until the candidate is safely opened, the original editor is read-only
+    /// so a later autosave cannot accidentally write the source Work again.
+    var syncV2KeepBothPendingWorkID: WorkID?
 
     let editorCommandSession: EditorCommandSession
-    @ObservationIgnored let repository: any DocumentCopyingRepository
-    @ObservationIgnored let attachmentManager: (any AttachmentManaging)?
+    /// The only package boundary owned by the iOS app. Normal document
+    /// lifecycle and attachment editing never receive a package repository;
+    /// this bridge is called only by explicit import/export actions.
+    @ObservationIgnored let portableBridge: SyncV2PortableBridge
     @ObservationIgnored let fileManager: FileManager
     @ObservationIgnored let userDefaults: UserDefaults
     @ObservationIgnored let libraryRoot: URL
@@ -89,19 +123,22 @@ final class IOSDocumentStore {
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?
+    /// Attachment bytes are owned by the Snapshot Sync v2 SQLite/CAS record.
+    @ObservationIgnored var syncV2AttachmentPayloads: [String: Data] = [:]
+    @ObservationIgnored var syncV2AttachmentIDs: [String: UUID] = [:]
     @ObservationIgnored var verifiedPrivateDocumentIDs: Set<IOSPrivateDocumentID> = []
     @ObservationIgnored var libraryRefreshGeneration: UInt64 = 0
 
     @ObservationIgnored
-    lazy var saveCoordinator: DocumentSaveCoordinator = .init(
+    lazy var saveCoordinator: V2DocumentSaveCoordinator = .init(
         debounceNanoseconds: Self.autosaveDebounceNanoseconds,
-        currentState: { [weak self] in
+        currentDocument: { [weak self] in
             guard let self, startupState == .ready else { return nil }
-            return (document, documentURL)
+            return document
         },
-        saveOperation: { [weak self] document, url in
+        saveOperation: { [weak self] document in
             guard let self else { throw CancellationError() }
-            try await performCoordinatedDocumentSave(document, to: url)
+            try await performCoordinatedDocumentSave(document)
         },
         saveEventHandler: { [weak self] event in
             switch event {
@@ -114,8 +151,7 @@ final class IOSDocumentStore {
     )
 
     init(
-        repository: any DocumentCopyingRepository = NovelpkgRepository(),
-        attachmentManager: (any AttachmentManaging)? = nil,
+        portableBridge: SyncV2PortableBridge = SyncV2PortableBridge(),
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
@@ -124,8 +160,7 @@ final class IOSDocumentStore {
         privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation? = nil,
         libraryRoot: URL? = nil
     ) {
-        self.repository = repository
-        self.attachmentManager = attachmentManager ?? repository as? any AttachmentManaging
+        self.portableBridge = portableBridge
         self.fileManager = fileManager
         self.userDefaults = userDefaults
         self.editorCommandSession = editorCommandSession
@@ -139,7 +174,9 @@ final class IOSDocumentStore {
                                                let configuration = try? AuthClientConfiguration(
                                                    origin: url, clientVersion: "0.1.0", clientPlatform: .ios
                                                ),
-                                               let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration),
+                                               let transport = try? FuminiwaHTTPAuthTransport(
+                                                   configuration: configuration
+                                               ),
                                                let limits = try? AuthLimits(
                                                    accessTokenLifetimeSeconds: 900,
                                                    authReceiptLifetimeSeconds: 86400,
@@ -184,14 +221,19 @@ final class IOSDocumentStore {
             try? IOSPrivateWorkingCopyLocation.prepareDefault(fileManager: fileManager)
         }
         self.privateWorkingCopyLocation = location
-        let root = location?.rootURL ?? libraryRoot?.standardizedFileURL ?? Self.defaultLibraryRoot(fileManager: fileManager)
+        let root = location?.rootURL
+            ?? libraryRoot?.standardizedFileURL
+            ?? Self.defaultLibraryRoot(fileManager: fileManager)
         self.libraryRoot = root
         snapshotSyncV2DocumentGate = SnapshotSyncV2Runtime.makeProductionDocumentGate()
         authUIState = auth == nil ? .unavailable : .signedOut
         let placeholder = NovelDocument.newDocument()
         document = placeholder
         documentCreatedAt = Date()
-        documentURL = root.appendingPathComponent(placeholder.id.uuidString, isDirectory: true)
+        // URL is retained only for the explicit package import/export bridge.
+        // A normal v2 work has no filesystem identity; WorkID + SQLite is the
+        // sole durable identity and no per-work directory is created here.
+        documentURL = root.standardizedFileURL
         selectedChapterID = placeholder.chapters.first?.id
         selectedEpisodeID = placeholder.chapters.first?.episodes.first?.id
         if location == nil {
@@ -205,7 +247,10 @@ final class IOSDocumentStore {
     }
 
     func markDocumentChanged() {
-        guard startupState == .ready, !isDocumentTransitionInProgress else { return }
+        guard startupState == .ready,
+              !isDocumentTransitionInProgress,
+              syncV2KeepBothPendingWorkID == nil else { return }
+        localEditGeneration &+= 1
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
     }
@@ -223,11 +268,10 @@ final class IOSDocumentStore {
     }
 
     var currentPrivateDocumentID: IOSPrivateDocumentID? {
-        guard startupState == .ready else { return nil }
-        if snapshotSyncV2Application != nil {
-            return IOSPrivateDocumentID(workID: WorkID(document.id))
-        }
-        return IOSPrivateDocumentID(packageName: documentURL.lastPathComponent)
+        guard startupState == .ready,
+              snapshotSyncV2Application != nil,
+              let workID = syncV2ActiveWorkID else { return nil }
+        return IOSPrivateDocumentID(workID: workID)
     }
 
     var currentDocumentSessionToken: IOSDocumentSessionToken? {

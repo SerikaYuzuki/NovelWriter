@@ -17,6 +17,12 @@ extension IOSDocumentStore {
         do {
             authSession = try await coordinator.currentSession()
             authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
+            syncV2ParkedAccountID = nil
+            if authSession != nil {
+                Task { @MainActor [weak self] in
+                    _ = await self?.refreshRemoteCatalog(reset: true)
+                }
+            }
         } catch {
             authSession = nil
             authUIState = .failed("サインイン状態を復元できませんでした")
@@ -34,7 +40,17 @@ extension IOSDocumentStore {
             let session = try await orchestrator.signIn()
             authSession = session
             authUIState = .signedIn(accountID: session.accountID)
+            syncV2ParkedAccountID = nil
+            syncV2RemoteCatalogItems = []
+            syncV2RemoteCatalogCursor = nil
+            syncV2HistoryItems = []
+            syncV2HistoryCursor = nil
+            syncV2HistoryWorkID = nil
+            syncV2HistoryLocalAvailability = .unavailable
+            syncV2HistoryOnlineAvailability = .unavailable
+            syncV2HistoryOnlineFailure = nil
             await resumeSnapshotSyncV2()
+            _ = await refreshRemoteCatalog(reset: true)
         } catch is CancellationError {
             authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         } catch {
@@ -46,15 +62,57 @@ extension IOSDocumentStore {
         guard let coordinator = authSessionCoordinator else {
             authSession = nil
             authUIState = .unavailable
+            parkSnapshotSyncV2AccountScope(accountID: nil)
             return
         }
         do {
             try await coordinator.signOut()
+            let previousAccountID = authSession?.accountID
             authSession = nil
             authUIState = .signedOut
+            // Keep SQLite/CAS untouched, but park every account-scoped
+            // projection and session so another account cannot see it.
+            parkSnapshotSyncV2AccountScope(accountID: previousAccountID)
         } catch {
             authUIState = .failed("サインアウトを完了できませんでした")
         }
+    }
+
+    private func parkSnapshotSyncV2AccountScope(accountID: String?) {
+        let unboundActiveWorkID = syncV2ActiveWorkID.flatMap { workID in
+            syncV2LibraryItems.first {
+                $0.workID == workID && $0.accountState == .unbound
+            }?.workID
+        }
+        syncV2ParkedAccountID = accountID
+        // Invalidate the old account's editor/session as well as its shelf.
+        // The SQLite rows remain untouched and can only be reopened through
+        // an explicit account-scoped action later.
+        // An unbound work is not owned by the account being signed out. Keep
+        // its WorkID available so sign-in can expose the explicit
+        // "add this work to the account" action without auto-adopting it.
+        syncV2ActiveWorkID = unboundActiveWorkID
+        if let unboundActiveWorkID {
+            userDefaults.set(unboundActiveWorkID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
+        } else {
+            userDefaults.removeObject(forKey: Self.lastWorkIDKey)
+        }
+        advanceDocumentSessionGeneration()
+        syncV2RemoteCatalogItems = []
+        syncV2RemoteCatalogCursor = nil
+        syncV2RemoteCatalogError = nil
+        syncV2HistoryItems = []
+        syncV2HistoryCursor = nil
+        syncV2HistoryWorkID = nil
+        syncV2HistoryLocalAvailability = .unavailable
+        syncV2HistoryOnlineAvailability = .unavailable
+        syncV2HistoryOnlineFailure = nil
+        syncV2LibraryItems = syncV2LibraryItems.filter {
+            $0.accountState == .unbound
+        }
+        snapshotSyncConflict = nil
+        snapshotSyncState = nil
+        snapshotSyncOutcome = .offline
     }
 
     func flushDeviceSyncBeforeNavigationDeparture(

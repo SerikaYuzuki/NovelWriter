@@ -21,6 +21,13 @@ extension IOSDocumentStore {
         return true
     }
 
+    func addEpisodeAfterDeviceSyncDeparture(to chapterID: ChapterID) async -> Bool {
+        guard await prepareForEditorSurfaceDeparture() else { return false }
+        selectChapter(chapterID)
+        addEpisode()
+        return true
+    }
+
     func deleteEpisodesAfterDeviceSyncDeparture(at offsets: IndexSet, chapterID: ChapterID) async -> Bool {
         guard await prepareForEditorSurfaceDeparture() else { return false }
         deleteEpisodes(at: offsets, chapterID: chapterID)
@@ -33,7 +40,11 @@ extension IOSDocumentStore {
         return true
     }
 
-    func moveEpisodesAfterDeviceSyncDeparture(in chapterID: ChapterID, fromOffsets: IndexSet, toOffset: Int) async -> Bool {
+    func moveEpisodesAfterDeviceSyncDeparture(
+        in chapterID: ChapterID,
+        fromOffsets: IndexSet,
+        toOffset: Int
+    ) async -> Bool {
         guard await prepareForEditorSurfaceDeparture() else { return false }
         moveEpisodes(in: chapterID, fromOffsets: fromOffsets, toOffset: toOffset)
         return true
