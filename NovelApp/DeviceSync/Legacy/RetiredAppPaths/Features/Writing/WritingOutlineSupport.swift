@@ -193,7 +193,7 @@ struct EpisodeOutlineContextMenu: View {
         Button {
             guard isCurrentSession else { return }
             Task {
-                guard await appState.selectEpisodeAfterTransition(
+                guard await appState.selectEpisodeAfterDeviceSyncDeparture(
                     request.episode.id,
                     in: request.chapterID
                 ) else { return }
@@ -220,7 +220,7 @@ struct EpisodeOutlineContextMenu: View {
                     Button(destination.title) {
                         guard isCurrentSession else { return }
                         Task {
-                            await appState.moveEpisodeAfterTransition(
+                            await appState.moveEpisodeAfterDeviceSyncDeparture(
                                 id: request.episode.id,
                                 from: request.chapterID,
                                 to: destination.id
@@ -266,7 +266,7 @@ struct ChapterOutlineContextMenu: View {
             guard isCurrentSession else { return }
             onReveal()
             Task {
-                await appState.addEpisodeAfterTransition(to: chapter.id)
+                await appState.addEpisodeAfterDeviceSyncDeparture(to: chapter.id)
             }
         } label: {
             Label("この章に話を追加", systemImage: "square.and.pencil")
@@ -276,7 +276,7 @@ struct ChapterOutlineContextMenu: View {
         Button {
             guard isCurrentSession else { return }
             Task {
-                guard await appState.selectChapterAfterTransition(chapter.id) else { return }
+                guard await appState.selectChapterAfterDeviceSyncDeparture(chapter.id) else { return }
                 NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
             }
         } label: {
@@ -298,12 +298,12 @@ struct ChapterOutlineContextMenu: View {
                 onOpenCharacter: { characterID in
                     guard isCurrentSession else { return }
                     appState.selectCharacter(characterID)
-                    Task { await appState.selectProjectSectionAfterTransition(.characters) }
+                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
                 },
                 onOpenPlotCard: { cardID in
                     guard isCurrentSession else { return }
                     appState.selectPlotCard(cardID)
-                    Task { await appState.selectProjectSectionAfterTransition(.plot) }
+                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
                 }
             )
         } label: {

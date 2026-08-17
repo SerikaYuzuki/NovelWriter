@@ -37,6 +37,7 @@ struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
+    @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
 
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
@@ -46,6 +47,7 @@ struct NovelWorkbenchView: View {
     @State private var attachmentImportMessage: OperationMessage?
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
+    @State private var isDeviceSyncConflictPresented = false
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
@@ -61,11 +63,19 @@ struct NovelWorkbenchView: View {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
                 showsWritingActions: showsWritingActions,
-                isPlotCardRailPresented: $isPlotCardRailPresented
+                isPlotCardRailPresented: $isPlotCardRailPresented,
+                reviewDeviceSyncChanges: {
+                    // ContentView owns the legacy Work startup recovery sheet.
+                    // Do not create a second sheet owner for that same review.
+                    if appState.workSyncLocalRecoveryReview == nil {
+                        isDeviceSyncConflictPresented = true
+                    }
+                }
             )
         }
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarBackground(Color(nsColor: .underPageBackgroundColor), for: .windowToolbar)
+        .deviceSyncReviewSheet(isPresented: $isDeviceSyncConflictPresented)
         // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
         // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
         // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
@@ -83,6 +93,26 @@ struct NovelWorkbenchView: View {
                 isPlotCardRailPresented = false
             }
         }
+        .confirmationDialog(
+            "このスナップショットに戻しますか？",
+            isPresented: snapshotRestoreDialogIsPresented,
+            presenting: snapshotMenuPresenter.snapshotPendingRestore
+        ) { request in
+            Button("戻す", role: .destructive) {
+                Task { await snapshotMenuPresenter.restore(request) }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: { request in
+            Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
+        }
+        .alert(
+            "復元できませんでした",
+            isPresented: snapshotRestoreErrorIsPresented
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
+        }
         .alert(item: $attachmentImportMessage) { message in
             Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
         }
@@ -95,6 +125,9 @@ struct NovelWorkbenchView: View {
                 await importAttachment(from: result)
             }
         }
+        .task(id: appState.documentURL) {
+            await snapshotMenuPresenter.refresh()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
             guard appState.selectedEpisode != nil else { return }
             overlayState.presented = .memo
@@ -102,7 +135,7 @@ struct NovelWorkbenchView: View {
         .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
             guard appState.supportsAttachments else { return }
             Task {
-                guard await appState.selectProjectSectionAfterTransition(.references) else { return }
+                guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.references) else { return }
                 attachmentImportSession = appState.documentSessionToken
                 isImportingAttachment = true
             }
@@ -155,7 +188,7 @@ struct NovelWorkbenchView: View {
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
         Task { @MainActor in
             let previous = appState.workspaceSelection.section
-            guard await appState.selectProjectSectionAfterTransition(section),
+            guard await appState.selectProjectSectionAfterDeviceSyncDeparture(section),
                   WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
 
             // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
@@ -169,6 +202,28 @@ struct NovelWorkbenchView: View {
             projectSidebarIsFocused = true
             sidebarFocusHandoffID = nil
         }
+    }
+
+    private var snapshotRestoreDialogIsPresented: Binding<Bool> {
+        Binding(
+            get: { snapshotMenuPresenter.snapshotPendingRestore != nil },
+            set: { isPresented in
+                if !isPresented {
+                    snapshotMenuPresenter.snapshotPendingRestore = nil
+                }
+            }
+        )
+    }
+
+    private var snapshotRestoreErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { snapshotMenuPresenter.restoreErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    snapshotMenuPresenter.restoreErrorMessage = nil
+                }
+            }
+        )
     }
 
     @MainActor
@@ -249,8 +304,8 @@ struct NovelWorkbenchView: View {
         case .characters:
             CharacterDetailView { appearance in
                 Task {
-                    guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
-                    guard await appState.selectEpisodeAfterTransition(
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    guard await appState.selectEpisodeAfterDeviceSyncDeparture(
                         appearance.episodeID,
                         in: appearance.chapterID
                     ) else { return }
@@ -260,8 +315,8 @@ struct NovelWorkbenchView: View {
         case .plot:
             PlotAndFlagSplitView { chapterID in
                 Task {
-                    guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
-                    await appState.selectChapterAfterTransition(chapterID)
+                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
+                    await appState.selectChapterAfterDeviceSyncDeparture(chapterID)
                 }
             }
         case .references:
@@ -274,6 +329,9 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
+                    .frame(maxWidth: 560, alignment: .leading)
+                Divider()
+                DeviceSyncSettingsView()
                     .frame(maxWidth: 560, alignment: .leading)
             }
         }

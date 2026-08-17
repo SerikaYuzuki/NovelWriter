@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelSync
 
 extension AppState {
     // MARK: - 選択中章
@@ -9,11 +10,23 @@ extension AppState {
     /// Project Sidebar のセクションを選択する。UI2 では画面の主導線として使う。
     func selectProjectSection(_ section: ProjectSection) {
         guard workspaceSelection.section != section else { return }
-        guard permitsDocumentInteraction else { return }
+        guard deviceSyncRuntime == nil || permitsDeviceSyncProjectSectionMutationAfterFlush else { return }
         workspaceSelection = WorkspaceSelection(section: section)
         if section == .worldbuilding {
             ensureWorldNoteSelection()
         }
+    }
+
+    /// 選択中の章(存在しなければ `nil`)。
+    var selectedChapter: Chapter? {
+        guard let selectedChapterID else { return nil }
+        return document.chapters.first { $0.id == selectedChapterID }
+    }
+
+    /// 選択中の話(存在しなければ `nil`)。
+    var selectedEpisode: Episode? {
+        guard let selectedEpisodeID else { return nil }
+        return selectedChapter?.episodes.first { $0.id == selectedEpisodeID }
     }
 
     /// 本文右クリックで取得したexact selectionから、AIチャット用promptをコピーする。
@@ -146,7 +159,7 @@ extension AppState {
     }
 
     private func isCurrentAIClipboardPromptContext(_ expectedSession: DocumentSessionToken) -> Bool {
-        permitsDocumentInteraction && documentSessionToken == expectedSession
+        permitsLongRunningDocumentOperation && documentSessionToken == expectedSession
     }
 
     @discardableResult
@@ -295,7 +308,7 @@ extension AppState {
         flushSaveImmediately()
     }
 
-    func ensureWorldNoteSelection() {
+    private func ensureWorldNoteSelection() {
         if let selectedWorldNoteID,
            document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
             return
@@ -308,7 +321,7 @@ extension AppState {
     func selectChapter(_ id: ChapterID?) {
         guard permitsDocumentInteraction else { return }
         guard id != selectedChapterID else { return }
-        guard permitsDocumentInteraction else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         setSelection(chapterID: id, episodeID: id.flatMap(preferredEpisodeID(in:)))
         flushSaveImmediately()
     }
@@ -318,7 +331,7 @@ extension AppState {
         guard permitsDocumentInteraction else { return }
         guard selection != plotOutlineSelection else { return }
         if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
-            guard permitsDocumentInteraction else { return }
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         }
         plotOutlineSelection = selection
         if case let .chapter(chapterID) = selection {
@@ -333,7 +346,7 @@ extension AppState {
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID else { return }
         guard targetChapterID == selectedChapterID && id == selectedEpisodeID ||
-            permitsDocumentInteraction else { return }
+            permitsSynchronousDeviceSyncSelectionMutation else { return }
         guard let id else {
             guard document.chapters.first(where: { $0.id == targetChapterID })?.episodes.isEmpty == true else { return }
             setSelection(chapterID: targetChapterID, episodeID: nil)
@@ -352,7 +365,7 @@ extension AppState {
     /// 章を末尾に追加し、追加した章を選択状態にする。
     func addChapter() {
         guard permitsDocumentInteraction else { return }
-        guard permitsDocumentInteraction else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
         setSelection(chapterID: newID, episodeID: nil)
@@ -365,7 +378,7 @@ extension AppState {
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
         guard permitsDocumentInteraction else { return }
-        guard permitsDocumentInteraction else { return }
+        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID,
               let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
@@ -455,7 +468,7 @@ extension AppState {
     func deleteChapter(id: ChapterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedChapterID == id {
-            guard permitsDocumentInteraction else { return false }
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
         }
         guard document.chapters.count > 1 else { return false }
         guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return false }
@@ -496,7 +509,7 @@ extension AppState {
     ) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedEpisodeID == episodeID {
-            guard permitsDocumentInteraction else { return false }
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
         }
         let sourceChapterID = chapterID ?? selectedChapterID
         guard let sourceChapterID,
@@ -534,7 +547,7 @@ extension AppState {
     ) -> Bool {
         guard permitsDocumentInteraction else { return false }
         if selectedEpisodeID == episodeID, selectedChapterID != destinationChapterID {
-            guard permitsDocumentInteraction else { return false }
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
         }
         guard document.moveEpisode(
             id: episodeID,
@@ -576,9 +589,53 @@ extension AppState {
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
+        let baseContentDigest = deviceSyncDurablePackageDigest(
+            for: episodeID,
+            fallbackContent: episode.content
+        )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        registerDeviceSyncContentMutation(content, episodeID: episodeID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
+        if let expectedSession,
+           let expectedEditorContentGeneration,
+           let expectedLookup = currentDeviceSyncLookupIdentity,
+           expectedLookup.documentSession == expectedSession,
+           expectedLookup.chapterID == chapterID,
+           expectedLookup.episodeID == episodeID,
+           expectedLookup.editorContentGeneration == expectedEditorContentGeneration {
+            scheduleDeviceSyncForEditedEpisode(
+                content: content,
+                expectedLookup: expectedLookup,
+                baseContentDigest: baseContentDigest,
+                previousContentDigest: SyncContentDigest(content: episode.content)
+            )
+        }
+    }
+
+    func captureCommittedTextForDeviceSync() -> EditorCommittedTextCaptureResult {
+        activeCommittedTextCapture()
+    }
+
+    func installDeviceSyncEpisodeContent(
+        _ content: String,
+        chapterID: ChapterID,
+        episodeID: EpisodeID,
+        advancesEditorGeneration: Bool
+    ) {
+        let previousContent = document.episode(episodeID)?.episode.content
+        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
+        if previousContent != content {
+            registerDeviceSyncContentMutation(
+                content,
+                episodeID: episodeID,
+                containsLocalEditIntent: false
+            )
+        }
+        saveCoordinator.markDirty()
+        if advancesEditorGeneration {
+            editorContentGeneration &+= 1
+        }
     }
 
     func advanceEditorContentGenerationForSurfaceTransition() {

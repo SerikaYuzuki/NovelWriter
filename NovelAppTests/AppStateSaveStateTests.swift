@@ -1,40 +1,29 @@
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import Testing
 
 @MainActor
 struct AppStateSaveStateTests {
     @Test("明示保存はデバウンスを待たず現在revisionを保存する")
-    func manualSaveFlushesCurrentRevision() async {
-        let repository = ControllableRepository(shouldFail: false)
-        let state = AppState(
-            dependencies: AppDependencies(
-                repository: repository,
-                userDefaults: makeUserDefaults(),
-                fileManager: .default
-            ),
-            initialStartupState: .ready
-        )
+    func manualSaveFlushesCurrentRevision() async throws {
+        let state = try makeState()
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
 
         state.updateSelectedEpisodeContent("今すぐ保存")
 
         #expect(await state.saveNow())
         #expect(state.saveState == .saved)
-        #expect(await repository.saveCount == 1)
+        #expect(state.snapshotSyncV2Session?.workID == state.snapshotSyncV2ActiveWorkID)
+        #expect(state.snapshotSyncV2Session?.workID.rawValue != state.document.id)
     }
 
     @Test("保存失敗は状態に反映され、次の保存で再試行できる")
-    func saveFailureCanBeRetried() async {
-        let repository = ControllableRepository(shouldFail: true)
-        let state = AppState(
-            dependencies: AppDependencies(
-                repository: repository,
-                userDefaults: makeUserDefaults(),
-                fileManager: .default
-            ),
-            initialStartupState: .ready
-        )
+    func saveFailureCanBeRetried() async throws {
+        let state = try makeState()
 
         state.updateSelectedEpisodeContent("保存対象")
         #expect(state.saveState == .unsaved)
@@ -43,7 +32,8 @@ struct AppStateSaveStateTests {
         #expect(firstResult == false)
         #expect(state.saveState == .failed)
 
-        await repository.setShouldFail(false)
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
         let retryResult = await state.saveBeforeTermination()
         #expect(retryResult == true)
         #expect(state.saveState == .saved)
@@ -55,32 +45,17 @@ struct AppStateSaveStateTests {
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
-}
 
-private actor ControllableRepository: DocumentRepository {
-    private var shouldFail: Bool
-    private(set) var saveCount = 0
-
-    init(shouldFail: Bool) {
-        self.shouldFail = shouldFail
+    private func makeState() throws -> AppState {
+        let configuration = try TestRuntimeConfiguration(account: nil)
+        return AppState(
+            dependencies: AppDependencies(
+                userDefaults: makeUserDefaults(),
+                snapshotSyncV2Factory: {
+                    try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                }
+            ),
+            initialStartupState: .ready
+        )
     }
-
-    func setShouldFail(_ value: Bool) {
-        shouldFail = value
-    }
-
-    func load(from _: URL) async throws -> NovelDocument {
-        NovelDocument.newDocument()
-    }
-
-    func save(_: NovelDocument, to _: URL) async throws {
-        saveCount += 1
-        if shouldFail {
-            throw TestRepositoryError.saveFailed
-        }
-    }
-}
-
-private enum TestRepositoryError: Error {
-    case saveFailed
 }

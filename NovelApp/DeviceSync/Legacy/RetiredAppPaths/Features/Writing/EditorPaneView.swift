@@ -20,9 +20,10 @@ struct EditorPaneView: View {
     var body: some View {
         Group {
             if let episode = appState.selectedEpisode,
-               let chapterID = appState.selectedChapterID {
+               let chapterID = appState.selectedChapterID,
+               let syncLookup = appState.currentDeviceSyncLookupIdentity {
                 let session = appState.documentSessionToken
-                let isEditable = appState.permitsDocumentInteraction
+                let isEditable = appState.deviceSyncAllowsEditing(for: syncLookup)
                 let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
                     ?? Color(nsColor: .textBackgroundColor)
                 VStack(spacing: 0) {
@@ -51,7 +52,7 @@ struct EditorPaneView: View {
                                         for: episode.id,
                                         in: chapterID,
                                         expectedSession: session,
-                                        expectedEditorContentGeneration: appState.editorContentGeneration
+                                        expectedEditorContentGeneration: syncLookup.editorContentGeneration
                                     )
                                 }
                             )
@@ -72,6 +73,9 @@ struct EditorPaneView: View {
                         isEnabled: isEditable,
                         backgroundColor: editorCanvas
                     )
+                }
+                .task(id: syncLookup) {
+                    await appState.prepareDeviceSync(for: syncLookup)
                 }
             } else {
                 ContentUnavailableView(

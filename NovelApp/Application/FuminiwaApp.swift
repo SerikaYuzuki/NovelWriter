@@ -3,32 +3,10 @@ import EditorKit
 import Foundation
 import NovelAuth
 import NovelAuthApple
-import NovelLocalStore
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import SwiftUI
 
-/// アプリのエントリポイント(docs/DESIGN.md 5.3)。
-///
-/// v1 では `DocumentGroup` は使わず、単一ウィンドウ + 明示的な Repository 構成とする
-/// (D-010)。起動時の作品選択・Finder指定作品の読み込みは `AppState.bootstrap()` に委譲し、
-/// ウィンドウ表示をブロックしないよう `.task` で非同期に行う。
-///
-/// - 重要: `ApplicationDelegate.appState` の配線は、あえて `init` ではなく
-///   `WindowGroup` の `.task` の先頭(`bootstrap()` の直前)で行う。SwiftUI は
-///   `App` 準拠の構造体を必要に応じて何度でも再生成しうるため、もし `init` 内で
-///   配線すると、再生成のたびに `AppState(dependencies:)` で新しく作られた
-///   (`@State` には採用されない)使い捨てインスタンスを `weak` な delegate に
-///   渡してしまい、即座に解放されて `nil` に戻ってしまう。`.task` 内で
-///   `appState`(`@State` プロパティ)を読めば、常に実際に使われている
-///   永続的なインスタンスを参照できる。
-///
-/// - Note: `documentPanelPresenter`(File メニューのパネル結線、4.5-2b)は
-///   `appState` を初期化時に参照する必要があるため、上記の delegate とは異なり
-///   `init` 内で `appState` と対にして生成する。これは安全: `@State` は同じ
-///   view identity 内で複数回 `init` が呼ばれても最初の一回の初期値しか採用しない
-///   ため、`appState` と `documentPanelPresenter` は常に同じ回の `init` 呼び出し
-///   由来のペアとして採用されるか、両方まとめて捨てられるかのどちらかになり、
-///   ペアが食い違うことはない(delegate のような `@State` 外の `weak` 参照とは
-///   性質が異なる)。
 @main
 struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
@@ -37,15 +15,11 @@ struct FuminiwaApp: App {
     @State private var documentPanelPresenter: DocumentPanelPresenter
     @State private var snapshotMenuPresenter: SnapshotMenuPresenter
     @State private var exportPresenter: ExportPresenter
-    @State private var editorSearchSession = EditorSearchSession()
+    @State private var editorSearchSession: EditorSearchSession
     @State private var editorCommandSession: EditorCommandSession
 
     init() {
         let defaults = FuminiwaRuntimeEnvironment.applicationUserDefaults()
-        if AppBuildFlavor.migratesLegacyPreferences {
-            LegacyPreferenceMigration.migrateIfNeeded(to: defaults)
-        }
-
         let editorCommandSession = EditorCommandSession()
         let dependencies = Self.makeDependencies(
             userDefaults: defaults,
@@ -57,42 +31,100 @@ struct FuminiwaApp: App {
         _documentPanelPresenter = State(initialValue: DocumentPanelPresenter(appState: appState))
         _snapshotMenuPresenter = State(initialValue: SnapshotMenuPresenter(appState: appState))
         _exportPresenter = State(initialValue: ExportPresenter(appState: appState))
+        _editorSearchSession = State(initialValue: EditorSearchSession())
         _editorCommandSession = State(initialValue: editorCommandSession)
     }
 
     static func makeDependencies(
         userDefaults: UserDefaults,
-        editorCommandSession: EditorCommandSession = EditorCommandSession()
+        editorCommandSession: EditorCommandSession = EditorCommandSession(),
+        processEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppDependencies {
-        let runtimeEnvironment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
+        let environment = FuminiwaRuntimeEnvironment(
+            userDefaults: userDefaults,
+            environment: processEnvironment
+        )
+        let platformGate = MacSyncV2DocumentGate()
+        let explicitOrigin = environment.syncServerURL.flatMap { try? ProductionHTTPSOrigin(url: $0) }
+
         #if canImport(Security)
-        let authSessionCoordinator: AuthSessionCoordinator? = if runtimeEnvironment.allowsNetwork,
-                                                                 let syncServerURL = runtimeEnvironment.syncServerURL {
+        let authVault: (any AuthSessionVault)? = KeychainAuthSessionVault(
+            service: "dev.serikayuzuki.fuminiwa.sync"
+        )
+        #else
+        let authVault: (any AuthSessionVault)? = nil
+        #endif
+
+        let authCoordinator: AuthSessionCoordinator? = if let authVault,
+                                                          let explicitOrigin,
+                                                          let configuration = try? AuthClientConfiguration(
+                                                              origin: explicitOrigin.url,
+                                                              clientVersion: "0.1.0",
+                                                              clientPlatform: .macos
+                                                          ),
+                                                          let limits = try? AuthLimits(
+                                                              accessTokenLifetimeSeconds: 900,
+                                                              authReceiptLifetimeSeconds: 86400,
+                                                              challengeLifetimeSeconds: 300,
+                                                              maxCanonicalCommandBytes: 65536,
+                                                              maxProviderClockSkewSeconds: 300,
+                                                              refreshTokenLifetimeSeconds: 86400
+                                                          ),
+                                                          let transport = try? FuminiwaHTTPAuthTransport(configuration: configuration) {
             AuthSessionCoordinator(
-                transport: FuminiwaHTTPAuthTransport(baseURL: syncServerURL),
-                vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync")
+                transport: transport,
+                vault: authVault,
+                authLimits: limits
+            )
+        } else {
+            nil
+        }
+
+        let appleSignInCoordinator = AppleSignInCoordinator()
+        #if canImport(AuthenticationServices)
+        let orchestrator: AppleAuthenticationOrchestrator? = if let authCoordinator {
+            AppleAuthenticationOrchestrator(
+                authSessionCoordinator: authCoordinator,
+                authorizationProvider: appleSignInCoordinator,
+                credentialStateHandleVault: KeychainAppleCredentialStateHandleVault(),
+                credentialStateProvider: SystemAppleCredentialStateProvider()
             )
         } else {
             nil
         }
         #else
-        let authSessionCoordinator: AuthSessionCoordinator? = nil
+        let orchestrator: AppleAuthenticationOrchestrator? = nil
         #endif
-        let appleSignInCoordinator = AppleSignInCoordinator()
+
+        let factory: (@Sendable () async throws -> SyncV2Application)? = {
+            if environment.isTestProcess {
+                let configuration = try TestRuntimeConfiguration()
+                return try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+            }
+            // The production configuration is typed and always receives the
+            // Keychain vault plus the macOS gate. The runtime opens SQLite
+            // even when the HTTPS lane is unreachable; it reports offline.
+            let configuration = try ProductionRuntimeConfiguration(
+                origin: explicitOrigin,
+                vault: authVault,
+                documentGate: platformGate,
+                clientVersion: "0.1.0",
+                clientPlatform: .macos
+            )
+            return try await SnapshotSyncV2Runtime.makeApplication(mode: .production(configuration))
+        }
+
         return AppDependencies(
             userDefaults: userDefaults,
-            defaultDocumentDirectoryName: runtimeEnvironment.isTestProcess
+            defaultDocumentDirectoryName: environment.isTestProcess
                 ? "\(AppBuildFlavor.defaultDocumentDirectoryName)-TestHost"
                 : AppBuildFlavor.defaultDocumentDirectoryName,
             editorCommandSession: editorCommandSession,
-            deviceSyncRuntime: nil,
-            authSessionCoordinator: authSessionCoordinator,
+            authSessionCoordinator: authCoordinator,
             appleSignInCoordinator: appleSignInCoordinator,
-            snapshotSyncTransport: runtimeEnvironment.allowsNetwork
-                ? runtimeEnvironment.syncServerURL.map {
-                    FuminiwaHTTPSnapshotSyncTransport(baseURL: $0)
-                }
-                : nil
+            appleAuthenticationOrchestrator: orchestrator,
+            snapshotSyncV2Factory: factory,
+            snapshotSyncV2DocumentGate: platformGate
         )
     }
 
@@ -108,69 +140,44 @@ struct FuminiwaApp: App {
                 .environment(editorCommandSession)
                 .task {
                     applicationDelegate.attach(appState: appState)
-                    let startupOpenURL = applicationDelegate.takeStartupOpenURL()
-                    await appState.restoreFuminiwaSession()
-                    await appState.bootstrap(opening: startupOpenURL, localFirst: true)
-                    await appState.resumePendingSnapshotSync()
+                    let opening = applicationDelegate.takeStartupOpenURL()
+                    guard await appState.configureSnapshotSyncV2(using: appState.snapshotSyncV2Factory) else {
+                        applicationDelegate.finishBootstrap()
+                        return
+                    }
+                    // Apple credential-state lookup is advisory and may cross
+                    // a system/network boundary. It must not hold the local
+                    // SQLite bootstrap or first editor frame.
+                    Task { @MainActor in
+                        await appState.restoreFuminiwaSession()
+                        await appState.refreshSnapshotLibrary()
+                        await appState.refreshSnapshotRemoteCatalog()
+                    }
+                    await appState.bootstrap(opening: opening)
+                    await appState.resumeSnapshotSyncV2()
                     applicationDelegate.finishBootstrap()
                 }
         }
         .commands {
-            CommandMenu("アカウント") {
-                switch appState.authUIState {
-                case .signedIn:
-                    Button("サインアウト") {
-                        Task { await appState.signOutFromFuminiwa() }
-                    }
-                case .unavailable, .signedOut, .failed:
-                    Button("Appleでサインイン") {
-                        Task { await appState.signInWithApple() }
-                    }
-                case .signingIn:
-                    Button("Appleでサインイン中…") {}
-                        .disabled(true)
-                }
-            }
-
-            // 新規作品はこのアプリの作品ライフサイクルの入口であり、`WindowGroup`
-            // 既定の「新規ウインドウ」(単一ウィンドウ方針 D-010 と衝突する)を
-            // 置き換える。
             CommandGroup(replacing: .newItem) {
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(!appState.permitsDocumentChoice)
-
                 Button("作品を取り込む…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(!appState.permitsDocumentChoice)
             }
-
             CommandGroup(replacing: .saveItem) {
-                if appState.canExplicitlySyncCurrentWork {
-                    Button("サーバーと同期") {
-                        Task {
-                            _ = await appState.saveAndSyncSnapshotNow()
-                        }
-                    }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(
-                        !appState.permitsDocumentInteraction || appState.isExplicitNoteSyncInFlight
-                    )
-                } else {
-                    Button("保存") {
-                        Task { await appState.saveNow() }
-                    }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(!appState.permitsDocumentInteraction)
+                Button("この端末に保存") {
+                    Task { _ = await appState.saveNow() }
                 }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!appState.permitsDocumentInteraction)
             }
-
-            // app-private作業コピーを外へ見せず、portable `.novelpkg`は書き出しから
-            // 明示的に作る。スナップショット保存は Cmd+Option+S を維持する。
             CommandGroup(after: .saveItem) {
                 Button("書き出す…") {
                     exportPresenter.present()
@@ -181,33 +188,47 @@ struct FuminiwaApp: App {
                 Divider()
 
                 Button("スナップショットを保存") {
-                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.createSnapshot(expectedSession: session)
+                        _ = await appState.checkpointSnapshotSyncV2(
+                            appState.document,
+                            reason: .explicit
+                        )
                         await snapshotMenuPresenter.refresh()
                     }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(!appState.permitsDocumentInteraction)
 
-                SnapshotRestoreCommands(appState: appState, presenter: snapshotMenuPresenter)
-                    .disabled(!appState.permitsDocumentInteraction)
+                SnapshotRestoreCommands(
+                    appState: appState,
+                    presenter: snapshotMenuPresenter
+                )
+                .disabled(!appState.permitsDocumentInteraction)
             }
-
+            CommandMenu("アカウント") {
+                switch appState.authUIState {
+                case .signedIn:
+                    Button("サインアウト") { Task { await appState.signOutFromFuminiwa() } }
+                case .signingIn:
+                    Button("Appleでサインイン中…") {}
+                        .disabled(true)
+                case .signedOut, .unavailable, .failed:
+                    Button("Appleでサインイン") { Task { await appState.signInWithApple() } }
+                }
+            }
             CommandMenu("章") {
                 Button("章を追加") {
-                    Task {
-                        await appState.addChapterAfterDeviceSyncDeparture()
-                    }
+                    Task { _ = await appState.addChapterAfterTransition() }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
-
-                Button("選択中の章に話を追加") {
-                    Task {
-                        await appState.addEpisodeAfterDeviceSyncDeparture()
-                    }
+                Button("話を追加") {
+                    Task { _ = await appState.addEpisodeAfterTransition() }
                 }
-                .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
+                .disabled(!appState.permitsDocumentInteraction)
+                Button("話メモ") {
+                    NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
+                }
+                .disabled(!appState.permitsDocumentInteraction || appState.selectedEpisode == nil)
 
                 Button("章タイトルを編集…") {
                     NotificationCenter.default.post(name: .presentChapterTitleEditor, object: nil)
@@ -218,11 +239,6 @@ struct FuminiwaApp: App {
                         appState.selectedChapter == nil
                 )
 
-                Button("話メモ") {
-                    NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
-                }
-                .disabled(!appState.permitsDocumentInteraction || appState.selectedEpisode == nil)
-
                 Divider()
 
                 Menu("この章") {
@@ -230,24 +246,22 @@ struct FuminiwaApp: App {
                         appState: appState,
                         onOpenCharacter: { characterID in
                             appState.selectCharacter(characterID)
-                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
+                            Task { await appState.selectProjectSectionAfterTransition(.characters) }
                         },
                         onOpenPlotCard: { cardID in
                             appState.selectPlotCard(cardID)
-                            Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
+                            Task { await appState.selectProjectSectionAfterTransition(.plot) }
                         }
                     )
                 }
                 .disabled(!appState.permitsDocumentInteraction || appState.selectedChapter == nil)
             }
-
             CommandMenu("登場人物") {
                 Button("登場人物を追加") {
                     appState.addCharacter()
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
-
             CommandMenu("プロット") {
                 Button("プロットカードを追加") {
                     if case let .chapter(chapterID) = appState.plotOutlineSelection {
@@ -258,24 +272,21 @@ struct FuminiwaApp: App {
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
-
             CommandMenu("資料") {
                 Button("資料を取り込む…") {
                     NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
                 }
                 .disabled(!appState.permitsDocumentInteraction || !appState.supportsAttachments)
             }
-
             CommandMenu("世界観") {
                 Button("ノートを追加") {
                     Task {
-                        guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.worldbuilding) else { return }
+                        guard await appState.selectProjectSectionAfterTransition(.worldbuilding) else { return }
                         appState.addWorldNote()
                     }
                 }
                 .disabled(!appState.permitsDocumentInteraction)
             }
-
             CommandGroup(after: .textEditing) {
                 Divider()
                 WorkbenchFindCommands(
@@ -284,11 +295,10 @@ struct FuminiwaApp: App {
                 )
                 .disabled(!appState.permitsDocumentInteraction)
             }
-
             CommandMenu("表示") {
                 ForEach(ProjectSection.allCases) { section in
                     Button {
-                        Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(section) }
+                        Task { await appState.selectProjectSectionAfterTransition(section) }
                     } label: {
                         Label(section.title, systemImage: section.systemImage)
                     }
@@ -318,8 +328,8 @@ private struct SnapshotRestoreCommands: View {
                 Text("スナップショットはありません")
             } else {
                 ForEach(presenter.snapshots) { item in
-                    Button(item.snapshot.displayName) {
-                        presenter.requestRestore(item)
+                    Button(item.entry.reason) {
+                        Task { await presenter.restore(item) }
                     }
                 }
             }

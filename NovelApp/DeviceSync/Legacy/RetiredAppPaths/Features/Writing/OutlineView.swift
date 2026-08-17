@@ -47,7 +47,7 @@ struct OutlineContainerView: View {
         ) { request in
             Button("削除", role: .destructive) {
                 Task {
-                    await appState.deleteChapterAfterTransition(
+                    await appState.deleteChapterAfterDeviceSyncDeparture(
                         id: request.value.id,
                         expectedSession: request.session
                     )
@@ -64,7 +64,7 @@ struct OutlineContainerView: View {
         ) { request in
             Button("削除", role: .destructive) {
                 Task {
-                    await appState.deleteEpisodeAfterTransition(
+                    await appState.deleteEpisodeAfterDeviceSyncDeparture(
                         id: request.episode.id,
                         from: request.chapterID,
                         expectedSession: request.session
@@ -144,7 +144,7 @@ struct OutlineView: View {
                         .onMove { offsets, destination in
                             guard appState.outlinePresentation.searchText.isEmpty else { return }
                             Task {
-                                await appState.moveEpisodesAfterTransition(
+                                await appState.moveEpisodesAfterDeviceSyncDeparture(
                                     in: chapter.id,
                                     fromOffsets: offsets,
                                     toOffset: destination
@@ -186,7 +186,7 @@ struct OutlineView: View {
                 .onMove { offsets, destination in
                     guard appState.outlinePresentation.searchText.isEmpty else { return }
                     Task {
-                        await appState.moveChaptersAfterTransition(
+                        await appState.moveChaptersAfterDeviceSyncDeparture(
                             fromOffsets: offsets,
                             toOffset: destination
                         )
@@ -322,7 +322,7 @@ struct OutlineView: View {
                           $0.episodes.contains(where: { $0.id == episodeID })
                       }) else { return }
                 Task {
-                    await appState.selectEpisodeAfterTransition(
+                    await appState.selectEpisodeAfterDeviceSyncDeparture(
                         episodeID,
                         in: chapter.id
                     )

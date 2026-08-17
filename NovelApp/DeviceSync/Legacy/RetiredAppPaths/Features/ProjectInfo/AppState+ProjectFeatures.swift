@@ -2,6 +2,7 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
+import NovelSync
 
 extension AppState {
     // MARK: - 登場人物
@@ -332,7 +333,7 @@ extension AppState {
     func movePlotCardFromOutline(id: PlotCardID, to selection: PlotOutlineSelection) -> Bool {
         guard permitsDocumentInteraction else { return false }
         if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
-            guard permitsDocumentInteraction else { return false }
+            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
         }
         guard let card = document.plotCards.first(where: { $0.id == id }) else { return false }
 

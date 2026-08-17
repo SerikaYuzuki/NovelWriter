@@ -1,18 +1,8 @@
-import Foundation
-
-/// 非同期操作が、呼び出し時と同じ作品セッションを対象にしているか確認する値。
-/// 同じ作品IDでも「別名保存」や復元後はgenerationが変わり、古いUI操作を拒否する。
-struct DocumentSessionToken: Hashable, Sendable {
-    var generation: UInt64
-    var documentID: UUID
-    var documentURL: URL
-}
-
-/// `AppState`の作品ライフサイクル操作を、`await`をまたいでFIFOに直列化する。
+/// macOS document operation の直列化境界。
 ///
-/// `AppState`はMainActor上にあるが、Repository I/O中は別Taskが同じ状態へ入れる。
-/// 作品の切替・別名保存・復元・資料操作が互いの`documentURL`を読み替えないよう、
-/// 高レベル操作の最外周でこのGateを取得する(D-041)。
+/// v2 の通常 identity は `WorkID` と shared `SyncV2Application` の session
+/// token が担う。ここは AppKit/EditorKit の IME・遷移境界を一度に通す
+/// FIFO gate だけを提供し、package URL を保存 identity にしない。
 @MainActor
 final class DocumentOperationGate {
     private var isRunning = false

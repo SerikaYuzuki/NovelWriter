@@ -1,204 +1,53 @@
 import Foundation
-import NovelSync
-
-enum StartupDocumentSource: Equatable {
-    case recentDocument
-    case finder
-    case chosenDocument
-    case initialDocument
-}
-
-enum StartupRecoveryReason: Equatable {
-    case cannotOpenDocument
-    case cannotCreateDocument
-    case protectedLocationInDebugBuild
-    case deviceSyncSafetyUnavailable
-}
-
-struct StartupRecoveryContext: Equatable {
-    var reason: StartupRecoveryReason
-    var source: StartupDocumentSource
-    var documentURL: URL?
-
-    var documentDisplayName: String? {
-        documentURL?.lastPathComponent
-    }
-}
-
-struct StartupRecentDocument: Identifiable, Equatable, Hashable {
-    let url: URL
-
-    init(url: URL) {
-        self.url = url.standardizedFileURL
-    }
-
-    var id: String {
-        url.path
-    }
-
-    var displayName: String {
-        let name = url.deletingPathExtension().lastPathComponent
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "名称未設定の作品" : name
-    }
-
-    var locationDescription: String {
-        (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
-    }
-}
-
-enum StartupLibraryWorkReference: Hashable {
-    case recentDocument(URL)
-    case cloudWork(UUID)
-}
-
-enum StartupLibraryWorkAvailability: Hashable {
-    /// iCloud identityと端末内app-private working copyがexact一致している。
-    case cachedRemote
-    /// 端末内へ保存済みだが、iCloudへの初回作成または更新をまだ確認できない。
-    case localPending
-    /// Device Syncを持たないbuildでだけ使うlocal fallback。iCloudと表示しない。
-    case localOnly
-    /// catalog metadataだけがあり、初回materializationには通信が必要。
-    case remoteOnly
-    /// exact remote revisionがhidden journalにあり、中断した端末保存を再開できる。
-    case remotePending
-    /// 端末内packageは読めるが、remote差分の明示統合が必要。
-    case needsReview
-    /// local packageは検証済みだが、接続中のcurrent catalogに作品が無い。
-    /// delete/tombstone意味論が無いMVPではopen/uploadを止める。
-    case cloudUnavailable
-    /// account相違、破損等により自動で開いてはいけない。
-    case unavailable
-
-    func canPublishToCloud(connection: StartupLibraryConnection) -> Bool {
-        guard connection.allowsExplicitCloudPublish else { return false }
-        return switch self {
-        case .localOnly, .localPending:
-            true
-        case .cachedRemote, .remoteOnly, .remotePending, .needsReview, .cloudUnavailable, .unavailable:
-            false
-        }
-    }
-
-    var canDuplicateLocalCopy: Bool {
-        switch self {
-        case .localOnly, .localPending, .cachedRemote, .needsReview, .cloudUnavailable:
-            true
-        case .remoteOnly, .remotePending, .unavailable:
-            false
-        }
-    }
-
-    var canRemoveLocalCopy: Bool {
-        switch self {
-        case .localOnly, .localPending, .cachedRemote, .needsReview, .cloudUnavailable, .unavailable:
-            true
-        case .remoteOnly, .remotePending:
-            false
-        }
-    }
-}
-
-struct StartupLibraryWork: Identifiable, Equatable, Hashable {
-    let reference: StartupLibraryWorkReference
-    let title: String
-    let updatedAt: Date?
-    let availability: StartupLibraryWorkAvailability
-    let isTitleTruncated: Bool
-
-    init(
-        reference: StartupLibraryWorkReference,
-        title: String,
-        updatedAt: Date?,
-        availability: StartupLibraryWorkAvailability,
-        isTitleTruncated: Bool = false
-    ) {
-        self.reference = reference
-        self.title = title
-        self.updatedAt = updatedAt
-        self.availability = availability
-        self.isTitleTruncated = isTitleTruncated
-    }
-
-    var id: StartupLibraryWorkReference {
-        reference
-    }
-
-    var displayTitle: String {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.isEmpty ? "名称未設定の作品" : trimmed
-        guard isTitleTruncated, !normalized.hasSuffix("…") else { return normalized }
-        return normalized + "…"
-    }
-
-    var cloudWorkID: SyncWorkID? {
-        guard case let .cloudWork(raw) = reference else { return nil }
-        return SyncWorkID(rawValue: raw)
-    }
-}
+import NovelSyncV2
+import NovelSyncV2Application
 
 enum StartupLibraryConnection: Equatable {
     case available
     case offline
     case accountRequired
     case differentAccount
-    case unavailable(message: String)
+    case unavailable(String)
 
-    /// Catalog list failure after a signed-in account is not the same as
-    /// `accountRequired`. Explicit first save is how missing Note types appear.
-    var allowsExplicitCloudPublish: Bool {
-        switch self {
-        case .available, .unavailable:
-            true
-        case .offline, .accountRequired, .differentAccount:
-            false
-        }
+    var allowsExplicitRemotePublish: Bool {
+        self == .available
+    }
+}
+
+enum StartupLibraryWorkAvailability: Equatable {
+    case local
+    case cached
+    case remoteOnly
+    case pending
+    case conflict
+    case parked
+    case excluded
+}
+
+struct StartupLibraryWork: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let availability: StartupLibraryWorkAvailability
+    let workID: WorkID
+    let remoteProgress: SyncV2RemoteProgress
+
+    var isOpenable: Bool {
+        availability != .excluded && availability != .parked
     }
 }
 
 enum StartupLibraryPresentation: Equatable {
-    case cloudLibrary
-    case localFallback
+    case localAndRemote
 }
 
 struct StartupDocumentSelectionContext: Equatable {
     let works: [StartupLibraryWork]
-    let connection: StartupLibraryConnection
-    let isLoading: Bool
     let presentation: StartupLibraryPresentation
+    let connection: StartupLibraryConnection
+}
 
-    init(recentDocumentURL: URL?) {
-        works = recentDocumentURL.map { url in
-            let recent = StartupRecentDocument(url: url)
-            return StartupLibraryWork(
-                reference: .recentDocument(recent.url),
-                title: recent.displayName,
-                updatedAt: nil,
-                availability: .localOnly
-            )
-        }.map { [$0] } ?? []
-        connection = .available
-        isLoading = false
-        presentation = .localFallback
-    }
-
-    init(
-        works: [StartupLibraryWork],
-        connection: StartupLibraryConnection,
-        isLoading: Bool = false,
-        presentation: StartupLibraryPresentation = .cloudLibrary
-    ) {
-        self.works = works
-        self.connection = connection
-        self.isLoading = isLoading
-        self.presentation = presentation
-    }
-
-    var recentDocument: StartupRecentDocument? {
-        guard case let .recentDocument(url) = works.first?.reference else { return nil }
-        return StartupRecentDocument(url: url)
-    }
+struct StartupRecoveryContext: Equatable {
+    let message: String
 }
 
 enum AppStartupState: Equatable {
@@ -209,14 +58,5 @@ enum AppStartupState: Equatable {
 
     var isReady: Bool {
         self == .ready
-    }
-
-    var permitsDocumentChoice: Bool {
-        switch self {
-        case .loading:
-            false
-        case .documentSelection, .ready, .recovery:
-            true
-        }
     }
 }

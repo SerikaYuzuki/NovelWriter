@@ -1,6 +1,5 @@
 import AppKit
 import NovelCore
-import NovelSyncV2Application
 import Observation
 import SwiftUI
 
@@ -17,6 +16,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let overlayState: WorkbenchOverlayState
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
+    let reviewDeviceSyncChanges: () -> Void
 
     var body: some CustomizableToolbarContent {
         if appState.startupState.isReady {
@@ -24,21 +24,13 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 Button {
                     let session = appState.documentSessionToken
                     Task {
-                        _ = session
-                        await appState.refreshSnapshotLibrary()
-                        appState.startupState = .documentSelection(
-                            .init(
-                                works: appState.snapshotSyncLibraryWorks,
-                                presentation: .localAndRemote,
-                                connection: appState.lastStartupLibraryConnection
-                            )
-                        )
+                        _ = await appState.returnToStartupLibrary(expectedSession: session)
                     }
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
                 .help("作品一覧へ戻る")
-                .disabled(!appState.permitsDocumentChoice)
+                .disabled(!appState.permitsReturnToCloudLibrary)
                 .accessibilityIdentifier("workbench.library")
             }
             .customizationBehavior(.disabled)
@@ -49,7 +41,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
                 Button {
                     Task {
-                        _ = await appState.addEpisodeAfterTransition()
+                        await appState.addEpisodeAfterDeviceSyncDeparture()
                     }
                 } label: {
                     Label("話を追加", systemImage: "square.and.pencil")
@@ -61,22 +53,33 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .defaultCustomization(.visible)
         }
 
-        if showsWritingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.syncStatus) {
-                SnapshotSyncV2StatusControl(
-                    state: appState.snapshotSyncV2UIState,
-                    saveState: appState.saveState,
-                    reviewConflict: {
-                        NotificationCenter.default.post(name: .presentSnapshotSyncConflict, object: nil)
-                    },
-                    adoptServerVersion: {
-                        Task { _ = await appState.applySnapshotSyncV2ServerVersion() }
-                    },
-                    canCloneIntoAccount: appState.canCloneCurrentWorkIntoActiveAccount,
-                    cloneIntoAccount: {
-                        Task { _ = await appState.cloneCurrentWorkIntoActiveAccount() }
-                    }
-                )
+        if showsWritingActions || appState.hasPendingDeviceSyncReview {
+            ToolbarItem(id: WorkbenchToolbarItemID.deviceSyncStatus) {
+                if appState.usesSnapshotSyncRuntime {
+                    SnapshotSyncStatusControl(
+                        saveState: appState.saveState,
+                        outcome: appState.lastSnapshotSyncOutcome,
+                        isSyncInFlight: appState.isSnapshotSyncInFlight,
+                        canReviewConflict: appState.snapshotSyncConflict != nil,
+                        reviewConflict: {
+                            NotificationCenter.default.post(
+                                name: .presentSnapshotSyncConflict,
+                                object: nil
+                            )
+                        }
+                    )
+                } else {
+                    DeviceSyncStatusControl(
+                        saveState: appState.saveState,
+                        state: appState.deviceSyncState,
+                        transferState: appState.deviceSyncTransferState,
+                        localDurabilityState: appState.deviceSyncLocalDurabilityState,
+                        hasLocalRecoveryReview: appState.hasPendingDeviceSyncReview,
+                        isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
+                            || !appState.deviceSyncLocalRecoveryPending,
+                        reviewChanges: reviewDeviceSyncChanges
+                    )
+                }
             }
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
@@ -87,13 +90,13 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
                     Button {
                         Task {
-                            await appState.synchronizeSnapshotSyncV2()
+                            _ = await appState.saveAndSyncSnapshotNow()
                         }
                     } label: {
                         Label("サーバーと同期", systemImage: "arrow.clockwise")
                     }
                     .help("この端末の保存内容をサーバーと同期します")
-                    .disabled(!appState.canExplicitlySyncCurrentWork)
+                    .disabled(appState.isExplicitNoteSyncInFlight)
                     .accessibilityIdentifier("workbench.snapshot.sync")
                 }
                 .customizationBehavior(.disabled)
@@ -176,7 +179,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
                 Button {
                     Task {
-                        _ = await appState.addChapterAfterTransition()
+                        await appState.addChapterAfterDeviceSyncDeparture()
                     }
                 } label: {
                     Label("章を追加", systemImage: "plus")
@@ -267,7 +270,7 @@ enum WorkbenchToolbarItemID {
     static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
-    static let syncStatus = "workbench.snapshot.sync.status"
+    static let deviceSyncStatus = "workbench.device.sync.status"
     static let snapshotSync = "workbench.snapshot.sync"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
@@ -327,11 +330,9 @@ struct SnapshotPopover: View {
                     .font(.headline)
                 Spacer()
                 Button {
+                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.checkpointSnapshotSyncV2(
-                            appState.document,
-                            reason: .explicit
-                        )
+                        _ = await appState.createSnapshot(expectedSession: session)
                         await presenter.refresh()
                     }
                 } label: {
@@ -347,12 +348,12 @@ struct SnapshotPopover: View {
                 ContentUnavailableView(
                     "スナップショットがありません",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("保存ボタンから、この作品の履歴を記録できます。")
+                    description: Text("保存ボタンから、または編集のあと約5分で現在の状態を記録できます。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(presenter.snapshots) { item in
-                    Button(item.entry.reason) {
+                    Button(item.snapshot.displayName) {
                         presenter.requestRestore(item)
                         overlayState.presented = nil
                     }
@@ -437,11 +438,11 @@ struct ChapterContextMenuContent: View {
 
 /// File メニューからスナップショット一覧・復元へ到達するための薄い状態。
 struct SnapshotRestoreRequest: Identifiable, Equatable {
-    var entry: SyncV2HistoryItem
+    var snapshot: DocumentSnapshotInfo
     var session: DocumentSessionToken
 
-    var id: UUID {
-        entry.occurrenceID
+    var id: URL {
+        snapshot.id
     }
 }
 
@@ -460,11 +461,11 @@ final class SnapshotMenuPresenter {
 
     func refresh() async {
         let session = appState.documentSessionToken
-        await appState.refreshSnapshotHistory()
+        let loadedSnapshots = await appState.listSnapshots(expectedSession: session)
         guard appState.documentSessionToken == session else { return }
 
-        snapshots = appState.snapshotSyncHistory.map {
-            SnapshotRestoreRequest(entry: $0, session: session)
+        snapshots = loadedSnapshots.map {
+            SnapshotRestoreRequest(snapshot: $0, session: session)
         }
         if snapshotPendingRestore?.session != session {
             snapshotPendingRestore = nil
@@ -482,10 +483,13 @@ final class SnapshotMenuPresenter {
 
     func restore(_ request: SnapshotRestoreRequest) async {
         snapshotPendingRestore = nil
-        let success = await appState.restoreSnapshotV2(snapshotID: request.entry.snapshotID)
+        let success = await appState.restoreSnapshot(
+            at: request.snapshot.url,
+            expectedSession: request.session
+        )
         await refresh()
         if !success {
-            restoreErrorMessage = "スナップショットを復元できませんでした。現在の作品はこの端末に保持されています。"
+            restoreErrorMessage = "スナップショットを復元できませんでした。保存に失敗したか、ファイルにアクセスできない可能性があります。"
         }
     }
 }

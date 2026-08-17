@@ -214,7 +214,7 @@ struct PlotChapterOutlineView: View {
             set: { selection in
                 guard let selection else { return }
                 Task {
-                    await appState.selectPlotOutlineAfterTransition(selection)
+                    await appState.selectPlotOutlineAfterDeviceSyncDeparture(selection)
                 }
             }
         )
@@ -260,7 +260,7 @@ private struct PlotOutlineDropTargetModifier: ViewModifier {
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let cardID = items.first else { return false }
                 Task {
-                    await appState.movePlotCardFromOutlineAfterTransition(
+                    await appState.movePlotCardFromOutlineAfterDeviceSyncDeparture(
                         id: cardID,
                         to: selection
                     )

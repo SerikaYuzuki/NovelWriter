@@ -1,205 +1,366 @@
 import EditorKit
-import NovelLocalStore
+import NovelCore
+import NovelSyncV2
+import NovelSyncV2Application
 import SwiftUI
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
-    @State private var isStartupWorkRecoveryPresented = false
-    @State private var isSnapshotConflictPresented = false
+    @State private var showingLibrary = true
+    @State private var showingConflict = false
 
     var body: some View {
-        Group {
-            switch appState.startupState {
-            case .loading:
-                StartupLoadingView()
-            case let .documentSelection(context):
-                StartupDocumentSelectionView(context: context)
-            case .ready:
-                NovelWorkbenchView()
-                    .disabled(!appState.permitsDocumentInteraction)
-            case let .recovery(context):
-                StartupRecoveryView(context: context)
-            }
-        }
-        .alert(
-            "操作を完了できませんでした",
-            isPresented: Binding(
-                get: { documentPanelPresenter.alertMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        documentPanelPresenter.alertMessage = nil
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(documentPanelPresenter.alertMessage ?? "")
-        }
-        .alert(
-            "作品を開けませんでした",
-            isPresented: Binding(
-                get: { appState.externalDocumentOpenErrorMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        appState.externalDocumentOpenErrorMessage = nil
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(appState.externalDocumentOpenErrorMessage ?? "")
-        }
-        .alert(
-            "作品の操作",
-            isPresented: Binding(
-                get: { appState.cloudLibraryActionMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        appState.dismissCloudLibraryActionMessage()
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(appState.cloudLibraryActionMessage ?? "")
-        }
-        .overlay {
-            if appState.startupState.isReady,
-               appState.usesWholeWorkSyncRuntime,
-               !appState.usesNoteSyncRuntime,
-               appState.deviceSyncLocalRecoveryPending {
-                StartupWorkSyncGateView(
-                    requiresReview: appState.workSyncLocalRecoveryReview != nil,
-                    review: { isStartupWorkRecoveryPresented = true }
-                )
-            }
-        }
-        .sheet(isPresented: $isStartupWorkRecoveryPresented) {
-            if let review = appState.workSyncLocalRecoveryReview {
-                let session = appState.documentSessionToken
-                WorkConflictResolutionView(
-                    presentation: WorkConflictPresentationAdapter.make(localRecovery: review),
-                    isApplying: appState.isApplyingWorkSyncConflict,
-                    choose: { choice in
+        rootContent
+            .sheet(isPresented: $showingConflict) {
+                if let conflict = appState.snapshotSyncConflict {
+                    ConflictSheet(conflict: conflict) { choice in
                         Task {
-                            await appState.resolveWorkSyncLocalRecovery(
-                                using: choice,
-                                expectedReview: review,
-                                expectedSession: session
-                            )
-                        }
-                    },
-                    reviewLater: { isStartupWorkRecoveryPresented = false }
-                )
-                .id("startup-local-recovery:\(review.materializedRevision.revisionID)")
-            }
-        }
-        .sheet(isPresented: $isSnapshotConflictPresented) {
-            if let conflict = appState.snapshotSyncConflict {
-                SnapshotSyncConflictResolutionView(
-                    conflict: conflict,
-                    isApplying: appState.isSnapshotSyncInFlight,
-                    choose: { choice in
-                        Task {
-                            if await appState.resolveSnapshotConflict(using: choice),
-                               appState.snapshotSyncConflict == nil {
-                                isSnapshotConflictPresented = false
+                            if await appState.resolveSnapshotConflict(using: choice) {
+                                showingConflict = false
                             }
                         }
-                    },
-                    dismiss: { isSnapshotConflictPresented = false }
+                    } cancel: {
+                        showingConflict = false
+                    }
+                }
+            }
+            .alert(
+                "作品の操作",
+                isPresented: Binding(
+                    get: { appState.operationMessage != nil },
+                    set: {
+                        if !$0 {
+                            appState.dismissOperationMessage()
+                        }
+                    }
                 )
-                .id("snapshot-conflict:\(conflict.conflictID.uuidString)")
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(appState.operationMessage ?? "")
             }
-        }
-        .onChange(of: appState.workSyncLocalRecoveryReview, initial: true) { _, review in
-            isStartupWorkRecoveryPresented = review != nil
-        }
-        .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
-            isSnapshotConflictPresented = conflict != nil
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
-            guard appState.snapshotSyncConflict != nil else { return }
-            isSnapshotConflictPresented = true
-        }
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: 8) {
-                if appState.startupState.isReady,
-                   let notice = appState.aiClipboardPromptCopyNotice {
-                    AIClipboardPromptCopyNoticeView(
-                        notice: notice,
-                        onDismiss: appState.dismissAIClipboardPromptCopyNotice
-                    )
-                }
+            .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
+                showingConflict = conflict != nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
+                showingConflict = appState.snapshotSyncConflict != nil
+            }
+            .alert(
+                "作品を開けませんでした",
+                isPresented: Binding(
+                    get: { appState.externalDocumentOpenErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            appState.externalDocumentOpenErrorMessage = nil
+                        }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(appState.externalDocumentOpenErrorMessage ?? "")
+            }
+    }
 
-                if appState.startupState.isReady, exportPresenter.state != .idle {
-                    ExportStatusView(presenter: exportPresenter)
+    @ViewBuilder
+    private var rootContent: some View {
+        switch appState.startupState {
+        case .ready:
+            // NovelWorkbenchView owns the product NavigationSplitView and its
+            // toolbar. Keeping it as the root avoids nesting a second split
+            // view around the editor and losing the existing workbench chrome.
+            NovelWorkbenchView()
+                .disabled(!appState.permitsDocumentInteraction)
+        case .recovery:
+            RecoveryPane()
+        case .loading, .documentSelection:
+            NavigationSplitView {
+                LibraryPane(showingLibrary: $showingLibrary)
+            } detail: {
+                switch appState.startupState {
+                case .loading:
+                    ProgressView("端末の作品を開いています…")
+                case .documentSelection:
+                    ContentUnavailableView(
+                        "作品を選択してください",
+                        systemImage: "books.vertical",
+                        description: Text("左の作品一覧から作品を開くか、新しい作品を作成してください。")
+                    )
+                default:
+                    EmptyView()
                 }
             }
-            .padding(16)
         }
     }
 }
 
-private struct StartupWorkSyncGateView: View {
-    let requiresReview: Bool
-    let review: () -> Void
+private struct LibraryPane: View {
+    @Environment(AppState.self) private var appState
+    @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
+    @Binding var showingLibrary: Bool
+    @State private var showingHistory = false
 
     var body: some View {
-        Group {
-            if requiresReview {
-                ContentUnavailableView {
-                    Label("変更の確認が必要です", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text("端末に残っている作品の版を確認してから、執筆を再開できます。")
-                } actions: {
-                    Button("変更を確認", action: review)
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("startup.workSyncRecovery.review")
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("作品一覧")
+                    .font(.headline)
+                Spacer()
+                Button("新規", systemImage: "plus") {
+                    documentPanelPresenter.presentNewDocument()
                 }
-            } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("作品の保存状態を確認中")
-                    Text("作品の保存状態を確認しています…")
-                        .font(.headline)
-                    Text("端末に保存された内容を確認してから、執筆画面を開きます。")
-                        .foregroundStyle(.secondary)
+                .labelStyle(.iconOnly)
+                .help("新しい作品")
+                Button("取り込む", systemImage: "square.and.arrow.down") {
+                    documentPanelPresenter.presentOpenPanel()
+                }
+                .labelStyle(.iconOnly)
+                .help("作品を取り込む")
+                Button("更新", systemImage: "arrow.clockwise") {
+                    Task { await appState.refreshSnapshotLibrary() }
+                }
+                .labelStyle(.iconOnly)
+                .help("作品一覧を更新")
+                Button("履歴", systemImage: "clock.arrow.circlepath") {
+                    Task {
+                        await appState.refreshSnapshotHistory()
+                        showingHistory = true
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .help("スナップショット履歴")
+            }
+            .padding(.horizontal, 12)
+            List {
+                Section {
+                    ForEach(works) { work in
+                        Button {
+                            Task { _ = await appState.openLibraryWork(work) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: icon(for: work))
+                                    .foregroundStyle(color(for: work))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(work.title)
+                                        .lineLimit(1)
+                                    Text(label(for: work))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!work.isOpenable)
+                        .accessibilityIdentifier("library.work.\(work.id.uuidString)")
+                    }
                 }
             }
+            .listStyle(.sidebar)
+            Text(connectionLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
-        .accessibilityIdentifier("startup.workSyncRecovery")
+        .frame(minWidth: 220)
+        .opacity(showingLibrary ? 1 : 0)
+        .accessibilityHidden(!showingLibrary)
+        .sheet(isPresented: $showingHistory) {
+            SnapshotHistorySheet {
+                showingHistory = false
+            }
+        }
+    }
+
+    private var works: [StartupLibraryWork] {
+        if !appState.snapshotSyncLibraryWorks.isEmpty {
+            return appState.snapshotSyncLibraryWorks
+        }
+        if case let .documentSelection(context) = appState.startupState {
+            return context.works
+        }
+        return []
+    }
+
+    private var connectionLabel: String {
+        switch appState.lastStartupLibraryConnection {
+        case .available: "同期済み"
+        case .offline: "オフライン・接続時再開"
+        case .accountRequired: "サインインすると同期します"
+        case .differentAccount: "別のアカウントのため保留中"
+        case let .unavailable(message): message
+        }
+    }
+
+    private func icon(for work: StartupLibraryWork) -> String {
+        switch work.remoteProgress {
+        case .needsChoice, .readyForSafeAdoption:
+            return "exclamationmark.triangle"
+        case .pending, .syncing, .retryable:
+            return "arrow.triangle.2.circlepath"
+        case .offline:
+            return "wifi.slash"
+        case .failed, .receiptMismatch:
+            return "exclamationmark.circle"
+        default:
+            break
+        }
+        return switch work.availability {
+        case .remoteOnly: "server.rack.and.arrow.down"
+        case .cached: "externaldrive"
+        case .pending: "arrow.triangle.2.circlepath"
+        case .conflict: "exclamationmark.triangle"
+        case .parked, .excluded: "lock"
+        case .local: "internaldrive"
+        }
+    }
+
+    private func color(for work: StartupLibraryWork) -> Color {
+        switch work.availability {
+        case .conflict: .orange
+        case .remoteOnly: .blue
+        case .parked, .excluded: .secondary
+        default: .secondary
+        }
+    }
+
+    private func label(for work: StartupLibraryWork) -> String {
+        switch work.remoteProgress {
+        case .pending, .syncing, .retryable:
+            return "同期待ち"
+        case .offline:
+            return "オフライン・接続時再開"
+        case .authenticationRequired:
+            return "サインインすると同期します"
+        case .needsChoice, .readyForSafeAdoption:
+            return "競合・確認が必要"
+        case .parkedDifferentAccount, .fenceChanged, .quarantined:
+            return "別のアカウントのため保留中"
+        case .failed, .receiptMismatch:
+            return "実エラー"
+        case .idle, .noChanges:
+            break
+        }
+        return switch work.availability {
+        case .local: "この端末"
+        case .cached: "この端末・同期済み"
+        case .remoteOnly: "サーバー・未ダウンロード"
+        case .pending: "同期待ち"
+        case .conflict: "競合・確認が必要"
+        case .parked: "別のアカウントのため保留中"
+        case .excluded: "表示対象外"
+        }
     }
 }
 
-extension Notification.Name {
-    static let toggleWritingInspector = Notification.Name("dev.serikayuzuki.fuminiwa.toggleWritingInspector")
-    static let presentChapterTitleEditor = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterTitleEditor")
-    static let presentChapterMemo = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterMemo")
-    static let presentAttachmentImporter = Notification.Name("dev.serikayuzuki.fuminiwa.presentAttachmentImporter")
-    static let presentSnapshotSyncConflict = Notification.Name("dev.serikayuzuki.fuminiwa.presentSnapshotSyncConflict")
+private struct SnapshotHistorySheet: View {
+    @Environment(AppState.self) private var appState
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("スナップショット履歴")
+                .font(.title2.weight(.semibold))
+            if appState.snapshotSyncHistory.isEmpty {
+                ContentUnavailableView(
+                    "履歴はありません",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("この端末の履歴とオンライン履歴を、利用できる範囲で表示します。")
+                )
+            } else {
+                List(appState.snapshotSyncHistory, id: \.occurrenceID) { entry in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.reason)
+                            Text(entry.createdAt, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(entry.source == .local ? "端末" : "オンライン")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if entry.pinned {
+                            Label("保持", systemImage: "pin.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("復元") {
+                            Task {
+                                if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
+                                    dismiss()
+                                }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            Button("閉じる", action: dismiss)
+                .buttonStyle(.borderless)
+        }
+        .padding(24)
+        .frame(minWidth: 460, minHeight: 300)
+        .accessibilityIdentifier("snapshotSyncV2.historySheet")
+    }
+}
+
+private struct RecoveryPane: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        ContentUnavailableView(
+            "復旧が必要です",
+            systemImage: "exclamationmark.triangle",
+            description: Text(recoveryMessage)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var recoveryMessage: String {
+        if case let .recovery(context) = appState.startupState {
+            return context.message
+        }
+        return "端末の保存領域を確認できませんでした。"
+    }
+}
+
+private struct ConflictSheet: View {
+    let conflict: SyncV2ConflictProjection
+    let choose: (SyncV2ConflictChoice) -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("競合", systemImage: "exclamationmark.triangle")
+                .font(.title2.weight(.semibold))
+            Text("この端末の版とサーバーの版が分かれています。選択中の入力は先に端末へ保存されます。")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Button("この端末の版を残す") { choose(.useDevice) }
+                Button("サーバーの版を採用") { choose(.useServer) }
+                Button("両方を残す") { choose(.keepBoth) }
+            }
+            .buttonStyle(.borderedProminent)
+            Button("後で確認", action: cancel)
+                .buttonStyle(.borderless)
+        }
+        .padding(24)
+        .frame(width: 420)
+        .accessibilityIdentifier("snapshotSyncV2.conflictSheet")
+    }
 }
 
 #Preview {
-    let editorCommandSession = EditorCommandSession()
-    let appState = AppState(
-        dependencies: AppDependencies(editorCommandSession: editorCommandSession),
+    let session = EditorCommandSession()
+    let state = AppState(
+        dependencies: AppDependencies(editorCommandSession: session),
         initialStartupState: .ready
     )
     return ContentView()
-        .environment(appState)
-        .environment(EditorSettings())
-        .environment(DocumentPanelPresenter(appState: appState))
-        .environment(SnapshotMenuPresenter(appState: appState))
-        .environment(ExportPresenter(appState: appState))
-        .environment(EditorSearchSession())
-        .environment(editorCommandSession)
+        .environment(state)
+        .environment(session)
 }

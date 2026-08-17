@@ -1,97 +1,117 @@
-import AppKit
-import EditorKit
 import Foundation
 import NovelCore
-import NovelSync
+import NovelSyncV2
 
+/// 添付はv2 snapshotの一部としてSQLiteへ保存する。`.novelpkg`のcodecは、
+/// この画面から明示的に書き出す／取り込む場合にだけ呼び出される。
 extension AppState {
-    // MARK: - 資料添付
-
-    /// 現在のリポジトリが資料添付に対応しているか。
-    var supportsAttachments: Bool {
-        attachmentManager != nil
-    }
-
-    /// 資料一覧を保存層から再読み込みする。
     func reloadAttachments(expectedSession: DocumentSessionToken? = nil) async {
-        await performForCurrentDocument(expectedSession: expectedSession, ifStale: ()) {
-            let packageURL = documentURL
-            attachments = await saveCoordinator.performExclusive {
-                await loadAttachments(for: packageURL)
-            }
+        guard permitsEditorSynchronization(expectedSession: expectedSession) else { return }
+        attachmentPreviewURLs.removeAll()
+        attachments = snapshotSyncV2Attachments.map {
+            Attachment(fileName: $0.fileName, byteCount: Int64($0.byteCount))
         }
     }
 
-    /// 外部ファイルを現在の作品へ資料として取り込む。
-    ///
-    /// 添付ファイルのコピーは大きなファイルだと数秒かかることがあり、その間に
-    /// 本文編集のデバウンス保存(2秒)が発火すると、保存側は「取り込み中の古い
-    /// attachments/ をコピーした作業ディレクトリ」でパッケージを全置換してしまい、
-    /// 取り込んだ資料が失われる(Phase 4 レビュー F-A)。そこで、まず
-    /// `saveCoordinator.saveNow()` で保留中の編集を先に排出したうえで、実際の
-    /// ファイルコピーと一覧再読込みは `saveCoordinator.performExclusive` の中で
-    /// 行い、その間は新しい保存が一切始まらないようにする。
-    ///
-    /// - Important: `saveNow()` は `performExclusive` の *外側* で呼ぶこと。
-    ///   `performExclusive` の中から `saveNow()` を呼ぶと、排他区間そのものを
-    ///   待つ形になりデッドロックする。
     @discardableResult
     func addAttachment(
         from sourceURL: URL,
         expectedSession: DocumentSessionToken? = nil
     ) async -> Attachment? {
-        await performForCurrentDocument(expectedSession: expectedSession, ifStale: nil) {
-            await addAttachmentSerially(from: sourceURL)
-        }
-    }
-
-    private func addAttachmentSerially(from sourceURL: URL) async -> Attachment? {
-        guard let attachmentManager else { return nil }
-        guard await saveCoordinator.saveNow() else { return nil }
-        let packageURL = documentURL
-
-        return await saveCoordinator.performExclusive {
-            do {
-                let attachment = try await attachmentManager.addAttachment(from: sourceURL, to: packageURL)
-                attachments = await loadAttachments(for: packageURL)
-                return attachment
-            } catch {
-                print("[FUMINIWA] 資料の取り込みに失敗しました(\(Self.errorCategory(error)))")
+        guard permitsMutation(expectedSession: expectedSession) else { return nil }
+        do {
+            let bytes = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+            let originalName = sourceURL.lastPathComponent.isEmpty ? "資料" : sourceURL.lastPathComponent
+            let usedNames = Set(snapshotSyncV2Attachments.map(\.fileName))
+            let fileName = Self.uniqueAttachmentName(originalName, usedNames: usedNames)
+            let previousPayloads = snapshotSyncV2Attachments
+            let previousRecords = attachments
+            let previousPreviews = attachmentPreviewURLs
+            let item = SyncAttachment(
+                attachmentId: UUID(),
+                fileName: fileName,
+                bytes: bytes
+            )
+            snapshotSyncV2Attachments.append(item)
+            attachmentPreviewURLs.removeValue(forKey: fileName)
+            attachments.append(Attachment(fileName: fileName, byteCount: Int64(bytes.count)))
+            guard await checkpointSnapshotSyncV2(document, reason: .navigation) else {
+                snapshotSyncV2Attachments = previousPayloads
+                attachments = previousRecords
+                attachmentPreviewURLs = previousPreviews
                 return nil
             }
+            return Attachment(fileName: fileName, byteCount: Int64(bytes.count))
+        } catch {
+            return nil
         }
     }
 
-    /// 作品から資料を削除する。添付操作と保存の直列化は `addAttachment` と同じ理由
-    /// (Phase 4 レビュー F-A)。
+    @discardableResult
     func deleteAttachment(
         _ attachment: Attachment,
         expectedSession: DocumentSessionToken? = nil
     ) async -> Bool {
-        await performForCurrentDocument(expectedSession: expectedSession, ifStale: false) {
-            await deleteAttachmentSerially(attachment)
+        guard permitsMutation(expectedSession: expectedSession) else { return false }
+        let previousPayloads = snapshotSyncV2Attachments
+        let previousRecords = attachments
+        let previousPreviews = attachmentPreviewURLs
+        let originalCount = snapshotSyncV2Attachments.count
+        snapshotSyncV2Attachments.removeAll { $0.fileName == attachment.fileName }
+        guard snapshotSyncV2Attachments.count != originalCount else { return false }
+        let removedPreview = attachmentPreviewURLs.removeValue(forKey: attachment.fileName)
+        attachments.removeAll { $0.fileName == attachment.fileName }
+        let saved = await checkpointSnapshotSyncV2(document, reason: .navigation)
+        guard saved else {
+            snapshotSyncV2Attachments = previousPayloads
+            attachments = previousRecords
+            attachmentPreviewURLs = previousPreviews
+            return false
         }
+        if let removedPreview {
+            try? fileManager.removeItem(at: removedPreview)
+        }
+        return true
     }
 
-    private func deleteAttachmentSerially(_ attachment: Attachment) async -> Bool {
-        guard let attachmentManager else { return false }
-        guard await saveCoordinator.saveNow() else { return false }
-        let packageURL = documentURL
-
-        return await saveCoordinator.performExclusive {
-            do {
-                try await attachmentManager.deleteAttachment(named: attachment.fileName, from: packageURL)
-                attachments = await loadAttachments(for: packageURL)
-                return true
-            } catch {
-                print("[FUMINIWA] 資料の削除に失敗しました(\(attachment.fileName), \(Self.errorCategory(error)))")
-                return false
-            }
-        }
-    }
-
-    /// プレビュー用の資料URLを返す。
+    /// Materialize the SQLite resource bytes into a disposable URL for AppKit
+    /// previews. This URL is never used as document identity or save authority.
     func attachmentPreviewURL(for attachment: Attachment) -> URL? {
-        attachmentManager?.attachmentURL(named: attachment.fileName, in: documentURL)
+        guard let resource = snapshotSyncV2Attachments.first(where: { $0.fileName == attachment.fileName }) else {
+            return nil
+        }
+        if let cached = attachmentPreviewURLs[attachment.fileName],
+           fileManager.fileExists(atPath: cached.path) {
+            return cached
+        }
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-v2-attachment-previews", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let extensionPart = URL(fileURLWithPath: resource.fileName).pathExtension
+            let previewName = extensionPart.isEmpty
+                ? resource.attachmentId.uuidString
+                : "\(resource.attachmentId.uuidString).\(extensionPart)"
+            let previewURL = directory.appendingPathComponent(previewName)
+            try resource.bytes.write(to: previewURL, options: .atomic)
+            attachmentPreviewURLs[attachment.fileName] = previewURL
+            return previewURL
+        } catch {
+            return nil
+        }
+    }
+
+    private static func uniqueAttachmentName(_ name: String, usedNames: Set<String>) -> String {
+        guard usedNames.contains(name) else { return name }
+        let url = URL(fileURLWithPath: name)
+        let stem = url.deletingPathExtension().lastPathComponent
+        let suffix = url.pathExtension.isEmpty ? "" : ".\(url.pathExtension)"
+        var index = 2
+        var candidate = "\(stem) (\(index))\(suffix)"
+        while usedNames.contains(candidate) {
+            index += 1
+            candidate = "\(stem) (\(index))\(suffix)"
+        }
+        return candidate
     }
 }

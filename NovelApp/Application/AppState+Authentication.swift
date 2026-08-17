@@ -8,14 +8,25 @@ extension AppState {
         return false
     }
 
-    /// Restores only the opaque FUMINIWA session from the device vault. A
-    /// failed restore never blocks local startup or offline editing.
+    /// Credential-state lookup is advisory.  It may fail offline without
+    /// blocking the local SQLite workbench.
     func restoreFuminiwaSession() async {
         guard let coordinator = authSessionCoordinator else {
             authUIState = .unavailable
             return
         }
         do {
+            if let orchestrator = appleAuthenticationOrchestrator {
+                switch try await orchestrator.checkCredentialState() {
+                case .revoked?, .notFound?, .transferred?:
+                    authSession = nil
+                    authUIState = .signedOut
+                    clearAccountScopedSnapshotUI()
+                    return
+                default:
+                    break
+                }
+            }
             let session = try await coordinator.currentSession()
             authSession = session
             authUIState = session.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
@@ -25,36 +36,27 @@ extension AppState {
         }
     }
 
-    /// Performs the complete native Apple flow. The Apple adapter owns the
-    /// UI presentation; this AppState method only coordinates the challenge,
-    /// one-use credential handoff, and FUMINIWA session persistence.
     func signInWithApple() async {
-        guard let coordinator = authSessionCoordinator,
-              let apple = appleSignInCoordinator else {
+        guard let orchestrator = appleAuthenticationOrchestrator else {
             authUIState = .unavailable
             return
         }
         guard authUIState != .signingIn else { return }
         authUIState = .signingIn
         do {
-            let challenge = try await coordinator.createAppleChallenge()
-            let authorization = try await apple.authorize(using: challenge)
-            let session = try await coordinator.completeAppleSignIn(
-                challenge: challenge,
-                authorizationCode: authorization.authorizationCode,
-                identityToken: authorization.identityToken
-            )
+            // The orchestrator exchanges the one-use Apple credential with the
+            // auth server. The Apple token is never passed to Snapshot Sync.
+            let session = try await orchestrator.signIn()
+            if let previous = authSession, previous.accountID != session.accountID {
+                // A fence/account switch parks the old scope. Nothing from the
+                // previous account is adopted into the new shelf implicitly.
+                clearAccountScopedSnapshotUI()
+            }
             authSession = session
             authUIState = .signedIn(accountID: session.accountID)
-            await resumePendingSnapshotSync()
-            // A user may have signed in from the empty startup shelf. Refresh
-            // the snapshot catalog immediately so remote-only works become
-            // discoverable without restarting the app.
-            if usesSnapshotSyncRuntime,
-               case let .documentSelection(context) = startupState,
-               context.presentation == .cloudLibrary {
-                await refreshSnapshotLibrary()
-            }
+            await resumeSnapshotSyncV2()
+            await refreshSnapshotLibrary()
+            await refreshSnapshotRemoteCatalog()
         } catch is CancellationError {
             authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         } catch {
@@ -66,18 +68,40 @@ extension AppState {
         guard let coordinator = authSessionCoordinator else {
             authSession = nil
             authUIState = .unavailable
+            clearAccountScopedSnapshotUI()
             return
         }
         do {
             try await coordinator.signOut()
+            authSession = nil
+            authUIState = .signedOut
+            clearAccountScopedSnapshotUI()
         } catch {
-            // Local work and the Keychain session remain safe even when the
-            // server is offline. The vault is deliberately not cleared on a
-            // failed revoke so the next retry can finish the server session.
             authUIState = .failed("サインアウトを完了できませんでした")
-            return
         }
-        authSession = nil
-        authUIState = .signedOut
+    }
+
+    /// Remote shelf/history/conflict state is scoped to the authenticated
+    /// AccountID. Signing out must not leave the previous scope visible or
+    /// make a later account switch look like an implicit adoption.
+    private func clearAccountScopedSnapshotUI() {
+        snapshotSyncAutoAdoptionTask?.cancel()
+        snapshotSyncAutoAdoptionTask = nil
+        snapshotSyncRemoteCatalogItems = []
+        snapshotSyncHistory = []
+        snapshotSyncConflict = nil
+        snapshotSyncV2UIState = nil
+        snapshotSyncLibraryWorks = []
+        snapshotSyncCurrentWorkAccountState = nil
+        lastStartupLibraryConnection = .offline
+        if !startupState.isReady {
+            startupState = .documentSelection(
+                .init(
+                    works: [],
+                    presentation: .localAndRemote,
+                    connection: .offline
+                )
+            )
+        }
     }
 }

@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import Testing
 
 @MainActor
@@ -73,12 +75,17 @@ struct ApplicationDelegateTests {
     @Test("保存失敗時はruntimeを止めず、再試行の保存成功後にだけ終了前準備を行う")
     func terminationPreparationRunsOnlyAfterSuccessfulSave() async throws {
         let delegate = ApplicationDelegate()
-        let repository = DelegateTerminationRepository(shouldFail: true)
         let suiteName = "FUMINIWAApplicationDelegateTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
+        let configuration = try TestRuntimeConfiguration(account: nil)
         let state = AppState(
-            dependencies: AppDependencies(repository: repository, userDefaults: defaults),
+            dependencies: AppDependencies(
+                userDefaults: defaults,
+                snapshotSyncV2Factory: {
+                    try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                }
+            ),
             initialStartupState: .ready
         )
         state.updateSelectedEpisodeContent("終了前に保存する本文")
@@ -97,7 +104,8 @@ struct ApplicationDelegateTests {
         #expect(replies == [false])
         #expect(preparationCount == 0)
 
-        await repository.setShouldFail(false)
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
         #expect(delegate.beginTerminationRequest { replies.append($0) } == .terminateLater)
         while replies.count < 2 {
             await Task.yield()
@@ -105,30 +113,4 @@ struct ApplicationDelegateTests {
         #expect(replies == [false, true])
         #expect(preparationCount == 1)
     }
-}
-
-private actor DelegateTerminationRepository: DocumentRepository {
-    private var shouldFail: Bool
-
-    init(shouldFail: Bool) {
-        self.shouldFail = shouldFail
-    }
-
-    func setShouldFail(_ value: Bool) {
-        shouldFail = value
-    }
-
-    func load(from _: URL) async throws -> NovelDocument {
-        NovelDocument.newDocument()
-    }
-
-    func save(_: NovelDocument, to _: URL) async throws {
-        if shouldFail {
-            throw DelegateTerminationRepositoryError.saveFailed
-        }
-    }
-}
-
-private enum DelegateTerminationRepositoryError: Error {
-    case saveFailed
 }

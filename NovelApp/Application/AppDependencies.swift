@@ -3,8 +3,9 @@ import Foundation
 import NovelAuth
 import NovelAuthApple
 import NovelCore
-import NovelLocalStore
 import NovelStorage
+import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 
 /// アプリが使う依存関係の組み立てを担当する(docs/DESIGN.md 5.1)。
 ///
@@ -32,20 +33,22 @@ struct AppDependencies {
     /// 表示中の本文エディタを、作品遷移前にIME確定・モデル同期・入力停止する境界。
     let editorCommandSession: EditorCommandSession
 
-    /// 利用者が明示したprompt copyだけをsystem clipboardへ書く境界。
+    /// Explicit clipboard boundary for the local prompt-copy feature.
     let clipboardWriter: any PlainTextClipboardWriting
 
     /// 表示中Editorの確定済み全文を、本文所有権を破らず読み取る境界。
     let activeCommittedTextCapture: @MainActor () -> EditorCommittedTextCaptureResult
 
-    /// Device Syncが設定済みの場合だけ注入するtransport-neutral runtime。
-    let deviceSyncRuntime: DeviceSyncRuntime?
-
     /// Sign in with Apple is an optional account layer. Local editing remains
     /// available when the auth server is unreachable or not configured.
     let authSessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
-    let snapshotSyncTransport: (any SnapshotSyncTransport)?
+    let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    /// v2 runtime is created by the macOS composition root.  The app state
+    /// never constructs a URL session, SQLite handle, or v1 worker itself.
+    let snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)?
+    let snapshotSyncV2DocumentGate: MacSyncV2DocumentGate?
+    let portableBridge: SyncV2PortableBridge
 
     init(
         repository: DocumentRepository = NovelpkgRepository(),
@@ -56,10 +59,12 @@ struct AppDependencies {
         editorCommandSession: EditorCommandSession = EditorCommandSession(),
         clipboardWriter: any PlainTextClipboardWriting = SystemPlainTextClipboardWriter(),
         activeCommittedTextCapture: (@MainActor () -> EditorCommittedTextCaptureResult)? = nil,
-        deviceSyncRuntime: DeviceSyncRuntime? = nil,
         authSessionCoordinator: AuthSessionCoordinator? = nil,
         appleSignInCoordinator: AppleSignInCoordinator? = nil,
-        snapshotSyncTransport: (any SnapshotSyncTransport)? = nil
+        appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator? = nil,
+        snapshotSyncV2Factory: (@Sendable () async throws -> SyncV2Application)? = nil,
+        snapshotSyncV2DocumentGate: MacSyncV2DocumentGate? = nil,
+        portableBridge: SyncV2PortableBridge? = nil
     ) {
         self.repository = repository
         self.attachmentManager = attachmentManager ?? repository as? AttachmentManaging
@@ -71,9 +76,17 @@ struct AppDependencies {
         self.activeCommittedTextCapture = activeCommittedTextCapture ?? {
             editorCommandSession.captureActiveCommittedText()
         }
-        self.deviceSyncRuntime = deviceSyncRuntime
         self.authSessionCoordinator = authSessionCoordinator
         self.appleSignInCoordinator = appleSignInCoordinator
-        self.snapshotSyncTransport = snapshotSyncTransport
+        self.appleAuthenticationOrchestrator = appleAuthenticationOrchestrator
+        self.snapshotSyncV2Factory = snapshotSyncV2Factory
+        self.snapshotSyncV2DocumentGate = snapshotSyncV2DocumentGate
+        if let portableBridge {
+            self.portableBridge = portableBridge
+        } else if let repository = repository as? any PortableDocumentPackageRepository & AttachmentManaging {
+            self.portableBridge = SyncV2PortableBridge(repository: repository)
+        } else {
+            self.portableBridge = SyncV2PortableBridge()
+        }
     }
 }

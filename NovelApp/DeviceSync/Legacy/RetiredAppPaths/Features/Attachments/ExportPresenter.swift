@@ -291,7 +291,7 @@ private final class MacExportPanelPresenter: ExportPanelPresenting {
 
         let alert = NSAlert()
         alert.messageText = "書き出し形式を選択"
-        alert.informativeText = "原稿または作品パッケージを書き出す形式を選んでください。作品パッケージには、このMacにある作品内容・資料・スナップショット履歴が含まれます。同期先の完全なバックアップではありません。"
+        alert.informativeText = "原稿または作品パッケージを書き出す形式を選んでください。作品パッケージには、このMacにある作品内容・資料・スナップショット履歴が含まれます。iCloud上の完全なバックアップではありません。"
         alert.alertStyle = .informational
         alert.accessoryView = picker
         alert.addButton(withTitle: "続ける")
