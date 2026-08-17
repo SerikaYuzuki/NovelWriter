@@ -280,7 +280,7 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
     let value: [String: Any] = [
         "entries": [[
             "byteCount": byteCount,
-            "contentType": "application/json",
+            "contentType": "application/vnd.fuminiwa.entity+json;version=1",
             "entityKey": "work/document",
             "objectId": objectID
         ]],
@@ -292,7 +292,7 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
 }
 
 private func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
-    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,1,\(snapshotID),0,evidence\n"
+    "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,4,\(snapshotID),4,evidence\n"
 }
 
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
@@ -318,11 +318,11 @@ private func makeLegacyDatabase(
     guard let database else { throw FixtureError.open }
     defer { sqlite3_close(database) }
     try exec(database, """
-    CREATE TABLE works(work_id TEXT PRIMARY KEY, document_id TEXT NOT NULL, document_created_at TEXT NOT NULL, current_local_snapshot_id TEXT, local_generation INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE works(work_id TEXT PRIMARY KEY, document_id TEXT NOT NULL, document_created_at TEXT NOT NULL, current_local_snapshot_id TEXT, local_generation INTEGER NOT NULL DEFAULT 0, acknowledged_head_snapshot_id TEXT, acknowledged_head_generation INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY, work_id TEXT NOT NULL, parent_snapshot_ids TEXT NOT NULL, manifest BLOB NOT NULL, reason TEXT NOT NULL, local_generation INTEGER NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
     CREATE TABLE objects(object_id TEXT PRIMARY KEY, byte_count INTEGER NOT NULL, bytes BLOB NOT NULL);
     """)
-    try exec(database, "INSERT INTO works VALUES ('\(workID.uuidString.lowercased())','\(documentID.uuidString.lowercased())','2026-08-17T00:00:00Z','\(snapshotID)',1)")
+    try exec(database, "INSERT INTO works VALUES ('\(workID.uuidString.lowercased())','\(documentID.uuidString.lowercased())','2026-08-17T00:00:00Z','\(snapshotID)',4,'\(snapshotID)',4)")
     try insertSnapshot(database, snapshotID: snapshotID, workID: workID, manifest: manifest)
     if let objectID, let object {
         var statement: OpaquePointer?

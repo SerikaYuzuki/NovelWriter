@@ -16,7 +16,7 @@ swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-export \
   /path/to/legacy-archive-root/sha256-manifest.txt
 ```
 
-classification CSVは8列（`workID,classification,snapshotID,createdAt,generation,headSnapshotID,pinned,evidence`）です。分類はタイトルから推測せず、
+classification CSVは8列（`workID,classification,currentSnapshotID,currentSnapshotCreatedAt,localGeneration,acknowledgedHeadSnapshotID,acknowledgedHeadGeneration,evidence`）です。分類はタイトルから推測せず、
 ledgerの証拠を使います。受理する分類は`verified`、`verified_candidate`、`quarantine`、
 `legacy_quarantine_test_batch`、`needs-review`、`needs_review`、
 `legacy_quarantine_ambiguous_user_touched`です。
@@ -26,6 +26,7 @@ ledgerの証拠を使います。受理する分類は`verified`、`verified_can
 
 - canonical `WorkSnapshot`のdecode/materialize
 - manifest bytesのSHA-256とsnapshot IDの一致
+- legacy v1 document content type（`application/json`または`application/vnd.fuminiwa.entity+json;version=1`）の一致
 - document IDとworks行の一致
 - `NovelpkgRepository`での書き出しとlogical read-back
 - v1 object全行のbyte count／SHA-256（問題はledgerへ記録）

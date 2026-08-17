@@ -227,7 +227,7 @@ public struct LegacyV1Exporter: Sendable {
                     }
                 }
                 guard let documentEntry = snapshot.manifestModel.entries.first(where: { $0.entityKey == "work/document" }),
-                      documentEntry.contentType == "application/json",
+                      ["application/json", "application/vnd.fuminiwa.entity+json;version=1"].contains(documentEntry.contentType),
                       let documentObject = try database.object(id: documentEntry.objectID) else {
                     throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "work/document object is missing")
                 }
@@ -714,7 +714,7 @@ private enum ClassificationLedger {
             } catch {
                 throw LegacyV1ExportError.malformedClassification(workID: "<unknown>", value: "unclosed quote")
             }
-            let knownHeader = ["workId", "classification", "snapshotId", "createdAt", "generation", "headSnapshotId", "pinned", "evidence"]
+            let knownHeader = ["workID", "classification", "currentSnapshotID", "currentSnapshotCreatedAt", "localGeneration", "acknowledgedHeadSnapshotID", "acknowledgedHeadGeneration", "evidence"]
             if fields == knownHeader {
                 continue
             }
@@ -738,7 +738,7 @@ private enum ClassificationLedger {
                   fields[5] == fields[2],
                   ISO8601DateFormatter().date(from: fields[3]) != nil,
                   Int(fields[4]) != nil,
-                  Int(fields[6]) == 0 || Int(fields[6]) == 1 else {
+                  Int(fields[6]) != nil else {
                 throw LegacyV1ExportError.malformedClassification(workID: fields[0], value: "invalid evidence columns")
             }
             let record = ClassificationRecord(
@@ -747,7 +747,7 @@ private enum ClassificationLedger {
                 createdAt: fields[3],
                 generation: Int(fields[4])!,
                 headSnapshotID: fields[5],
-                pinned: Int(fields[6])!
+                headGeneration: Int(fields[6])!
             )
             guard values.updateValue(record, forKey: workID) == nil else {
                 throw LegacyV1ExportError.duplicateClassification(workID)
@@ -776,7 +776,7 @@ private struct ClassificationRecord: Equatable {
     let createdAt: String
     let generation: Int
     let headSnapshotID: String
-    let pinned: Int
+    let headGeneration: Int
 }
 
 private enum CSV {
@@ -817,8 +817,9 @@ private struct LegacyWork {
     let workID: UUID
     let documentID: UUID
     let currentSnapshotID: String
-    let createdAt: String
-    let generation: Int
+    let acknowledgedHeadSnapshotID: String
+    let acknowledgedHeadGeneration: Int
+    let localGeneration: Int
 }
 
 private struct ArchiveEvidence {
@@ -922,6 +923,7 @@ private struct LegacySnapshot {
     let snapshotID: String
     let manifest: Data
     let manifestModel: LegacyV1Manifest
+    let createdAt: String
     let pinned: Int
 }
 
@@ -1064,7 +1066,7 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     func works() throws -> [LegacyWork] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, document_created_at, local_generation FROM works ORDER BY work_id") { statement in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, local_generation, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement -> LegacyWork? in
             guard let work = text(statement, 0), let workID = UUID(uuidString: work),
                   let document = text(statement, 1), let documentID = UUID(uuidString: document),
                   let snapshot = text(statement, 2), !snapshot.isEmpty else { return nil }
@@ -1072,21 +1074,24 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                 workID: workID,
                 documentID: documentID,
                 currentSnapshotID: snapshot,
-                createdAt: text(statement, 3) ?? "",
-                generation: Int(sqlite3_column_int64(statement, 4))
+                acknowledgedHeadSnapshotID: text(statement, 4) ?? "",
+                acknowledgedHeadGeneration: Int(sqlite3_column_int64(statement, 5)),
+                localGeneration: Int(sqlite3_column_int64(statement, 3))
             )
         }
     }
 
     func malformedWorkRows() throws -> [String] {
-        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, document_created_at, local_generation FROM works ORDER BY work_id") { statement in
+        try rows(sql: "SELECT work_id, document_id, current_local_snapshot_id, local_generation, acknowledged_head_snapshot_id, acknowledged_head_generation FROM works ORDER BY work_id") { statement in
             let work = text(statement, 0) ?? "<null>"
             let document = text(statement, 1) ?? "<null>"
             let snapshot = text(statement, 2) ?? "<null>"
+            let acknowledged = text(statement, 4) ?? "<null>"
             guard UUID(uuidString: work) != nil,
                   UUID(uuidString: document) != nil,
                   !snapshot.isEmpty,
-                  snapshot != "<null>" else {
+                  snapshot != "<null>",
+                  acknowledged.count == 64 else {
                 return "works row malformed: work_id=\(work), document_id=\(document), current_local_snapshot_id=\(snapshot)"
             }
             return nil
@@ -1094,7 +1099,7 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
     }
 
     func snapshot(id: String, workID: UUID) throws -> LegacySnapshot? {
-        try one(sql: "SELECT snapshot_id, manifest, pinned FROM snapshots WHERE snapshot_id = ? AND work_id = ?", binds: [id, workID.uuidString.lowercased()]) { statement in
+        try one(sql: "SELECT snapshot_id, manifest, created_at, pinned FROM snapshots WHERE snapshot_id = ? AND work_id = ?", binds: [id, workID.uuidString.lowercased()]) { statement in
             guard let snapshotID = text(statement, 0), let manifest = data(statement, 1) else { return nil }
             let manifestModel: LegacyV1Manifest
             do {
@@ -1106,7 +1111,8 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                 snapshotID: snapshotID,
                 manifest: manifest,
                 manifestModel: manifestModel,
-                pinned: Int(sqlite3_column_int(statement, 2))
+                createdAt: text(statement, 2) ?? "",
+                pinned: Int(sqlite3_column_int(statement, 3))
             )
         }
     }
@@ -1115,11 +1121,11 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
         for work in works {
             guard let classification = classifications[work.workID],
                   classification.snapshotID == work.currentSnapshotID,
-                  classification.headSnapshotID == work.currentSnapshotID,
-                  classification.createdAt == work.createdAt,
-                  classification.generation == work.generation,
+                  classification.generation == work.localGeneration,
+                  classification.headSnapshotID == work.acknowledgedHeadSnapshotID,
+                  classification.headGeneration == work.acknowledgedHeadGeneration,
                   let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID),
-                  classification.pinned == snapshot.pinned else {
+                  classification.createdAt == snapshot.createdAt else {
                 throw LegacyV1ExportError.malformedClassification(
                     workID: work.workID.uuidString,
                     value: "classification evidence does not match source"
@@ -1143,11 +1149,11 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
             guard let object = try object(id: entry.objectID),
                   object.byteCount == entry.byteCount,
                   SHA256Hex.digest(object.bytes) == entry.objectID else {
-                throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "referenced object is invalid: (entry.objectID)")
+                throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "referenced object is invalid: \(entry.objectID)")
             }
         }
         guard let documentEntry = snapshot.manifestModel.entries.first(where: { $0.entityKey == "work/document" }),
-              documentEntry.contentType == "application/json",
+              ["application/json", "application/vnd.fuminiwa.entity+json;version=1"].contains(documentEntry.contentType),
               let documentObject = try object(id: documentEntry.objectID) else {
             throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "work/document object is missing")
         }
