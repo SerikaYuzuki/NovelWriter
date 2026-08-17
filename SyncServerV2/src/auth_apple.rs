@@ -321,6 +321,11 @@ impl<T, V> ProductionAppleProvider<T, V> {
             || claims.events.sub.len() > 512
             || claims.events.event_time <= 0
             || claims.events.event_time > now_unix + MAX_CLOCK_SKEW_SECONDS
+            || claims
+                .events
+                .is_private_email
+                .as_deref()
+                .is_some_and(|value| !matches!(value, "true" | "false"))
             || !matches!(
                 claims.events.notification_type.as_str(),
                 "email-enabled" | "email-disabled" | "consent-revoked" | "account-deleted"
@@ -361,7 +366,7 @@ struct AppleS2SEvent {
     #[serde(default)]
     email: Option<String>,
     #[serde(default)]
-    is_private_email: Option<bool>,
+    is_private_email: Option<String>,
 }
 
 #[async_trait]
@@ -788,6 +793,32 @@ gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
         assert_eq!(notification.notification_type, "consent-revoked");
         assert_eq!(notification.subject, "apple-sub-1");
         assert_eq!(notification.event_time_unix, now);
+        let email_event = encode(
+            &header,
+            &serde_json::json!({
+                "iss": APPLE_ISSUER,
+                "aud": MAC_AUDIENCE,
+                "iat": now,
+                "jti": "fixture-jti-email",
+                "events": {
+                    "type":"email-enabled",
+                    "sub":"apple-sub-1",
+                    "email":"relay@privaterelay.appleid.com",
+                    "is_private_email":"true",
+                    "event_time":now
+                }
+            }),
+            &private_key,
+        )
+        .unwrap();
+        assert_eq!(
+            provider
+                .verify_s2s_notification(&email_event, now)
+                .await
+                .unwrap()
+                .notification_type,
+            "email-enabled"
+        );
         let invalid = encode(
             &header,
             &serde_json::json!({
