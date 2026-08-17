@@ -399,6 +399,23 @@ async fn setup_conflicted_work(
     let (_, status, _) = publish(repo, principal, work_id, remote, 2, Some((root, 1))).await?;
     ensure(status == 200, "remote branch publish failed")?;
 
+    // Re-sending an already contained candidate is a successful no-op. These
+    // two calls cover both the strict-equality and ancestor branches before a
+    // real divergent candidate opens the single conflict lane.
+    let (_, status, response) =
+        publish(repo, principal, work_id, remote, 2, Some((root, 1))).await?;
+    ensure(status == 200, "equal publish did not succeed")?;
+    ensure(
+        response_value(&response)?["result"] == "noChanges",
+        "equal publish did not return noChanges",
+    )?;
+    let (_, status, response) = publish(repo, principal, work_id, root, 2, Some((root, 1))).await?;
+    ensure(status == 200, "ancestor publish did not succeed")?;
+    ensure(
+        response_value(&response)?["result"] == "noChanges",
+        "ancestor publish did not return noChanges",
+    )?;
+
     let local_title =
         canonical_json(&json!({"value":format!("local-{work_id}")})).map_err(failure)?;
     let local_title_object = upload_object(repo, principal, work_id, &local_title, root, 3).await?;
@@ -411,8 +428,7 @@ async fn setup_conflicted_work(
         local_title.len(),
         &[root],
     )?;
-    let (mut local, _) =
-        register_snapshot(repo, principal, work_id, local_bytes.clone(), 3).await?;
+    let (local, _) = register_snapshot(repo, principal, work_id, local_bytes.clone(), 3).await?;
     let (_, status, conflict_response) =
         publish(repo, principal, work_id, local, 3, Some((root, 1))).await?;
     ensure(status == 409, "stale local publish did not create conflict")?;
@@ -422,11 +438,11 @@ async fn setup_conflicted_work(
             .as_str()
             .ok_or_else(|| failure("conflict response missing id"))?,
     )?;
-    let mut conflict_revision = first_conflict["conflictRevision"]
+    let conflict_revision = first_conflict["conflictRevision"]
         .as_i64()
         .ok_or_else(|| failure("conflict response missing revision"))?;
-    let mut source_generation = 3;
-    let mut effective_manifest = local_bytes;
+    let source_generation = 3;
+    let effective_manifest = local_bytes;
 
     if add_revision {
         let latest_title =
@@ -444,24 +460,19 @@ async fn setup_conflicted_work(
         )?;
         let (latest, _) =
             register_snapshot(repo, principal, work_id, latest_bytes.clone(), 4).await?;
-        let (_, status, response) =
-            publish(repo, principal, work_id, latest, 4, Some((root, 1))).await?;
+        let result = publish(repo, principal, work_id, latest, 4, Some((root, 1))).await;
         ensure(
-            status == 409,
-            "second stale publish did not revise conflict",
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string() == "staleConflictRevision"),
+            "second stale publish bypassed the active conflict lane",
         )?;
-        let value = response_value(&response)?;
-        ensure(
-            value["conflictId"].as_str() == Some(conflict_id.to_string().as_str()),
-            "second stale publish created a duplicate active conflict",
-        )?;
-        conflict_revision = value["conflictRevision"]
-            .as_i64()
-            .ok_or_else(|| failure("revision response missing revision"))?;
-        ensure(conflict_revision == 2, "conflict revision did not append")?;
-        local = latest;
-        source_generation = 4;
-        effective_manifest = latest_bytes;
+        // A normal publish must not revise or replace the active candidate.
+        // The newer local snapshot remains registered and can be selected by
+        // a later explicit resolution command after the client refreshes the
+        // conflict revision.
+        drop(latest_bytes);
     }
 
     let active_count: i64 = sqlx::query_scalar(

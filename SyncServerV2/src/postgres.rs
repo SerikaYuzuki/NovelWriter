@@ -16,6 +16,17 @@ use uuid::Uuid;
 const SERVER_NAMESPACE: &str = "fuminiwa-snapshot-sync-v2";
 const SCHEMA_VERSION: &str = "2";
 const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r2";
+/// The server never follows an unbounded user-controlled snapshot graph.
+/// This is deliberately a graph-node budget (not a wall-clock timeout): a
+/// malformed cycle or an unexpectedly huge closure is rejected before any
+/// head/conflict/receipt mutation can be committed.
+const MAX_LINEAGE_NODES: i64 = 4096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotRelation {
+    Ancestor,
+    NotAncestor,
+}
 
 #[derive(Clone)]
 pub struct Repository {
@@ -287,7 +298,7 @@ impl Repository {
             | (CommandKind::ResolveServer, "applied")
             | (CommandKind::CloneWork, "applied")
             | (CommandKind::Restore, "applied") => Some(200),
-            (CommandKind::Publish, "applied") => Some(200),
+            (CommandKind::Publish, "noChanges" | "applied") => Some(200),
             (CommandKind::Publish, "conflictPending") => Some(409),
             _ => None,
         };
@@ -338,7 +349,7 @@ impl Repository {
                 "snapshotId",
             ]
             .as_slice(),
-            (CommandKind::Publish, "applied") => [
+            (CommandKind::Publish, "noChanges" | "applied") => [
                 "commandId",
                 "commandKind",
                 "generation",
@@ -597,6 +608,35 @@ impl Repository {
             .get("generation")
             .and_then(Value::as_i64)
             .ok_or(SyncError::Retryable)?;
+        if response.get("result").and_then(Value::as_str) == Some("noChanges") {
+            let candidate = digest_field(&cmd.value["payload"], "candidateSnapshotId")
+                .map_err(|_| SyncError::Retryable)?;
+            let reported_candidate =
+                digest_field(response, "snapshotId").map_err(|_| SyncError::Retryable)?;
+            return sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sync_v2.works w
+                     JOIN sync_v2.snapshots s
+                       ON s.account_id=w.account_id AND s.work_id=w.work_id
+                      AND s.snapshot_id=$3
+                     WHERE w.account_id=$1 AND w.work_id=$2
+                       AND w.head_snapshot_id=$3 AND w.head_generation=$4
+                       AND NOT EXISTS(
+                           SELECT 1 FROM sync_v2.head_events h
+                           WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$5
+                       )
+                 )",
+            )
+            .bind(&p.account_id)
+            .bind(cmd.work_id)
+            .bind(snapshot.as_slice())
+            .bind(generation)
+            .bind(cmd.command_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(SyncError::Database)
+            .map(|head_matches| head_matches && candidate == reported_candidate);
+        }
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.head_events h JOIN sync_v2.history hi ON hi.account_id=h.account_id AND hi.work_id=h.work_id AND hi.snapshot_id=h.snapshot_id JOIN sync_v2.catalog_events c ON c.account_id=h.account_id AND c.work_id=h.work_id AND c.head_generation=h.generation AND c.head_snapshot_id=h.snapshot_id WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$3 AND h.generation=$4 AND h.snapshot_id=$5 AND h.command_kind='publish' AND hi.reason='publish' AND c.event_kind='upsert' AND c.tombstoned=false)")
             .bind(&p.account_id).bind(cmd.work_id).bind(cmd.command_id).bind(generation).bind(snapshot.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
     }
@@ -1201,6 +1241,104 @@ impl Repository {
             ),
         ))
     }
+    /// Verify a snapshot graph edge without trusting a client-provided base.
+    ///
+    /// The recursive walk starts at `descendant` and follows immutable parent
+    /// edges. The query also emits a row for a cycle edge and detects a
+    /// continuation past the node budget, so both cases fail closed as
+    /// `lineageViolation` instead of being treated as a normal conflict.
+    async fn snapshot_is_ancestor<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        ancestor: &[u8; 32],
+        descendant: &[u8; 32],
+    ) -> SyncResult<SnapshotRelation> {
+        let row = sqlx::query(
+            "WITH RECURSIVE walk(snapshot_id, depth, path, cycle) AS (
+                 SELECT s.snapshot_id, 0::bigint, ARRAY[s.snapshot_id]::bytea[], false
+                 FROM sync_v2.snapshots s
+                 WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3
+                 UNION ALL
+                 SELECT p.parent_snapshot_id,
+                        w.depth + 1,
+                        w.path || p.parent_snapshot_id,
+                        p.parent_snapshot_id = ANY(w.path)
+                 FROM walk w
+                 JOIN sync_v2.snapshot_parents p
+                   ON p.account_id=$1 AND p.work_id=$2 AND p.snapshot_id=w.snapshot_id
+                 WHERE NOT w.cycle AND w.depth < $5
+             ), bounded AS (
+                 SELECT * FROM walk LIMIT $6
+             ), checked AS (
+                 SELECT w.*,
+                        EXISTS(
+                            SELECT 1
+                            FROM sync_v2.snapshot_parents next_parent
+                            WHERE next_parent.account_id=$1
+                              AND next_parent.work_id=$2
+                              AND next_parent.snapshot_id=w.snapshot_id
+                        ) AS has_next
+                 FROM bounded w
+             )
+             SELECT
+                 EXISTS(SELECT 1 FROM checked WHERE snapshot_id=$4) AS ancestor,
+                 EXISTS(SELECT 1 FROM checked WHERE cycle) AS cycle,
+                 EXISTS(SELECT 1 FROM checked WHERE depth >= $5 AND has_next) AS over_budget,
+                 COUNT(*) AS visited
+             FROM checked",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .bind(descendant)
+        .bind(ancestor)
+        .bind(MAX_LINEAGE_NODES)
+        .bind(MAX_LINEAGE_NODES + 1)
+        .fetch_one(&mut **tx)
+        .await?;
+        let cycle: bool = row.try_get("cycle")?;
+        let over_budget: bool = row.try_get("over_budget")?;
+        let visited: i64 = row.try_get("visited")?;
+        if cycle || over_budget || visited > MAX_LINEAGE_NODES {
+            return Err(SyncError::LineageViolation);
+        }
+        let is_ancestor: bool = row.try_get("ancestor")?;
+        Ok(if is_ancestor {
+            SnapshotRelation::Ancestor
+        } else {
+            SnapshotRelation::NotAncestor
+        })
+    }
+
+    async fn snapshot_is_root<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        snapshot_id: &[u8; 32],
+    ) -> SyncResult<bool> {
+        let row = sqlx::query(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sync_v2.snapshots s
+                 WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3
+             ) AS exists,
+             EXISTS(
+                 SELECT 1 FROM sync_v2.snapshot_parents p
+                 WHERE p.account_id=$1 AND p.work_id=$2 AND p.snapshot_id=$3
+             ) AS has_parent",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .bind(snapshot_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !row.try_get::<bool, _>("exists")? {
+            return Err(SyncError::LineageViolation);
+        }
+        Ok(!row.try_get::<bool, _>("has_parent")?)
+    }
+
     async fn publish<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -1210,23 +1348,35 @@ impl Repository {
         let payload = &c.value["payload"];
         let candidate =
             digest_field(payload, "candidateSnapshotId").map_err(SyncError::SchemaViolation)?;
-        if sqlx::query(
-            "SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+        // Validate the candidate closure before touching the Work head or
+        // active-conflict state. An absent snapshot is deliberately reported
+        // as lineageViolation: it must not disclose a cross-account object or
+        // leave a reserved receipt behind.
+        let candidate_exists = sqlx::query(
+            "SELECT 1 FROM sync_v2.snapshots
+             WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
         )
         .bind(&p.account_id)
         .bind(c.work_id)
         .bind(candidate.as_slice())
         .fetch_optional(&mut **tx)
         .await?
-        .is_none()
-        {
-            return Err(SyncError::NotFound);
+        .is_some();
+        if !candidate_exists {
+            return Err(SyncError::LineageViolation);
         }
-        let row=sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let row = sqlx::query(
+            "SELECT head_generation,head_snapshot_id FROM sync_v2.works
+             WHERE account_id=$1 AND work_id=$2 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .fetch_one(&mut **tx)
+        .await?;
         let generation: Option<i64> = row.try_get("head_generation")?;
         let current: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
         let expected = &payload["expectedRemoteHead"];
-        let (expected_id, expected_generation) = if expected.is_null() {
+        let (expected_id, _expected_generation) = if expected.is_null() {
             (None, None)
         } else {
             let id = digest_field(expected, "snapshotId")
@@ -1240,26 +1390,175 @@ impl Repository {
                 })?;
             (Some(id), Some(gen))
         };
-        if current != expected_id || generation != expected_generation {
-            let remote = current.clone().ok_or(SyncError::StaleHead)?;
-            let active = sqlx::query("SELECT conflict_id,current_revision FROM sync_v2.active_conflicts WHERE account_id=$1 AND work_id=$2 AND state='active' FOR UPDATE")
-                .bind(&p.account_id).bind(c.work_id).fetch_optional(&mut **tx).await?;
-            let (conflict, revision) = if let Some(row) = active {
-                let id: Uuid = row.try_get("conflict_id")?;
-                let next: i64 = row.try_get::<i64, _>("current_revision")? + 1;
-                (id, next)
+        // A non-null expected head must be an actual ancestor of the
+        // candidate. This prevents a stale client from inventing a common
+        // base merely because its expected generation happens to differ.
+        if let Some(expected_id) = expected_id.as_deref() {
+            if sqlx::query(
+                "SELECT 1 FROM sync_v2.snapshots
+                 WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+            )
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .bind(expected_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_none()
+            {
+                return Err(SyncError::LineageViolation);
+            }
+            let expected_array: [u8; 32] = expected_id
+                .try_into()
+                .map_err(|_| SyncError::LineageViolation)?;
+            if self
+                .snapshot_is_ancestor(tx, p, c.work_id, &expected_array, &candidate)
+                .await?
+                != SnapshotRelation::Ancestor
+            {
+                return Err(SyncError::LineageViolation);
+            }
+        } else if !self.snapshot_is_root(tx, p, c.work_id, &candidate).await? {
+            return Err(SyncError::LineageViolation);
+        }
+
+        // There is one active conflict lane per Work. Lock it after the Work
+        // row (the repository-wide lock order) and never append a second
+        // revision through an ordinary publish command.
+        let active = sqlx::query(
+            "SELECT conflict_id,current_revision FROM sync_v2.active_conflicts
+             WHERE account_id=$1 AND work_id=$2 AND state='active' FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if active.is_some() {
+            return Err(SyncError::StaleConflictRevision);
+        }
+
+        let remote = current.clone();
+        if let Some(remote_id) = remote.as_deref() {
+            let remote_array: [u8; 32] = remote_id
+                .try_into()
+                .map_err(|_| SyncError::LineageViolation)?;
+            if candidate.as_slice() == remote_id {
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "noChanges",
+                        vec![
+                            ("generation".into(), Value::from(generation.unwrap_or(1))),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            (
+                                "head".into(),
+                                Self::head_value(remote_id, generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            let candidate_is_ancestor = self
+                .snapshot_is_ancestor(tx, p, c.work_id, &candidate, &remote_array)
+                .await?
+                == SnapshotRelation::Ancestor;
+            if candidate_is_ancestor {
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "noChanges",
+                        vec![
+                            ("generation".into(), Value::from(generation.unwrap_or(1))),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            (
+                                "head".into(),
+                                Self::head_value(remote_id, generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            let current_is_ancestor = self
+                .snapshot_is_ancestor(tx, p, c.work_id, &remote_array, &candidate)
+                .await?
+                == SnapshotRelation::Ancestor;
+            if current_is_ancestor {
+                let next = generation.unwrap_or(0) + 1;
+                sqlx::query(
+                    "UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4
+                     WHERE account_id=$1 AND work_id=$2",
+                )
+                .bind(&p.account_id)
+                .bind(c.work_id)
+                .bind(candidate.as_slice())
+                .bind(next)
+                .execute(&mut **tx)
+                .await?;
+                let occurrence = Uuid::new_v4();
+                sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
+                    .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
+                self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
+                    .await?;
+                sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())")
+                    .bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "applied",
+                        vec![
+                            ("generation".into(), Value::from(next)),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            ("head".into(), Self::head_value(candidate.as_slice(), next)),
+                        ],
+                    ),
+                ));
+            }
+        }
+
+        // A true divergence must have a verified common base. For an
+        // expected-null command, both branches must be independent roots;
+        // otherwise the server would be manufacturing a base it cannot prove.
+        if remote.is_none() && expected_id.is_some() {
+            return Err(SyncError::LineageViolation);
+        }
+        if let Some(remote_id) = remote.as_deref() {
+            if let Some(expected_id) = expected_id.as_deref() {
+                let expected_array: [u8; 32] = expected_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                let remote_array: [u8; 32] = remote_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                if self
+                    .snapshot_is_ancestor(tx, p, c.work_id, &expected_array, &remote_array)
+                    .await?
+                    != SnapshotRelation::Ancestor
+                {
+                    return Err(SyncError::LineageViolation);
+                }
             } else {
-                let id = Uuid::new_v4();
-                sqlx::query("INSERT INTO sync_v2.active_conflicts(account_id,conflict_id,work_id,current_revision,source_generation,state) VALUES($1,$2,$3,1,$4,'active')")
-                    .bind(&p.account_id).bind(id).bind(c.work_id).bind(c.source_generation).execute(&mut **tx).await?;
-                (id, 1)
-            };
+                let remote_array: [u8; 32] = remote_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                if !self
+                    .snapshot_is_root(tx, p, c.work_id, &remote_array)
+                    .await?
+                {
+                    return Err(SyncError::LineageViolation);
+                }
+            }
+        }
+
+        if let Some(remote) = remote.as_deref() {
+            let conflict = Uuid::new_v4();
+            sqlx::query("INSERT INTO sync_v2.active_conflicts(account_id,conflict_id,work_id,current_revision,source_generation,state) VALUES($1,$2,$3,1,$4,'active')")
+                .bind(&p.account_id).bind(conflict).bind(c.work_id).bind(c.source_generation).execute(&mut **tx).await?;
             sqlx::query("INSERT INTO sync_v2.conflict_candidates(account_id,conflict_id,work_id,revision,base_snapshot_id,local_snapshot_id,remote_snapshot_id,source_generation,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())")
-                .bind(&p.account_id).bind(conflict).bind(c.work_id).bind(revision).bind(expected_id.as_deref()).bind(candidate.as_slice()).bind(remote.as_slice()).bind(c.source_generation).execute(&mut **tx).await?;
-            sqlx::query("UPDATE sync_v2.active_conflicts SET current_revision=$3,source_generation=$4 WHERE account_id=$1 AND conflict_id=$2")
-                .bind(&p.account_id).bind(conflict).bind(revision).bind(c.source_generation).execute(&mut **tx).await?;
+                .bind(&p.account_id).bind(conflict).bind(c.work_id).bind(1_i64).bind(expected_id.as_deref()).bind(candidate.as_slice()).bind(remote).bind(c.source_generation).execute(&mut **tx).await?;
             sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,$4,$5,now())")
-                .bind(&p.account_id).bind(conflict).bind(revision).bind(if revision == 1 { "created" } else { "revision" }).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+                .bind(&p.account_id).bind(conflict).bind(1_i64).bind("created").bind(&c.canonical_bytes).execute(&mut **tx).await?;
             return Ok((
                 409,
                 Self::response(
@@ -1267,11 +1566,11 @@ impl Repository {
                     "conflictPending",
                     vec![
                         ("conflictId".into(), Value::String(conflict.to_string())),
-                        ("conflictRevision".into(), Value::from(revision)),
+                        ("conflictRevision".into(), Value::from(1_i64)),
                         ("sourceGeneration".into(), Value::from(c.source_generation)),
                         (
                             "head".into(),
-                            Self::head_value(&remote, generation.unwrap_or(1)),
+                            Self::head_value(remote, generation.unwrap_or(1)),
                         ),
                     ],
                 ),
