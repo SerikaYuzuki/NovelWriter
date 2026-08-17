@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde_json::Value;
 use sqlx::{
     postgres::{PgAdvisoryLock, PgAdvisoryLockKey, PgConnectOptions, PgPoolOptions},
-    PgPool, Postgres, Row, Transaction,
+    PgConnection, PgPool, Postgres, Row, Transaction,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -24,6 +24,10 @@ const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
 // can safely be read and while SQLx is applying DDL.
 const DATABASE_IDENTITY_LOCK_KEY_1: i32 = 0x4655_4D49; // "FUMI"
 const DATABASE_IDENTITY_LOCK_KEY_2: i32 = 0x4E49_5741; // "NIWA"
+
+fn is_temporary_namespace(name: &str) -> bool {
+    name.starts_with("pg_temp_") || name.starts_with("pg_toast_temp_")
+}
 /// The server never follows an unbounded user-controlled snapshot graph.
 /// This is deliberately a graph-node budget (not a wall-clock timeout): a
 /// malformed cycle or an unexpectedly huge closure is rejected before any
@@ -331,10 +335,19 @@ impl Repository {
             DATABASE_IDENTITY_LOCK_KEY_1,
             DATABASE_IDENTITY_LOCK_KEY_2,
         ));
-        let identity_guard = identity_lock.acquire(&mut identity_connection).await?;
-        Self::verify_database_identity(&pool).await?;
+        let mut identity_guard = identity_lock.acquire(&mut identity_connection).await?;
+        Self::verify_database_identity(&mut identity_guard).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        // Re-read the complete catalog after migrations while the same
+        // deployment-wide lock is still held.  Advisory locks are
+        // cooperative, so this second check is the fail-closed boundary for
+        // a non-cooperative DDL session that raced the pre-migration check.
+        Self::verify_database_identity(&mut identity_guard).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
+        // Re-read once more after the binding transaction. The binding is
+        // never considered a successful startup if an external DDL session
+        // inserted an unknown object during metadata verification.
+        Self::verify_database_identity(&mut identity_guard).await?;
         drop(identity_guard);
         drop(identity_connection);
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
@@ -361,10 +374,19 @@ impl Repository {
             DATABASE_IDENTITY_LOCK_KEY_1,
             DATABASE_IDENTITY_LOCK_KEY_2,
         ));
-        let identity_guard = identity_lock.acquire(&mut identity_connection).await?;
-        Self::verify_database_identity(&pool).await?;
+        let mut identity_guard = identity_lock.acquire(&mut identity_connection).await?;
+        Self::verify_database_identity(&mut identity_guard).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        // Re-read the complete catalog after migrations while the same
+        // deployment-wide lock is still held.  Advisory locks are
+        // cooperative, so this second check is the fail-closed boundary for
+        // a non-cooperative DDL session that raced the pre-migration check.
+        Self::verify_database_identity(&mut identity_guard).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
+        // Re-read once more after the binding transaction. The binding is
+        // never considered a successful startup if an external DDL session
+        // inserted an unknown object during metadata verification.
+        Self::verify_database_identity(&mut identity_guard).await?;
         drop(identity_guard);
         drop(identity_connection);
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
@@ -381,16 +403,16 @@ impl Repository {
     /// SQLx's own migration bookkeeping) or already carries the exact v2
     /// marker.  In particular, a legacy-looking `sync_v2` table is not a
     /// migration starting point: it is rejected before any migration runs.
-    async fn verify_database_identity(pool: &PgPool) -> Result<(), sqlx::Error> {
+    async fn verify_database_identity(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
         let server_meta_exists: bool =
             sqlx::query_scalar("SELECT to_regclass('sync_v2.server_meta') IS NOT NULL")
-                .fetch_one(pool)
+                .fetch_one(&mut *connection)
                 .await?;
         let server_meta = if server_meta_exists {
             sqlx::query_as::<_, (String, String)>(
                 "SELECT key,value FROM sync_v2.server_meta ORDER BY key",
             )
-            .fetch_all(pool)
+            .fetch_all(&mut *connection)
             .await?
         } else {
             Vec::new()
@@ -406,11 +428,18 @@ impl Repository {
             "SELECT nspname FROM pg_namespace
              WHERE nspname NOT IN ('pg_catalog','information_schema','public')
                AND nspname NOT LIKE 'pg_toast%'
+               AND nspname NOT LIKE 'pg_temp_%'
+               AND nspname NOT LIKE 'pg_toast_temp_%'
              ORDER BY nspname",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await?;
-        user_objects.extend(schemas.into_iter().map(|schema| format!("schema:{schema}")));
+        user_objects.extend(
+            schemas
+                .into_iter()
+                .filter(|schema| !is_temporary_namespace(schema))
+                .map(|schema| format!("schema:{schema}")),
+        );
 
         let relations: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT c.relkind::TEXT, n.nspname, c.relname
@@ -418,13 +447,17 @@ impl Repository {
              JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname NOT IN ('pg_catalog','information_schema')
                AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND c.relpersistence <> 't'
              ORDER BY n.nspname, c.relkind, c.relname",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await?;
         user_objects.extend(
             relations
                 .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
                 .map(|(kind, schema, name)| format!("relation:{kind}:{schema}.{name}")),
         );
 
@@ -434,15 +467,18 @@ impl Repository {
              JOIN pg_namespace n ON n.oid = t.typnamespace
              WHERE n.nspname NOT IN ('pg_catalog','information_schema')
                AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
                AND t.typelem = 0
                AND t.typtype IN ('c','d','e','r')
              ORDER BY n.nspname, t.typtype, t.typname",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await?;
         user_objects.extend(
             types
                 .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
                 .map(|(kind, schema, name)| format!("type:{kind}:{schema}.{name}")),
         );
 
@@ -453,19 +489,22 @@ impl Repository {
              JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname NOT IN ('pg_catalog','information_schema')
                AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
              ORDER BY n.nspname, p.proname, p.oid",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await?;
         user_objects.extend(
             routines
                 .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
                 .map(|(kind, schema, name)| format!("{kind}:{schema}.{name}")),
         );
 
         let extensions: Vec<String> =
             sqlx::query_scalar("SELECT extname FROM pg_extension ORDER BY extname")
-                .fetch_all(pool)
+                .fetch_all(&mut *connection)
                 .await?;
         user_objects.extend(
             extensions
@@ -2789,8 +2828,9 @@ mod create_work_lock_key_tests {
 #[cfg(test)]
 mod database_identity_tests {
     use super::{
-        classify_database_identity, expected_v2_database_objects, sqlx_only_database_objects,
-        DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION, SERVER_NAMESPACE,
+        classify_database_identity, expected_v2_database_objects, is_temporary_namespace,
+        sqlx_only_database_objects, DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION,
+        SERVER_NAMESPACE,
     };
 
     fn exact_marker() -> Vec<(String, String)> {
@@ -2828,6 +2868,17 @@ mod database_identity_tests {
             classify_database_identity(false, &[], &objects),
             Ok(DatabaseIdentity::Fresh)
         );
+    }
+
+    #[test]
+    fn postgres_temporary_namespaces_are_ignored_by_identity_inventory() {
+        for name in ["pg_temp_3", "pg_toast_temp_3"] {
+            assert!(
+                is_temporary_namespace(name),
+                "temporary PostgreSQL namespace was not recognized: {name}"
+            );
+        }
+        assert!(!is_temporary_namespace("sync_v2"));
     }
 
     #[test]

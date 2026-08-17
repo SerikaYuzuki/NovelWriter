@@ -25,6 +25,14 @@ migration would either break startup or require destructive rewriting. Do not
 weaken startup or claim role isolation until that blocker is resolved in a
 separate deployment revision.
 
+For Production hardening, the recommended end state is a dedicated runtime
+role with no database/schema `CREATE`, `ALTER`, `DROP`, or migration-table
+write authority, plus a separately provisioned migration owner. The runtime
+role must not be able to bypass the startup identity boundary with direct DDL;
+advisory locks are cooperative coordination, not a privilege boundary. This
+role split remains a Production GO prerequisite and is not implemented by the
+current Compose revision.
+
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks
 the v2 schema checksum/protocol epoch or points at a known v1 volume/schema.
@@ -37,13 +45,17 @@ database unchanged.
 
 Startup takes one deployment-wide PostgreSQL session advisory lock before
 reading that inventory. The lock ordering is fixed: acquire the advisory
-lock, inspect the complete identity inventory, run SQLx migrations, then
-verify `server_meta` and the singleton deployment binding; release the lock
-only after the final verification succeeds. The checked-out session keeps the
-lock across all phases, and the SQLx advisory-lock guard releases it when that
-session is returned or closed on every error path. Every v2 server startup uses
-the same key, so a concurrent startup cannot pass the pre-migration check and create or
-accept an unknown DDL object in the guard-to-migration window.
+lock, inspect the complete identity inventory, run SQLx migrations, re-inspect
+the complete inventory, then verify `server_meta` and the singleton deployment
+binding, followed by a final inventory read; release the lock only after the
+final verification succeeds. The checked-out session keeps the lock across
+all phases, and the SQLx advisory-lock guard releases it when that session is
+returned or closed on every error path. Every v2 server startup uses the same
+key, so a concurrent startup cannot pass the pre-migration check and create or
+accept an unknown DDL object in the guard-to-migration window. The repeated
+inventory checks are defense-in-depth; advisory locks do not constrain a
+non-cooperative DDL role, which remains a Production NO-GO until role split and
+privilege read-back are implemented.
 
 `PostgresObjectStore` is the only initial `ObjectStore` implementation. A
 future S3 adapter requires a new versioned deployment manifest, data-copy plus
