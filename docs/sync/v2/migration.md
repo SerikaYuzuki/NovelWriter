@@ -41,6 +41,15 @@ Any invalid UTF-8, unknown account scope, duplicate identity, symlink, digest
 mismatch, or unsupported payload goes to `quarantined` with evidence and never
 becomes a v2 Work. A migration run has exactly one declared target database:
 
+The standalone package also inventories every non-hidden tree entry, including
+empty directories and opaque/orphan files. Each entry records its normalized
+relative path, kind, byte count, SHA-256/ObjectID (for files), and empty-directory
+flag. The current v2 SQLite schema has no portable-resource CAS, so a non-empty
+opaque-resource inventory is staged only long enough to record evidence and then
+quarantined; it is never silently dropped into a lossy committed Work. A later
+resource-CAS decision must extend the schema and fixtures before commit is
+enabled.
+
 - **client SQLite adoption** revalidates the staged closure, adds the local
   WorkID/first Snapshot and adoption marker in one SQLite transaction, then
   later publishes through `createWork` -> object prepare/upload/finalize ->
