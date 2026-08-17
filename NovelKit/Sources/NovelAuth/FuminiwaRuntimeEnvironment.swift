@@ -48,7 +48,7 @@ public struct FuminiwaRuntimeEnvironment: Equatable, Sendable {
         }
 
         let configuredURL = userDefaults.string(forKey: Self.syncServerURLKey)
-        let url = URL(string: configuredURL ?? Self.defaultSyncServerURL)
+        let url = Self.productionServerURL(configuredURL)
         self.init(networkPolicy: url == nil ? .disabled : .enabled, syncServerURL: url)
     }
 
@@ -71,7 +71,31 @@ public struct FuminiwaRuntimeEnvironment: Equatable, Sendable {
         return defaults
     }
 
-    private static let defaultSyncServerURL = "http://192.168.11.5:18080"
+    private static let defaultSyncServerURL = "https://192.168.11.5:8443"
+
+    /// A persisted v1 HTTP endpoint is never adopted by the v2 production
+    /// runtime. Invalid or retired preferences fall back to the isolated v2
+    /// HTTPS endpoint; tests use the typed test composition instead.
+    private static func productionServerURL(_ configured: String?) -> URL? {
+        if let configured,
+           let url = URL(string: configured),
+           isValidProductionServerURL(url) {
+            return url
+        }
+        return URL(string: defaultSyncServerURL)
+    }
+
+    private static func isValidProductionServerURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              url.host != nil,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil else {
+            return false
+        }
+        return url.path.isEmpty || url.path == "/"
+    }
 
     public static func isTestProcess(
         environment: [String: String] = ProcessInfo.processInfo.environment
