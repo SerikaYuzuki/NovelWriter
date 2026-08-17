@@ -327,12 +327,39 @@ public protocol PortableDocumentPackageRepository: DocumentCopyingRepository {
     /// the storage implementation rather than crossing into App or sync code.
     func readValidatedAttachments(in url: URL) async throws -> [PortableAttachmentPayload]
 
+    /// Reads the manifest's validated metadata and the opaque remainder of
+    /// the package tree in deterministic order.
+    func readValidatedPortableMetadata(in url: URL) async throws -> PortablePackageMetadata
+
     /// sibling temporary package を完全検証してから destination へ atomic に採用する。
     func saveValidatedCopy(
         _ doc: NovelDocument,
         from sourceURL: URL,
         to destinationURL: URL
     ) async throws
+
+    /// Extended explicit export boundary used by Snapshot Sync v2.
+    func saveValidatedCopy(
+        _ doc: NovelDocument,
+        from sourceURL: URL,
+        to destinationURL: URL,
+        createdAt: Date,
+        resources: [PortableResource]
+    ) async throws
+}
+
+public extension PortableDocumentPackageRepository {
+    func saveValidatedCopy(
+        _ doc: NovelDocument,
+        from sourceURL: URL,
+        to destinationURL: URL,
+        createdAt: Date,
+        resources: [PortableResource]
+    ) async throws {
+        _ = createdAt
+        _ = resources
+        try await saveValidatedCopy(doc, from: sourceURL, to: destinationURL)
+    }
 }
 
 /// スナップショットの作成契機(D-026 / D-074)。

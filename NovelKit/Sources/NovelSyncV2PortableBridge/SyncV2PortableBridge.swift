@@ -11,11 +11,20 @@ import NovelSyncV2
 /// reason afterwards.
 public struct SyncV2PortableImport: Sendable {
     public let document: NovelDocument
+    public let documentCreatedAt: Date
     public let attachments: [SyncAttachment]
+    public let resources: [PortableResource]
 
-    public init(document: NovelDocument, attachments: [SyncAttachment]) {
+    public init(
+        document: NovelDocument,
+        documentCreatedAt: Date,
+        attachments: [SyncAttachment],
+        resources: [PortableResource] = []
+    ) {
         self.document = document
+        self.documentCreatedAt = documentCreatedAt
         self.attachments = attachments
+        self.resources = resources
     }
 }
 
@@ -107,6 +116,12 @@ public struct SyncV2PortableBridge: Sendable {
                 bytes: payload.bytes
             )
         }
+        let metadata: PortablePackageMetadata
+        do {
+            metadata = try await repository.readValidatedPortableMetadata(in: packageURL)
+        } catch let error as NovelpkgPortableTransferError {
+            throw map(error)
+        }
 
         // A package can be replaced by another process between the repository
         // validation and attachment reads. Revalidate the logical document so
@@ -120,7 +135,12 @@ public struct SyncV2PortableBridge: Sendable {
             throw map(error)
         }
 
-        return SyncV2PortableImport(document: document, attachments: attachments)
+        return SyncV2PortableImport(
+            document: document,
+            documentCreatedAt: metadata.createdAt,
+            attachments: attachments,
+            resources: metadata.resources
+        )
     }
 
     /// Exports a committed v2 projection to a new `.novelpkg`.
@@ -133,6 +153,8 @@ public struct SyncV2PortableBridge: Sendable {
     public func exportExplicitPackage(
         document: NovelDocument,
         attachments: [SyncAttachment],
+        documentCreatedAt: Date? = nil,
+        resources: [PortableResource] = [],
         to destinationURL: URL
     ) async throws {
         try validateDestination(destinationURL)
@@ -167,18 +189,32 @@ public struct SyncV2PortableBridge: Sendable {
             }
 
             let staged = try await importExplicitPackage(from: stagingURL)
-            try verify(staged, document: document, attachments: attachments)
+            try verify(
+                staged,
+                document: document,
+                documentCreatedAt: staged.documentCreatedAt,
+                attachments: attachments,
+                resources: []
+            )
 
             // saveValidatedCopy performs a final tree validation and atomic
             // adoption. It is reached only after all source bytes are proven.
             try await repository.saveValidatedCopy(
                 document,
                 from: stagingURL,
-                to: destinationURL
+                to: destinationURL,
+                createdAt: documentCreatedAt ?? staged.documentCreatedAt,
+                resources: resources
             )
 
             let exported = try await importExplicitPackage(from: destinationURL)
-            try verify(exported, document: document, attachments: attachments)
+            try verify(
+                exported,
+                document: document,
+                documentCreatedAt: documentCreatedAt ?? staged.documentCreatedAt,
+                attachments: attachments,
+                resources: resources
+            )
         } catch let error as SyncV2PortableBridgeError {
             throw error
         } catch let error as NovelpkgPortableTransferError {
@@ -247,10 +283,15 @@ private extension SyncV2PortableBridge {
     func verify(
         _ actual: SyncV2PortableImport,
         document: NovelDocument,
-        attachments expected: [SyncAttachment]
+        documentCreatedAt: Date,
+        attachments expected: [SyncAttachment],
+        resources expectedResources: [PortableResource]
     ) throws {
         guard actual.document == document else {
             throw SyncV2PortableBridgeError.exportReadBackMismatch("document")
+        }
+        guard actual.documentCreatedAt == documentCreatedAt else {
+            throw SyncV2PortableBridgeError.exportReadBackMismatch("createdAt")
         }
         let expectedByName = Dictionary(uniqueKeysWithValues: expected.map { ($0.fileName, $0.bytes) })
         let actualByName = Dictionary(uniqueKeysWithValues: actual.attachments.map { ($0.fileName, $0.bytes) })
@@ -261,6 +302,9 @@ private extension SyncV2PortableBridge {
             guard actualByName[name] == bytes else {
                 throw SyncV2PortableBridgeError.exportReadBackMismatch(name)
             }
+        }
+        guard actual.resources == expectedResources else {
+            throw SyncV2PortableBridgeError.exportReadBackMismatch("resources")
         }
     }
 

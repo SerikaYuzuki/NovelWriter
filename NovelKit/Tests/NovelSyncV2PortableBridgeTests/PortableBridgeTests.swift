@@ -42,11 +42,27 @@ private func syncAttachment(_ name: String, _ bytes: [UInt8]) -> SyncAttachment 
     let attachmentDirectory = source.appendingPathComponent("attachments", isDirectory: true)
     try Data([0, 1, 2, 255]).write(to: attachmentDirectory.appendingPathComponent("画像.bin"))
     try Data("参考資料".utf8).write(to: attachmentDirectory.appendingPathComponent("参考.txt"))
+    let snapshots = source.appendingPathComponent("snapshots", isDirectory: true)
+    let snapshotRaw = snapshots.appendingPathComponent("legacy.bin")
+    try Data([5, 4, 3, 2]).write(to: snapshotRaw)
+    let orphan = source.appendingPathComponent("orphan.dat")
+    try Data([8, 6, 7]).write(to: orphan)
+
+    var manifest = try #require(
+        JSONSerialization.jsonObject(
+            with: Data(contentsOf: source.appendingPathComponent("manifest.json"))
+        ) as? [String: Any]
+    )
+    manifest["createdAt"] = "2024-02-29T12:34:56.789Z"
+    try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys, .prettyPrinted])
+        .write(to: source.appendingPathComponent("manifest.json"))
 
     let imported = try await bridge.importExplicitPackage(from: source)
     #expect(imported.document == document)
+    #expect(imported.documentCreatedAt == Date(timeIntervalSince1970: 1_709_210_096.789))
     #expect(imported.attachments.map(\.fileName) == ["参考.txt", "画像.bin"])
     #expect(imported.attachments.allSatisfy { $0.byteCount == $0.bytes.count })
+    #expect(imported.resources.map(\.pathComponents) == [["orphan.dat"], ["snapshots"], ["snapshots", "legacy.bin"]])
 
     let repeated = try await bridge.importExplicitPackage(from: source)
     #expect(imported.attachments.map(\.attachmentId) == repeated.attachments.map(\.attachmentId))
@@ -54,6 +70,8 @@ private func syncAttachment(_ name: String, _ bytes: [UInt8]) -> SyncAttachment 
     try await bridge.exportExplicitPackage(
         document: imported.document,
         attachments: imported.attachments,
+        documentCreatedAt: imported.documentCreatedAt,
+        resources: imported.resources,
         to: destination
     )
     let exported = try await bridge.importExplicitPackage(from: destination)
@@ -61,6 +79,8 @@ private func syncAttachment(_ name: String, _ bytes: [UInt8]) -> SyncAttachment 
     #expect(exported.attachments.map(\.fileName) == imported.attachments.map(\.fileName))
     #expect(exported.attachments.map(\.bytes) == imported.attachments.map(\.bytes))
     #expect(exported.attachments.map(\.attachmentId) == imported.attachments.map(\.attachmentId))
+    #expect(exported.documentCreatedAt == imported.documentCreatedAt)
+    #expect(exported.resources == imported.resources)
 }
 
 @Test func exportRejectsDuplicateOrPortableCollidingNamesBeforeWritingDestination() async throws {
