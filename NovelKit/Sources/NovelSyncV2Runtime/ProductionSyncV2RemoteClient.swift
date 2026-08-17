@@ -139,6 +139,8 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
         guard response["result"] as? String == "noChanges" else { throw SyncV2Failure.receiptMismatch }
         guard let rawConflict = response["conflict"] as? [String: Any] else { return nil }
         let conflict = try checkedObject(rawConflict, keys: ["baseSnapshotId", "conflictId", "localSnapshotId", "remoteSnapshotId", "revision", "sourceGeneration", "workId"])
+        guard let responseWorkID = conflict["workId"] as? String,
+              try WorkID(uuidString: responseWorkID) == workID else { throw SyncV2Failure.receiptMismatch }
         guard let id = (conflict["conflictId"] as? String).flatMap(UUID.init(uuidString:)),
               let revision = (conflict["revision"] as? NSNumber)?.int64Value,
               let local = conflict["localSnapshotId"] as? String,
