@@ -73,6 +73,57 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
             // exchanges may replace the vault before the UI observes them;
             // that must not make the old binding impossible to park.
             try await store.parkWork(workID: workID, binding: storeBinding)
+        } catch SyncV2StoreError.accountMismatch {
+            // A work can still be a local-only work when the UI session has
+            // changed before the first account binding was committed. There
+            // is no remote lane to park in that case. Do not turn this
+            // benign, idempotent case into a failed auth transition; every
+            // other mismatch remains fail-closed below.
+            guard try await isLocalOnly(workID: workID) else {
+                throw SyncV2StoreError.accountMismatch
+            }
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
+    func rebindAccountScope(
+        workID: WorkID,
+        from old: SyncV2AccountScopeBinding,
+        to new: SyncV2AccountScopeBinding
+    ) async throws {
+        let oldBinding = V2AccountBinding(
+            accountID: old.accountID,
+            accountFence: old.accountFence,
+            serverInstanceID: old.serverInstanceID,
+            protocolEpoch: old.protocolEpoch
+        )
+        do {
+            let newBinding = V2AccountBinding(
+                accountID: new.accountID,
+                accountFence: new.accountFence,
+                serverInstanceID: new.serverInstanceID,
+                protocolEpoch: new.protocolEpoch
+            )
+            guard oldBinding.accountID == newBinding.accountID else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            try await store.rebindWork(workID: workID, from: oldBinding, to: newBinding)
+        } catch SyncV2StoreError.accountMismatch {
+            // Same-account fence rotation is a no-op for a work that has not
+            // been bound yet. A bound work still has to pass rebindWork's
+            // exact old-binding check and cannot be silently adopted.
+            // If the pre-transition auth session lagged the persisted vault,
+            // park the one actual old lane. It is safer to retire that lane
+            // than to leave it eligible for a late worker completion.
+            do {
+                try await store.parkWork(workID: workID, binding: oldBinding)
+                return
+            } catch SyncV2StoreError.accountMismatch {
+                guard try await isLocalOnly(workID: workID) else {
+                    throw SyncV2StoreError.accountMismatch
+                }
+            }
         } catch {
             throw mapStoreError(error)
         }
@@ -298,6 +349,10 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
             scope: .unbound,
             accountState: .unbound
         )
+        let parked = try await parkedItems()
+        let parkedIDs = Set(parked.map(\.workID))
+        projectionItems = projectionItems.filter { !parkedIDs.contains($0.workID) }
+        projectionItems += parked
         return SyncV2LibraryProjection(items: projectionItems)
     }
 
@@ -409,6 +464,44 @@ extension ProductionSyncV2Kernel {
 }
 
 private extension ProductionSyncV2Kernel {
+    func isLocalOnly(workID: WorkID) async throws -> Bool {
+        do {
+            _ = try await store.open(workID: workID, scope: .unbound)
+            return true
+        } catch SyncV2StoreError.workNotFound {
+            do {
+                _ = try await store.open(workID: workID, scope: .parked)
+                return true
+            } catch SyncV2StoreError.workNotFound {
+                return false
+            }
+        }
+    }
+
+    func parkedItems() async throws -> [SyncV2LibraryItem] {
+        try await withThrowingTaskGroup(of: SyncV2LibraryItem.self) { group in
+            for summary in try await store.listParkedWorks() {
+                group.addTask { [store] in
+                    let opened = try await store.open(
+                        workID: summary.workID,
+                        scope: .parked
+                    )
+                    return SyncV2LibraryItem(
+                        workID: summary.workID,
+                        title: opened.document?.title ?? "名称未設定の作品",
+                        availability: .localOnly,
+                        accountState: .parkedDifferentAccount,
+                        localGeneration: summary.localGeneration,
+                        remoteProgress: .idle
+                    )
+                }
+            }
+            var result: [SyncV2LibraryItem] = []
+            for try await item in group { result.append(item) }
+            return result
+        }
+    }
+
     func items(
         scope localScope: V2LocalWorkScope,
         accountState: SyncV2LibraryAccountState
@@ -438,7 +531,7 @@ private extension ProductionSyncV2Kernel {
                             scope: localScope,
                             workID: summary.workID
                         )
-                    case .unbound:
+                    case .unbound, .parked:
                         []
                     }
                     let progress: SyncV2RemoteProgress = if let adoption {

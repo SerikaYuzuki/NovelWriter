@@ -49,7 +49,12 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
             _ = try await store.open(workID: workID, scope: .unbound)
             return .unbound
         } catch SyncV2StoreError.workNotFound {
-            throw SyncV2ApplicationError.workNotFound
+            do {
+                _ = try await store.open(workID: workID, scope: .parked)
+                return .parked
+            } catch SyncV2StoreError.workNotFound {
+                throw SyncV2ApplicationError.workNotFound
+            }
         }
     }
 
@@ -109,7 +114,12 @@ actor TestScopeResolver: SyncV2ScopeResolver {
             _ = try await store.open(workID: workID, scope: .unbound)
             return .unbound
         } catch SyncV2StoreError.workNotFound {
-            throw SyncV2ApplicationError.workNotFound
+            do {
+                _ = try await store.open(workID: workID, scope: .parked)
+                return .parked
+            } catch SyncV2StoreError.workNotFound {
+                throw SyncV2ApplicationError.workNotFound
+            }
         }
     }
 

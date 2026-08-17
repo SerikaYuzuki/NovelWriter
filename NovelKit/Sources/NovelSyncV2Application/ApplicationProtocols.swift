@@ -97,6 +97,11 @@ public protocol SyncV2LocalKernel: Sendable {
         workID: WorkID,
         binding: SyncV2AccountScopeBinding
     ) async throws
+    func rebindAccountScope(
+        workID: WorkID,
+        from old: SyncV2AccountScopeBinding,
+        to new: SyncV2AccountScopeBinding
+    ) async throws
     /// Returns the durable active conflict projection, if one exists. This is
     /// intentionally a local read so a process restart can restore the
     /// conflict UI without a network round trip.

@@ -162,6 +162,14 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         guard works[workID] != nil else { throw SyncV2ApplicationError.workNotFound }
     }
 
+    public func rebindAccountScope(
+        workID: WorkID,
+        from _: SyncV2AccountScopeBinding,
+        to _: SyncV2AccountScopeBinding
+    ) throws {
+        guard works[workID] != nil else { throw SyncV2ApplicationError.workNotFound }
+    }
+
     public func prepareRestore(
         _ request: SyncV2RestoreRequest
     ) throws -> SyncV2Preparation {

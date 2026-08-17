@@ -115,6 +115,30 @@ public actor SyncV2Application {
             lastTypedResult: .checkpointed
         )
     }
+
+    /// Quarantine the old fence and bind the same account to a new fence.
+    /// Workers remain stopped until the new scope performs its normal
+    /// bootstrap/replan path.
+    public func rebindAccountScope(
+        workID: WorkID,
+        from old: SyncV2AccountScopeBinding,
+        to new: SyncV2AccountScopeBinding
+    ) async throws {
+        guard runtimeIdentity != .preview else {
+            throw SyncV2ApplicationError.previewReadOnly
+        }
+        try await kernel.rebindAccountScope(workID: workID, from: old, to: new)
+        workerTasks[workID]?.cancel()
+        workerTasks[workID] = nil
+        wakeEpochs[workID, default: 0] &+= 1
+        states[workID] = SyncUIState(
+            workID: workID,
+            localDurability: states[workID]?.localDurability ?? .unsaved,
+            remoteProgress: .idle,
+            conflict: nil,
+            lastTypedResult: .checkpointed
+        )
+    }
 }
 
 extension SyncV2Application {

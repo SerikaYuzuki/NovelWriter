@@ -45,6 +45,20 @@ extension LocalSyncV2Store {
                 SELECT \(columns) FROM works w
                 WHERE w.work_id=? AND NOT EXISTS (
                   SELECT 1 FROM account_bindings b
+                  WHERE b.work_id=w.work_id AND b.state IN ('bound','parked')
+                )
+                """,
+                [.text(workID.description)]
+            ).first
+        case .parked:
+            return try query(
+                """
+                SELECT \(columns) FROM works w
+                WHERE w.work_id=? AND EXISTS (
+                  SELECT 1 FROM account_bindings b
+                  WHERE b.work_id=w.work_id AND b.state='parked'
+                ) AND NOT EXISTS (
+                  SELECT 1 FROM account_bindings b
                   WHERE b.work_id=w.work_id AND b.state='bound'
                 )
                 """,
@@ -597,6 +611,8 @@ extension V2LocalWorkScope {
         switch self {
         case .unbound:
             " AND scope_kind='unbound'"
+        case .parked:
+            " AND scope_kind='unbound'"
         case .bound:
             """
              AND scope_kind='bound' AND server_instance_id=?
@@ -607,14 +623,14 @@ extension V2LocalWorkScope {
 
     var intentPredicateValues: [SQLiteValue] {
         switch self {
-        case .unbound: []
+        case .unbound, .parked: []
         case let .bound(binding): binding.values
         }
     }
 
     var intentFields: [SQLiteValue] {
         switch self {
-        case .unbound:
+        case .unbound, .parked:
             [.text("unbound"), .null, .null, .null, .null]
         case let .bound(binding):
             [.text("bound")] + binding.values

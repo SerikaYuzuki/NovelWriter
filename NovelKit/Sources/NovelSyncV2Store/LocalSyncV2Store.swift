@@ -100,6 +100,23 @@ public extension LocalSyncV2Store {
                 FROM works w
                 WHERE NOT EXISTS (
                   SELECT 1 FROM account_bindings b
+                  WHERE b.work_id=w.work_id AND b.state IN ('bound','parked')
+                )
+                ORDER BY lower(w.work_id)
+                """
+            )
+        case .parked:
+            try query(
+                """
+                SELECT w.work_id,w.document_id,w.local_generation,
+                       w.current_snapshot_id,w.acknowledged_head_generation,
+                       w.document_created_at,w.sync_lane
+                FROM works w
+                WHERE EXISTS (
+                  SELECT 1 FROM account_bindings b
+                  WHERE b.work_id=w.work_id AND b.state='parked'
+                ) AND NOT EXISTS (
+                  SELECT 1 FROM account_bindings b
                   WHERE b.work_id=w.work_id AND b.state='bound'
                 )
                 ORDER BY lower(w.work_id)
@@ -120,6 +137,13 @@ public extension LocalSyncV2Store {
             )
         }
         return try rows.map(Self.summary)
+    }
+
+    /// Parked works are intentionally a separate projection from ordinary
+    /// unbound works. They remain locally editable, but must never look like
+    /// an adoptable unbound work to an account-scoped shelf.
+    func listParkedWorks() throws -> [V2WorkSummary] {
+        try listWorks(scope: .parked)
     }
 
     func open(workID: WorkID, scope: V2LocalWorkScope) throws -> V2OpenResult {
@@ -334,6 +358,15 @@ public extension LocalSyncV2Store {
         to new: V2AccountBinding
     ) throws {
         try inTransaction {
+            guard try query(
+                "SELECT 1 FROM restore_records WHERE work_id=? AND account_id=? AND state IN ('prepared','sealed')",
+                [.text(workID.description), .text(old.accountID)]
+            ).isEmpty else {
+                // restore_records is part of the reviewed canonical DDL. A
+                // transition cannot rewrite its state without a schema
+                // migration; fail closed until the restore is terminal.
+                throw SyncV2StoreError.invalidLifecycle
+            }
             guard try bindingIsActive(workID: workID, binding: old) else {
                 throw SyncV2StoreError.accountMismatch
             }
@@ -399,6 +432,16 @@ public extension LocalSyncV2Store {
                     .text(workID.description)
                 ] + old.values + [.text(disposition)]
             )
+            try retireScopeCaches(workID: workID)
+            try exec(
+                """
+                UPDATE upload_transfers SET lifecycle=?
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+                  AND lifecycle IN ('prepared','sending','acknowledged')
+                """,
+                [.text(disposition), .text(workID.description)] + old.values
+            )
             if disposition == "quarantined" {
                 try insertBinding(workID: workID, binding: new)
             }
@@ -424,8 +467,46 @@ public extension LocalSyncV2Store {
         workID: WorkID,
         binding: V2AccountBinding
     ) throws {
+        // The UI session can lag the persisted vault (notably while an auth
+        // exchange is being finalized). Retire the one active binding that is
+        // actually present for this Work rather than guessing its account
+        // from that stale session. Multiple active bindings remain a hard
+        // failure; no lane is allowed to be parked ambiguously.
+        let effectiveBinding: V2AccountBinding
+        if try bindingIsActive(workID: workID, binding: binding) {
+            effectiveBinding = binding
+        } else {
+            let rows = try query(
+                """
+                SELECT account_id,account_fence,server_instance_id,protocol_epoch
+                FROM account_bindings WHERE work_id=? AND state='bound'
+                """,
+                [.text(workID.description)]
+            )
+            guard rows.count == 1,
+                  let accountID = rows[0][0].text,
+                  let accountFence = rows[0][1].text,
+                  let serverInstanceID = rows[0][2].text,
+                  let protocolEpoch = rows[0][3].int64 else {
+                throw SyncV2StoreError.accountMismatch
+            }
+            effectiveBinding = V2AccountBinding(
+                accountID: accountID,
+                accountFence: accountFence,
+                serverInstanceID: serverInstanceID,
+                protocolEpoch: protocolEpoch
+            )
+        }
         try inTransaction {
-            guard try bindingIsActive(workID: workID, binding: binding) else {
+            guard try query(
+                "SELECT 1 FROM restore_records WHERE work_id=? AND state IN ('prepared','sealed')",
+                [.text(workID.description)]
+            ).isEmpty else {
+                // As with rebind, the reviewed DDL has no safe transition
+                // state for an active restore. Refuse the whole transition.
+                throw SyncV2StoreError.invalidLifecycle
+            }
+            guard try bindingIsActive(workID: workID, binding: effectiveBinding) else {
                 throw SyncV2StoreError.accountMismatch
             }
             try exec(
@@ -434,7 +515,7 @@ public extension LocalSyncV2Store {
                 WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
                   AND account_id=? AND account_fence=? AND state='bound'
                 """,
-                [.text(workID.description)] + binding.values
+                [.text(workID.description)] + effectiveBinding.values
             )
             guard try changes() == 1 else { throw SyncV2StoreError.accountMismatch }
             try exec(
@@ -444,7 +525,7 @@ public extension LocalSyncV2Store {
                   AND account_id=? AND account_fence=?
                   AND status IN ('sealed','sending','conflictPending')
                 """,
-                [.text(workID.description)] + binding.values
+                [.text(workID.description)] + effectiveBinding.values
             )
             try exec(
                 """
@@ -454,7 +535,7 @@ public extension LocalSyncV2Store {
                   AND account_id=? AND account_fence=?
                   AND status IN ('pending','sealed')
                 """,
-                [.text(workID.description)] + binding.values
+                [.text(workID.description)] + effectiveBinding.values
             )
             try exec(
                 """
@@ -463,7 +544,7 @@ public extension LocalSyncV2Store {
                   AND account_id=? AND account_fence=?
                   AND state IN ('staged','verified')
                 """,
-                [.text(workID.description)] + binding.values
+                [.text(workID.description)] + effectiveBinding.values
             )
             try exec(
                 """
@@ -471,9 +552,44 @@ public extension LocalSyncV2Store {
                 WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
                   AND account_id=? AND account_fence=? AND state='active'
                 """,
-                [.text(workID.description)] + binding.values
+                [.text(workID.description)] + effectiveBinding.values
+            )
+            try retireScopeCaches(workID: workID)
+            try exec(
+                """
+                UPDATE pending_keep_both SET state='parked'
+                WHERE source_work_id=? AND state IN ('prepared','sealed')
+                """,
+                [.text(workID.description)]
+            )
+            try exec(
+                """
+                UPDATE upload_transfers SET lifecycle='parked'
+                WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+                  AND account_id=? AND account_fence=?
+                  AND lifecycle IN ('prepared','sending','acknowledged')
+                """,
+                [.text(workID.description)] + effectiveBinding.values
             )
         }
+    }
+
+    /// Scope-free remote head/equivalence values belong to the retired fence.
+    /// Clearing them forces the next fence through bootstrap and replan.
+    private func retireScopeCaches(workID: WorkID) throws {
+        try exec(
+            """
+            UPDATE works SET acknowledged_head_snapshot_id=NULL,
+                             acknowledged_head_generation=NULL,
+                             remote_equivalent_local_snapshot_id=NULL
+            WHERE work_id=?
+            """,
+            [.text(workID.description)]
+        )
+        try exec(
+            "DELETE FROM snapshot_remote_equivalents WHERE work_id=?",
+            [.text(workID.description)]
+        )
     }
 
     func historyCount(workID: WorkID, scope: V2LocalWorkScope) throws -> Int {

@@ -43,6 +43,11 @@ extension AppState {
         let scopeChanged = authSession?.accountID != session?.accountID
             || authSession?.accountFence != session?.accountFence
         guard scopeChanged else {
+            if authSession == nil, session == nil {
+                // Even a nil-to-nil sign-out is an ownership change for an
+                // in-flight restore/sign-in result.
+                invalidateSnapshotSyncV2AccountOperations()
+            }
             authSession = session
             authUIState = authState
             return true
@@ -53,22 +58,10 @@ extension AppState {
         // a suspended open/download must fail its stale-session check rather
         // than hold the transition behind an external await.
         invalidateSnapshotSyncV2AccountOperations()
-        if isDocumentTransitionInProgress {
-            // A shared remote/adoption callback can run while the gate is
-            // already held. Never re-enter it; queue the same transition for
-            // the first safe turn after the current operation releases it.
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                while isDocumentTransitionInProgress {
-                    await Task.yield()
-                }
-                _ = await transitionFuminiwaSession(to: session, authState: authState)
-            }
-            return true
-        }
-
-        return await documentOperationGate.perform { [weak self] in
+        let requestGeneration = snapshotSyncV2AccountScopeGeneration
+        let transitioned = await documentOperationGate.perform { [weak self] in
             guard let self,
+                  snapshotSyncV2AccountScopeGeneration == requestGeneration,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -86,18 +79,35 @@ extension AppState {
             // local checkpoint through the now-unbound authority in that
             // narrow recovery case; never discard the in-memory editor.
             if let oldSession, let oldWorkID, let application = snapshotSyncV2Application {
-                let binding = SyncV2AccountScopeBinding(
+                let oldBinding = SyncV2AccountScopeBinding(
                     accountID: oldSession.accountID,
                     accountFence: oldSession.accountFence,
                     serverInstanceID: oldSession.serverInstanceID.uuidString.lowercased(),
                     protocolEpoch: Int64(oldSession.syncProtocolEpoch)
                 )
-                let parked = try? await application.parkAccountScope(workID: oldWorkID, binding: binding)
-                if parked != nil {
-                    if !checkpointed {
-                        checkpointed = await saveNow()
+                do {
+                    if let session, session.accountID == oldSession.accountID {
+                        let newBinding = SyncV2AccountScopeBinding(
+                            accountID: session.accountID,
+                            accountFence: session.accountFence,
+                            serverInstanceID: session.serverInstanceID.uuidString.lowercased(),
+                            protocolEpoch: Int64(session.syncProtocolEpoch)
+                        )
+                        try await application.rebindAccountScope(
+                            workID: oldWorkID,
+                            from: oldBinding,
+                            to: newBinding
+                        )
+                    } else {
+                        try await application.parkAccountScope(
+                            workID: oldWorkID,
+                            binding: oldBinding
+                        )
                     }
-                } else if !checkpointed {
+                } catch {
+                    // Parking/quarantining is part of the auth transition.
+                    // A failure leaves the old editor, shelf, and auth state
+                    // untouched; never silently continue with a new session.
                     return false
                 }
             }
@@ -116,11 +126,17 @@ extension AppState {
             authUIState = authState
             return true
         }
+        guard transitioned else { return false }
+        // Reproject local parked work immediately. This is deliberately after
+        // the gate so the shelf cannot observe a half-completed transition.
+        await refreshSnapshotLibrary()
+        return true
     }
 
     /// Credential-state lookup is advisory.  It may fail offline without
     /// blocking the local SQLite workbench.
     func restoreFuminiwaSession() async {
+        let requestGeneration = snapshotSyncV2AccountScopeGeneration
         guard let coordinator = authSessionCoordinator else {
             authUIState = .unavailable
             return
@@ -129,6 +145,7 @@ extension AppState {
             if let orchestrator = appleAuthenticationOrchestrator {
                 switch try await orchestrator.checkCredentialState() {
                 case .revoked?, .notFound?, .transferred?:
+                    guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
                     _ = await transitionFuminiwaSession(to: nil, authState: .signedOut)
                     return
                 default:
@@ -136,11 +153,13 @@ extension AppState {
                 }
             }
             let session = try await coordinator.currentSession()
+            guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
             _ = await transitionFuminiwaSession(
                 to: session,
                 authState: session.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
             )
         } catch {
+            guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
             _ = await transitionFuminiwaSession(
                 to: nil,
                 authState: .failed("サインイン状態を復元できませんでした")
@@ -159,10 +178,12 @@ extension AppState {
         // checkpointed against the new account's scope.
         guard await transitionFuminiwaSession(to: nil, authState: .signingIn) else { return }
         authUIState = .signingIn
+        let requestGeneration = snapshotSyncV2AccountScopeGeneration
         do {
             // The orchestrator exchanges the one-use Apple credential with the
             // auth server. The Apple token is never passed to Snapshot Sync.
             let session = try await orchestrator.signIn()
+            guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
             guard await transitionFuminiwaSession(
                 to: session,
                 authState: .signedIn(accountID: session.accountID)
@@ -171,8 +192,10 @@ extension AppState {
             await refreshSnapshotLibrary()
             await refreshSnapshotRemoteCatalog()
         } catch is CancellationError {
+            guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
             authUIState = authSession.map { .signedIn(accountID: $0.accountID) } ?? .signedOut
         } catch {
+            guard snapshotSyncV2AccountScopeGeneration == requestGeneration else { return }
             authUIState = .failed("Appleでのサインインを完了できませんでした")
         }
     }

@@ -33,10 +33,15 @@ extension AppState {
             snapshotSyncHistory = []
             return
         }
+        let accountScope = snapshotSyncV2AccountScopeToken
+        let documentSession = documentSessionToken
         do {
             var cursor: String?
             var items: [SyncV2HistoryItem] = []
             repeat {
+                guard matchesSnapshotSyncV2AccountScope(accountScope),
+                      currentSnapshotSyncV2WorkID == workID,
+                      documentSessionToken == documentSession else { return }
                 let page = try await application.historyPage(
                     workID: workID,
                     cursor: cursor,
@@ -45,6 +50,9 @@ extension AppState {
                 items.append(contentsOf: page.items)
                 cursor = page.nextCursor
             } while cursor != nil
+            guard matchesSnapshotSyncV2AccountScope(accountScope),
+                  currentSnapshotSyncV2WorkID == workID,
+                  documentSessionToken == documentSession else { return }
             snapshotSyncHistory = items
         } catch {
             snapshotSyncHistory = []

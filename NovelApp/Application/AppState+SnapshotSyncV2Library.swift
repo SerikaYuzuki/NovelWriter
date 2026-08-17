@@ -46,12 +46,18 @@ extension AppState {
             return
         }
         guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        let parkedWorkIDs = Set(
+            projection.items
+                .filter { $0.accountState == .parkedDifferentAccount }
+                .map(\.workID)
+        )
         lastStartupLibraryConnection = connection
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             projection.items.first(where: { $0.workID == workID })?.accountState
         }
         var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap { item -> (WorkID, StartupLibraryWork)? in
-            guard item.accountState == .active || item.accountState == .unbound else { return nil }
+            guard item.accountState == .active || item.accountState == .unbound
+                || item.accountState == .parkedDifferentAccount else { return nil }
             let availability: StartupLibraryWorkAvailability = switch item.availability {
             case .localOnly: .local
             case .cached: .cached
@@ -68,6 +74,7 @@ extension AppState {
             return (item.workID, work)
         })
         for remote in snapshotSyncRemoteCatalogItems {
+            if parkedWorkIDs.contains(remote.workID) { continue }
             if let local = worksByID[remote.workID] {
                 let availability: StartupLibraryWorkAvailability = local.availability == .conflict
                     ? .conflict
