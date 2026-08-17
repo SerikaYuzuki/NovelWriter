@@ -44,7 +44,7 @@ fi
 
 # App targets must compose the v2 runtime directly and must not link a retired
 # sync product.  The block extraction avoids matching package/test targets.
-for target in FUMINIWA FUMINIWAIOS; do
+for target in NovelApp FUMINIWAIOS; do
   block="$(awk -v target="$target" '
     $0 == "targets:" { in_targets=1; next }
     !in_targets { next }
