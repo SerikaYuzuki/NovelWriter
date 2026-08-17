@@ -1061,18 +1061,35 @@ impl Repository {
         let expected_current = digest_field(payload, "expectedCurrentSnapshotId")
             .map_err(SyncError::SchemaViolation)?;
         let row = sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
-        let generation: i64 = row
+        let generation = row
             .try_get::<Option<i64>, _>("head_generation")?
-            .unwrap_or(0);
-        let current: Vec<u8> = row.try_get("head_snapshot_id")?;
-        if current.as_slice() != expected_current.as_slice() {
+            .ok_or(SyncError::StaleHead)?;
+        let current = row
+            .try_get::<Option<Vec<u8>>, _>("head_snapshot_id")?
+            .ok_or(SyncError::StaleHead)?;
+        if expected_current != c.source_snapshot_id {
             return Err(SyncError::StaleHead);
         }
-        let expected_generation = payload
+        let expected_local_generation = payload
             .get("expectedLocalGeneration")
             .and_then(Value::as_i64)
             .ok_or_else(|| SyncError::SchemaViolation("expectedLocalGeneration".into()))?;
-        if expected_generation != generation {
+        if expected_local_generation != c.source_generation {
+            return Err(SyncError::StaleHead);
+        }
+        let expected_remote = payload
+            .get("expectedRemoteHead")
+            .filter(|value| value.is_object())
+            .ok_or(SyncError::StaleHead)?;
+        let expected_remote_snapshot =
+            digest_field(expected_remote, "snapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected_remote_generation = expected_remote
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("expectedRemoteHead.generation".into()))?;
+        if current.as_slice() != expected_remote_snapshot.as_slice()
+            || generation != expected_remote_generation
+        {
             return Err(SyncError::StaleHead);
         }
         let selected_row=sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3").bind(&p.account_id).bind(c.work_id).bind(selected.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
