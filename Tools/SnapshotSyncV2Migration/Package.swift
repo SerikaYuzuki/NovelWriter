@@ -20,7 +20,9 @@ let package = Package(
             dependencies: [
                 .product(name: "NovelCore", package: "NovelKit"),
                 .product(name: "NovelStorage", package: "NovelKit"),
-                .product(name: "NovelSync", package: "NovelKit")
+                .product(name: "NovelSync", package: "NovelKit"),
+                .product(name: "NovelSyncV2", package: "NovelKit"),
+                .product(name: "NovelSyncV2PortableBridge", package: "NovelKit")
             ]
         ),
         .executableTarget(
@@ -34,6 +36,7 @@ let package = Package(
         .target(
             name: "SnapshotSyncV2MigrationCore",
             dependencies: [
+                "SnapshotSyncV2Migration",
                 .product(name: "NovelCore", package: "NovelKit"),
                 .product(name: "NovelStorage", package: "NovelKit"),
                 .product(name: "NovelSync", package: "NovelKit"),

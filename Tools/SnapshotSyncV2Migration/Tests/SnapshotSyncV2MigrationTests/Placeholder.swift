@@ -71,15 +71,17 @@ func exportsClassifiedWork() async throws {
     )
 
     let first = try await LegacyV1Exporter().export(options: options)
-    #expect(first.entries == [LegacyV1ExportEntry(
-        workID: workID,
-        disposition: .verified,
-        snapshotID: snapshotID,
-        outputRelativePath: "verified/\(workID.uuidString).novelpkg",
-        outcome: "exported",
-        note: "attachments and opaque resources are not present in v1 SQLite; raw archive is authoritative",
-        projectionDigest: SHA256.hash(data: manifest).hex
-    )])
+    let firstEntry = try #require(first.entries.first)
+    #expect(first.entries.count == 1)
+    #expect(firstEntry.workID == workID)
+    #expect(firstEntry.disposition == .verified)
+    #expect(firstEntry.snapshotID == snapshotID)
+    #expect(firstEntry.sourceWireSnapshotID == snapshotID)
+    #expect(firstEntry.sourceWireSnapshotDigest == snapshotID)
+    #expect(firstEntry.adoptionSnapshotID != snapshotID)
+    #expect(firstEntry.adoptionProjectionDigest == SHA256.hash(data: manifest).hex)
+    #expect(firstEntry.provenanceVersion == 2)
+    #expect(firstEntry.sourceObjectClosureSHA256?.count == 64)
     let packageURL = stageURL.appendingPathComponent("verified/\(workID.uuidString).novelpkg")
     let readBack = try await NovelpkgRepository().load(from: packageURL)
     #expect(try WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: readBack)) == manifest)
@@ -292,7 +294,7 @@ func blocksMissingReferencedObject() async throws {
     #expect(report.entries.first?.note?.contains("referenced object is missing") == true)
 }
 
-private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) throws -> Data {
+func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) throws -> Data {
     let value: [String: Any] = [
         "entries": [[
             "byteCount": byteCount,
@@ -307,11 +309,11 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
     return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
 }
 
-private func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
+func classificationRow(workID: UUID, disposition: String, snapshotID: String = String(repeating: "0", count: 64)) -> String {
     "\(workID.uuidString),\(disposition),\(snapshotID),2026-08-17T00:00:00Z,1,\(snapshotID),4,evidence\r\n"
 }
 
-private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
+func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
     let digest = try SHA256.hash(data: Data(contentsOf: sqliteURL)).hex
     let manifestURL = root.appendingPathComponent("sha256-manifest.txt")
     try "\(digest)  ./\(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
@@ -320,7 +322,7 @@ private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
     return manifestURL
 }
 
-private func makeLegacyDatabase(
+func makeLegacyDatabase(
     at url: URL,
     workID: UUID,
     documentID: UUID,
@@ -354,7 +356,7 @@ private func makeLegacyDatabase(
     }
 }
 
-private func insertSnapshot(_ database: OpaquePointer, snapshotID: String, workID: UUID, manifest: Data) throws {
+func insertSnapshot(_ database: OpaquePointer, snapshotID: String, workID: UUID, manifest: Data) throws {
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(database, "INSERT INTO snapshots VALUES (?,?,?,?,?,?,?,?)", -1, &statement, nil) == SQLITE_OK,
           let statement else { throw FixtureError.query }

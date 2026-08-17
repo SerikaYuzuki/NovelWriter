@@ -1,6 +1,7 @@
 import Foundation
 import NovelSync
 import NovelSyncV2
+import SnapshotSyncV2Migration
 
 public enum TrustedProvenanceBuilderError: Error, Equatable, Sendable {
     case invalidArgument(String)
@@ -82,6 +83,7 @@ public struct TrustedProvenanceBuilder: Sendable {
         let expected = try validateInputs(options)
         let classifications = try loadClassifications(options.classificationLedgerURL)
         let stage = try loadStageReport(options.stageRootURL)
+        let sourceEvidence = try LegacyV1Exporter().readSourceSQLiteEvidence(at: options.sourceSQLiteURL)
         let report = stage.report
         guard report.sourceWorkCount == options.expectedWorkCount,
               report.sourceSQLiteSHA256 == expected.sourceSQLiteDigest,
@@ -92,17 +94,28 @@ public struct TrustedProvenanceBuilder: Sendable {
               stage.run.classificationLedgerDigest == expected.classificationDigest,
               report.entries.count == options.expectedWorkCount,
               classifications.count == options.expectedWorkCount,
-              Set(report.entries.map(\.workID)) == Set(classifications.keys) else {
+              Set(report.entries.map(\.workID)) == Set(classifications.keys),
+              sourceEvidence.objectVerificationIssues.isEmpty,
+              sourceEvidence.sourceRowIssues.isEmpty,
+              sourceEvidence.rows.count == options.expectedWorkCount,
+              Set(sourceEvidence.rows.map(\.workID)) == Set(classifications.keys) else {
             throw TrustedProvenanceBuilderError.invalidStage("workCountOrIdentity")
         }
+
+        let sourceRows = Dictionary(uniqueKeysWithValues: sourceEvidence.rows.map { ($0.workID, $0) })
 
         var authorityEntries: [MigrationTrustedProvenanceEntry] = []
         for reportEntry in report.entries.sorted(by: { $0.workID.uuidString < $1.workID.uuidString }) {
             guard let classification = classifications[reportEntry.workID],
+                  let sourceRow = sourceRows[reportEntry.workID],
                   reportEntry.outcome == "exported",
                   let relativePath = reportEntry.outputRelativePath,
-                  let snapshotID = reportEntry.snapshotID,
-                  let projectionDigest = reportEntry.projectionDigest else {
+                  let sourceWireSnapshotID = reportEntry.sourceWireSnapshotID,
+                  let sourceWireSnapshotDigest = reportEntry.sourceWireSnapshotDigest,
+                  let adoptionSnapshotID = reportEntry.adoptionSnapshotID,
+                  let adoptionProjectionDigest = reportEntry.adoptionProjectionDigest,
+                  let inventoryEvidenceSHA256 = reportEntry.inventoryEvidenceSHA256,
+                  let sourceObjectClosureSHA256 = reportEntry.sourceObjectClosureSHA256 else {
                 throw TrustedProvenanceBuilderError.invalidStage("entry:\(reportEntry.workID.uuidString)")
             }
             let literalDisposition = classification.disposition
@@ -119,19 +132,50 @@ public struct TrustedProvenanceBuilder: Sendable {
                 proposedWorkID: proposedWorkID
             )
             let expectedProjection = try projectionDigestFor(archive)
+            let expectedAdoptionSnapshotID = archive.encoded.snapshotId.description
+            let expectedEvidence = try migrationInventoryEvidenceDigest(archive.inventory)
             let stateURL = options.stageRootURL.appendingPathComponent(".state/\(reportEntry.workID.uuidString).json")
             let state = try JSONDecoder().decode(StageProjectionState.self, from: Data(contentsOf: stateURL))
-            guard archive.inventory.workID == reportEntry.workID.uuidString.lowercased(),
-                  snapshotID == archive.encoded.snapshotId.description,
-                  projectionDigest == expectedProjection,
-                  reportEntry.projectionDigest == projectionDigest,
-                  classification.snapshotID == snapshotID,
-                  state.sourceDigest == expected.sourceSQLiteDigest,
-                  state.snapshotID == snapshotID,
-                  state.projectionDigest == projectionDigest else {
-                throw TrustedProvenanceBuilderError.invalidStage("packageEvidence:\(reportEntry.workID.uuidString)")
+            let evidencePrefix = "packageEvidence:\(reportEntry.workID.uuidString)"
+            guard archive.inventory.workID == reportEntry.workID.uuidString.lowercased() else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):workID")
             }
-            let inventoryEvidenceDigest = try migrationInventoryEvidenceDigest(archive.inventory)
+            guard sourceWireSnapshotID == sourceRow.sourceWireSnapshotID,
+                  sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotDigest,
+                  sourceObjectClosureSHA256 == sourceRow.objectClosureDigest else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):sourceRow")
+            }
+            guard sourceRow.documentID == archive.model.document.id,
+                  sourceRow.sourceProjectionDigest == expectedProjection,
+                  sourceRow.sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotID else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):sourceProjection")
+            }
+            guard classification.snapshotID == sourceWireSnapshotID else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):classificationSnapshot")
+            }
+            guard adoptionSnapshotID == expectedAdoptionSnapshotID else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):adoptionSnapshot")
+            }
+            guard adoptionProjectionDigest == expectedProjection,
+                  reportEntry.snapshotID == sourceWireSnapshotID,
+                  reportEntry.projectionDigest == adoptionProjectionDigest else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):projection")
+            }
+            guard inventoryEvidenceSHA256 == expectedEvidence else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):inventoryEvidence")
+            }
+            guard state.sourceDigest == expected.sourceSQLiteDigest,
+                  state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+                  state.sourceWireSnapshotID == sourceWireSnapshotID,
+                  state.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                  state.adoptionSnapshotID == adoptionSnapshotID,
+                  state.adoptionProjectionDigest == adoptionProjectionDigest,
+                  state.inventoryEvidenceSHA256 == inventoryEvidenceSHA256,
+                  state.snapshotID == sourceWireSnapshotID,
+                  state.projectionDigest == adoptionProjectionDigest else {
+                throw TrustedProvenanceBuilderError.invalidStage("\(evidencePrefix):state")
+            }
+            let inventoryEvidenceDigest = expectedEvidence
             authorityEntries.append(
                 MigrationTrustedProvenanceEntry(
                     workID: reportEntry.workID,
@@ -140,9 +184,15 @@ public struct TrustedProvenanceBuilder: Sendable {
                     sourceSQLiteSHA256: expected.sourceSQLiteDigest,
                     sourceArchiveManifestSHA256: expected.archiveManifestDigest,
                     classificationLedgerSHA256: expected.classificationDigest,
-                    snapshotID: snapshotID,
-                    projectionDigest: projectionDigest,
-                    inventoryEvidenceSHA256: inventoryEvidenceDigest
+                    snapshotID: sourceWireSnapshotID,
+                    projectionDigest: adoptionProjectionDigest,
+                    inventoryEvidenceSHA256: inventoryEvidenceDigest,
+                    provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
+                    sourceWireSnapshotID: sourceWireSnapshotID,
+                    sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                    adoptionSnapshotID: adoptionSnapshotID,
+                    adoptionProjectionDigest: adoptionProjectionDigest,
+                    sourceObjectClosureSHA256: sourceObjectClosureSHA256
                 )
             )
         }
@@ -179,15 +229,19 @@ public struct TrustedProvenanceBuilder: Sendable {
         let classificationDigest: String
         let sourceSQLiteDigest: String
         let archiveManifestDigest: String
+        let stageTreeDigest: String
     }
 
     private struct StageReport: Decodable {
         let formatVersion: Int
+        let provenanceVersion: Int
         let exportID: UUID
         let sourceSQLiteSHA256: String
         let sourceArchiveManifestSHA256: String
         let classificationLedgerSHA256: String
         let sourceWorkCount: Int
+        let objectVerificationIssues: [String]
+        let sourceRowIssues: [String]
         let entries: [StageEntry]
     }
 
@@ -198,6 +252,13 @@ public struct TrustedProvenanceBuilder: Sendable {
         let outputRelativePath: String?
         let outcome: String
         let projectionDigest: String?
+        let provenanceVersion: Int
+        let sourceWireSnapshotID: String?
+        let sourceWireSnapshotDigest: String?
+        let adoptionSnapshotID: String?
+        let adoptionProjectionDigest: String?
+        let inventoryEvidenceSHA256: String?
+        let sourceObjectClosureSHA256: String?
     }
 
     private struct StageRun: Decodable {
@@ -212,6 +273,12 @@ public struct TrustedProvenanceBuilder: Sendable {
         let sourceDigest: String
         let snapshotID: String
         let projectionDigest: String
+        let provenanceVersion: Int
+        let sourceWireSnapshotID: String
+        let sourceWireSnapshotDigest: String
+        let adoptionSnapshotID: String
+        let adoptionProjectionDigest: String
+        let inventoryEvidenceSHA256: String
     }
 
     private struct ClassificationRecord {
@@ -240,7 +307,13 @@ public struct TrustedProvenanceBuilder: Sendable {
               sqlitePath.hasPrefix(archivePath + "/") else {
             throw TrustedProvenanceBuilderError.unsafeInput("archiveContainment")
         }
-        try validateArchiveManifest(rootPath: archivePath, manifestPath: manifestPath)
+        let sourceSQLiteRelativePath = String(sqlitePath.dropFirst(archivePath.count + 1))
+        try validateArchiveManifest(
+            rootPath: archivePath,
+            manifestPath: manifestPath,
+            sourceSQLiteRelativePath: sourceSQLiteRelativePath,
+            sourceSQLiteDigest: options.expectedSourceSQLiteDigest
+        )
         let classificationDigest = try SHA256Digest.hex(Data(contentsOf: URL(fileURLWithPath: classificationPath)))
         let sourceSQLiteDigest = try SHA256Digest.hex(Data(contentsOf: URL(fileURLWithPath: sqlitePath)))
         let archiveManifestDigest = try SHA256Digest.hex(Data(contentsOf: URL(fileURLWithPath: manifestPath)))
@@ -253,7 +326,23 @@ public struct TrustedProvenanceBuilder: Sendable {
         guard archiveManifestDigest == options.expectedArchiveManifestDigest else {
             throw TrustedProvenanceBuilderError.digestMismatch("archiveManifest")
         }
-        let outputPath = options.outputRootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        guard !pathsOverlap(stagePath, archivePath),
+              !pathsOverlap(stagePath, classificationPath),
+              !pathsOverlap(stagePath, manifestPath),
+              !pathsOverlap(stagePath, sqlitePath),
+              !pathsOverlap(archivePath, classificationPath),
+              !pathsOverlap(classificationPath, manifestPath),
+              !pathsOverlap(classificationPath, sqlitePath),
+              !pathsOverlap(manifestPath, sqlitePath) else {
+            throw TrustedProvenanceBuilderError.unsafeInput("inputOverlap")
+        }
+        let stageTreeDigest = try digestTree(options.stageRootURL)
+        let outputStandardized = options.outputRootURL.standardizedFileURL
+        let outputResolved = options.outputRootURL.resolvingSymlinksInPath().standardizedFileURL
+        guard outputStandardized.path == outputResolved.path else {
+            throw TrustedProvenanceBuilderError.unsafeInput("outputSymlink")
+        }
+        let outputPath = outputResolved.path
         guard !FileManager.default.fileExists(atPath: outputPath) else {
             throw TrustedProvenanceBuilderError.outputAlreadyExists
         }
@@ -268,7 +357,8 @@ public struct TrustedProvenanceBuilder: Sendable {
         return ExpectedDigests(
             classificationDigest: classificationDigest,
             sourceSQLiteDigest: sourceSQLiteDigest,
-            archiveManifestDigest: archiveManifestDigest
+            archiveManifestDigest: archiveManifestDigest,
+            stageTreeDigest: stageTreeDigest
         )
     }
 
@@ -279,9 +369,12 @@ public struct TrustedProvenanceBuilder: Sendable {
         }
         let report = try JSONDecoder().decode(StageReport.self, from: Data(contentsOf: root.appendingPathComponent("migration-ledger.json")))
         let run = try JSONDecoder().decode(StageRun.self, from: Data(contentsOf: root.appendingPathComponent("migration-run.json")))
-        guard report.formatVersion == 1,
+        guard report.formatVersion == LegacyV1ProvenanceContract.formatVersion,
+              report.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               report.exportID == run.exportID,
-              run.status == "committed" else {
+              run.status == "committed",
+              report.objectVerificationIssues.isEmpty,
+              report.sourceRowIssues.isEmpty else {
             throw TrustedProvenanceBuilderError.invalidStage("runState")
         }
         return (report, run)
@@ -342,6 +435,16 @@ public struct TrustedProvenanceBuilder: Sendable {
                 throw TrustedProvenanceBuilderError.outputAlreadyExists
             }
             try fileManager.moveItem(at: temporary, to: output)
+            try fileManager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: output.path)
+            try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: options.outputRootURL.path)
+            let outputValues = try output.resourceValues(forKeys: [.isRegularFileKey, .isWritableKey, .isSymbolicLinkKey])
+            let rootValues = try options.outputRootURL.resourceValues(forKeys: [.isDirectoryKey, .isWritableKey, .isSymbolicLinkKey])
+            guard outputValues.isRegularFile == true, outputValues.isWritable != true,
+                  outputValues.isSymbolicLink != true,
+                  rootValues.isDirectory == true, rootValues.isWritable != true,
+                  rootValues.isSymbolicLink != true else {
+                throw TrustedProvenanceBuilderError.outputWriteFailed("authoritySeal")
+            }
         } catch {
             try? fileManager.removeItem(at: temporary)
             throw TrustedProvenanceBuilderError.outputWriteFailed(String(describing: error))
@@ -386,10 +489,16 @@ public struct TrustedProvenanceBuilder: Sendable {
             throw TrustedProvenanceBuilderError.unsafeInput("\(label):symlink")
         }
         let values = try standardized.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isWritableKey])
-        guard values.isDirectory == true || values.isRegularFile == true, values.isSymbolicLink != true,
+        let systemAlias = standardized.path == "/tmp" || standardized.path == "/var"
+        guard values.isDirectory == true || values.isRegularFile == true || systemAlias,
+              values.isSymbolicLink != true || systemAlias,
               allowWritableFinal || values.isWritable != true else {
             throw TrustedProvenanceBuilderError.unsafeInput(label)
         }
+        // System temporary roots such as /var -> /private/var are legitimate
+        // mount aliases.  The input itself was already required to be the
+        // exact realpath above; ancestor aliases must not be mistaken for a
+        // symlink inside the trusted input tree.
     }
 
     private func canonicalJSON(_ data: Data) throws -> Data {
@@ -399,7 +508,12 @@ public struct TrustedProvenanceBuilder: Sendable {
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 
-    private func validateArchiveManifest(rootPath: String, manifestPath: String) throws {
+    private func validateArchiveManifest(
+        rootPath: String,
+        manifestPath: String,
+        sourceSQLiteRelativePath: String,
+        sourceSQLiteDigest: String
+    ) throws {
         let text = try String(contentsOf: URL(fileURLWithPath: manifestPath), encoding: .utf8)
         var entries: [String: String] = [:]
         for rawLine in text.split(whereSeparator: \.isNewline) {
@@ -419,6 +533,9 @@ public struct TrustedProvenanceBuilder: Sendable {
             }
         }
         guard !entries.isEmpty else { throw TrustedProvenanceBuilderError.unsafeInput("archiveManifestEmpty") }
+        guard entries[sourceSQLiteRelativePath] == sourceSQLiteDigest else {
+            throw TrustedProvenanceBuilderError.digestMismatch("archiveManifestSourceSQLite")
+        }
         let rootURL = URL(fileURLWithPath: rootPath)
         let expectedPaths = Set(entries.keys.map { rootURL.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path })
         let manifestRelative = String(manifestPath.dropFirst(rootPath.count + 1))
@@ -462,6 +579,38 @@ public struct TrustedProvenanceBuilder: Sendable {
 
     private func pathsOverlap(_ lhs: String, _ rhs: String) -> Bool {
         lhs == rhs || lhs.hasPrefix(rhs + "/") || rhs.hasPrefix(lhs + "/")
+    }
+
+    private func digestTree(_ root: URL) throws -> String {
+        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let enumerator = FileManager.default.enumerator(
+            at: URL(fileURLWithPath: rootPath),
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isWritableKey]
+        )
+        var items: [(path: String, data: Data, isDirectory: Bool)] = []
+        while let item = enumerator?.nextObject() as? URL {
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isWritableKey])
+            guard values.isSymbolicLink != true, values.isWritable != true,
+                  values.isDirectory == true || values.isRegularFile == true else {
+                throw TrustedProvenanceBuilderError.unsafeInput("stageTree:\(item.path)")
+            }
+            let relative = item.resolvingSymlinksInPath().standardizedFileURL.path
+                .replacingOccurrences(of: rootPath + "/", with: "")
+            let data = values.isDirectory == true ? Data() : try Data(contentsOf: item, options: [.mappedIfSafe])
+            items.append((relative, data, values.isDirectory == true))
+        }
+        var bytes = Data()
+        for item in items.sorted(by: { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }) {
+            let path = Data(item.path.utf8)
+            bytes.append(item.isDirectory ? 0x44 : 0x46)
+            var pathCount = UInt64(path.count).bigEndian
+            var dataCount = UInt64(item.data.count).bigEndian
+            withUnsafeBytes(of: &pathCount) { bytes.append(contentsOf: $0) }
+            bytes.append(path)
+            withUnsafeBytes(of: &dataCount) { bytes.append(contentsOf: $0) }
+            bytes.append(item.data)
+        }
+        return SHA256Digest.hex(bytes)
     }
 
     private func parseCSV(_ line: String) throws -> [String] {

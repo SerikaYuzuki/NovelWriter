@@ -69,6 +69,20 @@ must match the package tree digest, snapshot ID, projection digest, and
 path-independent canonical inventory-evidence digest. The stage report's
 matching fields are insufficient on their own.
 
+The v2 provenance contract keeps the two snapshot identities disjoint:
+`sourceWireSnapshotID` and `sourceWireSnapshotDigest` identify the legacy
+SQLite manifest read independently by the exporter, while
+`adoptionSnapshotID` and `adoptionProjectionDigest` are recomputed from the
+package read-back that the adopter will commit. `snapshotID` and
+`projectionDigest` remain compatibility aliases only; they cannot substitute
+for either side of the contract. The source row also carries an exact
+`sourceObjectClosureSHA256`. `inventoryEvidenceSHA256` is the SHA-256 of the
+canonical path-independent inventory evidence, including regular files,
+directories (including empty directories), byte counts, object IDs, and
+portable-resource metadata. A report, run file, sidecar, or self-generated
+matching digest is never sufficient without this independent source/package
+comparison.
+
 `verified_candidate` is an adoption candidate only. It is never equivalent to
 the authority disposition `verified`; an authority entry with
 `verified_candidate`, `quarantine`, or `needs-review` is rejected by the client
@@ -86,6 +100,15 @@ report/run, literal classification, and every package's tree/projection/
 path-independent inventory evidence before creating a new authority root.
 The builder never modifies the stage or source archive; an existing or
 overlapping output root, input tamper, or output race fails closed.
+
+The exporter atomically writes `COMMITTED` only after all works and issue lists
+pass, then seals the complete stage tree read-only (`0444` files and `0555`
+directories). The builder rehashes the report, run, marker, every sidecar and
+package tree, plus the classification CSV, source SQLite, and archive manifest
+again immediately before creating the new authority root. The adopter repeats
+authority and package read-back after its final commit hook and only then opens
+the SQLite commit transaction. A failed or partially writable seal is not an
+authority.
 
 The standalone package also inventories every non-hidden tree entry, including
 empty directories and opaque/orphan files. Each entry records its normalized

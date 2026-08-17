@@ -3,6 +3,8 @@ import Foundation
 import NovelCore
 import NovelStorage
 import NovelSync
+import NovelSyncV2
+import NovelSyncV2PortableBridge
 import SQLite3
 
 /// 旧v1 SQLiteを読み取り、v2切替前の検証済みportable backupを作る移行専用API。
@@ -44,6 +46,55 @@ public enum LegacyV1Disposition: String, Codable, Sendable {
     case needsReview = "needs-review"
 }
 
+/// The provenance contract deliberately names the legacy wire snapshot and
+/// the snapshot that is reconstructed from the read-back `.novelpkg`
+/// separately.  They may contain the same bytes for a fixture, but they are
+/// different authorities and must never be compared as interchangeable IDs.
+public enum LegacyV1ProvenanceContract {
+    public static let formatVersion = 2
+}
+
+public struct LegacyV1SourceEvidenceRow: Codable, Equatable, Sendable {
+    public let workID: UUID
+    public let documentID: UUID
+    public let sourceWireSnapshotID: String
+    public let sourceWireSnapshotDigest: String
+    public let sourceProjectionDigest: String
+    public let objectClosureDigest: String
+
+    public init(
+        workID: UUID,
+        documentID: UUID,
+        sourceWireSnapshotID: String,
+        sourceWireSnapshotDigest: String,
+        sourceProjectionDigest: String,
+        objectClosureDigest: String
+    ) {
+        self.workID = workID
+        self.documentID = documentID
+        self.sourceWireSnapshotID = sourceWireSnapshotID
+        self.sourceWireSnapshotDigest = sourceWireSnapshotDigest
+        self.sourceProjectionDigest = sourceProjectionDigest
+        self.objectClosureDigest = objectClosureDigest
+    }
+}
+
+public struct LegacyV1SourceEvidence: Codable, Equatable, Sendable {
+    public let rows: [LegacyV1SourceEvidenceRow]
+    public let objectVerificationIssues: [String]
+    public let sourceRowIssues: [String]
+
+    public init(
+        rows: [LegacyV1SourceEvidenceRow],
+        objectVerificationIssues: [String],
+        sourceRowIssues: [String]
+    ) {
+        self.rows = rows
+        self.objectVerificationIssues = objectVerificationIssues
+        self.sourceRowIssues = sourceRowIssues
+    }
+}
+
 public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
     public let workID: UUID
     public let disposition: LegacyV1Disposition
@@ -52,6 +103,13 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
     public let outcome: String
     public let note: String?
     public let projectionDigest: String?
+    public let provenanceVersion: Int
+    public let sourceWireSnapshotID: String?
+    public let sourceWireSnapshotDigest: String?
+    public let adoptionSnapshotID: String?
+    public let adoptionProjectionDigest: String?
+    public let inventoryEvidenceSHA256: String?
+    public let sourceObjectClosureSHA256: String?
 
     public init(
         workID: UUID,
@@ -60,7 +118,14 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
         outputRelativePath: String?,
         outcome: String,
         note: String?,
-        projectionDigest: String? = nil
+        projectionDigest: String? = nil,
+        provenanceVersion: Int = LegacyV1ProvenanceContract.formatVersion,
+        sourceWireSnapshotID: String? = nil,
+        sourceWireSnapshotDigest: String? = nil,
+        adoptionSnapshotID: String? = nil,
+        adoptionProjectionDigest: String? = nil,
+        inventoryEvidenceSHA256: String? = nil,
+        sourceObjectClosureSHA256: String? = nil
     ) {
         self.workID = workID
         self.disposition = disposition
@@ -69,6 +134,13 @@ public struct LegacyV1ExportEntry: Codable, Equatable, Sendable {
         self.outcome = outcome
         self.note = note
         self.projectionDigest = projectionDigest
+        self.provenanceVersion = provenanceVersion
+        self.sourceWireSnapshotID = sourceWireSnapshotID ?? snapshotID
+        self.sourceWireSnapshotDigest = sourceWireSnapshotDigest ?? snapshotID
+        self.adoptionSnapshotID = adoptionSnapshotID ?? snapshotID
+        self.adoptionProjectionDigest = adoptionProjectionDigest ?? projectionDigest
+        self.inventoryEvidenceSHA256 = inventoryEvidenceSHA256
+        self.sourceObjectClosureSHA256 = sourceObjectClosureSHA256
     }
 }
 
@@ -85,6 +157,7 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
     public let objectVerificationIssues: [String]
     public let sourceRowIssues: [String]
     public let entries: [LegacyV1ExportEntry]
+    public let provenanceVersion: Int
 
     public init(
         exportID: UUID = UUID(),
@@ -97,9 +170,10 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
         attachmentsPolicy: String,
         objectVerificationIssues: [String],
         sourceRowIssues: [String] = [],
-        entries: [LegacyV1ExportEntry]
+        entries: [LegacyV1ExportEntry],
+        provenanceVersion: Int = LegacyV1ProvenanceContract.formatVersion
     ) {
-        formatVersion = 1
+        formatVersion = LegacyV1ProvenanceContract.formatVersion
         self.exportID = exportID
         self.sourceSQLiteSHA256 = sourceSQLiteSHA256
         self.sourceArchiveManifestPath = sourceArchiveManifestPath
@@ -111,6 +185,7 @@ public struct LegacyV1ExportReport: Codable, Equatable, Sendable {
         self.objectVerificationIssues = objectVerificationIssues
         self.sourceRowIssues = sourceRowIssues
         self.entries = entries
+        self.provenanceVersion = provenanceVersion
     }
 }
 
@@ -142,6 +217,15 @@ public struct LegacyV1Exporter: Sendable {
         try ClassificationLedger.load(from: url).count
     }
 
+    /// Independently reads the legacy SQLite source for the authority builder.
+    /// This path never consults a migration stage or a report and opens the
+    /// database with both read-only and immutable SQLite flags.
+    public func readSourceSQLiteEvidence(at url: URL) throws -> LegacyV1SourceEvidence {
+        let database = try ReadOnlyV1Database(url: url)
+        defer { database.close() }
+        return try database.sourceEvidence()
+    }
+
     /// 全workをWorkID順に処理し、classification ledgerの分類先へstageする。
     /// 同一入力を再実行した場合は、既存packageをlogical read-backして再利用する。
     public func export(options: LegacyV1ExportOptions) async throws -> LegacyV1ExportReport {
@@ -157,6 +241,8 @@ public struct LegacyV1Exporter: Sendable {
             throw LegacyV1ExportError.workCountMismatch(expected: options.expectedWorkCount, actual: works.count)
         }
         let sourceRowIssues = try database.malformedWorkRows()
+        let sourceEvidence = try database.sourceEvidence()
+        let sourceEvidenceRows = Dictionary(uniqueKeysWithValues: sourceEvidence.rows.map { ($0.workID, $0) })
         let workIDs = Set(works.map(\.workID))
         if let extra = classifications.keys.first(where: { !workIDs.contains($0) }) {
             throw LegacyV1ExportError.malformedClassification(
@@ -248,13 +334,21 @@ public struct LegacyV1Exporter: Sendable {
 
                 let relative = classification.disposition.directoryName + "/" + work.workID.uuidString + ".novelpkg"
                 let destination = options.stageRootURL.appendingPathComponent(relative)
-                let projectionDigest = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
-                try await writeIdempotently(
+                let sourceWireSnapshotDigest = SHA256Hex.digest(snapshot.manifest)
+                let sourceProjectionDigest = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot))
+                guard let sourceEvidenceRow = sourceEvidenceRows[work.workID],
+                      sourceEvidenceRow.sourceWireSnapshotID == snapshot.snapshotID,
+                      sourceEvidenceRow.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                      sourceEvidenceRow.sourceProjectionDigest == sourceProjectionDigest else {
+                    throw LegacyV1ExportError.invalidManifest(workID: work.workID, reason: "independent source evidence mismatch")
+                }
+                let adoption = try await writeIdempotently(
                     document: document,
                     destination: destination,
                     sourceDigest: sourceDigest,
-                    snapshotID: snapshot.snapshotID,
-                    projectionDigest: projectionDigest,
+                    sourceWireSnapshotID: snapshot.snapshotID,
+                    sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                    workID: work.workID,
                     stateURL: options.stageRootURL.appendingPathComponent(".state", isDirectory: true)
                         .appendingPathComponent(work.workID.uuidString + ".json")
                 )
@@ -266,7 +360,14 @@ public struct LegacyV1Exporter: Sendable {
                         outputRelativePath: relative,
                         outcome: "exported",
                         note: "attachments and opaque resources are not present in v1 SQLite; raw archive is authoritative",
-                        projectionDigest: projectionDigest
+                        projectionDigest: adoption.projectionDigest,
+                        provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
+                        sourceWireSnapshotID: snapshot.snapshotID,
+                        sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                        adoptionSnapshotID: adoption.snapshotID,
+                        adoptionProjectionDigest: adoption.projectionDigest,
+                        inventoryEvidenceSHA256: adoption.inventoryEvidence,
+                        sourceObjectClosureSHA256: sourceEvidenceRow.objectClosureDigest
                     )
                 )
             } catch {
@@ -325,6 +426,7 @@ public struct LegacyV1Exporter: Sendable {
             to: options.stageRootURL.appendingPathComponent("COMMITTED"),
             options: .atomic
         )
+        try sealStageReadOnly(at: options.stageRootURL)
         return report
     }
 
@@ -436,8 +538,14 @@ public struct LegacyV1Exporter: Sendable {
                 continue
             }
             let values = try current.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
-            guard values.isSymbolicLink != true,
-                  values.isDirectory == true || index == components.count - 1 else {
+            // macOS exposes /tmp and /var as stable system aliases for
+            // /private/tmp and /private/var.  They are the only symlinked
+            // ancestors accepted here; every user-controlled component still
+            // has to be a real directory/file and the caller's final path is
+            // canonicalized separately for containment checks.
+            let systemAlias = current.path == "/tmp" || current.path == "/var"
+            guard values.isSymbolicLink != true || systemAlias,
+                  values.isDirectory == true || systemAlias || index == components.count - 1 else {
                 throw LegacyV1ExportError.unsafeArchivePath(current)
             }
             if index == components.count - 1, allowMissingFinal == false,
@@ -464,6 +572,33 @@ public struct LegacyV1Exporter: Sendable {
             guard contents.isEmpty else { throw LegacyV1ExportError.stageNotEmpty(url) }
         } else {
             try fileManager.createDirectory(at: url, withIntermediateDirectories: false)
+        }
+    }
+
+    /// Finalization is an explicit, verified seal step.  A stage that is only
+    /// partly sealed is not trusted by the builder, so an interrupted chmod
+    /// cannot turn a writable report into adoption authority.
+    private func sealStageReadOnly(at root: URL) throws {
+        let fileManager = FileManager.default
+        let urls = [root] + (fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        )?.compactMap { $0 as? URL } ?? [])
+        for url in urls {
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isSymbolicLink != true,
+                  values.isDirectory == true || values.isRegularFile == true else {
+                throw LegacyV1ExportError.unsafeArchivePath(url)
+            }
+            let permissions: NSNumber = values.isDirectory == true ? 0o555 : 0o444
+            try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path)
+        }
+        for url in urls {
+            let values = try url.resourceValues(forKeys: [.isWritableKey, .isSymbolicLinkKey])
+            guard values.isSymbolicLink != true, values.isWritable != true else {
+                throw LegacyV1ExportError.writeFailed("stage seal verification failed: \(url.path)")
+            }
         }
     }
 
@@ -495,6 +630,8 @@ public struct LegacyV1Exporter: Sendable {
         try requireRegularFile(runURL)
         let report = try JSONDecoder().decode(LegacyV1ExportReport.self, from: Data(contentsOf: reportURL))
         let run = try JSONDecoder().decode(RunState.self, from: Data(contentsOf: runURL))
+        let sourceEvidence = try database.sourceEvidence()
+        let sourceRows = Dictionary(uniqueKeysWithValues: sourceEvidence.rows.map { ($0.workID, $0) })
         guard run.status == "committed",
               run.exportID == report.exportID,
               run.sourceDigest == evidence.sourceDigest,
@@ -503,6 +640,10 @@ public struct LegacyV1Exporter: Sendable {
               report.sourceSQLiteSHA256 == evidence.sourceDigest,
               report.sourceArchiveManifestSHA256 == evidence.archiveManifestDigest,
               report.classificationLedgerSHA256 == classificationDigest,
+              report.formatVersion == LegacyV1ProvenanceContract.formatVersion,
+              report.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+              report.objectVerificationIssues.isEmpty,
+              report.sourceRowIssues.isEmpty,
               report.sourceWorkCount == works.count,
               report.sourceWorkCount == workIDs.count,
               Set(report.entries.map(\.workID)).count == report.entries.count,
@@ -515,12 +656,17 @@ public struct LegacyV1Exporter: Sendable {
         try database.verifySourceEvidence(works: works, classifications: classifications)
         for work in works {
             guard let entry = report.entries.first(where: { $0.workID == work.workID }),
-                  let projection = entry.projectionDigest,
-                  let snapshotID = entry.snapshotID else {
+                  let sourceWireSnapshotID = entry.sourceWireSnapshotID,
+                  let sourceWireSnapshotDigest = entry.sourceWireSnapshotDigest,
+                  let sourceObjectClosure = entry.sourceObjectClosureSHA256,
+                  let sourceRow = sourceRows[work.workID] else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
             let source = try database.verifyProjection(for: work)
-            guard source.snapshotID == snapshotID, source.projectionDigest == projection else {
+            guard source.snapshotID == sourceWireSnapshotID,
+                  sourceWireSnapshotDigest == sourceRow.sourceWireSnapshotDigest,
+                  sourceObjectClosure == sourceRow.objectClosureDigest,
+                  source.projectionDigest == sourceRow.sourceProjectionDigest else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
         }
@@ -528,19 +674,39 @@ public struct LegacyV1Exporter: Sendable {
         let repository = NovelpkgRepository()
         for entry in report.entries {
             guard let relative = entry.outputRelativePath,
-                  let expectedProjection = entry.projectionDigest else {
+                  let sourceWireSnapshotID = entry.sourceWireSnapshotID,
+                  let sourceWireSnapshotDigest = entry.sourceWireSnapshotDigest,
+                  let adoptionSnapshotID = entry.adoptionSnapshotID,
+                  let adoptionProjectionDigest = entry.adoptionProjectionDigest,
+                  let expectedEvidence = entry.inventoryEvidenceSHA256 else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
             let stateURL = options.stageRootURL.appendingPathComponent(".state/\(entry.workID.uuidString).json")
             let state = try JSONDecoder().decode(ProjectionState.self, from: Data(contentsOf: stateURL))
+            let packageURL = options.stageRootURL.appendingPathComponent(relative)
+            let document = try await repository.load(from: packageURL)
+            let adoption = try await adoptionEvidence(
+                packageURL: packageURL,
+                workID: entry.workID,
+                expectedDocument: document
+            )
+            let inventoryEvidence = try await packageInventoryEvidence(
+                packageURL: packageURL,
+                workID: entry.workID,
+                adoption: adoption
+            )
             guard state.sourceDigest == evidence.sourceDigest,
-                  state.snapshotID == entry.snapshotID,
-                  state.projectionDigest == expectedProjection else {
+                  state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+                  state.sourceWireSnapshotID == sourceWireSnapshotID,
+                  state.sourceWireSnapshotDigest == sourceWireSnapshotDigest,
+                  state.adoptionSnapshotID == adoptionSnapshotID,
+                  state.adoptionProjectionDigest == adoptionProjectionDigest,
+                  state.inventoryEvidenceSHA256 == expectedEvidence,
+                  adoption.snapshotID == adoptionSnapshotID,
+                  adoption.projectionDigest == adoptionProjectionDigest,
+                  inventoryEvidence == expectedEvidence else {
                 throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL)
             }
-            let document = try await repository.load(from: options.stageRootURL.appendingPathComponent(relative))
-            let projection = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: document)))
-            guard projection == expectedProjection else { throw LegacyV1ExportError.stageNotEmpty(options.stageRootURL) }
         }
         return report
     }
@@ -593,14 +759,21 @@ public struct LegacyV1Exporter: Sendable {
         }
     }
 
+    private struct AdoptionEvidence {
+        let snapshotID: String
+        let projectionDigest: String
+        let inventoryEvidence: String
+    }
+
     private func writeIdempotently(
         document: NovelDocument,
         destination: URL,
         sourceDigest: String,
-        snapshotID: String,
-        projectionDigest: String,
+        sourceWireSnapshotID: String,
+        sourceWireSnapshotDigest: String,
+        workID: UUID,
         stateURL: URL
-    ) async throws {
+    ) async throws -> AdoptionEvidence {
         let repository = NovelpkgRepository()
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: destination.path) {
@@ -608,15 +781,25 @@ public struct LegacyV1Exporter: Sendable {
                 guard let stateData = try? Data(contentsOf: stateURL),
                       let state = try? JSONDecoder().decode(ProjectionState.self, from: stateData),
                       state.sourceDigest == sourceDigest,
-                      state.snapshotID == snapshotID,
-                      state.projectionDigest == projectionDigest else {
+                      state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+                      state.sourceWireSnapshotID == sourceWireSnapshotID,
+                      state.sourceWireSnapshotDigest == sourceWireSnapshotDigest else {
                     throw LegacyV1ExportError.writeFailed("existing package state differs at \(destination.path)")
                 }
                 let existing = try await repository.load(from: destination)
                 guard existing == document else {
                     throw LegacyV1ExportError.writeFailed("existing package differs at \(destination.path)")
                 }
-                return
+                guard !state.adoptionSnapshotID.isEmpty,
+                      !state.adoptionProjectionDigest.isEmpty,
+                      !state.inventoryEvidenceSHA256.isEmpty else {
+                    throw LegacyV1ExportError.writeFailed("existing package has no adoption provenance at \(destination.path)")
+                }
+                return AdoptionEvidence(
+                    snapshotID: state.adoptionSnapshotID,
+                    projectionDigest: state.adoptionProjectionDigest,
+                    inventoryEvidence: state.inventoryEvidenceSHA256
+                )
             } catch let error as LegacyV1ExportError {
                 throw error
             } catch {
@@ -629,13 +812,34 @@ public struct LegacyV1Exporter: Sendable {
             guard readBack == document else {
                 throw LegacyV1ExportError.writeFailed("logical read-back mismatch at \(destination.path)")
             }
+            let adoption = try await adoptionEvidence(
+                packageURL: destination,
+                workID: workID,
+                expectedDocument: readBack
+            )
+            let inventoryEvidence = try await packageInventoryEvidence(
+                packageURL: destination,
+                workID: workID,
+                adoption: adoption
+            )
             try fileManager.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let state = ProjectionState(
                 sourceDigest: sourceDigest,
-                snapshotID: snapshotID,
-                projectionDigest: projectionDigest
+                snapshotID: sourceWireSnapshotID,
+                projectionDigest: adoption.projectionDigest,
+                provenanceVersion: LegacyV1ProvenanceContract.formatVersion,
+                sourceWireSnapshotID: sourceWireSnapshotID,
+                sourceWireSnapshotDigest: sourceWireSnapshotDigest,
+                adoptionSnapshotID: adoption.snapshotID,
+                adoptionProjectionDigest: adoption.projectionDigest,
+                inventoryEvidenceSHA256: inventoryEvidence
             )
             try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
+            return AdoptionEvidence(
+                snapshotID: adoption.snapshotID,
+                projectionDigest: adoption.projectionDigest,
+                inventoryEvidence: inventoryEvidence
+            )
         } catch let error as LegacyV1ExportError {
             throw error
         } catch {
@@ -659,6 +863,136 @@ public struct LegacyV1Exporter: Sendable {
             status: status
         )
         try JSONEncoder().encode(state).write(to: url, options: .atomic)
+    }
+
+    private func adoptionEvidence(
+        packageURL: URL,
+        workID: UUID,
+        expectedDocument: NovelDocument
+    ) async throws -> AdoptionEvidence {
+        let imported = try await SyncV2PortableBridge().importExplicitPackage(from: packageURL)
+        guard imported.document == expectedDocument else {
+            throw LegacyV1ExportError.writeFailed("package read-back document changed")
+        }
+        let id: WorkID
+        do {
+            id = try WorkID(uuidString: workID.uuidString.lowercased())
+        } catch {
+            throw LegacyV1ExportError.writeFailed("invalid work ID in adoption snapshot")
+        }
+        let encoded = try SnapshotCodec.encode(
+            SnapshotModel(
+                workId: id,
+                document: imported.document,
+                documentCreatedAt: imported.documentCreatedAt,
+                attachments: imported.attachments
+            )
+        )
+        let projection = try SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: imported.document)))
+        return AdoptionEvidence(snapshotID: encoded.snapshotId.description, projectionDigest: projection, inventoryEvidence: "")
+    }
+
+    private func packageInventoryEvidence(
+        packageURL: URL,
+        workID: UUID,
+        adoption: AdoptionEvidence
+    ) async throws -> String {
+        let imported = try await SyncV2PortableBridge().importExplicitPackage(from: packageURL)
+        let files = try packageFiles(packageURL)
+        let sourceDigest = packageTreeDigest(files)
+        // Keep the evidence wire-compatible with ArchiveReader.evidenceBytes:
+        // the package manifest's literal strings are authoritative.  Formatting
+        // the read-back Date (or lowercasing documentID) would create a second
+        // representation and make the builder reject an otherwise identical
+        // package, especially for manifests without fractional seconds.
+        guard let manifest = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: packageURL.appendingPathComponent("manifest.json")),
+            options: []
+        ) as? [String: Any],
+            let manifestDocumentID = manifest["documentID"] as? String,
+            let manifestCreatedAt = manifest["createdAt"] as? String else {
+            throw LegacyV1ExportError.writeFailed("package manifest evidence is incomplete")
+        }
+        let portableResources: [[String: Any]] = imported.resources.map { resource in
+            let bytes = resource.bytes ?? Data()
+            return [
+                "path": resource.pathComponents.joined(separator: "/"),
+                "kind": resource.kind.rawValue,
+                "byteCount": bytes.count,
+                "digest": SHA256Hex.digest(bytes),
+                "objectID": resource.bytes.map { ObjectID(data: $0).description } as Any,
+                "emptyDirectory": resource.kind == .directory
+            ]
+        }
+        let value: [String: Any] = try [
+            "sourceKind": "novelpkg",
+            "sourcePath": packageURL.standardizedFileURL.path,
+            "sourceDigest": sourceDigest,
+            "workId": workID.uuidString.lowercased(),
+            "documentId": manifestDocumentID,
+            "createdAt": manifestCreatedAt,
+            "fileCount": files.count,
+            "byteCount": files.reduce(0) { $0 + $1.data.count },
+            "snapshotId": adoption.snapshotID,
+            "objectCount": SnapshotCodec.encode(
+                SnapshotModel(
+                    workId: WorkID(uuidString: workID.uuidString.lowercased()),
+                    document: imported.document,
+                    documentCreatedAt: imported.documentCreatedAt,
+                    attachments: imported.attachments
+                )
+            ).objects.count,
+            "portableResourceCount": imported.resources.count,
+            "portableResources": portableResources
+        ]
+        var pathIndependent = value
+        pathIndependent.removeValue(forKey: "sourcePath")
+        let canonical = try JSONSerialization.data(withJSONObject: pathIndependent, options: [.sortedKeys])
+        return SHA256Hex.digest(canonical)
+    }
+
+    private struct PackageFile {
+        let path: String
+        let data: Data
+        let isDirectory: Bool
+    }
+
+    private func packageFiles(_ root: URL) throws -> [PackageFile] {
+        let rootPath = root.standardizedFileURL.path
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        )
+        var files: [PackageFile] = []
+        while let url = enumerator?.nextObject() as? URL {
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isSymbolicLink != true else { throw LegacyV1ExportError.unsafeArchivePath(url) }
+            let path = url.standardizedFileURL.path.replacingOccurrences(of: rootPath + "/", with: "")
+            if values.isDirectory == true {
+                files.append(PackageFile(path: path, data: Data(), isDirectory: true))
+            } else if values.isRegularFile == true {
+                try files.append(PackageFile(path: path, data: Data(contentsOf: url, options: [.mappedIfSafe]), isDirectory: false))
+            } else {
+                throw LegacyV1ExportError.unsafeArchivePath(url)
+            }
+        }
+        return files.sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
+    }
+
+    private func packageTreeDigest(_ files: [PackageFile]) -> String {
+        var bytes = Data()
+        for file in files {
+            let path = Data(file.path.utf8)
+            bytes.append(file.isDirectory ? 0x44 : 0x46)
+            var pathCount = UInt64(path.count).bigEndian
+            var dataCount = UInt64(file.data.count).bigEndian
+            withUnsafeBytes(of: &pathCount) { bytes.append(contentsOf: $0) }
+            bytes.append(path)
+            withUnsafeBytes(of: &dataCount) { bytes.append(contentsOf: $0) }
+            bytes.append(file.data)
+        }
+        return SHA256Hex.digest(bytes)
     }
 
     private func writeReport(_ report: LegacyV1ExportReport, to url: URL) throws {
@@ -922,6 +1256,12 @@ private struct ProjectionState: Codable {
     let sourceDigest: String
     let snapshotID: String
     let projectionDigest: String
+    let provenanceVersion: Int
+    let sourceWireSnapshotID: String
+    let sourceWireSnapshotDigest: String
+    let adoptionSnapshotID: String
+    let adoptionProjectionDigest: String
+    let inventoryEvidenceSHA256: String
 }
 
 private struct RunState: Codable {
@@ -1156,6 +1496,73 @@ private final class ReadOnlyV1Database: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    func sourceEvidence() throws -> LegacyV1SourceEvidence {
+        let works = try works()
+        let sourceRowIssues = try malformedWorkRows()
+        let objectVerificationIssues = try verifyObjects()
+        var rows: [LegacyV1SourceEvidenceRow] = []
+        for work in works {
+            guard let snapshot = try snapshot(id: work.currentSnapshotID, workID: work.workID) else {
+                continue
+            }
+            guard SHA256Hex.digest(snapshot.manifest) == snapshot.snapshotID,
+                  snapshot.manifestModel.workID == work.workID else {
+                continue
+            }
+            var closureEntries: [[String: Any]] = []
+            var closureValid = true
+            for entry in snapshot.manifestModel.entries {
+                guard let object = try object(id: entry.objectID),
+                      object.byteCount == entry.byteCount,
+                      SHA256Hex.digest(object.bytes) == entry.objectID else {
+                    closureValid = false
+                    break
+                }
+                closureEntries.append([
+                    "byteCount": entry.byteCount,
+                    "contentType": entry.contentType,
+                    "entityKey": entry.entityKey,
+                    "objectID": entry.objectID,
+                    "objectDigest": SHA256Hex.digest(object.bytes)
+                ])
+            }
+            guard closureValid,
+                  let documentEntry = snapshot.manifestModel.entries.first(where: { $0.entityKey == "work/document" }),
+                  let documentObject = try object(id: documentEntry.objectID),
+                  let wireSnapshot = try? WorkCanonicalJSON.decodeSnapshot(documentObject.bytes),
+                  let document = try? wireSnapshot.materializedDocument(),
+                  document.id == work.documentID else {
+                continue
+            }
+            let closure: [String: Any] = [
+                "workID": work.workID.uuidString.lowercased(),
+                "documentID": work.documentID.uuidString.lowercased(),
+                "snapshotID": snapshot.snapshotID,
+                "snapshotDigest": SHA256Hex.digest(snapshot.manifest),
+                "entries": closureEntries
+            ]
+            guard JSONSerialization.isValidJSONObject(closure),
+                  let closureData = try? JSONSerialization.data(withJSONObject: closure, options: [.sortedKeys]) else {
+                continue
+            }
+            try rows.append(
+                LegacyV1SourceEvidenceRow(
+                    workID: work.workID,
+                    documentID: work.documentID,
+                    sourceWireSnapshotID: snapshot.snapshotID,
+                    sourceWireSnapshotDigest: SHA256Hex.digest(snapshot.manifest),
+                    sourceProjectionDigest: SHA256Hex.digest(WorkCanonicalJSON.encodeSnapshot(wireSnapshot)),
+                    objectClosureDigest: SHA256Hex.digest(closureData)
+                )
+            )
+        }
+        return LegacyV1SourceEvidence(
+            rows: rows.sorted { $0.workID.uuidString < $1.workID.uuidString },
+            objectVerificationIssues: objectVerificationIssues,
+            sourceRowIssues: sourceRowIssues
+        )
     }
 
     func verifyProjection(for work: LegacyWork) throws -> (snapshotID: String, projectionDigest: String) {

@@ -5,6 +5,7 @@ import NovelSync
 import NovelSyncV2
 import NovelSyncV2PortableBridge
 import NovelSyncV2Store
+import SnapshotSyncV2Migration
 
 public enum MigrationError: Error, Equatable, Sendable {
     case invalidSource(String)
@@ -87,10 +88,13 @@ public struct MigrationOptions: Sendable {
 /// exporter output.
 private struct VerifiedExportReport: Decodable, Equatable {
     let formatVersion: Int
+    let provenanceVersion: Int
     let exportID: UUID
     let sourceSQLiteSHA256: String
     let sourceArchiveManifestSHA256: String
     let classificationLedgerSHA256: String
+    let objectVerificationIssues: [String]
+    let sourceRowIssues: [String]
     let entries: [VerifiedExportEntry]
 }
 
@@ -101,6 +105,13 @@ private struct VerifiedExportEntry: Decodable, Equatable {
     let outputRelativePath: String?
     let outcome: String
     let projectionDigest: String?
+    let provenanceVersion: Int
+    let sourceWireSnapshotID: String?
+    let sourceWireSnapshotDigest: String?
+    let adoptionSnapshotID: String?
+    let adoptionProjectionDigest: String?
+    let inventoryEvidenceSHA256: String?
+    let sourceObjectClosureSHA256: String?
 }
 
 private struct VerifiedRunState: Decodable, Equatable {
@@ -115,6 +126,12 @@ private struct VerifiedProjectionState: Decodable, Equatable {
     let sourceDigest: String
     let snapshotID: String?
     let projectionDigest: String?
+    let provenanceVersion: Int
+    let sourceWireSnapshotID: String?
+    let sourceWireSnapshotDigest: String?
+    let adoptionSnapshotID: String?
+    let adoptionProjectionDigest: String?
+    let inventoryEvidenceSHA256: String?
 }
 
 private struct VerifiedExportStageAttestation: Equatable {
@@ -127,6 +144,7 @@ private struct VerifiedExportStageAttestation: Equatable {
     let runDigest: String
     let markerDigest: String
     let sidecarDigest: String
+    let stageTreeDigest: String
 }
 
 private struct LoadedTrustedProvenance: Equatable {
@@ -414,6 +432,12 @@ public actor MigrationRunner {
                 authority: authority
             )
             try await finalCommitHook?()
+            _ = try await revalidatedArchive(
+                sourceURL: options.sourceURL,
+                initial: archive,
+                initialAttestation: initialStageAttestation,
+                authority: authority
+            )
             try revalidateTrustedProvenance(options, initial: authority, sourceURL: options.sourceURL)
             let replay = try await store.commitMigration(
                 V2MigrationCommitRequest(
@@ -467,6 +491,12 @@ public actor MigrationRunner {
             authority: authority
         )
         try await finalCommitHook?()
+        _ = try await revalidatedArchive(
+            sourceURL: options.sourceURL,
+            initial: archive,
+            initialAttestation: initialStageAttestation,
+            authority: authority
+        )
         try revalidateTrustedProvenance(options, initial: authority, sourceURL: options.sourceURL)
         let result = try await store.commitMigration(
             V2MigrationCommitRequest(
@@ -535,7 +565,8 @@ public actor MigrationRunner {
         }
         let report = try decode(VerifiedExportReport.self, data: reportData, reason: "ledger")
         let run = try decode(VerifiedRunState.self, data: runData, reason: "runState")
-        guard report.formatVersion == 1,
+        guard report.formatVersion == LegacyV1ProvenanceContract.formatVersion,
+              report.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               run.status == "committed",
               run.exportID == report.exportID,
               isDigest(report.sourceSQLiteSHA256),
@@ -543,7 +574,9 @@ public actor MigrationRunner {
               isDigest(report.classificationLedgerSHA256),
               run.sourceDigest == report.sourceSQLiteSHA256,
               run.archiveManifestDigest == report.sourceArchiveManifestSHA256,
-              run.classificationLedgerDigest == report.classificationLedgerSHA256 else {
+              run.classificationLedgerDigest == report.classificationLedgerSHA256,
+              report.objectVerificationIssues.isEmpty,
+              report.sourceRowIssues.isEmpty else {
             throw MigrationError.exportProvenanceMismatch("runOrLedger")
         }
 
@@ -561,6 +594,13 @@ public actor MigrationRunner {
               entry.outputRelativePath == package.path.replacingOccurrences(of: stageRoot.path + "/", with: ""),
               entry.snapshotID.map(isDigest) == true,
               entry.projectionDigest.map(isDigest) == true,
+              entry.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+              entry.sourceWireSnapshotID.map(isDigest) == true,
+              entry.sourceWireSnapshotDigest.map(isDigest) == true,
+              entry.adoptionSnapshotID.map(isDigest) == true,
+              entry.adoptionProjectionDigest.map(isDigest) == true,
+              entry.inventoryEvidenceSHA256.map(isDigest) == true,
+              entry.sourceObjectClosureSHA256.map(isDigest) == true,
               report.entries.count(where: { $0.workID == entry.workID }) == 1 else {
             throw MigrationError.exportProvenanceMismatch("verifiedEntry")
         }
@@ -580,10 +620,16 @@ public actor MigrationRunner {
               trustedEntry.sourceSQLiteSHA256 == authority.authority.sourceSQLiteSHA256,
               trustedEntry.sourceArchiveManifestSHA256 == authority.authority.sourceArchiveManifestSHA256,
               trustedEntry.classificationLedgerSHA256 == authority.authority.classificationLedgerSHA256,
-              entry.snapshotID == archive.encoded.snapshotId.description,
-              entry.projectionDigest != nil,
+              entry.adoptionSnapshotID == archive.encoded.snapshotId.description,
+              entry.adoptionProjectionDigest != nil,
               trustedEntry.snapshotID == entry.snapshotID,
               trustedEntry.projectionDigest == entry.projectionDigest,
+              trustedEntry.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
+              trustedEntry.sourceWireSnapshotID == entry.sourceWireSnapshotID,
+              trustedEntry.sourceWireSnapshotDigest == entry.sourceWireSnapshotDigest,
+              trustedEntry.adoptionSnapshotID == entry.adoptionSnapshotID,
+              trustedEntry.adoptionProjectionDigest == entry.adoptionProjectionDigest,
+              trustedEntry.sourceObjectClosureSHA256 == entry.sourceObjectClosureSHA256,
               trustedEntry.inventoryEvidenceSHA256 == evidenceDigest else {
             throw MigrationError.exportProvenanceMismatch("externalAuthorityEntry")
         }
@@ -592,17 +638,24 @@ public actor MigrationRunner {
         let stateData = try trustedRegularFile(stateURL, fileManager: fileManager)
         let state = try decode(VerifiedProjectionState.self, data: stateData, reason: "sidecar")
         guard state.sourceDigest == report.sourceSQLiteSHA256,
+              state.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               state.snapshotID == entry.snapshotID,
-              state.projectionDigest == entry.projectionDigest else {
+              state.projectionDigest == entry.projectionDigest,
+              state.sourceWireSnapshotID == entry.sourceWireSnapshotID,
+              state.sourceWireSnapshotDigest == entry.sourceWireSnapshotDigest,
+              state.adoptionSnapshotID == entry.adoptionSnapshotID,
+              state.adoptionProjectionDigest == entry.adoptionProjectionDigest,
+              state.inventoryEvidenceSHA256 == entry.inventoryEvidenceSHA256 else {
             throw MigrationError.exportProvenanceMismatch("sidecar")
         }
 
         let projection = try SHA256Digest.hex(
             WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: archive.model.document))
         )
-        guard projection == entry.projectionDigest else {
+        guard projection == entry.adoptionProjectionDigest else {
             throw MigrationError.exportProvenanceMismatch("packageProjection")
         }
+        let stageTreeDigest = try ArchiveReader().digestRoot(stageRoot).hex
         return VerifiedExportStageAttestation(
             exportID: report.exportID,
             workID: entry.workID,
@@ -612,7 +665,8 @@ public actor MigrationRunner {
             reportDigest: SHA256Digest.hex(reportData),
             runDigest: SHA256Digest.hex(runData),
             markerDigest: SHA256Digest.hex(markerData),
-            sidecarDigest: SHA256Digest.hex(stateData)
+            sidecarDigest: SHA256Digest.hex(stateData),
+            stageTreeDigest: stageTreeDigest
         )
     }
 
@@ -652,7 +706,8 @@ public actor MigrationRunner {
         } catch {
             throw MigrationError.exportProvenanceMismatch("authoritySchema")
         }
-        guard authority.formatVersion == 1,
+        guard authority.formatVersion == LegacyV1ProvenanceContract.formatVersion,
+              authority.provenanceVersion == LegacyV1ProvenanceContract.formatVersion,
               authority.authorityID == expectedID,
               isDigest(authority.sourceSQLiteSHA256),
               isDigest(authority.sourceArchiveManifestSHA256),
@@ -665,6 +720,12 @@ public actor MigrationRunner {
                       && isDigest($0.inventoryEvidenceSHA256)
                       && isDigest($0.snapshotID ?? "")
                       && isDigest($0.projectionDigest ?? "")
+                      && $0.provenanceVersion == LegacyV1ProvenanceContract.formatVersion
+                      && isDigest($0.sourceWireSnapshotID ?? "")
+                      && isDigest($0.sourceWireSnapshotDigest ?? "")
+                      && isDigest($0.adoptionSnapshotID ?? "")
+                      && isDigest($0.adoptionProjectionDigest ?? "")
+                      && isDigest($0.sourceObjectClosureSHA256 ?? "")
               }) else {
             throw MigrationError.exportProvenanceMismatch("authorityFields")
         }
@@ -684,8 +745,8 @@ public actor MigrationRunner {
         let standardized = url.standardizedFileURL
         let resolved = standardized.resolvingSymlinksInPath().standardizedFileURL
         guard standardized.path == resolved.path else { throw MigrationError.untrustedExportStage("authorityRootSymlink") }
-        let values = try resolved.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        guard values.isDirectory == true, values.isSymbolicLink != true else {
+        let values = try resolved.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isWritableKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true, values.isWritable != true else {
             throw MigrationError.untrustedExportStage("authorityRoot")
         }
         return resolved.path
@@ -698,8 +759,8 @@ public actor MigrationRunner {
               resolved.path.hasPrefix(rootPath + "/") else {
             throw MigrationError.untrustedExportStage("authorityPath")
         }
-        let values = try resolved.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+        let values = try resolved.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isWritableKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true, values.isWritable != true else {
             throw MigrationError.untrustedExportStage("authorityFile")
         }
         return resolved.path

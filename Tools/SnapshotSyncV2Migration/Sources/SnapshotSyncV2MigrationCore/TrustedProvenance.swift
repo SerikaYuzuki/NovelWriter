@@ -11,14 +11,16 @@ public struct MigrationTrustedProvenanceAuthority: Codable, Equatable, Sendable 
     public let sourceArchiveManifestSHA256: String
     public let classificationLedgerSHA256: String
     public let entries: [MigrationTrustedProvenanceEntry]
+    public let provenanceVersion: Int
 
     public init(
-        formatVersion: Int = 1,
+        formatVersion: Int = 2,
         authorityID: String,
         sourceSQLiteSHA256: String,
         sourceArchiveManifestSHA256: String,
         classificationLedgerSHA256: String,
-        entries: [MigrationTrustedProvenanceEntry]
+        entries: [MigrationTrustedProvenanceEntry],
+        provenanceVersion: Int = 2
     ) {
         self.formatVersion = formatVersion
         self.authorityID = authorityID
@@ -26,6 +28,7 @@ public struct MigrationTrustedProvenanceAuthority: Codable, Equatable, Sendable 
         self.sourceArchiveManifestSHA256 = sourceArchiveManifestSHA256
         self.classificationLedgerSHA256 = classificationLedgerSHA256
         self.entries = entries
+        self.provenanceVersion = provenanceVersion
     }
 }
 
@@ -39,6 +42,12 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
     public let snapshotID: String?
     public let projectionDigest: String?
     public let inventoryEvidenceSHA256: String
+    public let provenanceVersion: Int
+    public let sourceWireSnapshotID: String?
+    public let sourceWireSnapshotDigest: String?
+    public let adoptionSnapshotID: String?
+    public let adoptionProjectionDigest: String?
+    public let sourceObjectClosureSHA256: String?
 
     public init(
         workID: UUID,
@@ -49,7 +58,13 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
         classificationLedgerSHA256: String,
         snapshotID: String?,
         projectionDigest: String?,
-        inventoryEvidenceSHA256: String
+        inventoryEvidenceSHA256: String,
+        provenanceVersion: Int = 2,
+        sourceWireSnapshotID: String? = nil,
+        sourceWireSnapshotDigest: String? = nil,
+        adoptionSnapshotID: String? = nil,
+        adoptionProjectionDigest: String? = nil,
+        sourceObjectClosureSHA256: String? = nil
     ) {
         self.workID = workID
         self.disposition = disposition
@@ -60,6 +75,12 @@ public struct MigrationTrustedProvenanceEntry: Codable, Equatable, Sendable {
         self.snapshotID = snapshotID
         self.projectionDigest = projectionDigest
         self.inventoryEvidenceSHA256 = inventoryEvidenceSHA256
+        self.provenanceVersion = provenanceVersion
+        self.sourceWireSnapshotID = sourceWireSnapshotID ?? snapshotID
+        self.sourceWireSnapshotDigest = sourceWireSnapshotDigest ?? snapshotID
+        self.adoptionSnapshotID = adoptionSnapshotID ?? snapshotID
+        self.adoptionProjectionDigest = adoptionProjectionDigest ?? projectionDigest
+        self.sourceObjectClosureSHA256 = sourceObjectClosureSHA256
     }
 }
 
