@@ -4,6 +4,10 @@ import NovelSyncV2Application
 import NovelSyncV2Store
 
 public enum SnapshotSyncV2Runtime {
+    public static func makeProductionDocumentGate() -> ProductionDocumentGate {
+        ProductionDocumentGate()
+    }
+
     public static func makeApplication(
         mode: RuntimeMode
     ) async throws -> SyncV2Application {

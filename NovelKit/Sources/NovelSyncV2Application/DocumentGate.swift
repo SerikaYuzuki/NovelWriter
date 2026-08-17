@@ -3,10 +3,10 @@ import NovelSyncV2
 
 public struct DocumentSessionToken: Hashable, Sendable {
     public let workID: WorkID
-    package let identity: UUID
-    package let revision: UInt64
+    public let identity: UUID
+    public let revision: UInt64
 
-    package init(workID: WorkID, identity: UUID, revision: UInt64) {
+    public init(workID: WorkID, identity: UUID, revision: UInt64) {
         self.workID = workID
         self.identity = identity
         self.revision = revision
@@ -15,12 +15,12 @@ public struct DocumentSessionToken: Hashable, Sendable {
 
 public struct DocumentGateToken: Hashable, Sendable {
     public let workID: WorkID
-    package let sessionIdentity: UUID
-    package let gateIdentity: UUID
-    package let sessionRevision: UInt64
-    package let expectedLocalVersion: SyncV2LocalVersion
+    public let sessionIdentity: UUID
+    public let gateIdentity: UUID
+    public let sessionRevision: UInt64
+    public let expectedLocalVersion: SyncV2LocalVersion
 
-    package init(
+    public init(
         workID: WorkID,
         sessionIdentity: UUID,
         gateIdentity: UUID,
@@ -43,6 +43,33 @@ public struct SyncV2LocalVersion: Hashable, Sendable {
         self.generation = generation
         self.snapshotID = snapshotID
     }
+}
+
+public struct SyncV2SafeBoundaryProof: Hashable, Sendable {
+    public let editorGeneration: UInt64
+    public let hasMarkedText: Bool
+    public let hasUnsavedChanges: Bool
+    public let pendingIntentCleared: Bool
+
+    public init(
+        editorGeneration: UInt64,
+        hasMarkedText: Bool,
+        hasUnsavedChanges: Bool,
+        pendingIntentCleared: Bool
+    ) {
+        self.editorGeneration = editorGeneration
+        self.hasMarkedText = hasMarkedText
+        self.hasUnsavedChanges = hasUnsavedChanges
+        self.pendingIntentCleared = pendingIntentCleared
+    }
+}
+
+public protocol SyncV2ArmableDocumentGate: SyncV2DocumentGate {
+    func arm(
+        session: DocumentSessionToken,
+        expectedLocalVersion: SyncV2LocalVersion,
+        proof: SyncV2SafeBoundaryProof
+    ) async throws
 }
 
 public struct SafeAdoptionBoundary: Hashable, Sendable {

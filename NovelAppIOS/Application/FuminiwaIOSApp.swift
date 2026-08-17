@@ -40,9 +40,10 @@ struct FuminiwaIOSApp: App {
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )
                 .task {
+                    _ = await store.configureSnapshotSyncV2()
                     await store.restoreFuminiwaSession()
                     await store.bootstrap(localFirst: true)
-                    await store.resumePendingSnapshotSync()
+                    await store.resumeSnapshotSyncV2()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task {
@@ -52,6 +53,10 @@ struct FuminiwaIOSApp: App {
                             // プレビューをロード表示で覆い、復帰直後の入力も止めてしまう。
                             // 実際に中断される `.background` でだけ端末保存を行う。
                             await store.flushDeviceSyncWithBackgroundTime()
+                        } else if newPhase == .active {
+                            // Foreground resume is a non-blocking wake of the
+                            // durable v2 outbox; no network result gates UI.
+                            Task { await store.resumeSnapshotSyncV2() }
                         }
                     }
                 }

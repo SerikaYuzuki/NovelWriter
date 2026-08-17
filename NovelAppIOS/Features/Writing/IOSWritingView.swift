@@ -330,7 +330,6 @@ private struct IOSWritingOutlineList: View {
                 EditButton()
             }
         }
-        .iosWorkChrome(store: store, accessibilityPrefix: "ios.writing.outline")
         .modifier(IOSWritingOutlineSurfaceModifier())
     }
 

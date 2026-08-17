@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct IOSRuntimeCompositionTests {
     @Test("iOS app test composition never creates HTTP transports")
-    func appCompositionIsOffline() throws {
+    func appCompositionIsOffline() async throws {
         let id = UUID().uuidString
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("FUMINIWA-iOS-runtime-\(id)", isDirectory: true)
@@ -20,7 +20,8 @@ struct IOSRuntimeCompositionTests {
         let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
 
         #expect(store.authSessionCoordinator == nil)
-        #expect(store.localSnapshotSyncWorker == nil)
         #expect(store.authUIState == .unavailable)
+        #expect(await store.configureSnapshotSyncV2())
+        #expect(store.snapshotSyncV2Application != nil)
     }
 }

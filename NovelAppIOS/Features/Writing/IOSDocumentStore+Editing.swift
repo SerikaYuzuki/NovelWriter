@@ -1,6 +1,5 @@
 import Foundation
 import NovelCore
-import NovelSync
 
 /// 執筆画面からの選択・作品編集を、起動と保存のcomposition rootから分離する。
 /// すべての操作は従来どおり`markDocumentChanged()`へ集約し、保存・同期境界は変えない。
@@ -16,13 +15,7 @@ extension IOSDocumentStore {
     }
 
     func selectChapter(_ chapterID: ChapterID?) {
-        let previousSelection = (selectedChapterID, selectedEpisodeID)
         guard chapterID == selectedChapterID || permitsSyncSelectionMutation else { return }
-        defer {
-            if previousSelection != (selectedChapterID, selectedEpisodeID) {
-                deviceSyncSelectionDidChange()
-            }
-        }
         selectedChapterID = chapterID
         guard let chapterID else {
             selectedEpisodeID = nil
@@ -42,7 +35,6 @@ extension IOSDocumentStore {
         guard selectedEpisodeID != episodeID else { return }
         guard permitsSyncSelectionMutation else { return }
         selectedEpisodeID = episodeID
-        deviceSyncSelectionDidChange()
     }
 
     func updateDocumentTitle(_ title: String) {
@@ -81,23 +73,8 @@ extension IOSDocumentStore {
         guard selectedChapterID == chapterID, selectedEpisodeID == episodeID else { return }
         guard let previousContent = document.episode(episodeID)?.episode.content,
               previousContent != content else { return }
-        let baseContentDigest = deviceSyncDurablePackageDigest(
-            for: episodeID,
-            fallbackContent: previousContent
-        )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        if !usesWholeWorkDeviceSync {
-            registerDeviceSyncContentMutation(content, episodeID: episodeID)
-        }
         markDocumentChanged()
-        if let expectedEditingToken {
-            scheduleDeviceSyncForEditedEpisode(
-                content: content,
-                expectedEditingToken: expectedEditingToken,
-                baseContentDigest: baseContentDigest,
-                previousContentDigest: SyncContentDigest(content: previousContent)
-            )
-        }
     }
 
     func addChapter() {
@@ -107,7 +84,6 @@ extension IOSDocumentStore {
         let episodeID = document.addEpisode(to: chapterID)
         selectedChapterID = chapterID
         selectedEpisodeID = episodeID
-        deviceSyncSelectionDidChange()
         markDocumentChanged()
     }
 
@@ -118,9 +94,7 @@ extension IOSDocumentStore {
         let title = count == 0 ? Episode.defaultTitle : "第\(count + 1)話"
         let previousEpisodeID = selectedEpisodeID
         selectedEpisodeID = document.addEpisode(to: selectedChapterID, title: title)
-        if selectedEpisodeID != previousEpisodeID {
-            deviceSyncSelectionDidChange()
-        }
+        if selectedEpisodeID != previousEpisodeID {}
         markDocumentChanged()
     }
 
@@ -137,7 +111,6 @@ extension IOSDocumentStore {
             selectedEpisodeID = document.chapters
                 .first(where: { $0.id == chapterID })?
                 .episodes.first?.id
-            deviceSyncSelectionDidChange()
         }
         markDocumentChanged()
     }
@@ -159,9 +132,6 @@ extension IOSDocumentStore {
     }
 
     private var permitsSyncSelectionMutation: Bool {
-        deviceSyncRuntime == nil ||
-            activeDeviceSyncIdentity == nil ||
-            permitsDeviceSyncSelectionMutationAfterFlush ||
-            editorCommandSession.isDocumentTransitionPrepared
+        true
     }
 }

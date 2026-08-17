@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import NovelSync
+import NovelSyncV2
 
 enum IOSPrivateWorkingCopyLocationError: Error, Equatable {
     case unsafeRoot
@@ -190,7 +190,7 @@ extension IOSPrivateWorkingCopyLocation {
 
     /// Cloud libraryの作品はURLをmetadataへ保存せず、WorkIDから常に同じ
     /// app-private packageを導出する。既存packageがあってもURLを返す。
-    func packageURL(for workID: SyncWorkID) throws -> URL {
+    func packageURL(for workID: WorkID) throws -> URL {
         try validateFixedRoot()
         return try directChildURL(
             forPackageName: "\(workID.rawValue.uuidString).novelpkg",
@@ -198,18 +198,18 @@ extension IOSPrivateWorkingCopyLocation {
         )
     }
 
-    func documentID(for workID: SyncWorkID) -> IOSPrivateDocumentID {
+    func documentID(for workID: WorkID) -> IOSPrivateDocumentID {
         IOSPrivateDocumentID(packageName: "\(workID.rawValue.uuidString).novelpkg")
     }
 
-    func workID(for packageURL: URL) throws -> SyncWorkID? {
+    func workID(for packageURL: URL) throws -> WorkID? {
         try validateFixedRoot()
         let requested = packageURL.standardizedFileURL
         guard requested.deletingLastPathComponent() == rootURL,
               requested.pathExtension == "novelpkg",
               let uuid = UUID(uuidString: requested.deletingPathExtension().lastPathComponent),
               requested.lastPathComponent == "\(uuid.uuidString).novelpkg" else { return nil }
-        return SyncWorkID(rawValue: uuid)
+        return WorkID(uuid)
     }
 
     func stagingDestination() throws -> URL {
@@ -223,7 +223,7 @@ extension IOSPrivateWorkingCopyLocation {
         return candidate
     }
 
-    func stagingPackageURL(for workID: SyncWorkID) throws -> URL {
+    func stagingPackageURL(for workID: WorkID) throws -> URL {
         try validateFixedRoot()
         return try directChildURL(
             forPackageName: ".\(workID.rawValue.uuidString).staging.novelpkg",
@@ -231,7 +231,7 @@ extension IOSPrivateWorkingCopyLocation {
         )
     }
 
-    func validateStagingPackage(at url: URL, for workID: SyncWorkID) throws {
+    func validateStagingPackage(at url: URL, for workID: WorkID) throws {
         let requested = url.standardizedFileURL
         let expected = rootURL.appendingPathComponent(
             ".\(workID.rawValue.uuidString).staging.novelpkg",
@@ -243,7 +243,7 @@ extension IOSPrivateWorkingCopyLocation {
         _ = try attestStagingPackage(at: requested)
     }
 
-    func installStagingPackage(_ url: URL, for workID: SyncWorkID) throws -> URL {
+    func installStagingPackage(_ url: URL, for workID: WorkID) throws -> URL {
         try validateStagingPackage(at: url, for: workID)
         let staging = try attestStagingPackage(at: url)
         let finalURL = try packageURL(for: workID)
@@ -261,7 +261,7 @@ extension IOSPrivateWorkingCopyLocation {
     }
 
     /// D-072: this-device copy only. Does not delete CloudKit records.
-    func removePackages(for workID: SyncWorkID) throws {
+    func removePackages(for workID: WorkID) throws {
         try validateFixedRoot()
         let staging = try stagingPackageURL(for: workID)
         if try Self.pathStatus(staging) != nil {
@@ -277,7 +277,7 @@ extension IOSPrivateWorkingCopyLocation {
         }
     }
 
-    func validateInstalledPackage(for workID: SyncWorkID) throws {
+    func validateInstalledPackage(for workID: WorkID) throws {
         let expected = try packageURL(for: workID)
         let attestation = try attestPackage(at: expected)
         guard attestation.id == documentID(for: workID) else {

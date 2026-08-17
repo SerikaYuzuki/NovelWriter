@@ -24,6 +24,15 @@ extension IOSDocumentStore {
         _ document: NovelDocument,
         to url: URL
     ) async throws {
+        if snapshotSyncV2Application != nil {
+            guard await checkpointSnapshotSyncV2(document, reason: .autosave) else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            // Snapshot Sync v2 owns the durable local authority.  A novpkg is
+            // deliberately not rewritten during ordinary autosave; it is an
+            // import/export boundary only.
+            return
+        }
         if usesSnapshotSyncRuntime {
             try await repository.save(document, to: url)
             noteDeviceSyncPackageSaved(document)
