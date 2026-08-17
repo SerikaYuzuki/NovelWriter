@@ -194,6 +194,7 @@ fn auth_binding_projects_live_sync_v2_epoch_into_authenticated_command_scope() {
     let sync_principal = fuminiwa_sync_server_v2::AuthenticatedPrincipal {
         account_id: binding["accountId"].as_str().unwrap().into(),
         account_fence: binding["accountFence"].as_str().unwrap().into(),
+        account_auth_epoch: 1,
         server_instance_id: binding["serverInstanceId"].as_str().unwrap().into(),
         protocol_epoch: binding["syncProtocolEpoch"].as_i64().unwrap(),
     };

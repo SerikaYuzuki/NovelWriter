@@ -11,7 +11,7 @@ Apple native credential
   -> VerifiedExternalIdentity(providerConfig, issuer, subject)
   -> auth_v1 maps to opaque AccountID
   -> auth_v1 issues FUMINIWA session
-  -> middleware creates AuthenticatedPrincipal(AccountID, SessionID, AuthEpoch)
+  -> middleware creates AuthenticatedPrincipal(AccountID, SessionID, AuthEpoch, AccountFence)
   -> /v2 capabilities returns matching AccountFence
   -> sync_v2 queries only by principal AccountID
 ```
@@ -26,3 +26,9 @@ Development bearer support is a separately compiled/configured harness. A
 production build/configuration has no dev-token verifier or fallback secret;
 startup fails closed if a development-auth flag/token is present. Production
 never accepts a fixed token after Apple or FUMINIWA session verification fails.
+
+The sync deployment persists the authenticated `AccountAuthEpoch` alongside
+the opaque fence. A strictly newer epoch for the same AccountID atomically
+quarantines old sealed commands and parked works, then updates the scope;
+equal or older epochs, or a same-epoch fence change, are rejected. A different
+AccountID can never perform this rebind.

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 const SERVER_NAMESPACE: &str = "fuminiwa-snapshot-sync-v2";
 const SCHEMA_VERSION: &str = "2";
-const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r2";
+const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
 /// The server never follows an unbounded user-controlled snapshot graph.
 /// This is deliberately a graph-node budget (not a wall-clock timeout): a
 /// malformed cycle or an unexpectedly huge closure is rejected before any
@@ -167,18 +167,19 @@ impl Repository {
     ) -> SyncResult<()> {
         sqlx::query(
             "INSERT INTO sync_v2.account_scopes(
-                 account_id,server_instance_id,protocol_epoch,account_fence
-             ) VALUES($1,$2,$3,$4)
+                 account_id,server_instance_id,protocol_epoch,account_auth_epoch,account_fence
+             ) VALUES($1,$2,$3,$4,$5)
              ON CONFLICT(account_id) DO NOTHING",
         )
         .bind(&p.account_id)
         .bind(&p.server_instance_id)
         .bind(p.protocol_epoch)
+        .bind(p.account_auth_epoch)
         .bind(&p.account_fence)
         .execute(&mut **tx)
         .await?;
         let row = sqlx::query(
-            "SELECT server_instance_id,protocol_epoch,account_fence
+            "SELECT server_instance_id,protocol_epoch,account_auth_epoch,account_fence
              FROM sync_v2.account_scopes WHERE account_id=$1 FOR UPDATE",
         )
         .bind(&p.account_id)
@@ -186,9 +187,54 @@ impl Repository {
         .await?;
         let instance: String = row.try_get("server_instance_id")?;
         let epoch: i64 = row.try_get("protocol_epoch")?;
+        let auth_epoch: i64 = row.try_get("account_auth_epoch")?;
         let fence: String = row.try_get("account_fence")?;
-        if instance != p.server_instance_id || epoch != p.protocol_epoch || fence != p.account_fence
+        if instance != p.server_instance_id || epoch != p.protocol_epoch {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if auth_epoch > p.account_auth_epoch
+            || (auth_epoch == p.account_auth_epoch && fence != p.account_fence)
         {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if auth_epoch < p.account_auth_epoch {
+            // A rotated Auth v1 fence is a same-account, monotonic scope
+            // transition. Quarantine old sealed commands before making the
+            // new scope usable, then rebind parked works in this transaction.
+            sqlx::query(
+                "UPDATE sync_v2.sealed_commands
+                 SET state='quarantined'
+                 WHERE account_id=$1 AND account_fence <> $2
+                   AND state IN ('sealed','sending','conflictPending','parked')",
+            )
+            .bind(&p.account_id)
+            .bind(&p.account_fence)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.works SET state='bound'
+                 WHERE account_id=$1 AND state='quarantined'",
+            )
+            .bind(&p.account_id)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.account_scopes
+                 SET server_instance_id=$2,protocol_epoch=$3,
+                     account_auth_epoch=$4,account_fence=$5
+                 WHERE account_id=$1 AND account_auth_epoch=$6",
+            )
+            .bind(&p.account_id)
+            .bind(&p.server_instance_id)
+            .bind(p.protocol_epoch)
+            .bind(p.account_auth_epoch)
+            .bind(&p.account_fence)
+            .bind(auth_epoch)
+            .execute(&mut **tx)
+            .await?;
+            return Ok(());
+        }
+        if fence != p.account_fence {
             return Err(SyncError::AccountFenceMismatch);
         }
         Ok(())
@@ -200,7 +246,7 @@ impl Repository {
     /// rotated fence cannot continue to expose the old account projection.
     pub async fn check_scope(&self, p: &AuthenticatedPrincipal) -> SyncResult<()> {
         if let Some(row) = sqlx::query(
-            "SELECT server_instance_id,protocol_epoch,account_fence
+            "SELECT server_instance_id,protocol_epoch,account_auth_epoch,account_fence
              FROM sync_v2.account_scopes WHERE account_id=$1",
         )
         .bind(&p.account_id)
@@ -209,10 +255,12 @@ impl Repository {
         {
             let instance: String = row.try_get("server_instance_id")?;
             let epoch: i64 = row.try_get("protocol_epoch")?;
+            let auth_epoch: i64 = row.try_get("account_auth_epoch")?;
             let fence: String = row.try_get("account_fence")?;
             if instance != p.server_instance_id
                 || epoch != p.protocol_epoch
-                || fence != p.account_fence
+                || auth_epoch > p.account_auth_epoch
+                || (auth_epoch == p.account_auth_epoch && fence != p.account_fence)
             {
                 return Err(SyncError::AccountFenceMismatch);
             }
@@ -1494,8 +1542,9 @@ impl Repository {
         }
 
         // There is one active conflict lane per Work. Lock it after the Work
-        // row (the repository-wide lock order) and never append a second
-        // revision through an ordinary publish command.
+        // row (the repository-wide lock order). A newer divergent candidate
+        // is an immutable revision in that same lane; it must not be rejected
+        // merely because an older candidate is still awaiting a choice.
         let active = sqlx::query(
             "SELECT conflict_id,current_revision FROM sync_v2.active_conflicts
              WHERE account_id=$1 AND work_id=$2 AND state='active' FOR UPDATE",
@@ -1504,8 +1553,69 @@ impl Repository {
         .bind(c.work_id)
         .fetch_optional(&mut **tx)
         .await?;
-        if active.is_some() {
-            return Err(SyncError::StaleConflictRevision);
+        if let Some(active) = active {
+            let conflict_id: Uuid = active.try_get("conflict_id")?;
+            let current_revision: i64 = active.try_get("current_revision")?;
+            let revision = current_revision
+                .checked_add(1)
+                .ok_or(SyncError::SizeLimitExceeded)?;
+            let remote = current.as_deref().ok_or(SyncError::LineageViolation)?;
+            sqlx::query(
+                "INSERT INTO sync_v2.conflict_candidates(
+                    account_id,conflict_id,work_id,revision,base_snapshot_id,
+                    local_snapshot_id,remote_snapshot_id,source_generation,created_at
+                 ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(c.work_id)
+            .bind(revision)
+            .bind(expected_id.as_deref())
+            .bind(candidate.as_slice())
+            .bind(remote)
+            .bind(c.source_generation)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.active_conflicts
+                 SET current_revision=$4,source_generation=$5
+                 WHERE account_id=$1 AND conflict_id=$2 AND state='active'
+                   AND current_revision=$3",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(current_revision)
+            .bind(revision)
+            .bind(c.source_generation)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO sync_v2.conflict_events(
+                    account_id,conflict_id,revision,event_kind,canonical_event,created_at
+                 ) VALUES($1,$2,$3,'appended',$4,now())",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(revision)
+            .bind(&c.canonical_bytes)
+            .execute(&mut **tx)
+            .await?;
+            return Ok((
+                409,
+                Self::response(
+                    c,
+                    "conflictPending",
+                    vec![
+                        ("conflictId".into(), Value::String(conflict_id.to_string())),
+                        ("conflictRevision".into(), Value::from(revision)),
+                        ("sourceGeneration".into(), Value::from(c.source_generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(remote, generation.unwrap_or(1)),
+                        ),
+                    ],
+                ),
+            ));
         }
 
         let remote = current.clone();
@@ -1880,6 +1990,24 @@ impl Repository {
         let new_document = uuid(payload, "newDocumentId").map_err(SyncError::SchemaViolation)?;
         let source_snapshot = digest_field(payload, "localCandidateSnapshotId")
             .map_err(SyncError::SchemaViolation)?;
+        // keepBoth is bound to the exact candidate shown by the active
+        // conflict projection. An arbitrary same-work Snapshot is not a
+        // valid clone source, even when it is otherwise registered.
+        let active_candidate: Vec<u8> = sqlx::query(
+            "SELECT local_snapshot_id
+             FROM sync_v2.conflict_candidates
+             WHERE account_id=$1 AND conflict_id=$2 AND work_id=$3 AND revision=$4",
+        )
+        .bind(&p.account_id)
+        .bind(conflict)
+        .bind(c.work_id)
+        .bind(revision)
+        .fetch_one(&mut **tx)
+        .await?
+        .try_get("local_snapshot_id")?;
+        if source_snapshot.as_slice() != active_candidate.as_slice() {
+            return Err(SyncError::StaleConflictRevision);
+        }
         let expected_head = &payload["expectedOriginalHead"];
         let original = sqlx::query("SELECT head_generation,head_snapshot_id,document_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
         let original_generation: Option<i64> = original.try_get("head_generation")?;

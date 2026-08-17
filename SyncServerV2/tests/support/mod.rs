@@ -61,6 +61,7 @@ fn principal(account_id: &str) -> AuthenticatedPrincipal {
     AuthenticatedPrincipal {
         account_id: account_id.into(),
         account_fence: FENCE.into(),
+        account_auth_epoch: 1,
         server_instance_id: SERVER_INSTANCE.into(),
         protocol_epoch: 2,
     }
@@ -191,6 +192,143 @@ async fn create_work(
         "createWork exact replay diverged",
     )?;
     Ok((cmd, bytes))
+}
+
+async fn exercise_auth_scope_rotation(repo: &Repository) -> ScenarioResult<()> {
+    let old = principal("account-rotation");
+    let work_id = Uuid::new_v4();
+    create_work(repo, &old, work_id, Uuid::new_v4()).await?;
+
+    // Simulate a process restart with an old sealed command and parked work.
+    // The next authenticated command must quarantine/rebind both atomically.
+    let old_command = command(
+        &old,
+        Uuid::new_v4(),
+        CommandKind::Publish,
+        work_id,
+        [0x33; 32],
+        1,
+        json!({
+            "candidateSnapshotId":hex::encode([0x33; 32]),
+            "expectedRemoteHead":Value::Null,
+            "workId":work_id
+        }),
+    )?;
+    let mut tx = repo.pool.begin().await?;
+    sqlx::query(
+        "UPDATE sync_v2.works SET state='quarantined'
+         WHERE account_id=$1 AND work_id=$2",
+    )
+    .bind(&old.account_id)
+    .bind(work_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO sync_v2.sealed_commands(
+            account_id,command_id,work_id,account_fence,command_kind,
+            canonical_request,request_digest,source_snapshot_id,source_generation,state
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'sending')",
+    )
+    .bind(&old.account_id)
+    .bind(old_command.command_id)
+    .bind(work_id)
+    .bind(&old.account_fence)
+    .bind(old_command.kind.as_str())
+    .bind(&old_command.canonical_bytes)
+    .bind(old_command.request_digest.as_slice())
+    .bind(old_command.source_snapshot_id.as_slice())
+    .bind(old_command.source_generation)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let rotated = AuthenticatedPrincipal {
+        account_id: old.account_id.clone(),
+        account_fence: "rotated-fence".into(),
+        account_auth_epoch: 2,
+        server_instance_id: old.server_instance_id.clone(),
+        protocol_epoch: old.protocol_epoch,
+    };
+    let new_work = Uuid::new_v4();
+    create_work(repo, &rotated, new_work, Uuid::new_v4()).await?;
+    ensure(
+        matches!(
+            repo.command(&old, &old_command).await,
+            Err(SyncError::AccountFenceMismatch)
+        ),
+        "old authenticated scope resumed after fence rotation",
+    )?;
+    let sealed_state: String = sqlx::query_scalar(
+        "SELECT state FROM sync_v2.sealed_commands
+         WHERE account_id=$1 AND command_id=$2",
+    )
+    .bind(&old.account_id)
+    .bind(old_command.command_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    let work_state: String =
+        sqlx::query_scalar("SELECT state FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+            .bind(&old.account_id)
+            .bind(work_id)
+            .fetch_one(&repo.pool)
+            .await?;
+    let scope: (i64, String) = sqlx::query_as(
+        "SELECT account_auth_epoch,account_fence FROM sync_v2.account_scopes
+         WHERE account_id=$1",
+    )
+    .bind(&old.account_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    ensure(
+        sealed_state == "quarantined"
+            && work_state == "bound"
+            && scope == (2, "rotated-fence".into()),
+        "scope rotation did not quarantine/rebind atomically",
+    )?;
+    let same_epoch = AuthenticatedPrincipal {
+        account_fence: "same-epoch-fence".into(),
+        ..rotated.clone()
+    };
+    ensure(
+        matches!(
+            repo.check_scope(&same_epoch).await,
+            Err(SyncError::AccountFenceMismatch)
+        ),
+        "same-epoch fence change bypassed scope monotonicity",
+    )?;
+    let backwards = AuthenticatedPrincipal {
+        account_fence: FENCE.into(),
+        account_auth_epoch: 1,
+        ..rotated.clone()
+    };
+    ensure(
+        matches!(
+            repo.check_scope(&backwards).await,
+            Err(SyncError::AccountFenceMismatch)
+        ),
+        "older auth epoch bypassed scope monotonicity",
+    )?;
+
+    let foreign = AuthenticatedPrincipal {
+        account_id: "account-rotation-foreign".into(),
+        account_fence: "foreign-fence".into(),
+        account_auth_epoch: 9,
+        server_instance_id: old.server_instance_id,
+        protocol_epoch: old.protocol_epoch,
+    };
+    create_work(repo, &foreign, Uuid::new_v4(), Uuid::new_v4()).await?;
+    let unchanged: (i64, String) = sqlx::query_as(
+        "SELECT account_auth_epoch,account_fence FROM sync_v2.account_scopes
+         WHERE account_id=$1",
+    )
+    .bind(&old.account_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    ensure(
+        unchanged == (2, "rotated-fence".into()),
+        "different account changed another account's scope",
+    )?;
+    Ok(())
 }
 
 async fn upload_object(
@@ -438,11 +576,12 @@ async fn setup_conflicted_work(
             .as_str()
             .ok_or_else(|| failure("conflict response missing id"))?,
     )?;
-    let conflict_revision = first_conflict["conflictRevision"]
+    let mut conflict_revision = first_conflict["conflictRevision"]
         .as_i64()
         .ok_or_else(|| failure("conflict response missing revision"))?;
-    let source_generation = 3;
-    let effective_manifest = local_bytes;
+    let mut source_generation = 3;
+    let mut effective_manifest = local_bytes;
+    let mut effective_local = local;
 
     if add_revision {
         let latest_title =
@@ -460,19 +599,23 @@ async fn setup_conflicted_work(
         )?;
         let (latest, _) =
             register_snapshot(repo, principal, work_id, latest_bytes.clone(), 4).await?;
-        let result = publish(repo, principal, work_id, latest, 4, Some((root, 1))).await;
+        let (_, status, response) =
+            publish(repo, principal, work_id, latest, 4, Some((root, 1))).await?;
         ensure(
-            result
-                .as_ref()
-                .err()
-                .is_some_and(|error| error.to_string() == "staleConflictRevision"),
-            "second stale publish bypassed the active conflict lane",
+            status == 409,
+            "new divergence did not append a conflict revision",
         )?;
-        // A normal publish must not revise or replace the active candidate.
-        // The newer local snapshot remains registered and can be selected by
-        // a later explicit resolution command after the client refreshes the
-        // conflict revision.
-        drop(latest_bytes);
+        let appended = response_value(&response)?;
+        ensure(
+            appended["conflictId"] == Value::String(conflict_id.to_string())
+                && appended["conflictRevision"] == 2
+                && appended["sourceGeneration"] == 4,
+            "new divergence did not preserve the active conflict lane",
+        )?;
+        source_generation = 4;
+        conflict_revision = 2;
+        effective_local = latest;
+        effective_manifest = latest_bytes;
     }
 
     let active_count: i64 = sqlx::query_scalar(
@@ -490,7 +633,7 @@ async fn setup_conflicted_work(
         document_bytes,
         root,
         remote,
-        local,
+        local: effective_local,
         local_manifest: effective_manifest,
         remote_generation: 2,
         conflict_id,
@@ -793,6 +936,26 @@ async fn clone_work(
             "sourceWorkId":graph.work_id
         })
     };
+    let arbitrary_candidate = command(
+        principal,
+        Uuid::new_v4(),
+        CommandKind::CloneWork,
+        graph.work_id,
+        graph.root,
+        graph.conflict_source_generation,
+        {
+            let mut value = payload([0xFF; 32]);
+            value["localCandidateSnapshotId"] = Value::String(hex::encode(graph.root));
+            value
+        },
+    )?;
+    ensure(
+        matches!(
+            repo.command(principal, &arbitrary_candidate).await,
+            Err(SyncError::StaleConflictRevision)
+        ),
+        "keepBoth accepted an arbitrary same-work snapshot",
+    )?;
     let invalid = command(
         principal,
         Uuid::new_v4(),
@@ -1348,6 +1511,7 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         "receipt did not survive repository restart",
     )?;
     restarted.pool.close().await;
+    exercise_auth_scope_rotation(&repo).await?;
 
     let base_title = fixture_list
         .objects

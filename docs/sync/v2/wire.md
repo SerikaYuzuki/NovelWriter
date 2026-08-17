@@ -148,6 +148,13 @@ closed payload WorkID. Receipt identity is `(AccountID, commandId)`; reusing a
 command ID with a different kind, WorkID, or bytes is always
 `commandIdReused`.
 
+The authenticated scope also carries the Auth v1 `accountAuthEpoch` (not as a
+client-selectable body field). A strictly newer epoch for the same AccountID
+and a new fence is accepted as a transactional scope rebind: old sealed
+commands are quarantined before capabilities/bootstrap/replan work proceeds.
+An equal or older epoch, same-epoch fence change, or different AccountID is
+rejected before resource lookup.
+
 A Work's first remote publication starts with the sealed `createWork` command
 at `POST /v2/works`. It atomically creates only an account-scoped, null-head
 Work after proving `WorkID` absent for that principal. An exact

@@ -27,6 +27,7 @@ impl RuntimeMode {
 pub struct AuthenticatedAccess {
     pub account_id: String,
     pub account_fence: String,
+    pub account_auth_epoch: i64,
 }
 
 #[async_trait]
@@ -64,6 +65,7 @@ impl AccessAuthenticator for FixtureAccessAuthenticator {
         Ok(AuthenticatedAccess {
             account_id: account.into(),
             account_fence: self.fence.to_string(),
+            account_auth_epoch: 1,
         })
     }
 }
@@ -86,6 +88,7 @@ pub async fn authenticate(
     Ok(AuthenticatedPrincipal {
         account_id: principal.account_id,
         account_fence: principal.account_fence,
+        account_auth_epoch: principal.account_auth_epoch,
         server_instance_id: server_instance.to_owned(),
         protocol_epoch: PROTOCOL_EPOCH,
     })

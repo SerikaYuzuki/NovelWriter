@@ -12,6 +12,7 @@ pub const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
 pub struct AuthenticatedPrincipal {
     pub account_id: String,
     pub account_fence: String,
+    pub account_auth_epoch: i64,
     pub server_instance_id: String,
     pub protocol_epoch: i64,
 }
@@ -21,6 +22,7 @@ impl AuthenticatedPrincipal {
         Self {
             account_id: account_id.into(),
             account_fence: "fixture-fence".into(),
+            account_auth_epoch: 1,
             server_instance_id: "fixture-server".into(),
             protocol_epoch: PROTOCOL_EPOCH,
         }

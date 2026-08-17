@@ -27,6 +27,7 @@ CREATE TABLE sync_v2.account_scopes (
   account_id TEXT PRIMARY KEY,
   server_instance_id TEXT NOT NULL,
   protocol_epoch BIGINT NOT NULL CHECK (protocol_epoch > 0),
+  account_auth_epoch BIGINT NOT NULL CHECK (account_auth_epoch > 0),
   account_fence TEXT NOT NULL
 );
 CREATE TABLE sync_v2.works (

@@ -203,6 +203,7 @@ impl AccessAuthenticator for ProductionAuthService {
         Ok(AuthenticatedAccess {
             account_id: principal.account_id.to_string(),
             account_fence: URL_SAFE_NO_PAD.encode(principal.account_fence),
+            account_auth_epoch: principal.account_auth_epoch,
         })
     }
 }
@@ -347,6 +348,7 @@ impl From<&AuthenticatedPrincipal> for AuthenticatedAccess {
         Self {
             account_id: value.account_id.to_string(),
             account_fence: URL_SAFE_NO_PAD.encode(&value.account_fence),
+            account_auth_epoch: value.account_auth_epoch,
         }
     }
 }
