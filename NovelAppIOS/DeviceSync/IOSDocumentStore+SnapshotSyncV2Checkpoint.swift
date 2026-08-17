@@ -55,7 +55,7 @@ extension IOSDocumentStore {
     }
 
     func resumeSnapshotSyncV2() async {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let resumedWorkID = syncV2ActiveWorkID
         // A parked lane is intentionally local-only.  Reprojection may still
@@ -91,7 +91,7 @@ extension IOSDocumentStore {
 
     @discardableResult
     func synchronizeSnapshotSyncV2() async -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return false }
         guard syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
@@ -101,13 +101,13 @@ extension IOSDocumentStore {
         defer { isSnapshotSyncInFlight = false }
         do {
             let result = try await application.synchronize(workID: workID)
-            guard !isSyncV2AccountTransitionActive,
+            guard !isSyncV2RemoteAccountTransitionActive,
                   syncV2ActiveWorkID == workID,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             applySnapshotSyncV2State(result.state)
             return true
         } catch {
-            if !isSyncV2AccountTransitionActive,
+            if !isSyncV2RemoteAccountTransitionActive,
                syncV2ActiveWorkID == workID,
                snapshotSyncV2AccountScope == expectedAccountScope {
                 snapshotSyncOutcome = .offline

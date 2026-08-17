@@ -1,10 +1,18 @@
 import NovelCore
 
 extension IOSDocumentStore {
-    /// Both the short auth-request window and the SQLite transition itself
-    /// invalidate remote work. Local editing/checkpointing remains available
-    /// while only the request flag is set.
+    /// Only the short, document-gate-owned SQLite transition blocks local
+    /// document operations. The Apple UI/token exchange may remain suspended
+    /// indefinitely; local open/edit/checkpoint/export must continue during
+    /// that remote wait.
     var isSyncV2AccountTransitionActive: Bool {
+        syncV2AccountTransitionInProgress
+    }
+
+    /// Remote work remains fenced for the whole account request window. This
+    /// is intentionally separate from `isSyncV2AccountTransitionActive` so a
+    /// never-returning Apple exchange cannot freeze the local shelf/editor.
+    var isSyncV2RemoteAccountTransitionActive: Bool {
         syncV2AccountTransitionRequested || syncV2AccountTransitionInProgress
     }
 

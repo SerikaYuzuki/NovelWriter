@@ -67,7 +67,7 @@ extension IOSDocumentStore {
     var canExplicitlySyncCurrentWork: Bool {
         guard snapshotSyncV2Application != nil,
               startupState == .ready,
-              !isSyncV2AccountTransitionActive,
+              !isSyncV2RemoteAccountTransitionActive,
               authSession != nil,
               case .signedIn = authUIState,
               let workID = syncV2ActiveWorkID else { return false }
@@ -114,8 +114,10 @@ extension IOSDocumentStore {
             guard try await reloadLibraryItems() else { return false }
             // The local shelf is authoritative for launch/open.  Catalog I/O
             // is a deferred projection refresh and never gates the shelf.
-            Task { @MainActor [weak self] in
-                _ = await self?.refreshRemoteCatalog(reset: true)
+            if !isSyncV2RemoteAccountTransitionActive {
+                Task { @MainActor [weak self] in
+                    _ = await self?.refreshRemoteCatalog(reset: true)
+                }
             }
             return true
         } catch {
@@ -173,7 +175,7 @@ extension IOSDocumentStore {
     /// WorkID/title/head projection for the shelf.
     @discardableResult
     func refreshRemoteCatalog(reset: Bool = true) async -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               exposesAccountScopedSyncV2Items,
               let application = snapshotSyncV2Application else { return false }
         guard !syncV2RemoteCatalogIsLoading else { return false }
@@ -194,7 +196,7 @@ extension IOSDocumentStore {
                 cursor: cursor,
                 pageSize: 100
             )
-            guard !isSyncV2AccountTransitionActive,
+            guard !isSyncV2RemoteAccountTransitionActive,
                   libraryRefreshGeneration == refreshGeneration,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             var rows = Dictionary(
@@ -215,7 +217,7 @@ extension IOSDocumentStore {
                 refreshGeneration: refreshGeneration
             )
         } catch {
-            if !isSyncV2AccountTransitionActive,
+            if !isSyncV2RemoteAccountTransitionActive,
                libraryRefreshGeneration == refreshGeneration,
                snapshotSyncV2AccountScope == expectedAccountScope {
                 syncV2RemoteCatalogError = error.localizedDescription
@@ -232,7 +234,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         refreshGeneration: UInt64
     ) -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
               snapshotSyncV2AccountScope == expectedAccountScope else { return false }
         let localItems = localProjection.items.filter { item in
@@ -254,7 +256,7 @@ extension IOSDocumentStore {
 
     @discardableResult
     func loadMoreRemoteCatalog() async -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               syncV2RemoteCatalogCursor != nil else { return false }
         return await refreshRemoteCatalog(reset: false)
     }
@@ -370,7 +372,7 @@ extension IOSDocumentStore {
     }
 
     func openRemoteOnly(workID: WorkID) async -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               exposesAccountScopedSyncV2Items,
               syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
               != .parkedDifferentAccount else { return false }
@@ -383,7 +385,7 @@ extension IOSDocumentStore {
     /// original unbound Work intact.
     @discardableResult
     func cloneActiveWorkIntoSignedInAccount() async -> Bool {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               let sourceWorkID = syncV2ActiveWorkID,
               let expectedSession = currentDocumentSessionToken,

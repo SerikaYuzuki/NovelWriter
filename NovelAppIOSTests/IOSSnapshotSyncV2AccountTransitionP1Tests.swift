@@ -456,17 +456,18 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(parked?.availability == .localOnly)
         #expect(store.localEditGeneration == localGenerationBeforeSignIn + 1)
 
-        // The request window permits only local checkpointing. Document
-        // switches and library/export operations must not interleave with the
-        // pending account transition after the old lane has been parked.
-        #expect(await store.openSnapshotSyncV2(workID: workID.rawValue) == false)
-        #expect(await store.makeNewDocument() == false)
-        #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)) == false)
-        #expect(await store.refreshLibrary() == false)
+        // The request window fences remote work, but it must not freeze the
+        // local shelf/editor while Apple UI or an exchange transport waits.
+        #expect(await store.openSnapshotSyncV2(workID: workID.rawValue))
+        #expect(await store.makeNewDocument())
+        #expect(await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)))
+        #expect(await store.refreshLibrary())
         let reloadedDuringTransition = try? await store.reloadLibraryItems()
-        #expect(reloadedDuringTransition == false)
+        #expect(reloadedDuringTransition == true)
         await store.requestExport()
-        #expect(store.pendingExportURL == nil)
+        let exportedDuringExchange = try #require(store.pendingExportURL)
+        #expect(await store.importPackage(from: exportedDuringExchange))
+        store.dismissExport()
 
         let parkedSnapshot = try LocalSyncV2Store(
             root: configuration.localRoot.url,
@@ -483,7 +484,10 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         await store.resumeSnapshotSyncV2()
         #expect(await store.synchronizeSnapshotSyncV2() == false)
         #expect(await store.refreshRemoteCatalog() == false)
-        #expect(await store.refreshSnapshotHistory(for: workID) == false)
+        #expect(await store.refreshSnapshotHistory(for: workID))
+        if let localSnapshot = store.syncV2HistoryItems.first {
+            #expect(await store.restoreSnapshotSyncV2(snapshotID: localSnapshot.snapshotID.rawValue))
+        }
         #expect(await store.adoptPendingSnapshotSyncV2() == false)
         #expect(await store.startRemoteOnlySnapshotSyncV2Open(workID: remoteOnlyWorkID) == false)
         #expect(await configuration.remote.recordedOperations().count == remoteOperationCount)

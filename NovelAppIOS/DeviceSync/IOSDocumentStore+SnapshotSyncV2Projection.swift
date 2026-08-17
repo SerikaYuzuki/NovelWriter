@@ -79,7 +79,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         resumesWorker: Bool
     ) {
-        guard !isSyncV2AccountTransitionActive,
+        guard !isSyncV2RemoteAccountTransitionActive,
               snapshotSyncV2AccountScope == expectedAccountScope else { return }
         snapshotSyncV2ReprojectionToken = nil
         snapshotSyncV2ReprojectionTask?.cancel()
@@ -96,7 +96,7 @@ extension IOSDocumentStore {
                 try? await application.resumePending()
             }
             guard let self,
-                  !isSyncV2AccountTransitionActive,
+                  !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return }
             if let workID {
@@ -126,7 +126,7 @@ extension IOSDocumentStore {
     ) async {
         for _ in 0 ..< 600 {
             guard !Task.isCancelled,
-                  !isSyncV2AccountTransitionActive,
+                  !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
                   snapshotSyncV2AccountScope == expectedAccountScope,
                   syncV2ActiveWorkID == workID else { return }
@@ -139,7 +139,7 @@ extension IOSDocumentStore {
                 return
             }
             guard snapshotSyncV2ReprojectionToken == operationToken,
-                  !isSyncV2AccountTransitionActive,
+                  !isSyncV2RemoteAccountTransitionActive,
                   snapshotSyncV2AccountScope == expectedAccountScope,
                   syncV2ActiveWorkID == workID else { return }
             applySnapshotSyncV2State(state)
