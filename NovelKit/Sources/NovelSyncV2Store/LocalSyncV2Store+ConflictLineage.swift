@@ -20,6 +20,11 @@ extension LocalSyncV2Store {
             workID: workID,
             graph: graph
         )
+        guard localSnapshotID != remoteSnapshotID,
+              !remoteAncestors.contains(localSnapshotID),
+              !localAncestors.contains(remoteSnapshotID) else {
+            throw SyncV2StoreError.invalidSnapshot
+        }
         if let baseSnapshotID {
             guard localAncestors.contains(baseSnapshotID),
                   remoteAncestors.contains(baseSnapshotID) else {
@@ -30,6 +35,17 @@ extension LocalSyncV2Store {
                 throw SyncV2StoreError.invalidSnapshot
             }
         }
+    }
+
+    func graphHead(
+        _ graph: V2RemoteSnapshotGraph,
+        containsAncestor snapshotID: SnapshotID
+    ) throws -> Bool {
+        try conflictAncestors(
+            from: graph.headSnapshotID,
+            workID: graph.workID,
+            graph: graph
+        ).contains(snapshotID)
     }
 
     private func conflictAncestors(

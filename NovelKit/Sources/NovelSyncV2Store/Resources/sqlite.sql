@@ -117,6 +117,10 @@ CREATE TABLE sync_intents (
   ) REFERENCES account_bindings(
     work_id, server_instance_id, protocol_epoch, account_id, account_fence
   ),
+  UNIQUE (
+    intent_id, work_id, source_snapshot_id, source_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ),
   CHECK (
     (scope_kind = 'unbound' AND server_instance_id IS NULL AND
       protocol_epoch IS NULL AND account_id IS NULL AND account_fence IS NULL) OR
@@ -213,7 +217,15 @@ CREATE TABLE inbox_batches (
   state TEXT NOT NULL CHECK (state IN ('staged', 'verified', 'rejected', 'adopted')),
   rejection_code TEXT,
   CHECK ((expected_remote_head_snapshot_id IS NULL) = (expected_remote_head_generation IS NULL)),
+  CHECK (
+    expected_remote_head_snapshot_id IS NULL OR
+    snapshot_id = expected_remote_head_snapshot_id
+  ),
   UNIQUE (work_id, snapshot_id, inbox_id),
+  UNIQUE (
+    inbox_id, work_id, snapshot_id, expected_remote_head_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ),
   FOREIGN KEY (
     work_id, server_instance_id, protocol_epoch, account_id, account_fence
   ) REFERENCES account_bindings(
@@ -255,6 +267,41 @@ CREATE TABLE inbox_closure (
   FOREIGN KEY (inbox_id, snapshot_id)
     REFERENCES inbox_snapshots(inbox_id, snapshot_id),
   FOREIGN KEY (inbox_id, object_id) REFERENCES inbox_objects(inbox_id, object_id)
+);
+CREATE TABLE intent_subsumptions (
+  intent_id TEXT PRIMARY KEY,
+  inbox_id TEXT NOT NULL UNIQUE,
+  work_id TEXT NOT NULL,
+  source_snapshot_id BLOB NOT NULL CHECK (length(source_snapshot_id) = 32),
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+  remote_head_snapshot_id BLOB NOT NULL CHECK (length(remote_head_snapshot_id) = 32),
+  remote_head_generation INTEGER NOT NULL CHECK (
+    remote_head_generation BETWEEN 1 AND 9007199254740991
+  ),
+  server_instance_id TEXT NOT NULL,
+  protocol_epoch INTEGER NOT NULL CHECK (protocol_epoch > 0),
+  account_id TEXT NOT NULL,
+  account_fence TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (
+    intent_id, work_id, source_snapshot_id, source_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ) REFERENCES sync_intents(
+    intent_id, work_id, source_snapshot_id, source_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ),
+  FOREIGN KEY (
+    inbox_id, work_id, remote_head_snapshot_id, remote_head_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ) REFERENCES inbox_batches(
+    inbox_id, work_id, snapshot_id, expected_remote_head_generation,
+    server_instance_id, protocol_epoch, account_id, account_fence
+  ),
+  FOREIGN KEY (
+    work_id, server_instance_id, protocol_epoch, account_id, account_fence
+  ) REFERENCES account_bindings(
+    work_id, server_instance_id, protocol_epoch, account_id, account_fence
+  )
 );
 
 CREATE TABLE conflicts (
@@ -529,6 +576,16 @@ BEFORE DELETE ON conflict_candidates
 BEGIN
   SELECT RAISE(ABORT, 'immutable conflict candidate');
 END;
+CREATE TRIGGER intent_subsumptions_immutable_update
+BEFORE UPDATE ON intent_subsumptions
+BEGIN
+  SELECT RAISE(ABORT, 'immutable intent subsumption');
+END;
+CREATE TRIGGER intent_subsumptions_immutable_delete
+BEFORE DELETE ON intent_subsumptions
+BEGIN
+  SELECT RAISE(ABORT, 'immutable intent subsumption');
+END;
 
 CREATE INDEX sync_intents_pending ON sync_intents(work_id, status, source_generation);
 CREATE INDEX sealed_commands_pending ON sealed_commands(work_id, status);
@@ -572,3 +629,10 @@ CREATE INDEX inbox_by_work ON inbox_batches(work_id, state);
 --    acknowledged after a newer local generation exists, install only the
 --    immutable graph/history/remote baseline and resolve that exact conflict;
 --    leave current, the active editor and the newer Intent untouched.
+-- A normal pending checkpoint Intent may be acknowledged without a command
+-- receipt only when the exact Intent source is the current local Snapshot and
+-- an exact verified Inbox graph proves it is an ancestor of the remote head.
+-- The same adoption transaction records immutable intent_subsumptions evidence,
+-- acknowledges only that still-pending Intent, and applies the Inbox CAS. A
+-- sealed Intent, active Conflict, extra pending Intent, or concurrent edit
+-- rejects the transition without changing current, Inbox, or Intent state.

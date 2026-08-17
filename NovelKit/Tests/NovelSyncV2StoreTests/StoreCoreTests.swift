@@ -301,7 +301,13 @@ func schemaRejectsMismatchedIntentFenceAndUnknownKeepBothCommand() async throws 
         ),
         scope: scopeA
     )
-    guard let objectID = fixture.remote.encoded.objects.keys.first else {
+    let localEncoded = try encodeSnapshot(
+        workID: sourceWorkID,
+        document: fixture.localDocument,
+        parents: [fixture.baseCheckpoint.snapshotID]
+    )
+    #expect(localEncoded.snapshotId == fixture.localCheckpoint.snapshotID)
+    guard let objectID = localEncoded.objects.keys.first else {
         Issue.record("conflict fixture has no content object")
         return
     }

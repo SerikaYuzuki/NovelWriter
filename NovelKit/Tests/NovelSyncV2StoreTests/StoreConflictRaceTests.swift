@@ -10,8 +10,8 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
     defer { try? FileManager.default.removeItem(at: root) }
     let workID = WorkID(UUID())
     let firstStore = try LocalSyncV2Store(root: root, policy: .createNew)
-    let localDocument = makeDocument(title: "local")
-    let local = try await firstStore.checkpoint(
+    var localDocument = makeDocument(title: "base")
+    let base = try await firstStore.checkpoint(
         V2CheckpointRequest(
             workID: workID,
             document: localDocument,
@@ -20,11 +20,21 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
         ),
         scope: scopeA
     )
+    localDocument.title = "local"
+    let local = try await firstStore.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: localDocument,
+            documentCreatedAt: testDate,
+            expectedGeneration: base.generation
+        ),
+        scope: scopeA
+    )
     let secondStore = try LocalSyncV2Store(root: root, policy: .openExisting)
     let encoded = try remoteChild(
         workID: workID,
         localDocument: localDocument,
-        parent: local.snapshotID
+        parent: base.snapshotID
     )
     let remoteHead = try V2RemoteHead(snapshotID: encoded.snapshotId, generation: 2)
     let firstDelivery = remoteDelivery(
@@ -41,7 +51,7 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
     )
     async let firstConflict = firstStore.appendConflict(
         workID: workID,
-        baseSnapshotID: local.snapshotID,
+        baseSnapshotID: base.snapshotID,
         localSnapshotID: local.snapshotID,
         remote: firstDelivery,
         sourceGeneration: local.generation,
@@ -49,7 +59,7 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
     )
     async let secondConflict = secondStore.appendConflict(
         workID: workID,
-        baseSnapshotID: local.snapshotID,
+        baseSnapshotID: base.snapshotID,
         localSnapshotID: local.snapshotID,
         remote: secondDelivery,
         sourceGeneration: local.generation,
@@ -108,6 +118,82 @@ func unrelatedConflictBaseCannotChangeAuthoritativeState() async throws {
 }
 
 @Test
+func fastForwardLineageCannotBeRecordedAsConflict() async throws {
+    let root = temporaryStoreRoot("conflict-fast-forward-rejected")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    var document = makeDocument(title: "base")
+    let baseEncoded = try encodeSnapshot(workID: workID, document: document)
+    let base = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    #expect(base.snapshotID == baseEncoded.snapshotId)
+    document.title = "remote child"
+    let remote = try encodeSnapshot(
+        workID: workID,
+        document: document,
+        parents: [base.snapshotID]
+    )
+    let delivery = try remoteDelivery(
+        workID: workID,
+        encoded: remote,
+        local: base,
+        remoteHead: V2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
+    )
+    do {
+        _ = try await store.appendConflict(
+            workID: workID,
+            baseSnapshotID: base.snapshotID,
+            localSnapshotID: base.snapshotID,
+            remote: delivery,
+            sourceGeneration: base.generation,
+            scope: scopeA
+        )
+        Issue.record("L == B was recorded as a conflict")
+    } catch SyncV2StoreError.invalidSnapshot {}
+
+    document.title = "local child"
+    let local = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: document,
+            documentCreatedAt: testDate,
+            expectedGeneration: base.generation
+        ),
+        scope: scopeA
+    )
+    let reverseDelivery = try remoteDelivery(
+        workID: workID,
+        encoded: baseEncoded,
+        local: local,
+        remoteHead: V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
+    )
+    do {
+        _ = try await store.appendConflict(
+            workID: workID,
+            baseSnapshotID: base.snapshotID,
+            localSnapshotID: local.snapshotID,
+            remote: reverseDelivery,
+            sourceGeneration: local.generation,
+            scope: scopeA
+        )
+        Issue.record("R == B was recorded as a conflict")
+    } catch SyncV2StoreError.invalidSnapshot {}
+
+    let opened = try await store.open(workID: workID, scope: scopeA)
+    #expect(opened.summary.currentSnapshotID == local.snapshotID)
+    #expect(opened.document?.title == "local child")
+    #expect(try await store.activeConflict(workID: workID, scope: scopeA) == nil)
+}
+
+@Test
 func fenceRotationQuarantinesOldConflictAndAllowsNewDelivery() async throws {
     let root = temporaryStoreRoot("conflict-fence-rotation")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -137,7 +223,7 @@ func fenceRotationQuarantinesOldConflictAndAllowsNewDelivery() async throws {
     )
     let next = try await store.appendConflict(
         workID: workID,
-        baseSnapshotID: fixture.localCheckpoint.snapshotID,
+        baseSnapshotID: fixture.baseCheckpoint.snapshotID,
         localSnapshotID: fixture.localCheckpoint.snapshotID,
         remote: redelivery,
         sourceGeneration: fixture.localCheckpoint.generation,

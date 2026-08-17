@@ -397,6 +397,7 @@ private extension Data {
 }
 
 struct ConflictFixture {
+    let baseCheckpoint: V2CheckpointResult
     let localDocument: NovelDocument
     let localCheckpoint: V2CheckpointResult
     let remote: V2RemoteSnapshot
@@ -410,13 +411,23 @@ func createConflict(
     localTitle: String = "local",
     remoteTitle: String = "remote"
 ) async throws -> ConflictFixture {
-    let local = makeDocument(title: localTitle)
-    let localCheckpoint = try await store.checkpoint(
+    var local = makeDocument(title: "base")
+    let baseCheckpoint = try await store.checkpoint(
         V2CheckpointRequest(
             workID: workID,
             document: local,
             documentCreatedAt: testDate,
             expectedGeneration: 0
+        ),
+        scope: scopeA
+    )
+    local.title = localTitle
+    let localCheckpoint = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: local,
+            documentCreatedAt: testDate,
+            expectedGeneration: baseCheckpoint.generation
         ),
         scope: scopeA
     )
@@ -428,25 +439,26 @@ func createConflict(
     let encoded = try encodeSnapshot(
         workID: workID,
         document: remoteDocument,
-        parents: [localCheckpoint.snapshotID]
+        parents: [baseCheckpoint.snapshotID]
     )
     let remoteHead = try V2RemoteHead(snapshotID: encoded.snapshotId, generation: 2)
     let remote = V2RemoteSnapshot(
         workID: workID,
         encoded: encoded,
         expectedCurrentSnapshotID: localCheckpoint.snapshotID,
-        expectedLocalGeneration: 1,
+        expectedLocalGeneration: localCheckpoint.generation,
         expectedRemoteHead: remoteHead
     )
     let conflict = try await store.appendConflict(
         workID: workID,
-        baseSnapshotID: localCheckpoint.snapshotID,
+        baseSnapshotID: baseCheckpoint.snapshotID,
         localSnapshotID: localCheckpoint.snapshotID,
         remote: remote,
-        sourceGeneration: 1,
+        sourceGeneration: localCheckpoint.generation,
         scope: scopeA
     )
     return ConflictFixture(
+        baseCheckpoint: baseCheckpoint,
         localDocument: local,
         localCheckpoint: localCheckpoint,
         remote: remote,

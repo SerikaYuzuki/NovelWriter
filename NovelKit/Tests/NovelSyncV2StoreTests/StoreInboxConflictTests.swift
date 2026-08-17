@@ -197,15 +197,15 @@ func conflictRedeliveryIsIdempotentAcrossInboxIDs() async throws {
         workID: workID,
         encoded: fixture.remote.encoded,
         expectedCurrentSnapshotID: fixture.localCheckpoint.snapshotID,
-        expectedLocalGeneration: 1,
+        expectedLocalGeneration: fixture.localCheckpoint.generation,
         expectedRemoteHead: fixture.remoteHead
     )
     let duplicate = try await store.appendConflict(
         workID: workID,
-        baseSnapshotID: fixture.localCheckpoint.snapshotID,
+        baseSnapshotID: fixture.baseCheckpoint.snapshotID,
         localSnapshotID: fixture.localCheckpoint.snapshotID,
         remote: redelivery,
-        sourceGeneration: 1,
+        sourceGeneration: fixture.localCheckpoint.generation,
         scope: scopeA
     )
     #expect(duplicate.conflictID == fixture.conflict.conflictID)
@@ -227,13 +227,13 @@ func ordinaryInboxAdoptionCannotBypassAnActiveConflict() async throws {
     let other = try encodeSnapshot(
         workID: workID,
         document: otherDocument,
-        parents: [fixture.localCheckpoint.snapshotID]
+        parents: [fixture.baseCheckpoint.snapshotID]
     )
     let inbox = try V2RemoteSnapshot(
         workID: workID,
         encoded: other,
         expectedCurrentSnapshotID: fixture.localCheckpoint.snapshotID,
-        expectedLocalGeneration: 1,
+        expectedLocalGeneration: fixture.localCheckpoint.generation,
         expectedRemoteHead: V2RemoteHead(snapshotID: other.snapshotId, generation: 3)
     )
     try await store.stageRemote(inbox, scope: scopeA)
