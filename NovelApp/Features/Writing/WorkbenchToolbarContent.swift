@@ -22,17 +22,8 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if appState.startupState.isReady {
             ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
                 Button {
-                    let session = appState.documentSessionToken
                     Task {
-                        _ = session
-                        await appState.refreshSnapshotLibrary()
-                        appState.startupState = .documentSelection(
-                            .init(
-                                works: appState.snapshotSyncLibraryWorks,
-                                presentation: .localAndRemote,
-                                connection: appState.lastStartupLibraryConnection
-                            )
-                        )
+                        _ = await appState.returnToSnapshotLibrary()
                     }
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")

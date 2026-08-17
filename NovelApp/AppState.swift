@@ -143,6 +143,7 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2Session: NovelSyncV2Application.DocumentSessionToken?
     @ObservationIgnored var snapshotSyncV2ActiveWorkID: WorkID?
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
+    @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
@@ -223,6 +224,7 @@ final class AppState {
         operationMessage = nil
         attachments = []
         snapshotSyncV2Attachments = []
+        snapshotSyncV2Resources = []
         attachmentPreviewURLs = [:]
         snapshotSyncLibraryWorks = []
         snapshotSyncRemoteCatalogItems = []

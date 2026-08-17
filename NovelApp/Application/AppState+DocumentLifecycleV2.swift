@@ -278,6 +278,8 @@ extension AppState {
         try await portableBridge.exportExplicitPackage(
             document: document,
             attachments: snapshotSyncV2Attachments,
+            documentCreatedAt: snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),
+            resources: snapshotSyncV2Resources,
             to: destination
         )
     }
