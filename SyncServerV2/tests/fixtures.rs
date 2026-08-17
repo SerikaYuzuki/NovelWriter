@@ -93,14 +93,24 @@ struct ObjectHash {
 fn canonical_object_ids_and_snapshot_id_match_the_same_fixture_bytes() {
     let snapshot = fs::read(fixture("snapshot.json")).unwrap();
     let snapshot_id = hex::encode(sha256(&snapshot));
-    assert_eq!(snapshot_id, fs::read_to_string(fixture("snapshot.sha256")).unwrap().trim());
+    assert_eq!(
+        snapshot_id,
+        fs::read_to_string(fixture("snapshot.sha256"))
+            .unwrap()
+            .trim()
+    );
 
     let hashes: ObjectHashes =
         serde_json::from_slice(&fs::read(fixture("object-hashes.json")).unwrap()).unwrap();
     for row in hashes.objects {
         let bytes = fs::read(fixture(&format!("objects/{}", row.file))).unwrap();
         assert_eq!(bytes.len(), row.byte_count, "{} byte count", row.file);
-        assert_eq!(hex::encode(sha256(&bytes)), row.object_id, "{} ObjectID", row.file);
+        assert_eq!(
+            hex::encode(sha256(&bytes)),
+            row.object_id,
+            "{} ObjectID",
+            row.file
+        );
     }
 }
 

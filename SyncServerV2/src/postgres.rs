@@ -165,17 +165,31 @@ impl Repository {
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
     ) -> SyncResult<()> {
-        if let Some(row) = sqlx::query("SELECT server_instance_id,protocol_epoch,account_fence FROM sync_v2.account_scopes WHERE account_id=$1 FOR UPDATE")
-            .bind(&p.account_id).fetch_optional(&mut **tx).await? {
-            let instance: String = row.try_get("server_instance_id")?;
-            let epoch: i64 = row.try_get("protocol_epoch")?;
-            let fence: String = row.try_get("account_fence")?;
-            if instance != p.server_instance_id || epoch != p.protocol_epoch || fence != p.account_fence {
-                return Err(SyncError::AccountFenceMismatch);
-            }
-        } else {
-            sqlx::query("INSERT INTO sync_v2.account_scopes(account_id,server_instance_id,protocol_epoch,account_fence) VALUES($1,$2,$3,$4)")
-                .bind(&p.account_id).bind(&p.server_instance_id).bind(p.protocol_epoch).bind(&p.account_fence).execute(&mut **tx).await?;
+        sqlx::query(
+            "INSERT INTO sync_v2.account_scopes(
+                 account_id,server_instance_id,protocol_epoch,account_fence
+             ) VALUES($1,$2,$3,$4)
+             ON CONFLICT(account_id) DO NOTHING",
+        )
+        .bind(&p.account_id)
+        .bind(&p.server_instance_id)
+        .bind(p.protocol_epoch)
+        .bind(&p.account_fence)
+        .execute(&mut **tx)
+        .await?;
+        let row = sqlx::query(
+            "SELECT server_instance_id,protocol_epoch,account_fence
+             FROM sync_v2.account_scopes WHERE account_id=$1 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let instance: String = row.try_get("server_instance_id")?;
+        let epoch: i64 = row.try_get("protocol_epoch")?;
+        let fence: String = row.try_get("account_fence")?;
+        if instance != p.server_instance_id || epoch != p.protocol_epoch || fence != p.account_fence
+        {
+            return Err(SyncError::AccountFenceMismatch);
         }
         Ok(())
     }
@@ -849,7 +863,7 @@ impl Repository {
         let mut tx = self.pool.begin().await?;
         self.scope(&mut tx, p).await?;
         if cmd.kind == CommandKind::CreateWork {
-            let lock_key = format!("{}\0{}", p.account_id, cmd.work_id);
+            let lock_key = create_work_lock_key(&p.account_id, cmd.work_id);
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
                 .bind(lock_key)
                 .execute(&mut *tx)
@@ -1967,7 +1981,7 @@ impl Repository {
         }
         let original_occurrence = Uuid::new_v4();
         let clone_occurrence = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$4,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$7,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).bind(root_id.as_slice()).execute(&mut **tx).await?;
         sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,1,$3,$4,$5,'cloneWork','cloneNewWork',now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(c.command_id).bind(c.work_id).execute(&mut **tx).await?;
         self.append_catalog_event(tx, p, new_work, 1, root_id.as_slice())
             .await?;
@@ -2151,5 +2165,29 @@ impl Repository {
             row.try_get("canonical_response")?,
             row.try_get("response_status")?,
         ))
+    }
+}
+
+fn create_work_lock_key(account_id: &str, work_id: Uuid) -> String {
+    // PostgreSQL `text` rejects NUL bytes. A byte-length prefix keeps the
+    // account/work tuple unambiguous even when an opaque AccountID contains
+    // punctuation that could otherwise be mistaken for a separator.
+    format!("{}:{account_id}:{work_id}", account_id.len())
+}
+
+#[cfg(test)]
+mod create_work_lock_key_tests {
+    use super::create_work_lock_key;
+    use uuid::Uuid;
+
+    #[test]
+    fn account_and_work_lock_key_is_postgres_text_safe_and_unambiguous() {
+        let work_id = Uuid::parse_str("6e2081b1-a097-4fa6-89f8-27621b658509").unwrap();
+        let first = create_work_lock_key("a:b", work_id);
+        let second = create_work_lock_key("a", work_id);
+
+        assert!(!first.as_bytes().contains(&0));
+        assert_ne!(first, second);
+        assert_eq!(first, "3:a:b:6e2081b1-a097-4fa6-89f8-27621b658509");
     }
 }

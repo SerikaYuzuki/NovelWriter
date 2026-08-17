@@ -358,10 +358,10 @@ pub fn router(state: AppState) -> Router {
                 .post(command)
                 .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
-        .route("/v2/works/:work_id/head", get(head))
-        .route("/v2/works/:work_id/history", get(history))
-        .route("/v2/snapshots/:snapshot_id/manifest", get(manifest))
-        .route("/v2/objects/:object_id", get(object))
+        .route("/v2/works/{work_id}/head", get(head))
+        .route("/v2/works/{work_id}/history", get(history))
+        .route("/v2/snapshots/{snapshot_id}/manifest", get(manifest))
+        .route("/v2/objects/{object_id}", get(object))
         .route(
             "/v2/objects/missing",
             post(missing_objects).layer(DefaultBodyLimit::max(MAX_MISSING_BODY_BYTES)),
@@ -375,7 +375,7 @@ pub fn router(state: AppState) -> Router {
             post(command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
         .route(
-            "/v2/uploads/:upload_id",
+            "/v2/uploads/{upload_id}",
             put(upload).layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES)),
         )
         .route(
@@ -383,19 +383,19 @@ pub fn router(state: AppState) -> Router {
             post(command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
         .route(
-            "/v2/works/:work_id/publish",
+            "/v2/works/{work_id}/publish",
             post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
-        .route("/v2/works/:work_id/conflict", get(conflict))
+        .route("/v2/works/{work_id}/conflict", get(conflict))
         .route(
-            "/v2/works/:work_id/conflict/resolve",
+            "/v2/works/{work_id}/conflict/resolve",
             post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
         .route(
-            "/v2/works/:work_id/restore",
+            "/v2/works/{work_id}/restore",
             post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
-        .route("/v2/receipts/:command_id", get(receipt))
+        .route("/v2/receipts/{command_id}", get(receipt))
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {

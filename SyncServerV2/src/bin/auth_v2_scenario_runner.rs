@@ -244,14 +244,14 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     let mac_credential = vault
         .seal(
             "apple_provider_refresh_v1",
-            "mac-fixture",
+            "fixture-dev.serikayuzuki.fuminiwa",
             b"mac-provider-secret-never-persisted-plain",
         )
         .await?;
     let ios_credential = vault
         .seal(
             "apple_provider_refresh_v1",
-            "ios-fixture",
+            "fixture-dev.serikayuzuki.fuminiwa.ios",
             b"ios-provider-secret-never-persisted-plain",
         )
         .await?;
