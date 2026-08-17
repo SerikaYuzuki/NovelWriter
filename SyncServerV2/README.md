@@ -10,12 +10,14 @@ database, Docker project and volumes are never read or mounted.
 ## Local development
 
 ```sh
-export FUMINIWA_SYNC_V2_POSTGRES_PASSWORD='use-a-local-secret'
+export FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE=/secure/path/postgres-password
 docker compose -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2 up --build
 ```
 
-The only Compose volume is `fuminiwa_sync_v2_pgdata`; the only project and
-containers are `fuminiwa-sync-v2-*`. Copy `.env.example` outside version
+The only database volume is `fuminiwa_sync_v2_pgdata`; Caddy also has two
+edge-state volumes (`fuminiwa_sync_v2_caddy_data` and
+`fuminiwa_sync_v2_caddy_config`). The only project and containers are
+`fuminiwa-sync-v2-*`. Copy `.env.example` outside version
 control and point the `*_HOST_PATH` values at separately managed secret files.
 The server binary is Production-only and fails closed before opening
 PostgreSQL when any Auth v1 key or Apple configuration is absent. Test and

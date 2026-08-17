@@ -4,6 +4,23 @@ The following checks are the minimum document-only gate. The independent Swift
 and Rust runners must additionally exercise every scenario fixture without
 sharing canonicalization or state-machine code.
 
+## Rust HTTP source-to-test map
+
+The opt-in PostgreSQL gate is the only test that exercises the Axum routes
+against a database. Without a fresh disposable `FUMINIWA_V2_TEST_DATABASE_URL`
+it remains an explicit NO-GO/skip and does not connect anywhere.
+
+| Contract area | Rust source | Test/evidence |
+| --- | --- | --- |
+| Authenticated AccountID/Fence/epoch headers before lookup | `SyncServerV2/src/http.rs` (`principal`, `command_inner`) | `tests/integration_gate.rs` foreign/absent resource equality and missing-scope checks |
+| Exact JCS request/response media type and no-store headers | `SyncServerV2/src/http.rs` (`require_media_type`, `error_response`, `canonical_response`) | `src/http.rs` unit tests; integration gate response headers |
+| Canonical command parsing and closed result unions | `SyncServerV2/src/application.rs`; `src/postgres.rs` response validation | `tests/domain.rs`; `tests/fixtures.rs` |
+| Raw manifest BYTEA digest/round-trip | `src/postgres.rs` register/manifest; `src/http.rs` manifest | `tests/fixtures.rs`; opt-in repository + HTTP gate |
+| Receipt lookup, exact replay, and read-back predicates | `src/postgres.rs` receipt lookup/complete; `src/http.rs` receipt | `tests/domain.rs`; `tests/fixtures.rs`; opt-in HTTP gate |
+| Catalog/history pagination and sealed cursors | `src/http.rs` list/history/cursor helpers | opt-in HTTP gate cursor continuation checks |
+| One active conflict and closed useDevice/useServer/keepBoth/restore results | `src/postgres.rs` publish/resolve/restore; `src/application.rs` payload validation | `tests/fixtures.rs`; opt-in repository scenarios and stale-resolution HTTP check |
+| Foreign/absent 404 non-disclosure and body/path bounds | `src/http.rs` scope, digest/UUID parsing, body limits | opt-in HTTP gate; `tests/domain.rs` canonical/schema bounds |
+
 ```sh
 find docs/sync/v2 -name '*.json' -print0 | xargs -0 -n1 jq -e . >/dev/null
 ruby -e 'require "yaml"; YAML.safe_load(File.read("docs/sync/v2/openapi.yaml"), aliases: true)'

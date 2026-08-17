@@ -7,7 +7,7 @@ use crate::{
 use axum::{
     body::Bytes,
     extract::{rejection::BytesRejection, DefaultBodyLimit, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::Response,
     routing::{get, post, put},
     Router,
@@ -67,7 +67,9 @@ fn error_response(error: SyncError) -> Response {
     });
     Response::builder()
         .status(status)
-        .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
+        .header("content-type", SYNC_MEDIA_TYPE)
+        .header("cache-control", "no-store")
+        .header("pragma", "no-cache")
         .body(axum::body::Body::from(bytes))
         .unwrap()
 }
@@ -77,7 +79,9 @@ fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response 
     });
     Response::builder()
         .status(status)
-        .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
+        .header("content-type", SYNC_MEDIA_TYPE)
+        .header("cache-control", "no-store")
+        .header("pragma", "no-cache")
         .body(axum::body::Body::from(bytes))
         .unwrap()
 }
@@ -256,6 +260,22 @@ fn body_or_error(body: Result<Bytes, BytesRejection>) -> Result<Bytes, Response>
 
 const MAX_COMMAND_BODY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_MISSING_BODY_BYTES: usize = 8 * 1024 * 1024;
+const SYNC_MEDIA_TYPE: &str = "application/vnd.fuminiwa.sync.v2+jcs";
+const OBJECT_MEDIA_TYPE: &str = "application/octet-stream";
+
+#[allow(clippy::result_large_err)]
+fn require_media_type(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
+    if headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        != Some(expected)
+    {
+        return Err(error_response(SyncError::SchemaViolation(
+            "unsupportedMediaType".into(),
+        )));
+    }
+    Ok(())
+}
 
 async fn command(
     headers: HeaderMap,
@@ -266,6 +286,9 @@ async fn command(
         Ok(body) => body,
         Err(response) => return response,
     };
+    if let Err(response) = require_media_type(&headers, SYNC_MEDIA_TYPE) {
+        return response;
+    }
     command_inner(headers, state, body, None).await
 }
 async fn command_inner(
@@ -299,7 +322,9 @@ async fn command_inner(
             .status(
                 StatusCode::from_u16(status as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             )
-            .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
+            .header("content-type", SYNC_MEDIA_TYPE)
+            .header("cache-control", "no-store")
+            .header("pragma", "no-cache")
             .body(axum::body::Body::from(bytes))
             .unwrap(),
         Err(e) => error_response(e),
@@ -319,6 +344,9 @@ async fn routed_command(
         Ok(body) => body,
         Err(response) => return response,
     };
+    if let Err(response) = require_media_type(&headers, SYNC_MEDIA_TYPE) {
+        return response;
+    }
     command_inner(headers, state, body, Some(work_id)).await
 }
 pub fn router(state: AppState) -> Router {
@@ -758,6 +786,8 @@ async fn object(
             .header("x-fuminiwa-object-digest", hex::encode(id))
             .header("x-fuminiwa-byte-count", bytes.len().to_string())
             .header("x-fuminiwa-result", "noChanges")
+            .header("cache-control", "no-store")
+            .header("pragma", "no-cache")
             .body(axum::body::Body::from(bytes))
             .unwrap(),
         Err(e) => error_response(e),
@@ -773,6 +803,9 @@ async fn missing_objects(
         Ok(_) => return error_response(SyncError::SizeLimitExceeded),
         Err(response) => return response,
     };
+    if let Err(response) = require_media_type(&headers, SYNC_MEDIA_TYPE) {
+        return response;
+    }
     let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -869,7 +902,9 @@ async fn missing_objects(
     };
     Response::builder()
         .status(StatusCode::OK)
-        .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
+        .header("content-type", SYNC_MEDIA_TYPE)
+        .header("cache-control", "no-store")
+        .header("pragma", "no-cache")
         .body(axum::body::Body::from(bytes))
         .unwrap()
 }
@@ -887,6 +922,9 @@ async fn upload(
         Ok(body) => body,
         Err(response) => return response,
     };
+    if let Err(response) = require_media_type(&headers, OBJECT_MEDIA_TYPE) {
+        return response;
+    }
     let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -901,6 +939,8 @@ async fn upload(
         Ok(()) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .header("x-fuminiwa-result", "applied")
+            .header("cache-control", "no-store")
+            .header("pragma", "no-cache")
             .body(axum::body::Body::empty())
             .unwrap(),
         Err(e) => error_response(e),
@@ -1098,4 +1138,34 @@ fn parse_uuid_path(value: &str) -> Result<Uuid, SyncError> {
         return Err(SyncError::NotFound);
     }
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn v2_responses_are_uncacheable_and_canonical() {
+        let response =
+            canonical_response(StatusCode::OK, serde_json::json!({"result":"noChanges"}));
+        assert_eq!(response.headers()[CONTENT_TYPE], SYNC_MEDIA_TYPE);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["pragma"], "no-cache");
+    }
+
+    #[test]
+    fn mutating_media_types_are_exact() {
+        let empty = HeaderMap::new();
+        assert!(require_media_type(&empty, SYNC_MEDIA_TYPE).is_err());
+
+        let mut jcs = HeaderMap::new();
+        jcs.insert(CONTENT_TYPE, HeaderValue::from_static(SYNC_MEDIA_TYPE));
+        assert!(require_media_type(&jcs, SYNC_MEDIA_TYPE).is_ok());
+        assert!(require_media_type(&jcs, OBJECT_MEDIA_TYPE).is_err());
+
+        let mut object = HeaderMap::new();
+        object.insert(CONTENT_TYPE, HeaderValue::from_static(OBJECT_MEDIA_TYPE));
+        assert!(require_media_type(&object, OBJECT_MEDIA_TYPE).is_ok());
+    }
 }

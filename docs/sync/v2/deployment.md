@@ -1,15 +1,22 @@
 # v2 Docker and database namespace
 
 The development deployment is a new Compose project/service revision that
-mounts exactly one named data volume for v2 PostgreSQL:
+mounts one named data volume for v2 PostgreSQL. The edge service additionally
+uses two named Caddy state volumes; those are not database or application
+data authorities:
 
 ```text
 API prefix:       /v2
 PostgreSQL volume fuminiwa_sync_v2_pgdata
-auth schema:      auth_v1 (separate owner/role)
-sync schema:      sync_v2 (separate owner/role)
+auth schema:      auth_v1 (separate schema namespace)
+sync schema:      sync_v2 (separate schema namespace)
 object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
 ```
+
+The checked-in Compose file currently bootstraps both schemas with one
+PostgreSQL role. Separate database owners/roles are a staging hardening gate,
+not a capability claimed by this Compose revision; deployment evidence must
+include role grants and authenticated read-back before that claim is restored.
 
 It does not mount a v1 PostgreSQL volume, legacy object directory, package
 root, or CloudKit credential. Startup fails if the configured database lacks

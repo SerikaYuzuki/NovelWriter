@@ -73,6 +73,10 @@ async fn post_resolution(context: &ScenarioContext, account_id: &str) -> (Status
         ))
         .unwrap();
     *request.headers_mut() = headers(account_id);
+    request.headers_mut().insert(
+        "content-type",
+        HeaderValue::from_static("application/vnd.fuminiwa.sync.v2+jcs"),
+    );
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     let body = to_bytes(response.into_body(), 64 * 1024)
@@ -200,6 +204,7 @@ async fn verify_http_contract(context: &ScenarioContext) {
         bad_headers["content-type"],
         "application/vnd.fuminiwa.sync.v2+jcs"
     );
+    assert_eq!(bad_headers["cache-control"], "no-store");
     assert_eq!(
         serde_json::from_slice::<Value>(&bad_body).unwrap()["error"],
         "schemaViolation"

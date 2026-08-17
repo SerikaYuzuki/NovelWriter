@@ -7,7 +7,10 @@ All JSON requests and responses use
 Bearer token from Auth v1; Apple credentials never cross this boundary. Except
 for `GET /v2/capabilities`, requests include `X-Fuminiwa-Server-Instance`,
 `X-Fuminiwa-Protocol-Epoch`, and `X-Fuminiwa-Account-Fence`. The server checks
-these before resource lookup.
+these before resource lookup. JSON request `Content-Type` is an exact media
+type match; upload requests use an exact `application/octet-stream` media type.
+Every v2 response, including typed errors and raw object/upload responses,
+sets `Cache-Control: no-store` (and `Pragma: no-cache`).
 
 ## Receipt and digest
 
