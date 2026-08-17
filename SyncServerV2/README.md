@@ -93,7 +93,9 @@ empty database whose name is `fuminiwa_v2_test` or begins with
 container, or volume. It applies the checked-in migrations to that database,
 runs repository scenarios, and leaves its synthetic rows intact. Test-only
 setup directly forces upload expiry, a migration-marker mismatch, and a
-catalog tombstone/race; these writes are not production API paths.
+catalog tombstone/race. It also runs two concurrent fresh `Repository::connect`
+calls to exercise the deployment-wide identity-lock TOCTOU boundary. These
+writes are not production API paths.
 
 The operator must discard the entire disposable database after the run. Use a
 second fresh database for the HTTP integration gate because each gate refuses

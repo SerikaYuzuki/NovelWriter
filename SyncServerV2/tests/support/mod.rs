@@ -286,6 +286,37 @@ async fn exercise_database_identity_guard(url: &str) -> ScenarioResult<()> {
     Ok(())
 }
 
+async fn exercise_concurrent_repository_startup(url: &str) -> ScenarioResult<Repository> {
+    // Both startup paths use the same database-wide advisory lock.  Running
+    // them together is the opt-in PostgreSQL TOCTOU scenario: the second
+    // process cannot pass the pre-migration inventory check until the first
+    // process has completed migration and server_meta/deployment binding.
+    let (left, right) = tokio::join!(
+        Repository::connect(url, SERVER_INSTANCE.into()),
+        Repository::connect(url, SERVER_INSTANCE.into()),
+    );
+    let left = left?;
+    let right = right?;
+    let binding_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sync_v2.deployment_binding WHERE singleton=true")
+            .fetch_one(&left.pool)
+            .await?;
+    ensure(
+        binding_count == 1,
+        "concurrent repository startup did not leave exactly one deployment binding",
+    )?;
+    let marker: String =
+        sqlx::query_scalar("SELECT value FROM sync_v2.server_meta WHERE key='ddl_contract_marker'")
+            .fetch_one(&left.pool)
+            .await?;
+    ensure(
+        marker == DDL_CONTRACT_MARKER,
+        "concurrent repository startup did not preserve the current DDL marker",
+    )?;
+    right.pool.close().await;
+    Ok(left)
+}
+
 async fn create_work(
     repo: &Repository,
     principal: &AuthenticatedPrincipal,
@@ -1588,7 +1619,7 @@ async fn exercise_catalog_commit_race(
 pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioContext> {
     require_empty_database(url).await?;
     exercise_database_identity_guard(url).await?;
-    let repo = Repository::connect(url, SERVER_INSTANCE.into()).await?;
+    let repo = exercise_concurrent_repository_startup(url).await?;
     let marker: String =
         sqlx::query_scalar("SELECT value FROM sync_v2.server_meta WHERE key='ddl_contract_marker'")
             .fetch_one(&repo.pool)

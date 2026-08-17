@@ -35,6 +35,16 @@ bookkeeping allowed). Legacy, partial, nonempty, and unrecognized user
 schemas fail closed, and the guard is read-only so a rejection leaves the
 database unchanged.
 
+Startup takes one deployment-wide PostgreSQL session advisory lock before
+reading that inventory. The lock ordering is fixed: acquire the advisory
+lock, inspect the complete identity inventory, run SQLx migrations, then
+verify `server_meta` and the singleton deployment binding; release the lock
+only after the final verification succeeds. The checked-out session keeps the
+lock across all phases, and the SQLx advisory-lock guard releases it when that
+session is returned or closed on every error path. Every v2 server startup uses
+the same key, so a concurrent startup cannot pass the pre-migration check and create or
+accept an unknown DDL object in the guard-to-migration window.
+
 `PostgresObjectStore` is the only initial `ObjectStore` implementation. A
 future S3 adapter requires a new versioned deployment manifest, data-copy plus
 read-back migration, rollback evidence, and a later Decision. It is not an

@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::{
-    postgres::{PgConnectOptions, PgPoolOptions},
+    postgres::{PgAdvisoryLock, PgAdvisoryLockKey, PgConnectOptions, PgPoolOptions},
     PgPool, Postgres, Row, Transaction,
 };
 use std::{
@@ -19,6 +19,11 @@ use uuid::Uuid;
 const SERVER_NAMESPACE: &str = "fuminiwa-snapshot-sync-v2";
 const SCHEMA_VERSION: &str = "2";
 const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
+// All v2 server processes use the same two-key advisory lock.  Keep this
+// outside either schema: the lock must exist before the identity inventory
+// can safely be read and while SQLx is applying DDL.
+const DATABASE_IDENTITY_LOCK_KEY_1: i32 = 0x4655_4D49; // "FUMI"
+const DATABASE_IDENTITY_LOCK_KEY_2: i32 = 0x4E49_5741; // "NIWA"
 /// The server never follows an unbounded user-controlled snapshot graph.
 /// This is deliberately a graph-node budget (not a wall-clock timeout): a
 /// malformed cycle or an unexpectedly huge closure is rejected before any
@@ -316,9 +321,22 @@ impl Repository {
             .max_connections(10)
             .connect_with(options)
             .await?;
+        // The checked-out connection owns the session-level lock until every
+        // startup phase has completed.  Do not release it between the guard,
+        // migration, and metadata/binding verification: another process must
+        // not be able to pass the same pre-migration inventory check and then
+        // create an unknown object before this process finishes its DDL.
+        let mut identity_connection = pool.acquire().await?;
+        let identity_lock = PgAdvisoryLock::with_key(PgAdvisoryLockKey::IntPair(
+            DATABASE_IDENTITY_LOCK_KEY_1,
+            DATABASE_IDENTITY_LOCK_KEY_2,
+        ));
+        let identity_guard = identity_lock.acquire(&mut identity_connection).await?;
         Self::verify_database_identity(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
+        drop(identity_guard);
+        drop(identity_connection);
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
         Ok(Self {
             pool,
@@ -333,9 +351,22 @@ impl Repository {
             .max_connections(10)
             .connect(url)
             .await?;
+        // Lock ordering is database identity advisory lock, then the
+        // identity inventory, SQLx migration, and server_meta/deployment
+        // binding transaction.  The PoolConnection is deliberately kept
+        // alive through all phases; dropping the advisory guard on any error
+        // queues its unlock before the connection returns to the pool.
+        let mut identity_connection = pool.acquire().await?;
+        let identity_lock = PgAdvisoryLock::with_key(PgAdvisoryLockKey::IntPair(
+            DATABASE_IDENTITY_LOCK_KEY_1,
+            DATABASE_IDENTITY_LOCK_KEY_2,
+        ));
+        let identity_guard = identity_lock.acquire(&mut identity_connection).await?;
         Self::verify_database_identity(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Self::verify_server_meta(&pool, &server_instance_id).await?;
+        drop(identity_guard);
+        drop(identity_connection);
         let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
         Ok(Self {
             pool,
@@ -2818,6 +2849,25 @@ mod database_identity_tests {
             .collect::<Vec<_>>();
         objects.push("relation:r:sync_v2.legacy_rows".into());
         assert!(classify_database_identity(true, &exact_marker(), &objects).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_object_kinds_even_when_the_marker_is_exact() {
+        for unknown in [
+            "extension:postgis",
+            "routine:sync_v2.legacy_function()",
+            "type:d:sync_v2.legacy_domain",
+            "relation:S:sync_v2.legacy_sequence",
+        ] {
+            let mut objects = expected_v2_database_objects()
+                .into_iter()
+                .collect::<Vec<_>>();
+            objects.push(unknown.into());
+            assert!(
+                classify_database_identity(true, &exact_marker(), &objects).is_err(),
+                "unknown database object kind was accepted: {unknown}"
+            );
+        }
     }
 
     #[test]
