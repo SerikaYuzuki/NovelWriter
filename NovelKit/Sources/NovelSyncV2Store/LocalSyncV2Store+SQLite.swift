@@ -484,8 +484,11 @@ extension LocalSyncV2Store {
         var rows: [[SQLiteValue]] = []
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
-            rows.append((0 ..< sqlite3_column_count(statement)).map {
-                SQLiteValue(statement: statement!, index: Int32($0))
+            guard let statement else {
+                throw SyncV2StoreError.sqlite("query statement unavailable")
+            }
+            try rows.append((0 ..< sqlite3_column_count(statement)).map {
+                try SQLiteValue(statement: statement, index: Int32($0))
             })
             result = sqlite3_step(statement)
         }
@@ -530,19 +533,30 @@ enum SQLiteValue {
     case blob(Data)
     case int(Int64)
 
-    init(statement: OpaquePointer, index: Int32) {
+    init(statement: OpaquePointer, index: Int32) throws {
         switch sqlite3_column_type(statement, index) {
         case SQLITE_NULL:
             self = .null
         case SQLITE_INTEGER:
             self = .int(sqlite3_column_int64(statement, index))
         case SQLITE_BLOB:
-            self = .blob(Data(
-                bytes: sqlite3_column_blob(statement, index),
-                count: Int(sqlite3_column_bytes(statement, index))
-            ))
+            let count = Int(sqlite3_column_bytes(statement, index))
+            guard count >= 0 else {
+                throw SyncV2StoreError.sqlite("negative blob length")
+            }
+            guard count > 0 else {
+                self = .blob(Data())
+                return
+            }
+            guard let bytes = sqlite3_column_blob(statement, index) else {
+                throw SyncV2StoreError.sqlite("blob bytes unavailable")
+            }
+            self = .blob(Data(bytes: bytes, count: count))
         default:
-            self = .text(String(cString: sqlite3_column_text(statement, index)))
+            guard let text = sqlite3_column_text(statement, index) else {
+                throw SyncV2StoreError.sqlite("text bytes unavailable")
+            }
+            self = .text(String(cString: text))
         }
     }
 

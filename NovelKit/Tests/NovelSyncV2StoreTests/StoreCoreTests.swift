@@ -42,6 +42,32 @@ func checkpointIsAtomicReopensAndNoOpSucceeds() async throws {
 }
 
 @Test
+func emptyAttachmentBytesRoundTripThroughSQLite() async throws {
+    let root = temporaryStoreRoot("empty-attachment")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workID = WorkID(UUID())
+    let attachment = SyncAttachment(
+        attachmentId: UUID(),
+        fileName: "empty.txt",
+        bytes: Data()
+    )
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    _ = try await store.checkpoint(
+        V2CheckpointRequest(
+            workID: workID,
+            document: makeDocument(title: "empty attachment"),
+            documentCreatedAt: testDate,
+            expectedGeneration: 0,
+            attachments: [attachment]
+        ),
+        scope: scopeA
+    )
+    let opened = try await store.open(workID: workID, scope: scopeA)
+    #expect(opened.attachments == [attachment])
+    #expect(opened.attachments.first?.bytes.isEmpty == true)
+}
+
+@Test
 func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
     let root = temporaryStoreRoot("checkpoint-no-op-occurrence")
     defer { try? FileManager.default.removeItem(at: root) }
