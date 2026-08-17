@@ -81,15 +81,15 @@ struct RuntimeIsolationTests {
         #expect(FileManager.default.fileExists(atPath: sentinel.path) == before)
     }
 
-    @Test("production factory fails before opening or creating its SQLite root")
-    func incompleteProductionIsFailClosedBeforeIO() async throws {
+    @Test("production factory requires the injected document gate")
+    func productionRequiresDocumentGateBeforeIO() async throws {
         let origin = try ProductionHTTPSOrigin(
             url: #require(URL(string: "https://sync.example.test"))
         )
         let configuration = try ProductionRuntimeConfiguration(origin: origin)
         let before = fileInventory(at: configuration.localRoot.url)
 
-        await #expect(throws: SyncV2ApplicationError.productionRuntimeIncomplete) {
+        await #expect(throws: SyncV2ApplicationError.invalidRuntimeMode) {
             try await SnapshotSyncV2Runtime.makeApplication(
                 mode: .production(configuration)
             )

@@ -1,4 +1,6 @@
 import Foundation
+import NovelAuth
+import NovelSyncV2
 
 public struct ProductionLocalRoot: Hashable, Sendable {
     public let url: URL
@@ -37,11 +39,15 @@ public struct ProductionHTTPSOrigin: Hashable, Sendable {
     }
 }
 
-public struct ProductionRuntimeConfiguration: Hashable, Sendable {
+public struct ProductionRuntimeConfiguration: Sendable {
     public let localRoot: ProductionLocalRoot
-    public let origin: ProductionHTTPSOrigin
+    public let origin: ProductionHTTPSOrigin?
+    public let vault: (any AuthSessionVault)?
+    public let documentGate: (any SyncV2DocumentGate)?
+    public let clientVersion: String
+    public let clientPlatform: AuthClientPlatform
 
-    public init(origin: ProductionHTTPSOrigin) throws {
+    public init(origin: ProductionHTTPSOrigin? = nil) throws {
         guard let applicationSupportDirectory = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -52,6 +58,35 @@ public struct ProductionRuntimeConfiguration: Hashable, Sendable {
             applicationSupportDirectory: applicationSupportDirectory
         )
         self.origin = origin
+        vault = nil
+        documentGate = nil
+        clientVersion = "0.0.0"
+        clientPlatform = .macos
+    }
+
+    public init(
+        origin: ProductionHTTPSOrigin? = nil,
+        vault: (any AuthSessionVault)? = nil,
+        documentGate: any SyncV2DocumentGate,
+        clientVersion: String,
+        clientPlatform: AuthClientPlatform
+    ) throws {
+        guard clientVersion.range(
+            of: #"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"#,
+            options: .regularExpression
+        ) != nil else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        guard let applicationSupportDirectory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        localRoot = try ProductionLocalRoot(
+            applicationSupportDirectory: applicationSupportDirectory
+        )
+        self.origin = origin
+        self.vault = vault
+        self.documentGate = documentGate
+        self.clientVersion = clientVersion
+        self.clientPlatform = clientPlatform
     }
 }
 

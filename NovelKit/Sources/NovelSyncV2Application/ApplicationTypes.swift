@@ -33,6 +33,7 @@ public enum SyncV2RetryReason: String, Equatable, Sendable {
     case serverUnavailable
     case rateLimited
     case lostResponse
+    case uploadExpired
 }
 
 public enum SyncV2FatalReason: String, Equatable, Sendable {
@@ -139,6 +140,20 @@ public struct SyncV2Preparation: Hashable, Sendable {
     public init(intentID: UUID?, noChanges: Bool) {
         self.intentID = intentID
         self.noChanges = noChanges
+    }
+}
+
+public struct SyncV2ExplicitAccountClone: Hashable, Sendable {
+    public let sourceWorkID: WorkID
+    public let newWorkID: WorkID
+    public let newDocumentID: DocumentID
+    public let intentID: UUID
+
+    public init(sourceWorkID: WorkID, newWorkID: WorkID, newDocumentID: DocumentID, intentID: UUID) {
+        self.sourceWorkID = sourceWorkID
+        self.newWorkID = newWorkID
+        self.newDocumentID = newDocumentID
+        self.intentID = intentID
     }
 }
 

@@ -2,6 +2,16 @@ import Foundation
 import NovelSyncV2
 
 extension SyncV2Application {
+    /// Wake every durable outbox lane.  It is safe to call repeatedly from
+    /// launch, foreground, and connectivity callbacks; per-work single flight
+    /// keeps command bytes and operation IDs stable.
+    public func resumePending() async throws {
+        guard runtimeIdentity != .preview else { return }
+        for workID in try await planner.pendingWorkIDs() {
+            scheduleWorker(for: workID)
+        }
+    }
+
     func scheduleWorker(for workID: WorkID) {
         wakeEpochs[workID, default: 0] &+= 1
         guard workerTasks[workID] == nil, runtimeIdentity != .preview else {
@@ -100,6 +110,13 @@ extension SyncV2Application {
                     inboxID: inbox.inboxID,
                     workID: inbox.workID
                 )
+                if receipt.result == .conflictPending, let conflict = receipt.conflict {
+                    try await kernel.recordConflict(
+                        conflict,
+                        workID: inbox.workID,
+                        inboxID: inbox.inboxID
+                    )
+                }
             }
             try await planner.acknowledgeCommand(
                 receipt,

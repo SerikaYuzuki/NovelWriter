@@ -204,6 +204,15 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         return SyncV2Preparation(intentID: intent.id, noChanges: false)
     }
 
+    public func prepareExplicitAccountClone(
+        sourceWorkID: WorkID,
+        newWorkID: WorkID,
+        newDocumentID: DocumentID
+    ) throws -> SyncV2ExplicitAccountClone {
+        _ = sourceWorkID; _ = newWorkID; _ = newDocumentID
+        throw SyncV2ApplicationError.workNotFound
+    }
+
     public func stageRemote(_ inbox: SyncV2RemoteInbox) throws {
         guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
         inboxes[inbox.inboxID] = inbox
@@ -214,6 +223,18 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
         verifiedInboxes.insert(inboxID)
+    }
+
+    public func recordConflict(
+        _ conflict: SyncV2ConflictProjection,
+        workID: WorkID,
+        inboxID: UUID
+    ) throws {
+        guard verifiedInboxes.contains(inboxID), let inbox = inboxes[inboxID] else {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
+        guard inbox.workID == workID else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+        works[workID]?.conflict = conflict
     }
 
     public func pendingAdoption(
@@ -305,6 +326,12 @@ public extension InMemorySyncV2RuntimeState {
             PendingCommand(command: command, intentID: intent.id, sending: false)
         )
         return .command(command)
+    }
+
+    func pendingWorkIDs() -> [WorkID] {
+        Array(Set(works.keys.filter { workID in
+            !(commands[workID] ?? []).isEmpty || !(works[workID]?.intents.isEmpty ?? true)
+        }))
     }
 
     func markSending(

@@ -152,6 +152,38 @@ public extension LocalSyncV2Store {
         }
     }
 
+    /// Records the server-choice decision without changing the active editor
+    /// snapshot.  The worker turns this durable intent into one sealed
+    /// resolveServer command; adoption remains behind the platform gate.
+    func prepareUseServer(
+        _ request: V2ServerResolutionRequest,
+        scope: V2LocalWorkScope
+    ) throws -> V2CheckpointResult {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        try validateExactConflict(request, binding: binding)
+        guard try inboxState(inboxID: request.inboxID, binding: binding) == "verified",
+              let current = try scopedWorkRow(workID: request.workID, scope: scope),
+              current[2].int64 == request.sourceGeneration,
+              current[3].blob == request.localSnapshotID.bytes else {
+            throw SyncV2StoreError.staleConflictAction
+        }
+        let existing = try pendingIntents(scope: scope, workID: request.workID)
+            .first { $0.kind == "conflictResolution" && $0.sourceSnapshotID == request.localSnapshotID && $0.sourceGeneration == request.sourceGeneration }
+        if let existing {
+            return V2CheckpointResult(snapshotID: existing.sourceSnapshotID, generation: existing.sourceGeneration, intentID: existing.intentID, noChanges: false)
+        }
+        let intentID = UUID()
+        try insertIntent(
+            intentID: intentID,
+            workID: request.workID,
+            snapshotID: request.localSnapshotID,
+            generation: request.sourceGeneration,
+            kind: "conflictResolution",
+            scope: scope
+        )
+        return V2CheckpointResult(snapshotID: request.localSnapshotID, generation: request.sourceGeneration, intentID: intentID, noChanges: false)
+    }
+
     func prepareKeepBoth(
         _ request: V2KeepBothPreparationRequest,
         scope: V2LocalWorkScope
@@ -245,6 +277,34 @@ public extension LocalSyncV2Store {
             sourceWorkID: sourceWorkID,
             newWorkID: newWorkID
         )
+    }
+
+    func latestKeepBothReservation(
+        sourceWorkID: WorkID,
+        conflictID: UUID,
+        scope: V2LocalWorkScope
+    ) throws -> V2KeepBothReservation? {
+        guard case .bound = scope else { throw SyncV2StoreError.accountMismatch }
+        return try loadKeepBothReservation(sourceWorkID: sourceWorkID, conflictID: conflictID)
+    }
+
+    func prepareKeepBothResolution(
+        _ request: V2KeepBothPreparationRequest,
+        scope: V2LocalWorkScope
+    ) throws -> (reservation: V2KeepBothReservation, intentID: UUID) {
+        let reservation = try prepareKeepBoth(request, scope: scope)
+        guard case .bound = scope,
+              let current = try scopedWorkRow(workID: request.workID, scope: scope),
+              let snapshot = current[3].blob,
+              let generation = current[2].int64 else { throw SyncV2StoreError.staleCAS }
+        let snapshotID = try SnapshotID(rawValue: snapshot.hexString)
+        if let existing = try pendingIntents(scope: scope, workID: request.workID)
+            .first(where: { $0.kind == "conflictResolution" && $0.sourceSnapshotID == snapshotID && $0.sourceGeneration == generation }) {
+            return (reservation, existing.intentID)
+        }
+        let intentID = UUID()
+        try insertIntent(intentID: intentID, workID: request.workID, snapshotID: snapshotID, generation: generation, kind: "conflictResolution", scope: scope)
+        return (reservation, intentID)
     }
 
     internal func loadKeepBothReservation(

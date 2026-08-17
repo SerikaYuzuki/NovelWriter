@@ -295,7 +295,7 @@ extension LocalSyncV2Store {
     }
 
     private func acknowledgeLinkedIntent(_ record: V2SealedCommandRecord) throws {
-        guard ["publish", "resolveDevice", "restore"].contains(record.commandKind),
+        guard ["publish", "resolveDevice", "resolveServer", "cloneWork", "restore"].contains(record.commandKind),
               let intentID = record.intentID else { return }
         guard let intent = try query(
             """

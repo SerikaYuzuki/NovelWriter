@@ -18,6 +18,8 @@ public struct SyncV2ConflictAction: Hashable, Sendable {
     public let choice: SyncV2ConflictChoice
     public let commandID: UUID?
     public let inboxID: UUID?
+    public let newWorkID: WorkID?
+    public let newDocumentID: DocumentID?
 
     public init(
         workID: WorkID,
@@ -29,7 +31,9 @@ public struct SyncV2ConflictAction: Hashable, Sendable {
         sourceGeneration: Int64,
         choice: SyncV2ConflictChoice,
         commandID: UUID? = nil,
-        inboxID: UUID? = nil
+        inboxID: UUID? = nil,
+        newWorkID: WorkID? = nil,
+        newDocumentID: DocumentID? = nil
     ) {
         self.workID = workID
         self.conflictID = conflictID
@@ -41,6 +45,8 @@ public struct SyncV2ConflictAction: Hashable, Sendable {
         self.choice = choice
         self.commandID = commandID
         self.inboxID = inboxID
+        self.newWorkID = newWorkID
+        self.newDocumentID = newDocumentID
     }
 }
 

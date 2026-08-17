@@ -2,6 +2,20 @@ import Foundation
 import NovelSyncV2
 
 public extension LocalSyncV2Store {
+    func allSealedCommands(
+        scope: V2LocalWorkScope,
+        workID: WorkID
+    ) throws -> [V2SealedCommandRecord] {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        return try query(
+            Self.commandSelect + """
+             WHERE work_id=? AND server_instance_id=? AND protocol_epoch=?
+               AND account_id=? AND account_fence=? ORDER BY rowid
+            """,
+            [.text(workID.description)] + binding.values
+        ).map(Self.commandRecord)
+    }
+
     func seal(
         _ command: SealedCommand,
         intentID: UUID? = nil,
@@ -35,7 +49,10 @@ public extension LocalSyncV2Store {
         }
 
         let intentRequired = Set(["publish", "resolveDevice", "restore"])
-        guard intentRequired.contains(command.commandKind) == (intentID != nil) else {
+        let intentCapable = intentRequired.union(["resolveServer", "cloneWork"])
+        guard (intentRequired.contains(command.commandKind) && intentID != nil) ||
+            (!intentRequired.contains(command.commandKind) &&
+                (intentID == nil || intentCapable.contains(command.commandKind))) else {
             throw SyncV2StoreError.invalidCommand
         }
         try persistSealedCommand(

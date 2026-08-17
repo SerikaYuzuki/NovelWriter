@@ -114,7 +114,7 @@ extension LocalSyncV2Store {
             work: work
         )
         if intentID != nil,
-           !["publish", "resolveDevice", "restore"].contains(command.commandKind) {
+           !["publish", "resolveDevice", "resolveServer", "cloneWork", "restore"].contains(command.commandKind) {
             throw SyncV2StoreError.invalidCommand
         }
         switch command.commandKind {

@@ -2,6 +2,45 @@ import Foundation
 import NovelSyncV2
 
 extension LocalSyncV2Store {
+    public func appendConflictFromVerifiedInbox(
+        workID: WorkID,
+        inboxID: UUID,
+        conflictID: UUID,
+        revision: Int64,
+        localSnapshotID: SnapshotID,
+        remoteSnapshotID: SnapshotID,
+        sourceGeneration: Int64,
+        scope: V2LocalWorkScope
+    ) throws -> V2ConflictCandidate {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
+        guard graph.headSnapshotID == remoteSnapshotID,
+              let expectedHead = graph.expectedRemoteHead,
+              expectedHead.snapshotID == remoteSnapshotID,
+              let encoded = graph.snapshots.first(where: { $0.snapshotId == remoteSnapshotID }) else {
+            throw SyncV2StoreError.invalidRemoteHead
+        }
+        let candidate = try appendConflict(
+            workID: workID,
+            baseSnapshotID: nil,
+            localSnapshotID: localSnapshotID,
+            remote: V2RemoteSnapshot(
+                inboxID: inboxID,
+                workID: workID,
+                encoded: encoded,
+                expectedCurrentSnapshotID: localSnapshotID,
+                expectedLocalGeneration: sourceGeneration,
+                expectedRemoteHead: expectedHead
+            ),
+            sourceGeneration: sourceGeneration,
+            scope: scope
+        )
+        guard candidate.conflictID == conflictID, candidate.revision == revision else {
+            throw SyncV2StoreError.staleConflictAction
+        }
+        return candidate
+    }
+
     func commitConflictDelivery(
         _ material: ConflictAppendMaterial,
         scope: V2LocalWorkScope

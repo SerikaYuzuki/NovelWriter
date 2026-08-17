@@ -142,11 +142,17 @@ extension LocalSyncV2Store {
             inboxID: inboxID,
             expectedRemoteHead: remoteHead
         )
-        try finalizeConflictRemoteGraphTransaction(
-            graph,
-            request: request,
-            binding: record.binding
-        )
+        if record.intentID == nil {
+            // Legacy/direct Store callers have no platform gate boundary. Keep
+            // the original atomic behavior for that closed command shape;
+            // production Application commands always carry the prepared
+            // resolution Intent and remain pending for safe adoption.
+            try finalizeConflictRemoteGraphTransaction(
+                graph,
+                request: request,
+                binding: record.binding
+            )
+        }
     }
 
     func finalizeUseDeviceAcknowledgement(

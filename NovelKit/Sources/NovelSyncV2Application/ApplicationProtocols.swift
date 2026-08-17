@@ -22,6 +22,9 @@ public enum SyncV2CommandFailureDisposition: Sendable {
 /// those same bytes until an exact verified receipt acknowledges that intent.
 public protocol SyncV2CommandPlanner: Sendable {
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan
+    /// Enumerates durable outbox work without requiring the work to be opened
+    /// in the UI.  This is the restart/connectivity wake boundary.
+    func pendingWorkIDs() async throws -> [WorkID]
     func markSending(
         _ operation: SyncV2RemoteOperation,
         workID: WorkID
@@ -39,11 +42,25 @@ public protocol SyncV2CommandPlanner: Sendable {
     func acknowledgeUpload(_ completion: SyncV2UploadCompletion) async throws
 }
 
+public extension SyncV2CommandPlanner {
+    func pendingWorkIDs() async throws -> [WorkID] {
+        []
+    }
+}
+
 /// A closed semantic client. Its production adapter performs the typed v2
 /// capability/upload/register/publish or conflict/restore sequence internally;
 /// the application service never builds URLs or interprets HTTP/SQL details.
 public protocol SyncV2RemoteClient: Sendable {
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution
+    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
+}
+
+public extension SyncV2RemoteClient {
+    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
+        _ = workID
+        throw SyncV2ApplicationError.workNotFound
+    }
 }
 
 public protocol SyncV2LocalKernel: Sendable {
@@ -51,8 +68,18 @@ public protocol SyncV2LocalKernel: Sendable {
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
     func prepareConflict(_ action: SyncV2ConflictAction) async throws -> SyncV2Preparation
     func prepareRestore(_ request: SyncV2RestoreRequest) async throws -> SyncV2Preparation
+    func prepareExplicitAccountClone(
+        sourceWorkID: WorkID,
+        newWorkID: WorkID,
+        newDocumentID: DocumentID
+    ) async throws -> SyncV2ExplicitAccountClone
     func stageRemote(_ inbox: SyncV2RemoteInbox) async throws
     func verifyRemote(inboxID: UUID, workID: WorkID) async throws
+    func recordConflict(
+        _ conflict: SyncV2ConflictProjection,
+        workID: WorkID,
+        inboxID: UUID
+    ) async throws
     func pendingAdoption(workID: WorkID) async throws -> SyncV2PendingAdoption?
 
     /// The concrete store must atomically recheck the expected current

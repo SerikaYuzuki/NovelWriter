@@ -138,6 +138,76 @@ public struct V2PendingIntent: Hashable, Sendable {
     public let status: String
 }
 
+/// Immutable bytes selected by the worker for one local intent.  The view is
+/// account-scoped and intentionally contains no SQLite row handles; a caller
+/// may retain it while doing network I/O and must still re-seal the command
+/// through the store before sending.
+public struct V2ImmutableTransferView: Sendable {
+    public let workID: WorkID
+    public let binding: V2AccountBinding
+    public let summary: V2WorkSummary
+    public let snapshot: EncodedSnapshot
+    public let pendingIntent: V2PendingIntent
+    public let expectedRemoteHead: V2RemoteHead?
+
+    public init(
+        workID: WorkID,
+        binding: V2AccountBinding,
+        summary: V2WorkSummary,
+        snapshot: EncodedSnapshot,
+        pendingIntent: V2PendingIntent,
+        expectedRemoteHead: V2RemoteHead?
+    ) {
+        self.workID = workID
+        self.binding = binding
+        self.summary = summary
+        self.snapshot = snapshot
+        self.pendingIntent = pendingIntent
+        self.expectedRemoteHead = expectedRemoteHead
+    }
+}
+
+public struct V2PendingServerAdoption: Hashable, Sendable {
+    public let workID: WorkID
+    public let inboxID: UUID
+    public let expectedCurrentSnapshotID: SnapshotID
+    public let expectedLocalGeneration: Int64
+    public let conflictID: UUID
+    public let conflictRevision: Int64
+}
+
+public struct V2UploadTransferRecord: Hashable, Sendable {
+    public let transferID: UUID
+    public let commandID: UUID
+    public let workID: WorkID
+    public let objectID: ObjectID
+    public let sourceSnapshotID: SnapshotID
+    public let sourceGeneration: Int64
+    public let uploadID: UUID
+    public let capability: String
+    public let exactBytes: Data
+    public let bytesDigest: ObjectID
+    public let acknowledgedOffset: Int
+    public let expiresAt: Date
+    public let lifecycle: String
+
+    public init(transferID: UUID, commandID: UUID, workID: WorkID, objectID: ObjectID, sourceSnapshotID: SnapshotID, sourceGeneration: Int64, uploadID: UUID, capability: String, exactBytes: Data, bytesDigest: ObjectID, acknowledgedOffset: Int, expiresAt: Date, lifecycle: String) {
+        self.transferID = transferID
+        self.commandID = commandID
+        self.workID = workID
+        self.objectID = objectID
+        self.sourceSnapshotID = sourceSnapshotID
+        self.sourceGeneration = sourceGeneration
+        self.uploadID = uploadID
+        self.capability = capability
+        self.exactBytes = exactBytes
+        self.bytesDigest = bytesDigest
+        self.acknowledgedOffset = acknowledgedOffset
+        self.expiresAt = expiresAt
+        self.lifecycle = lifecycle
+    }
+}
+
 public struct V2HistoryOccurrence: Hashable, Sendable {
     public let snapshotID: SnapshotID
     public let reason: String
@@ -155,6 +225,13 @@ public struct V2RemoteHead: Hashable, Sendable {
         guard generation > 0, generation <= Self.maximumGeneration else {
             throw SyncV2StoreError.invalidRemoteHead
         }
+        self.snapshotID = snapshotID
+        self.generation = generation
+    }
+
+    /// Conversion boundary for a head that already passed the application
+    /// wire validator.
+    public init(validatedSnapshotID snapshotID: SnapshotID, generation: Int64) {
         self.snapshotID = snapshotID
         self.generation = generation
     }

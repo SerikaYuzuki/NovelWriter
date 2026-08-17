@@ -5,11 +5,13 @@ import NovelSyncV2Store
 
 actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     private let store: LocalSyncV2Store
-    private let scope: ProductionScopeResolver
+    private let scope: any SyncV2ScopeResolver
+    private let remote: (any SyncV2RemoteClient)?
 
-    init(store: LocalSyncV2Store, scope: ProductionScopeResolver) {
+    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver, remote: (any SyncV2RemoteClient)? = nil) {
         self.store = store
         self.scope = scope
+        self.remote = remote
     }
 
     func checkpoint(
@@ -59,8 +61,79 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     func prepareConflict(
         _ action: SyncV2ConflictAction
     ) async throws -> SyncV2Preparation {
-        _ = action
-        throw SyncV2ApplicationError.productionRuntimeIncomplete
+        do {
+            let localScope = try await scope.existingScope(workID: action.workID)
+            guard case .bound = localScope,
+                  let active = try await store.activeConflict(
+                      workID: action.workID,
+                      scope: localScope
+                  ),
+                  active.conflictID == action.conflictID,
+                  active.revision == action.revision,
+                  active.sourceGeneration == action.sourceGeneration,
+                  active.localSnapshotID == action.localSnapshotID,
+                  active.remoteSnapshotID == action.remoteSnapshotID else {
+                throw SyncV2ApplicationError.staleConflictAction
+            }
+            let remoteHead = try await store.remoteHeadForConflict(
+                active,
+                scope: localScope
+            )
+            switch action.choice {
+            case .useDevice:
+                let prepared = try await store.prepareUseDevice(
+                    V2DeviceResolutionRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        inboxID: store.conflictInboxID(active),
+                        remoteHead: remoteHead
+                    ),
+                    scope: localScope
+                )
+                return SyncV2Preparation(
+                    intentID: prepared.intentID,
+                    noChanges: prepared.noChanges
+                )
+            case .useServer:
+                let prepared = try await store.prepareUseServer(
+                    V2ServerResolutionRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        inboxID: store.conflictInboxID(active),
+                        expectedRemoteHead: remoteHead
+                    ),
+                    scope: localScope
+                )
+                return SyncV2Preparation(intentID: prepared.intentID, noChanges: prepared.noChanges)
+            case .keepBoth:
+                let prepared = try await store.prepareKeepBothResolution(
+                    V2KeepBothPreparationRequest(
+                        workID: action.workID,
+                        conflictID: action.conflictID,
+                        revision: action.revision,
+                        sourceGeneration: action.sourceGeneration,
+                        localSnapshotID: action.localSnapshotID,
+                        remoteSnapshotID: action.remoteSnapshotID,
+                        newWorkID: action.newWorkID ?? WorkID(UUID()),
+                        newDocumentID: action.newDocumentID ?? DocumentID(UUID())
+                    ),
+                    scope: localScope
+                )
+                return SyncV2Preparation(intentID: prepared.intentID, noChanges: false)
+            }
+        } catch SyncV2ApplicationError.staleConflictAction {
+            throw SyncV2ApplicationError.staleConflictAction
+        } catch {
+            throw mapStoreError(error)
+        }
     }
 
     func prepareRestore(
@@ -89,6 +162,33 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
+    func prepareExplicitAccountClone(
+        sourceWorkID: WorkID,
+        newWorkID: WorkID,
+        newDocumentID: DocumentID
+    ) async throws -> SyncV2ExplicitAccountClone {
+        do {
+            let sourceScope = try await scope.existingScope(workID: sourceWorkID)
+            guard let destination = try await scope.activeBinding() else {
+                throw SyncV2Failure.authenticationRequired
+            }
+            let prepared = try await store.prepareExplicitAccountClone(
+                sourceWorkID: sourceWorkID,
+                sourceScope: sourceScope,
+                newWorkID: newWorkID,
+                newDocumentID: newDocumentID,
+                destination: destination
+            )
+            guard let intentID = prepared.intentID else { throw SyncV2Failure.fatal(.invalidLocalState) }
+            return SyncV2ExplicitAccountClone(
+                sourceWorkID: sourceWorkID,
+                newWorkID: newWorkID,
+                newDocumentID: newDocumentID,
+                intentID: intentID
+            )
+        } catch { throw mapStoreError(error) }
+    }
+
     func stageRemote(_ inbox: SyncV2RemoteInbox) async throws {
         do {
             let localScope = try await scope.existingScope(workID: inbox.workID)
@@ -107,25 +207,69 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         }
     }
 
+    func recordConflict(
+        _ conflict: SyncV2ConflictProjection,
+        workID: WorkID,
+        inboxID: UUID
+    ) async throws {
+        do {
+            let localScope = try await scope.existingScope(workID: workID)
+            _ = try await store.appendConflictFromVerifiedInbox(
+                workID: workID,
+                inboxID: inboxID,
+                conflictID: conflict.conflictID,
+                revision: conflict.revision,
+                localSnapshotID: conflict.localSnapshotID,
+                remoteSnapshotID: conflict.remoteSnapshotID,
+                sourceGeneration: conflict.sourceGeneration,
+                scope: localScope
+            )
+        } catch { throw mapStoreError(error) }
+    }
+
     func pendingAdoption(workID: WorkID) async throws -> SyncV2PendingAdoption? {
-        _ = workID
-        // The Store currently finalizes resolveServer immediately. Until its
-        // durable ready-for-safe-adoption row lands, production remote
-        // execution remains fail-closed and cannot reach this path.
-        return nil
+        let localScope = try await scope.existingScope(workID: workID)
+        guard let pending = try await store.pendingServerAdoption(
+            workID: workID,
+            scope: localScope
+        ) else { return nil }
+        return SyncV2PendingAdoption(
+            workID: pending.workID,
+            inboxID: pending.inboxID,
+            expectedLocalVersion: SyncV2LocalVersion(
+                generation: pending.expectedLocalGeneration,
+                snapshotID: pending.expectedCurrentSnapshotID
+            ),
+            conflictID: pending.conflictID,
+            conflictRevision: pending.conflictRevision
+        )
     }
 
     func applyStagedRemote(
         _ transaction: SyncV2AdoptionTransaction
     ) async throws -> SyncV2OpenedWork {
-        _ = transaction
-        throw SyncV2ApplicationError.productionRuntimeIncomplete
+        do {
+            let localScope = try await scope.existingScope(workID: transaction.boundary.workID)
+            let result = try await store.adoptPendingServerResolution(
+                workID: transaction.boundary.workID,
+                inboxID: transaction.boundary.inboxID,
+                scope: localScope
+            )
+            return SyncV2OpenedWork(
+                workID: transaction.boundary.workID,
+                document: result.document,
+                documentCreatedAt: result.documentCreatedAt,
+                attachments: result.attachments,
+                generation: result.summary.localGeneration,
+                snapshotID: result.summary.currentSnapshotID
+            )
+        } catch { throw mapStoreError(error) }
     }
 
     func installRemoteOnly(
         _ inbox: SyncV2RemoteInbox
     ) async throws -> SyncV2OpenedWork {
-        guard let binding = await scope.activeBinding() else {
+        guard let binding = try await scope.activeBinding() else {
             throw SyncV2Failure.authenticationRequired
         }
         do {
@@ -149,7 +293,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
 
     func library() async throws -> SyncV2LibraryProjection {
         var projectionItems: [SyncV2LibraryItem] = []
-        if let binding = await scope.activeBinding() {
+        if let binding = try await scope.activeBinding() {
             projectionItems += try await items(
                 scope: .bound(binding),
                 accountState: .active
@@ -163,8 +307,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     }
 
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
-        _ = workID
-        throw SyncV2ApplicationError.productionRuntimeIncomplete
+        guard let remote else { throw SyncV2ApplicationError.workNotFound }
+        return try await remote.downloadRemoteOnly(workID: workID)
     }
 }
 
@@ -225,8 +369,8 @@ private extension SyncV2RemoteInbox {
             snapshots: snapshots,
             expectedCurrentSnapshotID: expectedCurrentSnapshotID,
             expectedLocalGeneration: expectedLocalGeneration,
-            expectedRemoteHead: try? V2RemoteHead(
-                snapshotID: expectedRemoteHead.snapshotID,
+            expectedRemoteHead: V2RemoteHead(
+                validatedSnapshotID: expectedRemoteHead.snapshotID,
                 generation: expectedRemoteHead.generation
             )
         )

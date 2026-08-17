@@ -57,7 +57,7 @@ let package = Package(
         ),
         .target(
             name: "NovelSyncV2Application",
-            dependencies: ["NovelCore", "NovelSyncV2"]
+            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth"]
         ),
         .target(
             name: "NovelSyncV2Runtime",
