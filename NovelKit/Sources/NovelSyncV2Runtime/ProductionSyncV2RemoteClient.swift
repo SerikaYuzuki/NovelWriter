@@ -79,7 +79,12 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
               let generation = (headObject["generation"] as? NSNumber)?.int64Value,
               let raw = headObject["snapshotId"] as? String else { throw SyncV2Failure.fatal(.unexpected) }
         let head = try SyncV2RemoteHead(snapshotID: SnapshotID(rawValue: raw), generation: generation)
-        let snapshots = try await fetchSnapshot(workID: workID, id: head.snapshotID, session: session, seen: [])
+        let snapshots = try await fetchSnapshot(
+            workID: workID,
+            id: head.snapshotID,
+            session: session,
+            traversal: SnapshotFetchTraversal()
+        )
         return SyncV2RemoteInbox(inboxID: UUID(), workID: workID, headSnapshotID: head.snapshotID, snapshots: snapshots, expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0, expectedRemoteHead: head)
     }
 
@@ -243,6 +248,9 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
         let digest: ObjectID
         do { digest = try ObjectID(rawValue: digestRaw) }
         catch { throw SyncV2Failure.receiptMismatch }
+        guard digest == command.requestDigest else {
+            throw SyncV2Failure.receiptMismatch
+        }
         let head = try parseHead(object["head"])
         let predicates = SyncV2ReadBackPredicates(
             accountMatched: readBack["accountMatched"] as? Bool == true,
@@ -257,7 +265,8 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
             guard let id = UUID(uuidString: object["conflictId"] as? String ?? ""),
                   let revision = (object["conflictRevision"] as? NSNumber)?.int64Value,
                   let head, let generation = (object["sourceGeneration"] as? NSNumber)?.int64Value else { throw SyncV2Failure.receiptMismatch }
-            conflict = SyncV2ConflictProjection(conflictID: id, revision: revision, baseSnapshotID: nil, localSnapshotID: command.sourceSnapshotId, remoteSnapshotID: head.snapshotID, sourceGeneration: generation)
+            let baseSnapshotID = try publishExpectedRemoteHeadSnapshotID(command)
+            conflict = SyncV2ConflictProjection(conflictID: id, revision: revision, baseSnapshotID: baseSnapshotID, localSnapshotID: command.sourceSnapshotId, remoteSnapshotID: head.snapshotID, sourceGeneration: generation)
         } else {
             conflict = nil
         }
@@ -267,53 +276,26 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
     private func inbox(command: SealedCommand, receipt: SyncV2ReceiptReadback, session: FuminiwaSession) async throws -> SyncV2RemoteInbox? {
         guard let head = receipt.remoteHead else { return nil }
         let workID = try command.workID
-        let snapshots = try await fetchSnapshot(workID: workID, id: head.snapshotID, session: session, seen: [])
+        let snapshots = try await fetchSnapshot(workID: workID, id: head.snapshotID, session: session, traversal: SnapshotFetchTraversal())
         return try SyncV2RemoteInbox(inboxID: UUID(), workID: workID, headSnapshotID: head.snapshotID, snapshots: snapshots, expectedCurrentSnapshotID: command.sourceSnapshotId, expectedLocalGeneration: command.sourceGeneration, expectedRemoteHead: SyncV2RemoteHead(snapshotID: head.snapshotID, generation: head.generation))
     }
 
-    private func fetchSnapshot(workID: WorkID, id: SnapshotID, session: FuminiwaSession, seen: Set<SnapshotID>) async throws -> [EncodedSnapshot] {
-        guard !seen.contains(id), seen.count < 128 else { throw SyncV2Failure.fatal(.invalidLocalState) }
-        var request = URLRequest(url: origin.url.appendingPathComponent("v2/snapshots/\(id.rawValue)/manifest"))
-        request.httpMethod = "GET"
-        addHeaders(&request, session: session, binding: SealedCommand.Binding(accountFence: session.accountFence, accountId: session.accountID, protocolEpoch: 2, serverInstanceId: session.serverInstanceID.uuidString.lowercased()))
-        let (data, response) = try await requestData(request)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
-              http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
-              http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
-              http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init) == mediaType,
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let raw = object["manifestBase64URL"] as? String,
-              let digestRaw = object["manifestBytesDigest"] as? String,
-              let bytes = Data(base64URL: raw),
-              SnapshotID(data: bytes) == id,
-              ObjectID(data: bytes).rawValue == digestRaw,
-              object["snapshotId"] as? String == id.rawValue,
-              object["result"] as? String == "noChanges" else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
-        let manifest = try SnapshotValidator.validate(manifestBytes: bytes)
-        var objects: [ObjectID: Data] = [:]
-        for entry in manifest.entries {
-            var objectRequest = URLRequest(url: origin.url.appendingPathComponent("v2/objects/\(entry.objectId.rawValue)"))
-            objectRequest.httpMethod = "GET"
-            addHeaders(&objectRequest, session: session, binding: SealedCommand.Binding(accountFence: session.accountFence, accountId: session.accountID, protocolEpoch: 2, serverInstanceId: session.serverInstanceID.uuidString.lowercased()))
-            let (rawObject, objectResponse) = try await requestData(objectRequest)
-            guard let objectHTTP = objectResponse as? HTTPURLResponse,
-                  objectHTTP.statusCode == 200,
-                  objectHTTP.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
-                  objectHTTP.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
-                  objectHTTP.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init) == "application/octet-stream",
-                  objectHTTP.value(forHTTPHeaderField: "X-Fuminiwa-Object-Digest") == entry.objectId.rawValue,
-                  Int(objectHTTP.value(forHTTPHeaderField: "X-Fuminiwa-Byte-Count") ?? "") == rawObject.count,
-                  rawObject.count == entry.byteCount,
-                  ObjectID(data: rawObject) == entry.objectId else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
-            objects[entry.objectId] = rawObject
+    private func publishExpectedRemoteHeadSnapshotID(_ command: SealedCommand) throws -> SnapshotID? {
+        guard command.commandKind == "publish" else { return nil }
+        guard let payload = try JSONSerialization.jsonObject(with: command.payloadBytes) as? [String: Any],
+              let expected = payload["expectedRemoteHead"] else {
+            throw SyncV2Failure.receiptMismatch
         }
-        var result: [EncodedSnapshot] = []
-        for parent in manifest.parentSnapshotIds {
-            result += try await fetchSnapshot(workID: workID, id: parent, session: session, seen: seen.union([id]))
+        if expected is NSNull {
+            return nil
         }
-        result.append(EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects))
-        return result
+        guard let head = expected as? [String: Any],
+              Set(head.keys) == ["generation", "snapshotId"],
+              head["generation"] is NSNumber,
+              let rawSnapshotID = head["snapshotId"] as? String else {
+            throw SyncV2Failure.receiptMismatch
+        }
+        return try SnapshotID(rawValue: rawSnapshotID)
     }
 
     private func addHeaders(_ request: inout URLRequest, session: FuminiwaSession, binding: SealedCommand.Binding) {
@@ -371,6 +353,99 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
         default: return .retryable(.serverUnavailable)
         }
     }
+}
+
+private extension ProductionSyncV2RemoteClient {
+    func fetchSnapshot(
+        workID: WorkID,
+        id: SnapshotID,
+        session: FuminiwaSession,
+        traversal: SnapshotFetchTraversal
+    ) async throws -> [EncodedSnapshot] {
+        if traversal.memo[id] != nil {
+            return []
+        }
+        guard !traversal.active.contains(id),
+              traversal.visited.count + traversal.active.count < SnapshotFetchTraversal.maximumSnapshots else {
+            throw SyncV2Failure.fatal(.invalidLocalState)
+        }
+        traversal.active.insert(id)
+        defer { traversal.active.remove(id) }
+        var request = URLRequest(url: origin.url.appendingPathComponent("v2/snapshots/\(id.rawValue)/manifest"))
+        request.httpMethod = "GET"
+        addHeaders(
+            &request,
+            session: session,
+            binding: SealedCommand.Binding(
+                accountFence: session.accountFence,
+                accountId: session.accountID,
+                protocolEpoch: 2,
+                serverInstanceId: session.serverInstanceID.uuidString.lowercased()
+            )
+        )
+        let (data, response) = try await requestData(request)
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
+              http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
+              http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init) == mediaType,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = object["manifestBase64URL"] as? String,
+              let digestRaw = object["manifestBytesDigest"] as? String,
+              let bytes = Data(base64URL: raw),
+              SnapshotID(data: bytes) == id,
+              ObjectID(data: bytes).rawValue == digestRaw,
+              object["snapshotId"] as? String == id.rawValue,
+              object["result"] as? String == "noChanges" else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+        let manifest = try SnapshotValidator.validate(manifestBytes: bytes)
+        var objects: [ObjectID: Data] = [:]
+        for entry in manifest.entries {
+            var objectRequest = URLRequest(url: origin.url.appendingPathComponent("v2/objects/\(entry.objectId.rawValue)"))
+            objectRequest.httpMethod = "GET"
+            addHeaders(
+                &objectRequest,
+                session: session,
+                binding: SealedCommand.Binding(
+                    accountFence: session.accountFence,
+                    accountId: session.accountID,
+                    protocolEpoch: 2,
+                    serverInstanceId: session.serverInstanceID.uuidString.lowercased()
+                )
+            )
+            let (rawObject, objectResponse) = try await requestData(objectRequest)
+            guard let objectHTTP = objectResponse as? HTTPURLResponse,
+                  objectHTTP.statusCode == 200,
+                  objectHTTP.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
+                  objectHTTP.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache",
+                  objectHTTP.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first.map(String.init) == "application/octet-stream",
+                  objectHTTP.value(forHTTPHeaderField: "X-Fuminiwa-Object-Digest") == entry.objectId.rawValue,
+                  Int(objectHTTP.value(forHTTPHeaderField: "X-Fuminiwa-Byte-Count") ?? "") == rawObject.count,
+                  rawObject.count == entry.byteCount,
+                  ObjectID(data: rawObject) == entry.objectId else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+            objects[entry.objectId] = rawObject
+        }
+        var result: [EncodedSnapshot] = []
+        for parent in manifest.parentSnapshotIds {
+            result += try await fetchSnapshot(
+                workID: workID,
+                id: parent,
+                session: session,
+                traversal: traversal
+            )
+        }
+        let snapshot = EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects)
+        traversal.visited.insert(id)
+        traversal.memo[id] = snapshot
+        result.append(snapshot)
+        return result
+    }
+}
+
+private final class SnapshotFetchTraversal: @unchecked Sendable {
+    static let maximumSnapshots = 128
+    var active: Set<SnapshotID> = []
+    var visited: Set<SnapshotID> = []
+    var memo: [SnapshotID: EncodedSnapshot] = [:]
 }
 
 private extension SealedCommand {
