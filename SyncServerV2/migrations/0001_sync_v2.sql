@@ -109,3 +109,47 @@ CREATE TABLE sync_v2.quarantine_records(account_id TEXT NOT NULL,quarantine_id U
 CREATE TABLE sync_v2.migration_ledger(migration_id UUID PRIMARY KEY,account_id TEXT,source_kind TEXT NOT NULL,source_digest BYTEA NOT NULL,export_backup_marker TEXT,adoption_marker TEXT,quarantined_from_state TEXT,evidence_bytes BYTEA NOT NULL,state TEXT NOT NULL,UNIQUE(source_kind,source_digest),CHECK(account_id IS NOT NULL OR state IN('discovered','backupExported','staged','quarantined')));
 CREATE TABLE sync_v2.migration_staging_batches(migration_id UUID PRIMARY KEY REFERENCES sync_v2.migration_ledger(migration_id),proposed_work_id UUID NOT NULL,proposed_document_id UUID NOT NULL,snapshot_id BYTEA NOT NULL,manifest_bytes BYTEA NOT NULL,verified_account_id TEXT,state TEXT NOT NULL,CHECK(state<>'verified' OR verified_account_id IS NOT NULL));
 CREATE TABLE sync_v2.migration_staging_objects(migration_id UUID NOT NULL REFERENCES sync_v2.migration_staging_batches(migration_id),object_id BYTEA NOT NULL,byte_count BIGINT NOT NULL,raw_bytes BYTEA NOT NULL,PRIMARY KEY(migration_id,object_id),CHECK(octet_length(raw_bytes)=byte_count));
+
+-- The v2 migration is installed only into a fresh database.  Keep these
+-- constraints in the migration itself (rather than relying on repository
+-- checks) so direct SQL readers and writers observe the same authority.
+ALTER TABLE sync_v2.upload_capabilities
+  ADD CONSTRAINT upload_command_uq UNIQUE(account_id,command_id);
+ALTER TABLE sync_v2.active_conflicts
+  ADD CONSTRAINT active_conflict_identity_uq UNIQUE(account_id,work_id,conflict_id);
+ALTER TABLE sync_v2.conflict_events
+  ADD CONSTRAINT conflict_event_candidate_fk
+  FOREIGN KEY(account_id,conflict_id,revision)
+  REFERENCES sync_v2.conflict_candidates(account_id,conflict_id,revision);
+ALTER TABLE sync_v2.history
+  ADD CONSTRAINT history_snapshot_fk
+  FOREIGN KEY(account_id,work_id,snapshot_id)
+  REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id);
+ALTER TABLE sync_v2.head_events
+  ADD CONSTRAINT head_event_snapshot_fk
+  FOREIGN KEY(account_id,work_id,snapshot_id)
+  REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id);
+ALTER TABLE sync_v2.catalog_events
+  ADD CONSTRAINT catalog_event_kind_ck CHECK(event_kind IN('upsert','tombstone')),
+  ADD CONSTRAINT catalog_head_generation_ck CHECK(head_generation IS NULL OR head_generation>0),
+  ADD CONSTRAINT catalog_head_snapshot_fk
+  FOREIGN KEY(account_id,work_id,head_snapshot_id)
+  REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id);
+ALTER TABLE sync_v2.migration_ledger
+  ADD CONSTRAINT migration_source_state_ck CHECK(quarantined_from_state IS NULL OR quarantined_from_state IN('discovered','backupExported','staged','verified')),
+  ADD CONSTRAINT migration_state_ck CHECK(state IN('discovered','backupExported','staged','verified','committed','quarantined')),
+  ADD CONSTRAINT migration_account_state_ck CHECK(account_id IS NOT NULL OR state IN('discovered','backupExported','staged','quarantined')),
+  ADD CONSTRAINT migration_marker_shape_ck CHECK(
+    (state='discovered' AND export_backup_marker IS NULL AND adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state IN('backupExported','staged','verified') AND export_backup_marker IS NOT NULL AND length(export_backup_marker) BETWEEN 1 AND 512 AND adoption_marker IS NULL AND quarantined_from_state IS NULL) OR
+    (state='committed' AND export_backup_marker IS NOT NULL AND adoption_marker IS NOT NULL AND length(export_backup_marker) BETWEEN 1 AND 512 AND length(adoption_marker) BETWEEN 1 AND 512 AND quarantined_from_state IS NULL) OR
+    (state='quarantined' AND adoption_marker IS NULL AND quarantined_from_state IS NOT NULL AND ((quarantined_from_state='discovered' AND export_backup_marker IS NULL) OR (quarantined_from_state IN('backupExported','staged','verified') AND export_backup_marker IS NOT NULL AND length(export_backup_marker) BETWEEN 1 AND 512)))
+  ),
+  ADD CONSTRAINT migration_verified_account_ck CHECK(state<>'quarantined' OR quarantined_from_state<>'verified' OR account_id IS NOT NULL);
+ALTER TABLE sync_v2.migration_staging_batches
+  ADD CONSTRAINT staging_manifest_id_len_ck CHECK(octet_length(snapshot_id)=32),
+  ADD CONSTRAINT staging_manifest_len_ck CHECK(octet_length(manifest_bytes)<=16777216),
+  ADD CONSTRAINT staging_state_ck CHECK(state IN('staged','verified','quarantined'));
+ALTER TABLE sync_v2.migration_staging_objects
+  ADD CONSTRAINT staging_object_id_len_ck CHECK(octet_length(object_id)=32),
+  ADD CONSTRAINT staging_object_count_ck CHECK(byte_count BETWEEN 0 AND 262144000);
