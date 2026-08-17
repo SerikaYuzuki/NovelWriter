@@ -118,14 +118,17 @@ impl Repository {
             .bind(&p.account_id).bind(cmd.command_id).fetch_optional(&mut **tx).await? {
             let kind: String = row.try_get("command_kind")?;
             let digest: Vec<u8> = row.try_get("request_digest")?;
+            let state: String = row.try_get("state")?;
+            let status: Option<i32> = row.try_get("response_status")?;
+            let response: Option<Vec<u8>> = row.try_get("canonical_response")?;
             return replay_receipt(
                 &kind,
                 &digest,
                 cmd.kind.as_str(),
                 &cmd.request_digest,
-                row.try_get::<String, _>("state")? == "completed",
-                row.try_get("response_status").ok(),
-                row.try_get::<Vec<u8>, _>("canonical_response").ok().as_deref(),
+                state == "completed",
+                status,
+                response.as_deref(),
             );
         }
         Ok(None)
@@ -821,10 +824,14 @@ impl Repository {
                 .and_then(|value| value.get("ids"))
                 .and_then(Value::as_array)
                 .ok_or_else(|| SyncError::SchemaViolation(key.into()))
-                .map(|ids| {
+                .and_then(|ids| {
                     ids.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| SyncError::SchemaViolation(key.into()))
+                        })
                         .collect()
                 })
         };
