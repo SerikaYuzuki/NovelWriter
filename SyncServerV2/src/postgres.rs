@@ -258,9 +258,11 @@ impl Repository {
             .get("byteCount")
             .and_then(Value::as_i64)
             .ok_or_else(|| SyncError::SchemaViolation("byteCount".into()))?;
-        if sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'").bind(&p.account_id).bind(object.as_slice()).fetch_optional(&mut **tx).await?.is_some() { return Ok((200,Self::response(c,"noChanges",vec![("objectId".into(),Value::String(hex::encode(object)))]))); }
+        if sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'").bind(&p.account_id).bind(object.as_slice()).fetch_optional(&mut **tx).await?.is_some() { return Ok((200,Self::response(c,"noChanges",vec![]))); }
         let upload = Uuid::new_v4();
-        sqlx::query("INSERT INTO sync_v2.upload_capabilities(account_id,upload_id,command_id,work_id,account_fence,object_id,byte_count,state,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'prepared',now()+interval '15 minutes')").bind(&p.account_id).bind(upload).bind(c.command_id).bind(c.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(count).execute(&mut **tx).await?;
+        let upload_row = sqlx::query("INSERT INTO sync_v2.upload_capabilities(account_id,upload_id,command_id,work_id,account_fence,object_id,byte_count,state,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'prepared',now()+interval '15 minutes') RETURNING expires_at")
+            .bind(&p.account_id).bind(upload).bind(c.command_id).bind(c.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(count).fetch_one(&mut **tx).await?;
+        let expires: chrono::DateTime<Utc> = upload_row.try_get("expires_at")?;
         let capability = upload_capability(&p.account_id, &p.account_fence, upload, c.command_id);
         Ok((
             201,
@@ -271,6 +273,7 @@ impl Repository {
                     ("uploadId".into(), Value::String(upload.to_string())),
                     ("uploadCapability".into(), Value::String(capability)),
                     ("objectId".into(), Value::String(hex::encode(object))),
+                    ("expiresAt".into(), Value::String(expires.to_rfc3339())),
                 ],
             ),
         ))

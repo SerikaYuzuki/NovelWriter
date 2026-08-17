@@ -42,6 +42,11 @@ ALTER TABLE sync_v2.account_objects
 ALTER TABLE sync_v2.works
   ADD CONSTRAINT works_head_snapshot_scope_fk FOREIGN KEY(account_id,work_id,head_snapshot_id)
   REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE sync_v2.account_scopes
+  ADD CONSTRAINT account_scope_epoch_ck CHECK(protocol_epoch > 0);
+ALTER TABLE sync_v2.works
+  ADD CONSTRAINT works_state_ck CHECK(state IN('bound','quarantined')),
+  ADD CONSTRAINT works_generation_ck CHECK(head_generation IS NULL OR head_generation > 0);
 ALTER TABLE sync_v2.snapshot_parents
   ADD CONSTRAINT snapshot_parent_fk FOREIGN KEY(account_id,work_id,snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),
   ADD CONSTRAINT snapshot_parent_target_fk FOREIGN KEY(account_id,work_id,parent_snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),
@@ -59,14 +64,35 @@ ALTER TABLE sync_v2.receipts
 ALTER TABLE sync_v2.sealed_commands
   ADD CONSTRAINT sealed_work_command_uq UNIQUE(account_id,work_id,command_id),
   ADD CONSTRAINT sealed_work_kind_uq UNIQUE(account_id,work_id,command_id,command_kind),
+  ADD CONSTRAINT sealed_command_kind_ck CHECK(command_kind IN ('createWork','prepareObject','finalizeObject','registerSnapshot','publish','resolveDevice','resolveServer','cloneWork','restore')),
+  ADD CONSTRAINT sealed_state_ck CHECK(state IN('sealed','sending','completed','quarantined','conflictPending','parked')),
   ADD CONSTRAINT sealed_request_len_ck CHECK(octet_length(canonical_request)<=33554432),
-  ADD CONSTRAINT sealed_digest_len_ck CHECK(octet_length(request_digest)=32);
+  ADD CONSTRAINT sealed_digest_len_ck CHECK(octet_length(request_digest)=32),
+  ADD CONSTRAINT sealed_source_id_len_ck CHECK(octet_length(source_snapshot_id)=32),
+  ADD CONSTRAINT sealed_generation_ck CHECK(source_generation>0);
+ALTER TABLE sync_v2.receipts
+  ADD CONSTRAINT receipts_state_ck CHECK(state IN('reserved','completed')),
+  ADD CONSTRAINT receipts_kind_ck CHECK(command_kind IN ('createWork','prepareObject','finalizeObject','registerSnapshot','publish','resolveDevice','resolveServer','cloneWork','restore')),
+  ADD CONSTRAINT receipts_digest_len_ck CHECK(octet_length(request_digest)=32),
+  ADD CONSTRAINT receipts_request_len_ck CHECK(octet_length(canonical_request)<=33554432),
+  ADD CONSTRAINT receipts_response_len_ck CHECK(canonical_response IS NULL OR octet_length(canonical_response)<=33554432),
+  ADD CONSTRAINT receipts_state_shape_ck CHECK((state='reserved' AND response_status IS NULL AND canonical_response IS NULL AND completed_at IS NULL) OR (state='completed' AND response_status IS NOT NULL AND canonical_response IS NOT NULL AND completed_at IS NOT NULL));
 ALTER TABLE sync_v2.upload_capabilities
-  ADD CONSTRAINT upload_sealed_composite_fk FOREIGN KEY(account_id,work_id,command_id) REFERENCES sync_v2.sealed_commands(account_id,work_id,command_id);
+  ADD CONSTRAINT upload_sealed_composite_fk FOREIGN KEY(account_id,work_id,command_id) REFERENCES sync_v2.sealed_commands(account_id,work_id,command_id),
+  ADD CONSTRAINT upload_object_id_len_ck CHECK(octet_length(object_id)=32),
+  ADD CONSTRAINT upload_byte_count_ck CHECK(byte_count BETWEEN 0 AND 262144000),
+  ADD CONSTRAINT upload_state_ck CHECK(state IN('prepared','uploaded','finalized','expired'));
 ALTER TABLE sync_v2.active_conflicts ADD COLUMN source_generation BIGINT NOT NULL;
-ALTER TABLE sync_v2.active_conflicts ADD CONSTRAINT active_conflict_source_generation_ck CHECK(source_generation>0);
+ALTER TABLE sync_v2.active_conflicts ADD CONSTRAINT active_conflict_source_generation_ck CHECK(source_generation>0),
+  ADD CONSTRAINT active_conflict_revision_ck CHECK(current_revision>0),
+  ADD CONSTRAINT active_conflict_state_ck CHECK(state IN('active','resolved'));
 ALTER TABLE sync_v2.conflict_candidates ADD COLUMN source_generation BIGINT NOT NULL;
-ALTER TABLE sync_v2.conflict_candidates ADD CONSTRAINT conflict_candidate_source_generation_ck CHECK(source_generation>0);
+ALTER TABLE sync_v2.conflict_candidates
+  ADD CONSTRAINT conflict_candidate_source_generation_ck CHECK(source_generation>0),
+  ADD CONSTRAINT conflict_candidate_revision_ck CHECK(revision>0),
+  ADD CONSTRAINT conflict_candidate_remote_len_ck CHECK(octet_length(remote_snapshot_id)=32),
+  ADD CONSTRAINT conflict_candidate_local_len_ck CHECK(octet_length(local_snapshot_id)=32),
+  ADD CONSTRAINT conflict_candidate_base_len_ck CHECK(base_snapshot_id IS NULL OR octet_length(base_snapshot_id)=32);
 ALTER TABLE sync_v2.conflict_candidates
   ADD CONSTRAINT conflict_candidate_work_fk FOREIGN KEY(account_id,work_id,base_snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),
   ADD CONSTRAINT conflict_candidate_local_fk FOREIGN KEY(account_id,work_id,local_snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),

@@ -5,9 +5,9 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn postgres_gate_is_opt_in_and_uses_a_unique_schema() {
-    let Ok(url) = std::env::var("FUMINIWA_V2_TEST_DATABASE_URL") else {
-        return;
-    };
+    let url = std::env::var("FUMINIWA_V2_TEST_DATABASE_URL").expect(
+        "NO-GO: FUMINIWA_V2_TEST_DATABASE_URL is required for Snapshot Sync v2 PostgreSQL integration tests",
+    );
     assert!(
         !url.contains("192.168."),
         "integration must not use a LAN fixed URL"

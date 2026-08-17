@@ -6,15 +6,15 @@ use crate::{
 };
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post, put},
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sqlx::Row;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -30,9 +30,12 @@ fn error_response(error: SyncError) -> Response {
         SyncError::CommandIdReused | SyncError::StaleHead | SyncError::StaleConflictRevision => {
             StatusCode::CONFLICT
         }
-        SyncError::InvalidCanonicalBytes | SyncError::SchemaViolation(_) => {
-            StatusCode::UNPROCESSABLE_ENTITY
-        }
+        SyncError::InvalidCanonicalBytes
+        | SyncError::SchemaViolation(_)
+        | SyncError::ObjectDigestMismatch
+        | SyncError::SnapshotDigestMismatch
+        | SyncError::LineageViolation
+        | SyncError::SizeLimitExceeded => StatusCode::UNPROCESSABLE_ENTITY,
         _ => StatusCode::BAD_REQUEST,
     };
     let code = error.to_string();
@@ -54,6 +57,84 @@ fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response 
         .header("content-type", "application/vnd.fuminiwa.sync.v2+jcs")
         .body(axum::body::Body::from(bytes))
         .unwrap()
+}
+const MAX_PAGE_SIZE: i64 = 500;
+const DEFAULT_PAGE_SIZE: i64 = 100;
+
+fn cursor_digest(endpoint: &str) -> String {
+    hex::encode(sha256(endpoint.as_bytes()))
+}
+
+fn encode_cursor(value: serde_json::Value) -> Result<String, SyncError> {
+    let bytes = canonical_json(&value).map_err(|_| SyncError::Retryable)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn decode_cursor(encoded: &str) -> SyncResult<serde_json::Value> {
+    if encoded.len() > 2048 {
+        return Err(SyncError::SizeLimitExceeded);
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| SyncError::SchemaViolation("cursor".into()))?;
+    let value = strict_json(&bytes)?;
+    if canonical_json(&value).map_err(|_| SyncError::InvalidCanonicalBytes)? != bytes {
+        return Err(SyncError::InvalidCanonicalBytes);
+    }
+    Ok(value)
+}
+
+fn page_size(params: &HashMap<String, String>) -> SyncResult<i64> {
+    let value = params
+        .get("pageSize")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_PAGE_SIZE);
+    if !(1..=MAX_PAGE_SIZE).contains(&value) {
+        return Err(SyncError::SchemaViolation("pageSize".into()));
+    }
+    Ok(value)
+}
+
+fn cursor_scope(
+    value: &serde_json::Value,
+    endpoint: &str,
+    p: &AuthenticatedPrincipal,
+    page: i64,
+    work: Option<Uuid>,
+) -> SyncResult<(i64, String)> {
+    if value.get("endpoint").and_then(serde_json::Value::as_str) != Some(endpoint)
+        || value.get("accountId").and_then(serde_json::Value::as_str) != Some(p.account_id.as_str())
+        || value
+            .get("accountFence")
+            .and_then(serde_json::Value::as_str)
+            != Some(p.account_fence.as_str())
+        || value
+            .get("protocolEpoch")
+            .and_then(serde_json::Value::as_i64)
+            != Some(PROTOCOL_EPOCH)
+        || value.get("queryDigest").and_then(serde_json::Value::as_str)
+            != Some(cursor_digest(endpoint).as_str())
+        || value.get("pageSize").and_then(serde_json::Value::as_i64) != Some(page)
+    {
+        return Err(SyncError::AccountFenceMismatch);
+    }
+    if let Some(work_id) = work {
+        if value.get("workId").and_then(serde_json::Value::as_str)
+            != Some(work_id.to_string().as_str())
+        {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+    }
+    let high = value
+        .get("highWater")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| SyncError::SchemaViolation("cursor.highWater".into()))?;
+    let last = value
+        .get("last")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok((high, last))
 }
 #[allow(clippy::result_large_err)]
 fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrincipal, Response> {
@@ -147,6 +228,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v2/works/:work_id/conflict/resolve", post(routed_command))
         .route("/v2/works/:work_id/restore", post(routed_command))
         .route("/v2/receipts/:command_id", get(receipt))
+        .layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES))
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {
@@ -156,21 +238,74 @@ async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {
     };
     canonical_response(
         StatusCode::OK,
-        serde_json::json!({"accountId":p.account_id,"accountFence":p.account_fence,"serverInstanceId":p.server_instance_id,"protocolEpoch":PROTOCOL_EPOCH,"result":"noChanges","limits":{"maxObjectBytes":MAX_OBJECT_BYTES,"maxManifestBytes":MAX_MANIFEST_BYTES}}),
+        serde_json::json!({"accountId":p.account_id,"accountFence":p.account_fence,"serverInstanceId":p.server_instance_id,"protocolEpoch":PROTOCOL_EPOCH,"result":"noChanges","limits":{"maxObjectBytes":MAX_OBJECT_BYTES,"maxManifestBytes":MAX_MANIFEST_BYTES,"maxEntries":100000}}),
     )
 }
-async fn list_works(headers: HeaderMap, state: State<AppState>) -> Response {
+async fn list_works(
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    state: State<AppState>,
+) -> Response {
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let rows=sqlx::query("SELECT work_id,document_id,head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 ORDER BY work_id LIMIT 500").bind(&p.account_id).fetch_all(&state.repo.pool).await;
+    let requested_page = match page_size(&params) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let (high_water, last, page) = if let Some(encoded) = params.get("cursor") {
+        let cursor = match decode_cursor(encoded) {
+            Ok(value) => value,
+            Err(error) => return error_response(error),
+        };
+        let page = match cursor.get("pageSize").and_then(serde_json::Value::as_i64) {
+            Some(value) => value,
+            None => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
+        };
+        if params.contains_key("pageSize") && page != requested_page {
+            return error_response(SyncError::SchemaViolation("cursor.pageSize".into()));
+        }
+        match cursor_scope(&cursor, "works", &p, page, None) {
+            Ok((high, last)) => (high, last, page),
+            Err(error) => return error_response(error),
+        }
+    } else {
+        let high = match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(event_id) FROM sync_v2.catalog_events WHERE account_id=$1",
+        )
+        .bind(&p.account_id)
+        .fetch_one(&state.repo.pool)
+        .await
+        {
+            Ok(value) => value.unwrap_or(0),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        (high, String::new(), requested_page)
+    };
+    let rows=sqlx::query("SELECT DISTINCT ON (c.work_id) c.work_id,c.head_generation,c.head_snapshot_id,c.title,c.tombstoned FROM sync_v2.catalog_events c WHERE c.account_id=$1 AND c.event_id <= $2 AND c.work_id::text > $3 ORDER BY c.work_id,c.event_id DESC LIMIT $4").bind(&p.account_id).bind(high_water).bind(&last).bind(page).fetch_all(&state.repo.pool).await;
     match rows {
         Ok(rows) => {
-            let items:Vec<_>=rows.into_iter().map(|r|serde_json::json!({"workId":r.try_get::<Uuid,_>("work_id").ok(),"documentId":r.try_get::<Uuid,_>("document_id").ok(),"head":r.try_get::<Option<i64>,_>("head_generation").ok().flatten().map(|g|serde_json::json!({"generation":g,"snapshotId":hex::encode(r.try_get::<Vec<u8>,_>("head_snapshot_id").unwrap_or_default())}))})).collect();
+            let last_work = rows
+                .last()
+                .and_then(|row| row.try_get::<Uuid, _>("work_id").ok())
+                .map(|value| value.to_string());
+            let items:Vec<_>=rows.into_iter().filter_map(|r| {
+                let work_id = r.try_get::<Uuid,_>("work_id").ok()?;
+                let generation = r.try_get::<Option<i64>,_>("head_generation").ok().flatten()?;
+                let snapshot = r.try_get::<Vec<u8>,_>("head_snapshot_id").ok()?;
+                let title = r.try_get::<String,_>("title").ok()?;
+                if r.try_get::<bool,_>("tombstoned").ok()? { return None; }
+                Some(serde_json::json!({"workId":work_id,"title":title,"head":{"generation":generation,"snapshotId":hex::encode(snapshot)}}))
+            }).collect();
+            let next_cursor = if items.len() as i64 == page {
+                last_work.and_then(|last| encode_cursor(serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"works","highWater":high_water,"last":last,"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("works")})).ok())
+            } else {
+                None
+            };
             canonical_response(
                 StatusCode::OK,
-                serde_json::json!({"items":items,"nextCursor":null,"result":"noChanges"}),
+                serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"}),
             )
         }
         Err(e) => error_response(SyncError::Database(e)),
@@ -194,17 +329,76 @@ async fn head(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>
         Err(e) => error_response(SyncError::Database(e)),
     }
 }
-async fn history(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppState>) -> Response {
+async fn history(
+    Path(work): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    state: State<AppState>,
+) -> Response {
     let p = match principal(&headers, &state) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let rows=sqlx::query("SELECT occurrence_id,snapshot_id,reason,pinned,created_at FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 ORDER BY event_id LIMIT 500").bind(&p.account_id).bind(work).fetch_all(&state.repo.pool).await;
+    let exists = match sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+        .bind(&p.account_id)
+        .bind(work)
+        .fetch_optional(&state.repo.pool)
+        .await
+    {
+        Ok(value) => value.is_some(),
+        Err(error) => return error_response(SyncError::Database(error)),
+    };
+    if !exists {
+        return error_response(SyncError::NotFound);
+    }
+    let requested_page = match page_size(&params) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let (high_water, last, page) = if let Some(encoded) = params.get("cursor") {
+        let cursor = match decode_cursor(encoded) {
+            Ok(value) => value,
+            Err(error) => return error_response(error),
+        };
+        let page = match cursor.get("pageSize").and_then(serde_json::Value::as_i64) {
+            Some(value) => value,
+            None => return error_response(SyncError::SchemaViolation("cursor.pageSize".into())),
+        };
+        if params.contains_key("pageSize") && page != requested_page {
+            return error_response(SyncError::SchemaViolation("cursor.pageSize".into()));
+        }
+        match cursor_scope(&cursor, "history", &p, page, Some(work)) {
+            Ok((high, last)) => (high, last.parse::<i64>().unwrap_or(0), page),
+            Err(error) => return error_response(error),
+        }
+    } else {
+        let high = match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(event_id) FROM sync_v2.history WHERE account_id=$1 AND work_id=$2",
+        )
+        .bind(&p.account_id)
+        .bind(work)
+        .fetch_one(&state.repo.pool)
+        .await
+        {
+            Ok(value) => value.unwrap_or(0),
+            Err(error) => return error_response(SyncError::Database(error)),
+        };
+        (high, 0, requested_page)
+    };
+    let rows=sqlx::query("SELECT occurrence_id,snapshot_id,reason,pinned,created_at,event_id FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 AND event_id <= $3 AND event_id > $4 ORDER BY event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page).fetch_all(&state.repo.pool).await;
     match rows {
-        Ok(rows) => canonical_response(
-            StatusCode::OK,
-            serde_json::json!({"items":rows.into_iter().map(|r|serde_json::json!({"occurrenceId":r.try_get::<Uuid,_>("occurrence_id").ok(),"snapshotId":hex::encode(r.try_get::<Vec<u8>,_>("snapshot_id").unwrap_or_default()),"reason":r.try_get::<String,_>("reason").ok(),"pinned":r.try_get::<bool,_>("pinned").ok()})).collect::<Vec<_>>(),"nextCursor":null,"result":"noChanges"}),
-        ),
+        Ok(rows) => canonical_response(StatusCode::OK, {
+            let last_event = rows
+                .last()
+                .and_then(|row| row.try_get::<i64, _>("event_id").ok());
+            let items = rows.into_iter().filter_map(|r| Some(serde_json::json!({"occurrenceId":r.try_get::<Uuid,_>("occurrence_id").ok()?,"snapshotId":hex::encode(r.try_get::<Vec<u8>,_>("snapshot_id").ok()?),"reason":r.try_get::<String,_>("reason").ok()? ,"pinned":r.try_get::<bool,_>("pinned").ok()?,"createdAt":r.try_get::<chrono::DateTime<chrono::Utc>,_>("created_at").ok()?.to_rfc3339()}))).collect::<Vec<_>>();
+            let next_cursor = if items.len() as i64 == page {
+                last_event.and_then(|last| encode_cursor(serde_json::json!({"accountFence":p.account_fence,"accountId":p.account_id,"endpoint":"history","highWater":high_water,"last":last.to_string(),"pageSize":page,"protocolEpoch":PROTOCOL_EPOCH,"queryDigest":cursor_digest("history"),"workId":work})).ok())
+            } else {
+                None
+            };
+            serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"})
+        }),
         Err(e) => error_response(SyncError::Database(e)),
     }
 }
@@ -227,7 +421,7 @@ async fn manifest(
             let bytes: Vec<u8> = r.try_get("manifest_bytes").unwrap_or_default();
             canonical_response(
                 StatusCode::OK,
-                serde_json::json!({"manifestBase64URL":URL_SAFE_NO_PAD.encode(bytes),"manifestBytesDigest":hex::encode(r.try_get::<Vec<u8>,_>("manifest_digest").unwrap_or_default()),"result":"noChanges"}),
+                serde_json::json!({"manifestBase64URL":URL_SAFE_NO_PAD.encode(bytes),"manifestBytesDigest":hex::encode(r.try_get::<Vec<u8>,_>("manifest_digest").unwrap_or_default()),"snapshotId":hex::encode(id),"result":"noChanges"}),
             )
         }
         Ok(None) => error_response(SyncError::NotFound),
@@ -255,6 +449,8 @@ async fn object(
                 .status(200)
                 .header("content-type", "application/octet-stream")
                 .header("x-fuminiwa-object-digest", hex::encode(id))
+                .header("x-fuminiwa-byte-count", bytes.len().to_string())
+                .header("x-fuminiwa-result", "noChanges")
                 .body(axum::body::Body::from(bytes))
                 .unwrap()
         }
@@ -271,22 +467,53 @@ async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes
         Ok(v) => v,
         Err(e) => return error_response(e),
     };
+    if canonical_json(&value).ok().as_deref() != Some(body.as_ref()) {
+        return error_response(SyncError::SchemaViolation("missing objects request".into()));
+    }
     if value
         .get("schemaVersion")
         .and_then(serde_json::Value::as_i64)
         != Some(PROTOCOL_EPOCH)
         || value
-            .get("workId")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|v| Uuid::parse_str(v).ok())
-            .is_none()
+            .as_object()
+            .map(|object| {
+                object
+                    .keys()
+                    .any(|key| !["objectIds", "schemaVersion", "workId"].contains(&key.as_str()))
+            })
+            .unwrap_or(true)
     {
         return error_response(SyncError::SchemaViolation("missing objects request".into()));
+    }
+    let work = match value
+        .get("workId")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    {
+        Some(work) => work,
+        None => return error_response(SyncError::SchemaViolation("workId".into())),
+    };
+    if value.get("workId").and_then(serde_json::Value::as_str) != Some(work.to_string().as_str()) {
+        return error_response(SyncError::SchemaViolation("workId".into()));
+    }
+    if !sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+        .bind(&p.account_id)
+        .bind(work)
+        .fetch_optional(&state.repo.pool)
+        .await
+        .map(|value| value.is_some())
+        .unwrap_or(false)
+    {
+        return error_response(SyncError::NotFound);
     }
     let Some(ids) = value.get("objectIds").and_then(serde_json::Value::as_array) else {
         return error_response(SyncError::SchemaViolation("objectIds".into()));
     };
+    if ids.len() > 100_000 {
+        return error_response(SyncError::SizeLimitExceeded);
+    }
     let mut missing = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for id in ids {
         let Some(text) = id.as_str() else {
             return error_response(SyncError::SchemaViolation("objectIds".into()));
@@ -295,6 +522,9 @@ async fn missing_objects(headers: HeaderMap, state: State<AppState>, body: Bytes
             Ok(v) => v,
             Err(e) => return error_response(e),
         };
+        if !seen.insert(digest) {
+            return error_response(SyncError::SchemaViolation("objectIds.unique".into()));
+        }
         let found = match sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'")
             .bind(&p.account_id)
             .bind(digest.as_slice())
@@ -339,7 +569,11 @@ async fn upload(
         return error_response(SyncError::UploadCapabilityMismatch);
     };
     match state.repo.upload(&p, upload, capability, &body).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header("x-fuminiwa-result", "applied")
+            .body(axum::body::Body::empty())
+            .unwrap(),
         Err(e) => error_response(e),
     }
 }
@@ -348,11 +582,23 @@ async fn conflict(Path(work): Path<Uuid>, headers: HeaderMap, state: State<AppSt
         Ok(v) => v,
         Err(e) => return e,
     };
-    let row=sqlx::query("SELECT conflict_id,current_revision,state FROM sync_v2.active_conflicts WHERE account_id=$1 AND work_id=$2 AND state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
+    let exists = match sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+        .bind(&p.account_id)
+        .bind(work)
+        .fetch_optional(&state.repo.pool)
+        .await
+    {
+        Ok(value) => value.is_some(),
+        Err(error) => return error_response(SyncError::Database(error)),
+    };
+    if !exists {
+        return error_response(SyncError::NotFound);
+    }
+    let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => canonical_response(
             StatusCode::OK,
-            serde_json::json!({"conflictId":r.try_get::<Uuid,_>("conflict_id").ok(),"conflictRevision":r.try_get::<i64,_>("current_revision").ok(),"state":"active","result":"noChanges"}),
+            serde_json::json!({"conflict":{"baseSnapshotId":r.try_get::<Option<Vec<u8>>,_>("base_snapshot_id").ok().flatten().map(hex::encode),"conflictId":r.try_get::<Uuid,_>("conflict_id").ok(),"localSnapshotId":hex::encode(r.try_get::<Vec<u8>,_>("local_snapshot_id").unwrap_or_default()),"remoteSnapshotId":hex::encode(r.try_get::<Vec<u8>,_>("remote_snapshot_id").unwrap_or_default()),"revision":r.try_get::<i64,_>("current_revision").ok(),"sourceGeneration":r.try_get::<i64,_>("source_generation").ok(),"workId":work},"result":"noChanges"}),
         ),
         Ok(None) => canonical_response(
             StatusCode::OK,
