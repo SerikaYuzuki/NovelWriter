@@ -68,7 +68,9 @@ public enum CanonicalJSON {
         switch value {
         case let .object(pairs):
             output.append(123)
-            let sorted = pairs.sorted { $0.0.utf8.lexicographicallyPrecedes($1.0.utf8) }
+            // RFC 8785 orders property names by their UTF-16 code units, not
+            // by UTF-8 bytes or Unicode scalar values.
+            let sorted = pairs.sorted { $0.0.utf16.lexicographicallyPrecedes($1.0.utf16) }
             for (index, pair) in sorted.enumerated() {
                 if index != 0 {
                     output.append(44)
@@ -268,7 +270,9 @@ public enum CanonicalJSON {
                 throw CanonicalJSONError.unsupportedNumber
             }
             let text = String(bytes: bytes[start ..< index], encoding: .ascii)!
-            guard let number = Int64(text), abs(number) <= 9_007_199_254_740_991 else {
+            guard let number = Int64(text),
+                  number >= -9_007_199_254_740_991,
+                  number <= 9_007_199_254_740_991 else {
                 throw CanonicalJSONError.unsafeInteger
             }
             return .number(number)

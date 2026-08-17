@@ -19,6 +19,15 @@ public enum SyncV2TypeError: Error, Equatable, Sendable {
     case commandViolation(String)
 }
 
+enum SyncV2UUID {
+    static func parse(_ string: String) -> UUID? {
+        guard string.count == 36,
+              let value = UUID(uuidString: string),
+              value.uuidString.lowercased() == string else { return nil }
+        return value
+    }
+}
+
 public struct WorkID: Hashable, Codable, Sendable, CustomStringConvertible {
     public let rawValue: UUID
     public init(rawValue: UUID) {
@@ -30,7 +39,7 @@ public struct WorkID: Hashable, Codable, Sendable, CustomStringConvertible {
     }
 
     public init(uuidString: String) throws {
-        guard let value = UUID(uuidString: uuidString.lowercased()), value.uuidString.lowercased() == uuidString else {
+        guard let value = SyncV2UUID.parse(uuidString) else {
             throw SyncV2TypeError.invalidUUID
         }
         rawValue = value
@@ -60,7 +69,7 @@ public struct DocumentID: Hashable, Codable, Sendable, CustomStringConvertible {
     }
 
     public init(uuidString: String) throws {
-        guard let value = UUID(uuidString: uuidString.lowercased()), value.uuidString.lowercased() == uuidString else { throw SyncV2TypeError.invalidUUID }
+        guard let value = SyncV2UUID.parse(uuidString) else { throw SyncV2TypeError.invalidUUID }
         rawValue = value
     }
 
@@ -126,13 +135,16 @@ public struct SnapshotID: Hashable, Codable, Sendable, CustomStringConvertible {
 }
 
 public enum SHA256Digest {
+    #if canImport(CryptoKit)
     public static func hex(_ data: Data) -> String {
-        #if canImport(CryptoKit)
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        #else
-        return data.map { String(format: "%02x", $0) }.joined()
-        #endif
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
+    #else
+    @available(*, unavailable, message: "Snapshot Sync v2 requires CryptoKit for SHA-256")
+    public static func hex(_: Data) -> String {
+        fatalError("CryptoKit unavailable")
+    }
+    #endif
 }
 
 public struct SnapshotEntry: Codable, Hashable, Sendable {

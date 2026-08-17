@@ -69,7 +69,7 @@ public enum SnapshotCodec {
             return bytes
         }
         let documentInfo = try fields(data("work/document"), allowed: ["documentCreatedAt", "documentId"])
-        guard let documentID = try UUID(uuidString: string(documentInfo, "documentId")) else { throw SyncV2TypeError.invalidUUID }
+        guard let documentID = try SyncV2UUID.parse(string(documentInfo, "documentId")) else { throw SyncV2TypeError.invalidUUID }
         let createdAt = try parseDate(string(documentInfo, "documentCreatedAt"))
         let chapterIDs = try order(data("work/chapter-order"))
         let characterIDs = try order(data("work/character-order"))
@@ -90,10 +90,10 @@ public enum SnapshotCodec {
                 let prefix = "episode/\(episodeID)"
                 let title = try valueString(data("\(prefix)/title")); let body = try valueString(data("\(prefix)/body")); let memo = try valueString(data("\(prefix)/memo"))
                 expected.formUnion(["\(prefix)/title", "\(prefix)/body", "\(prefix)/memo"])
-                guard let eid = UUID(uuidString: episodeID) else { throw SyncV2TypeError.invalidUUID }
+                guard let eid = SyncV2UUID.parse(episodeID) else { throw SyncV2TypeError.invalidUUID }
                 episodes.append(Episode(id: EpisodeID(rawValue: eid), title: title, content: body, memo: memo))
             }
-            guard let cid = UUID(uuidString: chapterID) else { throw SyncV2TypeError.invalidUUID }
+            guard let cid = SyncV2UUID.parse(chapterID) else { throw SyncV2TypeError.invalidUUID }
             try chapters.append(Chapter(id: ChapterID(rawValue: cid), title: valueString(data("\(chapterPrefix)/title")), episodes: episodes))
         }
         var characters: [Character] = []
@@ -192,7 +192,7 @@ public enum SnapshotCodec {
 
     private static func order(_ data: Data) throws -> [String] {
         guard case let .object(pairs) = try CanonicalJSON.parseObject(data), let value = Dictionary(pairs, uniquingKeysWith: { first, _ in first })["ids"], case let .array(ids) = value else { throw SyncV2TypeError.schemaViolation("ids") }
-        let strings = try ids.map { guard case let .string(id) = $0, UUID(uuidString: id) != nil, id == id.lowercased() else { throw SyncV2TypeError.invalidUUID }; return id }
+        let strings = try ids.map { guard case let .string(id) = $0, SyncV2UUID.parse(id) != nil else { throw SyncV2TypeError.invalidUUID }; return id }
         guard Set(strings).count == strings.count else { throw SyncV2TypeError.referenceViolation("duplicate order") }
         return strings
     }
@@ -200,7 +200,7 @@ public enum SnapshotCodec {
     private static func uuid(_ value: CanonicalJSON.Value?, _: String) throws -> UUID? {
         if case .null = value {
             return nil
-        }; guard case let .string(s) = value, let id = UUID(uuidString: s), s == s.lowercased() else { throw SyncV2TypeError.invalidUUID }; return id
+        }; guard case let .string(s) = value, let id = SyncV2UUID.parse(s) else { throw SyncV2TypeError.invalidUUID }; return id
     }
 
     private static func decodeCharacter(_ data: Data) throws -> Character {

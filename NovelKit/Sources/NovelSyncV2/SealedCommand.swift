@@ -27,10 +27,17 @@ public struct SealedCommand: Hashable, Sendable {
         let root = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
         guard Set(root.keys) == Set(["binding", "commandId", "commandKind", "payload", "schemaVersion", "sourceGeneration", "sourceSnapshotId"]) else { throw SyncV2TypeError.commandViolation("envelope fields") }
         guard case let .number(version) = root["schemaVersion"], version == 2, case let .string(kind) = root["commandKind"], kinds.contains(kind) else { throw SyncV2TypeError.commandViolation("kind/version") }
-        guard let commandString = root["commandId"]?.stringValue, let commandID = UUID(uuidString: commandString), commandString == commandString.lowercased() else { throw SyncV2TypeError.invalidUUID }
+        guard let commandString = root["commandId"]?.stringValue, let commandID = SyncV2UUID.parse(commandString) else { throw SyncV2TypeError.invalidUUID }
         guard case let .number(generation) = root["sourceGeneration"], generation >= 1, case let .string(snapshotString) = root["sourceSnapshotId"], let sourceSnapshot = try? SnapshotID(rawValue: snapshotString) else { throw SyncV2TypeError.commandViolation("source") }
         guard case let .object(bindingPairs) = root["binding"] else { throw SyncV2TypeError.commandViolation("binding") }
-        let b = Dictionary(bindingPairs, uniquingKeysWith: { first, _ in first }); guard Set(b.keys) == Set(["accountFence", "accountId", "protocolEpoch", "serverInstanceId"]), case let .string(fence) = b["accountFence"], case let .string(account) = b["accountId"], case let .number(epoch) = b["protocolEpoch"], epoch >= 1, case let .string(server) = b["serverInstanceId"] else { throw SyncV2TypeError.commandViolation("binding") }
+        let b = Dictionary(bindingPairs, uniquingKeysWith: { first, _ in first })
+        guard Set(b.keys) == Set(["accountFence", "accountId", "protocolEpoch", "serverInstanceId"]),
+              case let .string(fence) = b["accountFence"], fence.count >= 1, fence.count <= 256,
+              case let .string(account) = b["accountId"], account.count >= 1, account.count <= 128,
+              case let .number(epoch) = b["protocolEpoch"], epoch >= 1,
+              case let .string(server) = b["serverInstanceId"], server.count >= 1, server.count <= 128 else {
+            throw SyncV2TypeError.commandViolation("binding")
+        }
         guard let payload = root["payload"], case .object = payload else { throw SyncV2TypeError.commandViolation("payload") }
         try validatePayload(kind, payload)
         let payloadBytes = try CanonicalJSON.render(payload)
@@ -80,7 +87,7 @@ public struct SealedCommand: Hashable, Sendable {
     }
 
     private static func uuid(_ value: CanonicalJSON.Value, _ key: String) throws {
-        guard case let .string(s) = value, UUID(uuidString: s) != nil, s == s.lowercased() else { throw SyncV2TypeError.commandViolation(key) }
+        guard case let .string(s) = value, SyncV2UUID.parse(s) != nil else { throw SyncV2TypeError.commandViolation(key) }
     }
 
     private static func digest(_ value: CanonicalJSON.Value, _ key: String) throws {
