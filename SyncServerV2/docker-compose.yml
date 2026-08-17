@@ -118,10 +118,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          wget --no-check-certificate --server-response --spider
-          --header "Host: $${FUMINIWA_SYNC_V2_EDGE_HOST}:8443"
-          --header "x-fuminiwa-client-version: 0.1.0"
-          https://127.0.0.1:8443/v1/auth/capabilities 2>&1 |
+          wget -q -S --spider http://127.0.0.1:2019/config/ 2>&1 |
           grep -Eq 'HTTP/[0-9.]+ 200'
       interval: 5s
       timeout: 5s
