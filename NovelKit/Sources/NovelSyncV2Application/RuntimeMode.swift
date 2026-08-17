@@ -47,23 +47,6 @@ public struct ProductionRuntimeConfiguration: Sendable {
     public let clientVersion: String
     public let clientPlatform: AuthClientPlatform
 
-    public init(origin: ProductionHTTPSOrigin? = nil) throws {
-        guard let applicationSupportDirectory = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            throw SyncV2ApplicationError.invalidRuntimeMode
-        }
-        localRoot = try ProductionLocalRoot(
-            applicationSupportDirectory: applicationSupportDirectory
-        )
-        self.origin = origin
-        vault = nil
-        documentGate = nil
-        clientVersion = "0.0.0"
-        clientPlatform = .macos
-    }
-
     public init(
         origin: ProductionHTTPSOrigin? = nil,
         vault: (any AuthSessionVault)? = nil,

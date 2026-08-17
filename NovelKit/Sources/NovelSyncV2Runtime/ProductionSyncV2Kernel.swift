@@ -310,6 +310,26 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         guard let remote else { throw SyncV2ApplicationError.workNotFound }
         return try await remote.downloadRemoteOnly(workID: workID)
     }
+
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
+        guard let remote else { throw SyncV2Failure.authenticationRequired }
+        return try await remote.catalogPage(cursor: cursor, pageSize: pageSize)
+    }
+
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
+        guard let remote else { throw SyncV2Failure.authenticationRequired }
+        return try await remote.remoteHead(workID: workID)
+    }
+
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
+        guard let remote else { throw SyncV2Failure.authenticationRequired }
+        return try await remote.historyPage(workID: workID, cursor: cursor, pageSize: pageSize)
+    }
+
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
+        guard let remote else { throw SyncV2Failure.authenticationRequired }
+        return try await remote.remoteConflict(workID: workID)
+    }
 }
 
 private extension ProductionSyncV2Kernel {

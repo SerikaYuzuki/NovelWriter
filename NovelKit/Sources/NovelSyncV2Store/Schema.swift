@@ -37,7 +37,41 @@ enum V2StoreSchema {
             }
             try insertMetadata(db, checksum: expectedChecksum)
         }
+        try ensureTransferJournal(db)
         try attest(db, expectedSQL: sql, expectedChecksum: expectedChecksum)
+    }
+
+    /// Transfer leases are an additive local journal.  It is deliberately
+    /// excluded from the reviewed canonical schema signature so an older
+    /// database can be opened and upgraded without changing the wire/schema
+    /// contract.
+    private static func ensureTransferJournal(_ db: OpaquePointer) throws {
+        let sql = """
+        CREATE TABLE IF NOT EXISTS upload_transfers (
+          transfer_id TEXT PRIMARY KEY,
+          command_id TEXT NOT NULL UNIQUE,
+          work_id TEXT NOT NULL,
+          object_id BLOB NOT NULL,
+          source_snapshot_id BLOB NOT NULL,
+          source_generation INTEGER NOT NULL,
+          upload_id TEXT NOT NULL,
+          capability TEXT NOT NULL,
+          exact_bytes BLOB NOT NULL,
+          bytes_digest BLOB NOT NULL,
+          acknowledged_offset INTEGER NOT NULL,
+          expires_at TEXT NOT NULL,
+          lifecycle TEXT NOT NULL,
+          server_instance_id TEXT NOT NULL,
+          protocol_epoch INTEGER NOT NULL,
+          account_id TEXT NOT NULL,
+          account_fence TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS upload_transfers_scope
+          ON upload_transfers(server_instance_id, protocol_epoch, account_id, account_fence, work_id);
+        """
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw SyncV2StoreError.sqlite(String(cString: sqlite3_errmsg(db)))
+        }
     }
 
     private static func insertMetadata(_ db: OpaquePointer, checksum: Data) throws {
@@ -139,6 +173,12 @@ enum V2StoreSchema {
         var objects: [[String]] = []
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
+            let objectName = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+            let tableName = sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? ""
+            guard !objectName.hasPrefix("upload_transfers"), !tableName.hasPrefix("upload_transfers") else {
+                result = sqlite3_step(statement)
+                continue
+            }
             objects.append((0 ..< 4).map { index in
                 sqlite3_column_text(statement, Int32(index)).map {
                     String(cString: $0)

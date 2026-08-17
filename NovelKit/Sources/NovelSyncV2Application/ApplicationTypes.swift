@@ -9,7 +9,6 @@ public enum SyncV2ApplicationError: Error, Equatable, Sendable {
     case staleConflictAction
     case safeBoundaryRejected
     case remoteOnlyInstallRejected
-    case productionRuntimeIncomplete
 }
 
 public enum SyncV2Failure: Error, Equatable, Sendable {
@@ -39,7 +38,6 @@ public enum SyncV2RetryReason: String, Equatable, Sendable {
 public enum SyncV2FatalReason: String, Equatable, Sendable {
     case unsupportedCommand
     case invalidLocalState
-    case productionTransportIncomplete
     case unexpected
 }
 

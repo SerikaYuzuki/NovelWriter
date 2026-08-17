@@ -59,4 +59,33 @@ public struct SyncV2LibraryProjection: Sendable {
 public protocol SyncV2LibraryProvider: Sendable {
     func library() async throws -> SyncV2LibraryProjection
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
+}
+
+public extension SyncV2LibraryProvider {
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
+        _ = cursor
+        _ = pageSize
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
+        _ = workID
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
+        _ = workID
+        _ = cursor
+        _ = pageSize
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
+        _ = workID
+        throw SyncV2Failure.authenticationRequired
+    }
 }

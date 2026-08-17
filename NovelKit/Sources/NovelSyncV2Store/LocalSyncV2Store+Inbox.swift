@@ -551,8 +551,10 @@ extension LocalSyncV2Store {
                 binding: binding
             )
         }
-        if let previous = current[3].blob,
-           let previousID = try? SnapshotID(rawValue: previous.hexString) {
+        if let previous = current[3].blob {
+            let previousID: SnapshotID
+            do { previousID = try SnapshotID(rawValue: previous.hexString) }
+            catch { throw SyncV2StoreError.invalidSnapshot }
             try insertHistory(
                 workID: graph.workID,
                 snapshotID: previousID,

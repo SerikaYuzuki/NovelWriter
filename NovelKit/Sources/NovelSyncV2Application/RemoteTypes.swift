@@ -113,6 +113,54 @@ public struct SyncV2ReceiptReadback: Hashable, Sendable {
     }
 }
 
+public struct SyncV2RemoteCatalogEntry: Hashable, Sendable {
+    public let workID: WorkID
+    public let title: String
+    public let head: SyncV2RemoteHead?
+
+    public init(workID: WorkID, title: String, head: SyncV2RemoteHead?) {
+        self.workID = workID
+        self.title = title
+        self.head = head
+    }
+}
+
+public struct SyncV2RemoteCatalogPage: Hashable, Sendable {
+    public let items: [SyncV2RemoteCatalogEntry]
+    public let nextCursor: String?
+
+    public init(items: [SyncV2RemoteCatalogEntry], nextCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
+    }
+}
+
+public struct SyncV2RemoteHistoryEntry: Hashable, Sendable {
+    public let occurrenceID: UUID
+    public let snapshotID: SnapshotID
+    public let reason: String
+    public let pinned: Bool
+    public let createdAt: Date
+
+    public init(occurrenceID: UUID, snapshotID: SnapshotID, reason: String, pinned: Bool, createdAt: Date) {
+        self.occurrenceID = occurrenceID
+        self.snapshotID = snapshotID
+        self.reason = reason
+        self.pinned = pinned
+        self.createdAt = createdAt
+    }
+}
+
+public struct SyncV2RemoteHistoryPage: Hashable, Sendable {
+    public let items: [SyncV2RemoteHistoryEntry]
+    public let nextCursor: String?
+
+    public init(items: [SyncV2RemoteHistoryEntry], nextCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
+    }
+}
+
 public enum SyncV2RemoteOperationKind: String, CaseIterable, Equatable, Sendable {
     case createWork
     case prepareObject

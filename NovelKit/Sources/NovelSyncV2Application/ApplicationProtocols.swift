@@ -54,12 +54,36 @@ public extension SyncV2CommandPlanner {
 public protocol SyncV2RemoteClient: Sendable {
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
 }
 
 public extension SyncV2RemoteClient {
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
         _ = workID
         throw SyncV2ApplicationError.workNotFound
+    }
+
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
+        _ = cursor; _ = pageSize
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
+        _ = workID
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
+        _ = workID; _ = cursor; _ = pageSize
+        throw SyncV2Failure.authenticationRequired
+    }
+
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
+        _ = workID
+        throw SyncV2Failure.authenticationRequired
     }
 }
 

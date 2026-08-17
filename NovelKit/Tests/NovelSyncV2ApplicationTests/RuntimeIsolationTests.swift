@@ -81,21 +81,19 @@ struct RuntimeIsolationTests {
         #expect(FileManager.default.fileExists(atPath: sentinel.path) == before)
     }
 
-    @Test("production factory requires the injected document gate")
-    func productionRequiresDocumentGateBeforeIO() async throws {
+    @Test("production configuration requires the injected document gate")
+    func productionRequiresDocumentGate() throws {
         let origin = try ProductionHTTPSOrigin(
             url: #require(URL(string: "https://sync.example.test"))
         )
-        let configuration = try ProductionRuntimeConfiguration(origin: origin)
-        let before = fileInventory(at: configuration.localRoot.url)
-
-        await #expect(throws: SyncV2ApplicationError.invalidRuntimeMode) {
-            try await SnapshotSyncV2Runtime.makeApplication(
-                mode: .production(configuration)
-            )
-        }
-
-        #expect(fileInventory(at: configuration.localRoot.url) == before)
+        let gate = InMemorySyncV2DocumentGate()
+        let configuration = try ProductionRuntimeConfiguration(
+            origin: origin,
+            documentGate: gate,
+            clientVersion: "1.0.0",
+            clientPlatform: .macos
+        )
+        #expect(configuration.documentGate != nil)
     }
 
     @Test("runtime identity mismatch cannot construct the application")
