@@ -29,7 +29,7 @@ struct IOSSnapshotSyncV2Tests {
     }
 
     @Test("normal new/open never creates a WorkID directory")
-    func workIDIsNotAFileSystemArtifact() async {
+    func workIDIsNotAFileSystemArtifact() async throws {
         let environment = makeEnvironment()
         defer { environment.cleanup() }
         let store = IOSDocumentStore(
