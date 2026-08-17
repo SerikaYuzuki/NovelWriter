@@ -14,7 +14,7 @@ func migrationModuleLoads() {
 
 @Test("exports a classified v1 work through NovelStorage and is idempotent")
 func exportsClassifiedWork() async throws {
-    let root = FileManager.default.temporaryDirectory
+    let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
         .appendingPathComponent("v2-export-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -75,11 +75,66 @@ func exportsClassifiedWork() async throws {
     let second = try await LegacyV1Exporter().export(options: options)
     #expect(second.entries == first.entries)
     #expect(FileManager.default.fileExists(atPath: packageURL.path))
+
+    try "\(workID.uuidString),needs-review\n".write(to: ledgerURL, atomically: true, encoding: .utf8)
+    do {
+        _ = try await LegacyV1Exporter().export(options: options)
+        Issue.record("a committed stage with different provenance must not be reused")
+    } catch let error as LegacyV1ExportError {
+        #expect(error == .stageNotEmpty(stageURL))
+    }
+
+    let symlinkStage = root.appendingPathComponent("stage-link", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: symlinkStage, withDestinationURL: stageURL)
+    do {
+        _ = try await LegacyV1Exporter().export(options: optionsWithStage(options, symlinkStage))
+        Issue.record("a symlink stage root must be rejected")
+    } catch let error as LegacyV1ExportError {
+        #expect(error == .unsafeArchivePath(URL(fileURLWithPath: symlinkStage.path)))
+    }
+
+    let walURL = URL(fileURLWithPath: sqliteURL.path + "-wal")
+    try Data("not a sidecar".utf8).write(to: walURL)
+    do {
+        _ = try await LegacyV1Exporter().export(options: optionsWithStage(options, root.appendingPathComponent("stage-wal")))
+        Issue.record("a source WAL sidecar must be rejected")
+    } catch let error as LegacyV1ExportError {
+        #expect(error == .sourceSidecarPresent(walURL))
+    }
+    try FileManager.default.removeItem(at: walURL)
+
+    let sourceFileDigest = SHA256.hash(data: try Data(contentsOf: sqliteURL)).hex
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: archiveManifestURL.path)
+    try "\(sourceFileDigest)  ../library.sqlite\n".write(to: archiveManifestURL, atomically: true, encoding: .utf8)
+    do {
+        _ = try await LegacyV1Exporter().export(options: optionsWithStage(options, root.appendingPathComponent("stage-traversal")))
+        Issue.record("manifest traversal must be rejected")
+    } catch let error as LegacyV1ExportError {
+        #expect(String(describing: error).contains("sourceArchiveManifestMismatch"))
+    }
+    try "\(sourceFileDigest)  library.sqlite\n\(sourceFileDigest)  library.sqlite\n".write(to: archiveManifestURL, atomically: true, encoding: .utf8)
+    do {
+        _ = try await LegacyV1Exporter().export(options: optionsWithStage(options, root.appendingPathComponent("stage-duplicate")))
+        Issue.record("duplicate manifest paths must be rejected")
+    } catch let error as LegacyV1ExportError {
+        #expect(String(describing: error).contains("sourceArchiveManifestMismatch"))
+    }
+}
+
+private func optionsWithStage(_ options: LegacyV1ExportOptions, _ stage: URL) -> LegacyV1ExportOptions {
+    LegacyV1ExportOptions(
+        sourceSQLiteURL: options.sourceSQLiteURL,
+        classificationLedgerURL: options.classificationLedgerURL,
+        stageRootURL: stage,
+        sourceArchiveRootURL: options.sourceArchiveRootURL,
+        archiveManifestURL: options.archiveManifestURL,
+        sourceIsVerifiedArchive: options.sourceIsVerifiedArchive
+    )
 }
 
 @Test("blocks a work whose canonical manifest digest does not match its snapshot ID")
 func blocksInvalidManifest() async throws {
-    let root = FileManager.default.temporaryDirectory
+    let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
         .appendingPathComponent("v2-export-invalid-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -119,7 +174,7 @@ func blocksInvalidManifest() async throws {
 
 @Test("blocks a missing or mismatched referenced document object")
 func blocksReferencedObjectFailure() async throws {
-    let root = FileManager.default.temporaryDirectory
+    let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
         .appendingPathComponent("v2-export-object-failure-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -158,7 +213,7 @@ func blocksReferencedObjectFailure() async throws {
 
 @Test("blocks a missing referenced object")
 func blocksMissingReferencedObject() async throws {
-    let root = FileManager.default.temporaryDirectory
+    let root = URL(fileURLWithPath: "/Volumes/Files/GitHub/NovelWriter/.tmp-v2-export-tests", isDirectory: true)
         .appendingPathComponent("v2-export-object-missing-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -214,7 +269,7 @@ private func makeV1Manifest(workID: UUID, objectID: String, byteCount: Int) thro
 private func makeArchiveManifest(root: URL, sqliteURL: URL) throws -> URL {
     let digest = try SHA256.hash(data: Data(contentsOf: sqliteURL)).hex
     let manifestURL = root.appendingPathComponent("sha256-manifest.txt")
-    try "\(digest)  ./\(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
+    try "\(digest)  \(sqliteURL.lastPathComponent)\n".write(to: manifestURL, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: sqliteURL.path)
     try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: manifestURL.path)
     return manifestURL
