@@ -23,7 +23,11 @@ public struct SealedCommand: Hashable, Sendable {
     public static let kinds: Set<String> = ["cloneWork", "createWork", "finalizeObject", "prepareObject", "publish", "registerSnapshot", "resolveDevice", "resolveServer", "restore"]
 
     public static func decodeCanonical(_ data: Data) throws -> SealedCommand {
-        guard case let .object(pairs) = try CanonicalJSON.parseObject(data) else { throw SyncV2TypeError.commandViolation("envelope") }
+        guard data.count <= SnapshotSyncV2Limits.maxCommandBytes else { throw SyncV2TypeError.commandViolation("size") }
+        guard case let .object(pairs) = try CanonicalJSON.parseObject(
+            data,
+            maxBytes: SnapshotSyncV2Limits.maxCommandBytes
+        ) else { throw SyncV2TypeError.commandViolation("envelope") }
         let root = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
         guard Set(root.keys) == Set(["binding", "commandId", "commandKind", "payload", "schemaVersion", "sourceGeneration", "sourceSnapshotId"]) else { throw SyncV2TypeError.commandViolation("envelope fields") }
         guard case let .number(version) = root["schemaVersion"], version == 2, case let .string(kind) = root["commandKind"], kinds.contains(kind) else { throw SyncV2TypeError.commandViolation("kind/version") }
@@ -75,11 +79,15 @@ public struct SealedCommand: Hashable, Sendable {
         guard Set(f.keys) == expected else { throw SyncV2TypeError.commandViolation("payload fields") }
         for (key, value) in f {
             switch key {
-            case "byteCount": guard case let .number(n) = value, n >= 0, n <= 262_144_000 else { throw SyncV2TypeError.commandViolation(key) }
+            case "byteCount": guard case let .number(n) = value, n >= 0, n <= Int64(SnapshotSyncV2Limits.maxObjectBytes) else { throw SyncV2TypeError.commandViolation(key) }
             case "conflictRevision", "expectedLocalGeneration": guard case let .number(n) = value, n >= 1, n <= 9_007_199_254_740_991 else { throw SyncV2TypeError.commandViolation(key) }
             case "workId", "documentId", "uploadId", "conflictId", "newWorkId", "newDocumentId": try uuid(value, key)
             case "objectId", "manifestBytesDigest", "snapshotId", "candidateSnapshotId", "decisionSnapshotId", "localCandidateSnapshotId", "expectedCurrentSnapshotId", "preAdoptionSnapshotId", "remoteSnapshotId", "newRootSnapshotId", "selectedSnapshotId": try digest(value, key)
-            case "manifestBase64URL": guard case let .string(s) = value, s.range(of: #"^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$"#, options: .regularExpression) != nil, s.count >= 2 else { throw SyncV2TypeError.commandViolation(key) }
+            case "manifestBase64URL":
+                guard case let .string(s) = value,
+                      s.count >= 2,
+                      s.count <= SnapshotSyncV2Limits.maxManifestBase64URLCharacters,
+                      s.range(of: #"^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$"#, options: .regularExpression) != nil else { throw SyncV2TypeError.commandViolation(key) }
             case "expectedRemoteHead", "expectedOriginalHead": try head(value, key)
             default: break
             }

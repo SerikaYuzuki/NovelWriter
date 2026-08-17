@@ -45,7 +45,7 @@ public enum SnapshotValidator {
 
     public static func validate(_ manifest: SnapshotManifest) throws {
         guard manifest.schemaVersion == 2,
-              manifest.entries.count <= 100_000 else { throw SyncV2TypeError.invalidManifest }
+              manifest.entries.count <= SnapshotSyncV2Limits.maxEntries else { throw SyncV2TypeError.invalidManifest }
         guard manifest.parentSnapshotIds.count <= 2 else { throw SyncV2TypeError.invalidManifest }
         let parents = manifest.parentSnapshotIds.map(\.rawValue)
         guard parents == parents.sorted(), Set(parents).count == parents.count else {
@@ -54,7 +54,7 @@ public enum SnapshotValidator {
         let keys = manifest.entries.map(\.entityKey)
         guard keys == keys.sorted(), Set(keys).count == keys.count else { throw SyncV2TypeError.invalidManifest }
         for entry in manifest.entries {
-            guard entry.byteCount >= 0, entry.byteCount <= 262_144_000 else { throw SyncV2TypeError.invalidManifest }
+            guard entry.byteCount >= 0, entry.byteCount <= SnapshotSyncV2Limits.maxObjectBytes else { throw SyncV2TypeError.invalidManifest }
             _ = try EntityKey(entry.entityKey)
             if entry.contentType == .octetStream {
                 guard entry.entityKey.hasSuffix("/bytes") else { throw SyncV2TypeError.schemaViolation(entry.entityKey) }
@@ -69,7 +69,13 @@ public enum SnapshotValidator {
     }
 
     public static func validate(manifestBytes: Data) throws -> SnapshotManifest {
-        let value = try CanonicalJSON.parseObject(manifestBytes)
+        guard manifestBytes.count <= SnapshotSyncV2Limits.maxManifestBytes else {
+            throw SyncV2TypeError.invalidManifest
+        }
+        let value = try CanonicalJSON.parseObject(
+            manifestBytes,
+            maxBytes: SnapshotSyncV2Limits.maxManifestBytes
+        )
         let json = try JSONDecoder().decode(SnapshotManifest.self, from: manifestBytes)
         try validate(json)
         guard case let .object(fields) = value,
@@ -93,17 +99,23 @@ public enum SnapshotValidator {
         for entry in encoded.manifest.entries {
             guard let data = encoded.objects[entry.objectId] else { throw SyncV2TypeError.missingEntity(entry.entityKey) }
             guard data.count == entry.byteCount else { throw SyncV2TypeError.byteCountMismatch }
+            guard data.count <= SnapshotSyncV2Limits.maxObjectBytes else { throw SyncV2TypeError.invalidManifest }
             guard ObjectID(data: data) == entry.objectId else { throw SyncV2TypeError.digestMismatch }
             if entry.contentType == .entityJSON {
                 try validateEntity(data, for: entry.entityKey)
             }
         }
+        try validateClosure(encoded.manifest, objects: encoded.objects)
     }
 
     private static let maxStringLength = 1_048_576
 
     private static func validateEntity(_ data: Data, for key: String) throws {
-        guard case let .object(pairs) = try CanonicalJSON.parseObject(data) else {
+        guard data.count <= SnapshotSyncV2Limits.maxStructuredEntityBytes,
+              case let .object(pairs) = try CanonicalJSON.parseObject(
+                  data,
+                  maxBytes: SnapshotSyncV2Limits.maxStructuredEntityBytes
+              ) else {
             throw SyncV2TypeError.schemaViolation(key)
         }
         let fields = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
@@ -123,7 +135,7 @@ public enum SnapshotValidator {
         }
         if key.hasSuffix("-order") {
             try require(fields, ["ids"], key)
-            guard case let .array(ids) = fields["ids"], ids.count <= 100_000 else {
+            guard case let .array(ids) = fields["ids"], ids.count <= SnapshotSyncV2Limits.maxEntries else {
                 throw SyncV2TypeError.schemaViolation(key)
             }
             var seen = Set<String>()
@@ -164,10 +176,182 @@ public enum SnapshotValidator {
         }
         if key.hasSuffix("/metadata") {
             try require(fields, ["attachmentId", "byteCount", "fileName"], key); try uuid(fields["attachmentId"], key)
-            guard case let .number(count) = fields["byteCount"], count >= 0, count <= 262_144_000 else { throw SyncV2TypeError.schemaViolation(key) }
+            guard case let .number(count) = fields["byteCount"], count >= 0, count <= SnapshotSyncV2Limits.maxObjectBytes else { throw SyncV2TypeError.schemaViolation(key) }
             try string(fields["fileName"], key, min: 1, max: 255); return
         }
         throw SyncV2TypeError.schemaViolation(key)
+    }
+
+    /// Validates the complete snapshot graph without materializing NovelCore
+    /// models. Registration and staging must be safe even when a caller does
+    /// not need to open the document.
+    private static func validateClosure(
+        _ manifest: SnapshotManifest,
+        objects: [ObjectID: Data]
+    ) throws {
+        let entriesByKey = Dictionary(uniqueKeysWithValues: manifest.entries.map { ($0.entityKey, $0) })
+        let referencedObjects = Set(manifest.entries.map(\.objectId))
+        guard Set(objects.keys) == referencedObjects else {
+            throw SyncV2TypeError.referenceViolation("object closure")
+        }
+
+        func objectFields(_ key: String) throws -> [String: CanonicalJSON.Value] {
+            guard let entry = entriesByKey[key], entry.contentType == .entityJSON,
+                  let bytes = objects[entry.objectId],
+                  case let .object(pairs) = try CanonicalJSON.parseObject(
+                      bytes,
+                      maxBytes: SnapshotSyncV2Limits.maxStructuredEntityBytes
+                  ) else {
+                throw SyncV2TypeError.missingEntity(key)
+            }
+            return Dictionary(pairs, uniquingKeysWith: { first, _ in first })
+        }
+
+        func data(_ key: String, contentType: SnapshotEntry.ContentType = .entityJSON) throws -> Data {
+            guard let entry = entriesByKey[key], entry.contentType == contentType,
+                  let bytes = objects[entry.objectId] else {
+                throw SyncV2TypeError.schemaViolation(key)
+            }
+            return bytes
+        }
+
+        func stringValue(_ fields: [String: CanonicalJSON.Value], _ field: String, _ key: String) throws -> String {
+            guard case let .string(value) = fields[field] else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+            return value
+        }
+
+        func uuidValue(_ fields: [String: CanonicalJSON.Value], _ field: String, _ key: String) throws -> String {
+            let value = try stringValue(fields, field, key)
+            guard SyncV2UUID.parse(value) != nil else { throw SyncV2TypeError.referenceViolation(key) }
+            return value
+        }
+
+        func optionalUUIDValue(_ fields: [String: CanonicalJSON.Value], _ field: String, _ key: String) throws -> String? {
+            guard let value = fields[field] else { throw SyncV2TypeError.referenceViolation(key) }
+            if case .null = value {
+                return nil
+            }
+            return try uuidValue(fields, field, key)
+        }
+
+        func order(_ key: String) throws -> [String] {
+            let fields = try objectFields(key)
+            guard fields.keys.count == 1, let ids = fields["ids"], case let .array(values) = ids,
+                  values.count <= SnapshotSyncV2Limits.maxEntries else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+            var result: [String] = []
+            var seen = Set<String>()
+            for value in values {
+                guard case let .string(id) = value, SyncV2UUID.parse(id) != nil, seen.insert(id).inserted else {
+                    throw SyncV2TypeError.referenceViolation(key)
+                }
+                result.append(id)
+            }
+            return result
+        }
+
+        var expected = Set([
+            "work/document", "work/title", "work/synopsis", "work/chapter-order",
+            "work/character-order", "work/plot-card-order", "work/flag-order",
+            "work/world-note-order", "work/attachment-order"
+        ])
+        _ = try objectFields("work/document")
+        _ = try data("work/title")
+        _ = try data("work/synopsis")
+
+        let chapterIDs = try order("work/chapter-order")
+        let characterIDs = try order("work/character-order")
+        let plotCardIDs = try order("work/plot-card-order")
+        let flagIDs = try order("work/flag-order")
+        let worldNoteIDs = try order("work/world-note-order")
+        let attachmentIDs = try order("work/attachment-order")
+
+        var ownedEpisodes = Set<String>()
+        for chapterID in chapterIDs {
+            let prefix = "chapter/\(chapterID)"
+            expected.insert("\(prefix)/title")
+            expected.insert("\(prefix)/episode-order")
+            _ = try data("\(prefix)/title")
+            let episodeIDs = try order("\(prefix)/episode-order")
+            for episodeID in episodeIDs {
+                guard ownedEpisodes.insert(episodeID).inserted else {
+                    throw SyncV2TypeError.referenceViolation("episode ownership")
+                }
+                let episodePrefix = "episode/\(episodeID)"
+                for suffix in ["title", "body", "memo"] {
+                    expected.insert("\(episodePrefix)/\(suffix)")
+                    _ = try data("\(episodePrefix)/\(suffix)")
+                }
+            }
+        }
+
+        for id in characterIDs {
+            let key = "character/\(id)"
+            expected.insert(key)
+            let fields = try objectFields(key)
+            guard try uuidValue(fields, "id", key) == id else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+        }
+
+        let chapterSet = Set(chapterIDs)
+        for id in plotCardIDs {
+            let key = "plot-card/\(id)"
+            expected.insert(key)
+            let fields = try objectFields(key)
+            guard try uuidValue(fields, "id", key) == id else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+            if let chapterID = try optionalUUIDValue(fields, "chapterId", key), !chapterSet.contains(chapterID) {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+        }
+
+        for id in flagIDs {
+            let key = "flag/\(id)"
+            expected.insert(key)
+            let fields = try objectFields(key)
+            guard try uuidValue(fields, "id", key) == id else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+            for field in ["plantedChapterId", "resolvedChapterId"] {
+                if let chapterID = try optionalUUIDValue(fields, field, key), !chapterSet.contains(chapterID) {
+                    throw SyncV2TypeError.referenceViolation(key)
+                }
+            }
+        }
+
+        for id in worldNoteIDs {
+            let key = "world-note/\(id)"
+            expected.insert(key)
+            let fields = try objectFields(key)
+            guard try uuidValue(fields, "id", key) == id else {
+                throw SyncV2TypeError.referenceViolation(key)
+            }
+        }
+
+        for id in attachmentIDs {
+            let metadataKey = "attachment/\(id)/metadata"
+            let bytesKey = "attachment/\(id)/bytes"
+            expected.insert(metadataKey)
+            expected.insert(bytesKey)
+            let metadata = try objectFields(metadataKey)
+            guard try uuidValue(metadata, "attachmentId", metadataKey) == id,
+                  case let .number(byteCount) = metadata["byteCount"],
+                  byteCount >= 0,
+                  byteCount <= Int64(SnapshotSyncV2Limits.maxObjectBytes) else {
+                throw SyncV2TypeError.referenceViolation(metadataKey)
+            }
+            let bytes = try data(bytesKey, contentType: .octetStream)
+            guard Int64(bytes.count) == byteCount else { throw SyncV2TypeError.byteCountMismatch }
+        }
+
+        guard Set(entriesByKey.keys) == expected else {
+            throw SyncV2TypeError.referenceViolation("entity closure")
+        }
     }
 
     private static func require(_ fields: [String: CanonicalJSON.Value], _ expected: Set<String>, _ key: String) throws {

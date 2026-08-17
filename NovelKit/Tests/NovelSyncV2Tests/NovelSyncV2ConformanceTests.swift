@@ -1,4 +1,5 @@
 import Foundation
+import NovelCore
 @testable import NovelSyncV2
 import Testing
 
@@ -32,6 +33,12 @@ struct NovelSyncV2ConformanceTests {
         #expect(materialized(model).asNSDictionary.isEqual(to: expected))
         let reencoded = try SnapshotCodec.encode(model)
         #expect(reencoded.manifestBytes == snapshotBytes)
+
+        var pollutedObjects = objects
+        let unreferenced = Data("unreferenced".utf8)
+        pollutedObjects[ObjectID(data: unreferenced)] = unreferenced
+        let polluted = EncodedSnapshot(manifest: manifest, manifestBytes: snapshotBytes, objects: pollutedObjects)
+        #expect(throws: Error.self) { try SnapshotValidator.validateObjects(polluted) }
     }
 
     @Test func allSealedCommandDigestsMatchFixtures() throws {
@@ -52,6 +59,13 @@ struct NovelSyncV2ConformanceTests {
         #expect(throws: Error.self) { try CanonicalJSON.validate(Data(#"{"a":1,"a":2}"#.utf8)) }
         #expect(throws: Error.self) { try CanonicalJSON.validate(Data(#"{"a":1.5}"#.utf8)) }
         #expect(throws: Error.self) { try CanonicalJSON.validate(Data(#"-9223372036854775808"#.utf8)) }
+        let deeplyNested = String(repeating: "[", count: SnapshotSyncV2Limits.maxCanonicalJSONDepth + 1)
+            + "0"
+            + String(repeating: "]", count: SnapshotSyncV2Limits.maxCanonicalJSONDepth + 1)
+        #expect(throws: Error.self) { try CanonicalJSON.validate(Data(deeplyNested.utf8)) }
+        #expect(throws: Error.self) {
+            try SnapshotValidator.validate(manifestBytes: Data(repeating: 0x20, count: SnapshotSyncV2Limits.maxManifestBytes + 1))
+        }
     }
 
     @Test func canonicalObjectKeysUseUTF16Order() {
@@ -80,12 +94,12 @@ struct NovelSyncV2ConformanceTests {
     }
 
     private func materialized(_ model: SnapshotModel) -> [String: Any] {
-        func chapter(_ chapter: Chapter) -> [String: Any] {
+        func chapter(_ chapter: NovelCore.Chapter) -> [String: Any] {
             ["id": chapter.id.rawValue.uuidString.lowercased(), "title": chapter.title, "episodes": chapter.episodes.map { episode in
                 ["id": episode.id.rawValue.uuidString.lowercased(), "title": episode.title, "content": episode.content, "memo": episode.memo]
             }]
         }
-        func character(_ character: Character) -> [String: Any] {
+        func character(_ character: NovelCore.Character) -> [String: Any] {
             ["id": character.id.rawValue.uuidString.lowercased(), "name": character.name, "kana": character.kana, "memo": character.memo, "colorHex": jsonValue(character.colorHex), "role": jsonValue(character.role), "age": jsonValue(character.age), "gender": jsonValue(character.gender), "firstPerson": jsonValue(character.firstPerson), "secondPerson": jsonValue(character.secondPerson), "speechStyle": jsonValue(character.speechStyle), "appearance": jsonValue(character.appearance), "personality": jsonValue(character.personality), "background": jsonValue(character.background)]
         }
         return ["schemaVersion": 2, "workId": model.workId.description, "document": ["id": model.document.id.uuidString.lowercased(), "documentCreatedAt": isoString(model.documentCreatedAt), "title": model.document.title, "synopsis": model.document.synopsis, "chapters": model.document.chapters.map(chapter), "characters": model.document.characters.map(character), "plotCards": model.document.plotCards.map { ["id": $0.id.rawValue.uuidString.lowercased(), "title": $0.title, "memo": $0.memo, "chapterId": jsonValue($0.chapterID?.rawValue.uuidString.lowercased())] }, "flags": model.document.flags.map { ["id": $0.id.rawValue.uuidString.lowercased(), "title": $0.title, "note": $0.note, "isResolved": $0.isResolved, "plantedChapterId": jsonValue($0.plantedChapterID?.rawValue.uuidString.lowercased()), "resolvedChapterId": jsonValue($0.resolvedChapterID?.rawValue.uuidString.lowercased())] }, "worldNotes": model.document.worldNotes.map { ["id": $0.id.rawValue.uuidString.lowercased(), "title": $0.title, "content": $0.content] }], "attachments": model.attachments.map { ["attachmentId": $0.attachmentId.uuidString.lowercased(), "fileName": $0.fileName, "byteCount": $0.byteCount, "objectId": $0.objectId.rawValue] }]

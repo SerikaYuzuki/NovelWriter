@@ -9,6 +9,8 @@ public enum CanonicalJSONError: Error, Equatable, Sendable {
     case unsupportedNumber
     case unsafeInteger
     case topLevelValueNotObject
+    case inputTooLarge
+    case nestingTooDeep
 }
 
 /// The small JSON surface used by Snapshot Sync v2.
@@ -20,20 +22,24 @@ public enum CanonicalJSON {
     public static func encode(_ value: any Encodable) throws -> Data {
         let encoder = JSONEncoder()
         let data = try encoder.encode(ErasedEncodable(value))
-        var parser = try Parser(data)
+        var parser = try Parser(data, maxBytes: SnapshotSyncV2Limits.maxCommandBytes)
         let parsed = try parser.parse()
         return try render(parsed)
     }
 
     public static func validate(_ data: Data) throws {
-        var parser = try Parser(data)
+        var parser = try Parser(data, maxBytes: SnapshotSyncV2Limits.maxCommandBytes)
         let parsed = try parser.parse()
         guard try render(parsed) == data else { throw CanonicalJSONError.nonCanonical }
     }
 
     /// Validates an object and returns its parsed form for schema validation.
-    static func parseObject(_ data: Data) throws -> Value {
-        var parser = try Parser(data)
+    static func parseObject(
+        _ data: Data,
+        maxBytes: Int = SnapshotSyncV2Limits.maxCommandBytes,
+        maxDepth: Int = SnapshotSyncV2Limits.maxCanonicalJSONDepth
+    ) throws -> Value {
+        var parser = try Parser(data, maxBytes: maxBytes, maxDepth: maxDepth)
         let value = try parser.parse()
         guard case .object = value else { throw CanonicalJSONError.topLevelValueNotObject }
         guard try render(value) == data else { throw CanonicalJSONError.nonCanonical }
@@ -132,26 +138,34 @@ public enum CanonicalJSON {
 
     private struct Parser {
         let bytes: [UInt8]
+        let maxDepth: Int
         var index = 0
 
-        init(_ data: Data) throws {
+        init(
+            _ data: Data,
+            maxBytes: Int = SnapshotSyncV2Limits.maxCommandBytes,
+            maxDepth: Int = SnapshotSyncV2Limits.maxCanonicalJSONDepth
+        ) throws {
+            guard data.count <= maxBytes else { throw CanonicalJSONError.inputTooLarge }
             guard String(data: data, encoding: .utf8) != nil else { throw CanonicalJSONError.invalidUTF8 }
             bytes = Array(data)
+            self.maxDepth = maxDepth
         }
 
         mutating func parse() throws -> Value {
             skipWhitespace()
-            let result = try parseValue()
+            let result = try parseValue(depth: 0)
             skipWhitespace()
             guard index == bytes.count else { throw CanonicalJSONError.malformed }
             return result
         }
 
-        mutating func parseValue() throws -> Value {
+        mutating func parseValue(depth: Int) throws -> Value {
+            guard depth <= maxDepth else { throw CanonicalJSONError.nestingTooDeep }
             guard let byte = peek else { throw CanonicalJSONError.malformed }
             switch byte {
-            case 123: return try parseObject()
-            case 91: return try parseArray()
+            case 123: return try parseObject(depth: depth)
+            case 91: return try parseArray(depth: depth)
             case 34: return try .string(parseString())
             case 45, 48 ... 57: return try parseNumber()
             case 116: try consume("true"); return .bool(true)
@@ -161,7 +175,7 @@ public enum CanonicalJSON {
             }
         }
 
-        mutating func parseObject() throws -> Value {
+        mutating func parseObject(depth: Int) throws -> Value {
             try expect(123)
             skipWhitespace()
             var pairs: [(String, Value)] = []
@@ -175,7 +189,7 @@ public enum CanonicalJSON {
                 let key = try parseString()
                 guard keys.insert(key).inserted else { throw CanonicalJSONError.duplicateKey(key) }
                 skipWhitespace(); try expect(58); skipWhitespace()
-                try pairs.append((key, parseValue()))
+                try pairs.append((key, parseValue(depth: depth + 1)))
                 skipWhitespace()
                 if peek == 125 {
                     index += 1; return .object(pairs)
@@ -184,14 +198,14 @@ public enum CanonicalJSON {
             }
         }
 
-        mutating func parseArray() throws -> Value {
+        mutating func parseArray(depth: Int) throws -> Value {
             try expect(91); skipWhitespace()
             var values: [Value] = []
             if peek == 93 {
                 index += 1; return .array(values)
             }
             while true {
-                try values.append(parseValue()); skipWhitespace()
+                try values.append(parseValue(depth: depth + 1)); skipWhitespace()
                 if peek == 93 {
                     index += 1; return .array(values)
                 }
