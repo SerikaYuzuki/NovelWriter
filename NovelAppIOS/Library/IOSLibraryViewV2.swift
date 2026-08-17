@@ -55,7 +55,6 @@ struct IOSLibraryView: View {
                             }
                         }
                     }
-                    .disabled(item.accountState == .parkedDifferentAccount)
                     if item.accountState == .unbound,
                        item.workID == store.syncV2ActiveWorkID {
                         Button("この作品をこのアカウントへ追加して同期") {

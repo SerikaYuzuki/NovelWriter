@@ -79,7 +79,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         resumesWorker: Bool
     ) {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               snapshotSyncV2AccountScope == expectedAccountScope else { return }
         snapshotSyncV2ReprojectionToken = nil
         snapshotSyncV2ReprojectionTask?.cancel()
@@ -96,7 +96,7 @@ extension IOSDocumentStore {
                 try? await application.resumePending()
             }
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return }
             if let workID {
@@ -126,7 +126,7 @@ extension IOSDocumentStore {
     ) async {
         for _ in 0 ..< 600 {
             guard !Task.isCancelled,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   snapshotSyncV2ReprojectionToken == operationToken,
                   snapshotSyncV2AccountScope == expectedAccountScope,
                   syncV2ActiveWorkID == workID else { return }
@@ -139,7 +139,7 @@ extension IOSDocumentStore {
                 return
             }
             guard snapshotSyncV2ReprojectionToken == operationToken,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   snapshotSyncV2AccountScope == expectedAccountScope,
                   syncV2ActiveWorkID == workID else { return }
             applySnapshotSyncV2State(state)
@@ -182,7 +182,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil,
         operationToken: UUID? = nil
     ) async {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
         libraryRefreshGeneration &+= 1
@@ -191,7 +191,7 @@ extension IOSDocumentStore {
         // request. Its generation-mismatched defer cannot clear this latch.
         syncV2RemoteCatalogIsLoading = false
         if let workID, let state = await application.uiState(workID: workID) {
-            guard !syncV2AccountTransitionInProgress,
+            guard !isSyncV2AccountTransitionActive,
                   libraryRefreshGeneration == refreshGeneration,
                   snapshotSyncV2AccountScope == expectedAccountScope,
                   operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {
@@ -202,7 +202,7 @@ extension IOSDocumentStore {
             }
         }
         guard let projection = try? await application.library() else { return }
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
               snapshotSyncV2AccountScope == expectedAccountScope,
               operationToken == nil || snapshotSyncV2ReprojectionToken == operationToken else {

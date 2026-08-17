@@ -54,9 +54,17 @@ struct FuminiwaIOSApp: App {
                 )
                 .task {
                     _ = await store.configureSnapshotSyncV2()
-                    await store.restoreFuminiwaSession()
                     await store.bootstrap(localFirst: true)
-                    await store.resumeSnapshotSyncV2()
+                    // The local shelf/editor is the launch boundary. Auth
+                    // vault reconciliation and remote wakeups continue in
+                    // background and never delay offline editing.
+                    Task { @MainActor in
+                        await store.restoreFuminiwaSession()
+                    }
+                    store.resumePendingAuthRevoke()
+                    Task { @MainActor in
+                        await store.resumeSnapshotSyncV2()
+                    }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task {
@@ -70,6 +78,7 @@ struct FuminiwaIOSApp: App {
                             // Foreground resume is a non-blocking wake of the
                             // durable v2 outbox; no network result gates UI.
                             Task { await store.resumeSnapshotSyncV2() }
+                            store.resumePendingAuthRevoke()
                         }
                     }
                 }

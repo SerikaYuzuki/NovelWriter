@@ -21,10 +21,12 @@ extension IOSDocumentStore {
         expectedEditGeneration: UInt64? = nil,
         expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
     ) async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application,
               startupState == .ready,
               let activeWorkID = syncV2ActiveWorkID,
+              syncV2LibraryItems.first(where: { $0.workID == activeWorkID })?.accountState
+              != .parkedDifferentAccount,
               let expectedSession = expectedSession ?? currentDocumentSessionToken else {
             return false
         }
@@ -32,7 +34,7 @@ extension IOSDocumentStore {
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
-            guard !syncV2AccountTransitionInProgress,
+            guard !isSyncV2AccountTransitionActive,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             guard currentDocumentSessionToken == expectedSession,
                   localEditGeneration == expectedEditGeneration,
@@ -48,7 +50,7 @@ extension IOSDocumentStore {
                     // commit/save boundary so a just-finished IME composition
                     // is never replaced by the staged remote snapshot.
                     guard syncV2ActiveWorkID == activeWorkID,
-                          !syncV2AccountTransitionInProgress,
+                          !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope,
@@ -59,21 +61,21 @@ extension IOSDocumentStore {
                     guard let projected = await application.uiState(workID: activeWorkID),
                           projected.lastTypedResult == .adoptionPending,
                           case let .readyForSafeAdoption(inboxID) = projected.remoteProgress,
-                          !syncV2AccountTransitionInProgress,
+                          !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
                     guard let pending = try await application.pendingAdoption(workID: activeWorkID),
                           pending.workID == activeWorkID,
                           pending.inboxID == inboxID,
-                          !syncV2AccountTransitionInProgress,
+                          !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
                     applySnapshotSyncV2State(projected)
 
                     let session = await application.beginSession(workID: pending.workID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
@@ -95,7 +97,7 @@ extension IOSDocumentStore {
                     )
                     #endif
                     let token = try await application.documentGateToken(for: session)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
@@ -106,19 +108,19 @@ extension IOSDocumentStore {
                         gate: token
                     )
                     let opened = try await application.applyStagedRemote(at: boundary)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           opened.workID == activeWorkID,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
                     guard let value = opened.document else { return }
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope,
                           installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let adoptedState = await application.uiState(workID: opened.workID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
                     applySnapshotSyncV2State(adoptedState)
                     adopted = true
@@ -135,7 +137,7 @@ extension IOSDocumentStore {
         for workID: WorkID,
         validatingEditorSurface: Bool
     ) -> AutoAdoptionExpectation? {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               startupState == .ready,
               syncV2ActiveWorkID == workID,
               let session = currentDocumentSessionToken,
@@ -158,7 +160,7 @@ extension IOSDocumentStore {
         }
 
         guard syncV2ActiveWorkID == workID,
-              !syncV2AccountTransitionInProgress,
+              !isSyncV2AccountTransitionActive,
               currentDocumentSessionToken == session,
               localEditGeneration == editGeneration,
               snapshotSyncV2AccountScope == accountScope,

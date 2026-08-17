@@ -391,12 +391,11 @@ private struct TestEnvironment {
 
     func cleanup() {
         let key = root.standardizedFileURL
-        let configuration = IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: key)
+        // The store can still retain the actor/database when defer runs.
+        // Never unlink an open SQLite root; this is a UUID-scoped temporary
+        // fixture and the OS cleans it up after the test process exits.
+        IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: key)
         IOSDocumentStore.testRuntimeApplications.removeValue(forKey: key)
-        if let runtimeRoot = configuration?.localRoot.url {
-            try? FileManager.default.removeItem(at: runtimeRoot)
-        }
-        try? FileManager.default.removeItem(at: root)
         defaults.removePersistentDomain(forName: suiteName)
     }
 }

@@ -9,7 +9,7 @@ import NovelSyncV2Runtime
 extension IOSDocumentStore {
     @discardableResult
     func restoreSnapshotSyncV2(snapshotID raw: String) async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let app = snapshotSyncV2Application,
               let activeWorkID = syncV2ActiveWorkID,
               let expectedSession = currentDocumentSessionToken,
@@ -17,7 +17,7 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   !isDocumentTransitionInProgress,
                   currentDocumentSessionToken == expectedSession,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
@@ -31,12 +31,12 @@ extension IOSDocumentStore {
                     let result = try await app.restore(
                         workID: activeWorkID, snapshotID: snapshotID
                     )
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
                     applySnapshotSyncV2State(result.state)
                     let opened = try await app.openLocal(workID: activeWorkID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           snapshotSyncV2AccountScope == expectedAccountScope,
                           opened.workID == activeWorkID,
@@ -48,7 +48,7 @@ extension IOSDocumentStore {
                     )
                     restored = true
                 } catch {
-                    if !syncV2AccountTransitionInProgress,
+                    if !isSyncV2AccountTransitionActive,
                        snapshotSyncV2AccountScope == expectedAccountScope {
                         snapshotSyncOutcome = .failed
                     }
@@ -63,7 +63,7 @@ extension IOSDocumentStore {
         using choice: SyncV2ConflictChoice,
         expectedSelection: IOSSnapshotSyncV2ConflictSelection
     ) async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let app = snapshotSyncV2Application,
               startupState == .ready,
               let activeWorkID = syncV2ActiveWorkID,
@@ -74,7 +74,7 @@ extension IOSDocumentStore {
         defer { isSnapshotSyncInFlight = false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   !isDocumentTransitionInProgress,
                   currentDocumentSessionToken == expectedSession,
                   localEditGeneration == expectedEditGeneration,
@@ -109,7 +109,7 @@ extension IOSDocumentStore {
                     }
                 }
                 let result = try await app.resolveConflict(workID: workID, action: action)
-                guard !syncV2AccountTransitionInProgress,
+                guard !isSyncV2AccountTransitionActive,
                       snapshotSyncV2AccountScope == expectedAccountScope,
                       currentDocumentSessionToken == expectedSession else { return false }
                 guard acceptsSnapshotSyncV2ConflictResult(result.typedResult) else {
@@ -139,7 +139,7 @@ extension IOSDocumentStore {
                         return false
                     }
                     let state = await app.uiState(workID: opened.workID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope,
                           syncV2ActiveWorkID == opened.workID else { return false }
                     applySnapshotSyncV2State(state)
@@ -183,8 +183,7 @@ extension IOSDocumentStore {
         selection.workID == syncV2ActiveWorkID
             && selection.session == currentDocumentSessionToken
             && selection.editGeneration <= localEditGeneration
-            && selection.accountID == authSession?.accountID
-            && selection.accountFence == authSession?.accountFence
+            && selection.accountScope == snapshotSyncV2AccountScope
             && selection.conflict == snapshotSyncConflict
     }
 

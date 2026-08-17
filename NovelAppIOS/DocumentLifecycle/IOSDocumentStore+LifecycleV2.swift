@@ -53,12 +53,14 @@ extension IOSDocumentStore {
 
     @discardableResult
     func makeNewDocument() async -> Bool {
-        guard await configureSnapshotSyncV2() else { return false }
+        guard !isSyncV2AccountTransitionActive,
+              await configureSnapshotSyncV2() else { return false }
         let value = NovelDocument.newDocument()
         return await documentOperationGate.perform { [weak self] in
-            guard let self else { return false }
+            guard let self, !isSyncV2AccountTransitionActive else { return false }
             return await performDocumentTransition {
-                guard snapshotSyncV2Application != nil else {
+                guard !isSyncV2AccountTransitionActive,
+                      snapshotSyncV2Application != nil else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
                 document = value
@@ -94,7 +96,7 @@ extension IOSDocumentStore {
 
     @discardableResult
     func importPackage(from sourceURL: URL) async -> Bool {
-        guard !syncV2AccountTransitionInProgress else { return false }
+        guard !isSyncV2AccountTransitionActive else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
         let expectedSession = currentDocumentSessionToken
         let expectedWorkID = syncV2ActiveWorkID
@@ -114,6 +116,7 @@ extension IOSDocumentStore {
               ) else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
+                  !isSyncV2AccountTransitionActive,
                   matchesSnapshotSyncV2OperationSource(
                       session: expectedSession, workID: expectedWorkID, accountScope: expectedAccountScope
                   ) else { return false }
@@ -259,18 +262,18 @@ extension IOSDocumentStore {
     }
 
     func requestExport() async {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let expectedSession = currentDocumentSessionToken,
               let expectedWorkID = syncV2ActiveWorkID else { return }
         let expectedAccountScope = snapshotSyncV2AccountScope
         await documentOperationGate.perform { [weak self] in
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
                   syncV2ActiveWorkID == expectedWorkID,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return }
             _ = await performDocumentTransition {
-                guard !syncV2AccountTransitionInProgress,
+                guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
                       snapshotSyncV2AccountScope == expectedAccountScope,
@@ -303,7 +306,7 @@ extension IOSDocumentStore {
                     resources: exportResources,
                     to: destination
                 )
-                guard !syncV2AccountTransitionInProgress,
+                guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
                       snapshotSyncV2AccountScope == expectedAccountScope else {
@@ -321,7 +324,7 @@ extension IOSDocumentStore {
         workID: WorkID?,
         accountScope: IOSSnapshotSyncV2AccountScope
     ) -> Bool {
-        !syncV2AccountTransitionInProgress
+        !isSyncV2AccountTransitionActive
             && currentDocumentSessionToken == session
             && syncV2ActiveWorkID == workID
             && snapshotSyncV2AccountScope == accountScope

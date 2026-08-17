@@ -31,7 +31,9 @@ struct IOSProjectHomeView: View {
                 Button("資料", action: openReferences)
             }
             Section("同期") {
-                Text(store.snapshotSyncState?.japaneseLabel
+                Text(store.isCurrentWorkParked
+                    ? "別アカウントのため保留中"
+                    : store.snapshotSyncState?.japaneseLabel
                     ?? (store.snapshotSyncOutcome == .offline
                         ? "端末に保存済み・通信待ち" : "端末に保存済み"))
                     .foregroundStyle(.secondary)
@@ -68,6 +70,7 @@ struct IOSProjectHomeView: View {
                     Button("サーバーの版をこの端末へ適用（安全境界で再試行）") {
                         Task { _ = await store.adoptPendingSnapshotSyncV2() }
                     }
+                    .disabled(!store.canExplicitlySyncCurrentWork || store.isExplicitSyncInFlight)
                     Text("サーバーの版は安全な状態なら自動で適用されます。本文変更やIME変換中はこの操作を再試行してください。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -88,7 +91,7 @@ struct IOSProjectHomeView: View {
                         }
                     }
                 }
-                .disabled(snapshotID.isEmpty || !store.canExplicitlySyncCurrentWork)
+                .disabled(snapshotID.isEmpty || !store.canRestoreLocalSnapshot)
                 if store.syncV2HistoryItems.isEmpty {
                     Text("履歴を読み込むと、復元対象を選べます。")
                         .font(.caption)
@@ -122,6 +125,7 @@ struct IOSProjectHomeView: View {
                                 }
                             }
                         }
+                        .disabled(!store.canExplicitlySyncCurrentWork)
                     }
                 }
                 Button("履歴を更新") {
@@ -133,7 +137,7 @@ struct IOSProjectHomeView: View {
                         }
                     }
                 }
-                .disabled(store.syncV2ActiveWorkID == nil)
+                .disabled(!store.canExplicitlySyncCurrentWork)
                 Text("復元は端末のSQLite履歴へ予約され、通信はバックグラウンドで再開します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -142,7 +146,7 @@ struct IOSProjectHomeView: View {
         }
         .navigationTitle("作品ホーム")
         .task {
-            if let workID = store.syncV2ActiveWorkID {
+            if let workID = store.syncV2ActiveWorkID, store.canExplicitlySyncCurrentWork {
                 _ = await store.refreshSnapshotHistory(for: workID, reset: true)
             }
         }

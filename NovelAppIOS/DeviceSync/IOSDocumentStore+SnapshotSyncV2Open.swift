@@ -9,13 +9,13 @@ import NovelSyncV2Runtime
 extension IOSDocumentStore {
     @discardableResult
     func openSnapshotSyncV2(workID: UUID) async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application else { return false }
         cancelSnapshotSyncV2BackgroundOperations()
         let targetWorkID = WorkID(workID)
         let expectedAccountScope = snapshotSyncV2AccountScope
         let didOpen = await documentOperationGate.perform { [weak self] in
-            guard let self else { return false }
+            guard let self, !isSyncV2AccountTransitionActive else { return false }
             var didOpen = false
             let transitioned = await performDocumentTransition {
                 do {
@@ -23,13 +23,13 @@ extension IOSDocumentStore {
                     // flushes a dirty editor through the local SQLite
                     // checkpoint.  It never wakes or awaits the remote worker.
                     let opened = try await application.openLocal(workID: targetWorkID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope,
                           opened.workID == targetWorkID,
                           let value = opened.document else { return }
                     guard installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let state = await application.uiState(workID: opened.workID)
-                    guard !syncV2AccountTransitionInProgress,
+                    guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope,
                           syncV2ActiveWorkID == targetWorkID else { return }
                     applySnapshotSyncV2State(state)
@@ -55,7 +55,7 @@ extension IOSDocumentStore {
     /// have already become the active editor.
     @discardableResult
     func startRemoteOnlySnapshotSyncV2Open(workID: WorkID) async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application,
               syncV2LibraryItems.contains(where: {
                   $0.workID == workID && $0.availability == .remoteOnly
@@ -82,12 +82,12 @@ extension IOSDocumentStore {
                 guard matchesRequestedWork,
                       !Task.isCancelled,
                       let self,
-                      !syncV2AccountTransitionInProgress,
+                      !isSyncV2AccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       snapshotSyncV2AccountScope == expectedAccountScope else { return }
                 _ = await documentOperationGate.perform { [weak self] in
                     guard let self,
-                          !syncV2AccountTransitionInProgress,
+                          !isSyncV2AccountTransitionActive,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                           currentDocumentSessionToken == expectedSession,
                           snapshotSyncV2AccountScope == expectedAccountScope,
@@ -97,7 +97,7 @@ extension IOSDocumentStore {
                     var installed = false
                     let transitioned = await performDocumentTransition {
                         guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                              !syncV2AccountTransitionInProgress,
+                              !isSyncV2AccountTransitionActive,
                               currentDocumentSessionToken == expectedSession,
                               snapshotSyncV2AccountScope == expectedAccountScope,
                               acceptsSnapshotSyncV2RemoteOnlyOpen(
@@ -112,7 +112,7 @@ extension IOSDocumentStore {
                         }
                         let state = await application.uiState(workID: opened.workID)
                         guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                              !syncV2AccountTransitionInProgress,
+                              !isSyncV2AccountTransitionActive,
                               snapshotSyncV2AccountScope == expectedAccountScope,
                               syncV2ActiveWorkID == workID else { return }
                         applySnapshotSyncV2State(state)
@@ -125,7 +125,7 @@ extension IOSDocumentStore {
                 return
             } catch {
                 guard let self,
-                      !syncV2AccountTransitionInProgress,
+                      !isSyncV2AccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       currentDocumentSessionToken == expectedSession,
                       snapshotSyncV2AccountScope == expectedAccountScope else { return }

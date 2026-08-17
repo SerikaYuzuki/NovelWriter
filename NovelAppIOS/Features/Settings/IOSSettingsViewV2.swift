@@ -22,6 +22,12 @@ struct IOSSettingsView: View {
                     Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
                 }
                 Button("同期を再開") { Task { _ = await store.synchronizeSnapshotSyncV2() } }
+                    .disabled(!store.canExplicitlySyncCurrentWork)
+                if store.isCurrentWorkParked {
+                    Text("別アカウントのため保留中。作品の本文と端末履歴は引き続き利用できます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle("設定")

@@ -127,6 +127,34 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
         }
     }
 
+    @Test("account transition request keeps local document forms checkpointable")
+    func accountTransitionRequestKeepsLocalDocumentFormsCheckpointable() async throws {
+        try await withEnvironment { environment in
+            let store = IOSDocumentStore(
+                userDefaults: environment.defaults,
+                libraryRoot: environment.root
+            )
+            await store.bootstrap()
+            #expect(await store.makeNewDocument())
+            let original = store.document
+            let editGeneration = store.localEditGeneration
+
+            // signInWithApple holds this request flag while the exchange is
+            // suspended. Local forms remain editable and dirty so the final
+            // document-gate checkpoint can persist them before rebind.
+            store.syncV2AccountTransitionRequested = true
+            store.updateDocumentTitle("認証中に届いた作品名")
+            store.updateDocumentSynopsis("認証中に届いたあらすじ")
+            store.addChapter()
+            store.syncV2AccountTransitionRequested = false
+
+            #expect(store.document != original)
+            #expect(store.document.title == "認証中に届いた作品名")
+            #expect(store.localEditGeneration > editGeneration)
+            #expect(store.saveState == .dirty)
+        }
+    }
+
     @Test("sign-out cancels pending remote-only work")
     func signOutCancelsRemoteOnlyWork() async throws {
         try await withEnvironment { environment in
@@ -171,14 +199,19 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             #expect(store.snapshotSyncV2RemoteOnlyOpenTask == nil)
             #expect(store.snapshotSyncV2RemoteOnlyOpenToken == nil)
             #expect(task.isCancelled)
-            #expect(store.syncV2ActiveWorkID == nil)
-            #expect(store.syncV2LibraryItems.isEmpty)
+            #expect(store.syncV2ActiveWorkID == activeWorkID)
+            #expect(store.syncV2LibraryItems.contains {
+                $0.workID == activeWorkID &&
+                    $0.accountState == .parkedDifferentAccount &&
+                    $0.availability == .localOnly
+            })
             #expect(store.pendingExportURL == nil)
             #expect(FileManager.default.fileExists(atPath: exportRoot.path) == false)
             let reopened = try await application.openLocal(workID: activeWorkID)
             #expect(reopened.document?.title == "サインアウト直前の未保存作品名")
             store.updateDocumentTitle("棚へ戻った後の遅延入力")
-            #expect(store.document == savedBeforePark)
+            #expect(store.document.title == "棚へ戻った後の遅延入力")
+            #expect(store.saveState == .dirty)
         }
     }
 

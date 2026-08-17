@@ -1,6 +1,13 @@
 import NovelCore
 
 extension IOSDocumentStore {
+    /// Both the short auth-request window and the SQLite transition itself
+    /// invalidate remote work. Local editing/checkpointing remains available
+    /// while only the request flag is set.
+    var isSyncV2AccountTransitionActive: Bool {
+        syncV2AccountTransitionRequested || syncV2AccountTransitionInProgress
+    }
+
     func failStartupForDeviceSyncSafety() {
         deviceSyncStartupFailedSafely = true
         startupState = .recovery(message: "本文を安全に保存できる場所を確認できませんでした。")

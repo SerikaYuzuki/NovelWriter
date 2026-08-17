@@ -55,9 +55,21 @@ extension IOSDocumentStore {
     }
 
     func resumeSnapshotSyncV2() async {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let resumedWorkID = syncV2ActiveWorkID
+        // A parked lane is intentionally local-only.  Reprojection may still
+        // refresh its local shelf, but must not wake a remote worker or offer
+        // adoption while no matching account/fence is active.
+        if let resumedWorkID,
+           syncV2LibraryItems.first(where: { $0.workID == resumedWorkID })?.accountState
+           == .parkedDifferentAccount {
+            await refreshSnapshotSyncV2Projection(
+                workID: resumedWorkID,
+                expectedAccountScope: snapshotSyncV2AccountScope
+            )
+            return
+        }
         let expectedAccountScope = snapshotSyncV2AccountScope
         let automaticAdoption = resumedWorkID.flatMap {
             automaticAdoptionExpectation(
@@ -79,21 +91,23 @@ extension IOSDocumentStore {
 
     @discardableResult
     func synchronizeSnapshotSyncV2() async -> Bool {
-        guard !syncV2AccountTransitionInProgress,
+        guard !isSyncV2AccountTransitionActive,
               let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return false }
+        guard syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
+            != .parkedDifferentAccount else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
         isSnapshotSyncInFlight = true
         defer { isSnapshotSyncInFlight = false }
         do {
             let result = try await application.synchronize(workID: workID)
-            guard !syncV2AccountTransitionInProgress,
+            guard !isSyncV2AccountTransitionActive,
                   syncV2ActiveWorkID == workID,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             applySnapshotSyncV2State(result.state)
             return true
         } catch {
-            if !syncV2AccountTransitionInProgress,
+            if !isSyncV2AccountTransitionActive,
                syncV2ActiveWorkID == workID,
                snapshotSyncV2AccountScope == expectedAccountScope {
                 snapshotSyncOutcome = .offline
