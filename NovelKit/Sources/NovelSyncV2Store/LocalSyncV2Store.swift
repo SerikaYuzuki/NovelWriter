@@ -136,7 +136,8 @@ public extension LocalSyncV2Store {
                 summary: summary,
                 document: nil,
                 documentCreatedAt: documentCreatedAt,
-                attachments: []
+                attachments: [],
+                resources: []
             )
         }
         let encoded = try loadEncoded(workID: workID, snapshotID: snapshotID)
@@ -145,11 +146,13 @@ public extension LocalSyncV2Store {
             objects: encoded.objects
         )
         try validateAnchor(model, workRow: row)
+        let resources = try loadPortableResources(workID: workID)
         return V2OpenResult(
             summary: summary,
             document: model.document,
             documentCreatedAt: model.documentCreatedAt,
-            attachments: model.attachments
+            attachments: model.attachments,
+            resources: resources
         )
     }
 
@@ -182,12 +185,18 @@ public extension LocalSyncV2Store {
             ),
             parents: parents
         )
+        let resourcesMatch = if let resources = request.resources {
+            try portableResourcesEqual(workID: request.workID, resources: resources)
+        } else {
+            true
+        }
         if let current = parents.first,
            try checkpointContentMatches(
                workID: request.workID,
                current: current,
                candidate: encoded
-           ) {
+           ),
+           resourcesMatch {
             return try commitNoChangeCheckpoint(
                 request,
                 scope: scope,
@@ -213,6 +222,12 @@ public extension LocalSyncV2Store {
                 throw SyncV2StoreError.generationMismatch
             }
             try insertEncoded(encoded, workID: request.workID)
+            if let resources = request.resources {
+                try replacePortableResources(
+                    workID: request.workID,
+                    resources: resources
+                )
+            }
             let next = request.expectedGeneration + 1
             try exec(
                 """
@@ -290,6 +305,7 @@ public extension LocalSyncV2Store {
         }
         let sourceSnapshot = try SnapshotID(rawValue: sourceSnapshotBytes.hexString)
         let encoded = try loadEncoded(workID: sourceWorkID, snapshotID: sourceSnapshot)
+        let sourceResources = try loadPortableResources(workID: sourceWorkID)
         let sourceModel = try SnapshotCodec.decode(
             manifestBytes: encoded.manifestBytes,
             objects: encoded.objects
@@ -322,6 +338,10 @@ public extension LocalSyncV2Store {
                 scope: .bound(destination)
             )
             try insertEncoded(clone, workID: newWorkID)
+            try replacePortableResources(
+                workID: newWorkID,
+                resources: sourceResources
+            )
             try exec(
                 """
                 UPDATE works SET current_snapshot_id=?,local_generation=1

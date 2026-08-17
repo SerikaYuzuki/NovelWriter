@@ -44,11 +44,14 @@ becomes a v2 Work. A migration run has exactly one declared target database:
 The standalone package also inventories every non-hidden tree entry, including
 empty directories and opaque/orphan files. Each entry records its normalized
 relative path, kind, byte count, SHA-256/ObjectID (for files), and empty-directory
-flag. The current v2 SQLite schema has no portable-resource CAS, so a non-empty
-opaque-resource inventory is staged only long enough to record evidence and then
-quarantined; it is never silently dropped into a lossy committed Work. A later
-resource-CAS decision must extend the schema and fixtures before commit is
-enabled.
+flag. The v2 client SQLite schema now has a local-only resource CAS and
+`work_resources` path mirror. A validated resource inventory may therefore be
+adopted into the client Work in the same transaction as its first Snapshot;
+resource bytes remain outside Snapshot identity and are never sent by the v2
+online wire. A missing digest, unsafe path, duplicate/collision, symlink, or
+unsupported item still fails closed into quarantine. Server/operator adoption
+does not infer ownership of local-only resources and must retain its existing
+quarantine behavior until a separate remote-resource contract is adopted.
 
 - **client SQLite adoption** revalidates the staged closure, adds the local
   WorkID/first Snapshot and adoption marker in one SQLite transaction, then

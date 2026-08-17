@@ -60,6 +60,8 @@ public struct SyncV2CheckpointCapture: Sendable {
     public let expectedGeneration: Int64
     public let reason: SyncV2CheckpointReason
     public let attachments: [SyncAttachment]
+    /// `nil` keeps an existing local-only resource mirror intact.
+    public let resources: [PortableResource]?
 
     public init(
         workID: WorkID,
@@ -67,7 +69,8 @@ public struct SyncV2CheckpointCapture: Sendable {
         documentCreatedAt: Date,
         expectedGeneration: Int64,
         reason: SyncV2CheckpointReason,
-        attachments: [SyncAttachment] = []
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource]? = nil
     ) {
         self.workID = workID
         self.document = document
@@ -75,6 +78,7 @@ public struct SyncV2CheckpointCapture: Sendable {
         self.expectedGeneration = expectedGeneration
         self.reason = reason
         self.attachments = attachments
+        self.resources = resources
     }
 }
 
@@ -102,6 +106,7 @@ public struct SyncV2OpenedWork: Sendable {
     public let document: NovelDocument?
     public let documentCreatedAt: Date
     public let attachments: [SyncAttachment]
+    public let resources: [PortableResource]
     public let generation: Int64
     public let snapshotID: SnapshotID?
 
@@ -110,6 +115,7 @@ public struct SyncV2OpenedWork: Sendable {
         document: NovelDocument?,
         documentCreatedAt: Date,
         attachments: [SyncAttachment] = [],
+        resources: [PortableResource] = [],
         generation: Int64,
         snapshotID: SnapshotID?
     ) {
@@ -117,6 +123,7 @@ public struct SyncV2OpenedWork: Sendable {
         self.document = document
         self.documentCreatedAt = documentCreatedAt
         self.attachments = attachments
+        self.resources = resources
         self.generation = generation
         self.snapshotID = snapshotID
     }

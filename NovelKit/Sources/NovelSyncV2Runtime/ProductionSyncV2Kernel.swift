@@ -26,7 +26,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                     documentCreatedAt: capture.documentCreatedAt,
                     expectedGeneration: capture.expectedGeneration,
                     reason: V2CheckpointReason(rawValue: capture.reason.rawValue) ?? .autosave,
-                    attachments: capture.attachments
+                    attachments: capture.attachments,
+                    resources: capture.resources
                 ),
                 scope: localScope
             )
@@ -50,6 +51,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
                 document: result.document,
                 documentCreatedAt: result.documentCreatedAt,
                 attachments: result.attachments,
+                resources: result.resources,
                 generation: result.summary.localGeneration,
                 snapshotID: result.summary.currentSnapshotID
             )

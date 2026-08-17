@@ -56,7 +56,8 @@ public actor SyncV2Application {
         document: NovelDocument,
         reason: SyncV2CheckpointReason,
         documentCreatedAt: Date,
-        attachments: [SyncAttachment] = []
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource]? = nil
     ) async throws -> SyncV2OperationResult {
         guard runtimeIdentity != .preview else {
             throw SyncV2ApplicationError.previewReadOnly
@@ -76,7 +77,8 @@ public actor SyncV2Application {
                     documentCreatedAt: documentCreatedAt,
                     expectedGeneration: expectedGeneration,
                     reason: reason,
-                    attachments: attachments
+                    attachments: attachments,
+                    resources: resources
                 )
             )
             return finishCheckpoint(local, workID: workID)

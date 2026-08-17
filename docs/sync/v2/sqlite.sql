@@ -53,6 +53,31 @@ CREATE TABLE objects (
   bytes BLOB NOT NULL,
   CHECK (length(bytes) = byte_count)
 );
+-- Portable package remainder. These rows are local-only and are deliberately
+-- not part of Snapshot manifests or remote sync commands.
+CREATE TABLE resources (
+  object_id BLOB PRIMARY KEY CHECK (length(object_id) = 32),
+  byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+  bytes BLOB NOT NULL,
+  availability TEXT NOT NULL DEFAULT 'available'
+    CHECK (availability IN ('available', 'quarantined', 'deleting')),
+  gc_root INTEGER NOT NULL DEFAULT 0 CHECK (gc_root IN (0, 1)),
+  CHECK (length(bytes) = byte_count)
+);
+CREATE TABLE work_resources (
+  work_id TEXT NOT NULL REFERENCES works(work_id),
+  path_components TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('directory', 'regularFile')),
+  original_path TEXT NOT NULL,
+  object_id BLOB REFERENCES resources(object_id),
+  byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+  PRIMARY KEY (work_id, path_components),
+  CHECK (
+    (kind = 'directory' AND object_id IS NULL AND byte_count = 0) OR
+    (kind = 'regularFile' AND object_id IS NOT NULL)
+  )
+);
+CREATE INDEX work_resources_object ON work_resources(object_id);
 CREATE TABLE snapshots (
   snapshot_id BLOB PRIMARY KEY CHECK (length(snapshot_id) = 32),
   work_id TEXT NOT NULL REFERENCES works(work_id),

@@ -97,6 +97,23 @@ public struct V2OpenResult: Sendable {
     public let document: NovelDocument?
     public let documentCreatedAt: Date
     public let attachments: [SyncAttachment]
+    /// Opaque `.novelpkg` remainder retained only in the local SQLite mirror.
+    /// These resources never enter Snapshot manifests or remote commands.
+    public let resources: [PortableResource]
+
+    public init(
+        summary: V2WorkSummary,
+        document: NovelDocument?,
+        documentCreatedAt: Date,
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource] = []
+    ) {
+        self.summary = summary
+        self.document = document
+        self.documentCreatedAt = documentCreatedAt
+        self.attachments = attachments
+        self.resources = resources
+    }
 }
 
 public struct V2CheckpointRequest: Sendable {
@@ -106,6 +123,9 @@ public struct V2CheckpointRequest: Sendable {
     public let expectedGeneration: Int64
     public let reason: V2CheckpointReason
     public let attachments: [SyncAttachment]
+    /// `nil` preserves an already-imported local resource mirror. An explicit
+    /// empty array is the only value that requests a caller-owned clear.
+    public let resources: [PortableResource]?
 
     public init(
         workID: WorkID,
@@ -113,7 +133,8 @@ public struct V2CheckpointRequest: Sendable {
         documentCreatedAt: Date,
         expectedGeneration: Int64,
         reason: V2CheckpointReason = .autosave,
-        attachments: [SyncAttachment] = []
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource]? = nil
     ) {
         self.workID = workID
         self.document = document
@@ -121,6 +142,7 @@ public struct V2CheckpointRequest: Sendable {
         self.expectedGeneration = expectedGeneration
         self.reason = reason
         self.attachments = attachments
+        self.resources = resources
     }
 }
 

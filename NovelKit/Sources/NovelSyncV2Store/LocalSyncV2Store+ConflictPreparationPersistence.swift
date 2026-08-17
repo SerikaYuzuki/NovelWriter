@@ -44,6 +44,11 @@ extension LocalSyncV2Store {
                 scope: scope
             )
             try insertEncoded(prepared.clone, workID: request.newWorkID)
+            let resources = try loadPortableResources(workID: request.workID)
+            try replacePortableResources(
+                workID: request.newWorkID,
+                resources: resources
+            )
             try exec(
                 """
                 UPDATE works SET current_snapshot_id=?,local_generation=1
