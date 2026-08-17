@@ -415,6 +415,49 @@ async fn same_identity_reuses_account_and_hmac_is_shared() {
 }
 
 #[tokio::test]
+async fn concurrent_same_subject_finishes_to_one_account() {
+    let repo = FakeRepo::default();
+    let identity = VerifiedExternalIdentity::apple("same-subject", 1_000).unwrap();
+    let challenge = ChallengeId::new("challenge_fake").unwrap();
+    let op_a = OperationId::new("op_concurrent_a").unwrap();
+    let op_b = OperationId::new("op_concurrent_b").unwrap();
+    let (left, right) = tokio::join!(
+        repo.finish_exchange(
+            &challenge,
+            &op_a,
+            &identity,
+            vec![1; 32],
+            SealedSecret {
+                key_version: 1,
+                ciphertext: vec![1]
+            },
+            "dev.serikayuzuki.fuminiwa",
+            digest_request(b"a")
+        ),
+        repo.finish_exchange(
+            &challenge,
+            &op_b,
+            &identity,
+            vec![1; 32],
+            SealedSecret {
+                key_version: 1,
+                ciphertext: vec![1]
+            },
+            "dev.serikayuzuki.fuminiwa",
+            digest_request(b"b")
+        ),
+    );
+    assert_eq!(
+        left.unwrap().0.principal.account_id,
+        right.unwrap().0.principal.account_id
+    );
+    assert_eq!(
+        repo.0.lock().unwrap().account.as_ref().unwrap().0.as_str(),
+        "acct_fake"
+    );
+}
+
+#[tokio::test]
 async fn refresh_lost_ack_replay_and_reuse_revoke_are_distinct() {
     let repo = FakeRepo::default();
     let app = AuthApplication::new(repo.clone());
