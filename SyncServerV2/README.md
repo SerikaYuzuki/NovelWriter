@@ -15,9 +15,12 @@ docker compose -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2 up --build
 ```
 
 The only Compose volume is `fuminiwa_sync_v2_pgdata`; the only project and
-containers are `fuminiwa-sync-v2-*`. Production mode fails closed without the
-Auth v1 principal boundary. Fixture Bearer tokens are available only with
-`FUMINIWA_RUNTIME_MODE=test` or `preview`.
+containers are `fuminiwa-sync-v2-*`. Copy `.env.example` outside version
+control and point the `*_HOST_PATH` values at separately managed secret files.
+The server binary is Production-only and fails closed before opening
+PostgreSQL when any Auth v1 key or Apple configuration is absent. Test and
+preview authentication are dependency-injected in process tests; the binary
+has no fixture-token startup mode.
 
 ## Verification
 
@@ -53,3 +56,14 @@ network or fixed LAN endpoint is contacted. The guard rejects private-LAN
 hosts, legacy/production/staging database names, names without the test marker,
 and any database that already has non-system tables. Never point it at v1, a
 development/staging authority, or a production volume.
+
+## Production Sign in with Apple authority
+
+The adapter uses only Apple's fixed issuer, JWKS, and token endpoints. It
+follows Apple's primary documentation for
+[authenticating users](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple),
+[token generation and validation](https://developer.apple.com/documentation/signinwithapplerestapi/generate-and-validate-tokens),
+[client-secret creation](https://developer.apple.com/documentation/accountorganizationaldatasharing/creating-a-client-secret),
+and [JWKS retrieval](https://developer.apple.com/documentation/signinwithapplerestapi/fetch-apple%27s-public-key-for-verifying-token-signature).
+No private key, provider token, or real identity fixture belongs in this
+repository.

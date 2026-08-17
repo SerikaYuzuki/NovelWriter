@@ -181,6 +181,22 @@ struct RevokeResponseWire {
     scope: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContentProtectionWire {
+    e2ee: bool,
+    profile: String,
+    server_can_read_content: bool,
+    user_managed_content_key: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MeResponseWire {
+    binding: SessionBindingWire,
+    content_protection: ContentProtectionWire,
+}
+
 pub fn encode_challenge_response(
     result: &crate::auth_application::ChallengeResult,
     replay_until_unix: i64,
@@ -324,6 +340,35 @@ pub fn encode_revoke_response(
         },
         revoked_at: timestamp(revoked_at_unix)?,
         scope: "currentSession".into(),
+    })
+}
+
+pub fn encode_me_response(
+    principal: &AuthenticatedPrincipal,
+    server_instance_id: &str,
+) -> Result<Vec<u8>, AuthError> {
+    if principal.account_fence.len() != 32 {
+        return Err(AuthError::InvalidFence);
+    }
+    let instance = Uuid::parse_str(server_instance_id).map_err(|_| AuthError::InvalidIdentifier)?;
+    if instance.to_string() != server_instance_id {
+        return Err(AuthError::InvalidIdentifier);
+    }
+    canonical_value(&MeResponseWire {
+        binding: SessionBindingWire {
+            account_auth_epoch: principal.account_auth_epoch,
+            account_fence: URL_SAFE_NO_PAD.encode(&principal.account_fence),
+            account_id: principal.account_id.clone(),
+            server_instance_id: server_instance_id.into(),
+            session_id: principal.session_id.clone(),
+            sync_protocol_epoch: AUTH_PROTOCOL_EPOCH,
+        },
+        content_protection: ContentProtectionWire {
+            e2ee: false,
+            profile: "serverReadableV1".into(),
+            server_can_read_content: true,
+            user_managed_content_key: false,
+        },
     })
 }
 

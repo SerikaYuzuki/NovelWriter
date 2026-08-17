@@ -19,9 +19,23 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://fuminiwa_sync_v2:${FUMINIWA_SYNC_V2_POSTGRES_PASSWORD}@postgres:5432/fuminiwa_sync_v2
-      FUMINIWA_RUNTIME_MODE: ${FUMINIWA_RUNTIME_MODE:-production}
-      FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:-fuminiwa-sync-v2}
+      FUMINIWA_RUNTIME_MODE: production
+      FUMINIWA_SERVER_INSTANCE_ID: ${FUMINIWA_SERVER_INSTANCE_ID:?set a v2-only lowercase UUID}
       FUMINIWA_SYNC_V2_BIND: 0.0.0.0:8092
+      FUMINIWA_AUTH_VAULT_KEY_VERSION: ${FUMINIWA_AUTH_VAULT_KEY_VERSION:?set the active vault key version}
+      FUMINIWA_AUTH_VAULT_KEY_FILE: /run/secrets/auth-vault-key
+      FUMINIWA_AUTH_SUBJECT_HMAC_KEY_FILE: /run/secrets/auth-subject-hmac-key
+      FUMINIWA_AUTH_TOKEN_HMAC_KEY_FILE: /run/secrets/auth-token-hmac-key
+      FUMINIWA_APPLE_TEAM_ID: ${FUMINIWA_APPLE_TEAM_ID:?set the Apple Team ID}
+      FUMINIWA_APPLE_KEY_ID: ${FUMINIWA_APPLE_KEY_ID:?set the Apple key ID}
+      FUMINIWA_APPLE_MAC_CLIENT_ID: ${FUMINIWA_APPLE_MAC_CLIENT_ID:?set the macOS App ID}
+      FUMINIWA_APPLE_IOS_CLIENT_ID: ${FUMINIWA_APPLE_IOS_CLIENT_ID:?set the iOS App ID}
+      FUMINIWA_APPLE_PRIVATE_KEY_FILE: /run/secrets/apple-sign-in-key.p8
+    volumes:
+      - ${FUMINIWA_AUTH_VAULT_KEY_HOST_PATH:?set vault key file path}:/run/secrets/auth-vault-key:ro
+      - ${FUMINIWA_AUTH_SUBJECT_HMAC_KEY_HOST_PATH:?set subject HMAC key file path}:/run/secrets/auth-subject-hmac-key:ro
+      - ${FUMINIWA_AUTH_TOKEN_HMAC_KEY_HOST_PATH:?set token HMAC key file path}:/run/secrets/auth-token-hmac-key:ro
+      - ${FUMINIWA_APPLE_PRIVATE_KEY_HOST_PATH:?set Apple p8 file path}:/run/secrets/apple-sign-in-key.p8:ro
     ports:
       - "${FUMINIWA_SYNC_V2_PORT:-8092}:8092"
 volumes:

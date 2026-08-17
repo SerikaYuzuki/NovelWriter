@@ -44,6 +44,7 @@ CREATE TABLE auth_v1.provider_credentials (
     credential_id UUID PRIMARY KEY,
     identity_id UUID NOT NULL REFERENCES auth_v1.external_identities(identity_id),
     original_audience TEXT NOT NULL,
+    vault_context TEXT NOT NULL UNIQUE,
     credential_generation BIGINT NOT NULL CHECK (credential_generation > 0),
     key_version INTEGER NOT NULL CHECK (key_version > 0),
     purpose TEXT NOT NULL DEFAULT 'apple_provider_refresh_v1',

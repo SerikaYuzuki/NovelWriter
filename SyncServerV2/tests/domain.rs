@@ -1,7 +1,7 @@
 use axum::http::{HeaderMap, HeaderValue};
 use fuminiwa_sync_server_v2::{
     application::{binding_matches, parse_command, strict_json, validate_entity_payload},
-    auth::{authenticate, RuntimeMode},
+    auth::{authenticate, FixtureAccessAuthenticator, RuntimeMode},
     domain::{canonical_json, replay_receipt, sha256},
     AuthenticatedPrincipal, SyncError,
 };
@@ -62,27 +62,21 @@ fn resolve_server_seal_requires_one_exact_local_state() {
     }
 }
 
-#[test]
-fn fixture_auth_is_fail_closed_in_production() {
+#[tokio::test]
+async fn fixture_auth_is_fail_closed_in_production() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "authorization",
         HeaderValue::from_static("Bearer dev:account:fixture-fence"),
     );
-    assert!(authenticate(
-        &headers,
-        RuntimeMode::Production,
-        "fixture-server",
-        "fixture-fence"
-    )
-    .is_err());
-    let principal = authenticate(
-        &headers,
-        RuntimeMode::Test,
-        "fixture-server",
-        "fixture-fence",
-    )
-    .unwrap();
+    assert!(
+        FixtureAccessAuthenticator::new(RuntimeMode::Production, "fixture-fence".into()).is_err()
+    );
+    let fixture =
+        FixtureAccessAuthenticator::new(RuntimeMode::Test, "fixture-fence".into()).unwrap();
+    let principal = authenticate(&headers, &fixture, "fixture-server")
+        .await
+        .unwrap();
     assert_eq!(principal.account_id, "account");
 }
 

@@ -183,6 +183,8 @@ impl fmt::Debug for VerifiedExternalIdentity {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerifiedProviderCredential {
     pub audience: String,
+    /// Opaque vault AAD context used to recover this credential generation.
+    pub vault_context: String,
     pub encrypted_refresh_token: SealedSecret,
 }
 impl fmt::Debug for VerifiedProviderCredential {
@@ -190,6 +192,7 @@ impl fmt::Debug for VerifiedProviderCredential {
         formatter
             .debug_struct("VerifiedProviderCredential")
             .field("audience", &self.audience)
+            .field("vault_context", &self.vault_context)
             .field("encrypted_refresh_token", &"<redacted>")
             .finish()
     }
@@ -276,7 +279,11 @@ impl VerifiedExternalIdentity {
             || evidence
                 .provider_credential
                 .as_ref()
-                .is_some_and(|credential| credential.audience != challenge.audience)
+                .is_some_and(|credential| {
+                    credential.audience != challenge.audience
+                        || credential.vault_context.is_empty()
+                        || credential.vault_context.len() > 512
+                })
         {
             return Err(AuthError::InvalidRequest);
         }
@@ -307,10 +314,11 @@ impl VerifiedExternalIdentity {
                 .provider_authenticated_at_unix
                 .abs_diff(self.freshness_verified_at_unix)
                 > 300
-            || self
-                .provider_credential
-                .as_ref()
-                .is_some_and(|credential| credential.audience != challenge.audience)
+            || self.provider_credential.as_ref().is_some_and(|credential| {
+                credential.audience != challenge.audience
+                    || credential.vault_context.is_empty()
+                    || credential.vault_context.len() > 512
+            })
         {
             return Err(AuthError::InvalidRequest);
         }

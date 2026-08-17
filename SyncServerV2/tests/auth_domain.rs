@@ -133,6 +133,7 @@ fn fence_requires_opaque_256_bit_value_and_positive_epoch() {
 fn apple_credentials_are_partitioned_by_original_audience() {
     let mac = VerifiedProviderCredential {
         audience: "dev.serikayuzuki.fuminiwa".into(),
+        vault_context: "fixture-mac".into(),
         encrypted_refresh_token: SealedSecret {
             key_version: 3,
             ciphertext: b"mac-ciphertext".to_vec(),
@@ -140,6 +141,7 @@ fn apple_credentials_are_partitioned_by_original_audience() {
     };
     let ios = VerifiedProviderCredential {
         audience: "dev.serikayuzuki.fuminiwa.ios".into(),
+        vault_context: "fixture-ios".into(),
         encrypted_refresh_token: SealedSecret {
             key_version: 3,
             ciphertext: b"ios-ciphertext".to_vec(),

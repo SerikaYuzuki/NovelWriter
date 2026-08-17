@@ -1,6 +1,6 @@
 use crate::{
     application::{binding_matches, parse_command, strict_json},
-    auth::{authenticate, RuntimeMode},
+    auth::{authenticate, AccessAuthenticator},
     domain::*,
     postgres::Repository,
 };
@@ -20,7 +20,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AppState {
     pub repo: Arc<Repository>,
-    pub runtime_mode: RuntimeMode,
+    pub access_authenticator: Arc<dyn AccessAuthenticator>,
 }
 fn error_response(error: SyncError) -> Response {
     let status = match error {
@@ -167,16 +167,16 @@ fn cursor_scope(
 }
 
 #[allow(clippy::result_large_err)]
-fn authenticated(
+async fn authenticated(
     headers: &HeaderMap,
     state: &AppState,
 ) -> Result<AuthenticatedPrincipal, Response> {
     authenticate(
         headers,
-        state.runtime_mode,
+        state.access_authenticator.as_ref(),
         &state.repo.server_instance_id,
-        "fixture-fence",
     )
+    .await
     .map_err(error_response)
 }
 
@@ -195,8 +195,11 @@ fn required_header<'a>(
 }
 
 #[allow(clippy::result_large_err)]
-fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrincipal, Response> {
-    let principal = authenticated(headers, state)?;
+async fn principal(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<AuthenticatedPrincipal, Response> {
+    let principal = authenticated(headers, state).await?;
     let server_instance = required_header(
         headers,
         "x-fuminiwa-server-instance",
@@ -228,7 +231,7 @@ fn principal(headers: &HeaderMap, state: &AppState) -> Result<AuthenticatedPrinc
 }
 
 #[allow(clippy::result_large_err)]
-fn capabilities_principal(
+async fn capabilities_principal(
     headers: &HeaderMap,
     state: &AppState,
 ) -> Result<AuthenticatedPrincipal, Response> {
@@ -238,7 +241,7 @@ fn capabilities_principal(
         64,
         SyncError::SchemaViolation("x-fuminiwa-client-version".into()),
     )?;
-    authenticated(headers, state)
+    authenticated(headers, state).await
 }
 
 #[allow(clippy::result_large_err)]
@@ -269,7 +272,7 @@ async fn command_inner(
     if body.len() > MAX_COMMAND_BODY_BYTES {
         return error_response(SyncError::SizeLimitExceeded);
     }
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -360,7 +363,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {
-    let p = match capabilities_principal(&headers, &state) {
+    let p = match capabilities_principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -374,7 +377,7 @@ async fn list_works(
     Query(params): Query<HashMap<String, String>>,
     state: State<AppState>,
 ) -> Response {
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -521,7 +524,7 @@ async fn head(Path(work): Path<String>, headers: HeaderMap, state: State<AppStat
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -562,7 +565,7 @@ async fn history(
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -696,7 +699,7 @@ async fn manifest(
     headers: HeaderMap,
     state: State<AppState>,
 ) -> Response {
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -732,7 +735,7 @@ async fn object(
     headers: HeaderMap,
     state: State<AppState>,
 ) -> Response {
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -762,7 +765,7 @@ async fn missing_objects(
         Ok(_) => return error_response(SyncError::SizeLimitExceeded),
         Err(response) => return response,
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -876,7 +879,7 @@ async fn upload(
         Ok(body) => body,
         Err(response) => return response,
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -904,7 +907,7 @@ async fn conflict(
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -968,7 +971,7 @@ async fn receipt(Path(id): Path<String>, headers: HeaderMap, state: State<AppSta
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    let p = match principal(&headers, &state) {
+    let p = match principal(&headers, &state).await {
         Ok(v) => v,
         Err(e) => return e,
     };

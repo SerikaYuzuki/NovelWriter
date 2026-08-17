@@ -119,6 +119,10 @@ pub trait AuthRepository: Send + Sync {
         &self,
         token_verifier: Vec<u8>,
     ) -> Result<AuthenticatedPrincipal, AuthError>;
+    async fn resolve_refresh_session(
+        &self,
+        token_verifier: Vec<u8>,
+    ) -> Result<SessionId, AuthError>;
     async fn find_operation_receipt(
         &self,
         operation_id: &OperationId,
@@ -513,6 +517,17 @@ impl<R: AuthRepository> AuthApplication<R> {
             .token_verifier("access", access_token)
             .await?;
         self.repository.authenticate_access(verifier).await
+    }
+
+    pub async fn resolve_refresh_session(
+        &self,
+        refresh_token: &str,
+    ) -> Result<SessionId, AuthError> {
+        let verifier = self
+            .repository
+            .token_verifier("refresh", refresh_token)
+            .await?;
+        self.repository.resolve_refresh_session(verifier).await
     }
 
     async fn revoke_current_session(

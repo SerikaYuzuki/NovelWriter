@@ -172,6 +172,9 @@ impl AuthRepository for FakeRepo {
             Err(AuthError::AccountNotFound)
         }
     }
+    async fn resolve_refresh_session(&self, _verifier: Vec<u8>) -> Result<SessionId, AuthError> {
+        Ok(self.principal().session_id)
+    }
     async fn find_operation_receipt(
         &self,
         operation_id: &OperationId,

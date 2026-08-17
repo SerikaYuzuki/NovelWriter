@@ -1,23 +1,62 @@
-use fuminiwa_sync_server_v2::{router, AppState, Repository, RuntimeMode};
+use fuminiwa_sync_server_v2::{
+    auth::{AccessAuthenticator, RuntimeMode},
+    auth_apple::{AppleClientSecretSigner, ProductionAppleTransport},
+    auth_http::{self, AuthHttpService, AuthHttpState},
+    auth_service::ProductionAuthService,
+    auth_vault::{secret_key_from_environment, AesGcmCredentialVault},
+    router, AppState, Repository,
+};
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    if RuntimeMode::from_env() == RuntimeMode::Production && std::env::var("DATABASE_URL").is_err()
-    {
-        return Err("DATABASE_URL is required in production".into());
-    }
-    let url = std::env::var("DATABASE_URL")?;
-    let instance =
-        std::env::var("FUMINIWA_SERVER_INSTANCE_ID").unwrap_or_else(|_| "fuminiwa-sync-v2".into());
-    let repo = Repository::connect(&url, instance).await?;
+    let _mode = RuntimeMode::production_from_environment()?;
+    let database_url = std::env::var("DATABASE_URL")?;
+    let server_instance_id = production_server_instance()?;
+
+    // Parse every Production auth dependency before opening PostgreSQL. A
+    // missing key or Apple configuration therefore cannot partially start or
+    // migrate a deployment with authentication disabled.
+    let vault = AesGcmCredentialVault::from_environment()?;
+    let subject_hmac_key = secret_key_from_environment("FUMINIWA_AUTH_SUBJECT_HMAC_KEY")?;
+    let token_hmac_key = secret_key_from_environment("FUMINIWA_AUTH_TOKEN_HMAC_KEY")?;
+    let apple_signer = AppleClientSecretSigner::from_environment()?;
+    let apple_transport = ProductionAppleTransport::new()?;
+
+    let repository = Repository::connect(&database_url, server_instance_id.clone()).await?;
+    ProductionAuthService::ensure_apple_provider_config(&repository.pool).await?;
+    let auth_service = Arc::new(ProductionAuthService::new(
+        repository.pool.clone(),
+        vault,
+        subject_hmac_key,
+        token_hmac_key,
+        server_instance_id.clone(),
+        apple_signer,
+        apple_transport,
+    )?);
+    let access_authenticator: Arc<dyn AccessAuthenticator> = auth_service.clone();
+    let auth_http_service: Arc<dyn AuthHttpService> = auth_service;
     let app = router(AppState {
-        repo: Arc::new(repo),
-        runtime_mode: RuntimeMode::from_env(),
-    });
+        repo: Arc::new(repository),
+        access_authenticator,
+    })
+    .merge(auth_http::router(AuthHttpState::new(
+        auth_http_service,
+        server_instance_id,
+    )));
     let bind = std::env::var("FUMINIWA_SYNC_V2_BIND").unwrap_or_else(|_| "127.0.0.1:8092".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn production_server_instance() -> Result<String, Box<dyn std::error::Error>> {
+    let value = std::env::var("FUMINIWA_SERVER_INSTANCE_ID")?;
+    let parsed = Uuid::parse_str(&value)?;
+    if parsed.to_string() != value {
+        return Err("FUMINIWA_SERVER_INSTANCE_ID must be a lowercase UUID".into());
+    }
+    Ok(value)
 }

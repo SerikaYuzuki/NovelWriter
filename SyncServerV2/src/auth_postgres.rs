@@ -184,6 +184,29 @@ impl AuthRepository for AuthPostgresRepository {
         Ok(principal)
     }
 
+    async fn resolve_refresh_session(
+        &self,
+        token_verifier: Vec<u8>,
+    ) -> Result<SessionId, AuthError> {
+        let row = sqlx::query(
+            "SELECT s.session_id FROM auth_v1.refresh_tokens t \
+             JOIN auth_v1.refresh_families f ON f.family_id=t.family_id \
+             JOIN auth_v1.auth_sessions s ON s.family_id=f.family_id \
+             WHERE t.token_hmac=$1 AND t.token_hmac_key_version=$2",
+        )
+        .bind(token_verifier)
+        .bind(TOKEN_HMAC_KEY_VERSION)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::map_db)?
+        .ok_or(AuthError::AccountNotFound)?;
+        SessionId::new(
+            row.try_get::<Uuid, _>("session_id")
+                .map_err(Self::map_db)?
+                .to_string(),
+        )
+    }
+
     async fn find_operation_receipt(
         &self,
         operation_id: &OperationId,
@@ -854,10 +877,11 @@ impl AuthRepository for AuthPostgresRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(Self::map_db)?;
-            sqlx::query("INSERT INTO auth_v1.provider_credentials(credential_id,identity_id,original_audience,credential_generation,key_version,ciphertext,state) VALUES($1,$2,$3,$4,$5,$6,'active')")
+            sqlx::query("INSERT INTO auth_v1.provider_credentials(credential_id,identity_id,original_audience,vault_context,credential_generation,key_version,ciphertext,state) VALUES($1,$2,$3,$4,$5,$6,$7,'active')")
                 .bind(Uuid::new_v4())
                 .bind(identity_id)
                 .bind(&credential.audience)
+                .bind(&credential.vault_context)
                 .bind(generation)
                 .bind(credential.encrypted_refresh_token.key_version)
                 .bind(&credential.encrypted_refresh_token.ciphertext)

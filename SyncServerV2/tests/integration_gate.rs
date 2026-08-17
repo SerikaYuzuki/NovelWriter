@@ -7,12 +7,16 @@ use axum::{
     http::{header::AUTHORIZATION, HeaderMap, HeaderValue, Request, StatusCode},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use fuminiwa_sync_server_v2::{router, AppState, RuntimeMode};
+use fuminiwa_sync_server_v2::{auth::FixtureAccessAuthenticator, router, AppState, RuntimeMode};
 use serde_json::Value;
 use std::sync::Arc;
 use support::{run_repository_scenarios, ScenarioContext};
 use tower::ServiceExt;
 use uuid::Uuid;
+
+fn fixture_authenticator() -> Arc<FixtureAccessAuthenticator> {
+    Arc::new(FixtureAccessAuthenticator::new(RuntimeMode::Test, "fixture-fence".into()).unwrap())
+}
 
 fn headers(account_id: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -39,7 +43,7 @@ async fn get(
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
     let app = router(AppState {
         repo: Arc::new(context.repo.clone()),
-        runtime_mode: RuntimeMode::Test,
+        access_authenticator: fixture_authenticator(),
     });
     let mut request = Request::builder().uri(path).body(Body::empty()).unwrap();
     *request.headers_mut() = headers(account_id);
@@ -56,7 +60,7 @@ async fn get(
 async fn post_resolution(context: &ScenarioContext, account_id: &str) -> (StatusCode, Vec<u8>) {
     let app = router(AppState {
         repo: Arc::new(context.repo.clone()),
-        runtime_mode: RuntimeMode::Test,
+        access_authenticator: fixture_authenticator(),
     });
     let mut request = Request::builder()
         .method("POST")
@@ -253,7 +257,7 @@ async fn verify_http_contract(context: &ScenarioContext) {
 
     let app = router(AppState {
         repo: Arc::new(context.repo.clone()),
-        runtime_mode: RuntimeMode::Test,
+        access_authenticator: fixture_authenticator(),
     });
     let mut capabilities = Request::builder()
         .uri("/v2/capabilities")

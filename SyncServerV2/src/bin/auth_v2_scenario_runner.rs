@@ -87,6 +87,7 @@ impl AppleProvider for ScenarioAppleProvider {
                 .get(&challenge.audience)
                 .map(|secret| VerifiedProviderCredential {
                     audience: challenge.audience.clone(),
+                    vault_context: format!("fixture-{}", challenge.audience),
                     encrypted_refresh_token: secret.clone(),
                 });
         AppleIdentityEvidence::from_verified_claims(

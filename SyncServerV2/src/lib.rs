@@ -1,8 +1,12 @@
 pub mod application;
 pub mod auth;
+pub mod auth_apple;
 pub mod auth_application;
 pub mod auth_domain;
+pub mod auth_http;
 pub mod auth_postgres;
+pub mod auth_service;
+pub mod auth_vault;
 pub mod auth_wire;
 pub mod domain;
 pub mod http;
