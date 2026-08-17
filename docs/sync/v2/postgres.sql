@@ -14,7 +14,7 @@ INSERT INTO sync_v2.server_meta(key, value) VALUES
   ('namespace', 'fuminiwa-snapshot-sync-v2'),
   ('protocol_epoch', '2'),
   ('schema_version', '2'),
-  ('ddl_contract_marker', 'snapshot-sync-v2-postgres-r2');
+  ('ddl_contract_marker', 'snapshot-sync-v2-postgres-r3');
 -- The deployment identity is intentionally not a static migration value.
 -- Repository startup inserts the expected environment-provided instance once
 -- into this singleton table, then rejects every mismatch fail-closed.

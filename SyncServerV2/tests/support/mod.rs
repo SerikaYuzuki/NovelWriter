@@ -14,6 +14,7 @@ pub type ScenarioResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const SERVER_INSTANCE: &str = "sync-v2-scenario";
 const FENCE: &str = "fixture-fence";
+const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -1299,6 +1300,14 @@ async fn exercise_account_isolation(
 }
 
 async fn exercise_migration_markers(url: &str, repo: &Repository) -> ScenarioResult<()> {
+    let marker: String =
+        sqlx::query_scalar("SELECT value FROM sync_v2.server_meta WHERE key='ddl_contract_marker'")
+            .fetch_one(&repo.pool)
+            .await?;
+    ensure(
+        marker == DDL_CONTRACT_MARKER,
+        "repository initialization did not apply the current DDL contract marker",
+    )?;
     ensure(
         Repository::connect(url, "wrong-deployment".into())
             .await
@@ -1314,9 +1323,10 @@ async fn exercise_migration_markers(url: &str, repo: &Repository) -> ScenarioRes
         .await
         .is_err();
     sqlx::query(
-        "UPDATE sync_v2.server_meta SET value='snapshot-sync-v2-postgres-r2'
+        "UPDATE sync_v2.server_meta SET value=$1
          WHERE key='ddl_contract_marker'",
     )
+    .bind(DDL_CONTRACT_MARKER)
     .execute(&repo.pool)
     .await?;
     ensure(
@@ -1462,6 +1472,14 @@ async fn exercise_catalog_commit_race(
 pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioContext> {
     require_empty_database(url).await?;
     let repo = Repository::connect(url, SERVER_INSTANCE.into()).await?;
+    let marker: String =
+        sqlx::query_scalar("SELECT value FROM sync_v2.server_meta WHERE key='ddl_contract_marker'")
+            .fetch_one(&repo.pool)
+            .await?;
+    ensure(
+        marker == DDL_CONTRACT_MARKER,
+        "fresh migration did not produce the current DDL contract marker",
+    )?;
     let account_a = principal("scenario-account-a");
     let account_b = principal("scenario-account-b");
     exercise_concurrent_create(&repo, &account_a).await?;

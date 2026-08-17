@@ -218,7 +218,7 @@ fn sync_migration_contains_fail_closed_server_identity() {
         "fuminiwa-snapshot-sync-v2",
         "('protocol_epoch', '2')",
         "('schema_version', '2')",
-        "('ddl_contract_marker', 'snapshot-sync-v2-postgres-r2')",
+        "('ddl_contract_marker', 'snapshot-sync-v2-postgres-r3')",
         "CREATE TABLE sync_v2.deployment_binding",
     ] {
         assert!(migration.contains(marker), "missing server marker {marker}");
