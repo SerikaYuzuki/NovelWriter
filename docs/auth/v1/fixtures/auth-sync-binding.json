@@ -30,13 +30,13 @@
           "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1
+          "syncProtocolEpoch": 2
         },
         "syncCapabilities": {
           "accountAuthEpoch": 1,
           "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
-          "protocolEpoch": 1,
+          "protocolEpoch": 2,
           "serverInstanceId": "00000000-0000-4000-8000-000000000001"
         }
       },
@@ -55,14 +55,14 @@
           "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1
+          "syncProtocolEpoch": 2
         },
         "afterAuthRefresh": {
           "accountAuthEpoch": 1,
           "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1
+          "syncProtocolEpoch": 2
         }
       },
       "expect": {
@@ -101,13 +101,13 @@
           "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1
+          "syncProtocolEpoch": 2
         },
         "syncCapabilities": {
           "accountAuthEpoch": 2,
           "accountFence": "fence_BBBBBBBBBBBBBBBBBBBB",
           "accountId": "acct_AAAAAAAAAAAAAAAA",
-          "protocolEpoch": 1,
+          "protocolEpoch": 2,
           "serverInstanceId": "00000000-0000-4000-8000-000000000001"
         },
         "allProjectedValuesEqual": true,
@@ -127,13 +127,13 @@
           "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
           "accountId": "acct_BBBBBBBBBBBBBBBB",
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1
+          "syncProtocolEpoch": 2
         },
         "syncCapabilities": {
           "accountAuthEpoch": 1,
           "accountFence": "fence_CCCCCCCCCCCCCCCCCCCC",
           "accountId": "acct_BBBBBBBBBBBBBBBB",
-          "protocolEpoch": 1,
+          "protocolEpoch": 2,
           "serverInstanceId": "00000000-0000-4000-8000-000000000001"
         },
         "allProjectedValuesEqual": true,

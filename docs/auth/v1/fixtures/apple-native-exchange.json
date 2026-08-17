@@ -118,7 +118,7 @@
             }
           ],
           "serverInstanceId": "00000000-0000-4000-8000-000000000001",
-          "syncProtocolEpoch": 1,
+          "syncProtocolEpoch": 2,
           "syncProtocolNamespace": "com.fuminiwa.snapshot-sync"
         },
         "forbiddenFields": [
@@ -258,7 +258,7 @@
             "accountId": "acct_AAAAAAAAAAAAAAAA",
             "serverInstanceId": "00000000-0000-4000-8000-000000000001",
             "sessionId": "40000000-0000-4000-8000-000000000001",
-            "syncProtocolEpoch": 1
+            "syncProtocolEpoch": 2
           },
           "receipt": {
             "commandKind": "exchangeAppleNativeCredential",
@@ -420,7 +420,7 @@
             "accountId": "acct_AAAAAAAAAAAAAAAA",
             "serverInstanceId": "00000000-0000-4000-8000-000000000001",
             "sessionId": "40000000-0000-4000-8000-000000000002",
-            "syncProtocolEpoch": 1
+            "syncProtocolEpoch": 2
           },
           "receipt": {
             "commandKind": "exchangeAppleNativeCredential",
@@ -477,7 +477,7 @@
             "accountId": "acct_AAAAAAAAAAAAAAAA",
             "serverInstanceId": "00000000-0000-4000-8000-000000000001",
             "sessionId": "40000000-0000-4000-8000-000000000002",
-            "syncProtocolEpoch": 1
+            "syncProtocolEpoch": 2
           },
           "contentProtection": {
             "e2ee": false,

@@ -117,7 +117,7 @@ async fn capabilities_are_public_closed_and_account_independent() {
     assert_eq!(left, right);
     let value: Value = serde_json::from_slice(&left).unwrap();
     assert_eq!(value["authProtocolEpoch"], 1);
-    assert_eq!(value["syncProtocolEpoch"], 1);
+    assert_eq!(value["syncProtocolEpoch"], 2);
     assert_eq!(value["minimumClientVersion"], "0.1.0");
     assert_eq!(value["providers"][0]["provider"], "apple");
     assert!(value.get("accountId").is_none());
@@ -162,7 +162,7 @@ async fn me_exposes_only_fuminiwa_binding_and_never_tenant() {
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["binding"]["accountId"], "acct_fixture");
     assert_eq!(value["binding"]["accountAuthEpoch"], 7);
-    assert_eq!(value["binding"]["syncProtocolEpoch"], 1);
+    assert_eq!(value["binding"]["syncProtocolEpoch"], 2);
     assert!(value.get("tenantId").is_none());
     assert!(!String::from_utf8_lossy(&bytes).contains("tenant_secret"));
     assert_eq!(

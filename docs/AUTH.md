@@ -2,7 +2,11 @@
 
 > **状態**: D-077／D-078のProduction認証を実装する前の設計契約。現時点では設計のみで、Rust／Swift認証module、Production session、provider linking UI／APIは未実装。v1で利用者へ出す外部providerは **Sign in with Appleだけ** とし、将来のOIDC provider追加でも内部AccountIDを変えない。
 
-本書は認証module、credential、session、account fence、Apple失効処理の正とする。認証HTTP wireとstate fixtureは[auth/v1/](auth/v1/)、同期payload、SQLite／CAS、Conflict、retentionの正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、実装順は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)、同期HTTP bearer境界は[sync/v1/openapi.yaml](sync/v1/openapi.yaml)に従う。
+本書は認証module、credential、session、account fence、Apple失効処理の正とする。認証HTTP wireとstate fixtureは[auth/v1/](auth/v1/)、現在liveな同期payload、SQLite／CAS、Conflict、retentionの正は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、実装順は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)、同期HTTP bearer境界は[sync/v2/openapi.yaml](sync/v2/openapi.yaml)に従う（`sync/v1/`はarchive）。
+
+### Auth v1 と live Sync v2 のepoch
+
+`authProtocolEpoch=1`／`authProtocolVersion=1.0.0`はAuth wire自体の世代であり、変更しない。一方、現在liveなSnapshot SyncはD-080の新namespaceで`syncProtocolEpoch=2`（Sync v2の`PROTOCOL_EPOCH`）である。Authのcapabilities、exchange、refresh、`/me`が返すsession bindingは常にこのSync v2 epoch `2`を返す。`authProtocolEpoch`と`syncProtocolEpoch`を同じ値として扱わず、AccountFenceはserver instance＋Sync v2 epoch `2`＋AccountID＋AccountAuthEpochへbindする。
 
 ## 1. 採択する境界
 

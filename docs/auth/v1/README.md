@@ -2,6 +2,8 @@
 
 このdirectoryはD-078で確定したSnapshot Sync用認証の **実装前wire契約** である。Rust auth server、Sign in with Apple adapter、Keychain client、Production deploymentが実装済みであることを示さない。HTTPの正は[`openapi.yaml`](openapi.yaml)、状態遷移のcross-language acceptanceは[`fixtures/`](fixtures/)である。
 
+`authProtocolEpoch=1`／`authProtocolVersion=1.0.0`はAuth protocol v1の値として維持する。現在のlive SyncはD-080の新namespaceでprotocol epoch `2`なので、capabilitiesとすべてのsession bindingの`syncProtocolEpoch`は`2`である。これはAuth epochとは別の値であり、Auth implementationはSync v2の`PROTOCOL_EPOCH`をbindingへ注入する。AccountFenceのbindingもserver instance＋Sync epoch `2`＋AccountID＋AccountAuthEpochで評価する。
+
 ## 固定する境界
 
 - Production v1の外部identity providerは`apple`、flowはAuthenticationServicesを使う`native`だけである。macOS／iOS／iPadOS clientはprovider選択UI、web redirect、別provider adapterを実装しない。Apple primary App ID groupingは同じ`providerConfigurationId=apple-primary-fuminiwa-v1`とし、server側audience allowlistをMacの`dev.serikayuzuki.fuminiwa`、iOS／iPadOSの`dev.serikayuzuki.fuminiwa.ios`だけに閉じる。request bodyのaudienceを信用しない。

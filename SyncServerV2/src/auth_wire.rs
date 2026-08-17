@@ -5,11 +5,11 @@
 
 use crate::auth_domain::{
     digest_request, AccountId, AuthError, AuthenticatedPrincipal, ChallengeId, OperationId,
-    ProviderConfigId, SessionGrant, SessionId, TenantId, AUTH_PROTOCOL_EPOCH,
-    CREATE_CHALLENGE_COMMAND, EXCHANGE_APPLE_COMMAND, REVOKE_SESSION_COMMAND,
-    ROTATE_REFRESH_COMMAND,
+    ProviderConfigId, SessionGrant, SessionId, TenantId, CREATE_CHALLENGE_COMMAND,
+    EXCHANGE_APPLE_COMMAND, REVOKE_SESSION_COMMAND, ROTATE_REFRESH_COMMAND,
 };
 use crate::domain::canonical_json;
+use crate::domain::PROTOCOL_EPOCH;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
@@ -361,7 +361,7 @@ pub fn encode_me_response(
             account_id: principal.account_id.clone(),
             server_instance_id: server_instance_id.into(),
             session_id: principal.session_id.clone(),
-            sync_protocol_epoch: AUTH_PROTOCOL_EPOCH,
+            sync_protocol_epoch: PROTOCOL_EPOCH,
         },
         content_protection: ContentProtectionWire {
             e2ee: false,
@@ -386,7 +386,7 @@ fn binding(
         account_id: grant.principal.account_id.clone(),
         server_instance_id: server_instance_id.into(),
         session_id: grant.principal.session_id.clone(),
-        sync_protocol_epoch: AUTH_PROTOCOL_EPOCH,
+        sync_protocol_epoch: PROTOCOL_EPOCH,
     })
 }
 
@@ -406,7 +406,7 @@ fn grant(
     tokens: SessionTokensWire,
     tenant_id: TenantId,
 ) -> Result<SessionGrant, AuthError> {
-    if binding.sync_protocol_epoch != AUTH_PROTOCOL_EPOCH
+    if binding.sync_protocol_epoch != PROTOCOL_EPOCH
         || binding.account_auth_epoch < 1
         || opaque_token(binding.account_id.as_str()).is_err()
         || uuid(binding.session_id.as_str()).is_err()

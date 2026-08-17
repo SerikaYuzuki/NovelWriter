@@ -2,8 +2,10 @@
 
 use crate::{
     auth::bearer_token,
-    auth_domain::{AuthError, ChallengeId, OperationId},
-    domain::canonical_json,
+    auth_domain::{
+        AuthError, ChallengeId, OperationId, AUTH_PROTOCOL_EPOCH, AUTH_PROTOCOL_VERSION,
+    },
+    domain::{canonical_json, PROTOCOL_EPOCH},
 };
 use async_trait::async_trait;
 use axum::{
@@ -146,9 +148,9 @@ async fn capabilities(headers: HeaderMap, State(state): State<AuthHttpState>) ->
         return response;
     }
     let value = json!({
-        "authProtocolEpoch":1,
+        "authProtocolEpoch":AUTH_PROTOCOL_EPOCH,
         "authProtocolNamespace":"com.fuminiwa.auth",
-        "authProtocolVersion":"1.0.0",
+        "authProtocolVersion":AUTH_PROTOCOL_VERSION,
         "canonicalization":"rfc8785-jcs",
         "contentProtection":content_protection(),
         "limits":{
@@ -177,7 +179,7 @@ async fn capabilities(headers: HeaderMap, State(state): State<AuthHttpState>) ->
             "tokenEndpoint":"https://appleid.apple.com/auth/token"
         }],
         "serverInstanceId":state.server_instance_id.as_ref(),
-        "syncProtocolEpoch":1,
+        "syncProtocolEpoch":PROTOCOL_EPOCH,
         "syncProtocolNamespace":"com.fuminiwa.snapshot-sync"
     });
     canonical_value_response(StatusCode::OK, value)

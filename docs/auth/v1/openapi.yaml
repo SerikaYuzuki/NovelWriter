@@ -29,6 +29,12 @@ info:
     deployment flag; it requires a future incompatible protocol namespace/epoch and
     migration. No user-managed work key or recovery code exists in v1.
 
+    Auth protocol v1 remains `authProtocolEpoch=1` and `authProtocolVersion=1.0.0`.
+    The current live Snapshot Sync namespace is v2, whose protocol epoch is 2.
+    Therefore `syncProtocolEpoch` in capabilities and every session binding MUST
+    be 2. These are independent fields: Auth implementations MUST NOT substitute
+    `authProtocolEpoch` for the live Sync epoch.
+
     Every JSON request and response uses
     `application/vnd.fuminiwa.auth.v1+jcs` and MUST be the exact UTF-8 RFC 8785
     JSON Canonicalization Scheme representation accepted by its closed schema.
@@ -754,7 +760,7 @@ components:
           $ref: '#/components/schemas/ServerInstanceId'
         syncProtocolEpoch:
           type: integer
-          const: 1
+          const: 2
         syncProtocolNamespace:
           type: string
           const: com.fuminiwa.snapshot-sync
@@ -908,7 +914,7 @@ components:
           $ref: '#/components/schemas/SessionId'
         syncProtocolEpoch:
           type: integer
-          const: 1
+          const: 2
       description: Provider-neutral sync/auth binding; contains no external identity claims.
     SessionTokens:
       type: object

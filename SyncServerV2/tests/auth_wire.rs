@@ -1,3 +1,4 @@
+use fuminiwa_sync_server_v2::application::{binding_matches, parse_command};
 use fuminiwa_sync_server_v2::auth_domain::{
     AccountId, AuthError, AuthenticatedPrincipal, OperationId, SessionGrant, SessionId, TenantId,
     CREATE_CHALLENGE_COMMAND, EXCHANGE_APPLE_COMMAND, REVOKE_SESSION_COMMAND,
@@ -7,6 +8,8 @@ use fuminiwa_sync_server_v2::auth_wire::{
     decode_exchange_response, encode_exchange_response, parse_auth_command, AuthCommand,
     ClientPlatform,
 };
+use fuminiwa_sync_server_v2::domain::{canonical_json, PROTOCOL_EPOCH};
+use serde_json::json;
 
 #[test]
 fn accepted_commands_match_the_audited_canonical_digests() {
@@ -152,4 +155,74 @@ fn session_receipt_is_closed_openapi_shaped_jcs_and_hydrates_internal_tenant() {
         .windows(b"tenant_fixture".len())
         .all(|window| window != b"tenant_fixture"));
     assert_eq!(decode_exchange_response(&bytes, tenant).unwrap(), grant);
+}
+
+#[test]
+fn auth_binding_projects_live_sync_v2_epoch_into_authenticated_command_scope() {
+    let tenant = TenantId::new("tenant_fixture").unwrap();
+    let grant = SessionGrant {
+        principal: AuthenticatedPrincipal {
+            account_id: AccountId::new("acct_AAAAAAAAAAAAAAAA").unwrap(),
+            tenant_id: tenant,
+            session_id: SessionId::new("40000000-0000-4000-8000-000000000001").unwrap(),
+            account_auth_epoch: 1,
+            account_fence: vec![0x11; 32],
+        },
+        access_token: format!("fma1_{}", "A".repeat(43)),
+        refresh_token: format!("fmr1_{}", "B".repeat(43)),
+        refresh_generation: 1,
+        access_expires_at_unix: 1_776_470_100,
+        refresh_expires_at_unix: 1_784_245_200,
+    };
+    let response = encode_exchange_response(
+        &grant,
+        "00000000-0000-4000-8000-000000000001",
+        &OperationId::new("30000000-0000-4000-8000-000000000001").unwrap(),
+    )
+    .unwrap();
+    let auth: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(auth["binding"]["syncProtocolEpoch"], PROTOCOL_EPOCH);
+    let mut old_auth = auth.clone();
+    old_auth["binding"]["syncProtocolEpoch"] = json!(1);
+    let old_auth_bytes = canonical_json(&old_auth).unwrap();
+    assert!(
+        decode_exchange_response(&old_auth_bytes, TenantId::new("tenant_fixture").unwrap())
+            .is_err()
+    );
+
+    let binding = &auth["binding"];
+    let sync_principal = fuminiwa_sync_server_v2::AuthenticatedPrincipal {
+        account_id: binding["accountId"].as_str().unwrap().into(),
+        account_fence: binding["accountFence"].as_str().unwrap().into(),
+        server_instance_id: binding["serverInstanceId"].as_str().unwrap().into(),
+        protocol_epoch: binding["syncProtocolEpoch"].as_i64().unwrap(),
+    };
+    let command_value = json!({
+        "binding": {
+            "accountFence": sync_principal.account_fence.clone(),
+            "accountId": sync_principal.account_id.clone(),
+            "protocolEpoch": sync_principal.protocol_epoch,
+            "serverInstanceId": sync_principal.server_instance_id.clone()
+        },
+        "commandId": "00000000-0000-4000-8000-000000000001",
+        "commandKind": "createWork",
+        "payload": {
+            "documentId": "00000000-0000-0000-0000-000000000002",
+            "workId": "00000000-0000-0000-0000-000000000003"
+        },
+        "schemaVersion": 2,
+        "sourceGeneration": 1,
+        "sourceSnapshotId": "0000000000000000000000000000000000000000000000000000000000000000"
+    });
+    let command_bytes = canonical_json(&command_value).unwrap();
+    let command = parse_command(&command_bytes).unwrap();
+    assert!(binding_matches(&command.value, &sync_principal));
+
+    let mut wrong_epoch = command_value;
+    wrong_epoch["binding"]["protocolEpoch"] = json!(1);
+    let wrong_bytes = canonical_json(&wrong_epoch).unwrap();
+    assert!(matches!(
+        parse_command(&wrong_bytes),
+        Err(fuminiwa_sync_server_v2::SyncError::ProtocolEpochMismatch)
+    ));
 }
