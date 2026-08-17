@@ -15,16 +15,19 @@ import UIKit
 public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDelegate,
     ASAuthorizationControllerPresentationContextProviding {
     private var continuation: CheckedContinuation<AppleAuthorizationPayload, Error>?
+    private var expectedChallenge: AuthChallenge?
 
     override public init() {
         super.init()
     }
 
     public func authorize(using challenge: AuthChallenge) async throws -> AppleAuthorizationPayload {
+        guard continuation == nil else { throw AuthError.authorizationInProgress }
         guard challenge.provider == .apple, challenge.flow == "native", challenge.requestedScopes.isEmpty,
               challenge.expiresAt > Date(), !challenge.state.isEmpty, !challenge.nonce.isEmpty else {
             throw AuthError.challengeExpired
         }
+        expectedChallenge = challenge
         let provider = ASAuthorizationAppleIDProvider()
         let request = provider.createRequest()
         request.requestedScopes = []
@@ -54,10 +57,24 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
         controller _: ASAuthorizationController,
         didCompleteWithAuthorization authorization: ASAuthorization
     ) {
+        let challenge = expectedChallenge
+        expectedChallenge = nil
         guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
               let identityToken = credential.identityToken,
-              let authorizationCode = credential.authorizationCode else {
+              let authorizationCode = credential.authorizationCode,
+              let challenge else {
             continuation?.resume(throwing: AuthError.providerRejected)
+            continuation = nil
+            return
+        }
+        do {
+            try AppleAuthorizationCallbackValidator.validate(
+                challenge: challenge,
+                credentialState: credential.state,
+                now: Date()
+            )
+        } catch {
+            continuation?.resume(throwing: error)
             continuation = nil
             return
         }
@@ -75,6 +92,7 @@ public final class AppleSignInCoordinator: NSObject, ASAuthorizationControllerDe
         controller _: ASAuthorizationController,
         didCompleteWithError error: Error
     ) {
+        expectedChallenge = nil
         continuation?.resume(throwing: error)
         continuation = nil
     }
@@ -96,6 +114,24 @@ public struct AppleAuthorizationPayload: Sendable {
         self.userHandle = userHandle
         self.authorizationCode = authorizationCode
         self.identityToken = identityToken
+    }
+}
+
+/// Pure callback seam used by the native delegate and tests. The server-side
+/// identity-token verifier remains authoritative for nonce validation; the
+/// client only binds the native callback to its exact server challenge state.
+public enum AppleAuthorizationCallbackValidator {
+    public static func validate(challenge: AuthChallenge, credentialState: String?, now: Date) throws {
+        guard challenge.provider == .apple,
+              challenge.flow == "native",
+              challenge.requestedScopes.isEmpty,
+              challenge.expiresAt > now,
+              credentialState == challenge.state else {
+            if credentialState != challenge.state {
+                throw AuthError.stateMismatch
+            }
+            throw AuthError.challengeExpired
+        }
     }
 }
 

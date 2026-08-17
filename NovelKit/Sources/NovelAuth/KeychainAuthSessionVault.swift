@@ -3,70 +3,167 @@ import Foundation
 #if canImport(Security)
 import Security
 
-/// Device-local vault.  Pending refresh rotation identifiers are durable in
-/// the same Keychain record, allowing a process restart to avoid inventing a
-/// second rotation for a request whose response was lost.
+/// Device-local vault. The serialized value is the pure AuthVaultRecord state
+/// machine, so pending refresh and operation journals survive process death.
 public actor KeychainAuthSessionVault: AuthSessionVault {
-    private struct Record: Codable, Sendable {
-        var session: FuminiwaSession
-        var pendingRotationIDs: [UUID]
-    }
-
     private let service: String
     private let account: String
+
     public init(service: String = "jp.fuminiwa.sync", account: String = "session") {
-        self.service = service; self.account = account
+        self.service = service
+        self.account = account
     }
 
     public func load() async throws -> FuminiwaSession? {
-        try read()?.session
+        try readRecord().session
     }
 
     public func save(_ session: FuminiwaSession) async throws {
-        try write(Record(session: session, pendingRotationIDs: read()?.pendingRotationIDs ?? []))
+        var record = try readRecord()
+        record.save(session)
+        try writeRecord(record)
     }
 
     public func remove() async throws {
-        let status = SecItemDelete(baseQuery() as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainAuthError.status(status) }
-    }
-
-    public func reserveRefreshRotation(_ rotationID: UUID, for session: FuminiwaSession) async throws {
-        guard let current = try read(), current.session == session else { throw AuthError.staleResponse }
-        guard !current.pendingRotationIDs.contains(rotationID) else { throw AuthError.duplicateRotation }
-        var next = current; next.pendingRotationIDs.append(rotationID); try write(next)
-    }
-
-    public func compareAndSwap(expectedRefreshToken: String, expectedGeneration: UInt64, replacing session: FuminiwaSession) async throws -> Bool {
-        guard var current = try read(), current.session.refreshToken == expectedRefreshToken, current.session.refreshGeneration == expectedGeneration else { return false }
-        current.session = session; current.pendingRotationIDs.removeAll(); try write(current); return true
-    }
-
-    private func read() throws -> Record? {
-        var query = baseQuery(); query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?; let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound {
-            return nil
+        var record = try readRecord()
+        record.removeLocalSession()
+        if record.session == nil, record.pendingRevoke == nil, record.operations.isEmpty {
+            let status = SecItemDelete(baseQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainAuthError.status(status)
+            }
+        } else {
+            try writeRecord(record)
         }
-        guard status == errSecSuccess, let data = result as? Data else { throw KeychainAuthError.status(status) }
-        do { return try JSONDecoder().decode(Record.self, from: data) } catch { throw KeychainAuthError.invalidRecord }
     }
 
-    private func write(_ record: Record) throws {
+    public func loadOrReserveRefreshRotation(proposed: UUID, for session: FuminiwaSession) async throws -> UUID {
+        var record = try readRecord()
+        let rotationID = try record.loadOrReserveRefreshRotation(proposed: proposed, for: session)
+        try writeRecord(record)
+        return rotationID
+    }
+
+    public func compareAndSwap(
+        expectedRefreshToken: String,
+        expectedGeneration: UInt64,
+        rotationID: UUID,
+        replacing session: FuminiwaSession
+    ) async throws -> Bool {
+        var record = try readRecord()
+        guard record.compareAndSwap(
+            expectedRefreshToken: expectedRefreshToken,
+            expectedGeneration: expectedGeneration,
+            rotationID: rotationID,
+            replacing: session
+        ) else { return false }
+        try writeRecord(record)
+        return true
+    }
+
+    public func loadOrReserveOperation(
+        kind: AuthOperationKind,
+        proposed: UUID,
+        fingerprint: String
+    ) async throws -> AuthOperationJournalEntry {
+        var record = try readRecord()
+        let entry = try record.loadOrReserveOperation(kind: kind, proposed: proposed, fingerprint: fingerprint)
+        try writeRecord(record)
+        return entry
+    }
+
+    public func beginOperation(
+        kind: AuthOperationKind,
+        operationID: UUID,
+        fingerprint: String
+    ) async throws -> AuthOperationJournalEntry {
+        var record = try readRecord()
+        let entry = try record.beginOperation(kind: kind, operationID: operationID, fingerprint: fingerprint)
+        try writeRecord(record)
+        return entry
+    }
+
+    public func clearOperation(kind: AuthOperationKind, operationID: UUID) async throws {
+        var record = try readRecord()
+        record.clearOperation(kind: kind, operationID: operationID)
+        try writeRecord(record)
+    }
+
+    public func loadPendingRevoke() async throws -> AuthPendingRevoke? {
+        try readRecord().pendingRevoke
+    }
+
+    public func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke {
+        var record = try readRecord()
+        let pending = try record.loadOrReserveRevokeOperation(proposed: proposed, for: session, now: now, receiptLifetimeSeconds: receiptLifetimeSeconds)
+        try writeRecord(record)
+        return pending
+    }
+
+    public func clearPendingRevoke(operationID: UUID) async throws {
+        var record = try readRecord()
+        record.clearPendingRevoke(operationID: operationID)
+        if record.session == nil, record.pendingRevoke == nil, record.operations.isEmpty {
+            let status = SecItemDelete(baseQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainAuthError.status(status)
+            }
+        } else {
+            try writeRecord(record)
+        }
+    }
+
+    private func readRecord() throws -> AuthVaultRecord {
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return AuthVaultRecord()
+        }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw KeychainAuthError.status(status)
+        }
+        do {
+            return try JSONDecoder().decode(AuthVaultRecord.self, from: data)
+        } catch {
+            throw KeychainAuthError.invalidRecord
+        }
+    }
+
+    private func writeRecord(_ record: AuthVaultRecord) throws {
         let data = try JSONEncoder().encode(record)
-        let updateStatus = SecItemUpdate(baseQuery() as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let updateStatus = SecItemUpdate(
+            baseQuery() as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
         if updateStatus == errSecSuccess {
             return
         }
-        guard updateStatus == errSecItemNotFound else { throw KeychainAuthError.status(updateStatus) }
-        var query = baseQuery(); query[kSecValueData as String] = data; query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let addStatus = SecItemAdd(query as CFDictionary, nil); guard addStatus == errSecSuccess else { throw KeychainAuthError.status(addStatus) }
+        guard updateStatus == errSecItemNotFound else {
+            throw KeychainAuthError.status(updateStatus)
+        }
+        var query = baseQuery()
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw KeychainAuthError.status(addStatus)
+        }
     }
 
     private func baseQuery() -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
     }
 }
 
-public enum KeychainAuthError: Error, Equatable, Sendable { case status(OSStatus), invalidRecord }
+public enum KeychainAuthError: Error, Equatable, Sendable {
+    case status(OSStatus)
+    case invalidRecord
+}
 #endif

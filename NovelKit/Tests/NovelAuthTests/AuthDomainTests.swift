@@ -5,34 +5,208 @@ import Testing
 
 @Suite("Auth v1 wire and session safety")
 struct AuthDomainTests {
-    @Test("challenge creation JCS bytes are the fixture bytes")
+    @Test("challenge creation JCS bytes and digest match the fixture")
     func challengeJCS() {
         let command = AuthJCS.object([
-            ("clientPlatform", "macos"), ("flow", "native"),
-            ("operationId", "10000000-0000-4000-8000-000000000002"), ("provider", "apple")
+            ("clientPlatform", "macos"),
+            ("flow", "native"),
+            ("operationId", "10000000-0000-4000-8000-000000000002"),
+            ("provider", "apple")
         ])
         #expect(String(decoding: command.bytes, as: UTF8.self) == "{\"clientPlatform\":\"macos\",\"flow\":\"native\",\"operationId\":\"10000000-0000-4000-8000-000000000002\",\"provider\":\"apple\"}")
         #expect(command.bytes.count == 114)
         #expect(command.sha256.map { String(format: "%02x", $0) }.joined() == "4f44d7abc543ae94b555744edecf0a67707a178460f017e59c511d0f1799ed53")
     }
 
-    @Test("production auth origin is HTTPS and has a required client version")
+    @Test("production origin rejects path, query, userinfo, and HTTP")
     func productionConfiguration() throws {
-        #expect(throws: AuthError.invalidProductionOrigin) {
-            _ = try AuthClientConfiguration(origin: #require(URL(string: "http://127.0.0.1:18080")), clientVersion: "0.1.0", clientPlatform: .macos)
+        let invalidURLs = [
+            "http://127.0.0.1:18080",
+            "https://sync.example.test/v1",
+            "https://user:password@sync.example.test",
+            "https://sync.example.test?mode=staging"
+        ]
+        for value in invalidURLs {
+            #expect(throws: AuthError.invalidProductionOrigin) {
+                _ = try AuthClientConfiguration(origin: #require(URL(string: value)), clientVersion: "0.1.0", clientPlatform: .macos)
+            }
         }
-        let config = try AuthClientConfiguration(origin: #require(URL(string: "https://sync.example.test")), clientVersion: "0.1.0", clientPlatform: .macos)
+        let config = try AuthClientConfiguration(origin: #require(URL(string: "https://sync.example.test/")), clientVersion: "0.1.0", clientPlatform: .macos)
         #expect(config.clientPlatform == .macos)
     }
 
-    @Test("refresh CAS keeps the newer generation")
-    func staleRefresh() async throws {
-        let session = fixtureSession(generation: 2, refresh: "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-        let newer = fixtureSession(generation: 3, refresh: "fmr1_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD")
-        let vault = InMemoryAuthSessionVault(session: newer)
-        let replaced = try await vault.compareAndSwap(expectedRefreshToken: session.refreshToken, expectedGeneration: session.refreshGeneration, replacing: fixtureSession(generation: 3, refresh: "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
+    @Test("strict parser rejects duplicate keys, BOM, escapes, whitespace, and unsafe numbers")
+    func strictCanonicalParser() {
+        let invalidInputs = [
+            Data(#"{"a":1,"a":2}"#.utf8),
+            Data([0xEF, 0xBB, 0xBF, 0x7B, 0x7D]),
+            Data(#"{"a":"\u0061"}"#.utf8),
+            Data(#"{"a": 1}"#.utf8),
+            Data(#"{"a":9007199254740992}"#.utf8),
+            Data(#"{"a":"\uD800"}"#.utf8)
+        ]
+        for input in invalidInputs {
+            #expect(throws: Error.self) { _ = try AuthCanonicalJSON.parse(input) }
+        }
+        let valid = Data(#"{"a":"é","b":0,"c":true,"d":null}"#.utf8)
+        #expect(throws: Never.self) { _ = try AuthCanonicalJSON.parse(valid) }
+    }
+
+    @Test("refresh reservation is one-per-session and survives a fake restart")
+    func refreshReservationRestart() async throws {
+        let session = fixtureSession(generation: 1)
+        let firstID = UUID(uuidString: "50000000-0000-4000-8000-000000000001")
+        let secondID = UUID(uuidString: "50000000-0000-4000-8000-000000000002")
+        let record = AuthVaultRecord(session: session)
+        let vault = InMemoryAuthSessionVault(record: record)
+        let reserved = try await vault.loadOrReserveRefreshRotation(proposed: #require(firstID), for: session)
+        let second = try await vault.loadOrReserveRefreshRotation(proposed: #require(secondID), for: session)
+        #expect(reserved == firstID)
+        #expect(second == firstID)
+        let restarted = await InMemoryAuthSessionVault(record: vault.snapshot())
+        #expect(try await restarted.loadOrReserveRefreshRotation(proposed: #require(secondID), for: session) == firstID)
+    }
+
+    @Test("concurrent refresh reservation returns one rotation id")
+    func concurrentRefreshReservation() async throws {
+        let session = fixtureSession(generation: 1)
+        let vault = InMemoryAuthSessionVault(session: session)
+        let ids = try await withThrowingTaskGroup(of: UUID.self, returning: Set<UUID>.self) { group in
+            for index in 0 ..< 8 {
+                group.addTask {
+                    let proposed = UUID(uuidString: String(format: "51000000-0000-4000-8000-%012d", index))
+                    return try await vault.loadOrReserveRefreshRotation(proposed: #require(proposed), for: session)
+                }
+            }
+            var values = Set<UUID>()
+            for try await value in group {
+                values.insert(value)
+            }
+            return values
+        }
+        #expect(ids.count == 1)
+    }
+
+    @Test("stale response cannot CAS over a newer generation")
+    func staleRefreshCAS() async throws {
+        let old = fixtureSession(generation: 1)
+        let new = fixtureSession(generation: 2, refresh: "fmr1_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+        let vault = InMemoryAuthSessionVault(session: new)
+        let rotationID = try #require(UUID(uuidString: "52000000-0000-4000-8000-000000000001"))
+        let replaced = try await vault.compareAndSwap(expectedRefreshToken: old.refreshToken, expectedGeneration: old.refreshGeneration, rotationID: rotationID, replacing: old)
         #expect(!replaced)
-        #expect(try await vault.load() == newer)
+        #expect(try await vault.load() == new)
+    }
+
+    @Test("refresh reservation rejects a different session")
+    func staleRefreshReservation() async throws {
+        let current = fixtureSession(generation: 1)
+        let stale = fixtureSession(generation: 1, sessionID: "40000000-0000-4000-8000-000000000002")
+        let vault = InMemoryAuthSessionVault(session: current)
+        do {
+            _ = try await vault.loadOrReserveRefreshRotation(proposed: UUID(), for: stale)
+            Issue.record("stale reservation unexpectedly succeeded")
+        } catch let error as AuthError {
+            #expect(error == .staleSession)
+        }
+    }
+
+    @Test("save retains pending rotation for same session and clears it for a new session")
+    func vaultSaveRules() throws {
+        let old = fixtureSession(generation: 1)
+        let rotationID = try #require(UUID(uuidString: "53000000-0000-4000-8000-000000000001"))
+        var record = AuthVaultRecord(session: old, pendingRotationID: rotationID)
+        record.save(old)
+        #expect(record.pendingRotationID == rotationID)
+        record.save(fixtureSession(generation: 1, sessionID: "40000000-0000-4000-8000-000000000002"))
+        #expect(record.pendingRotationID == nil)
+    }
+
+    @Test("exchange operation journal survives restart without storing credentials")
+    func exchangeOperationRestart() async throws {
+        let challengeID = try #require(UUID(uuidString: "54000000-0000-4000-8000-000000000001"))
+        let operationID = try #require(UUID(uuidString: "55000000-0000-4000-8000-000000000001"))
+        var record = AuthVaultRecord()
+        let fingerprint = "apple-exchange:\(challengeID.uuidString.lowercased())"
+        _ = try record.loadOrReserveOperation(kind: .exchangeAppleNativeCredential, proposed: operationID, fingerprint: fingerprint)
+        _ = try record.beginOperation(kind: .exchangeAppleNativeCredential, operationID: operationID, fingerprint: fingerprint)
+        let restarted = InMemoryAuthSessionVault(record: record)
+        let resumed = try await restarted.loadOrReserveOperation(kind: .exchangeAppleNativeCredential, proposed: UUID(), fingerprint: fingerprint)
+        #expect(resumed.operationID == operationID)
+        #expect(resumed.phase == .providerCallStarted)
+        #expect(record.operations.allSatisfy { !$0.fingerprint.contains("token") })
+    }
+
+    @Test("sign out removes local credentials even when revoke is unavailable")
+    func signOutIsLocalFirst() async throws {
+        let vault = InMemoryAuthSessionVault(session: fixtureSession(generation: 1))
+        let coordinator = try AuthSessionCoordinator(
+            transport: FailingTransport(),
+            vault: vault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        do {
+            try await coordinator.signOut()
+            Issue.record("signOut unexpectedly succeeded")
+        } catch let error as AuthError {
+            #expect(error == .providerRejected)
+        }
+        #expect(try await vault.load() == nil)
+        #expect(try await vault.loadPendingRevoke() != nil)
+    }
+
+    @Test("lost revoke acknowledgement keeps exact operation across restart")
+    func revokeRestartReplay() async throws {
+        let session = fixtureSession(generation: 1)
+        let transport = RevokeTransport()
+        let firstVault = InMemoryAuthSessionVault(session: session)
+        let firstCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: firstVault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        do {
+            try await firstCoordinator.signOut()
+            Issue.record("first revoke unexpectedly succeeded")
+        } catch let error as AuthError {
+            #expect(error == .providerRejected)
+        }
+        let pendingValue = try await firstVault.loadPendingRevoke()
+        let pending = try #require(pendingValue)
+        #expect(try await firstVault.load() == nil)
+        #expect(pending.requestFingerprint == "revoke:\(session.sessionID.uuidString.lowercased())")
+        #expect(pending.canonicalRequest == Data("{\"operationId\":\"\(pending.operationID.uuidString.lowercased())\",\"scope\":\"currentSession\"}".utf8))
+
+        let restartedVault = await InMemoryAuthSessionVault(record: firstVault.snapshot())
+        await transport.succeed()
+        let restartedCoordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: restartedVault,
+            authLimits: fixtureLimits(),
+            clock: { Date(timeIntervalSince1970: 1_800_000_000) }
+        )
+        try await restartedCoordinator.signOut()
+        #expect(try await restartedVault.loadPendingRevoke() == nil)
+        let operationIDs = await transport.revokeOperationIDs()
+        #expect(operationIDs == [pending.operationID, pending.operationID])
+        let requestBytes = await transport.revokeRequestBytes()
+        let requestDigests = await transport.revokeRequestDigests()
+        #expect(requestBytes == [pending.canonicalRequest, pending.canonicalRequest])
+        #expect(requestDigests == [pending.requestDigest, pending.requestDigest])
+    }
+
+    @Test("Apple callback validator rejects a mismatched state and expired challenge")
+    func appleStateValidation() throws {
+        let challenge = fixtureChallenge(expiresAt: Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(throws: AuthError.stateMismatch) {
+            try AppleAuthorizationCallbackValidator.validate(challenge: challenge, credentialState: "wrong", now: Date(timeIntervalSince1970: 1_700_000_000))
+        }
+        let expired = fixtureChallenge(expiresAt: Date(timeIntervalSince1970: 1_600_000_000))
+        #expect(throws: AuthError.challengeExpired) {
+            try AppleAuthorizationCallbackValidator.validate(challenge: expired, credentialState: expired.state, now: Date(timeIntervalSince1970: 1_700_000_000))
+        }
     }
 
     @Test("Apple credential state handle has an isolated provider vault")
@@ -43,27 +217,120 @@ struct AuthDomainTests {
         #expect(try await vault.load(providerConfigurationID: "other") == nil)
     }
 
-    private func fixtureSession(generation: UInt64, refresh: String) -> FuminiwaSession {
-        let binding = AuthSessionBinding(serverInstanceID: UUID(uuidString: "00000000-0000-4000-8000-000000000001")!, syncProtocolEpoch: 1, accountID: "acct_AAAAAAAAAAAAAAAA", accountAuthEpoch: 1, accountFence: "fence_AAAAAAAAAAAAAAAAAAAA", sessionID: UUID(uuidString: "40000000-0000-4000-8000-000000000001")!)
-        let tokens = AuthSessionTokens(accessToken: "fma1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", accessTokenExpiresAt: Date(timeIntervalSince1970: 1_755_312_900), refreshToken: refresh, refreshTokenExpiresAt: Date(timeIntervalSince1970: 1_778_000_000), refreshGeneration: generation)
-        let receipt = AuthReceipt(commandKind: "exchangeAppleNativeCredential", operationID: UUID(uuidString: "30000000-0000-4000-8000-000000000001")!, replayUntil: Date(timeIntervalSince1970: 1_778_000_000))
+    private func fixtureSession(
+        generation: UInt64,
+        refresh: String = "fmr1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        sessionID: String = "40000000-0000-4000-8000-000000000001"
+    ) -> FuminiwaSession {
+        let binding = AuthSessionBinding(
+            serverInstanceID: UUID(uuidString: "00000000-0000-4000-8000-000000000001") ?? UUID(),
+            syncProtocolEpoch: 2,
+            accountID: "acct_AAAAAAAAAAAAAAAA",
+            accountAuthEpoch: 1,
+            accountFence: "fence_AAAAAAAAAAAAAAAAAAAA",
+            sessionID: UUID(uuidString: sessionID) ?? UUID()
+        )
+        let tokens = AuthSessionTokens(
+            accessToken: "fma1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            accessTokenExpiresAt: Date(timeIntervalSince1970: 1_755_312_900),
+            refreshToken: refresh,
+            refreshTokenExpiresAt: Date(timeIntervalSince1970: 1_778_000_000),
+            refreshGeneration: generation
+        )
+        let receipt = AuthReceipt(
+            commandKind: "exchangeAppleNativeCredential",
+            operationID: UUID(uuidString: "30000000-0000-4000-8000-000000000001") ?? UUID(),
+            replayUntil: Date(timeIntervalSince1970: 1_778_000_000)
+        )
         return FuminiwaSession(binding: binding, tokens: tokens, receipt: receipt)
+    }
+
+    private func fixtureLimits() throws -> AuthLimits {
+        try AuthLimits(
+            accessTokenLifetimeSeconds: 900,
+            authReceiptLifetimeSeconds: 7_776_000,
+            challengeLifetimeSeconds: 300,
+            maxCanonicalCommandBytes: 65536,
+            maxProviderClockSkewSeconds: 300,
+            refreshTokenLifetimeSeconds: 7_776_000
+        )
+    }
+
+    private func fixtureChallenge(expiresAt: Date) -> AuthChallenge {
+        AuthChallenge(
+            challengeID: UUID(uuidString: "20000000-0000-4000-8000-000000000001") ?? UUID(),
+            expiresAt: expiresAt,
+            audience: "dev.serikayuzuki.fuminiwa",
+            providerConfigurationID: "apple-primary-fuminiwa-v1",
+            state: String(repeating: "A", count: 43),
+            nonce: String(repeating: "B", count: 43),
+            receipt: AuthReceipt(
+                commandKind: "createChallenge",
+                operationID: UUID(uuidString: "10000000-0000-4000-8000-000000000001") ?? UUID(),
+                replayUntil: Date(timeIntervalSince1970: 1_778_000_000)
+            )
+        )
     }
 }
 
-private struct StubTransport: FuminiwaAuthTransport {
-    let result: FuminiwaSession
+private struct FailingTransport: FuminiwaAuthTransport {
     func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
-        fatalError()
+        throw AuthError.providerRejected
     }
 
     func exchangeApple(challenge _: AuthChallenge, authorizationCode _: Data, identityToken _: Data, operationID _: UUID) async throws -> FuminiwaSession {
-        result
+        throw AuthError.providerRejected
     }
 
     func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
-        result
+        throw AuthError.providerRejected
     }
 
-    func revoke(session _: FuminiwaSession, operationID _: UUID) async throws {}
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.providerRejected
+    }
+}
+
+private actor RevokeTransport: FuminiwaAuthTransport {
+    private var shouldFail = true
+    private var operationIDs: [UUID] = []
+    private var requestBytes: [Data] = []
+    private var requestDigests: [Data] = []
+
+    func succeed() {
+        shouldFail = false
+    }
+
+    func revokeOperationIDs() -> [UUID] {
+        operationIDs
+    }
+
+    func revokeRequestBytes() -> [Data] {
+        requestBytes
+    }
+
+    func revokeRequestDigests() -> [Data] {
+        requestDigests
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID _: UUID) async throws -> AuthChallenge {
+        throw AuthError.providerRejected
+    }
+
+    func exchangeApple(challenge _: AuthChallenge, authorizationCode _: Data, identityToken _: Data, operationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func revoke(pending: AuthPendingRevoke) async throws {
+        operationIDs.append(pending.operationID)
+        requestBytes.append(pending.canonicalRequest)
+        requestDigests.append(pending.requestDigest)
+        if shouldFail {
+            throw AuthError.providerRejected
+        }
+    }
 }
