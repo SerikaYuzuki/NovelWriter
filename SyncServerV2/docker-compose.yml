@@ -109,6 +109,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # The official Caddy image carries cap_net_bind_service on its binary.
+    # Docker rejects exec when that file capability is not in the bounding
+    # set, even though this staging listener uses an unprivileged port.
+    cap_add:
+      - NET_BIND_SERVICE
     healthcheck:
       test:
         - CMD-SHELL
