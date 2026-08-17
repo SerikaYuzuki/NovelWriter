@@ -69,15 +69,18 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      # /v2/capabilities is authenticated by design.  401 proves that the
-      # listener, router and database-backed startup completed; no secret is
-      # needed in a container health probe.
+      # The sync capabilities endpoint is authenticated by design and cannot
+      # be probed without an access token.  Auth capabilities is intentionally
+      # unauthenticated (but version-gated), so it proves the listener and
+      # router are ready without embedding a credential in the image.
       test:
         - CMD-SHELL
         - >-
           code="$$(curl --silent --show-error --output /dev/null
-          --write-out '%{http_code}' http://127.0.0.1:8092/v2/capabilities || true)";
-          test "$$code" = 200 || test "$$code" = 401
+          --write-out '%{http_code}'
+          --header 'x-fuminiwa-client-version: 0.1.0'
+          http://127.0.0.1:8092/v1/auth/capabilities || true)";
+          test "$$code" = 200
       interval: 5s
       timeout: 5s
       retries: 12
