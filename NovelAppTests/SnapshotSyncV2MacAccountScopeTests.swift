@@ -279,6 +279,68 @@ struct SnapshotSyncV2MacAccountScopeTests {
         #expect(state.document.title == currentTitle)
     }
 
+    @Test("queued signout does not block local work while Apple exchange is suspended")
+    @MainActor
+    func queuedSignOutKeepsLocalOperationsAvailableDuringExchange() async throws {
+        let session = makeMacV2Session(accountID: "account-a", fence: "fence-a")
+        let configuration = try TestRuntimeConfiguration(
+            account: TestAccount(accountID: session.accountID, accountFence: session.accountFence)
+        )
+        let exchangeTransport = SuspendedMacExchangeTransport(session: session)
+        let authLimits = try makeMacAuthTestLimits()
+        let auth = AuthSessionCoordinator(
+            transport: exchangeTransport,
+            vault: InMemoryAuthSessionVault(),
+            authLimits: authLimits
+        )
+        let provider = MacWaitingAuthorizationProvider()
+        let orchestrator = AppleAuthenticationOrchestrator(
+            authSessionCoordinator: auth,
+            authorizationProvider: provider,
+            credentialStateHandleVault: InMemoryAppleCredentialStateHandleVault(),
+            credentialStateProvider: MacTransientCredentialStateProvider()
+        )
+        let defaults = try #require(
+            UserDefaults(suiteName: "FUMINIWA.SnapshotSyncV2MacQueuedSignout.\(UUID().uuidString)")
+        )
+        let state = AppState(
+            dependencies: AppDependencies(
+                userDefaults: defaults,
+                authSessionCoordinator: auth,
+                appleAuthenticationOrchestrator: orchestrator,
+                snapshotSyncV2Factory: {
+                    try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                }
+            )
+        )
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+
+        let signingIn = Task { @MainActor in
+            await state.signInWithApple()
+        }
+        try await eventuallyMac { provider.isWaiting }
+        provider.resume()
+        try await eventuallyMac { await exchangeTransport.isWaiting }
+
+        let signingOut = Task { @MainActor in
+            await state.signOutFromFuminiwa()
+        }
+        await Task.yield()
+        #expect(state.interactiveAuthOperationCount == 0)
+        #expect(state.permitsDocumentTransitionOperation)
+        #expect(await state.createNewDocument())
+        state.document.title = "exchange待機中のローカル編集"
+        state.markDocumentDirty()
+        #expect(await state.saveNow())
+
+        await exchangeTransport.resume()
+        await signingIn.value
+        await signingOut.value
+        #expect(state.interactiveAuthOperationCount == 0)
+        #expect(state.permitsDocumentTransitionOperation)
+    }
+
     @Test("signout releases local document transitions before a suspended remote revoke")
     @MainActor
     func signOutReleasesDocumentBoundaryBeforeRemoteRevoke() async throws {
@@ -692,6 +754,62 @@ private actor SuspendedMacRevokeTransport: FuminiwaAuthTransport {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
         }
+    }
+
+    func resume() {
+        let continuation = continuation
+        self.continuation = nil
+        continuation?.resume()
+    }
+}
+
+private actor SuspendedMacExchangeTransport: FuminiwaAuthTransport {
+    private let session: FuminiwaSession
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(session: FuminiwaSession) {
+        self.session = session
+    }
+
+    var isWaiting: Bool {
+        continuation != nil
+    }
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID: UUID) async throws -> AuthChallenge {
+        let now = Date()
+        return AuthChallenge(
+            challengeID: UUID(),
+            expiresAt: now.addingTimeInterval(300),
+            audience: "dev.serikayuzuki.fuminiwa",
+            providerConfigurationID: "apple-primary-fuminiwa-v1",
+            state: String(repeating: "A", count: 43),
+            nonce: String(repeating: "B", count: 43),
+            receipt: AuthReceipt(
+                commandKind: "createChallenge",
+                operationID: operationID,
+                replayUntil: now.addingTimeInterval(3600)
+            )
+        )
+    }
+
+    func exchangeApple(
+        challenge _: AuthChallenge,
+        authorizationCode _: Data,
+        identityToken _: Data,
+        operationID _: UUID
+    ) async throws -> FuminiwaSession {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        return session
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.providerRejected
     }
 
     func resume() {

@@ -591,17 +591,21 @@ extension AppState {
     }
 
     func signOutFromFuminiwa() async {
-        let transitionBlocker = beginInteractiveAuthOperation()
         let owner = makeAuthOperationOwner()
         await authOperationGate.perform { [weak self] in
             guard let self else { return }
             claimAuthOperation(owner)
+            // Do not hold the document-transition blocker while waiting for
+            // this auth gate. A prior Apple exchange or revoke may be
+            // indefinitely suspended; local new/open/edit/save/import/export
+            // must remain available until this operation actually owns the
+            // short durable park transition.
+            let transitionBlocker = beginInteractiveAuthOperation()
             await signOutFromFuminiwaOwned(
                 owner: owner,
                 transitionBlocker: transitionBlocker
             )
         }
-        releaseInteractiveAuthOperation(transitionBlocker)
     }
 
     private func signOutFromFuminiwaOwned(
