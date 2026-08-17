@@ -33,6 +33,15 @@ ALTER TABLE sync_v2.snapshots
 ALTER TABLE sync_v2.snapshots
   ADD CONSTRAINT snapshots_work_id_uq UNIQUE(account_id,work_id,snapshot_id),
   ADD CONSTRAINT snapshots_digest_uq UNIQUE(account_id,manifest_digest);
+ALTER TABLE sync_v2.global_blobs
+  ADD CONSTRAINT global_blob_id_len_ck CHECK(octet_length(object_id)=32),
+  ADD CONSTRAINT global_blob_count_ck CHECK(byte_count BETWEEN 0 AND 262144000),
+  ADD CONSTRAINT global_blob_bytes_ck CHECK(octet_length(raw_bytes)=byte_count);
+ALTER TABLE sync_v2.account_objects
+  ADD CONSTRAINT account_object_state_ck CHECK(state IN('available','quarantined','deleting'));
+ALTER TABLE sync_v2.works
+  ADD CONSTRAINT works_head_snapshot_scope_fk FOREIGN KEY(account_id,work_id,head_snapshot_id)
+  REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id) DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE sync_v2.snapshot_parents
   ADD CONSTRAINT snapshot_parent_fk FOREIGN KEY(account_id,work_id,snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),
   ADD CONSTRAINT snapshot_parent_target_fk FOREIGN KEY(account_id,work_id,parent_snapshot_id) REFERENCES sync_v2.snapshots(account_id,work_id,snapshot_id),
