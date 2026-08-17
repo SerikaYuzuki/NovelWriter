@@ -60,7 +60,20 @@ struct SnapshotSyncV2MigrationCLI {
         } else {
             nil
         }
-        return MigrationOptions(sourceURL: URL(fileURLWithPath: source), targetRoot: URL(fileURLWithPath: target), commit: commit, expectedSourceDigest: values["expected-source-digest"], verifiedMarker: values["verified-marker"], account: account, workID: workID, resume: values["resume"] == "true")
+        return MigrationOptions(
+            sourceURL: URL(fileURLWithPath: source),
+            targetRoot: URL(fileURLWithPath: target),
+            commit: commit,
+            expectedSourceDigest: values["expected-source-digest"],
+            verifiedMarker: values["verified-marker"],
+            account: account,
+            workID: workID,
+            resume: values["resume"] == "true",
+            trustedAuthorityRootURL: values["trusted-authority-root"].map { URL(fileURLWithPath: $0, isDirectory: true) },
+            trustedAuthorityURL: values["trusted-authority"].map { URL(fileURLWithPath: $0) },
+            expectedAuthorityDigest: values["expected-authority-digest"],
+            expectedAuthorityID: values["expected-authority-id"]
+        )
     }
 
     private static func readBinding(_ url: URL) throws -> MigrationAccountBinding {

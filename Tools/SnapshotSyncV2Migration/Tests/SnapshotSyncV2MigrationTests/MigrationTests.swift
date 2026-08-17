@@ -3,7 +3,7 @@ import NovelCore
 import NovelSync
 import NovelSyncV2
 import NovelSyncV2Store
-import SnapshotSyncV2MigrationCore
+@testable import SnapshotSyncV2MigrationCore
 import Testing
 
 @Suite("Snapshot Sync v2 migration")
@@ -44,7 +44,8 @@ struct MigrationTests {
         )
         let target = fixture.root.appendingPathComponent("target")
         let workID = try WorkID(uuidString: inventory.inventory.workID)
-        let result = try await MigrationRunner().run(MigrationOptions(sourceURL: trustedSource, targetRoot: target, commit: true, expectedSourceDigest: inventory.inventory.sourceDigest, verifiedMarker: "marker", account: account, workID: workID))
+        let options = try fixture.commitOptions(sourceURL: trustedSource, targetRoot: target, expectedSourceDigest: inventory.inventory.sourceDigest, verifiedMarker: "marker", account: account, workID: workID)
+        let result = try await MigrationRunner().run(options)
         #expect(result.state == V2MigrationLedgerState.quarantined)
         let store = try LocalSyncV2Store(root: target, policy: .openExisting)
         #expect(try await store.listWorks(scope: .unbound).isEmpty)
@@ -93,7 +94,7 @@ struct MigrationTests {
         #expect(decoded.documentCreatedAt == model.documentCreatedAt)
         let account = MigrationAccountBinding(binding: V2AccountBinding(accountID: "acct_known", accountFence: String(repeating: "f", count: 64), serverInstanceID: "server"), knownAccountIDs: ["acct_known"])
         let workID = try WorkID(uuidString: archive.inventory.workID)
-        let options = MigrationOptions(sourceURL: trustedSource, targetRoot: target, commit: true, expectedSourceDigest: inventory.sourceDigest, verifiedMarker: "verified-marker", account: account, workID: workID)
+        let options = try fixture.commitOptions(sourceURL: trustedSource, targetRoot: target, expectedSourceDigest: inventory.sourceDigest, verifiedMarker: "verified-marker", account: account, workID: workID)
         let first = try await MigrationRunner().run(options)
         #expect(first.state == V2MigrationLedgerState.committed)
         #expect(!first.noChanges)
@@ -101,7 +102,8 @@ struct MigrationTests {
         let opened = try await store.open(workID: workID, scope: .bound(account.binding))
         #expect(opened.resources == archive.portableResources)
         await store.close()
-        let replay = try await MigrationRunner().run(MigrationOptions(sourceURL: trustedSource, targetRoot: target, commit: true, expectedSourceDigest: inventory.sourceDigest, verifiedMarker: "verified-marker", account: account, workID: workID, resume: true))
+        let replayOptions = try fixture.commitOptions(sourceURL: trustedSource, targetRoot: target, expectedSourceDigest: inventory.sourceDigest, verifiedMarker: "verified-marker", account: account, workID: workID, resume: true)
+        let replay = try await MigrationRunner().run(replayOptions)
         #expect(replay.state == V2MigrationLedgerState.committed)
         #expect(replay.noChanges)
     }
@@ -154,7 +156,7 @@ struct MigrationTests {
         try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]).write(to: reportURL, options: .atomic)
         let target = fixture.root.appendingPathComponent("quarantine-target")
         do {
-            _ = try await MigrationRunner().run(MigrationOptions(
+            let options = try fixture.commitOptions(
                 sourceURL: trusted,
                 targetRoot: target,
                 commit: true,
@@ -162,7 +164,8 @@ struct MigrationTests {
                 verifiedMarker: "marker",
                 account: account,
                 workID: workID
-            ))
+            )
+            _ = try await MigrationRunner().run(options)
             Issue.record("quarantine entries must not be committed")
         } catch let error as MigrationError {
             #expect(String(describing: error).contains("exportProvenanceMismatch"))
@@ -209,7 +212,7 @@ struct MigrationTests {
             let account = knownAccount()
             let workID = try WorkID(uuidString: archive.inventory.workID)
             do {
-                _ = try await MigrationRunner().run(MigrationOptions(
+                let options = try fixture.commitOptions(
                     sourceURL: trusted,
                     targetRoot: target,
                     commit: true,
@@ -217,13 +220,159 @@ struct MigrationTests {
                     verifiedMarker: "marker",
                     account: account,
                     workID: workID
-                ))
+                )
+                _ = try await MigrationRunner().run(options)
                 Issue.record("tampered \(label) stage must be rejected")
             } catch {
                 // Any typed provenance/source failure is fail-closed; no Work is created.
                 #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("Library/library.sqlite").path))
             }
         }
+    }
+
+    @Test
+    func quarantineCopiedIntoVerifiedRejectsSelfGeneratedProvenance() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        try fixture.rewriteAuthority(disposition: "quarantine")
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let target = fixture.root.appendingPathComponent("target")
+        do {
+            let options = try fixture.commitOptions(
+                sourceURL: trusted,
+                targetRoot: target,
+                expectedSourceDigest: archive.inventory.sourceDigest,
+                verifiedMarker: "marker",
+                account: account,
+                workID: workID
+            )
+            _ = try await MigrationRunner().run(options)
+            Issue.record("external quarantine authority must reject a copied verified package")
+        } catch let error as MigrationError {
+            #expect(String(describing: error).contains("externalAuthorityEntry"))
+            #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("Library/library.sqlite").path))
+        }
+    }
+
+    @Test
+    func authorityTamperAndPathSwapAreRejected() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        var authority = try fixture.readAuthority()
+        authority = MigrationTrustedProvenanceAuthority(
+            authorityID: authority.authorityID,
+            sourceSQLiteSHA256: String(repeating: "0", count: 64),
+            sourceArchiveManifestSHA256: authority.sourceArchiveManifestSHA256,
+            classificationLedgerSHA256: authority.classificationLedgerSHA256,
+            entries: authority.entries
+        )
+        try fixture.writeAuthority(authority)
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let target = fixture.root.appendingPathComponent("target")
+        do {
+            let options = try fixture.commitOptions(
+                sourceURL: trusted,
+                targetRoot: target,
+                expectedSourceDigest: archive.inventory.sourceDigest,
+                verifiedMarker: "marker",
+                account: account,
+                workID: workID
+            )
+            _ = try await MigrationRunner().run(options)
+            Issue.record("authority tamper must be rejected")
+        } catch let error as MigrationError {
+            #expect(String(describing: error).contains("externalAuthority"))
+        }
+
+        let swapped = fixture.root.appendingPathComponent("swapped-authority.json")
+        try FileManager.default.copyItem(at: fixture.authorityURL, to: swapped)
+        let swappedData = try Data(contentsOf: swapped)
+        let swappedDigest = SHA256Digest.hex(swappedData)
+        let swapOptions = MigrationOptions(
+            sourceURL: trusted,
+            targetRoot: fixture.root.appendingPathComponent("swap-target"),
+            commit: true,
+            expectedSourceDigest: archive.inventory.sourceDigest,
+            verifiedMarker: "marker",
+            account: account,
+            workID: workID,
+            trustedAuthorityRootURL: fixture.root,
+            trustedAuthorityURL: swapped,
+            expectedAuthorityDigest: swappedDigest,
+            expectedAuthorityID: "different-authority"
+        )
+        await #expect(throws: MigrationError.self) {
+            try await MigrationRunner().run(swapOptions)
+        }
+    }
+
+    @Test
+    func authoritySymlinkIsRejected() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let symlink = fixture.authorityRoot.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: fixture.authorityURL)
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let authorityData = try Data(contentsOf: fixture.authorityURL)
+        let authorityDigest = SHA256Digest.hex(authorityData)
+        let options = MigrationOptions(
+            sourceURL: trusted,
+            targetRoot: fixture.root.appendingPathComponent("target"),
+            commit: true,
+            expectedSourceDigest: archive.inventory.sourceDigest,
+            verifiedMarker: "marker",
+            account: account,
+            workID: workID,
+            trustedAuthorityRootURL: fixture.authorityRoot,
+            trustedAuthorityURL: symlink,
+            expectedAuthorityDigest: authorityDigest,
+            expectedAuthorityID: fixture.authorityID
+        )
+        await #expect(throws: MigrationError.self) {
+            try await MigrationRunner().run(options)
+        }
+    }
+
+    @Test
+    func authorityRehashImmediatelyBeforeCommitRejectsTOCTOU() async throws {
+        let fixture = try Fixture.make()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let archive = try await ArchiveReader().inventoryAsync(sourceURL: fixture.source)
+        let trusted = try fixture.makeTrustedStage(archive: archive)
+        let account = knownAccount()
+        let workID = try WorkID(uuidString: archive.inventory.workID)
+        let options = try fixture.commitOptions(
+            sourceURL: trusted,
+            targetRoot: fixture.root.appendingPathComponent("target"),
+            expectedSourceDigest: archive.inventory.sourceDigest,
+            verifiedMarker: "marker",
+            account: account,
+            workID: workID
+        )
+        let runner = MigrationRunner(finalCommitHook: {
+            var authority = try fixture.readAuthority()
+            authority = MigrationTrustedProvenanceAuthority(
+                authorityID: authority.authorityID,
+                sourceSQLiteSHA256: String(repeating: "1", count: 64),
+                sourceArchiveManifestSHA256: authority.sourceArchiveManifestSHA256,
+                classificationLedgerSHA256: authority.classificationLedgerSHA256,
+                entries: authority.entries
+            )
+            try fixture.writeAuthority(authority)
+        })
+        await #expect(throws: MigrationError.self) {
+            try await runner.run(options)
+        }
+        #expect(!FileManager.default.fileExists(atPath: options.targetRoot.appendingPathComponent("Library/library.sqlite").path))
     }
 }
 
@@ -245,6 +394,9 @@ private struct Fixture {
     let root: URL
     let source: URL
     let documentID: UUID
+    let authorityRoot: URL
+    let authorityURL: URL
+    let authorityID: String
 
     static func make() throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("migration-\(UUID().uuidString)", isDirectory: true)
@@ -264,7 +416,9 @@ private struct Fixture {
         let resources = source.appendingPathComponent("resources", isDirectory: true)
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         try Data("opaque resource".utf8).write(to: resources.appendingPathComponent("cover.txt"))
-        return Fixture(root: root, source: source, documentID: documentID)
+        let authorityRoot = root.appendingPathComponent("trusted-authority", isDirectory: true)
+        let authorityURL = authorityRoot.appendingPathComponent("provenance.json")
+        return Fixture(root: root, source: source, documentID: documentID, authorityRoot: authorityRoot, authorityURL: authorityURL, authorityID: "authority-fixture")
     }
 
     func makeTrustedStage(archive: ArchiveReadResult) throws -> URL {
@@ -279,11 +433,12 @@ private struct Fixture {
         try FileManager.default.createDirectory(at: stage.appendingPathComponent(".state"), withIntermediateDirectories: true)
         let projectionBytes = try WorkCanonicalJSON.encodeSnapshot(WorkSnapshot(document: archive.model.document))
         let projectionDigest = SHA256Digest.hex(projectionBytes)
-        let snapshotID = String(repeating: "d", count: 64)
+        let snapshotID = archive.encoded.snapshotId.description
         let sourceSQLiteDigest = String(repeating: "a", count: 64)
         let archiveDigest = String(repeating: "b", count: 64)
         let classificationDigest = String(repeating: "c", count: 64)
         let exportID = UUID()
+        let evidenceDigest = try inventoryEvidenceDigest(archive.inventory)
         let report: [String: Any] = [
             "formatVersion": 1, "exportID": exportID.uuidString.lowercased(),
             "sourceSQLiteSHA256": sourceSQLiteDigest,
@@ -308,6 +463,94 @@ private struct Fixture {
         let state: [String: Any] = ["sourceDigest": sourceSQLiteDigest, "snapshotID": snapshotID, "projectionDigest": projectionDigest]
         try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stage.appendingPathComponent(".state/\(filenameWorkID).json"), options: .atomic)
         try Data("COMMITTED\n".utf8).write(to: stage.appendingPathComponent("COMMITTED"), options: .atomic)
+        try FileManager.default.createDirectory(at: authorityRoot, withIntermediateDirectories: true)
+        let authority = MigrationTrustedProvenanceAuthority(
+            authorityID: authorityID,
+            sourceSQLiteSHA256: sourceSQLiteDigest,
+            sourceArchiveManifestSHA256: archiveDigest,
+            classificationLedgerSHA256: classificationDigest,
+            entries: [MigrationTrustedProvenanceEntry(
+                workID: workID.rawValue,
+                disposition: "verified",
+                packageSHA256: archive.inventory.sourceDigest,
+                sourceSQLiteSHA256: sourceSQLiteDigest,
+                sourceArchiveManifestSHA256: archiveDigest,
+                classificationLedgerSHA256: classificationDigest,
+                snapshotID: snapshotID,
+                projectionDigest: projectionDigest,
+                inventoryEvidenceSHA256: evidenceDigest
+            )]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(authority).write(to: authorityURL, options: .atomic)
         return destination
     }
+
+    func commitOptions(
+        sourceURL: URL,
+        targetRoot: URL,
+        commit: Bool = true,
+        expectedSourceDigest: String,
+        verifiedMarker: String,
+        account: MigrationAccountBinding,
+        workID: WorkID,
+        resume: Bool = false
+    ) throws -> MigrationOptions {
+        let authorityData = try Data(contentsOf: authorityURL)
+        return MigrationOptions(
+            sourceURL: sourceURL,
+            targetRoot: targetRoot,
+            commit: commit,
+            expectedSourceDigest: expectedSourceDigest,
+            verifiedMarker: verifiedMarker,
+            account: account,
+            workID: workID,
+            resume: resume,
+            trustedAuthorityRootURL: authorityRoot,
+            trustedAuthorityURL: authorityURL,
+            expectedAuthorityDigest: SHA256Digest.hex(authorityData),
+            expectedAuthorityID: authorityID
+        )
+    }
+
+    func readAuthority() throws -> MigrationTrustedProvenanceAuthority {
+        try JSONDecoder().decode(MigrationTrustedProvenanceAuthority.self, from: Data(contentsOf: authorityURL))
+    }
+
+    func writeAuthority(_ authority: MigrationTrustedProvenanceAuthority) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(authority).write(to: authorityURL, options: .atomic)
+    }
+
+    func rewriteAuthority(disposition: String) throws {
+        let authority = try readAuthority()
+        try writeAuthority(MigrationTrustedProvenanceAuthority(
+            authorityID: authority.authorityID,
+            sourceSQLiteSHA256: authority.sourceSQLiteSHA256,
+            sourceArchiveManifestSHA256: authority.sourceArchiveManifestSHA256,
+            classificationLedgerSHA256: authority.classificationLedgerSHA256,
+            entries: authority.entries.map { entry in
+                MigrationTrustedProvenanceEntry(
+                    workID: entry.workID,
+                    disposition: disposition,
+                    packageSHA256: entry.packageSHA256,
+                    sourceSQLiteSHA256: entry.sourceSQLiteSHA256,
+                    sourceArchiveManifestSHA256: entry.sourceArchiveManifestSHA256,
+                    classificationLedgerSHA256: entry.classificationLedgerSHA256,
+                    snapshotID: entry.snapshotID,
+                    projectionDigest: entry.projectionDigest,
+                    inventoryEvidenceSHA256: entry.inventoryEvidenceSHA256
+                )
+            }
+        ))
+    }
+}
+
+private func inventoryEvidenceDigest(_ inventory: SourceInventory) throws -> String {
+    var object = try #require(JSONSerialization.jsonObject(with: inventory.registryEvidence) as? [String: Any])
+    object.removeValue(forKey: "sourcePath")
+    let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    return SHA256Digest.hex(canonical)
 }

@@ -43,6 +43,38 @@ Any invalid UTF-8, unknown account scope, duplicate identity, symlink, digest
 mismatch, or unsupported payload goes to `quarantined` with evidence and never
 becomes a v2 Work. A migration run has exactly one declared target database:
 
+## External provenance authority
+
+The stage's `migration-ledger.json`, `migration-run.json`, `.state/`, and
+`COMMITTED` marker are untrusted projections. A committing client must also be
+given an operator-provided, canonical JSON authority file outside the stage and
+outside the target database. The CLI requires all of:
+
+```text
+--trusted-authority-root <authority-root>
+--trusted-authority <authority-root/provenance.json>
+--expected-authority-digest <sha256 of canonical bytes>
+--expected-authority-id <operator authority identity>
+```
+
+The authority root and file must resolve without symlinks, the file must be a
+regular file contained by the root, and neither may overlap the stage or target
+root. The adopter rehashes and canonical-decodes the authority before staging
+and again immediately before the SQLite commit. A path swap, symlink, changed
+canonical bytes, changed authority ID, or changed expected digest fails closed.
+
+The authority records the source SQLite digest, source archive-manifest digest,
+classification-ledger digest, and an exact entry for each WorkID. Each entry
+must match the package tree digest, snapshot ID, projection digest, and
+path-independent canonical inventory-evidence digest. The stage report's
+matching fields are insufficient on their own.
+
+`verified_candidate` is an adoption candidate only. It is never equivalent to
+the authority disposition `verified`; an authority entry with
+`verified_candidate`, `quarantine`, or `needs-review` is rejected by the client
+adopter even when a copied package is placed under `verified/` and the stage
+report is rewritten.
+
 The standalone package also inventories every non-hidden tree entry, including
 empty directories and opaque/orphan files. Each entry records its normalized
 relative path, kind, byte count, SHA-256/ObjectID (for files), and empty-directory

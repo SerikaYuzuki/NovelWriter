@@ -22,6 +22,17 @@ ledgerの証拠を使います。受理する分類は`verified`、`verified_can
 `legacy_quarantine_ambiguous_user_touched`です。
 各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。`--expected-work-count`は必須で、今回の監査済みarchiveでは`62`を指定します。
 
+v2へcommitするmigration CLIは、stage内のreportだけを信頼しません。stage外の監査済みauthorityを指定し、authorityのcanonical JSON SHA-256とoperator identityを別経路で渡す必要があります。
+
+```text
+--trusted-authority-root <authority-root>
+--trusted-authority <authority-root/provenance.json>
+--expected-authority-digest <sha256>
+--expected-authority-id <authority-id>
+```
+
+authorityはsource SQLite、archive manifest、classification ledgerのdigestとWorkID別inventory evidenceを記録します。`verified_candidate`は採用候補に過ぎず、authority側のdispositionが文字通り`verified`でなければcommitされません。authority pathのstage内配置、同一ファイル指定、symlink、path swap、canonical bytes変更は拒否されます。
+
 各作品について次を検証します。
 
 - canonical `WorkSnapshot`のdecode/materialize

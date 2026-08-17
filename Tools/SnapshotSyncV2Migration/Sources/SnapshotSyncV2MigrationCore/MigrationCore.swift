@@ -47,6 +47,10 @@ public struct MigrationOptions: Sendable {
     public let account: MigrationAccountBinding?
     public let workID: WorkID?
     public let resume: Bool
+    public let trustedAuthorityRootURL: URL?
+    public let trustedAuthorityURL: URL?
+    public let expectedAuthorityDigest: String?
+    public let expectedAuthorityID: String?
 
     public init(
         sourceURL: URL,
@@ -56,7 +60,11 @@ public struct MigrationOptions: Sendable {
         verifiedMarker: String? = nil,
         account: MigrationAccountBinding? = nil,
         workID: WorkID? = nil,
-        resume: Bool = false
+        resume: Bool = false,
+        trustedAuthorityRootURL: URL? = nil,
+        trustedAuthorityURL: URL? = nil,
+        expectedAuthorityDigest: String? = nil,
+        expectedAuthorityID: String? = nil
     ) {
         self.sourceURL = sourceURL
         self.targetRoot = targetRoot
@@ -66,6 +74,10 @@ public struct MigrationOptions: Sendable {
         self.account = account
         self.workID = workID
         self.resume = resume
+        self.trustedAuthorityRootURL = trustedAuthorityRootURL
+        self.trustedAuthorityURL = trustedAuthorityURL
+        self.expectedAuthorityDigest = expectedAuthorityDigest
+        self.expectedAuthorityID = expectedAuthorityID
     }
 }
 
@@ -115,6 +127,12 @@ private struct VerifiedExportStageAttestation: Equatable {
     let runDigest: String
     let markerDigest: String
     let sidecarDigest: String
+}
+
+private struct LoadedTrustedProvenance: Equatable {
+    let authority: MigrationTrustedProvenanceAuthority
+    let canonicalData: Data
+    let digest: String
 }
 
 public struct SourceInventory: Codable, Equatable, Sendable {
@@ -284,9 +302,16 @@ public struct ArchiveReader: Sendable {
 
 public actor MigrationRunner {
     private let reader: ArchiveReader
+    private let finalCommitHook: (@Sendable () async throws -> Void)?
 
     public init(reader: ArchiveReader = ArchiveReader()) {
         self.reader = reader
+        finalCommitHook = nil
+    }
+
+    init(reader: ArchiveReader = ArchiveReader(), finalCommitHook: (@Sendable () async throws -> Void)?) {
+        self.reader = reader
+        self.finalCommitHook = finalCommitHook
     }
 
     public func run(_ options: MigrationOptions) async throws -> MigrationRunResult {
@@ -300,10 +325,21 @@ public actor MigrationRunner {
         if options.commit, options.workID == nil {
             throw MigrationError.invalidWorkID
         }
-        let initialStageAttestation: VerifiedExportStageAttestation? = if options.commit {
-            try attestVerifiedExportStage(sourceURL: options.sourceURL, archive: archive)
+        let initialAuthority: LoadedTrustedProvenance? = if options.commit {
+            try loadTrustedProvenance(options, sourceURL: options.sourceURL)
         } else {
             nil
+        }
+        let initialStageAttestation: VerifiedExportStageAttestation?
+        if options.commit {
+            let authority = try requireAuthority(initialAuthority)
+            initialStageAttestation = try attestVerifiedExportStage(
+                sourceURL: options.sourceURL,
+                archive: archive,
+                authority: authority
+            )
+        } else {
+            initialStageAttestation = nil
         }
         try validateTargetRoot(options.targetRoot, sourceURL: options.sourceURL)
         guard let expected = options.expectedSourceDigest else {
@@ -370,11 +406,15 @@ public actor MigrationRunner {
                   let verifiedMarker = options.verifiedMarker, !verifiedMarker.isEmpty else {
                 throw MigrationError.accountRequired
             }
+            let authority = try requireAuthority(initialAuthority)
             _ = try await revalidatedArchive(
                 sourceURL: options.sourceURL,
                 initial: archive,
-                initialAttestation: initialStageAttestation
+                initialAttestation: initialStageAttestation,
+                authority: authority
             )
+            try await finalCommitHook?()
+            try revalidateTrustedProvenance(options, initial: authority, sourceURL: options.sourceURL)
             let replay = try await store.commitMigration(
                 V2MigrationCommitRequest(
                     staging: staging,
@@ -415,15 +455,19 @@ public actor MigrationRunner {
             evidenceBytes: inventory.registryEvidence
         )
 
-        // The export tree is an immutable trust boundary.  Re-read both the
-        // package and its provenance immediately before the SQLite transaction
-        // so a package, ledger, marker, or sidecar changed during this run is
-        // never adopted from the bytes that happened to be read earlier.
+        // Re-read both the package and the external authority immediately
+        // before the SQLite transaction. Stage report bytes are not an
+        // authority; a package, report, or authority changed during this run
+        // must never be adopted from the bytes read earlier.
+        let authority = try requireAuthority(initialAuthority)
         _ = try await revalidatedArchive(
             sourceURL: options.sourceURL,
             initial: archive,
-            initialAttestation: initialStageAttestation
+            initialAttestation: initialStageAttestation,
+            authority: authority
         )
+        try await finalCommitHook?()
+        try revalidateTrustedProvenance(options, initial: authority, sourceURL: options.sourceURL)
         let result = try await store.commitMigration(
             V2MigrationCommitRequest(
                 staging: staging,
@@ -441,7 +485,8 @@ public actor MigrationRunner {
     private func revalidatedArchive(
         sourceURL: URL,
         initial: ArchiveReadResult,
-        initialAttestation: VerifiedExportStageAttestation?
+        initialAttestation: VerifiedExportStageAttestation?,
+        authority: LoadedTrustedProvenance
     ) async throws -> ArchiveReadResult {
         guard let initialAttestation else {
             throw MigrationError.untrustedExportStage("missingInitialAttestation")
@@ -458,7 +503,7 @@ public actor MigrationRunner {
               final.encoded.objects == initial.encoded.objects,
               final.model.document == initial.model.document,
               final.model.documentCreatedAt == initial.model.documentCreatedAt,
-              try attestVerifiedExportStage(sourceURL: sourceURL, archive: final) == initialAttestation else {
+              try attestVerifiedExportStage(sourceURL: sourceURL, archive: final, authority: authority) == initialAttestation else {
             throw MigrationError.sourceChangedDuringRead
         }
         return final
@@ -466,7 +511,8 @@ public actor MigrationRunner {
 
     private func attestVerifiedExportStage(
         sourceURL: URL,
-        archive: ArchiveReadResult
+        archive: ArchiveReadResult,
+        authority: LoadedTrustedProvenance
     ) throws -> VerifiedExportStageAttestation {
         let fileManager = FileManager.default
         let package = sourceURL.standardizedFileURL
@@ -501,6 +547,12 @@ public actor MigrationRunner {
             throw MigrationError.exportProvenanceMismatch("runOrLedger")
         }
 
+        guard report.sourceSQLiteSHA256 == authority.authority.sourceSQLiteSHA256,
+              report.sourceArchiveManifestSHA256 == authority.authority.sourceArchiveManifestSHA256,
+              report.classificationLedgerSHA256 == authority.authority.classificationLedgerSHA256 else {
+            throw MigrationError.exportProvenanceMismatch("externalAuthority")
+        }
+
         let logicalWorkID = try WorkID(uuidString: archive.inventory.workID)
         guard let entry = report.entries.first(where: { $0.workID.uuidString.lowercased() == logicalWorkID.description }),
               entry.disposition == "verified",
@@ -514,6 +566,21 @@ public actor MigrationRunner {
         }
         guard logicalWorkID.description == entry.workID.uuidString.lowercased() else {
             throw MigrationError.exportProvenanceMismatch("workID")
+        }
+        let evidenceDigest = try inventoryEvidenceDigest(archive.inventory)
+        guard let trustedEntry = authority.authority.entries.first(where: { $0.workID == entry.workID }),
+              authority.authority.entries.count(where: { $0.workID == entry.workID }) == 1,
+              trustedEntry.disposition == "verified",
+              trustedEntry.packageSHA256 == archive.inventory.sourceDigest,
+              trustedEntry.sourceSQLiteSHA256 == authority.authority.sourceSQLiteSHA256,
+              trustedEntry.sourceArchiveManifestSHA256 == authority.authority.sourceArchiveManifestSHA256,
+              trustedEntry.classificationLedgerSHA256 == authority.authority.classificationLedgerSHA256,
+              entry.snapshotID == archive.encoded.snapshotId.description,
+              entry.projectionDigest != nil,
+              trustedEntry.snapshotID == entry.snapshotID,
+              trustedEntry.projectionDigest == entry.projectionDigest,
+              trustedEntry.inventoryEvidenceSHA256 == evidenceDigest else {
+            throw MigrationError.exportProvenanceMismatch("externalAuthorityEntry")
         }
 
         let stateURL = stageRoot.appendingPathComponent(".state/\(entry.workID.uuidString).json")
@@ -544,6 +611,112 @@ public actor MigrationRunner {
         )
     }
 
+    private func requireAuthority(_ authority: LoadedTrustedProvenance?) throws -> LoadedTrustedProvenance {
+        guard let authority else { throw MigrationError.untrustedExportStage("missingTrustedAuthority") }
+        return authority
+    }
+
+    private func loadTrustedProvenance(
+        _ options: MigrationOptions,
+        sourceURL: URL
+    ) throws -> LoadedTrustedProvenance {
+        guard let rootURL = options.trustedAuthorityRootURL,
+              let authorityURL = options.trustedAuthorityURL,
+              let expectedDigest = options.expectedAuthorityDigest,
+              let expectedID = options.expectedAuthorityID,
+              isDigest(expectedDigest), !expectedID.isEmpty else {
+            throw MigrationError.untrustedExportStage("missingTrustedAuthority")
+        }
+        let stageRoot = sourceURL.standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent()
+        let targetPath = options.targetRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        let rootPath = try trustedAuthorityRootPath(rootURL)
+        let authorityPath = try trustedAuthorityFilePath(authorityURL, rootPath: rootPath)
+        guard !pathsOverlap(rootPath, stageRoot.resolvingSymlinksInPath().standardizedFileURL.path),
+              !pathsOverlap(rootPath, targetPath),
+              !pathsOverlap(authorityPath, sourceURL.resolvingSymlinksInPath().standardizedFileURL.path) else {
+            throw MigrationError.untrustedExportStage("authorityOverlapsMigration")
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: authorityPath), options: [.mappedIfSafe])
+        let canonical = try canonicalJSON(data)
+        guard data == canonical, SHA256Digest.hex(canonical) == expectedDigest else {
+            throw MigrationError.exportProvenanceMismatch("authorityDigest")
+        }
+        let authority: MigrationTrustedProvenanceAuthority
+        do {
+            authority = try JSONDecoder().decode(MigrationTrustedProvenanceAuthority.self, from: canonical)
+        } catch {
+            throw MigrationError.exportProvenanceMismatch("authoritySchema")
+        }
+        guard authority.formatVersion == 1,
+              authority.authorityID == expectedID,
+              isDigest(authority.sourceSQLiteSHA256),
+              isDigest(authority.sourceArchiveManifestSHA256),
+              isDigest(authority.classificationLedgerSHA256),
+              !authority.entries.isEmpty,
+              Set(authority.entries.map(\.workID)).count == authority.entries.count,
+              authority.entries.allSatisfy({
+                  isDigest($0.packageSHA256) && isDigest($0.sourceSQLiteSHA256)
+                      && isDigest($0.sourceArchiveManifestSHA256) && isDigest($0.classificationLedgerSHA256)
+                      && isDigest($0.inventoryEvidenceSHA256)
+                      && isDigest($0.snapshotID ?? "")
+                      && isDigest($0.projectionDigest ?? "")
+              }) else {
+            throw MigrationError.exportProvenanceMismatch("authorityFields")
+        }
+        return LoadedTrustedProvenance(authority: authority, canonicalData: canonical, digest: expectedDigest)
+    }
+
+    private func revalidateTrustedProvenance(
+        _ options: MigrationOptions,
+        initial: LoadedTrustedProvenance,
+        sourceURL: URL
+    ) throws {
+        let current = try loadTrustedProvenance(options, sourceURL: sourceURL)
+        guard current == initial else { throw MigrationError.sourceChangedDuringRead }
+    }
+
+    private func trustedAuthorityRootPath(_ url: URL) throws -> String {
+        let standardized = url.standardizedFileURL
+        let resolved = standardized.resolvingSymlinksInPath().standardizedFileURL
+        guard standardized.path == resolved.path else { throw MigrationError.untrustedExportStage("authorityRootSymlink") }
+        let values = try resolved.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw MigrationError.untrustedExportStage("authorityRoot")
+        }
+        return resolved.path
+    }
+
+    private func trustedAuthorityFilePath(_ url: URL, rootPath: String) throws -> String {
+        let standardized = url.standardizedFileURL
+        let resolved = standardized.resolvingSymlinksInPath().standardizedFileURL
+        guard standardized.path == resolved.path,
+              resolved.path.hasPrefix(rootPath + "/") else {
+            throw MigrationError.untrustedExportStage("authorityPath")
+        }
+        let values = try resolved.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw MigrationError.untrustedExportStage("authorityFile")
+        }
+        return resolved.path
+    }
+
+    private func canonicalJSON(_ data: Data) throws -> Data {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              JSONSerialization.isValidJSONObject(object) else {
+            throw MigrationError.exportProvenanceMismatch("authorityJSON")
+        }
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    private func inventoryEvidenceDigest(_ inventory: SourceInventory) throws -> String {
+        guard var object = try JSONSerialization.jsonObject(with: inventory.registryEvidence) as? [String: Any] else {
+            throw MigrationError.exportProvenanceMismatch("inventoryEvidence")
+        }
+        object.removeValue(forKey: "sourcePath")
+        let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return SHA256Digest.hex(canonical)
+    }
+
     private func trustedRegularFile(_ url: URL, fileManager: FileManager) throws -> Data {
         guard isSafePath(url), fileManager.fileExists(atPath: url.path) else {
             throw MigrationError.untrustedExportStage("missing:\(url.lastPathComponent)")
@@ -564,6 +737,10 @@ public actor MigrationRunner {
         value.count == 64 && value.utf8.allSatisfy { byte in
             (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
         }
+    }
+
+    private func pathsOverlap(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || lhs.hasPrefix(rhs + "/") || rhs.hasPrefix(lhs + "/")
     }
 
     private func decode<T: Decodable>(_ type: T.Type, data: Data, reason: String) throws -> T {
