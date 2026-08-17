@@ -147,6 +147,7 @@ struct FuminiwaApp: App {
             let configuration = try ProductionRuntimeConfiguration(
                 origin: explicitOrigin,
                 vault: authVault,
+                authSessionCoordinator: authCoordinator,
                 documentGate: platformGate,
                 clientVersion: "0.1.0",
                 clientPlatform: .macos
@@ -203,12 +204,12 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(!appState.permitsDocumentChoice)
+                .disabled(!appState.permitsDocumentTransitionOperation)
                 Button("作品を取り込む…") {
                     documentPanelPresenter.presentOpenPanel()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-                .disabled(!appState.permitsDocumentChoice)
+                .disabled(!appState.permitsDocumentTransitionOperation)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("この端末に保存") {
@@ -222,7 +223,7 @@ struct FuminiwaApp: App {
                     exportPresenter.present()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!appState.permitsDocumentInteraction || exportPresenter.state.isExporting)
+                .disabled(!appState.permitsDocumentTransitionOperation || exportPresenter.state.isExporting)
 
                 Divider()
 
@@ -242,7 +243,7 @@ struct FuminiwaApp: App {
                     appState: appState,
                     presenter: snapshotMenuPresenter
                 )
-                .disabled(!appState.permitsDocumentInteraction)
+                .disabled(!appState.permitsDocumentTransitionOperation)
             }
             CommandMenu("アカウント") {
                 switch appState.authUIState {

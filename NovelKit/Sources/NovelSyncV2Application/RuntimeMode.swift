@@ -43,6 +43,9 @@ public struct ProductionRuntimeConfiguration: Sendable {
     public let localRoot: ProductionLocalRoot
     public let origin: ProductionHTTPSOrigin?
     public let vault: (any AuthSessionVault)?
+    /// The app composition owns this coordinator. Runtime must reuse it so
+    /// UI sign-in/sign-out and remote refresh share one vault operation owner.
+    public let authSessionCoordinator: AuthSessionCoordinator?
     public let documentGate: (any SyncV2DocumentGate)?
     public let clientVersion: String
     public let clientPlatform: AuthClientPlatform
@@ -50,6 +53,7 @@ public struct ProductionRuntimeConfiguration: Sendable {
     public init(
         origin: ProductionHTTPSOrigin? = nil,
         vault: (any AuthSessionVault)? = nil,
+        authSessionCoordinator: AuthSessionCoordinator? = nil,
         documentGate: any SyncV2DocumentGate,
         clientVersion: String,
         clientPlatform: AuthClientPlatform
@@ -67,6 +71,7 @@ public struct ProductionRuntimeConfiguration: Sendable {
         )
         self.origin = origin
         self.vault = vault
+        self.authSessionCoordinator = authSessionCoordinator
         self.documentGate = documentGate
         self.clientVersion = clientVersion
         self.clientPlatform = clientPlatform

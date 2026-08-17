@@ -88,7 +88,8 @@ extension IOSDocumentStore {
                 let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
                 if let configuration = try? ProductionRuntimeConfiguration(
                     origin: environment.syncServerURL.flatMap { try? ProductionHTTPSOrigin(url: $0) },
-                    vault: makeProductionAuthVault(),
+                    vault: authSessionVault,
+                    authSessionCoordinator: authSessionCoordinator,
                     documentGate: snapshotSyncV2DocumentGate,
                     clientVersion: "0.1.0", clientPlatform: .ios
                 ) {
@@ -107,14 +108,4 @@ extension IOSDocumentStore {
         await task.value
         return snapshotSyncV2Application != nil
     }
-
-    #if !FUMINIWA_TEST_COMPOSITION
-    private func makeProductionAuthVault() -> (any AuthSessionVault)? {
-        #if canImport(Security)
-        KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync.ios")
-        #else
-        nil
-        #endif
-    }
-    #endif
 }

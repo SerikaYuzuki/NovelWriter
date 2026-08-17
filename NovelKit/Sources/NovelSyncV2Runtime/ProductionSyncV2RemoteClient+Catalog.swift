@@ -8,9 +8,7 @@ import FoundationNetworking
 
 extension ProductionSyncV2RemoteClient {
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
-        guard let session = try await vault.load() else {
-            throw SyncV2Failure.authenticationRequired
-        }
+        let session = try await loadSession()
         let binding = SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,
@@ -24,7 +22,7 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding)
-        let (data, response) = try await requestData(request)
+        let (data, response) = try await requestData(request, session: session)
         let contentType = httpContentType(response)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,

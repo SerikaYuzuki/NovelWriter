@@ -43,7 +43,7 @@ extension ProductionSyncV2RemoteClient {
         request.httpMethod = "POST"
         request.httpBody = command.canonicalBytes
         addHeaders(&request, session: session, binding: command.binding)
-        let (data, response) = try await requestData(request)
+        let (data, response) = try await requestData(request, session: session)
         return try decode(data: data, response: response, command: command)
     }
 
@@ -51,9 +51,7 @@ extension ProductionSyncV2RemoteClient {
         path: String,
         query: [URLQueryItem]
     ) async throws -> [String: Any] {
-        guard let sessionValue = try await vault.load() else {
-            throw SyncV2Failure.authenticationRequired
-        }
+        let sessionValue = try await loadSession()
         var components = URLComponents(
             url: origin.url.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
@@ -71,7 +69,7 @@ extension ProductionSyncV2RemoteClient {
             serverInstanceId: sessionValue.serverInstanceID.uuidString.lowercased()
         )
         addHeaders(&request, session: sessionValue, binding: binding)
-        let (data, response) = try await requestData(request)
+        let (data, response) = try await requestData(request, session: sessionValue)
         let contentType = httpContentType(response)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
@@ -114,7 +112,7 @@ extension ProductionSyncV2RemoteClient {
             accountFence: session.accountFence,
             server: session.serverInstanceID.uuidString.lowercased()
         )
-        let (data, response) = try await requestData(request)
+        let (data, response) = try await requestData(request, session: session)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 204,
               http.value(forHTTPHeaderField: "X-Fuminiwa-Result") == "applied",
@@ -135,7 +133,37 @@ extension ProductionSyncV2RemoteClient {
         )
     }
 
-    func requestData(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    func requestData(
+        _ request: URLRequest,
+        session originalSession: FuminiwaSession
+    ) async throws -> (Data, URLResponse) {
+        let first = try await performRequest(request)
+        guard (first.1 as? HTTPURLResponse)?.statusCode == 401 else {
+            return first
+        }
+        let refreshed: FuminiwaSession
+        do {
+            refreshed = try await sessionProvider.refresh(afterUnauthorizedFor: originalSession)
+        } catch let error as SyncV2Failure {
+            throw error
+        } catch {
+            // A failed refresh parks only the remote lane; local editing and
+            // SQLite checkpoint/save remain independent of this network path.
+            throw SyncV2Failure.authenticationRequired
+        }
+        guard refreshed.binding == originalSession.binding,
+              refreshed.syncProtocolEpoch == 2,
+              refreshed.refreshGeneration > originalSession.refreshGeneration else {
+            throw SyncV2Failure.accountFenceChanged
+        }
+        var retry = request
+        retry.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
+        // Exactly one retry. Method, path, body, operation ID and digest are
+        // preserved; only Authorization is replaced.
+        return try await performRequest(retry)
+    }
+
+    private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(for: request)
         } catch {

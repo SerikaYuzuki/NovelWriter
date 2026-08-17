@@ -70,15 +70,24 @@ public enum SnapshotSyncV2Runtime {
                 root: configuration.localRoot.url
             )
             let scope = ProductionScopeResolver(vault: configuration.vault, store: store)
-            let remote: any SyncV2RemoteClient = if let origin = configuration.origin, let vault = configuration.vault {
-                ProductionSyncV2RemoteClient(
+            let remote: any SyncV2RemoteClient
+            if let origin = configuration.origin,
+               let vault = configuration.vault,
+               let coordinator = configuration.authSessionCoordinator {
+                let provider = ProductionSyncV2SessionProvider(
+                    vault: vault,
+                    coordinator: coordinator,
+                    proactiveRefresh: true
+                )
+                remote = ProductionSyncV2RemoteClient(
                     origin: origin,
                     vault: vault,
                     clientVersion: configuration.clientVersion,
-                    clientPlatform: configuration.clientPlatform
+                    clientPlatform: configuration.clientPlatform,
+                    sessionProvider: provider
                 )
             } else {
-                OfflineProductionSyncV2RemoteClient()
+                remote = OfflineProductionSyncV2RemoteClient()
             }
             let kernel = ProductionSyncV2Kernel(store: store, scope: scope, remote: remote)
             let planner = ProductionSyncV2Planner(store: store, scope: scope)

@@ -66,17 +66,19 @@ struct IOSSnapshotSyncV2ConflictSelection: Equatable, Sendable {
     let workID: WorkID
     let session: IOSDocumentSessionToken
     let editGeneration: UInt64
-    let accountID: String?
-    let accountFence: String?
+    let accountScope: IOSSnapshotSyncV2AccountScope
     let conflict: SyncV2ConflictProjection
 }
 
 struct IOSSnapshotSyncV2AccountScope: Equatable, Sendable {
     let accountID: String?
     let accountFence: String?
+    let serverInstanceID: String?
+    let protocolEpoch: Int64?
 }
 
 private struct IOSDocumentStoreAuthComposition {
+    let sessionVault: (any AuthSessionVault)?
     let sessionCoordinator: AuthSessionCoordinator?
     let appleSignInCoordinator: AppleSignInCoordinator?
     let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
@@ -93,15 +95,24 @@ private enum IOSDocumentStoreComposition {
     static func makeAuth(userDefaults: UserDefaults) -> IOSDocumentStoreAuthComposition {
         #if FUMINIWA_TEST_COMPOSITION
         return IOSDocumentStoreAuthComposition(
+            sessionVault: nil,
             sessionCoordinator: nil,
             appleSignInCoordinator: nil,
             appleAuthenticationOrchestrator: nil,
             uiState: .unavailable
         )
         #else
-        let auth = makeProductionAuthSession(userDefaults: userDefaults)
+        #if canImport(Security)
+        let vault: (any AuthSessionVault)? = KeychainAuthSessionVault(
+            service: "dev.serikayuzuki.fuminiwa.sync.ios"
+        )
+        #else
+        let vault: (any AuthSessionVault)? = nil
+        #endif
+        let auth = makeProductionAuthSession(userDefaults: userDefaults, vault: vault)
         let appleSignIn = AppleSignInCoordinator()
         return IOSDocumentStoreAuthComposition(
+            sessionVault: vault,
             sessionCoordinator: auth,
             appleSignInCoordinator: appleSignIn,
             appleAuthenticationOrchestrator: makeProductionAppleOrchestrator(
@@ -155,11 +166,13 @@ private enum IOSDocumentStoreComposition {
 
     #if !FUMINIWA_TEST_COMPOSITION
     private static func makeProductionAuthSession(
-        userDefaults: UserDefaults
+        userDefaults: UserDefaults,
+        vault: (any AuthSessionVault)?
     ) -> AuthSessionCoordinator? {
         let environment = FuminiwaRuntimeEnvironment(userDefaults: userDefaults)
         #if canImport(Security)
         guard environment.allowsNetwork,
+              let vault,
               let url = environment.syncServerURL,
               url.scheme?.lowercased() == "https",
               let configuration = try? AuthClientConfiguration(
@@ -178,7 +191,7 @@ private enum IOSDocumentStoreComposition {
               ) else { return nil }
         return AuthSessionCoordinator(
             transport: transport,
-            vault: KeychainAuthSessionVault(service: "dev.serikayuzuki.fuminiwa.sync.ios"),
+            vault: vault,
             authLimits: limits,
             platform: .ios
         )
@@ -289,16 +302,24 @@ final class IOSDocumentStore {
             workID: workID,
             session: session,
             editGeneration: localEditGeneration,
-            accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence,
+            accountScope: snapshotSyncV2AccountScope,
             conflict: conflict
         )
     }
 
     var snapshotSyncV2AccountScope: IOSSnapshotSyncV2AccountScope {
-        IOSSnapshotSyncV2AccountScope(
+        let serverInstanceID: String?
+        #if FUMINIWA_TEST_COMPOSITION
+        serverInstanceID = testServerInstanceIDOverride
+            ?? authSession?.serverInstanceID.uuidString.lowercased()
+        #else
+        serverInstanceID = authSession?.serverInstanceID.uuidString.lowercased()
+        #endif
+        return IOSSnapshotSyncV2AccountScope(
             accountID: authSession?.accountID,
-            accountFence: authSession?.accountFence
+            accountFence: authSession?.accountFence,
+            serverInstanceID: serverInstanceID,
+            protocolEpoch: authSession.flatMap { Int64(exactly: $0.syncProtocolEpoch) }
         )
     }
 
@@ -314,9 +335,20 @@ final class IOSDocumentStore {
     @ObservationIgnored let privateWorkingCopyLocation: IOSPrivateWorkingCopyLocation?
     @ObservationIgnored let backgroundTaskController: any IOSBackgroundTaskControlling
     @ObservationIgnored let clipboardWriter: any IOSPlainTextClipboardWriting
+    @ObservationIgnored let authSessionVault: (any AuthSessionVault)?
     @ObservationIgnored let authSessionCoordinator: AuthSessionCoordinator?
     @ObservationIgnored let appleSignInCoordinator: AppleSignInCoordinator?
     @ObservationIgnored let appleAuthenticationOrchestrator: AppleAuthenticationOrchestrator?
+    #if FUMINIWA_TEST_COMPOSITION
+    /// App-hosted tests use the production sign-in entry point with a
+    /// suspended exchange.  The seam is test-composition-only and is not
+    /// present in the shipped iOS target.
+    @ObservationIgnored var testAppleSignInHandler: (@MainActor () async throws -> FuminiwaSession)?
+    /// The test runtime's scope resolver uses a fixed server namespace. This
+    /// override keeps the adapter test aligned with that isolated runtime;
+    /// production always uses the session's attested UUID.
+    @ObservationIgnored var testServerInstanceIDOverride: String?
+    #endif
     @ObservationIgnored var authSession: FuminiwaSession?
     @ObservationIgnored let documentOperationGate = DocumentOperationGate()
     @ObservationIgnored let snapshotSyncV2DocumentGate: ProductionDocumentGate
@@ -340,6 +372,12 @@ final class IOSDocumentStore {
     /// commit IME text and flush its local checkpoint. The mutation freeze is
     /// raised only after that document boundary succeeds.
     @ObservationIgnored var syncV2AccountTransitionRequested = false
+    /// The request owner remains stable across the Apple exchange and the
+    /// durable scope transition. A late/nested auth action must not release a
+    /// newer request's remote-scheduling lease.
+    @ObservationIgnored var syncV2AccountTransitionRequestOwner: UUID?
+    @ObservationIgnored var syncV2RemoteSuspensionToken:
+        SyncV2AccountTransitionRemoteSuspensionToken?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var pendingExportRootURL: URL?
@@ -398,6 +436,7 @@ final class IOSDocumentStore {
         self.backgroundTaskController = backgroundTaskController
         self.runtimeComposition = runtimeComposition
         let auth = IOSDocumentStoreComposition.makeAuth(userDefaults: userDefaults)
+        authSessionVault = auth.sessionVault
         authSessionCoordinator = auth.sessionCoordinator
         appleSignInCoordinator = auth.appleSignInCoordinator
         appleAuthenticationOrchestrator = auth.appleAuthenticationOrchestrator
