@@ -37,6 +37,23 @@ configuration is absent. Test and preview authentication are
 dependency-injected in process tests; the binary has no fixture-token startup
 mode.
 
+Compose file-backed secrets retain the source file's numeric ownership on the
+staging host. Because the server runs as uid/gid `10001`, prepare a separate
+v2-only runtime directory rather than weakening the permissions on operator
+originals:
+
+```sh
+sudo SyncServerV2/scripts/prepare-runtime-secrets.sh \
+  /DATA/AppData/fuminiwa-sync-v2/secrets \
+  /DATA/AppData/fuminiwa-sync-v2/runtime-secrets
+```
+
+Set every `*_FILE`/`*_HOST_PATH` entry in the private compose env file to the
+corresponding file under `runtime-secrets`. The script rejects symlinked
+inputs, leaves the source directory untouched, atomically replaces only the
+six named v2 copies, and sets mode `0400` with owner `10001:10001`. Re-run it
+after rotating a source secret, before recreating only the v2 server.
+
 Before using a new host or IP, inspect the rendered configuration without
 starting it and verify that every resource has the v2 prefix:
 
