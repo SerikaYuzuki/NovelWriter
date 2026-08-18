@@ -9,9 +9,8 @@ https://{$FUMINIWA_SYNC_V2_EDGE_HOST:192.168.11.5}:8443 {
     # tls internal is a staging-only local CA. Production must terminate with
     # a publicly trusted certificate at the deployment edge.
     tls internal
-    header {
-        Cache-Control "no-store"
-        Pragma "no-cache"
-    }
+    # Auth and sync response cache contracts are emitted exactly once by the
+    # Axum application. Do not add the same fields at the edge: Caddy would
+    # append duplicate values and URLSession would see "no-store, no-store".
     reverse_proxy server:8092
 }

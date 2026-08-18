@@ -130,6 +130,35 @@ fn production_server_has_no_migration_or_bootstrap_path() {
 }
 
 #[test]
+fn edge_does_not_duplicate_application_cache_contract() {
+    let caddy = fs::read_to_string("Caddyfile").expect("v2 Caddyfile");
+    assert!(
+        !caddy.lines().any(|line| {
+            let field = line.split_whitespace().next();
+            matches!(field, Some("Cache-Control") | Some("Pragma"))
+        }),
+        "Caddy must not add cache contract fields already emitted by Axum"
+    );
+    assert!(caddy.contains("reverse_proxy server:8092"));
+
+    let auth_http = fs::read_to_string("src/auth_http.rs").expect("v2 auth HTTP boundary");
+    assert_eq!(
+        auth_http
+            .matches(".header(\"cache-control\", \"no-store\")")
+            .count(),
+        1,
+        "Axum must remain the single Cache-Control authority"
+    );
+    assert_eq!(
+        auth_http
+            .matches(".header(\"pragma\", \"no-cache\")")
+            .count(),
+        1,
+        "Axum must remain the single Pragma authority"
+    );
+}
+
+#[test]
 fn runtime_attestation_forbids_migration_objects_and_ddl() {
     let postgres = fs::read_to_string("src/postgres.rs").expect("v2 postgres");
     for marker in [

@@ -87,6 +87,17 @@ fn request(path: &str) -> http::request::Builder {
         .header("x-fuminiwa-client-version", "0.1.0")
 }
 
+fn assert_single_auth_cache_contract(response: &http::Response<Body>) {
+    assert_eq!(
+        response.headers().get_all("cache-control").iter().count(),
+        1
+    );
+    assert_eq!(response.headers().get_all("pragma").iter().count(), 1);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["pragma"], "no-cache");
+    assert_eq!(response.headers()["content-type"], AUTH_MEDIA_TYPE);
+}
+
 #[tokio::test]
 async fn capabilities_are_public_closed_and_account_independent() {
     let service = Arc::new(FakeService::default());
@@ -112,6 +123,7 @@ async fn capabilities_are_public_closed_and_account_independent() {
     let signed_out_headers = signed_out.headers().clone();
     assert_eq!(signed_out_headers["content-type"], AUTH_MEDIA_TYPE);
     assert_eq!(signed_out_headers["cache-control"], "no-store");
+    assert_single_auth_cache_contract(&signed_out);
     let left = to_bytes(signed_out.into_body(), 64 * 1024).await.unwrap();
     let right = to_bytes(signed_in.into_body(), 64 * 1024).await.unwrap();
     assert_eq!(left, right);
@@ -156,8 +168,7 @@ async fn me_exposes_only_fuminiwa_binding_and_never_tenant() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    assert_eq!(response.headers()["pragma"], "no-cache");
+    assert_single_auth_cache_contract(&response);
     let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["binding"]["accountId"], "acct_fixture");
