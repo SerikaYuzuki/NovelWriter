@@ -15,7 +15,15 @@ public actor KeychainAuthSessionVault: AuthSessionVault {
     }
 
     public func load() async throws -> FuminiwaSession? {
-        try readRecord().session
+        do {
+            return try readRecord().session
+        } catch KeychainAuthError.invalidRecord {
+            let status = SecItemDelete(baseQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw KeychainAuthError.status(status)
+            }
+            return nil
+        }
     }
 
     public func save(_ session: FuminiwaSession) async throws {
