@@ -152,7 +152,7 @@ extension IOSDocumentStore {
         guard let authSessionCoordinator else {
             throw IOSDocumentStoreAuthenticationError.unavailable
         }
-        try await authSessionCoordinator.discardInterruptedAppleExchange()
+        try await authSessionCoordinator.beginFreshAppleAuthentication()
         return try await appleAuthenticationOrchestrator.signIn()
     }
 

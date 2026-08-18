@@ -4,6 +4,146 @@ import Testing
 
 @Suite("Auth exchange recovery")
 struct AuthSessionCoordinatorRecoveryTests {
+    @Test("expired challenge operation is replaced before a fresh challenge")
+    func expiredChallengeOperationStartsFresh() async throws {
+        let oldOperationID = fixtureUUID("58200000-0000-4000-8000-000000000010")
+        let oldFingerprint = "apple-native:ios"
+        var persisted = AuthVaultRecord()
+        _ = try persisted.loadOrReserveOperation(
+            kind: .createChallenge,
+            proposed: oldOperationID,
+            fingerprint: oldFingerprint
+        )
+        _ = try persisted.beginOperation(
+            kind: .createChallenge,
+            operationID: oldOperationID,
+            fingerprint: oldFingerprint
+        )
+
+        let transport = FreshAppleTransport()
+        let vault = InMemoryAuthSessionVault(record: persisted)
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: vault,
+            authLimits: fixtureLimits(),
+            platform: .ios
+        )
+
+        try await coordinator.beginFreshAppleAuthentication()
+        let challenge = try await coordinator.createAppleChallenge(
+            operationID: fixtureUUID("58200000-0000-4000-8000-000000000011")
+        )
+        #expect(challenge.receipt.operationID == fixtureUUID("58200000-0000-4000-8000-000000000011"))
+        #expect(await transport.challengeCallCount() == 1)
+        #expect(await vault.snapshot().operations.isEmpty)
+    }
+
+    @Test("fresh native recovery clears stale challenge and exchange together")
+    func staleChallengeAndExchangeStartFresh() async throws {
+        var persisted = AuthVaultRecord(session: fixtureSession())
+        let challengeOperationID = fixtureUUID("58200000-0000-4000-8000-000000000012")
+        _ = try persisted.loadOrReserveOperation(
+            kind: .createChallenge,
+            proposed: challengeOperationID,
+            fingerprint: "apple-native:ios"
+        )
+        _ = try persisted.beginOperation(
+            kind: .createChallenge,
+            operationID: challengeOperationID,
+            fingerprint: "apple-native:ios"
+        )
+        let exchangeChallengeID = fixtureUUID("20000000-0000-4000-8000-000000000098")
+        let exchangeOperationID = fixtureUUID("58200000-0000-4000-8000-000000000013")
+        let exchangeFingerprint = "apple-exchange:\(exchangeChallengeID.uuidString.lowercased())"
+        _ = try persisted.loadOrReserveOperation(
+            kind: .exchangeAppleNativeCredential,
+            proposed: exchangeOperationID,
+            fingerprint: exchangeFingerprint
+        )
+        _ = try persisted.beginOperation(
+            kind: .exchangeAppleNativeCredential,
+            operationID: exchangeOperationID,
+            fingerprint: exchangeFingerprint
+        )
+
+        let vault = InMemoryAuthSessionVault(record: persisted)
+        let coordinator = try AuthSessionCoordinator(
+            transport: FreshAppleTransport(),
+            vault: vault,
+            authLimits: fixtureLimits(),
+            platform: .ios
+        )
+        try await coordinator.beginFreshAppleAuthentication()
+
+        let record = await vault.snapshot()
+        #expect(record.operations.isEmpty)
+        #expect(record.session == fixtureSession())
+        _ = try await coordinator.createAppleChallenge()
+        #expect(await vault.snapshot().operations.isEmpty)
+    }
+
+    @Test("fresh native recovery preserves indeterminate exchange, refresh, and revoke lanes")
+    func freshRecoveryPreservesDurableLanes() async throws {
+        let session = fixtureSession()
+        var persisted = AuthVaultRecord(session: session)
+        let rotationID = fixtureUUID("58200000-0000-4000-8000-000000000014")
+        _ = try persisted.loadOrReserveRefreshRotation(proposed: rotationID, for: session)
+        let revokeOperationID = fixtureUUID("58200000-0000-4000-8000-000000000015")
+        let revokeFingerprint = "revoke:\(session.sessionID.uuidString.lowercased())"
+        persisted.operations.append(AuthOperationJournalEntry(
+            kind: .revokeCurrentSession,
+            operationID: revokeOperationID,
+            fingerprint: revokeFingerprint,
+            phase: .providerCallStarted
+        ))
+        let pendingRevoke = AuthPendingRevoke(
+            session: session,
+            operationID: revokeOperationID,
+            expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+            requestFingerprint: revokeFingerprint,
+            canonicalRequest: Data("{\"operationId\":\"\(revokeOperationID.uuidString.lowercased())\",\"scope\":\"currentSession\"}".utf8),
+            requestDigest: Data(repeating: 0x01, count: 32)
+        )
+        persisted.pendingRevoke = pendingRevoke
+
+        let indeterminateChallengeID = fixtureUUID("20000000-0000-4000-8000-000000000097")
+        let indeterminateOperationID = fixtureUUID("58200000-0000-4000-8000-000000000016")
+        let indeterminateFingerprint = "apple-exchange:\(indeterminateChallengeID.uuidString.lowercased())"
+        _ = try persisted.loadOrReserveOperation(
+            kind: .exchangeAppleNativeCredential,
+            proposed: indeterminateOperationID,
+            fingerprint: indeterminateFingerprint
+        )
+        _ = try persisted.beginOperation(
+            kind: .exchangeAppleNativeCredential,
+            operationID: indeterminateOperationID,
+            fingerprint: indeterminateFingerprint
+        )
+        try persisted.markProviderExchangeIndeterminate(
+            operationID: indeterminateOperationID,
+            fingerprint: indeterminateFingerprint
+        )
+
+        let vault = InMemoryAuthSessionVault(record: persisted)
+        let coordinator = try AuthSessionCoordinator(
+            transport: FreshAppleTransport(),
+            vault: vault,
+            authLimits: fixtureLimits(),
+            platform: .ios
+        )
+        try await coordinator.beginFreshAppleAuthentication()
+
+        let record = await vault.snapshot()
+        #expect(record.session == session)
+        #expect(record.pendingRotationID == rotationID)
+        #expect(record.pendingRevoke == pendingRevoke)
+        #expect(record.operations.contains {
+            $0.operationID == indeterminateOperationID &&
+                $0.phase == .providerExchangeIndeterminate
+        })
+        #expect(record.operations.contains { $0.operationID == revokeOperationID })
+    }
+
     @Test("a cold restart can abandon a stale exchange before a fresh Apple flow")
     func coldRestartStartsFreshAppleFlow() async throws {
         let session = fixtureSession()

@@ -126,6 +126,18 @@ public actor KeychainAuthSessionVault: AuthSessionVault {
         try writeRecord(record)
     }
 
+    public func markProviderExchangeIndeterminate(operationID: UUID, fingerprint: String) async throws {
+        var record = try readRecord()
+        try record.markProviderExchangeIndeterminate(operationID: operationID, fingerprint: fingerprint)
+        try writeRecord(record)
+    }
+
+    public func beginFreshAppleAuthentication() async throws {
+        var record = try readRecord()
+        record.beginFreshAppleAuthentication()
+        try writeRecord(record)
+    }
+
     public func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry {
         var record = try readRecord()
         let entry = try record.bindOperationRequest(

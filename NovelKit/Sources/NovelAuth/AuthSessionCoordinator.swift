@@ -66,7 +66,12 @@ public actor AuthSessionCoordinator {
                 // rejected identity) cannot be replayed.  Retain only the
                 // indeterminate lane, where the same operation and canonical
                 // request may still receive its lost ACK on retry.
-                if remote.code != "providerExchangeIndeterminate" {
+                if remote.code == "providerExchangeIndeterminate" {
+                    try? await vault.markProviderExchangeIndeterminate(
+                        operationID: reserved.operationID,
+                        fingerprint: fingerprint
+                    )
+                } else {
                     try? await vault.clearOperation(
                         kind: .exchangeAppleNativeCredential,
                         operationID: reserved.operationID
@@ -103,6 +108,13 @@ public actor AuthSessionCoordinator {
     /// retry `completeAppleSignIn` directly before invoking this method.
     public func discardInterruptedAppleExchange() async throws {
         try await vault.discardInterruptedAppleExchange()
+    }
+
+    /// Atomically retires only stale native-Apple lanes before a new
+    /// challenge is created. The exact replay lane for a server-indeterminate
+    /// exchange, refresh/revoke state, and the active session remain intact.
+    public func beginFreshAppleAuthentication() async throws {
+        try await vault.beginFreshAppleAuthentication()
     }
 
     public func refresh() async throws -> FuminiwaSession {

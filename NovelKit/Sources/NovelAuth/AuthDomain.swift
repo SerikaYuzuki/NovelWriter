@@ -262,6 +262,10 @@ public enum AuthOperationKind: String, Codable, Hashable, Sendable {
 public enum AuthOperationPhase: String, Codable, Hashable, Sendable {
     case reserved
     case providerCallStarted
+    /// The server may have consumed Apple's one-use credential while the
+    /// response was lost. This exact request is the only exchange lane that
+    /// may survive an explicit fresh interactive flow.
+    case providerExchangeIndeterminate
 }
 
 /// Non-secret operation metadata which may survive a process restart. Raw
@@ -439,7 +443,8 @@ public struct AuthVaultRecord: Codable, Hashable, Sendable {
     public mutating func loadOrReserveOperation(kind: AuthOperationKind, proposed: UUID, fingerprint: String) throws -> AuthOperationJournalEntry {
         if kind == .exchangeAppleNativeCredential,
            let activeExchange = operations.first(where: { $0.kind == kind }),
-           activeExchange.fingerprint != fingerprint {
+           activeExchange.fingerprint != fingerprint,
+           activeExchange.phase != .providerExchangeIndeterminate {
             throw AuthError.operationJournalConflict
         }
         if let existing = operations.first(where: { $0.kind == kind && $0.fingerprint == fingerprint }) {
@@ -505,15 +510,6 @@ public struct AuthVaultRecord: Codable, Hashable, Sendable {
 
     public mutating func clearOperation(kind: AuthOperationKind, fingerprint: String) {
         operations.removeAll { $0.kind == kind && $0.fingerprint == fingerprint }
-    }
-
-    /// Drops an exchange journal when the caller explicitly starts a new
-    /// interactive Apple flow after a process restart. Raw credentials are
-    /// never persisted, so this lane cannot be recovered after restart.
-    /// Same-call lost-ACK replay does not cross this boundary and continues
-    /// to use the original operation ID and request bytes.
-    public mutating func discardInterruptedAppleExchange() {
-        operations.removeAll { $0.kind == .exchangeAppleNativeCredential }
     }
 
     public mutating func rollForwardExpiredRevokeOperation(
@@ -633,6 +629,8 @@ public protocol AuthSessionVault: Sendable {
     func clearOperation(kind: AuthOperationKind, operationID: UUID) async throws
     func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws
     func discardInterruptedAppleExchange() async throws
+    func markProviderExchangeIndeterminate(operationID: UUID, fingerprint: String) async throws
+    func beginFreshAppleAuthentication() async throws
     func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry
     func loadPendingRevoke() async throws -> AuthPendingRevoke?
     func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke
@@ -642,7 +640,7 @@ public protocol AuthSessionVault: Sendable {
 }
 
 public actor InMemoryAuthSessionVault: AuthSessionVault {
-    private var record: AuthVaultRecord
+    var record: AuthVaultRecord
 
     public init(session: FuminiwaSession? = nil) {
         record = AuthVaultRecord(session: session)
