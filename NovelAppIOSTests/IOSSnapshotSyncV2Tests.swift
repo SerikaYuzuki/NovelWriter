@@ -1,5 +1,6 @@
 import Foundation
 @testable import FUMINIWAIOS
+import NovelAuth
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
@@ -354,22 +355,30 @@ struct IOSSnapshotSyncV2Tests {
 @MainActor
 extension IOSSnapshotSyncV2Tests {
     @Test("sign-outは旧accountのremote shelf/conflict/historyをparkする")
-    func signOutIsolatesAccountProjection() async {
+    func signOutIsolatesAccountProjection() async throws {
         let environment = makeEnvironment()
         defer { environment.cleanup() }
         let store = IOSDocumentStore(
             userDefaults: environment.defaults,
             libraryRoot: environment.root
         )
+        #expect(await store.configureSnapshotSyncV2())
         await store.bootstrap()
-        let workID = WorkID(UUID())
+        #expect(await store.makeNewDocument())
+        let workID = try #require(store.syncV2ActiveWorkID)
+        store.updateDocumentTitle("旧アカウント")
+        #expect(await store.saveNow())
+        store.testServerInstanceIDOverride = "test-server"
+        let session = makeProjectionAuthSession(
+            accountID: "test-account",
+            fence: "test-fence"
+        )
+        #expect(await store.transitionFuminiwaSession(
+            to: session,
+            authState: .signedIn(accountID: session.accountID)
+        ))
+        #expect(store.syncV2LibraryItems.contains { $0.workID == workID })
         let snapshot = SnapshotID(data: Data("snapshot".utf8))
-        store.syncV2LibraryItems = [SyncV2LibraryItem(
-            workID: workID,
-            title: "旧アカウント",
-            availability: .cached,
-            accountState: .active
-        )]
         store.syncV2RemoteCatalogItems = [
             SyncV2RemoteCatalogEntry(workID: workID, title: "旧アカウント", head: nil)
         ]
@@ -466,6 +475,32 @@ extension IOSSnapshotSyncV2Tests {
         #expect(await store.restoreSnapshotSyncV2(snapshotID: selectedSnapshotID.rawValue))
         #expect(store.document.title == "parked-0")
     }
+}
+
+private func makeProjectionAuthSession(accountID: String, fence: String) -> FuminiwaSession {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    return FuminiwaSession(
+        binding: AuthSessionBinding(
+            serverInstanceID: UUID(),
+            syncProtocolEpoch: 2,
+            accountID: accountID,
+            accountAuthEpoch: 1,
+            accountFence: fence,
+            sessionID: UUID()
+        ),
+        tokens: AuthSessionTokens(
+            accessToken: "test-access",
+            accessTokenExpiresAt: now.addingTimeInterval(900),
+            refreshToken: "test-refresh",
+            refreshTokenExpiresAt: now.addingTimeInterval(86400),
+            refreshGeneration: 1
+        ),
+        receipt: AuthReceipt(
+            commandKind: "exchangeApple",
+            operationID: UUID(),
+            replayUntil: now.addingTimeInterval(300)
+        )
+    )
 }
 
 @MainActor
