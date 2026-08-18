@@ -384,7 +384,7 @@ fn canonical_bytes_response(status: u16, bytes: Vec<u8>) -> Response {
         .expect("fixed auth response")
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ErrorScope {
     Access,
     Operation,
@@ -392,6 +392,25 @@ enum ErrorScope {
 }
 
 fn error_response(error: AuthApiError, scope: ErrorScope) -> Response {
+    // Keep provider credentials, tokens, request bodies, and database details
+    // out of logs.  The operation/challenge IDs are the safe correlation
+    // handles already returned in the typed response envelope.
+    tracing::warn!(
+        target: "fuminiwa::auth",
+        error_kind = auth_error_kind(&error.error),
+        operation_id = error
+            .operation_id
+            .as_ref()
+            .map(OperationId::as_str)
+            .unwrap_or("none"),
+        challenge_id = error
+            .challenge_id
+            .as_ref()
+            .map(ChallengeId::as_str)
+            .unwrap_or("none"),
+        scope = ?scope,
+        "auth request rejected"
+    );
     let (status, code, recovery, retryability) = match error.error {
         AuthError::OperationIdReused => (409, "operationIdReused", "none", "never"),
         AuthError::ChallengeExpired => (
@@ -478,6 +497,28 @@ fn error_response(error: AuthApiError, scope: ErrorScope) -> Response {
         StatusCode::from_u16(status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
         Value::Object(map),
     )
+}
+
+fn auth_error_kind(error: &AuthError) -> &'static str {
+    match error {
+        AuthError::OperationIdReused => "operationIdReused",
+        AuthError::ChallengeExpired => "challengeExpired",
+        AuthError::ChallengeConsumed => "challengeConsumed",
+        AuthError::InvalidChallengePhase => "invalidChallengePhase",
+        AuthError::InvalidExternalIdentity => "invalidExternalIdentity",
+        AuthError::ProviderExchangeIndeterminate => "providerExchangeIndeterminate",
+        AuthError::RefreshTokenReused => "refreshTokenReused",
+        AuthError::AccountNotFound => "accountNotFound",
+        AuthError::SessionRevoked => "sessionRevoked",
+        AuthError::FenceMismatch => "fenceMismatch",
+        AuthError::NotFound => "notFound",
+        AuthError::Vault => "vault",
+        AuthError::Database(_) => "database",
+        AuthError::InvalidIdentifier => "invalidIdentifier",
+        AuthError::InvalidFence => "invalidFence",
+        AuthError::InvalidRequest => "invalidRequest",
+        AuthError::ProviderNotAllowed => "providerNotAllowed",
+    }
 }
 
 fn payload_too_large_response() -> Response {
