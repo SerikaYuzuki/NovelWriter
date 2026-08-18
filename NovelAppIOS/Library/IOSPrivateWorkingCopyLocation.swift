@@ -67,11 +67,11 @@ extension IOSPrivateWorkingCopyLocation {
         let reportedHome = URL(
             fileURLWithPath: NSHomeDirectory(),
             isDirectory: true
-        ).standardizedFileURL
+        ).standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
         guard let reportedApplicationSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first?.standardizedFileURL else {
+        ).first?.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         let expectedApplicationSupport = reportedHome
