@@ -112,7 +112,7 @@ public enum SnapshotSyncV2Runtime {
                 try await app.resumePending()
             }
         } catch {
-            let errorType = String(reflecting: type(of: error))
+            let errorType = snapshotSyncV2StartupErrorLabel(error)
             snapshotSyncV2RuntimeLogger.error(
                 "Snapshot Sync v2 resume failed (error type: \(errorType, privacy: .public))"
             )
@@ -120,6 +120,20 @@ public enum SnapshotSyncV2Runtime {
         }
         return app
     }
+}
+
+private func snapshotSyncV2StartupErrorLabel(_ error: any Error) -> String {
+    #if canImport(Security)
+    if let keychainError = error as? KeychainAuthError {
+        return switch keychainError {
+        case .invalidRecord:
+            "NovelAuth.KeychainAuthError.invalidRecord"
+        case let .status(status):
+            "NovelAuth.KeychainAuthError.status(\(status))"
+        }
+    }
+    #endif
+    return String(reflecting: type(of: error))
 }
 
 enum ProductionStoreFactory {
