@@ -17,6 +17,24 @@ func logIOSAppleAuthenticationPhase(_ phase: AppleAuthenticationPhase) {
     iosAuthenticationLogger.info("\(line, privacy: .public)")
 }
 
+private enum IOSAppleAuthenticationBoundaryPhase: String {
+    case entry
+    case unavailable
+    case requestUnavailable = "request-unavailable"
+    case staleTransitionRecovered = "stale-transition-recovered"
+    case preflightRejected = "preflight-rejected"
+    case oldScopeRejected = "old-scope-rejected"
+    case challengeRequestStart = "challenge-request-start"
+}
+
+private func logIOSAppleAuthenticationBoundary(
+    _ phase: IOSAppleAuthenticationBoundaryPhase
+) {
+    let line = "auth apple boundary=\(phase.rawValue)"
+    print("[FUMINIWA] \(line)")
+    iosAuthenticationLogger.info("\(line, privacy: .public)")
+}
+
 private func logAppleAuthenticationFailure(
     phase: String,
     error: (any Error)? = nil
@@ -80,6 +98,22 @@ extension IOSDocumentStore {
     /// sign-in, signout, and direct account transitions.
     @discardableResult
     func beginAccountTransitionRequest() async -> UUID? {
+        await withTaskCancellationHandler {
+            await beginAccountTransitionRequestBody()
+        } onCancel: {
+            // A task can be cancelled while the shared application is
+            // suspending its remote worker.  In that narrow window the
+            // in-memory request owner has already been published, but the
+            // caller never receives it and therefore cannot release it.  Do
+            // the release on the main actor so a cancelled launch/auth task
+            // cannot leave the retry button permanently inert.
+            Task { @MainActor [weak self] in
+                await self?.releaseCancelledAccountTransitionRequest()
+            }
+        }
+    }
+
+    private func beginAccountTransitionRequestBody() async -> UUID? {
         guard !syncV2AccountTransitionRequested,
               syncV2AccountTransitionRequestOwner == nil,
               !syncV2AccountTransitionInProgress else { return nil }
@@ -101,6 +135,46 @@ extension IOSDocumentStore {
             syncV2RemoteSuspensionToken = token
         }
         return owner
+    }
+
+    private func releaseCancelledAccountTransitionRequest() async {
+        guard !syncV2AccountTransitionInProgress else { return }
+        guard let owner = syncV2AccountTransitionRequestOwner else {
+            syncV2AccountTransitionRequested = false
+            syncV2RemoteSuspensionToken = nil
+            return
+        }
+        await releaseAccountTransitionRequest(owner: owner, resume: true)
+    }
+
+    /// Recover a request window whose caller was cancelled after publishing
+    /// the owner.  This is intentionally only used by an explicit Apple retry:
+    /// a live sign-in remains protected by the `.signingIn` state, while a
+    /// stale owner cannot make every later retry return silently.
+    private func recoverAbandonedAccountTransitionRequest() async -> Bool {
+        guard authUIState != .signingIn,
+              !syncV2AccountTransitionInProgress,
+              syncV2AccountTransitionRequested ||
+              syncV2AccountTransitionRequestOwner != nil else { return false }
+        if let owner = syncV2AccountTransitionRequestOwner {
+            await releaseAccountTransitionRequest(owner: owner, resume: true)
+        } else {
+            syncV2AccountTransitionRequested = false
+            syncV2RemoteSuspensionToken = nil
+        }
+        return syncV2AccountTransitionRequestOwner == nil
+    }
+
+    private func beginAppleAccountTransitionRequest() async -> UUID? {
+        if let owner = await beginAccountTransitionRequest() {
+            return owner
+        }
+        guard await recoverAbandonedAccountTransitionRequest() else {
+            logIOSAppleAuthenticationBoundary(.requestUnavailable)
+            return nil
+        }
+        logIOSAppleAuthenticationBoundary(.staleTransitionRecovered)
+        return await beginAccountTransitionRequest()
     }
 
     private func acquireAccountTransitionRequest(
@@ -538,13 +612,16 @@ extension IOSDocumentStore {
     }
 
     func signInWithApple() async {
+        logIOSAppleAuthenticationBoundary(.entry)
         #if !FUMINIWA_TEST_COMPOSITION
         guard appleAuthenticationOrchestrator != nil else {
+            logIOSAppleAuthenticationBoundary(.unavailable)
             authUIState = .unavailable
             return
         }
         #else
         guard appleAuthenticationOrchestrator != nil || testAppleSignInHandler != nil else {
+            logIOSAppleAuthenticationBoundary(.unavailable)
             authUIState = .unavailable
             return
         }
@@ -552,7 +629,7 @@ extension IOSDocumentStore {
         guard authUIState != .signingIn else { return }
         let previousAuthUIState = authUIState
         let previousSession = authSession
-        guard let owner = await beginAccountTransitionRequest() else { return }
+        guard let owner = await beginAppleAccountTransitionRequest() else { return }
         authUIState = .signingIn
         // The Apple exchange may persist the replacement vault session before
         // it returns. Flush the current editor while the old vault binding is
@@ -566,6 +643,7 @@ extension IOSDocumentStore {
             return await performDocumentTransition {}
         }
         guard preflighted else {
+            logIOSAppleAuthenticationBoundary(.preflightRejected)
             authUIState = previousAuthUIState
             await releaseAccountTransitionRequest(owner: owner, resume: true)
             return
@@ -582,6 +660,7 @@ extension IOSDocumentStore {
                 authState: .signingIn,
                 requestOwner: owner
             ) else {
+                logIOSAppleAuthenticationBoundary(.oldScopeRejected)
                 authUIState = previousAuthUIState
                 await releaseAccountTransitionRequest(owner: owner, resume: true)
                 _ = try? await reloadLibraryItems()
@@ -589,6 +668,7 @@ extension IOSDocumentStore {
             }
             oldScopeParked = true
             authPhase = "apple-exchange"
+            logIOSAppleAuthenticationBoundary(.challengeRequestStart)
             let session = try await exchangeAppleSession()
             authPhase = "apply-new-scope"
             guard await transitionFuminiwaSession(

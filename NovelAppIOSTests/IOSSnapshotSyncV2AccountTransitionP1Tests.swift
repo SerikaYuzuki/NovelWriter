@@ -602,6 +602,40 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
         #expect(store.document.title == title)
     }
 
+    @Test("キャンセルされたApple開始のstale leaseは再試行を塞がない")
+    func staleAppleTransitionLeaseDoesNotBlockRetry() async {
+        let environment = makeIOSP1Environment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        #expect(await store.configureSnapshotSyncV2())
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        #if FUMINIWA_TEST_COMPOSITION
+        store.testServerInstanceIDOverride = "test-server"
+        #endif
+
+        let replacementSession = makeIOSAuthSession(
+            accountID: "retry-account",
+            fence: "retry-fence",
+            protocolEpoch: 2
+        )
+        store.testAppleSignInHandler = { replacementSession }
+        store.authUIState = .failed("Appleでのサインインを完了できませんでした")
+        store.syncV2AccountTransitionRequested = true
+        store.syncV2AccountTransitionRequestOwner = UUID()
+
+        await store.signInWithApple()
+
+        #expect(store.authSession?.accountID == replacementSession.accountID)
+        #expect(store.authUIState == .signedIn(accountID: replacementSession.accountID))
+        #expect(store.syncV2AccountTransitionRequested == false)
+        #expect(store.syncV2AccountTransitionRequestOwner == nil)
+        #expect(store.syncV2RemoteSuspensionToken == nil)
+    }
+
     @Test("iOS account transition lease is nested-owner and stale-release safe")
     func remoteSuspensionLeaseRejectsStaleRelease() async throws {
         let environment = makeIOSP1Environment()
