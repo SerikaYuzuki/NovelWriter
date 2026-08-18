@@ -60,6 +60,33 @@ struct RuntimeIsolationTests {
         }
     }
 
+    @Test("production root rejects an app-controlled base alias")
+    func productionRootRejectsAppControlledAlias() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-v2-production-root-\(UUID())")
+        let real = parent.appendingPathComponent("real", isDirectory: true)
+        let alias = parent.appendingPathComponent("alias", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+
+        #expect(throws: SyncV2ApplicationError.invalidRuntimeMode) {
+            try ProductionLocalRoot(applicationSupportDirectory: alias)
+        }
+    }
+
+    @Test("production root accepts the OS var alias")
+    func productionRootAcceptsOSVarAlias() throws {
+        let root = try ProductionLocalRoot(
+            applicationSupportDirectory: URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+        )
+
+        #expect(
+            root.url.path == "/var/tmp/FUMINIWA/SnapshotSyncV2" ||
+                root.url.path == "/private/var/tmp/FUMINIWA/SnapshotSyncV2"
+        )
+    }
+
     @Test("preview is read-only and creates no local root")
     func previewPerformsNoLocalIO() async throws {
         let sentinel = FileManager.default.temporaryDirectory
@@ -94,6 +121,70 @@ struct RuntimeIsolationTests {
             clientPlatform: .macos
         )
         #expect(configuration.documentGate != nil)
+    }
+
+    @Test("incompatible production database is quarantined before fresh bootstrap")
+    func incompatibleProductionDatabaseStartsFresh() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-v2-production-reset-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("snapshot-sync-v2.sqlite"))
+
+        let freshStore = try ProductionStoreFactory.openProduction(root: root)
+        #expect(try await freshStore.listWorks(scope: .unbound).isEmpty)
+        #expect(try await freshStore.schemaVersionAndChecksum().0 == "2")
+
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )
+        let quarantine = try #require(entries.first { url in
+            url.lastPathComponent.hasPrefix("snapshot-sync-v2.sqlite.incompatible-")
+        })
+        #expect(
+            try quarantine.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        )
+        #expect(
+            FileManager.default.fileExists(
+                atPath: quarantine.appendingPathComponent("snapshot-sync-v2.sqlite").path
+            )
+        )
+        await freshStore.close()
+    }
+
+    @Test("orphaned SQLite sidecars are quarantined before fresh bootstrap")
+    func orphanedProductionSidecarsStartFresh() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fuminiwa-v2-orphaned-sidecars-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for suffix in ["-wal", "-shm", "-journal"] {
+            try Data(suffix.utf8).write(
+                to: root.appendingPathComponent("snapshot-sync-v2.sqlite" + suffix)
+            )
+        }
+
+        let freshStore = try ProductionStoreFactory.openProduction(root: root)
+        #expect(try await freshStore.listWorks(scope: .unbound).isEmpty)
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )
+        let quarantine = try #require(entries.first { url in
+            url.lastPathComponent.hasPrefix("snapshot-sync-v2.sqlite.incompatible-")
+        })
+        for suffix in ["-wal", "-shm", "-journal"] {
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: quarantine.appendingPathComponent(
+                        "snapshot-sync-v2.sqlite" + suffix
+                    ).path
+                )
+            )
+        }
+        await freshStore.close()
     }
 
     @Test("runtime identity mismatch cannot construct the application")

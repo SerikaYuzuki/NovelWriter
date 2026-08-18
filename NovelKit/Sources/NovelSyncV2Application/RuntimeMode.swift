@@ -6,19 +6,37 @@ public struct ProductionLocalRoot: Hashable, Sendable {
     public let url: URL
 
     package init(applicationSupportDirectory: URL) throws {
-        let candidate = applicationSupportDirectory
+        let canonicalApplicationSupport = try canonicalProductionBase(
+            applicationSupportDirectory
+        )
+        let candidate = canonicalApplicationSupport
             .appendingPathComponent("FUMINIWA", isDirectory: true)
             .appendingPathComponent("SnapshotSyncV2", isDirectory: true)
             .standardizedFileURL
-        guard applicationSupportDirectory.isFileURL,
+        guard canonicalApplicationSupport.isFileURL,
               isSafeLocalPath(
                   candidate,
-                  within: applicationSupportDirectory
+                  within: canonicalApplicationSupport
               ) else {
             throw SyncV2ApplicationError.invalidRuntimeMode
         }
         url = candidate
     }
+}
+
+private func canonicalProductionBase(_ reported: URL) throws -> URL {
+    let standardized = reported.standardizedFileURL
+    guard standardized.isFileURL else {
+        throw SyncV2ApplicationError.invalidRuntimeMode
+    }
+    let canonical = standardized.resolvingSymlinksInPath().standardizedFileURL
+    guard canonical.path == standardized.path ||
+        canonical.path == "/private" + standardized.path &&
+        (standardized.path == "/var" || standardized.path.hasPrefix("/var/") ||
+            standardized.path == "/tmp" || standardized.path.hasPrefix("/tmp/")) else {
+        throw SyncV2ApplicationError.invalidRuntimeMode
+    }
+    return canonical
 }
 
 public struct ProductionHTTPSOrigin: Hashable, Sendable {

@@ -3,6 +3,12 @@ import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2PortableBridge
+import os
+
+private let snapshotSyncV2StartupLogger = Logger(
+    subsystem: "dev.serikayuzuki.fuminiwa",
+    category: "startup"
+)
 
 extension AppState {
     /// A document identity change explicitly retires background UI operations.
@@ -74,6 +80,10 @@ extension AppState {
             await refreshSnapshotSyncV2UIState()
             return true
         } catch {
+            let errorType = String(reflecting: type(of: error))
+            snapshotSyncV2StartupLogger.error(
+                "Snapshot Sync v2 startup failed (error type: \(errorType, privacy: .public))"
+            )
             snapshotSyncV2Application = nil
             startupState = .recovery(.init(message: "端末の保存領域を初期化できませんでした。"))
             return false
@@ -278,6 +288,7 @@ extension AppState {
             let workID = userDefaults.string(forKey: "fuminiwa.v2.activeWorkID")
                 .flatMap(UUID.init(uuidString:))
                 .map { WorkID($0) }
+            var shouldCreateFreshWork = true
             if let workID, let application = snapshotSyncV2Application {
                 do {
                     let opened = try await application.openLocal(workID: workID)
@@ -298,11 +309,18 @@ extension AppState {
                     }
                     snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
                     await refreshSnapshotSyncV2UIState()
+                    shouldCreateFreshWork = false
+                } catch SyncV2ApplicationError.workNotFound {
+                    // A fresh database may follow quarantine of an old v2
+                    // schema. The persisted preference then points to a
+                    // WorkID that no longer exists in the new local store.
+                    userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
                 } catch {
                     startupState = .recovery(.init(message: "保存済みの作品を読み込めませんでした。"))
                     return
                 }
-            } else {
+            }
+            if shouldCreateFreshWork {
                 let fresh = NovelDocument.newDocument()
                 let freshWorkID = WorkID(UUID())
                 guard installV2Document(

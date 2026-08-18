@@ -2,6 +2,12 @@ import Foundation
 import NovelAuth
 import NovelSyncV2Application
 import NovelSyncV2Store
+import OSLog
+
+private let snapshotSyncV2RuntimeLogger = Logger(
+    subsystem: "dev.serikayuzuki.fuminiwa",
+    category: "startup"
+)
 
 public enum SnapshotSyncV2Runtime {
     public static func makeProductionDocumentGate() -> ProductionDocumentGate {
@@ -66,7 +72,7 @@ public enum SnapshotSyncV2Runtime {
                 at: configuration.localRoot.url,
                 withIntermediateDirectories: true
             )
-            let store = try ProductionStoreFactory.open(
+            let store = try ProductionStoreFactory.openProduction(
                 root: configuration.localRoot.url
             )
             let scope = ProductionScopeResolver(vault: configuration.vault, store: store)
@@ -101,14 +107,37 @@ public enum SnapshotSyncV2Runtime {
             )
         }
         let app = try SyncV2Application(mode: mode, composition: composition)
-        if resumeOnLaunch {
-            try await app.resumePending()
+        do {
+            if resumeOnLaunch {
+                try await app.resumePending()
+            }
+        } catch {
+            let errorType = String(reflecting: type(of: error))
+            snapshotSyncV2RuntimeLogger.error(
+                "Snapshot Sync v2 resume failed (error type: \(errorType, privacy: .public))"
+            )
+            throw error
         }
         return app
     }
 }
 
-private enum ProductionStoreFactory {
+enum ProductionStoreFactory {
+    /// Opens the production database, quarantining only an incompatible
+    /// existing schema.  A stale v2 database is not a migration source for
+    /// the current runtime; keep it recoverable and start with an empty store.
+    static func openProduction(root: URL) throws -> LocalSyncV2Store {
+        if !databaseExists(at: root), hasOrphanedSidecar(at: root) {
+            try quarantineIncompatibleDatabase(at: root)
+        }
+        do {
+            return try open(root: root)
+        } catch SyncV2StoreError.schemaMismatch {
+            try quarantineIncompatibleDatabase(at: root)
+            return try LocalSyncV2Store(root: root, policy: .createNew)
+        }
+    }
+
     static func open(
         root: URL,
         policy: V2StoreOpenPolicy = .createNew
@@ -118,6 +147,47 @@ private enum ProductionStoreFactory {
             atPath: database.path
         ) ? .openExisting : policy
         return try LocalSyncV2Store(root: root, policy: actualPolicy)
+    }
+
+    static func quarantineIncompatibleDatabase(at root: URL) throws {
+        let fileManager = FileManager.default
+        let databaseName = "snapshot-sync-v2.sqlite"
+        let quarantine = root.appendingPathComponent(
+            "\(databaseName).incompatible-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: quarantine, withIntermediateDirectories: false)
+        do {
+            for suffix in databaseArtifactSuffixes {
+                let source = root.appendingPathComponent(databaseName + suffix)
+                guard fileManager.fileExists(atPath: source.path) else { continue }
+                try fileManager.moveItem(
+                    at: source,
+                    to: quarantine.appendingPathComponent(databaseName + suffix)
+                )
+            }
+        } catch {
+            // Do not remove a partially populated quarantine.  A failed move
+            // must never turn an incompatible database into data loss: the
+            // already moved files remain recoverable for a later repair.
+            throw error
+        }
+    }
+
+    private static let databaseArtifactSuffixes = ["", "-wal", "-shm", "-journal"]
+
+    private static func databaseExists(at root: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("snapshot-sync-v2.sqlite").path
+        )
+    }
+
+    private static func hasOrphanedSidecar(at root: URL) -> Bool {
+        databaseArtifactSuffixes.dropFirst().contains { suffix in
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("snapshot-sync-v2.sqlite" + suffix).path
+            )
+        }
     }
 }
 

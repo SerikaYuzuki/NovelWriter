@@ -5,6 +5,7 @@ import NovelStorage
 import NovelSyncV2
 import NovelSyncV2Application
 import NovelSyncV2Runtime
+import NovelSyncV2Store
 import Testing
 
 @MainActor
@@ -21,6 +22,32 @@ struct AppStateBootstrapTests {
         let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
         #expect(state.snapshotSyncV2Session?.workID == activeWorkID)
         #expect(activeWorkID.rawValue != state.document.id)
+        #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
+    }
+
+    @Test("v2起動は空のSQLiteに残った古いactive WorkIDからfresh workを作る")
+    func bootstrapReplacesStaleActiveWorkID() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.AppStateBootstrapTests.stale.\(UUID().uuidString)"))
+        let configuration = try TestRuntimeConfiguration(account: nil)
+        let store = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .createNew)
+        await store.close()
+        let staleWorkID = WorkID(UUID())
+        defaults.set(staleWorkID.rawValue.uuidString, forKey: "fuminiwa.v2.activeWorkID")
+        let state = AppState(
+            dependencies: AppDependencies(
+                userDefaults: defaults,
+                snapshotSyncV2Factory: {
+                    try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                }
+            )
+        )
+
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+
+        #expect(state.startupState == .ready)
+        let activeWorkID = try #require(state.snapshotSyncV2ActiveWorkID)
+        #expect(activeWorkID != staleWorkID)
         #expect(state.userDefaults.string(forKey: "fuminiwa.v2.activeWorkID") == activeWorkID.rawValue.uuidString)
     }
 
