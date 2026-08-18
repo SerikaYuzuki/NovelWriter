@@ -50,6 +50,63 @@ struct AppleAuthenticationOrchestratorTests {
         #expect(try await handles.load(providerConfigurationID: "apple-primary-fuminiwa-v1") == nil)
     }
 
+    @Test("phase observer reports only successful, content-free boundaries")
+    @MainActor
+    func phaseObserverOrderingAndRedaction() async throws {
+        let successPhases = PhaseCollector()
+        let successAuth = try AuthSessionCoordinator(
+            transport: OrchestratorTransport(),
+            vault: InMemoryAuthSessionVault(),
+            authLimits: limits()
+        )
+        let successOrchestrator = AppleAuthenticationOrchestrator(
+            authSessionCoordinator: successAuth,
+            authorizationProvider: StubAuthorizationProvider(),
+            credentialStateHandleVault: InMemoryAppleCredentialStateHandleVault(),
+            credentialStateProvider: StubCredentialStateProvider(),
+            phaseObserver: { phase in
+                successPhases.append(phase)
+            }
+        )
+
+        _ = try await successOrchestrator.signIn()
+        #expect(successPhases.values() == [
+            .challengeCreated,
+            .nativeAuthorized,
+            .serverExchanged
+        ])
+        #expect(
+            successPhases.values().allSatisfy { phase in
+                phase.rawValue == "challenge-created"
+                    || phase.rawValue == "native-authorized"
+                    || phase.rawValue == "server-exchanged"
+            }
+        )
+
+        let failureTransport = OrchestratorTransport()
+        await failureTransport.failExchange()
+        let failurePhases = PhaseCollector()
+        let failureAuth = try AuthSessionCoordinator(
+            transport: failureTransport,
+            vault: InMemoryAuthSessionVault(),
+            authLimits: limits()
+        )
+        let failureOrchestrator = AppleAuthenticationOrchestrator(
+            authSessionCoordinator: failureAuth,
+            authorizationProvider: StubAuthorizationProvider(),
+            credentialStateHandleVault: InMemoryAppleCredentialStateHandleVault(),
+            credentialStateProvider: StubCredentialStateProvider(),
+            phaseObserver: { phase in
+                failurePhases.append(phase)
+            }
+        )
+
+        await #expect(throws: Error.self) {
+            _ = try await failureOrchestrator.signIn()
+        }
+        #expect(failurePhases.values() == [.challengeCreated, .nativeAuthorized])
+    }
+
     @Test("revoked credential state removes only the provider handle")
     @MainActor
     func revokedHandleRemoval() async throws {
@@ -81,6 +138,19 @@ struct AppleAuthenticationOrchestratorTests {
             maxProviderClockSkewSeconds: 300,
             refreshTokenLifetimeSeconds: 7_776_000
         )
+    }
+}
+
+@MainActor
+private final class PhaseCollector {
+    private var recorded: [AppleAuthenticationPhase] = []
+
+    func append(_ phase: AppleAuthenticationPhase) {
+        recorded.append(phase)
+    }
+
+    func values() -> [AppleAuthenticationPhase] {
+        recorded
     }
 }
 

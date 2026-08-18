@@ -170,6 +170,17 @@ public enum AppleCredentialStateProviderError: Error, Equatable, Sendable {
     case unknownState
 }
 
+/// Content-free milestones for observing an interactive Apple sign-in.
+///
+/// The enum deliberately carries no challenge, provider, account, or token
+/// data so an observer cannot accidentally turn authentication diagnostics
+/// into a credential log.
+public enum AppleAuthenticationPhase: String, Equatable, Sendable {
+    case challengeCreated = "challenge-created"
+    case nativeAuthorized = "native-authorized"
+    case serverExchanged = "server-exchanged"
+}
+
 /// Coordinates native Apple authorization, FUMINIWA exchange, and the
 /// provider-only credential-state handle. The handle is committed only after
 /// the server has accepted the exchange and is never sent to the server.
@@ -180,30 +191,36 @@ public final class AppleAuthenticationOrchestrator {
     private let credentialStateHandleVault: any AppleCredentialStateHandleVault
     private let credentialStateProvider: any AppleCredentialStateProviding
     private let providerConfigurationID: String
+    private let phaseObserver: (@MainActor (AppleAuthenticationPhase) -> Void)?
 
     public init(
         authSessionCoordinator: AuthSessionCoordinator,
         authorizationProvider: any AppleAuthorizationProviding,
         credentialStateHandleVault: any AppleCredentialStateHandleVault,
         credentialStateProvider: any AppleCredentialStateProviding,
-        providerConfigurationID: String = "apple-primary-fuminiwa-v1"
+        providerConfigurationID: String = "apple-primary-fuminiwa-v1",
+        phaseObserver: (@MainActor (AppleAuthenticationPhase) -> Void)? = nil
     ) {
         self.authSessionCoordinator = authSessionCoordinator
         self.authorizationProvider = authorizationProvider
         self.credentialStateHandleVault = credentialStateHandleVault
         self.credentialStateProvider = credentialStateProvider
         self.providerConfigurationID = providerConfigurationID
+        self.phaseObserver = phaseObserver
     }
 
     public func signIn(challengeOperationID: UUID? = nil, exchangeOperationID: UUID? = nil) async throws -> FuminiwaSession {
         let challenge = try await authSessionCoordinator.createAppleChallenge(operationID: challengeOperationID)
+        phaseObserver?(.challengeCreated)
         let authorization = try await authorizationProvider.authorize(using: challenge)
+        phaseObserver?(.nativeAuthorized)
         let session = try await authSessionCoordinator.completeAppleSignIn(
             challenge: challenge,
             authorizationCode: authorization.authorizationCode,
             identityToken: authorization.identityToken,
             operationID: exchangeOperationID ?? UUID()
         )
+        phaseObserver?(.serverExchanged)
         try await credentialStateHandleVault.save(
             authorization.userHandle,
             providerConfigurationID: challenge.providerConfigurationID

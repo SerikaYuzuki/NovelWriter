@@ -210,7 +210,10 @@ private enum IOSDocumentStoreComposition {
             authSessionCoordinator: auth,
             authorizationProvider: appleSignIn,
             credentialStateHandleVault: KeychainAppleCredentialStateHandleVault(),
-            credentialStateProvider: SystemAppleCredentialStateProvider()
+            credentialStateProvider: SystemAppleCredentialStateProvider(),
+            phaseObserver: { phase in
+                logIOSAppleAuthenticationPhase(phase)
+            }
         )
         #else
         return nil

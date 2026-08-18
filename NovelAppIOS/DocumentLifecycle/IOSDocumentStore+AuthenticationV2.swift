@@ -1,5 +1,6 @@
 import Foundation
 import NovelAuth
+import NovelAuthApple
 import NovelSyncV2Application
 import OSLog
 
@@ -7,6 +8,14 @@ private let iosAuthenticationLogger = Logger(
     subsystem: "dev.serikayuzuki.fuminiwa.ios",
     category: "authentication"
 )
+
+/// Logs only a fixed authentication milestone. The phase type intentionally
+/// carries no identifiers, URLs, credentials, or response data.
+func logIOSAppleAuthenticationPhase(_ phase: AppleAuthenticationPhase) {
+    let line = "auth apple phase=\(phase.rawValue)"
+    print("[FUMINIWA] \(line)")
+    iosAuthenticationLogger.info("\(line, privacy: .public)")
+}
 
 private func logAppleAuthenticationFailure(
     phase: String,
