@@ -111,6 +111,15 @@ extension IOSDocumentStore {
         guard let appleAuthenticationOrchestrator else {
             throw IOSDocumentStoreAuthenticationError.unavailable
         }
+        // A new native authorization is an explicit recovery choice after a
+        // cold restart. Raw Apple credentials are not persisted, so an old
+        // exchange journal would otherwise block the fresh challenge. The
+        // same-call indeterminate/lost-ACK replay bypasses this method and
+        // retries the original operation directly.
+        guard let authSessionCoordinator else {
+            throw IOSDocumentStoreAuthenticationError.unavailable
+        }
+        try await authSessionCoordinator.discardInterruptedAppleExchange()
         return try await appleAuthenticationOrchestrator.signIn()
     }
 

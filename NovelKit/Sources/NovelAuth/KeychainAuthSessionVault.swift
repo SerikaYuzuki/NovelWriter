@@ -120,6 +120,12 @@ public actor KeychainAuthSessionVault: AuthSessionVault {
         try writeRecord(record)
     }
 
+    public func discardInterruptedAppleExchange() async throws {
+        var record = try readRecord()
+        record.discardInterruptedAppleExchange()
+        try writeRecord(record)
+    }
+
     public func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry {
         var record = try readRecord()
         let entry = try record.bindOperationRequest(

@@ -97,6 +97,14 @@ public actor AuthSessionCoordinator {
         try await vault.clearOperation(kind: .exchangeAppleNativeCredential, fingerprint: fingerprint)
     }
 
+    /// Starts a fresh interactive flow after a process restart. The vault
+    /// stores no Apple credentials, so an interrupted exchange cannot be
+    /// replayed across that boundary. Same-call indeterminate exchanges must
+    /// retry `completeAppleSignIn` directly before invoking this method.
+    public func discardInterruptedAppleExchange() async throws {
+        try await vault.discardInterruptedAppleExchange()
+    }
+
     public func refresh() async throws -> FuminiwaSession {
         guard let current = try await vault.load() else { throw AuthError.missingSession }
         let rotationID = try await vault.loadOrReserveRefreshRotation(proposed: UUID(), for: current)

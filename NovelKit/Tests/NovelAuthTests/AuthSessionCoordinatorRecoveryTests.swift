@@ -4,6 +4,53 @@ import Testing
 
 @Suite("Auth exchange recovery")
 struct AuthSessionCoordinatorRecoveryTests {
+    @Test("a cold restart can abandon a stale exchange before a fresh Apple flow")
+    func coldRestartStartsFreshAppleFlow() async throws {
+        let session = fixtureSession()
+        let oldChallengeID = fixtureUUID("20000000-0000-4000-8000-000000000099")
+        let oldOperationID = fixtureUUID("58200000-0000-4000-8000-000000000001")
+        let oldFingerprint = "apple-exchange:\(oldChallengeID.uuidString.lowercased())"
+        var persisted = AuthVaultRecord(session: session)
+        _ = try persisted.loadOrReserveOperation(
+            kind: .exchangeAppleNativeCredential,
+            proposed: oldOperationID,
+            fingerprint: oldFingerprint
+        )
+        _ = try persisted.beginOperation(
+            kind: .exchangeAppleNativeCredential,
+            operationID: oldOperationID,
+            fingerprint: oldFingerprint
+        )
+
+        let transport = FreshAppleTransport()
+        let restartedVault = InMemoryAuthSessionVault(record: persisted)
+        let coordinator = try AuthSessionCoordinator(
+            transport: transport,
+            vault: restartedVault,
+            authLimits: fixtureLimits(),
+            platform: .ios
+        )
+
+        // This is an explicit new native Apple flow. The old journal contains
+        // no Apple credential and cannot be replayed after process death.
+        try await coordinator.discardInterruptedAppleExchange()
+        let clearedRecord = await restartedVault.snapshot()
+        #expect(clearedRecord.operations.isEmpty)
+        let preservedSession = try await coordinator.currentSession()
+        #expect(preservedSession == session)
+
+        let challenge = try await coordinator.createAppleChallenge()
+        _ = try await coordinator.completeAppleSignIn(
+            challenge: challenge,
+            authorizationCode: Data("fresh-code".utf8),
+            identityToken: Data("header.payload.signature".utf8)
+        )
+        #expect(await transport.challengeCallCount() == 1)
+        #expect(await transport.exchangeCallCount() == 1)
+        let completedRecord = await restartedVault.snapshot()
+        #expect(completedRecord.operations.isEmpty)
+    }
+
     @Test("terminal interactive Apple failures clear the exchange journal")
     func terminalInteractiveFailureClearsJournal() async throws {
         let challenge = fixtureChallenge()
@@ -140,6 +187,54 @@ private actor InteractiveFailureTransport: FuminiwaAuthTransport {
 
     func revoke(pending _: AuthPendingRevoke) async throws {
         throw AuthError.providerRejected
+    }
+}
+
+private actor FreshAppleTransport: FuminiwaAuthTransport {
+    private var challengeCalls = 0
+    private var exchangeCalls = 0
+
+    func createAppleChallenge(clientPlatform _: AuthClientPlatform, operationID: UUID) async throws -> AuthChallenge {
+        challengeCalls += 1
+        return AuthChallenge(
+            challengeID: fixtureUUID("20000000-0000-4000-8000-000000000002"),
+            expiresAt: Date(timeIntervalSince1970: 1_800_000_000),
+            audience: "dev.serikayuzuki.fuminiwa.ios",
+            providerConfigurationID: "apple-primary-fuminiwa-v1",
+            state: String(repeating: "A", count: 43),
+            nonce: String(repeating: "B", count: 43),
+            receipt: AuthReceipt(
+                commandKind: "createChallenge",
+                operationID: operationID,
+                replayUntil: Date(timeIntervalSince1970: 1_778_000_000)
+            )
+        )
+    }
+
+    func exchangeApple(
+        challenge _: AuthChallenge,
+        authorizationCode _: Data,
+        identityToken _: Data,
+        operationID _: UUID
+    ) async throws -> FuminiwaSession {
+        exchangeCalls += 1
+        return fixtureSession()
+    }
+
+    func refresh(session _: FuminiwaSession, rotationID _: UUID) async throws -> FuminiwaSession {
+        throw AuthError.providerRejected
+    }
+
+    func revoke(pending _: AuthPendingRevoke) async throws {
+        throw AuthError.providerRejected
+    }
+
+    func challengeCallCount() -> Int {
+        challengeCalls
+    }
+
+    func exchangeCallCount() -> Int {
+        exchangeCalls
     }
 }
 

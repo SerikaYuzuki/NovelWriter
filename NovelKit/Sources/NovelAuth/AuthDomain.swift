@@ -496,6 +496,15 @@ public struct AuthVaultRecord: Codable, Hashable, Sendable {
         operations.removeAll { $0.kind == kind && $0.fingerprint == fingerprint }
     }
 
+    /// Drops an exchange journal when the caller explicitly starts a new
+    /// interactive Apple flow after a process restart. Raw credentials are
+    /// never persisted, so this lane cannot be recovered after restart.
+    /// Same-call lost-ACK replay does not cross this boundary and continues
+    /// to use the original operation ID and request bytes.
+    public mutating func discardInterruptedAppleExchange() {
+        operations.removeAll { $0.kind == .exchangeAppleNativeCredential }
+    }
+
     public mutating func rollForwardExpiredRevokeOperation(
         proposed: UUID,
         now: Date,
@@ -612,6 +621,7 @@ public protocol AuthSessionVault: Sendable {
     ) async throws -> Bool
     func clearOperation(kind: AuthOperationKind, operationID: UUID) async throws
     func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws
+    func discardInterruptedAppleExchange() async throws
     func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry
     func loadPendingRevoke() async throws -> AuthPendingRevoke?
     func loadOrReserveRevokeOperation(proposed: UUID, for session: FuminiwaSession, now: Date, receiptLifetimeSeconds: UInt64) async throws -> AuthPendingRevoke
@@ -679,6 +689,10 @@ public actor InMemoryAuthSessionVault: AuthSessionVault {
 
     public func clearOperation(kind: AuthOperationKind, fingerprint: String) async throws {
         record.clearOperation(kind: kind, fingerprint: fingerprint)
+    }
+
+    public func discardInterruptedAppleExchange() async throws {
+        record.discardInterruptedAppleExchange()
     }
 
     public func bindOperationRequest(kind: AuthOperationKind, operationID: UUID, fingerprint: String, requestDigest: Data) async throws -> AuthOperationJournalEntry {
