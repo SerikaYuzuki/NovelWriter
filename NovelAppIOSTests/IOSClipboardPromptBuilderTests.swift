@@ -32,12 +32,25 @@ struct IOSClipboardPromptBuilderTests {
     }
 
     @Test("空本文はclipboardへ書かない")
-    func emptySourceDoesNotWriteClipboard() throws {
+    func emptySourceDoesNotWriteClipboard() async throws {
         let suiteName = "jp.fuminiwa.ios.clipboard-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-ios-clipboard-\(UUID())", isDirectory: true)
+        defer {
+            IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: root.standardizedFileURL)
+            IOSDocumentStore.testRuntimeApplications.removeValue(forKey: root.standardizedFileURL)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         let writer = RecordingIOSClipboardWriter()
-        let store = IOSDocumentStore(userDefaults: defaults, clipboardWriter: writer)
+        let store = IOSDocumentStore(
+            userDefaults: defaults,
+            clipboardWriter: writer,
+            libraryRoot: root
+        )
+        #expect(await store.configureSnapshotSyncV2())
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
         let episodeID = try #require(store.selectedEpisodeID)
 
         store.copySelectionPrompt(
@@ -51,12 +64,25 @@ struct IOSClipboardPromptBuilderTests {
     }
 
     @Test("明示した選択promptだけをclipboardへ1回書く")
-    func explicitSelectionWritesExactlyOnce() throws {
+    func explicitSelectionWritesExactlyOnce() async throws {
         let suiteName = "jp.fuminiwa.ios.clipboard-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-ios-clipboard-\(UUID())", isDirectory: true)
+        defer {
+            IOSDocumentStore.testRuntimeConfigurations.removeValue(forKey: root.standardizedFileURL)
+            IOSDocumentStore.testRuntimeApplications.removeValue(forKey: root.standardizedFileURL)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
         let writer = RecordingIOSClipboardWriter()
-        let store = IOSDocumentStore(userDefaults: defaults, clipboardWriter: writer)
+        let store = IOSDocumentStore(
+            userDefaults: defaults,
+            clipboardWriter: writer,
+            libraryRoot: root
+        )
+        #expect(await store.configureSnapshotSyncV2())
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
         let episodeID = try #require(store.selectedEpisodeID)
 
         store.copySelectionPrompt(
@@ -65,8 +91,9 @@ struct IOSClipboardPromptBuilderTests {
             expectedEpisodeID: episodeID
         )
 
+        let copied = try #require(writer.values.first)
         #expect(writer.values.count == 1)
-        #expect(writer.values[0].contains("コピー対象"))
+        #expect(copied.contains("コピー対象"))
         #expect(store.promptCopyNotice?.failure == nil)
     }
 }
