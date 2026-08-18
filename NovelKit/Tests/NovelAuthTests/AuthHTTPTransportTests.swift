@@ -70,6 +70,27 @@ struct AuthHTTPTransportTests {
         #expect(request.httpBody == Data(expected.utf8))
     }
 
+    @Test("lowercase UUIDs containing hexadecimal letters are accepted")
+    func validNestedExchangeWithAlphabeticUUIDs() async throws {
+        let operationID = try #require(UUID(uuidString: "30000000-0000-4000-8000-000000000001"))
+        let challenge = Self.challenge(operationID: UUID(uuidString: "10000000-0000-4000-8000-000000000002") ?? UUID())
+        let body = Data(String(decoding: Self.sessionBody(command: "exchangeAppleNativeCredential", operationID: operationID, epoch: 2), as: UTF8.self)
+            .replacingOccurrences(of: "00000000-0000-4000-8000-000000000001", with: "abcdefab-cdef-abcd-efab-cdefabcdefab")
+            .replacingOccurrences(of: "40000000-0000-4000-8000-000000000001", with: "fedcbafe-dcba-fedc-bafe-dcbafedcbafe")
+            .utf8)
+        let state = try makeTransport { _ in
+            .init(status: 200, headers: Self.noStoreHeaders, body: body)
+        }
+        let session = try await state.transport.exchangeApple(
+            challenge: challenge,
+            authorizationCode: Data("fixture-apple-code-success".utf8),
+            identityToken: Data("fixtureHeader.fixturePayload.fixtureSignature".utf8),
+            operationID: operationID
+        )
+        #expect(session.binding.serverInstanceID == UUID(uuidString: "abcdefab-cdef-abcd-efab-cdefabcdefab"))
+        #expect(session.binding.sessionID == UUID(uuidString: "fedcbafe-dcba-fedc-bafe-dcbafedcbafe"))
+    }
+
     @Test("old sync epoch is rejected before a session can be adopted")
     func oldEpochRejected() async throws {
         let operationID = try #require(UUID(uuidString: "30000000-0000-4000-8000-000000000001"))

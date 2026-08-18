@@ -479,8 +479,6 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
         let binding = result.binding
         guard binding.syncProtocolEpoch == Self.syncProtocolEpoch,
               binding.accountAuthEpoch > 0,
-              Self.isLowercaseUUID(binding.serverInstanceID.uuidString),
-              Self.isLowercaseUUID(binding.sessionID.uuidString),
               Self.isOpaque(binding.accountID),
               Self.isOpaque(binding.accountFence),
               result.tokens.tokenType == "Bearer",
