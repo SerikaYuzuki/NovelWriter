@@ -71,7 +71,15 @@ rg -Fq 'case test(TestRuntimeConfiguration)' "$runtime_mode" \
   || fail "v2 runtime has no typed test composition"
 rg -Fq 'case production(ProductionRuntimeConfiguration)' "$runtime_mode" \
   || fail "v2 runtime has no typed production composition"
-if rg -n -e '192\.168\.11\.5|postgres(ql)?://|applicationSupportDirectory' \
+# Tests may name the production-root initializer explicitly, but must not
+# discover the real Application Support location themselves.  Match the
+# Foundation enum member rather than the initializer label.
+application_support_pattern='\.[[:space:]]*applicationSupportDirectory'
+if ! printf '%s\n' 'for: .applicationSupportDirectory' | rg -q "$application_support_pattern" || \
+  printf '%s\n' 'ProductionLocalRoot(applicationSupportDirectory: alias)' | rg -q "$application_support_pattern"; then
+  fail "v2 Application Support boundary pattern is not precise"
+fi
+if rg -n -e "192\.168\.11\.5|postgres(ql)?://|$application_support_pattern" \
   NovelKit/Tests/NovelSyncV2Tests NovelKit/Tests/NovelSyncV2StoreTests NovelKit/Tests/NovelSyncV2ApplicationTests; then
   fail "v2 tests contain a production/LAN persistence or server endpoint"
 fi
