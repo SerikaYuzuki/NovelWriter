@@ -186,6 +186,17 @@ public extension AuthError {
     }
 }
 
+/// A content-free diagnostic for failures that occur before an HTTP response
+/// exists.  In particular, URLSession errors may contain a request URL or
+/// localized text with credentials; neither is suitable for device logs.
+public enum AuthNetworkDiagnostic {
+    public static func token(for error: any Error) -> String? {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return nil }
+        return "NSURLError(code=\(nsError.code))"
+    }
+}
+
 public enum AuthRecoveryAction: String, Codable, Hashable, Sendable {
     case correctRequest
     case interactiveAppleSignIn

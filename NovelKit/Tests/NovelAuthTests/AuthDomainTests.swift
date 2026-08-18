@@ -35,6 +35,21 @@ struct AuthDomainTests {
         #expect(config.clientPlatform == .macos)
     }
 
+    @Test("URLSession diagnostics omit request details")
+    func networkDiagnosticRedactsNSErrorDetails() {
+        let error = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorServerCertificateUntrusted,
+            userInfo: [
+                NSURLErrorFailingURLStringErrorKey: "https://user:secret@example.test/private",
+                NSLocalizedDescriptionKey: "certificate failed for https://user:secret@example.test/private"
+            ]
+        )
+        #expect(AuthNetworkDiagnostic.token(for: error) == "NSURLError(code=-1202)")
+        #expect(AuthNetworkDiagnostic.token(for: error)?.contains("example.test") == false)
+        #expect(AuthNetworkDiagnostic.token(for: error)?.contains("secret") == false)
+    }
+
     @Test("strict parser rejects duplicate keys, BOM, escapes, whitespace, and unsafe numbers")
     func strictCanonicalParser() {
         let invalidInputs = [

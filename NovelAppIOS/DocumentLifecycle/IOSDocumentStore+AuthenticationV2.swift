@@ -14,6 +14,8 @@ private func logAppleAuthenticationFailure(
 ) {
     let token: String = if let authError = error as? AuthError {
         authError.diagnosticToken
+    } else if let error, let networkToken = AuthNetworkDiagnostic.token(for: error) {
+        networkToken
     } else if let error {
         String(reflecting: type(of: error))
     } else {
