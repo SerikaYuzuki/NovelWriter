@@ -11,6 +11,34 @@ private struct IOSAccountTransitionLease {
     let ownsRequest: Bool
 }
 
+private func appleSignInFailureMessage(_ error: any Error) -> String {
+    guard let authError = error as? AuthError else {
+        return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
+    }
+    switch authError {
+    case let .remote(remote):
+        switch remote.code {
+        case "temporarilyUnavailable", "rateLimited":
+            return "サーバーに接続できません。接続を確認して再試行してください。"
+        case "providerExchangeIndeterminate":
+            return "Apple認証の結果を確認できませんでした。時間をおいて再試行してください。"
+        case "providerIdentityInvalid", "providerAudienceMismatch", "providerIssuerMismatch", "nonceMismatch", "stateMismatch":
+            return "Apple認証を確認できませんでした。もう一度お試しください。"
+        default:
+            return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
+        }
+    case .invalidProductionOrigin, .invalidMediaType, .missingNoStore, .invalidWireResponse,
+         .invalidCanonicalResponse, .invalidResponseSemantics:
+        return "サーバー設定を確認できませんでした。時間をおいて再試行してください。"
+    case .operationJournalConflict:
+        return "前回のApple認証処理が残っています。時間をおいて再試行してください。"
+    case .restartAuthentication:
+        return "Appleでのサインインをもう一度お試しください。"
+    default:
+        return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
+    }
+}
+
 extension IOSDocumentStore {
     /// Opens the short auth-request window and invalidates every iOS-owned
     /// account-scoped task before an exchange can suspend.  The shared
@@ -501,7 +529,9 @@ extension IOSDocumentStore {
             return
         }
         var oldScopeParked = false
+        var authPhase = "preflight"
         do {
+            authPhase = "retire-old-scope"
             // Retire the old binding before the Apple exchange suspends.  A
             // failure leaves this local editor on the parked shelf; a later
             // successful session rebinds it through the same durable API.
@@ -516,7 +546,9 @@ extension IOSDocumentStore {
                 return
             }
             oldScopeParked = true
+            authPhase = "apple-exchange"
             let session = try await exchangeAppleSession()
+            authPhase = "apply-new-scope"
             guard await transitionFuminiwaSession(
                 to: session,
                 authState: .signedIn(accountID: session.accountID),
@@ -541,6 +573,7 @@ extension IOSDocumentStore {
             await releaseAccountTransitionRequest(owner: owner, resume: false)
             await resumeSnapshotSyncV2AfterAuthTransition()
         } catch is CancellationError {
+            DeviceSyncLog.snapshot("ios auth apple cancelled phase=\(authPhase)")
             authUIState = .failed("Appleでのサインインがキャンセルされました")
             let restored = await restoreSessionAfterAppleFailure(
                 fallback: previousSession,
@@ -554,7 +587,11 @@ extension IOSDocumentStore {
             }
             _ = try? await reloadLibraryItems()
         } catch {
-            authUIState = .failed("Appleでのサインインを完了できませんでした")
+            DeviceSyncLog.snapshot(
+                "ios auth apple failed phase=\(authPhase)",
+                error: error
+            )
+            authUIState = .failed(appleSignInFailureMessage(error))
             let restored = await restoreSessionAfterAppleFailure(
                 fallback: previousSession,
                 requestOwner: owner

@@ -1,4 +1,5 @@
 import Foundation
+import NovelAuth
 import NovelLocalStore
 import os
 
@@ -60,6 +61,8 @@ enum DeviceSyncLog {
             case .unauthorized: "SnapshotSyncError.unauthorized"
             case .conflict: "SnapshotSyncError.conflict"
             }
+        case let error as AuthError:
+            error.diagnosticToken
         default:
             String(reflecting: type(of: error))
         }

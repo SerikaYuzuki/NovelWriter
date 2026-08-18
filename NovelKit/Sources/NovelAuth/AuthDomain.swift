@@ -174,6 +174,18 @@ public enum AuthError: Error, Equatable, Sendable {
     case remote(AuthRemoteError)
 }
 
+public extension AuthError {
+    /// Stable, content-free diagnostic token for app logs. Remote errors are
+    /// reduced to the server's closed error code; credentials and request
+    /// bodies never cross this boundary.
+    var diagnosticToken: String {
+        if case let .remote(remote) = self {
+            return "AuthError.remote(\(remote.code))"
+        }
+        return "AuthError.\(String(describing: self))"
+    }
+}
+
 public enum AuthRecoveryAction: String, Codable, Hashable, Sendable {
     case correctRequest
     case interactiveAppleSignIn

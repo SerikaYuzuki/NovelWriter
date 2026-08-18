@@ -62,6 +62,16 @@ public actor AuthSessionCoordinator {
         } catch let error as AuthError {
             if case let .remote(remote) = error,
                remote.recoveryAction == .interactiveAppleSignIn {
+                // A terminal provider result (expired/consumed challenge or
+                // rejected identity) cannot be replayed.  Retain only the
+                // indeterminate lane, where the same operation and canonical
+                // request may still receive its lost ACK on retry.
+                if remote.code != "providerExchangeIndeterminate" {
+                    try? await vault.clearOperation(
+                        kind: .exchangeAppleNativeCredential,
+                        operationID: reserved.operationID
+                    )
+                }
                 throw AuthError.restartAuthentication
             }
             throw error
