@@ -71,14 +71,14 @@ struct RuntimeIsolationTests {
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
 
         #expect(throws: SyncV2ApplicationError.invalidRuntimeMode) {
-            try ProductionLocalRoot(applicationSupportDirectory: alias)
+            try ProductionLocalRoot(baseDirectory: alias)
         }
     }
 
     @Test("production root accepts the OS var alias")
     func productionRootAcceptsOSVarAlias() throws {
         let root = try ProductionLocalRoot(
-            applicationSupportDirectory: URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+            baseDirectory: URL(fileURLWithPath: "/var/tmp", isDirectory: true)
         )
 
         #expect(

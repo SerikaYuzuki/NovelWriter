@@ -5,9 +5,9 @@ import NovelSyncV2
 public struct ProductionLocalRoot: Hashable, Sendable {
     public let url: URL
 
-    package init(applicationSupportDirectory: URL) throws {
+    package init(baseDirectory: URL) throws {
         let canonicalApplicationSupport = try canonicalProductionBase(
-            applicationSupportDirectory
+            baseDirectory
         )
         let candidate = canonicalApplicationSupport
             .appendingPathComponent("FUMINIWA", isDirectory: true)
@@ -85,7 +85,7 @@ public struct ProductionRuntimeConfiguration: Sendable {
             in: .userDomainMask
         ).first else { throw SyncV2ApplicationError.invalidRuntimeMode }
         localRoot = try ProductionLocalRoot(
-            applicationSupportDirectory: applicationSupportDirectory
+            baseDirectory: applicationSupportDirectory
         )
         self.origin = origin
         self.vault = vault
