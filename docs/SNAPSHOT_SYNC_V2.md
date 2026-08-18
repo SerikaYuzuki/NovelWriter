@@ -1,8 +1,12 @@
 # FUMINIWA Snapshot Sync v2
 
-Status: implementation-ready design contract, D-080. This document replaces
-the v1 runtime contract for the next implementation. It does not report the
-Swift/Rust runtime as implemented, migrate data, or delete existing data.
+Status: normative implementation contract, D-080 through D-085. The v2
+Swift/Rust runtime is under integration and is not release-complete. The
+latest verified implementation state, known regressions, and next-session
+order are recorded in [SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md).
+This document replaces the v1 live runtime contract; passing fixtures or a
+healthy staging container alone does not declare device synchronization
+complete.
 
 ## 1. Scope and cutover
 
