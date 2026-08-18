@@ -1,6 +1,28 @@
 import Foundation
 import NovelAuth
 import NovelSyncV2Application
+import OSLog
+
+private let iosAuthenticationLogger = Logger(
+    subsystem: "dev.serikayuzuki.fuminiwa.ios",
+    category: "authentication"
+)
+
+private func logAppleAuthenticationFailure(
+    phase: String,
+    error: (any Error)? = nil
+) {
+    let token: String = if let authError = error as? AuthError {
+        authError.diagnosticToken
+    } else if let error {
+        String(reflecting: type(of: error))
+    } else {
+        "cancelled"
+    }
+    let line = "auth apple failed phase=\(phase) error=\(token)"
+    print("[FUMINIWA] \(line)")
+    iosAuthenticationLogger.error("\(line, privacy: .public)")
+}
 
 private enum IOSDocumentStoreAuthenticationError: Error {
     case unavailable
@@ -582,7 +604,7 @@ extension IOSDocumentStore {
             await releaseAccountTransitionRequest(owner: owner, resume: false)
             await resumeSnapshotSyncV2AfterAuthTransition()
         } catch is CancellationError {
-            DeviceSyncLog.snapshot("ios auth apple cancelled phase=\(authPhase)")
+            logAppleAuthenticationFailure(phase: authPhase)
             authUIState = .failed("Appleでのサインインがキャンセルされました")
             let restored = await restoreSessionAfterAppleFailure(
                 fallback: previousSession,
@@ -596,10 +618,7 @@ extension IOSDocumentStore {
             }
             _ = try? await reloadLibraryItems()
         } catch {
-            DeviceSyncLog.snapshot(
-                "ios auth apple failed phase=\(authPhase)",
-                error: error
-            )
+            logAppleAuthenticationFailure(phase: authPhase, error: error)
             authUIState = .failed(appleSignInFailureMessage(error))
             let restored = await restoreSessionAfterAppleFailure(
                 fallback: previousSession,
