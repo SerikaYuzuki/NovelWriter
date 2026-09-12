@@ -27,6 +27,7 @@
 | `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | navigation固定 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、primaryAction固定。macOS 26.1以降は表示優先度high |
+| `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
 | `workbench.writing.assistant` | AI支援下部パネル開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
@@ -80,3 +81,5 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 2026-09-12追加依頼: macOSのAI支援は右、プロットカードは本文下部へ配置する。プロットカードtoggleは `rectangle.bottomthird.inset.filled` を使用する。
 
 ローカル作品の保存ボタンは同じWorkIDのローカル保存だけを行う。同期用の複製はボタンの右クリックメニュー「同期用のコピーを作成…」で明示する。通常保存・Cmd+Sでは作品数を増やさない。プロット画面はカード専用とし、伏線との上下分割は使わない。
+
+2026-09-12 話名変更: 執筆ツールバーの「話の名前を変更」と話一覧の右クリックから、名前変更ダイアログを開く。既存の一覧内直接編集も維持する。ダイアログはpane側で所有し、toolbar overflow内へ閉じ込めない。確定時に取得元の作品session・account scope・章内の話の存在を検証し、本文、選択中の話、Editorの内容世代を変えずmetadataを通常保存する。空白だけの名前は確定できない。

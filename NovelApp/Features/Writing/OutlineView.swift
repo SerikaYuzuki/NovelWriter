@@ -116,6 +116,7 @@ struct OutlineView: View {
     @State private var disclosureState = OutlineDisclosureState()
     @State private var chapterPendingRename: SessionBoundValue<Chapter>?
     @State private var chapterTitleDraft = ""
+    @State private var episodePendingRename: EpisodeRenameRequest?
 
     var body: some View {
         List(selection: selectionBinding) {
@@ -135,6 +136,13 @@ struct OutlineView: View {
                                 )
                             )
                             .contextMenu {
+                                Button("話の名前を変更", systemImage: "pencil") {
+                                    guard appState.documentSessionToken == episodeRequest.session else { return }
+                                    episodePendingRename = EpisodeRenameRequest(
+                                        episode: episode, chapterID: chapter.id, appState: appState
+                                    )
+                                }
+                                .disabled(!appState.permitsDocumentInteraction)
                                 EpisodeOutlineContextMenu(request: episodeRequest) {
                                     episodePendingDeletion = episodeRequest
                                 }
@@ -195,6 +203,7 @@ struct OutlineView: View {
             }
         }
         .workbenchOutlineListStyle()
+        .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .overlay {
             if filteredChapters.isEmpty {
                 ContentUnavailableView(

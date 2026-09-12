@@ -43,6 +43,7 @@ struct NovelWorkbenchView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
+    @State private var episodePendingRename: EpisodeRenameRequest?
     @State private var explicitSyncPresentation = ExplicitSyncPresentation()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
@@ -81,9 +82,17 @@ struct NovelWorkbenchView: View {
                 overlayState: overlayState,
                 requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
                 showsWritingActions: showsWritingActions,
-                isPlotCardRailPresented: $isPlotCardRailPresented
+                isPlotCardRailPresented: $isPlotCardRailPresented,
+                requestEpisodeRename: {
+                    guard let episode = appState.selectedEpisode,
+                          let chapterID = appState.selectedChapterID else { return }
+                    episodePendingRename = EpisodeRenameRequest(
+                        episode: episode, chapterID: chapterID, appState: appState
+                    )
+                }
             )
         }
+        .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
         .task(id: SyncStatusObservationID(session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken)) {
             await appState.observeSnapshotSyncV2Status()

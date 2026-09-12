@@ -389,7 +389,8 @@ extension AppState {
     /// 話のタイトルを更新する。
     func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
         guard permitsDocumentInteraction else { return }
-        guard document.episode(episodeID)?.episode.title != title else { return }
+        guard let episode = document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID }),
+              episode.title != title else { return }
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()

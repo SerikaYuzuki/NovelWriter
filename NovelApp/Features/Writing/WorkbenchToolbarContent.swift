@@ -20,6 +20,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let requestSync: () -> Void
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
+    var requestEpisodeRename: () -> Void = {}
 
     @ToolbarContentBuilder
     private var synchronizationItem: some CustomizableToolbarContent {
@@ -59,6 +60,14 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         }
 
         if showsWritingActions {
+            ToolbarItem(id: "workbench.episode.rename") {
+                Button("話の名前を変更", systemImage: "pencil") {
+                    requestEpisodeRename()
+                }
+                .help("選択中の話の名前を変更")
+                .disabled(appState.selectedEpisode == nil || !appState.permitsDocumentInteraction)
+                .accessibilityIdentifier("workbench.episode.rename")
+            }
             ToolbarItem(id: "workbench.writing.assistant") {
                 Button("AI支援", systemImage: "sidebar.right") {
                     NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
