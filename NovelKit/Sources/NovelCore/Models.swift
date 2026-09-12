@@ -32,20 +32,11 @@ extension ChapterID: CustomStringConvertible {
 ///   章順は `NovelDocument.chapters` の配列順のみが唯一の正であり、
 ///   二重管理によるズレを防ぐ(docs/DESIGN.md 4.1, D-004)。
 public struct Chapter: Codable, Sendable, Identifiable, Equatable {
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case episodes
-        // v1 / v2 の JSON を直接 decode するための互換キー。
-        case content
-        case memo
-    }
-
     public var id: ChapterID
     public var title: String
     public var episodes: [Episode]
 
-    /// 旧API互換の初期化子。本文とメモは「本文」という話へ格納する。
+    /// 本文を1話持つ章を作る簡便な初期化子。
     public init(id: ChapterID = ChapterID(), title: String, content: String = "", memo: String = "") {
         self.id = id
         self.title = title
@@ -64,34 +55,6 @@ public struct Chapter: Codable, Sendable, Identifiable, Equatable {
         self.id = id
         self.title = title
         self.episodes = episodes
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(ChapterID.self, forKey: .id)
-        title = try container.decode(String.self, forKey: .title)
-        if let decodedEpisodes = try container.decodeIfPresent([Episode].self, forKey: .episodes) {
-            episodes = decodedEpisodes
-        } else {
-            // NovelCore 単体で v1 / v2 の JSON を扱う場合も無損失で話へ移す。
-            let content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
-            let memo = try container.decodeIfPresent(String.self, forKey: .memo) ?? ""
-            episodes = [
-                Episode(
-                    id: EpisodeID(rawValue: id.rawValue),
-                    title: Episode.defaultTitle,
-                    content: content,
-                    memo: memo
-                )
-            ]
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(title, forKey: .title)
-        try container.encode(episodes, forKey: .episodes)
     }
 }
 

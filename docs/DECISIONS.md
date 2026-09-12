@@ -1119,3 +1119,12 @@
 - API設定やnetworkの不在は執筆・保存を止めない。clipboard支援の既存契約は維持する。技術契約は[WRITING_ASSISTANT](WRITING_ASSISTANT.md)。
 - 併せてmacOSの専用作品一覧windowと明示Appleログイン導線を採用する。複数作品同時編集には拡張せず、既存のdocument operation gateで作品を切り替える。
 - 実装と検証結果は[今回の作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)へ分け、実API送信・署名済み実機・公開完了をこの決定だけで宣言しない。
+
+## D-090: 現行v2へコードを集約し旧互換実装を廃止する
+
+- 日付: 2026-09-12。利用者の全面整理・後方互換不要の指示による。
+- 旧CloudKit / Episode / Note / Work / Snapshot v1、旧SQLite store、旧Library、旧serverと除外画面・専用テストを削除する。比較が必要な履歴はGitと凍結設計文書から取得し、通常checkoutに実装を重複保持しない。D-076 / D-079の旧source保持方針を更新する。
+- `.novelpkg`の読込・書出はv3だけとする。v1/v2自動移行と章本文へのfallbackを廃止し、対応外versionは原本を変えず拒否する。v3の未知resource保全・UTF-8検査・参照整合・上限は維持する。
+- macOS / iOSの保存直列化は共有sourceへ集約する。SQLite checkpoint、編集中revision、排他操作、IMEとaccount/session gateは維持する。
+- 現行v2のDB schema、認証wire v1、データ保全・障害復旧を旧互換という理由で削除しない。原稿・実DB・未追跡退避フォルダは変更しない。
+- 検証と残件は[CLEANUP_20260912](CLEANUP_20260912.md)に記録する。

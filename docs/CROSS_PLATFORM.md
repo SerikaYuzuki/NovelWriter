@@ -1,6 +1,6 @@
 # クロスプラットフォーム設計契約
 
-**現行: `.novelpkg`読込v1〜v3／出力v3、Snapshot Sync v2、Auth wire v1 / 照合: 2026-09-12**
+**現行: `.novelpkg`読込v3／出力v3、Snapshot Sync v2、Auth wire v1 / 照合: 2026-09-12**
 
 各OSで同じ原稿を安全に扱うため、portable形式、同期wire、domainの意味、純粋ロジックの入出力を共有する。通常保存は各端末のSQLite v2で、DBファイル自体を端末間へ渡さない。Swift側の共有実装は存在するが、WindowsはW0未完了で、Windowsアプリ／reader／writerの実装完了を示すものではない。
 
@@ -32,7 +32,7 @@ Apple版はNovelKitを共有し、WindowsはWindows 11のみを対象に、WinUI
 - D-080の通常利用ではactive stateとobject bytesをplatform別app-private SQLite v2へ保存し、利用者がportable packageを扱うのは明示的なImport／Export境界だけとする。`.novelpkg`をDB dumpや同期containerにせず、公開互換の受け渡しartifactとして維持する
 - パッケージ内のパスは相対パスだけを使う。絶対パス、ドライブ文字、`\` 区切り、セキュリティスコープ付き bookmark、OS 固有 handle を保存しない
 - 既知のルート名と ID ベースのファイル名は ASCII とし、パス区切りを JSON 値へ埋め込まない
-- 読み込みは v1 / v2 / v3、保存は v3 とする。未対応メジャーは推測で開かず、明示的な非対応エラーにする
+- D-090により読み込み・保存とも v3 のみとする。v1/v2の自動移行は廃止した。未対応メジャーは推測で開かず、明示的な非対応エラーにする
 - 章順は `manifest.json` の `chapters`、話順は各章の `episodes` の配列順だけを正とする。ファイル列挙順、更新日時、ロケール順を順序として使わない
 
 ### 2.2 文字・識別子・日時
@@ -88,7 +88,7 @@ Coreは依存なし、Storage.Novelpkg／Export／Editor rulesはCoreへ、SQLit
 
 ### 4.1 W0の完了条件
 
-- v1／v2／v3の独立したschemaまたはフィールド表、全既知項目・添付・旧package履歴・非hidden未知rootを含むfixture。
+- v3のschemaまたはフィールド表、全既知項目・添付・旧package履歴・非hidden未知rootを含むfixture。
 - 日本語、絵文字、結合文字、NFC／NFD、全角空白、空章／空話、CRLF／CR／LFの値保持。
 - 論理モデルと相対path＋SHA-256 inventory。JSONは意味比較、本文／添付／未知resourceはbyte比較。ACL／xattr／ADS／file timestampは互換対象外。
 - UUID・日時・必須項目・duplicate ID・不正参照、Windows予約名、Unicode 15.1 collision key、depth／path budget、case variantの成功／失敗fixture。
@@ -134,3 +134,9 @@ Swift／Rustの検証成功を将来C#の互換成功として扱わない。con
 ## 8. 履歴
 
 [旧v1計画・Note／Work／Episode互換契約の全文](archive/product-guidance-20260912/CROSS_PLATFORM.md)を保存する。旧CloudKitとv1のmigration／fallbackは現行実装へ追加しない。旧データへの削除操作は文書整理の範囲外。
+
+## D-090: 現行manifestの最小フィールド契約
+
+読込・書出とも`formatVersion`は文字列`"3"`のみ。`documentID`、`title`、`chapters`、`createdAt`、`updatedAt`は必須。各章は`id`、`title`、`episodes`を持ち、各話は`id`、`title`を持つ。`episodes`は空配列を許可するが欠損・nullを許可しない。本文は`episodes/<id>.md`から読み、旧`chapters/`へfallbackしない。対応外versionと欠損配列は原本を変更せず拒否する。
+
+この表とNovelStorage／NovelCoreの拒否・round-tripテストが今回変更した境界。将来のWindows用完全schema・独立fixtureの未完了状態は変わらない。

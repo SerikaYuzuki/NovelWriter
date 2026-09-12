@@ -1,10 +1,10 @@
 import Foundation
 
-extension AuthVaultRecord {
+public extension AuthVaultRecord {
     /// Marks an exchange whose server result is indeterminate. Keeping this
     /// state in the journal lets cold-start recovery clear stale native
     /// operations without destroying the exact replay lane.
-    public mutating func markProviderExchangeIndeterminate(
+    mutating func markProviderExchangeIndeterminate(
         operationID: UUID,
         fingerprint: String
     ) throws {
@@ -28,7 +28,7 @@ extension AuthVaultRecord {
 
     /// Drops only non-replayable interrupted exchange work. An indeterminate
     /// provider exchange is an exact-replay lane and must survive.
-    public mutating func discardInterruptedAppleExchange() {
+    mutating func discardInterruptedAppleExchange() {
         operations.removeAll {
             $0.kind == .exchangeAppleNativeCredential &&
                 $0.phase != .providerExchangeIndeterminate
@@ -37,26 +37,26 @@ extension AuthVaultRecord {
 
     /// Atomically retires stale challenge and ordinary exchange work before a
     /// fresh native Apple flow. Session, refresh, and revoke state is intact.
-    public mutating func beginFreshAppleAuthentication() {
+    mutating func beginFreshAppleAuthentication() {
         operations.removeAll { operation in
             switch operation.kind {
             case .createChallenge:
-                return true
+                true
             case .exchangeAppleNativeCredential:
-                return operation.phase != .providerExchangeIndeterminate
+                operation.phase != .providerExchangeIndeterminate
             case .revokeCurrentSession:
-                return false
+                false
             }
         }
     }
 }
 
-extension InMemoryAuthSessionVault {
-    public func markProviderExchangeIndeterminate(operationID: UUID, fingerprint: String) async throws {
+public extension InMemoryAuthSessionVault {
+    func markProviderExchangeIndeterminate(operationID: UUID, fingerprint: String) async throws {
         try record.markProviderExchangeIndeterminate(operationID: operationID, fingerprint: fingerprint)
     }
 
-    public func beginFreshAppleAuthentication() async throws {
+    func beginFreshAppleAuthentication() async throws {
         record.beginFreshAppleAuthentication()
     }
 }

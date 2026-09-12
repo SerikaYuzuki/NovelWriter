@@ -1,7 +1,7 @@
 import Foundation
 import NovelCore
 
-/// iOS v2 revision gate.  A normal save owns only the in-memory document
+/// Shared macOS / iOS revision gate.  A normal save owns only the in-memory document
 /// value; WorkID/SQLite is selected by the Snapshot Sync runtime.  URL-based
 /// package writes remain explicit import/export operations outside this type.
 @MainActor

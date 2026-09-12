@@ -569,7 +569,10 @@ struct IOSSnapshotSyncV2AccountRequestP1Tests {
             atLeast: remoteOperationCount + 1
         )
     }
+}
 
+@MainActor
+struct IOSAccountRequestRecoveryTests {
     @Test("Apple交換キャンセル後はrequest windowを解放し、保存と再オープンを再開する")
     func appleExchangeCancellationReleasesRequestWindow() async throws {
         let environment = makeIOSP1Environment()

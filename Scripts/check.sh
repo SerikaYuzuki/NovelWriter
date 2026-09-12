@@ -1,6 +1,6 @@
 #!/bin/bash
 # ローカル検証スクリプト(D-014: CI/CD はローカル実行のみ)
-# マージ前に必ずこのスクリプトを通すこと。全チェックが通ると "All checks passed" を表示する。
+# D-086: 保存・共有基盤など重たい検証を選択した変更で実行する。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,7 +9,6 @@ echo "==> Snapshot Sync v2 independent conformance"
 
 echo "==> D-076 source structure"
 ./Scripts/check-code-structure.sh
-./Scripts/check-sync-legacy-inventory.sh
 ./Scripts/check-sync-target-dependencies.sh
 
 echo "==> SwiftFormat (lint)"

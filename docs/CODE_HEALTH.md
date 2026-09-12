@@ -20,7 +20,7 @@
 | portable Import / Export | [SyncV2PortableBridge](../NovelKit/Sources/NovelSyncV2PortableBridge/SyncV2PortableBridge.swift) |
 | server / 認証 | [SyncServerV2](../SyncServerV2/README.md)、[AUTH](AUTH.md) |
 
-通常のlocal authorityはv2 SQLite。旧`NovelLocalStore`、`NovelSync`、`NovelLibrary`がPackageに残っていても、通常Appのlive同期には使わない。`project.yml`のsource除外と依存productを調べてから変更対象を選ぶ。
+通常のlocal authorityはv2 SQLite。D-090で旧共有module・server・除外画面を削除した。今回の整理結果は[CLEANUP_20260912](CLEANUP_20260912.md)。
 
 ## 2. いま確認できること
 
@@ -67,7 +67,7 @@ D-086により、編集内容に応じて**検証なし／軽い／中ぐらい�
 
 ## 6. 履歴・移行資料の扱い
 
-旧source、凍結`docs/sync/v1/`、旧UIの完了記録は比較・説明のために保持する。履歴のチェックボックスを現在の作業一覧へ戻さない。過去の「旧データは不要」という方針は、現行DB・原稿・退避フォルダの包括削除を意味しない。削除を依頼されたときはexact targetを切り分ける。
+旧sourceはD-090で削除しGit履歴で保持する。凍結`docs/sync/v1/`と旧UIの完了記録は比較・説明のために保持する。履歴のチェックボックスを現在の作業一覧へ戻さない。過去の「旧データは不要」という方針は、現行DB・原稿・退避フォルダの包括削除を意味しない。削除を依頼されたときはexact targetを切り分ける。
 
 ## 7. GitHubと作業ブランチ
 

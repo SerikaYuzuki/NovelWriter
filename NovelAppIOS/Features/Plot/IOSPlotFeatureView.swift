@@ -108,7 +108,7 @@ struct IOSPlotOutlineView: View {
                 EditButton()
             }
         }
-        .iosWorkChrome(store: store, accessibilityPrefix: "ios.plot.outline")
+
         .confirmationDialog(
             deletionRequest?.title ?? "削除しますか？",
             isPresented: deletionRequestIsPresented,

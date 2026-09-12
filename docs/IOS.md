@@ -15,7 +15,7 @@ iPhone / iPadで、通信を待たず日本語小説を編集・保存する。�
 | 本文 | 同ファイルの`IOSEditorPane`から`EditorView`へ接続 | 執筆補助バーと本文context menuのprompt操作をlive Viewへ接続済み。署名済み実機受入は未実施 |
 | クリップボード支援 | `DocumentLifecycle/IOSDocumentStore+ClipboardV2.swift`と共有builder | 選択context menuと話／章toolbar menuを接続済み |
 | 履歴・競合 | 作品ホームに履歴取得／復元と3択あり | 日時の履歴行から確認dialogで復元。作品／accountをまたぐ確認を拒否し、診断用ID入力を廃止 |
-| 共通chrome | `iosWorkChrome`は現在そのままViewを返す | 旧画面にあるtoolbar拡張の呼出だけで同期／履歴入口の存在を主張しない |
+| 共通chrome | 旧`iosWorkChrome`の空実装と呼出を削除し、Workbenchがtoolbarを所有する | 旧画面にあるtoolbar拡張の呼出だけで同期／履歴入口の存在を主張しない |
 | 外観・本文フォント | `Features/Settings/IOSSettingsViewV2.swift`、`Platform/iOS/IOSAppearance.swift` | 初回Dark、System／Light／Dark選択、端末内本文フォント設定あり |
 | 保存・認証 | v2 application/store、`DocumentLifecycle`と`DeviceSync/*V2*` | SQLite checkpointとApple認証の実装あり。新規作品のremote反映とpaired実機Gateは未完了 |
 

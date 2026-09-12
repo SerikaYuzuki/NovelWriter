@@ -25,13 +25,6 @@ struct IOSWritingEditorIdentityBoundary {
     }
 }
 
-extension View {
-    /// v2 keeps feature views usable without the retired Note/Work chrome.
-    func iosWorkChrome(store _: IOSDocumentStore, accessibilityPrefix _: String) -> some View {
-        self
-    }
-}
-
 @MainActor
 enum IOSAdaptiveWritingLayoutTransition {
     static func nextSizeClass(

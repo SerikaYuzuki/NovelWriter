@@ -29,7 +29,7 @@
 | 端末内保存 | v2 SQLite、`CSQLite`。初版objectはDB内BLOB |
 | サーバー | `SyncServerV2`のRust / PostgreSQL。初版objectはBYTEA |
 | 認証 | Sign in with Apple、FUMINIWA session。Auth wire v1 / Sync epoch 2 |
-| 作品受け渡し | `.novelpkg` v1〜v3読込 / v3書出 |
+| 作品受け渡し | `.novelpkg` v3読込 / v3書出 |
 | 原稿出力 | TXT / Markdown / EPUB 3 |
 | Windows | Windows 11のみ。WinUI 3 + C# / .NET、MSIなどのインストーラー配布を計画。W0未完了 |
 
@@ -54,7 +54,7 @@
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
 
-`NovelSync`、`NovelLocalStore`、`NovelLibrary`、`NovelSyncLegacy`、`SyncServer/`と各AppのLegacy sourceは旧経路の保存・比較用に残る。通常targetの同期compositionはv2である。Package内の旧testが走ることと、通常Appがその経路を使うことは別である。
+旧同期・旧Library・旧serverと除外画面はD-090で削除した。履歴はGitと凍結文書で参照する。
 
 ## 4. 各モジュールの責務
 
@@ -62,7 +62,7 @@
 
 `NovelDocument`、`Chapter`、`Episode`、人物・プロット・伏線・世界観等のモデルを持つ。章順は`NovelDocument.chapters`、話順は`Chapter.episodes`の配列順だけを正とし、`order`を重ねない。本文と話メモはEpisodeに属する（D-004 / D-028）。
 
-他module、UI、SQLite、HTTPへ依存しない。`DocumentRepository`等のportable抽象と旧`DocumentSaveCoordinator`も残るが、通常Appの保存実体をそこから推測しない。
+他module、UI、SQLite、HTTPへ依存しない。`DocumentRepository`は明示portable転送の抽象。通常保存の直列化は両Appで共有する`NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift`が担当する。
 
 ### 4.2 NovelSyncV2Store / NovelStorage
 

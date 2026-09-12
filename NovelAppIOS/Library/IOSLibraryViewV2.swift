@@ -7,6 +7,8 @@ struct IOSLibraryView: View {
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
 
+    @State private var searchText = ""
+
     var body: some View {
         List {
             Section("作品") {
@@ -24,11 +26,15 @@ struct IOSLibraryView: View {
                 }
                 if store.syncV2LibraryItems.isEmpty {
                     Text(store.authUIState == .signedOut
-                        ? "サインインするとサーバーの作品を表示します"
+                        ? "「新規作品」から、サインインせずに書き始められます"
                         : "端末内に保存された作品はありません")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(store.syncV2LibraryItems, id: \.workID) { item in
+                if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
+                    Text("作品が見つかりません。検索する言葉を変えてください。")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
                     Button {
                         openWork(item.workID)
                     } label: {
@@ -81,6 +87,10 @@ struct IOSLibraryView: View {
             }
         }
         .navigationTitle("作品棚")
+        .searchable(text: $searchText, prompt: "作品を検索")
+        .refreshable {
+            _ = await store.refreshLibrary()
+        }
         .task { _ = await store.refreshLibrary() }
     }
 }

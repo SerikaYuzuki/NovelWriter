@@ -1,7 +1,0 @@
-import NovelLibrary
-
-typealias IOSDeviceSyncLocalLibraryError = LibraryRegistryError
-typealias IOSDeviceSyncLocalLibraryState = LibraryRecordState
-typealias IOSDeviceSyncLocalPackageAttestation = LocalPackageAttestation
-typealias IOSDeviceSyncLocalLibraryRecord = LibraryRecord
-typealias IOSDeviceSyncLocalLibraryInventory = LibraryInventory

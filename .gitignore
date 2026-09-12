@@ -55,3 +55,7 @@ fastlane/test_output
 .idea/
 *.swp
 .claude/settings.local.json
+
+# Retired server local settings/builds remain private after source removal.
+/SyncServer/.env
+/SyncServer/target/

@@ -27,13 +27,13 @@ import NovelCore
 ///   (削除はしない)
 public struct NovelpkgRepository: AutomaticSnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
-    /// 読み込みは v1 / v2 / v3 を受理する。
+    /// 読み込み・書き出しともv3のみを扱う（D-090）。
     public static let currentFormatVersion = "3"
 
     static let manifestFileName = "manifest.json"
     static let episodesDirectoryName = "episodes"
     static let episodeNotesDirectoryName = "episode-notes"
-    // v1 / v2 の読み込みと、v3保存時に既知項目として除外するために残す。
+    // 旧形式の予約名。v3書出時に本文として再利用せず除外する。
     static let chaptersDirectoryName = "chapters"
     static let notesDirectoryName = "notes"
     /// `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
@@ -114,7 +114,7 @@ extension NovelpkgRepository {
     }
 
     private static func isSupportedFormatVersion(_ formatVersion: String) -> Bool {
-        formatVersion == "1" || formatVersion == "2" || formatVersion == currentFormatVersion
+        formatVersion == currentFormatVersion
     }
 
     static func readManifest(at url: URL, fileManager: FileManager) throws -> NovelpkgManifest {
@@ -130,6 +130,11 @@ extension NovelpkgRepository {
             throw NovelpkgError.manifestCorrupted(url: url, reason: String(describing: error))
         }
 
+        struct VersionHeader: Decodable { let formatVersion: String }
+        if let header = try? JSONDecoder().decode(VersionHeader.self, from: data),
+           header.formatVersion != currentFormatVersion {
+            throw NovelpkgError.unsupportedFormatVersion(header.formatVersion)
+        }
         do {
             return try JSONDecoder().decode(NovelpkgManifest.self, from: data)
         } catch {

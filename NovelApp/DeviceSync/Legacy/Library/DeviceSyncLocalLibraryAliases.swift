@@ -1,7 +1,0 @@
-import NovelLibrary
-
-typealias DeviceSyncLocalLibraryError = LibraryRegistryError
-typealias DeviceSyncLocalLibraryState = LibraryRecordState
-typealias DeviceSyncLocalPackageAttestation = LocalPackageAttestation
-typealias DeviceSyncLocalLibraryRecord = LibraryRecord
-typealias DeviceSyncLocalLibraryInventory = LibraryInventory

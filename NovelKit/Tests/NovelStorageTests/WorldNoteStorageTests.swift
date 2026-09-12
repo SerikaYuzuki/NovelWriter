@@ -91,30 +91,6 @@ import Testing
     ) == remaining.content)
 }
 
-@Test func missingWorldMetadataLoadsAsEmptyWorldNotesForLegacyPackages() async throws {
-    let tempDir = try makeTempDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let packageURL = tempDir.appendingPathComponent("LegacyWorld.novelpkg")
-    let repository = NovelpkgRepository()
-    let document = NovelDocument(title: "旧作品", chapters: [Chapter(title: "第1章")])
-    try await repository.save(document, to: packageURL)
-
-    try convertPackageToVersionTwo(at: packageURL, chapterIDs: document.chapters.map(\.id))
-    var loaded = try await repository.load(from: packageURL)
-    #expect(loaded.worldNotes.isEmpty)
-    try await repository.save(loaded, to: packageURL)
-    #expect(try manifestJSON(at: packageURL)["formatVersion"] as? String == "3")
-    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("world.json").path))
-
-    try convertPackageToVersionOne(at: packageURL, chapterIDs: loaded.chapters.map(\.id))
-    loaded = try await repository.load(from: packageURL)
-    #expect(loaded.worldNotes.isEmpty)
-    try await repository.save(loaded, to: packageURL)
-    #expect(try manifestJSON(at: packageURL)["formatVersion"] as? String == "3")
-    #expect(!FileManager.default.fileExists(atPath: packageURL.appendingPathComponent("world.json").path))
-}
-
 @Test func missingReferencedWorldNoteBodyThrowsTypedError() async throws {
     let tempDir = try makeTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

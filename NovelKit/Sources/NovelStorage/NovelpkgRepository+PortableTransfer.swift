@@ -421,20 +421,14 @@ extension NovelpkgRepository {
             worldNotesDirectoryName
         ]
         for chapter in manifest.chapters {
-            let entries = chapter.episodes ?? [
-                NovelpkgManifest.EpisodeEntry(id: chapter.id, title: Episode.defaultTitle)
-            ]
-            let legacy = chapter.episodes == nil
-            let contentDirectory = legacy ? chaptersDirectoryName : episodesDirectoryName
-            let notesDirectory = legacy ? notesDirectoryName : episodeNotesDirectoryName
-            for entry in entries {
+            for entry in chapter.episodes {
                 let fileName = "\(entry.id.uuidString).md"
-                paths.insert("\(contentDirectory)/\(fileName)")
+                paths.insert("\(episodesDirectoryName)/\(fileName)")
                 if let episode = document.chapters
                     .flatMap(\.episodes)
                     .first(where: { $0.id.rawValue == entry.id }),
                     !episode.memo.isEmpty {
-                    paths.insert("\(notesDirectory)/\(fileName)")
+                    paths.insert("\(episodeNotesDirectoryName)/\(fileName)")
                 }
             }
         }

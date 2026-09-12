@@ -21,7 +21,7 @@ struct LibraryWindowView: View {
             }
             .padding(28).frame(width: 280)
             Divider()
-            LibraryPane(showingLibrary: .constant(true))
+            LibraryPane()
                 .padding(.vertical, 16)
         }
         .frame(minWidth: 700, minHeight: 420)
@@ -37,6 +37,7 @@ struct LibraryWindowView: View {
             set: {
                 if !$0 {
                     appState.dismissOperationMessage()
+                    presenter.alertMessage = nil
                 }
             }
         )) {

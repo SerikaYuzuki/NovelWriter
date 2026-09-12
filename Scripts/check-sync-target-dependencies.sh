@@ -34,4 +34,10 @@ if rg -n -e '(^|[^A-Za-z])import[[:space:]]+CloudKit|CKSyncEngine|CloudKitSyncDi
   exit 1
 fi
 
-echo "D-079 CloudKit removal audit passed"
+# D-090: only current v2 modules belong to the build graph.
+if rg -n 'name: "(NovelSync|NovelSyncLegacy|NovelSyncTesting|NovelLibrary|NovelLocalStore)"|product: (NovelSync|NovelSyncLegacy|NovelSyncTesting|NovelLibrary|NovelLocalStore)$' "$package_file" "$project_file"; then
+  echo "error: retired synchronization module returned to the build graph" >&2
+  exit 1
+fi
+
+echo "D-090 current synchronization dependency audit passed"

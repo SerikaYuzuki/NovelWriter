@@ -209,7 +209,7 @@ jq -e '
     reduce range(0; ($package.targets | length)) as $_
       ($roots; (. + [.[] as $name | dependencies($package; $name)[]]) | unique);
   . as $package |
-  (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport", "NovelLibrary", "NovelSync"])
+  (transitiveClosure($package; ["NovelCore", "NovelStorage", "EditorKit", "NovelUI", "NovelExport"])
     | index("NovelAI") == null) and
   ([$package.targets[].name] | all(test("Experimental|NovelAI"; "i") | not))
 ' "$package_tmp" >/dev/null

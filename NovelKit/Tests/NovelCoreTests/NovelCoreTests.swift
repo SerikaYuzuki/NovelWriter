@@ -43,26 +43,6 @@ import Testing
     #expect(chapter.episodes[0].memo.isEmpty)
 }
 
-@Test func chapterDecodesMissingMemoAsEmptyString() throws {
-    let id = ChapterID()
-    let json = """
-    {
-      "id": {"rawValue": "\(id.rawValue.uuidString)"},
-      "title": "第1章",
-      "content": "本文"
-    }
-    """
-
-    let decoded = try JSONDecoder().decode(Chapter.self, from: Data(json.utf8))
-
-    #expect(decoded.id == id)
-    #expect(decoded.title == "第1章")
-    #expect(decoded.episodes.count == 1)
-    #expect(decoded.episodes[0].id.rawValue == id.rawValue)
-    #expect(decoded.episodes[0].content == "本文")
-    #expect(decoded.episodes[0].memo == "")
-}
-
 @Test func novelDocumentChaptersOrderIsArrayOrder() {
     let first = Chapter(title: "第1章")
     let second = Chapter(title: "第2章")
@@ -104,12 +84,12 @@ import Testing
     let json = """
     {
       "id": "\(documentID.uuidString)",
-      "title": "旧形式",
+      "title": "任意メタデータなし",
       "chapters": [
         {
           "id": {"rawValue": "\(chapterID.rawValue.uuidString)"},
           "title": "第1章",
-          "content": "本文"
+          "episodes": []
         }
       ]
     }
@@ -129,12 +109,12 @@ import Testing
     let json = """
     {
       "id": "\(documentID.uuidString)",
-      "title": "旧形式",
+      "title": "任意メタデータなし",
       "chapters": [
         {
           "id": {"rawValue": "\(chapterID.rawValue.uuidString)"},
           "title": "第1章",
-          "content": "本文"
+          "episodes": []
         }
       ]
     }
@@ -152,12 +132,12 @@ import Testing
     let json = """
     {
       "id": "\(documentID.uuidString)",
-      "title": "旧形式",
+      "title": "任意メタデータなし",
       "chapters": [
         {
           "id": {"rawValue": "\(chapterID.rawValue.uuidString)"},
           "title": "第1章",
-          "content": "本文"
+          "episodes": []
         }
       ]
     }
