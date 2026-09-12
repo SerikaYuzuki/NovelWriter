@@ -21,6 +21,7 @@ public struct SyncV2OperationResult: Sendable {
 }
 
 public actor SyncV2Application {
+    var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     var syncDiagnostics: [WorkID: String] = [:]
     let kernel: any SyncV2LocalKernel
     let planner: any SyncV2CommandPlanner
@@ -35,7 +36,14 @@ public actor SyncV2Application {
     /// because it has the same WorkID.
     var workerOwners: [WorkID: UUID] = [:]
     var wakeEpochs: [WorkID: UInt64] = [:]
-    var states: [WorkID: SyncUIState] = [:]
+    var states: [WorkID: SyncUIState] = [:] {
+        didSet {
+            for continuation in stateChangeContinuations.values {
+                continuation.yield(())
+            }
+        }
+    }
+
     var sessions: [WorkID: DocumentSessionToken] = [:]
     var remoteSchedulingSuspensions: Set<UUID> = []
     var activeAccountTransitionSuspensions: Set<UUID> = []

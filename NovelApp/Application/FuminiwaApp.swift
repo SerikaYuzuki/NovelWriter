@@ -198,8 +198,8 @@ struct FuminiwaApp: App {
                 .disabled(!appState.permitsDocumentTransitionOperation)
             }
             CommandGroup(replacing: .saveItem) {
-                Button("この端末に保存") {
-                    Task { _ = await appState.saveNow() }
+                Button("保存して同期") {
+                    Task { await appState.saveAndSyncCurrentWork() }
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!appState.permitsDocumentInteraction)

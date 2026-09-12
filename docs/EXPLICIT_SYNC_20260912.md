@@ -75,3 +75,13 @@ HTTP adapterから実SQLiteへの作成受領テスト、応答bytes不一致拒
 利用者の依頼によりDebug build限定の一時診断を追加した。Macの停止メッセージ末尾とOS log（subsystem `dev.serikayuzuki.fuminiwa`、category `sync-debug`）へ、同期段階・Error型・enum case名を出す。Errorのassociated value、原稿、DBエラー本文、URL、account／work ID、認証情報は含めない。Release buildでは診断文字列を生成・表示しない。調査終了後にこの一時表示を撤去する。
 
 検証は中ぐらい。Application 68件、Macアプリ142件成功。診断の秘密値除外・初回publish完了テストを再実行して成功、Mac／iOS build成功。実端末のpublish成功は更新版の再送後に確認する。
+
+## ⌘S・見える同期状態（2026-09-12）
+
+既存の⌘Sはdirtyな保存からworkerを起動していたが、変更のない作品ではremote確認を要求しなかった。メニューを「保存して同期」とし、既存の入力確定→local保存→同期要求へ接続した。端末内だけの作品は保存に留める。認証操作等でtransition gateが閉じている間も、従来のlocal保存は利用できる。
+
+同期操作と状態を一つの文字付きボタンへ統合し、全sectionのprimaryActionへ配置した。macOS 26.1以降はnative visibility priorityをhighに設定する。旧OSではprimaryAction配置と⌘Sの入口を使う。未保存・保存中・同期中・同期済み・通信待ち・失敗を区別し、未確認のidleや端末内作品を同期済みとしない。競合／受信適用の入口は同ボタンに維持する。
+
+applicationの状態変更をcoalesced AsyncStreamで通知し、Workbenchのsession／accountに結び付いたtaskが最新状態を再取得する。toolbar overflowへ購読を所有させず、window終了や作品／account変更で解除する。以前はworker完了後のUI更新が明示refresh頼みだったため、この購読を追加した。
+
+検証は中ぐらい。Macアプリ146件成功、最終の関連6テスト成功、共有Application 68件成功、Mac／iOS build、baseline lint成功。未変更の⌘Sでもremote要求が出ること、unboundが送信されないこと、背景処理後に通信待ちへ自動更新することを確認した。native toolbarの560pt幅で実際にoverflowが発生しても同期項目がvisibleItemsに残ることを検証した。極端に狭い340pt幅ではOSが高優先度項目も隠すため、全幅での常時表示を保証するものではない。

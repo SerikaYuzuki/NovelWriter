@@ -1,15 +1,31 @@
+import NovelSyncV2Application
 import SwiftUI
 
 struct ExplicitSyncButton: View {
     @Environment(AppState.self) private var appState
     let requestSync: () -> Void
 
+    private var status: WorkbenchSyncStatus {
+        WorkbenchSyncStatus.resolve(
+            saveState: appState.saveState,
+            progress: appState.snapshotSyncV2UIState?.remoteProgress,
+            accountState: appState.snapshotSyncCurrentWorkAccountState,
+            isSignedIn: appState.isSignedInToFuminiwa,
+            isRequesting: appState.isSnapshotSyncInFlight
+        )
+    }
+
     var body: some View {
         Button(action: requestSync) {
-            Label(appState.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath")
-                .labelStyle(.titleAndIcon)
+            HStack(spacing: 5) {
+                Image(systemName: status.systemImage)
+                Text(status.title)
+            }
+            .fixedSize()
+            .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
         }
-        .help("入力を確定して端末に保存し、サーバーと同期します")
+        .help("\(status.title) — クリックまたは⌘Sで保存して同期します。競合がある場合は確認画面を開きます")
+        .accessibilityLabel("\(status.title)、今すぐ同期")
         .disabled(!appState.canExplicitlySyncCurrentWork)
         .accessibilityIdentifier("workbench.snapshot.sync")
     }
@@ -24,7 +40,11 @@ final class ExplicitSyncPresentation {
 
     @MainActor
     func requestSync(appState: AppState) {
-        if !appState.isSignedInToFuminiwa || appState.canCloneCurrentWorkIntoActiveAccount {
+        if appState.snapshotSyncV2UIState?.remoteProgress == .needsChoice {
+            NotificationCenter.default.post(name: .presentSnapshotSyncConflict, object: nil)
+        } else if case .readyForSafeAdoption = appState.snapshotSyncV2UIState?.remoteProgress {
+            Task { _ = await appState.applySnapshotSyncV2ServerVersion() }
+        } else if !appState.isSignedInToFuminiwa || appState.canCloneCurrentWorkIntoActiveAccount {
             session = appState.documentSessionToken
             account = appState.snapshotSyncV2AccountScopeToken
             showingSetup = true

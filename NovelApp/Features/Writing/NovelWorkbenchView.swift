@@ -33,6 +33,11 @@ enum WorkbenchColumnLayout: Hashable {
     }
 }
 
+private struct SyncStatusObservationID: Hashable {
+    let session: AppDocumentSessionToken
+    let account: SnapshotSyncV2AccountScopeToken
+}
+
 struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
@@ -68,6 +73,9 @@ struct NovelWorkbenchView: View {
             )
         }
         .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
+        .task(id: SyncStatusObservationID(session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken)) {
+            await appState.observeSnapshotSyncV2Status()
+        }
         .inspector(isPresented: $isAssistantPresented) {
             if showsWritingActions {
                 AssistantPanelView(

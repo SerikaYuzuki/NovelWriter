@@ -224,6 +224,17 @@ extension AppState {
         }
     }
 
+    /// Saving remains available while an authentication operation holds the
+    /// transition gate. Only the optional remote request is deferred then.
+    func saveAndSyncCurrentWork() async {
+        guard permitsDocumentInteraction else { return }
+        if canExplicitlySyncCurrentWork {
+            await synchronizeSnapshotSyncV2()
+        } else {
+            _ = await saveNow()
+        }
+    }
+
     /// Explicit sync commits editor input locally before requesting the durable
     /// worker. Remote receipts are projected asynchronously after the gate ends.
     func synchronizeSnapshotSyncV2() async {
@@ -244,6 +255,13 @@ extension AppState {
         guard saved, documentSessionToken == expectedSession,
               snapshotSyncV2AccountScopeToken == expectedAccount,
               currentSnapshotSyncV2WorkID == workID else { return }
+        // Cmd-S also serves local-only works. Never add an account binding or
+        // initiate sign-in as a side effect of saving.
+        guard isSignedInToFuminiwa, snapshotSyncCurrentWorkAccountState == .active else {
+            await refreshSnapshotSyncV2UIState()
+            await refreshSnapshotLibrary()
+            return
+        }
         do {
             _ = try await application.synchronize(workID: workID)
         } catch {

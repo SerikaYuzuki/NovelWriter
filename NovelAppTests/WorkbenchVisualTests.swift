@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelSyncV2
+import NovelSyncV2Application
 import SwiftUI
 import Testing
 
@@ -44,6 +46,39 @@ struct WorkbenchVisualTests {
         host.layoutSubtreeIfNeeded()
         try await snapshot(host, path: "/tmp/fuminiwa-visual-library.png")
         #expect(state.authSession == nil)
+    }
+
+    @Test("sync remains visible in a crowded native toolbar")
+    func synchronizationSurvivesOverflow() async throws {
+        guard #available(macOS 26.1, *) else { return }
+        let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
+        state.saveState = .saved
+        state.authUIState = .signedIn(accountID: "test-account")
+        state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")
+        state.snapshotSyncCurrentWorkAccountState = .active
+        state.snapshotSyncV2UIState = SyncUIState(workID: WorkID(UUID()), localDurability: .unsaved,
+                                                  remoteProgress: .noChanges, lastTypedResult: .sent)
+        let root = Color.clear
+            .toolbar(id: "sync-visibility-test-\(UUID())") {
+                WorkbenchToolbarContent(overlayState: WorkbenchOverlayState(), requestSync: {},
+                                        showsWritingActions: true, isPlotCardRailPresented: .constant(false))
+            }
+            .environment(state)
+            .environment(SnapshotMenuPresenter(appState: state))
+            .environment(ExportPresenter(appState: state))
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 340),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        let toolbar = try #require(window.toolbar)
+        let syncItem = try #require(toolbar.items.first { $0.itemIdentifier.rawValue.contains("workbench.snapshot.sync") })
+        #expect(toolbar.visibleItems?.contains(where: { $0 === syncItem }) == true)
+        #expect(syncItem.visibilityPriority > .standard)
+        #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

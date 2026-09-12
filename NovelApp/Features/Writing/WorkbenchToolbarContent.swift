@@ -20,6 +20,23 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
 
+    @ToolbarContentBuilder
+    private var synchronizationItem: some CustomizableToolbarContent {
+        if #available(macOS 26.1, *) {
+            synchronizationButton.visibilityPriority(.high)
+        } else {
+            synchronizationButton
+        }
+    }
+
+    private var synchronizationButton: some CustomizableToolbarContent {
+        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync, placement: .primaryAction) {
+            ExplicitSyncButton(requestSync: requestSync)
+        }
+        .customizationBehavior(.disabled)
+        .defaultCustomization(.visible)
+    }
+
     var body: some CustomizableToolbarContent {
         if appState.startupState.isReady {
             ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
@@ -61,32 +78,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .defaultCustomization(.visible)
         }
 
-        if showsWritingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.syncStatus) {
-                SnapshotSyncV2StatusControl(
-                    state: appState.snapshotSyncV2UIState,
-                    saveState: appState.saveState,
-                    reviewConflict: {
-                        NotificationCenter.default.post(name: .presentSnapshotSyncConflict, object: nil)
-                    },
-                    adoptServerVersion: {
-                        Task { _ = await appState.applySnapshotSyncV2ServerVersion() }
-                    },
-                    canCloneIntoAccount: appState.canCloneCurrentWorkIntoActiveAccount,
-                    cloneIntoAccount: {
-                        Task { _ = await appState.cloneCurrentWorkIntoActiveAccount() }
-                    }
-                )
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
-            ExplicitSyncButton(requestSync: requestSync)
-        }
-        .customizationBehavior(.disabled)
-        .defaultCustomization(.visible)
+        synchronizationItem
 
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
