@@ -1,5 +1,7 @@
 # Snapshot Sync v2 — 現在地と残件
 
+> 2026-09-12追記: UI・offline保存修正の最新結果は[今回の作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)。Macの保存中revision競合、両OSのautosave自己取消、接続復帰wake、iOS明示同期前のlocal flushを修正した。認証済み新規作品の実サーバーへの反映は引き続き署名済み実機での受入が必要。
+
 更新: 2026-09-12（source・target構成の照合）。実機・stagingの最終記録は2026-08-18。**実装・統合中、Release NO-GO**。
 
 この文書は実装状況と次の成果を示す。規範は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、[DECISIONS.md](DECISIONS.md) D-080〜D-085、[sync/v2/](sync/v2/)、認証は[AUTH.md](AUTH.md)。旧[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)はv1の履歴である。

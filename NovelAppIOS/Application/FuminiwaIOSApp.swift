@@ -5,6 +5,7 @@ import SwiftUI
 
 @main
 struct FuminiwaIOSApp: App {
+    @State private var connectivityRecovery = ConnectivityRecovery()
     @State private var store: IOSDocumentStore
     @AppStorage private var appearanceRawValue: String
     @Environment(\.scenePhase) private var scenePhase
@@ -55,6 +56,7 @@ struct FuminiwaIOSApp: App {
                 .task {
                     _ = await store.configureSnapshotSyncV2()
                     await store.bootstrap(localFirst: true)
+                    connectivityRecovery.start { await store.resumeSnapshotSyncV2() }
                     // The local shelf/editor is the launch boundary. Auth
                     // vault reconciliation and remote wakeups continue in
                     // background and never delay offline editing.

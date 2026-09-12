@@ -51,6 +51,8 @@ final class V2DocumentSaveCoordinator {
                 return
             }
             guard !Task.isCancelled else { return }
+            // Release our own task before saveNow cancels an outstanding timer.
+            debouncedSaveTask = nil
             _ = await saveNow()
         }
     }
@@ -69,10 +71,11 @@ final class V2DocumentSaveCoordinator {
                 succeeded = false
                 break
             }
+            let savingRevision = revision
             saveEventHandler(.saving)
             do {
                 try await saveOperation(document)
-                savedRevision = revision
+                savedRevision = savingRevision
                 saveEventHandler(.saved)
             } catch {
                 succeeded = false

@@ -46,6 +46,7 @@ struct NovelWorkbenchView: View {
     @State private var attachmentImportMessage: OperationMessage?
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
+    @State private var isAssistantPresented = false
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
@@ -64,6 +65,31 @@ struct NovelWorkbenchView: View {
                 isPlotCardRailPresented: $isPlotCardRailPresented
             )
         }
+        .inspector(isPresented: $isAssistantPresented) {
+            if showsWritingActions {
+                AssistantPanelView(
+                    defaults: appState.userDefaults,
+                    contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))",
+                    episodeTitle: appState.selectedEpisode?.title ?? "未選択",
+                    capture: {
+                        guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
+                            throw AssistantError.emptyContent
+                        }
+                        switch appState.activeCommittedTextCapture() {
+                        case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                        case .compositionInProgress: throw AssistantError.composing
+                        case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
+                        }
+                    }, close: { isAssistantPresented = false }
+                )
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 600)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleWritingAssistant)) { _ in
+            if showsWritingActions {
+                isAssistantPresented.toggle()
+            }
+        }
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarBackground(Color(nsColor: .underPageBackgroundColor), for: .windowToolbar)
         // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
@@ -81,6 +107,7 @@ struct NovelWorkbenchView: View {
         .onChange(of: showsWritingActions) { _, isWriting in
             if !isWriting {
                 isPlotCardRailPresented = false
+                isAssistantPresented = false
             }
         }
         .alert(item: $attachmentImportMessage) { message in

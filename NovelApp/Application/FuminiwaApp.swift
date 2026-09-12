@@ -10,6 +10,8 @@ import SwiftUI
 @main
 struct FuminiwaApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var applicationDelegate
+    @State private var didBootstrap = false
+    @State private var connectivityRecovery = ConnectivityRecovery()
     @State private var appState: AppState
     @State private var editorSettings: EditorSettings
     @State private var documentPanelPresenter: DocumentPanelPresenter
@@ -169,7 +171,7 @@ struct FuminiwaApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup {
+        Window("ふみにわ", id: "workbench") {
             ContentView()
                 .environment(appState)
                 .environment(editorSettings)
@@ -178,28 +180,12 @@ struct FuminiwaApp: App {
                 .environment(exportPresenter)
                 .environment(editorSearchSession)
                 .environment(editorCommandSession)
-                .task {
-                    applicationDelegate.attach(appState: appState)
-                    let opening = applicationDelegate.takeStartupOpenURL()
-                    guard await appState.configureSnapshotSyncV2(using: appState.snapshotSyncV2Factory) else {
-                        applicationDelegate.finishBootstrap()
-                        return
-                    }
-                    // Apple credential-state lookup is advisory and may cross
-                    // a system/network boundary. It must not hold the local
-                    // SQLite bootstrap or first editor frame.
-                    Task { @MainActor in
-                        await appState.restoreFuminiwaSession()
-                        await appState.refreshSnapshotLibrary()
-                        await appState.refreshSnapshotRemoteCatalog()
-                    }
-                    await appState.bootstrap(opening: opening)
-                    await appState.resumeSnapshotSyncV2()
-                    applicationDelegate.finishBootstrap()
-                }
+                .task { await bootstrapIfNeeded() }
         }
         .commands {
             CommandGroup(replacing: .newItem) {
+                LibraryWindowCommand()
+                Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
                 }
@@ -244,6 +230,13 @@ struct FuminiwaApp: App {
                     presenter: snapshotMenuPresenter
                 )
                 .disabled(!appState.permitsDocumentTransitionOperation)
+            }
+            CommandMenu("AI支援") {
+                Button("右パネルを開閉") {
+                    NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+                }
+                .keyboardShortcut("j", modifiers: .command)
+                .disabled(!appState.permitsDocumentInteraction || appState.workspaceSelection.section != .structure)
             }
             CommandMenu("アカウント") {
                 switch appState.authUIState {
@@ -351,10 +344,50 @@ struct FuminiwaApp: App {
             ToolbarCommands()
         }
 
-        Settings {
-            EditorSettingsView()
-                .environment(editorSettings)
+        Window("作品一覧", id: "library") {
+            LibraryWindowView()
+                .environment(appState)
+                .environment(documentPanelPresenter)
+                .task { await bootstrapIfNeeded() }
         }
+        .defaultSize(width: 760, height: 520)
+
+        Settings {
+            TabView {
+                EditorSettingsView().environment(editorSettings)
+                    .tabItem { Label("執筆", systemImage: "textformat") }
+                AssistantSettingsView(defaults: appState.userDefaults)
+                    .tabItem { Label("AI支援", systemImage: "sparkles") }
+                AccountAccessView().environment(appState).padding(24)
+                    .tabItem { Label("アカウント", systemImage: "person.crop.circle") }
+            }.frame(width: 520, height: 620)
+        }
+    }
+
+    @MainActor
+    private func bootstrapIfNeeded() async {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+        applicationDelegate.attach(appState: appState)
+        let opening = applicationDelegate.takeStartupOpenURL()
+        guard await appState.configureSnapshotSyncV2(using: appState.snapshotSyncV2Factory) else {
+            applicationDelegate.finishBootstrap()
+            return
+        }
+        // Apple credential-state lookup is advisory and may cross
+        // a system/network boundary. It must not hold the local
+        // SQLite bootstrap or first editor frame.
+        Task { @MainActor in
+            await appState.restoreFuminiwaSession()
+            await appState.refreshSnapshotLibrary()
+            await appState.refreshSnapshotRemoteCatalog()
+        }
+        connectivityRecovery.start {
+            await appState.resumeSnapshotSyncV2()
+        }
+        await appState.bootstrap(opening: opening)
+        await appState.resumeSnapshotSyncV2()
+        applicationDelegate.finishBootstrap()
     }
 }
 

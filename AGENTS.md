@@ -24,7 +24,7 @@
 - 作品遷移・復元・確認操作は、取得時のWorkID/sessionとdocument operation gateを守る。IME確定→ローカル保存→installの順にし、非同期完了を別作品や別accountへ適用しない。読込失敗を空の新規作品へ置き換えない（D-039 / D-041 / D-084）。
 - `NovelCore`は依存ゼロ。実際の依存グラフは`NovelKit/Package.swift`、通常targetの組み込みは`project.yml`を確認する。旧sourceの存在を現行経路の根拠にしない。
 - 章・話の順序は配列順だけが正。package内部はNovelStorageへ閉じ込める。互換契約を変える場合はDecision、schema、fixture、関連文書を同じ変更で揃える。
-- 通常版AI支援は明示scopeのpromptコピーだけ。自動送信・chat起動・response取込・provider実装を追加しない（D-075）。画面には利用できる機能だけを出す。
+- 通常版AI支援は明示scopeのpromptコピーと、D-089の1話preview後のOpenAI対応API送信。設定・Keychain・HTTPは本文保存から分離し、自動送信・原稿への自動反映をしない。旧provider研究コードを戻さず、[AI支援](docs/WRITING_ASSISTANT.md)の境界を守る。
 
 ## 作業の進め方と完了
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# D-075: 停止中のprovider実装をbuild graphへ戻さず、確定したclipboard／EditorKit境界だけを残すことを機械検査する。
+# D-089: 旧provider実装を戻さず、明示送信のWritingAssistantとclipboard／EditorKit境界を検査する。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -180,6 +180,13 @@ if plutil -convert json -o - NovelApp/NovelApp.entitlements | jq -e \
 fi
 if rg -n 'URLSession|Network\.framework|NWConnection|OpenRouter|codex_sdk' NovelAppIOS; then
   echo "error: the iOS app contains a provider or network callsite" >&2
+  exit 1
+fi
+
+# The new opt-in assistant owns its HTTP/Keychain boundary separately from
+# manuscript persistence, synchronization and the native editor.
+if rg -n 'import (NovelSync|NovelAuth|EditorKit)|Process\(|NSWorkspace|UIApplication' NovelApp/WritingAssistant; then
+  echo "error: writing assistant crossed its text-only application boundary" >&2
   exit 1
 fi
 

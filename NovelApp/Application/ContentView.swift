@@ -29,17 +29,18 @@ struct ContentView: View {
             .alert(
                 "作品の操作",
                 isPresented: Binding(
-                    get: { appState.operationMessage != nil },
+                    get: { appState.operationMessage != nil || documentPanelPresenter.alertMessage != nil },
                     set: {
                         if !$0 {
                             appState.dismissOperationMessage()
+                            documentPanelPresenter.alertMessage = nil
                         }
                     }
                 )
             ) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(appState.operationMessage ?? "")
+                Text(documentPanelPresenter.alertMessage ?? appState.operationMessage ?? "")
             }
             .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
                 showingConflict = conflict != nil
@@ -96,11 +97,13 @@ struct ContentView: View {
     }
 }
 
-private struct LibraryPane: View {
+struct LibraryPane: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Binding var showingLibrary: Bool
     @State private var showingHistory = false
+    @State private var selection: UUID?
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -133,32 +136,49 @@ private struct LibraryPane: View {
                 .help("スナップショット履歴")
             }
             .padding(.horizontal, 12)
-            List {
+            List(selection: $selection) {
                 Section {
                     ForEach(works) { work in
-                        Button {
-                            Task { _ = await appState.openLibraryWork(work) }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: icon(for: work))
-                                    .foregroundStyle(color(for: work))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(work.title)
-                                        .lineLimit(1)
-                                    Text(label(for: work))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
+                        HStack(spacing: 8) {
+                            Image(systemName: icon(for: work))
+                                .foregroundStyle(color(for: work))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(work.title).lineLimit(1)
+                                Text(label(for: work))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
+                            Spacer()
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!work.isOpenable)
+                        .tag(work.id)
+                        .contextMenu {
+                            Button("開く") { open(work) }
+                                .disabled(!work.isOpenable)
+                        }
                         .accessibilityIdentifier("library.work.\(work.id.uuidString)")
                     }
                 }
             }
             .listStyle(.sidebar)
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let work = works.first(where: { ids.contains($0.id) }) {
+                    Button("開く") { open(work) }.disabled(!work.isOpenable)
+                }
+            } primaryAction: { ids in
+                if let work = works.first(where: { ids.contains($0.id) }) {
+                    open(work)
+                }
+            }
+            HStack {
+                AccountAccessView()
+                Spacer()
+                Button("開く") {
+                    if let work = works.first(where: { $0.id == selection }) {
+                        open(work)
+                    }
+                }
+                .disabled(!works.contains { $0.id == selection && $0.isOpenable })
+            }
+            .padding(.horizontal, 12)
             Text(connectionLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -175,6 +195,15 @@ private struct LibraryPane: View {
         }
     }
 
+    private func open(_ work: StartupLibraryWork) {
+        guard work.isOpenable else { return }
+        Task {
+            if await appState.openLibraryWork(work) {
+                openWindow(id: "workbench")
+            }
+        }
+    }
+
     private var works: [StartupLibraryWork] {
         if !appState.snapshotSyncLibraryWorks.isEmpty {
             return appState.snapshotSyncLibraryWorks
@@ -187,9 +216,9 @@ private struct LibraryPane: View {
 
     private var connectionLabel: String {
         switch appState.lastStartupLibraryConnection {
-        case .available: "同期済み"
+        case .available: "サーバーに接続できます"
         case .offline: "オフライン・接続時再開"
-        case .accountRequired: "サインインすると同期します"
+        case .accountRequired: "サインインせず、この端末で執筆できます"
         case .differentAccount: "別のアカウントのため保留中"
         case let .unavailable(message): message
         }

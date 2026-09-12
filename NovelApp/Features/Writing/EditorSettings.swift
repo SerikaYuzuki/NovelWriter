@@ -50,7 +50,7 @@ final class EditorSettings {
         didSet { userDefaults.set(backgroundColorHex, forKey: Self.backgroundColorKey) }
     }
 
-    private let userDefaults: UserDefaults
+    let userDefaults: UserDefaults
     private let appearanceApplier: @MainActor (AppAppearance) -> Void
 
     private static let fontNameKey = AppPreferenceKey.editorFontName
@@ -228,11 +228,15 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 struct EditorSettingsView: View {
     @Environment(EditorSettings.self) private var settings
+    @State private var showingAssistantSettings = false
 
     var body: some View {
         @Bindable var settings = settings
 
         Form {
+            Section("AI支援") {
+                Button("AI支援の設定…") { showingAssistantSettings = true }
+            }
             Picker("外観", selection: $settings.appearance) {
                 ForEach(AppAppearance.allCases) { appearance in
                     Text(appearance.title)
@@ -292,6 +296,12 @@ struct EditorSettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 420)
+        .sheet(isPresented: $showingAssistantSettings) {
+            VStack {
+                AssistantSettingsView(defaults: settings.userDefaults)
+                Button("閉じる") { showingAssistantSettings = false }.padding()
+            }.frame(width: 520, height: 620)
+        }
     }
 
     private var fontFamilyBinding: Binding<EditorFontFamily> {

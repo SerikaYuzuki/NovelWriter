@@ -10,6 +10,7 @@ import SwiftUI
 /// `ToolbarItem(id:)` とし、Sidebar 開閉・Outline identity・右端検索は
 /// システムの固定アンカーに委ねる。
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
+    @Environment(\.openWindow) private var openWindow
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
@@ -22,18 +23,25 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if appState.startupState.isReady {
             ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
                 Button {
-                    Task {
-                        _ = await appState.returnToSnapshotLibrary()
-                    }
+                    openWindow(id: "library")
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
-                .help("作品一覧へ戻る")
+                .help("作品一覧ウィンドウを開く")
                 .disabled(!appState.permitsDocumentTransitionOperation)
                 .accessibilityIdentifier("workbench.library")
             }
             .customizationBehavior(.disabled)
             .defaultCustomization(.visible)
+        }
+
+        if showsWritingActions {
+            ToolbarItem(id: "workbench.writing.assistant") {
+                Button("AI支援", systemImage: "sidebar.right") {
+                    NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+                }
+                .help("AI支援パネルを開閉")
+            }
         }
 
         if showsWritingActions {

@@ -1,6 +1,6 @@
 # AI provider統合の設計・研究履歴
 
-通常版のAI支援は、校正／アドバイス用プロンプトを明示的にコピーする[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。provider／networkへの接続はない。
+2026-09-12のD-089により、現在のAPI支援は[WRITING_ASSISTANT.md](WRITING_ASSISTANT.md)を正とする。clipboard支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)。以下はD-075時点の旧研究記録であり、新実装の契約ではない。
 
 本書はB4-Dまでのprovider統合研究と、その際に検討した安全条件を残す。実装・fixture・test・Experimental targetはD-075で削除済みであり、本文のAPIや実装順を再利用契約として扱わない。将来の統合を明示的に検討するときだけ読み、最新の公式API／SDKと要件から新しいDecisionを作る。
 

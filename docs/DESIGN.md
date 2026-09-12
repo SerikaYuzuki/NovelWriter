@@ -109,7 +109,7 @@ IME変換中はモデル反映もプラグイン介入もしない。変換確�
 
 ### 4.9 AI支援
 
-[CLIPBOARD_AI_ASSIST](CLIPBOARD_AI_ASSIST.md)の明示scopeからpromptをコピーする。アプリからproviderへ送信しない。停止したprovider / sidecarの記録は[AI_INTEGRATION](AI_INTEGRATION.md)にある。再開は最新APIと新Decisionから設計する（D-075）。
+明示scopeのclipboard promptを維持し、D-089に基づき現在の1話のpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。原稿の自動編集はしない。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
 
 ### 4.10 作品棚
 

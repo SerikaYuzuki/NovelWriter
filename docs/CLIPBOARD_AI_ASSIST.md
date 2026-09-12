@@ -2,13 +2,13 @@
 
 **通常版の契約: 原稿からplain text promptを作り、明示操作でコピーする / 照合: 2026-09-12**
 
-利用者が任意のAI chatへ手動で渡せるよう、校正／アドバイス×選択／話／章を提供する。FUMINIWAは送信、chat起動、自動paste、応答取込、diff、Applyを行わない。決定はD-054／D-075。provider再開は [AI_INTEGRATION.md](AI_INTEGRATION.md) の履歴を根拠に自動着手せず、新しい判断と最新APIの評価から始める。
+利用者が任意のAI chatへ手動で渡せるよう、校正／アドバイス×選択／話／章を提供する。このコピー機能は送信、chat起動、自動paste、応答取込、diff、Applyを行わない。D-089の別機能として[明示送信のAI支援](WRITING_ASSISTANT.md)を追加した。決定はD-054／D-075。provider再開は [AI_INTEGRATION.md](AI_INTEGRATION.md) の履歴を根拠に自動着手せず、新しい判断と最新APIの評価から始める。
 
 ## 1. 現在の実装と不足
 
 - 両appの共有builderは [`NovelApp/AIClipboardPrompt.swift`](../NovelApp/AIClipboardPrompt.swift)。`project.yml`はMac側の旧同名featureファイルを除外する。
 - macOSは`Features/Writing/AppState+Outline.swift`と`EditorPaneView`等からcopyへ接続している。
-- iOSには`IOSDocumentStore+ClipboardV2.swift`のAPIとbuilder testsがあるが、live `IOSWorkbenchViewV2.swift`には選択／話／章copy入口が未接続。旧Viewの入口だけでiOS提供完了としない([IOS.md](IOS.md))。
+- iOSのlive `IOSWorkbenchViewV2.swift`に選択context menuと話／章toolbar menuを接続した。実機受入は別途記録する([IOS.md](IOS.md))。
 - 実行時の保存／認証にはnetworkやKeychainが必要でも、この機能のbuilder／clipboard経路へ依存を混ぜない。
 
 ## 2. Purpose

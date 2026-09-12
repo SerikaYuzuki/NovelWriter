@@ -4,7 +4,9 @@ import SwiftUI
 
 struct IOSProjectHomeView: View {
     let store: IOSDocumentStore
-    @State private var snapshotID = ""
+    @State private var snapshotID: String?
+    @State private var restoreSession: IOSDocumentSessionToken?
+    @State private var restoreAccountScope: IOSSnapshotSyncV2AccountScope?
     let openWriting: () -> Void
     let openProjectInfo: () -> Void
     let openPlot: () -> Void
@@ -39,10 +41,10 @@ struct IOSProjectHomeView: View {
                     .foregroundStyle(.secondary)
                 Button("今すぐ同期") { Task { _ = await store.synchronizeSnapshotSyncV2() } }
                     .disabled(!store.canExplicitlySyncCurrentWork)
-                if let conflict = store.snapshotSyncConflict {
-                    Text("競合 (\(conflict.conflictID.uuidString.prefix(8)))")
+                if store.snapshotSyncConflict != nil {
+                    Text("この端末とサーバーの変更が分かれています")
                         .foregroundStyle(.orange)
-                    Text("解決方法を選ぶと、選択したSyncV2操作を端末のSQLiteへ予約します。")
+                    Text("残す内容を選んでください。通信が戻ると同期を続けます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
@@ -67,7 +69,7 @@ struct IOSProjectHomeView: View {
                     }
                 }
                 if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
-                    Button("サーバーの版をこの端末へ適用（安全境界で再試行）") {
+                    Button("サーバーの版を反映") {
                         Task { _ = await store.adoptPendingSnapshotSyncV2() }
                     }
                     .disabled(!store.canExplicitlySyncCurrentWork || store.isExplicitSyncInFlight)
@@ -80,18 +82,6 @@ struct IOSProjectHomeView: View {
                 Text(historyAvailabilityLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("Snapshot ID", text: $snapshotID)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("この版を復元") {
-                    let selected = snapshotID
-                    Task {
-                        if await store.restoreSnapshotSyncV2(snapshotID: selected) {
-                            snapshotID = ""
-                        }
-                    }
-                }
-                .disabled(snapshotID.isEmpty || !store.canRestoreLocalSnapshot)
                 if store.syncV2HistoryItems.isEmpty {
                     Text("履歴を読み込むと、復元対象を選べます。")
                         .font(.caption)
@@ -99,11 +89,11 @@ struct IOSProjectHomeView: View {
                 } else {
                     ForEach(store.syncV2HistoryItems, id: \.occurrenceID) { entry in
                         Button {
+                            restoreSession = store.currentDocumentSessionToken
+                            restoreAccountScope = store.snapshotSyncV2AccountScope
                             snapshotID = entry.snapshotID.rawValue
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.snapshotID.rawValue)
-                                    .font(.caption.monospaced())
                                 Text(
                                     entry.reason + "・" + entry.createdAt.formatted(
                                         date: .abbreviated,
@@ -138,13 +128,40 @@ struct IOSProjectHomeView: View {
                     }
                 }
                 .disabled(!store.canRefreshSnapshotHistory)
-                Text("復元は端末のSQLite履歴へ予約され、通信はバックグラウンドで再開します。")
+                Text("復元前の内容も履歴に残します。復元後の同期は接続が戻ると再開します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Section { Button("設定", action: openSettings); Button("書き出す") { Task { await store.requestExport() } } }
         }
         .navigationTitle("作品ホーム")
+        .confirmationDialog("この版を復元しますか？", isPresented: Binding(
+            get: { snapshotID != nil },
+            set: {
+                if !$0 {
+                    snapshotID = nil
+                }
+            }
+        )) {
+            Button("復元") {
+                guard let selected = snapshotID,
+                      store.currentDocumentSessionToken == restoreSession,
+                      store.snapshotSyncV2AccountScope == restoreAccountScope else { return }
+                let session = restoreSession
+                let scope = restoreAccountScope
+                Task {
+                    guard store.currentDocumentSessionToken == session,
+                          store.snapshotSyncV2AccountScope == scope else { return }
+                    _ = await store.restoreSnapshotSyncV2(snapshotID: selected)
+                }
+                snapshotID = nil
+            }.disabled(!store.canRestoreLocalSnapshot)
+            Button("キャンセル", role: .cancel) { snapshotID = nil }
+        } message: {
+            Text("現在の内容を履歴に残してから、選んだ版へ戻します。")
+        }
+        .onChange(of: store.currentDocumentSessionToken) { _, _ in snapshotID = nil }
+        .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in snapshotID = nil }
         .task {
             if let workID = store.syncV2ActiveWorkID, store.canRefreshSnapshotHistory {
                 _ = await store.refreshSnapshotHistory(for: workID, reset: true)
@@ -164,7 +181,7 @@ struct IOSProjectHomeView: View {
         switch choice {
         case .useDevice: "この端末の変更をサーバーへ送ります。"
         case .useServer: "サーバーで確認済みの版を、この端末へ適用できます。"
-        case .keepBoth: "元の作品を保ち、別WorkIDへ複製します。"
+        case .keepBoth: "元の作品を保ち、もう一つの作品として残します。"
         }
     }
 

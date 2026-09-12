@@ -183,6 +183,8 @@ targets:
           - Features/Writing/IOSWorkbenchView.swift
           - Features/Writing/IOSWritingView.swift
           - Features/Settings/IOSSettingsView.swift
+      - path: NovelApp/ConnectivityRecovery.swift
+      - path: NovelApp/WritingAssistant
       - path: NovelApp/AIClipboardPrompt.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
     dependencies:
@@ -227,6 +229,8 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
+      - path: NovelAppTests/AssistantClientTests.swift
+      - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppIOSTests
         excludes:
           # These tests exercise the retired package/CloudKit/Note/Work live

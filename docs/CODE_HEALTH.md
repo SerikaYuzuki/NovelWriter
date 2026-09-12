@@ -2,6 +2,10 @@
 
 2026-09-12、文書改訂前の`32e60bdf6`をローカルで確認した。実装の構成と未完了事項を記録する。過去の説明は[2026-08版](archive/2026-09-12-CODE_HEALTH.md)に保存した。
 
+## 今回の実装更新
+
+2026-09-12、専用作品一覧・ログイン導線、伏線下段、AI支援、iOS導線、保存中のrevision競合・autosave自己取消・接続復帰wakeを修正した。[作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)を今回の結果の正とする。以下の元の調査表は文書改訂時点の記録であり、更新前の未接続項目を現在の状態と混同しない。
+
 ## 1. 現行の入口
 
 | 対象 | 確認する場所 |
@@ -32,7 +36,7 @@
 | --- | --- |
 | iOSの製品UI | 既存の入力・navigation・コピー導線をv2に接続し、診断用ID入力や保存内部の説明を製品操作へ置き換える。署名済み実機で受け入れる |
 | 認証済み新規作品の同期 | local commitからbinding / sealed command / worker / remote head read-backまで再現し、accountを越えずに同期済みへ進むことを示す |
-| D-076構造Gate | `IOSDocumentStore+AuthenticationV2.swift`は822行で800行上限を超える。責務分割して関係するauthテストと全体Gateを確認する |
+| D-076構造Gate | 診断ログを`IOSAuthenticationDiagnostics.swift`へ分離し、今回の構造Gateは成功。関係するiOS appテストも成功。全体Gateには別の環境・lint制約が残る |
 | Apple通知endpoint | [通知契約](auth/v1/apple-notification.md)とRust routeが不一致。契約・実装・検証の整合を回復する |
 | staging CA取得 | export scriptの固定edge名とrole-split構成が不一致。Sync epochの検証も含め[staging手順](SNAPSHOT_SYNC_V2_STAGING.md)の残件を解消する |
 | 公開運用 | auth / syncのcredential境界、backup / restore、account lifecycle、配布・実機Gateを確認する。設計と実装の差は[AUTH](AUTH.md) / [v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)参照 |

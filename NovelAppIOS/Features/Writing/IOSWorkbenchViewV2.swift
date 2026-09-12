@@ -529,6 +529,7 @@ struct IOSWorkbenchView: View {
 }
 
 struct IOSEditorPane: View {
+    @State private var showingAssistant = false
     let store: IOSDocumentStore
     let userDefaults: UserDefaults
     @AppStorage(IOSEditorFontPreference.preferenceKey)
@@ -567,6 +568,16 @@ struct IOSEditorPane: View {
                     ),
                     initialText: episode.content,
                     commandSession: store.editorCommandSession,
+                    selectionContextMenuCommands: [
+                        EditorSelectionContextMenuCommand(title: "校正用プロンプトをコピー", systemImageName: "doc.on.clipboard") { snapshot in
+                            guard store.currentEpisodeEditingToken == editingToken else { return }
+                            store.copySelectionPrompt(text: snapshot.text, purpose: .proofreading, expectedEpisodeID: episode.id)
+                        },
+                        EditorSelectionContextMenuCommand(title: "アドバイス用プロンプトをコピー", systemImageName: "doc.on.clipboard") { snapshot in
+                            guard store.currentEpisodeEditingToken == editingToken else { return }
+                            store.copySelectionPrompt(text: snapshot.text, purpose: .advice, expectedEpisodeID: episode.id)
+                        }
+                    ],
                     configuration: IOSEditorFontPreference.configuration(
                         storedRawValue: editorFontFamilyRawValue
                     ),
@@ -580,8 +591,40 @@ struct IOSEditorPane: View {
                     }
                 )
                 .disabled(store.syncV2KeepBothPendingWorkID != nil)
+                IOSEditorAccessoryBar(
+                    commandSession: store.editorCommandSession,
+                    isEnabled: store.syncV2KeepBothPendingWorkID == nil
+                )
+                .id(editingToken)
             }
             .navigationTitle(episode.title)
+            .toolbar {
+                Button("AI支援", systemImage: "sidebar.right") { showingAssistant.toggle() }
+                Menu("プロンプトをコピー", systemImage: "doc.on.clipboard") {
+                    Button("この話・校正用") { store.copyEpisodePrompt(purpose: .proofreading, expectedEpisodeID: episode.id) }
+                    Button("この話・アドバイス用") { store.copyEpisodePrompt(purpose: .advice, expectedEpisodeID: episode.id) }
+                    Button("この章・校正用") { store.copyChapterPrompt(purpose: .proofreading, expectedChapterID: chapter.id) }
+                    Button("この章・アドバイス用") { store.copyChapterPrompt(purpose: .advice, expectedChapterID: chapter.id) }
+                }
+            }
+            .inspector(isPresented: $showingAssistant) {
+                AssistantPanelView(
+                    defaults: userDefaults,
+                    contextID: "\(editingToken)",
+                    episodeTitle: episode.title,
+                    capture: {
+                        guard store.currentEpisodeEditingToken == editingToken,
+                              !store.isDocumentTransitionInProgress,
+                              !store.syncV2AccountTransitionInProgress,
+                              store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
+                        switch store.editorCommandSession.captureActiveCommittedText() {
+                        case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                        case .compositionInProgress: throw AssistantError.composing
+                        case .notActive: return AssistantManuscript(title: episode.title, content: store.selectedEpisode?.content ?? "")
+                        }
+                    }, close: { showingAssistant = false }
+                )
+            }
         } else {
             ContentUnavailableView("話を選択してください", systemImage: "doc.text")
         }

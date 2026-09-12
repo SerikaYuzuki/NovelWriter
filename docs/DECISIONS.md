@@ -1108,3 +1108,14 @@
   3. D-036のWinUI 3 + C# / .NET、portable形式・同期契約・fixtureを共有する境界を維持する。SDK、native editor、installer作成ツールは既定要件に沿って実装時に選ぶ。
 - **置き換える範囲**: CROSS_PLATFORMの未決だった対象Windowsと配布方式を確定する。W0／Windows実装／双方向round-trip／配布物の受入は未完了のまま残す。
 - **詳細**: [CROSS_PLATFORM](CROSS_PLATFORM.md)。今回の文書反映でWindowsプロジェクトやinstallerを作成したことにはしない。
+
+
+## D-089: 利用者設定のOpenAI対応APIへ1話を明示送信する
+
+- 日付: 2026-09-12
+- 判断: 利用者が右panelからの校正・感想・アドバイス、APIキーとプロンプトの設定を明示依頼したため、D-075のprovider停止をこの範囲で更新する。
+- macOS右inspector／iOS適応inspector、現在の1話、用途別prompt、送信先と本文preview後の明示送信を実装する。旧provider／Experimental targetは復活させない。
+- credentialはendpoint別の端末限定Keychain。HTTP境界は作品保存・同期・EditorKitから分離し、本文を自動変更しない。回答はviewの一時状態とし、作品／話切替で失効する。
+- API設定やnetworkの不在は執筆・保存を止めない。clipboard支援の既存契約は維持する。技術契約は[WRITING_ASSISTANT](WRITING_ASSISTANT.md)。
+- 併せてmacOSの専用作品一覧windowと明示Appleログイン導線を採用する。複数作品同時編集には拡張せず、既存のdocument operation gateで作品を切り替える。
+- 実装と検証結果は[今回の作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)へ分け、実API送信・署名済み実機・公開完了をこの決定だけで宣言しない。

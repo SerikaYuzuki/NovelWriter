@@ -528,6 +528,9 @@ extension AppState {
                 application: transitionApplication,
                 suspensionToken: suspensionToken
             )
+            if ownsAuthOperation(owner) {
+                operationMessage = "Appleでサインインできませんでした。接続を確認して、もう一度お試しください。"
+            }
         }
     }
 

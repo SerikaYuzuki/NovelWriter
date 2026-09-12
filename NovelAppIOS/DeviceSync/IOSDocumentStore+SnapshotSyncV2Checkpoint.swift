@@ -112,6 +112,12 @@ extension IOSDocumentStore {
         guard syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
             != .parkedDifferentAccount else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
+        let expectedSession = currentDocumentSessionToken
+        guard await saveNow(),
+              !isSyncV2RemoteAccountTransitionActive,
+              syncV2ActiveWorkID == workID,
+              currentDocumentSessionToken == expectedSession,
+              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
         isSnapshotSyncInFlight = true
         defer { isSnapshotSyncInFlight = false }
         do {

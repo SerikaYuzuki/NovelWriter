@@ -10,6 +10,7 @@ final class DocumentPanelPresenter {
     private static let packageExtension = "novelpkg"
 
     private let appState: AppState
+    var completedDocumentOperation: UUID?
     var alertMessage: String?
 
     init(appState: AppState) {
@@ -21,7 +22,9 @@ final class DocumentPanelPresenter {
         let session = expectedSession ?? appState.documentSessionToken
         Task {
             let success = await appState.createNewDocument(expectedSession: session)
-            if !success {
+            if success {
+                completedDocumentOperation = UUID()
+            } else {
                 alertMessage = appState.documentSessionToken != session
                     ? "作品が切り替わったため、新規作品は作成しませんでした。"
                     : "新規作品を作成できませんでした。保存先の空き容量やアクセス権限を確認してください。"
@@ -50,7 +53,9 @@ final class DocumentPanelPresenter {
 
         Task {
             let success = await appState.importExternalDocument(at: url, expectedSession: session)
-            if !success {
+            if success {
+                completedDocumentOperation = UUID()
+            } else {
                 alertMessage = appState.documentSessionToken != session
                     ? "作品が切り替わったため、選択した作品は開きませんでした。"
                     : "作品を取り込めませんでした。原本は変更していません。形式、空き容量、アクセス権限を確認してください。"

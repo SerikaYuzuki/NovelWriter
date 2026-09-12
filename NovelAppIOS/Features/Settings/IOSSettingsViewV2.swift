@@ -14,12 +14,22 @@ struct IOSSettingsView: View {
     var body: some View {
         List {
             appearanceSections
+            Section("AI支援") {
+                NavigationLink("APIキー・モデル・プロンプト") {
+                    AssistantSettingsView(defaults: userDefaults)
+                }
+            }
             Section("同期") {
                 Text(store.authUIState.label).foregroundStyle(.secondary)
-                if store.authUIState == .signedOut || store.authUIState == .unavailable {
+                switch store.authUIState {
+                case .signedOut, .failed:
                     Button("Appleでサインイン") { Task { await store.signInWithApple() } }
-                } else {
+                case .signedIn:
                     Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
+                case .signingIn:
+                    ProgressView("Appleでサインイン中…")
+                case .unavailable:
+                    Text("同期サーバーが未設定です。端末内で利用できます。")
                 }
                 Button("同期を再開") { Task { _ = await store.synchronizeSnapshotSyncV2() } }
                     .disabled(!store.canExplicitlySyncCurrentWork)

@@ -12,7 +12,7 @@
 
 ## 2. 既定レイアウト
 
-- Sidebar上: 標準開閉と作品一覧へ戻る入口。
+- Sidebar上: 標準開閉と作品一覧windowを開く入口。
 - Outline上: 作品名・章数などのidentityと、そのsection固有の章／人物／ノート／資料追加。
 - Editor上: 左に話追加、保存・同期状態、同期、話メモ、履歴、書き出し、プロットカード参照。右端に標準の話内検索。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
@@ -23,10 +23,11 @@
 
 | ID | 操作 | 配置・カスタマイズ |
 | --- | --- | --- |
-| `workbench.library` | 作品一覧へ戻る | navigation固定 |
+| `workbench.library` | 作品一覧windowを開く | navigation固定 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync.status` | local保存・remote状態、競合確認等 | 執筆時、固定 |
 | `workbench.snapshot.sync` | サーバーと同期 | 同期可能な執筆中作品、固定 |
+| `workbench.writing.assistant` | AI支援inspector開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
 | `workbench.export` | 書き出す… | 移動・削除可 |
@@ -37,7 +38,7 @@
 | `workbench.plot.card.add` | プロットカード追加 | プロットsection、移動・削除可 |
 | `workbench.attachment.add` | 資料取込 | 資料section、固定 |
 
-system sidebar toggleと`.searchable`は標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。旧AI toggle／Cmd+Jを別用途へ再利用しない。
+system sidebar toggleと`.searchable`は標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。D-089のAI支援toggleは`workbench.writing.assistant`とCmd+Jを使用する。
 
 ## 4. カスタマイズ方針
 
