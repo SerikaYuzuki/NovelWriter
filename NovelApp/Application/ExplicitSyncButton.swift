@@ -4,6 +4,7 @@ import SwiftUI
 struct ExplicitSyncButton: View {
     @Environment(AppState.self) private var appState
     let requestSync: () -> Void
+    @State private var setup = ExplicitSyncPresentation()
 
     private var status: WorkbenchSyncStatus {
         WorkbenchSyncStatus.resolve(
@@ -24,8 +25,18 @@ struct ExplicitSyncButton: View {
             .fixedSize()
             .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
         }
-        .help("\(status.title) — クリックまたは⌘Sで保存して同期します。競合がある場合は確認画面を開きます")
-        .accessibilityLabel("\(status.title)、今すぐ同期")
+        .help(appState.snapshotSyncCurrentWorkAccountState == .unbound
+            ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
+            : "クリックまたは⌘Sで保存して同期します。")
+        .contextMenu {
+            if appState.canCloneCurrentWorkIntoActiveAccount {
+                Button("同期用のコピーを作成…") { setup.requestSetup(appState: appState) }
+            } else if !appState.isSignedInToFuminiwa {
+                Button("同期の設定…") { setup.requestSetup(appState: appState) }
+            }
+        }
+        .modifier(ExplicitSyncSetupModifier(presentation: setup))
+        .accessibilityLabel(appState.snapshotSyncCurrentWorkAccountState == .unbound ? "\(status.title)、この端末に保存" : "\(status.title)、今すぐ同期")
         .disabled(!appState.canExplicitlySyncCurrentWork)
         .accessibilityIdentifier("workbench.snapshot.sync")
     }
@@ -40,17 +51,22 @@ final class ExplicitSyncPresentation {
 
     @MainActor
     func requestSync(appState: AppState) {
-        if appState.snapshotSyncV2UIState?.remoteProgress == .needsChoice {
+        if appState.snapshotSyncCurrentWorkAccountState == .unbound || !appState.isSignedInToFuminiwa {
+            Task { await appState.saveAndSyncCurrentWork() }
+        } else if appState.snapshotSyncV2UIState?.remoteProgress == .needsChoice {
             NotificationCenter.default.post(name: .presentSnapshotSyncConflict, object: nil)
         } else if case .readyForSafeAdoption = appState.snapshotSyncV2UIState?.remoteProgress {
             Task { _ = await appState.applySnapshotSyncV2ServerVersion() }
-        } else if !appState.isSignedInToFuminiwa || appState.canCloneCurrentWorkIntoActiveAccount {
-            session = appState.documentSessionToken
-            account = appState.snapshotSyncV2AccountScopeToken
-            showingSetup = true
         } else {
             Task { await appState.synchronizeSnapshotSyncV2() }
         }
+    }
+
+    @MainActor
+    func requestSetup(appState: AppState) {
+        session = appState.documentSessionToken
+        account = appState.snapshotSyncV2AccountScopeToken
+        showingSetup = true
     }
 }
 
@@ -62,7 +78,7 @@ struct ExplicitSyncSetupModifier: ViewModifier {
         content
             .alert("作品を同期する", isPresented: $presentation.showingSetup) {
                 if appState.canCloneCurrentWorkIntoActiveAccount {
-                    Button("アカウントへ追加して同期") {
+                    Button("同期用のコピーを作成") {
                         guard presentation.session == appState.documentSessionToken,
                               presentation.account == appState.snapshotSyncV2AccountScopeToken else { return }
                         Task { _ = await appState.cloneCurrentWorkIntoActiveAccount() }

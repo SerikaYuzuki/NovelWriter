@@ -31,3 +31,7 @@ APIの実送信には利用者自身の設定が必要。開発検証で私的�
 EditorKit 133テスト、AI通信境界・macOS表示11テスト、保存・遷移10テストが成功。macOS通常版とiOS Simulator build成功。SwiftLintは既存警告のみ。全体checkはPython/Swift conformance成功後、Rustのcargo不在で未完了。実API接続・実原稿への校正反映・署名済み実機受入は未実施。
 
 仕様確認: [OpenAI Models一覧](https://developers.openai.com/api/reference/resources/models/methods/list)、[Responses移行ガイド](https://developers.openai.com/api/docs/guides/migrate-to-responses)。
+
+2026-09-12追加修正: 校正は文章による形式指定に加え、`content`のみを必須とするstrict JSON SchemaをResponses/Chat Completionsへ送る。非対応モデル・途中出力は本文に適用しない。AIパネル開閉に0.22秒のアニメーションを追加し、Reduce Motionでは無効にする。
+
+追加修正の検証: AI返答schema・アニメーション後のeditor保持・ローカル作品の反復保存と再起動を含む14テストが成功。ログインあり／なしで同じWorkID・作品数・本文の保存を確認した。実原稿と実APIへの上書き試験は未実施。

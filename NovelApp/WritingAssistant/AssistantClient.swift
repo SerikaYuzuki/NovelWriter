@@ -42,8 +42,9 @@ struct AssistantConfiguration {
     let endpoint: URL
     let model: String
     let prompt: String
+    let replacesManuscript: Bool
 
-    init(endpoint: String, model: String, prompt: String) throws {
+    init(endpoint: String, model: String, prompt: String, replacesManuscript: Bool = false) throws {
         guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)),
               url.scheme == "https", let host = url.host, !host.isEmpty,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
@@ -53,6 +54,7 @@ struct AssistantConfiguration {
         self.endpoint = url
         self.model = model.trimmingCharacters(in: .whitespacesAndNewlines)
         self.prompt = prompt
+        self.replacesManuscript = replacesManuscript
     }
 
     func request(manuscript: AssistantManuscript, apiKey: String) throws -> URLRequest {
@@ -88,6 +90,22 @@ struct AssistantConfiguration {
                                                                          instructions: payload.messages[0].content, input: quoted))
         } else {
             request.httpBody = try JSONEncoder().encode(payload)
+        }
+        if replacesManuscript, let data = request.httpBody {
+            guard var body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw AssistantError.invalidConfiguration
+            }
+            let schema: [String: Any] = [
+                "type": "object", "properties": ["content": ["type": "string"]],
+                "required": ["content"], "additionalProperties": false
+            ]
+            let format: [String: Any] = ["name": "proofread_manuscript", "strict": true, "schema": schema]
+            if usesResponses {
+                body["text"] = ["format": format.merging(["type": "json_schema"]) { _, new in new }]
+            } else {
+                body["response_format"] = ["type": "json_schema", "json_schema": format]
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         return request
     }

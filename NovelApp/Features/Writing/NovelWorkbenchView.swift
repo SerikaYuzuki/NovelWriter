@@ -52,6 +52,7 @@ struct NovelWorkbenchView: View {
     @State private var attachmentImportMessage: OperationMessage?
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAssistantPresented = false
     @FocusState private var projectSidebarIsFocused: Bool
 
@@ -71,8 +72,10 @@ struct NovelWorkbenchView: View {
                     .frame(width: 360)
                     .background(.thinMaterial)
                     .accessibilityIdentifier("workbench.assistant.right")
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
         .toolbar(id: "novelwriter.workbench.v7") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
@@ -313,7 +316,7 @@ struct NovelWorkbenchView: View {
                 }
             }
         case .plot:
-            PlotAndFlagSplitView { chapterID in
+            PlotBoardView(focusedSelection: appState.plotOutlineSelection) { chapterID in
                 Task {
                     guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
                     await appState.selectChapterAfterTransition(chapterID)

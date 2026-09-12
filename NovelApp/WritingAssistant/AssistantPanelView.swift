@@ -106,7 +106,8 @@ struct AssistantPanelView: View {
             let effectiveConfig = try AssistantConfiguration(endpoint: config.endpoint.absoluteString, model: config.model,
                                                              prompt: config.prompt + (requestPurpose == .proofreading && applyProofreading != nil
                                                                  ? "\n校正した全文をJSONオブジェクト {\"content\":\"校正後の全文\"} のみで返してください。説明・引用・Markdown囲みは不要です。省略せず、校正対象外の文字、改行、空白を保持してください。"
-                                                                 : "\n回答はMarkdownで記述してください。"))
+                                                                 : "\n回答はMarkdownで記述してください。"),
+                                                             replacesManuscript: requestPurpose == .proofreading && applyProofreading != nil)
             let request = try effectiveConfig.request(manuscript: manuscript, apiKey: key)
             let id = UUID()
             requestID = id

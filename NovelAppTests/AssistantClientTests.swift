@@ -84,4 +84,18 @@ struct AssistantClientTests {
         #expect(try AssistantClient.proofreadContent(#"{"content":"本文\n続き"}"#) == "本文\n続き")
         #expect(throws: AssistantError.self) { try AssistantClient.proofreadContent("途中のJSON") }
     }
+
+    @Test("proofreading requires complete structured manuscript output", arguments: ["https://api.openai.com/v1/responses", "https://example.invalid/v1/chat/completions"])
+    func proofreadingSchema(endpoint: String) throws {
+        let config = try AssistantConfiguration(endpoint: endpoint, model: "model", prompt: "校正", replacesManuscript: true)
+        let request = try config.request(manuscript: .init(title: "題", content: "原文"), apiKey: "synthetic")
+        let data = try #require(request.httpBody)
+        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let envelope = (body["text"] ?? body["response_format"]) as? [String: Any]
+        let format = try #require((envelope?["format"] ?? envelope?["json_schema"]) as? [String: Any])
+        #expect(format["strict"] as? Bool == true)
+        let schema = try #require(format["schema"] as? [String: Any])
+        #expect(schema["required"] as? [String] == ["content"])
+        #expect(schema["additionalProperties"] as? Bool == false)
+    }
 }
