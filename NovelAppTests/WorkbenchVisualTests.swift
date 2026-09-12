@@ -82,7 +82,7 @@ struct WorkbenchVisualTests {
         #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
     }
 
-    @Test("assistant opens below the editor and closes without replacing its text view")
+    @Test("assistant opens beside the editor and closes without replacing its text view")
     func assistantBottomPanelPreservesEditor() async throws {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
@@ -107,16 +107,17 @@ struct WorkbenchVisualTests {
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(200))
         let editor = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == episode.content })
-        let height = try #require(editor.enclosingScrollView).bounds.height
+
         NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
         try await Task.sleep(for: .milliseconds(200))
         #expect(descendants(host).contains { $0 === editor })
-        #expect(try #require(editor.enclosingScrollView).bounds.height < height - 150)
+        #expect(host.bounds.maxX - editor.convert(editor.bounds, to: host).maxX >= 300)
+        #expect(try #require(editor.enclosingScrollView).bounds.height > 150)
         try await snapshot(host, path: "/tmp/fuminiwa-assistant-bottom.png")
         NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
         try await Task.sleep(for: .milliseconds(200))
         #expect(descendants(host).contains { $0 === editor })
-        #expect(abs(try #require(editor.enclosingScrollView).bounds.height - height) < 5)
+        #expect(host.bounds.maxX - editor.convert(editor.bounds, to: host).maxX < 100)
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

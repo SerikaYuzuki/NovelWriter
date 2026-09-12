@@ -1115,7 +1115,7 @@
 - 日付: 2026-09-12
 - 判断: 利用者が右panelからの校正・感想・アドバイス、APIキーとプロンプトの設定を明示依頼したため、D-075のprovider停止をこの範囲で更新する。
 - macOS右inspector／iOS適応inspector、現在の1話、用途別prompt、送信先と本文preview後の明示送信を実装する。旧provider／Experimental targetは復活させない。
-- credentialはendpoint別の端末限定Keychain。HTTP境界は作品保存・同期・EditorKitから分離し、本文を自動変更しない。回答はviewの一時状態とし、作品／話切替で失効する。
+- credentialはendpoint別の端末限定Keychain。HTTP境界は作品保存・同期・EditorKitから分離する。追加依頼によりmacOS校正のみ、明示送信した未変更本文へUndo可能な置換を認める。変更色は明示保存成功時に消し、自動保存では残す。回答はviewの一時状態とし、作品／話切替で失効する。
 - API設定やnetworkの不在は執筆・保存を止めない。clipboard支援の既存契約は維持する。技術契約は[WRITING_ASSISTANT](WRITING_ASSISTANT.md)。
 - 併せてmacOSの専用作品一覧windowと明示Appleログイン導線を採用する。複数作品同時編集には拡張せず、既存のdocument operation gateで作品を切り替える。
 - 実装と検証結果は[今回の作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)へ分け、実API送信・署名済み実機・公開完了をこの決定だけで宣言しない。

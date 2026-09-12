@@ -11,12 +11,16 @@ struct AssistantPreferences {
         defaults.string(forKey: "assistant.model") ?? ""
     }
 
+    func model(_ purpose: AssistantPurpose) -> String {
+        defaults.string(forKey: "assistant.model.\(purpose.id)") ?? model
+    }
+
     func prompt(_ purpose: AssistantPurpose) -> String {
         defaults.string(forKey: "assistant.prompt.\(purpose.id)") ?? purpose.defaultPrompt
     }
 
     func configuration(_ purpose: AssistantPurpose) throws -> AssistantConfiguration {
-        try AssistantConfiguration(endpoint: endpoint, model: model, prompt: prompt(purpose))
+        try AssistantConfiguration(endpoint: endpoint, model: model(purpose), prompt: prompt(purpose))
     }
 
     func key(endpoint: URL) throws -> String {

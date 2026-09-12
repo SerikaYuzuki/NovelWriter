@@ -133,7 +133,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 Button {
                     isPlotCardRailPresented.toggle()
                 } label: {
-                    Label("プロットカード", systemImage: "sidebar.trailing")
+                    Label("プロットカード", systemImage: "rectangle.bottomthird.inset.filled")
                         .labelStyle(.iconOnly)
                 }
                 .help("執筆中の章のプロットカードを表示")

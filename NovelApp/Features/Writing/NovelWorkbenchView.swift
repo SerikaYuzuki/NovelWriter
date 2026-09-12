@@ -53,36 +53,24 @@ struct NovelWorkbenchView: View {
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
     @State private var isAssistantPresented = false
-    @State private var assistantHeight: CGFloat = 260
-    @GestureState private var assistantResize: CGFloat = 0
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
                 workbenchSplitView
                     .id(workbenchColumnLayout)
-
                 if !showsWritingActions {
                     WorkbenchStatusBarView()
                 }
             }
             .frame(minHeight: 240)
-
             if isAssistantPresented, showsWritingActions {
                 Divider()
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture().updating($assistantResize) { value, state, _ in
-                        state = -value.translation.height
-                    }.onEnded { value in
-                        assistantHeight = min(400, max(220, assistantHeight - value.translation.height))
-                    })
-                    .accessibilityLabel("AI支援の高さを調整")
-                assistantBottomPanel
-                    .frame(height: min(400, max(220, assistantHeight + assistantResize)))
+                assistantPanel
+                    .frame(width: 360)
                     .background(.thinMaterial)
-                    .accessibilityIdentifier("workbench.assistant.bottom")
+                    .accessibilityIdentifier("workbench.assistant.right")
             }
         }
         .toolbar(id: "novelwriter.workbench.v7") {
@@ -148,10 +136,13 @@ struct NovelWorkbenchView: View {
         }
     }
 
-    private var assistantBottomPanel: some View {
-        AssistantPanelView(
+    private var assistantPanel: some View {
+        let session = appState.documentSessionToken
+        let episodeID = appState.selectedEpisodeID
+        let account = appState.snapshotSyncV2AccountScopeToken
+        return AssistantPanelView(
             defaults: appState.userDefaults,
-            contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))",
+            contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))-\(appState.snapshotSyncV2AccountScopeToken)",
             episodeTitle: appState.selectedEpisode?.title ?? "未選択",
             capture: {
                 guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
@@ -162,7 +153,14 @@ struct NovelWorkbenchView: View {
                 case .compositionInProgress: throw AssistantError.composing
                 case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
                 }
-            }, close: { isAssistantPresented = false }
+            }, close: { isAssistantPresented = false },
+            applyProofreading: { manuscript, replacement in
+                guard appState.documentSessionToken == session,
+                      appState.selectedEpisodeID == episodeID,
+                      appState.snapshotSyncV2AccountScopeToken == account,
+                      appState.permitsDocumentInteraction else { return false }
+                return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+            }
         )
     }
 

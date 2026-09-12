@@ -102,3 +102,29 @@ struct MacTextAdapterCommittedTextCaptureTests {
     }
 }
 #endif
+#if canImport(AppKit)
+extension MacTextAdapterCommittedTextCaptureTests {
+    @Test("proofreading preserves native Undo, rejects stale text and IME, and clears only presentation")
+    func proofreadingBoundary() {
+        let harness = makeHarness(initialText: "猫が歩く。")
+        let session = EditorCommandSession()
+        harness.coordinator.registerCommandSurface(with: session)
+        let textView = harness.textView
+        #expect(!session.applyProofreading(expectedText: "古い本文", replacement: "変更"))
+        #expect(session.applyProofreading(expectedText: "猫が歩く。", replacement: "猫が走る。"))
+        #expect(textView.string == "猫が走る。")
+        #expect(textView.textStorage?.attribute(.backgroundColor, at: 2, effectiveRange: nil) != nil)
+        #expect(textView.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil) == nil)
+        #expect(harness.changes.received.last == "猫が走る。")
+        harness.coordinator.undoManager.undo()
+        #expect(textView.string == "猫が歩く。")
+        harness.coordinator.undoManager.redo()
+        #expect(textView.string == "猫が走る。")
+        session.clearProofreadingHighlights()
+        #expect(textView.string == "猫が走る。")
+        #expect(textView.textStorage?.attribute(.backgroundColor, at: 2, effectiveRange: nil) == nil)
+        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        #expect(!session.applyProofreading(expectedText: textView.string, replacement: "変更"))
+    }
+}
+#endif

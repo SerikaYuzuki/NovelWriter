@@ -26,7 +26,7 @@ struct EditorPaneView: View {
                 let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
                     ?? Color(nsColor: .textBackgroundColor)
                 VStack(spacing: 0) {
-                    HStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ZStack {
                             editorCanvas
                             EditorView(
@@ -63,7 +63,8 @@ struct EditorPaneView: View {
                                 chapterID: chapterID,
                                 onClose: { isPlotCardRailPresented = false }
                             )
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                            .frame(height: 240)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .animation(.snappy(duration: 0.2), value: isPlotCardRailPresented)
@@ -161,21 +162,21 @@ private struct WritingPlotCardRail: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(12)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 12) {
                         ForEach(cards) { card in
                             WritingPlotCardReference(
                                 card: card,
                                 isSelected: appState.selectedPlotCardID == card.id,
                                 onSelect: { appState.selectPlotCard(card.id) }
-                            )
+                            ).frame(width: 260)
                         }
                     }
                     .padding(12)
                 }
             }
         }
-        .frame(width: 280)
+        .frame(maxWidth: .infinity)
         .frame(maxHeight: .infinity)
         .workbenchGlassChromeStyle()
         .overlay(alignment: .leading) {

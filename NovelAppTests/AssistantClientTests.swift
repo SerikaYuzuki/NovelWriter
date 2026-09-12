@@ -58,4 +58,30 @@ struct AssistantClientTests {
         #expect(throws: AssistantError.self) { try preferences.saveKey("synthetic", endpoint: endpoint) }
         #expect(throws: AssistantError.self) { try preferences.deleteKey(endpoint: endpoint) }
     }
+
+    @Test("purpose models retain the old global selection until individually configured")
+    func purposeModels() throws {
+        let defaults = makeIsolatedTestUserDefaults()
+        defaults.set("old-model", forKey: "assistant.model")
+        defaults.set("proof-model", forKey: "assistant.model.校正")
+        let preferences = AssistantPreferences(defaults: defaults)
+        #expect(try preferences.configuration(.proofreading).model == "proof-model")
+        #expect(try preferences.configuration(.advice).model == "old-model")
+    }
+
+    @Test("OpenAI uses Responses and only completed text is accepted")
+    func responsesAndCatalog() throws {
+        let config = try AssistantConfiguration(endpoint: "https://api.openai.com/v1/chat/completions", model: "latest-model", prompt: "校正")
+        let request = try config.request(manuscript: .init(title: "題", content: "本文"), apiKey: "synthetic")
+        #expect(request.url?.path == "/v1/responses")
+        let requestData = try #require(request.httpBody)
+        let body = try #require(try JSONSerialization.jsonObject(with: requestData) as? [String: Any])
+        #expect(body["store"] as? Bool == false)
+        #expect(body["input"] as? String != nil)
+        #expect(try AssistantClient.decode(Data(#"{"status":"completed","output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"回答"}]}]}"#.utf8)) == "回答")
+        #expect(throws: AssistantError.self) { try AssistantClient.decode(Data(#"{"status":"incomplete","output":[]}"#.utf8)) }
+        #expect(try AssistantClient.decodeModels(Data(#"{"data":[{"id":"old","created":1},{"id":"new","created":3}]}"#.utf8)) == ["new", "old"])
+        #expect(try AssistantClient.proofreadContent(#"{"content":"本文\n続き"}"#) == "本文\n続き")
+        #expect(throws: AssistantError.self) { try AssistantClient.proofreadContent("途中のJSON") }
+    }
 }

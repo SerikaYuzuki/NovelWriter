@@ -82,6 +82,27 @@ public final class EditorCommandSession {
     private var pendingCommandSurfaceToken: EditorSurfaceToken?
     private var selectionSnapshotSurfaceToken: EditorSurfaceToken?
 
+    private var proofreadingHandler: (token: EditorSurfaceToken, apply: (String, String) -> Bool, clear: () -> Void)?
+
+    /// Apply only to the unchanged active native editor, without crossing a document transition.
+    public func applyProofreading(expectedText: String, replacement: String) -> Bool {
+        guard !isDocumentTransitionPrepared, let handler = proofreadingHandler,
+              handler.token == activeSurfaceToken else { return false }
+        return handler.apply(expectedText, replacement)
+    }
+
+    public func clearProofreadingHighlights() {
+        guard let handler = proofreadingHandler, handler.token == activeSurfaceToken else { return }
+        handler.clear()
+    }
+
+    func registerProofreadingHandler(for token: EditorSurfaceToken,
+                                     apply: @escaping (String, String) -> Bool,
+                                     clear: @escaping () -> Void) {
+        guard token == activeSurfaceToken else { return }
+        proofreadingHandler = (token, apply, clear)
+    }
+
     public init() {}
 
     @discardableResult

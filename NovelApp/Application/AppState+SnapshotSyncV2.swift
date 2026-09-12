@@ -231,7 +231,13 @@ extension AppState {
         if canExplicitlySyncCurrentWork {
             await synchronizeSnapshotSyncV2()
         } else {
-            _ = await saveNow()
+            let session = documentSessionToken
+            let captured = editorCommandSession.captureActiveCommittedText()
+            if await saveNow(), documentSessionToken == session,
+               case .captured = captured,
+               editorCommandSession.captureActiveCommittedText() == captured {
+                editorCommandSession.clearProofreadingHighlights()
+            }
         }
     }
 
@@ -255,6 +261,7 @@ extension AppState {
         guard saved, documentSessionToken == expectedSession,
               snapshotSyncV2AccountScopeToken == expectedAccount,
               currentSnapshotSyncV2WorkID == workID else { return }
+        editorCommandSession.clearProofreadingHighlights()
         // Cmd-S also serves local-only works. Never add an account binding or
         // initiate sign-in as a side effect of saving.
         guard isSignedInToFuminiwa, snapshotSyncCurrentWorkAccountState == .active else {

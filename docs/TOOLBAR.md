@@ -76,3 +76,5 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 [旧レイアウト計画・実装順・手動確認項目の全文](archive/product-guidance-20260912/TOOLBAR.md)。旧仕様のCloudKitラベルとpackage snapshotは現行実装の指示ではない。
 
 作品一覧を先頭の起動sceneとする。一覧で作品を開けた場合、新規作成・取り込みが成功した場合は編集windowを開いて一覧windowを閉じる。失敗した場合は現在のwindowを維持する。メニューの「作品一覧…」もtoolbarと同じ保存境界を通る。
+
+2026-09-12追加依頼: macOSのAI支援は右、プロットカードは本文下部へ配置する。プロットカードtoggleは `rectangle.bottomthird.inset.filled` を使用する。
