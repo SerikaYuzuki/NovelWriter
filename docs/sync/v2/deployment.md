@@ -159,3 +159,17 @@ authenticated destructive request was not run against live data.
 Backups, previous container metadata, upgrade SQL and the previous image are
 retained on the server under the private release directory
 `/DATA/AppData/fuminiwa-sync-v2-role-split/releases/work-deletion-c23da069e`.
+
+### 2026-09-12 initial offline lineage publish
+
+Revision `02561154a` was built as `fuminiwa-sync-v2-initial-lineage:02561154a`
+and deployed to the same role-split server at `https://192.168.11.5:8443`.
+Image ID: `sha256:dee284acc421336f0daf38fd7d5d9225cd9f25a6499a9a0f21b17954a58cb4d5`.
+No schema migration was needed. The previous container, source, and the
+cutover PostgreSQL custom-format dump are retained under
+`/DATA/AppData/fuminiwa-sync-v2-role-split/releases/initial-lineage-02561154a`.
+The dump passed `pg_restore --list`; the replacement became healthy and the
+trusted HTTPS capabilities endpoint returned Auth 1 / Sync 2. The isolated
+PostgreSQL/HTTP test environment was removed after the 79 Rust tests passed.
+This deployment check does not itself prove an individual client's pending
+publish has completed.

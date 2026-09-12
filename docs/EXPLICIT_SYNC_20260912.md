@@ -104,3 +104,5 @@ iPhoneの旧失敗状態ではcreateWork 10件が隔離されていた。最初�
 D-093により公開headがnullの作品に限り、検証済み親closureを持つ最新checkpointの初回公開を許可する。公開済み作品のnull-base、expected-head、祖先、競合の条件は維持する。失敗publishの明示再試行は元のcommand ID・canonical bytes・sealed intentを再利用する。通常の背景処理は隔離済みpublishを勝手に再送しない。
 
 検証は重たい。Swift package 484テスト、変更途中のMac 152／iOS 116テストと最終の関連iOS 25テストが成功。新規回帰は、オフライン3世代の親順登録、各操作でのplanner再生成、最新だけのpublish、並行要求20件の単一seal、隔離publishの同一内容再試行。ビルドと並行した全package実行では既存2秒待機のタイムアウトが出たが、単独実行で成功した。Python conformance 61 vectors、Swift conformanceも実行。`check.sh`はMacにcargoがないためRust段階で停止した。Rustは隔離Docker/PostgreSQLのopt-in HTTP/DB gateを含む79テストが成功。全体script完走や公開配布の完了とは区別する。
+
+サーバーは`02561154a`を稼働role-split構成へ反映し、backupの目録検証、container healthy、TLS経由のAuth 1 / Sync 2応答を確認した。iPhoneにも同revisionの署名済みbuildを反映し起動を確認した。個別作品のpending publish完了は再試行後の端末・サーバー記録で確認する。
