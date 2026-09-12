@@ -94,3 +94,13 @@ applicationの状態変更をcoalesced AsyncStreamで通知し、Workbenchのses
 - サーバーの事前拒否は `error` 項目の応答だが、finalize は receipt として読んで receiptMismatch にしていた。409 の typed upload error を読み、uploadExpired の sealed command は隔離して同じ期限切れ command の無限再送を防ぐ。応答喪失など、成否不明の場合の同一 command 再送は維持する。
 
 検証は中ぐらい。実 SQLite を使い、各操作で planner を再生成し、ACK 直後の期限切れから再準備・finalize・register・publish まで進むケースを追加した。サーバーと同じ期限切れ応答の判別も確認した。関連68テスト、Mac/iOS Debug build、既存 baseline を使った lint は成功。実データの変更やサーバーの変更は行っていない。更新版での実同期完了は未確認。
+
+## オフライン保存後の初回同期（2026-09-12）
+
+iPhoneの旧失敗状態ではcreateWork 10件が隔離されていた。最初の1件はサーバーに同一requestの成功receiptがあり、既存の明示再試行で受領を完了した。その後registerSnapshotが拒否された原因は、最新checkpointだけを転送し、未登録の親Snapshotを送っていなかったことだった。
+
+送信対象の親を先に登録し、履歴の実際のsource generationをcommandに使う。完了register receiptまたは同scopeのverified Inboxで登録済みと確認できる祖先は再転送しない。最終intentは最新checkpointのまま保持する。UIとworkerの計画要求も作品単位でまとめ、publish intentの二重sealを防ぐ。実機ではこの修正で6世代の登録が完了したが、初回publishのサーバーroot限定条件による拒否が続いた。
+
+D-093により公開headがnullの作品に限り、検証済み親closureを持つ最新checkpointの初回公開を許可する。公開済み作品のnull-base、expected-head、祖先、競合の条件は維持する。失敗publishの明示再試行は元のcommand ID・canonical bytes・sealed intentを再利用する。通常の背景処理は隔離済みpublishを勝手に再送しない。
+
+検証は重たい。Swift package 484テスト、変更途中のMac 152／iOS 116テストと最終の関連iOS 25テストが成功。新規回帰は、オフライン3世代の親順登録、各操作でのplanner再生成、最新だけのpublish、並行要求20件の単一seal、隔離publishの同一内容再試行。ビルドと並行した全package実行では既存2秒待機のタイムアウトが出たが、単独実行で成功した。Python conformance 61 vectors、Swift conformanceも実行。`check.sh`はMacにcargoがないためRust段階で停止した。Rustは隔離Docker/PostgreSQLのopt-in HTTP/DB gateを含む79テストが成功。全体script完走や公開配布の完了とは区別する。

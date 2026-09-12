@@ -30,6 +30,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
 
     private var remoteObjectPresence: Set<RemoteObjectPresenceKey> = []
     private var transfers: [TransferSessionKey: SyncV2UploadTransfer] = [:]
+    private var planningTasks: [WorkID: Task<SyncV2CommandPlan, Error>] = [:]
 
     init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
         self.store = store
@@ -50,6 +51,18 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     /// The planner is a single ordered state machine; keep its branch ordering
     /// explicit so sealed command replay cannot be reordered by helpers.
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan {
+        // The UI's explicit sync and the worker may ask concurrently. Actor
+        // reentrancy at store reads must not seal the same publish intent twice.
+        if let task = planningTasks[workID] {
+            return try await task.value
+        }
+        let task = Task { try await self.planNextCommand(workID: workID) }
+        planningTasks[workID] = task
+        defer { planningTasks[workID] = nil }
+        return try await task.value
+    }
+
+    private func planNextCommand(workID: WorkID) async throws -> SyncV2CommandPlan {
         if try await store.workDeletion(workID: workID) != nil {
             await invalidateCaches(for: [workID])
             return .idle
@@ -71,6 +84,12 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         }
         let pending = try await store.pendingIntents(scope: localScope, workID: workID)
         guard !pending.isEmpty else { return .idle }
+        if let first = pending.first, first.status == "sealed",
+           records.contains(where: { $0.intentID == first.intentID && $0.lifecycle == .quarantined }) {
+            // An explicit sync requeues the exact command. Do not try to seal
+            // a second publish against an already sealed intent in the meantime.
+            return .blocked(.fatal(.unexpected))
+        }
         return try await planPending(workID: workID, scope: localScope, pending: pending)
     }
 
@@ -136,8 +155,10 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         try await store.seal(command, intentID: intent.intentID, scope: localScope)
         return .command(command)
     }
+}
 
-    private func planTransfer(
+private extension ProductionSyncV2Planner {
+    func planTransfer(
         workID: WorkID,
         scope localScope: V2LocalWorkScope,
         view: V2ImmutableTransferView,
@@ -145,23 +166,49 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         active: V2ConflictCandidate?,
         resolutionIntentID: UUID?
     ) async throws -> SyncV2CommandPlan {
+        let completedKinds = Set(records.filter { $0.lifecycle == .completed }.map(\.commandKind))
+        if !completedKinds.contains("createWork"), view.summary.acknowledgedHeadGeneration == nil {
+            let command = try makeCreateWork(view)
+            try await store.seal(command, scope: localScope)
+            return .command(command)
+        }
+        if let dependency = try await store.nextSnapshotTransferView(for: view, scope: localScope),
+           let plan = try await planSnapshotRegistration(
+               workID: workID, scope: localScope, view: dependency, records: records
+           ) {
+            return plan
+        }
+        if let active {
+            return try await planActiveTail(
+                workID: workID,
+                scope: localScope,
+                view: view,
+                active: active,
+                resolutionIntentID: resolutionIntentID
+            )
+        }
+        let command = try makePublish(view)
+        try await store.seal(command, intentID: view.pendingIntent.intentID, scope: localScope)
+        return .command(command)
+    }
+
+    private func planSnapshotRegistration(
+        workID: WorkID,
+        scope localScope: V2LocalWorkScope,
+        view: V2ImmutableTransferView,
+        records: [V2SealedCommandRecord]
+    ) async throws -> SyncV2CommandPlan? {
         let currentRecords = records.filter {
             $0.lifecycle == .completed &&
                 $0.sourceSnapshotID == view.snapshot.snapshotId &&
-                $0.sourceGeneration == view.pendingIntent.sourceGeneration
+                $0.sourceGeneration == view.sourceGeneration
         }
-        let completedKinds = Set(records.filter { $0.lifecycle == .completed }.map(\.commandKind))
         let progress = try await transferProgress(
             workID: workID,
             scope: localScope,
             view: view,
             records: currentRecords
         )
-        if !completedKinds.contains("createWork"), view.summary.acknowledgedHeadGeneration == nil {
-            let command = try makeCreateWork(view)
-            try await store.seal(command, scope: localScope)
-            return .command(command)
-        }
         if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) }) {
             let command = try makeObjectCommand(kind: "prepareObject", objectID: object, view: view)
             try await store.seal(command, scope: localScope)
@@ -181,7 +228,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
                 .filter { $0.binding == view.binding && $0.workID == workID }
                 .map(\.objectID)
         )
-        if ready.count < progress.prepared.count {
+        if !progress.prepared.isSubset(of: ready) {
             guard let object = progress.prepared.subtracting(ready).first else {
                 return .blocked(.fatal(.invalidLocalState))
             }
@@ -203,18 +250,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             try await store.seal(command, scope: localScope)
             return .command(command)
         }
-        if let active {
-            return try await planActiveTail(
-                workID: workID,
-                scope: localScope,
-                view: view,
-                active: active,
-                resolutionIntentID: resolutionIntentID
-            )
-        }
-        let command = try makePublish(view)
-        try await store.seal(command, intentID: view.pendingIntent.intentID, scope: localScope)
-        return .command(command)
+        return nil
     }
 
     private struct TransferProgress {
@@ -329,8 +365,8 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         TransferSessionKey(
             binding: view.binding,
             workID: view.workID,
-            sourceGeneration: view.pendingIntent.sourceGeneration,
-            sourceSnapshotID: view.pendingIntent.sourceSnapshotID,
+            sourceGeneration: view.sourceGeneration,
+            sourceSnapshotID: view.snapshot.snapshotId,
             intentID: view.pendingIntent.intentID,
             objectID: objectID,
             commandID: record.commandID
@@ -618,8 +654,8 @@ private extension ProductionSyncV2Planner {
             commandKind: kind,
             payload: payload,
             schemaVersion: 2,
-            sourceGeneration: view.pendingIntent.sourceGeneration,
-            sourceSnapshotId: view.pendingIntent.sourceSnapshotID.rawValue
+            sourceGeneration: view.sourceGeneration,
+            sourceSnapshotId: view.snapshot.snapshotId.rawValue
         )
         return try SealedCommand.decodeCanonical(CanonicalJSON.encode(envelope))
     }
@@ -682,7 +718,7 @@ private extension ProductionSyncV2Planner {
                 workID: transfer.workID,
                 objectID: transfer.objectID,
                 sourceSnapshotID: view.snapshot.snapshotId,
-                sourceGeneration: view.pendingIntent.sourceGeneration,
+                sourceGeneration: view.sourceGeneration,
                 uploadID: transfer.uploadID,
                 capability: transfer.capability,
                 exactBytes: transfer.exactBytes,

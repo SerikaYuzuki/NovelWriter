@@ -164,7 +164,13 @@ DocumentID is portable content identity and is not a server uniqueness or
 deduplication key, so multiple WorkIDs may carry the same DocumentID. Only
 after this receipt may the
 client prepare/upload/finalize objects, register the first Snapshot, and
-publish from expected remote head `null`. No object or snapshot route creates
+publish from expected remote head `null`. Before publishing, every required parent Snapshot must be
+registered in parent-first order. If the Work's current head is still `null`,
+the first candidate may be a registered descendant (the latest local
+checkpoint), not only a parentless root. The full object/parent closure is
+validated by registration. Once a current head exists, a null expected head
+still requires a root candidate; the existing lineage and conflict checks
+remain in force (D-093). No object or snapshot route creates
 a missing Work implicitly.
 
 `POST /v2/works/{workId}/conflict/resolve` is atomic with the following exact

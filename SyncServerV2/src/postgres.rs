@@ -2714,7 +2714,11 @@ impl Repository {
             {
                 return Err(SyncError::LineageViolation);
             }
-        } else if !self.snapshot_is_root(tx, p, c.work_id, &candidate).await? {
+        // An empty Work has no public base to protect. Its first publish may
+        // select any registered descendant whose parent closure is already
+        // verified by register_snapshot. Once a head exists, retain the root
+        // rule for a null expected head so it cannot invent a common base.
+        } else if current.is_some() && !self.snapshot_is_root(tx, p, c.work_id, &candidate).await? {
             return Err(SyncError::LineageViolation);
         }
 

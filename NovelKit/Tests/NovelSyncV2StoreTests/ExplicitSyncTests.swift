@@ -72,3 +72,28 @@ import Testing
     #expect(try await reopened.open(workID: workID, scope: scopeA).document == document)
     await reopened.close()
 }
+
+@Test func explicitSyncReplaysQuarantinedPublishWithoutReplacingItsIntent() async throws {
+    let root = temporaryStoreRoot("explicit-publish-recovery")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let workID = WorkID(UUID())
+    let document = makeDocument(title: "publish recovery")
+    let saved = try await store.checkpoint(V2CheckpointRequest(
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+    ), scope: scopeA)
+    let command = try publishCommand(workID: workID, checkpoint: saved)
+    try await store.seal(command, intentID: saved.intentID, scope: scopeA)
+    try await store.quarantine(commandID: command.commandId, scope: scopeA)
+    await store.close()
+    let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
+    try await reopened.requestSynchronization(workID: workID, scope: scopeA)
+    try await reopened.requestSynchronization(workID: workID, scope: scopeA)
+    let pending = try await reopened.pendingSealedCommands(scope: scopeA, workID: workID)
+    #expect(pending.count == 1)
+    #expect(pending.first?.commandID == command.commandId)
+    #expect(pending.first?.canonicalRequest == command.canonicalBytes)
+    #expect(pending.first?.intentID == saved.intentID)
+    #expect(try await reopened.open(workID: workID, scope: scopeA).document == document)
+    await reopened.close()
+}

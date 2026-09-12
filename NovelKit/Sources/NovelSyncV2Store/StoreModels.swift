@@ -174,6 +174,9 @@ public struct V2ImmutableTransferView: Sendable {
     public let workID: WorkID
     public let binding: V2AccountBinding
     public let summary: V2WorkSummary
+    /// Historical source for dependency registration; pendingIntent still
+    /// identifies the final checkpoint to publish.
+    public let sourceGeneration: Int64
     public let snapshot: EncodedSnapshot
     public let pendingIntent: V2PendingIntent
     public let expectedRemoteHead: V2RemoteHead?
@@ -184,11 +187,13 @@ public struct V2ImmutableTransferView: Sendable {
         summary: V2WorkSummary,
         snapshot: EncodedSnapshot,
         pendingIntent: V2PendingIntent,
-        expectedRemoteHead: V2RemoteHead?
+        expectedRemoteHead: V2RemoteHead?,
+        sourceGeneration: Int64? = nil
     ) {
         self.workID = workID
         self.binding = binding
         self.summary = summary
+        self.sourceGeneration = sourceGeneration ?? pendingIntent.sourceGeneration
         self.snapshot = snapshot
         self.pendingIntent = pendingIntent
         self.expectedRemoteHead = expectedRemoteHead

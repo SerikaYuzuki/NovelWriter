@@ -624,6 +624,85 @@ fn derive_manifest(
     canonical_json(&manifest).map_err(failure)
 }
 
+async fn exercise_initial_descendant_publish(
+    repo: &Repository,
+    principal: &AuthenticatedPrincipal,
+    template: &Value,
+    title_object: [u8; 32],
+    title_count: usize,
+) -> ScenarioResult<()> {
+    let work_id = Uuid::new_v4();
+    let document_id = Uuid::new_v4();
+    create_work(repo, principal, work_id, document_id).await?;
+    let document = canonical_json(&json!({
+        "documentCreatedAt":"2026-08-17T00:00:00Z", "documentId":document_id
+    }))
+    .map_err(failure)?;
+    let object = upload_object(repo, principal, work_id, &document, [0x33; 32], 1).await?;
+    let root_bytes = derive_manifest(
+        template,
+        work_id,
+        object,
+        document.len(),
+        title_object,
+        title_count,
+        &[],
+    )?;
+    let (root, _) = register_snapshot(repo, principal, work_id, root_bytes, 1).await?;
+    let child_bytes = derive_manifest(
+        template,
+        work_id,
+        object,
+        document.len(),
+        title_object,
+        title_count,
+        &[root],
+    )?;
+    let (child, _) = register_snapshot(repo, principal, work_id, child_bytes, 2).await?;
+    let (published, status, bytes) = publish(repo, principal, work_id, child, 2, None).await?;
+    ensure(status == 200, "initial descendant publish was rejected")?;
+    let response = response_value(&bytes)?;
+    ensure(
+        response["head"]["generation"] == 1 && response["head"]["snapshotId"] == hex::encode(child),
+        "initial descendant did not become the first public head",
+    )?;
+    ensure(
+        repo.command(principal, &published).await? == (status, bytes),
+        "initial descendant receipt replay changed",
+    )?;
+
+    // Once a head exists, a different null-base command must not use this
+    // exception to overwrite an initialized Work or manufacture a base.
+    let invalid = command(
+        principal,
+        Uuid::new_v4(),
+        CommandKind::Publish,
+        work_id,
+        child,
+        2,
+        json!({"candidateSnapshotId":hex::encode(child),"expectedRemoteHead":null,"workId":work_id}),
+    )?;
+    ensure(
+        matches!(
+            repo.command(principal, &invalid).await,
+            Err(SyncError::LineageViolation)
+        ),
+        "non-root null-base publish was accepted after initialization",
+    )?;
+    let rejected_receipt: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2)",
+    )
+    .bind(&principal.account_id)
+    .bind(invalid.command_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    ensure(
+        !rejected_receipt,
+        "rejected null-base publish left a receipt",
+    )?;
+    Ok(())
+}
+
 struct WorkGraph {
     work_id: Uuid,
     document_bytes: Vec<u8>,
@@ -1721,6 +1800,14 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         .find(|object| object.file == "work-title.json")
         .ok_or_else(|| failure("fixture title missing"))?;
     let base_title_object = decode_digest(&base_title.object_id).map_err(failure)?;
+    exercise_initial_descendant_publish(
+        &repo,
+        &account_a,
+        &template,
+        base_title_object,
+        base_title.byte_count,
+    )
+    .await?;
 
     let server_graph = setup_conflicted_work(
         &repo,

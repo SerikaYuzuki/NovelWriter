@@ -31,7 +31,11 @@ Required invariants:
    boundary.
 8. a new local Work remains editable at generation 1 or later while offline;
    its first remote plan is exactly createWork, object closure, register, then
-   publish with expected head null. No later step may bootstrap a missing Work.
+   publish with expected head null. Register missing parent Snapshots before
+   their descendants. When the current server head is null, publish the latest
+   registered checkpoint directly; do not publish each historical ancestor.
+   Once a head exists, keep the existing expected-head lineage rules.
+   No later step may bootstrap a missing Work.
 
 ## Conflict choices
 

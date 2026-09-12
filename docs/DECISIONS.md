@@ -1141,3 +1141,9 @@
 ## D-092: 作品一覧から端末とサーバーの作品を完全削除する
 
 2026-09-12採択。利用者の明示依頼により、macOS作品一覧の右クリックから本文・履歴・添付を完全削除する。端末intentを先に確定し、bound作品はserver成功後にlocal purgeする。通常保存・別作品の操作はHTTPを待たない。失敗は削除待ちとして再試行し、削除済みWorkIDの再作成を拒否する。詳細は[削除契約](sync/v2/work-deletion.md)。アカウント削除猶予とは別で、backupや別端末の物理消去を保証しない。
+
+## D-093: 初回同期は検証済み履歴の最新checkpointを公開する
+
+2026-09-12。同期不具合修正に伴い初回publishの条件を明確化する。同期前に複数のローカルcheckpointがあっても、必要な親Snapshotとobjectを親から順に登録し、公開headがまだnullの場合は最新checkpointを最初のheadにできる。古い版を途中の公開headにする必要はない。headが既にある場合のexpected head・祖先照合・競合条件は維持する。wire／SQLite／PostgreSQLの形とepochは変えない。
+
+同じ作品に対する計画要求はまとめ、同じintentを二重にsealしない。失敗したpublishの明示再試行では、既存のsealed intentとcommand ID／bytesを再利用し、受領検証を省略しない。D-090の現行v2限定を保ち、旧形式へのfallback・実原稿の削除・履歴の再生成は行わない。
