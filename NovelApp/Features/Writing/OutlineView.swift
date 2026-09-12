@@ -31,7 +31,7 @@ struct OutlineContainerView: View {
         }
         .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
         .workbenchGlassChromeStyle()
-        .focusedSceneValue(\.workbenchSearchSurface, .outline)
+        .focusedValue(\.workbenchSearchSurface, .outline)
         .focusable()
         .onKeyPress(.escape) {
             guard appState.outlinePresentation.isSearchVisible else { return .ignored }

@@ -8,6 +8,7 @@ enum IOSRegularProjectSection: Hashable {
     case characters
     case worldbuilding
     case references
+    case feedback
     case settings
 }
 
@@ -37,6 +38,10 @@ struct IOSRegularProjectSidebar: View {
                 Label("世界観", systemImage: "globe.asia.australia")
                     .tag(IOSRegularProjectSection.worldbuilding)
                     .accessibilityIdentifier("ios.ipad.project.worldbuilding")
+
+                Label("感想・アドバイス", systemImage: "text.bubble")
+                    .tag(IOSRegularProjectSection.feedback)
+                    .accessibilityIdentifier("ios.ipad.project.feedback")
 
                 Label("資料", systemImage: "paperclip")
                     .tag(IOSRegularProjectSection.references)

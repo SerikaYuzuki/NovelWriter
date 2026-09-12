@@ -12,6 +12,7 @@ struct IOSProjectHomeView: View {
     let openPlot: () -> Void
     let openCharacters: () -> Void
     let openWorldbuilding: () -> Void
+    let openFeedback: () -> Void
     let openReferences: () -> Void
     let openSettings: () -> Void
 
@@ -30,6 +31,7 @@ struct IOSProjectHomeView: View {
                 Button("プロット", action: openPlot)
                 Button("登場人物", action: openCharacters)
                 Button("世界観", action: openWorldbuilding)
+                Button("感想・アドバイス", action: openFeedback)
                 Button("資料", action: openReferences)
             }
             Section("同期") {

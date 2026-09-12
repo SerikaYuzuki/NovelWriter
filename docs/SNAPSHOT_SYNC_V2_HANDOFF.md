@@ -144,3 +144,15 @@ macOS app全166テスト、iOS app全128テストが成功し、校正を現在�
 更新前にMac SQLite online backupとiOS SQLite一式のコピーをリポジトリ外の非公開開発バックアップへ保存し、両コピーのintegrity_checkが成功した。実原稿やAPIキーはテストに使っておらず、AIへの実送信は未実施。実通信中のアイコン推移と新しい本文の端末間往復は実機受入で確認する。
 
 署名済みmacOS／iOS buildは最終レイアウト調整後も成功した。Mac更新版を起動し、チェック欄の操作・内容に応じた高さと「同期済み」の表示を確認。カリカリくんへの最終版インストールは成功したが、起動確認は端末ロック（Locked）で未完了。インストール成功を実機受入完了とは扱わない。
+
+## 2026-09-13 感想・アドバイス保存とツールバー配置
+
+D-089を更新し、感想・アドバイスを日時付きMarkdown attachmentとして保存・同期する。左の専用項目から読み取り・確認付き削除が可能。新規wire／DB schemaやserver変更は不要。校正と感想の設定が混ざるTextEditorのbindingを用途ごとに分離し、送信時にも用途を明記する。Macの既存誤設定は感想用の既定文へ修正し、校正の独自文が残ることを画面と保存値の再読取で確認した。
+
+重たい検証を選択。Mac app全171件、iOS app全132件が成功。その後、toolbarの即時終了・復元と検索focus修正を含むMac native UI 7件が成功した。両appの合成回答の保存・再起動・削除、本文不変、stale account拒否、SnapshotCodec round-tripを含む。関連packageテストは最初の絞り込み26件、v2 store／portable bridge 78件が成功（重複を含むため全体件数とは合算しない）。独立conformanceと各境界チェックが成功。今回変更したSwiftの整形検査も成功。
+
+`check.sh`はconformance／構造／依存の成功後、既存のEpisodeRenamePresentation.swift、EpisodeRenameTests.swift、ProductionUnboundAttachmentTests.swiftのSwiftFormat違反で停止。SwiftLintは既存FuminiwaApp.swiftの351行type_body_length違反で失敗。全体checkの完走とは扱わず、上記のapp／関連package検証を個別実行した。
+
+Mac実画面で、画像指定の既定配置、並べ替え→終了→再起動の保持、元の順への復帰、話内検索とCmd+Fの本文／Outline分岐、専用回答画面を確認。合成Markdownの日時・見出し・箇条書きと読み取り専用表示も描画テストで確認した。作品本文やAPIキーをAIへ実送信していない。
+
+Mac／iPhoneの更新前データを非公開の開発バックアップへ保全し、両SQLiteコピーのintegrity_checkが成功。最終macOS／iOS署名buildとiPhoneへのインストールは成功。Mac更新版の起動を確認。iPhoneはLockedで起動確認が未完了。今回追加した回答の実端末間転送は未実施で、保存・同期形式のテスト成功と区別する。

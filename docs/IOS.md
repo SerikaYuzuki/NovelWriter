@@ -11,7 +11,7 @@ iPhone / iPadで、通信を待たず日本語小説を編集・保存する。�
 | 対象 | 2026-09-12に確認したソース | 完了と区別する点 |
 | --- | --- | --- |
 | 作品棚・作品ホーム | `Library/IOSLibraryViewV2.swift`、`IOSProjectHomeViewV2.swift` | ボタンとList中心。既存カードUIの品質に到達したとは扱わない |
-| 段階導線・iPad複数列 | `Features/Writing/IOSWorkbenchViewV2.swift` | 執筆・作品情報・プロット・人物・世界観・資料・設定へのrouteあり。実機受入は別 |
+| 段階導線・iPad複数列 | `Features/Writing/IOSWorkbenchViewV2.swift` | 執筆・作品情報・プロット・人物・世界観・資料・感想アドバイス・設定へのrouteあり。実機受入は別 |
 | 本文 | 同ファイルの`IOSEditorPane`から`EditorView`へ接続 | 執筆補助バーと本文context menuのprompt操作をlive Viewへ接続済み。署名済み実機受入は未実施 |
 | クリップボード支援 | `DocumentLifecycle/IOSDocumentStore+ClipboardV2.swift`と共有builder | 選択context menuと話／章toolbar menuを接続済み |
 | 履歴・競合 | 作品ホームに履歴取得／復元と3択あり | 日時の履歴行から確認dialogで復元。作品／accountをまたぐ確認を拒否し、診断用ID入力を廃止 |
@@ -94,3 +94,5 @@ Files原本のopen-in-place、共同編集、複数作品同時編集、Windows�
 ## 2026-09-12 作品一覧での作品名変更
 
 作品行を長押しし、「作品名を変更」から名前を編集できる。空白だけの名前は確定できない。名前変更中は対象行に進行表示を出す。端末内の作品は通信を待たずSQLiteへ保存し、サーバーのみの作品は明示操作に必要なデータを取得してから変更する。作品やアカウントが切り替わった場合は古い確認を適用しない。編集中の入力を先に保存し、一覧から別作品の名前を変更しても選択中の作品・話やEditorの内容世代は変えない。
+
+2026-09-13: 作品ホーム／iPad左sidebarに「感想・アドバイス」を追加。日時付きの読み取り専用Markdownを一覧・詳細で読み、長押しから確認後に削除する。保存／削除は既存attachment checkpointを通じ作品と同期する。回答取得時のsession／accountを保存まで保持する。形式は[AI feedback attachments](sync/v2/assistant-feedback.md)。

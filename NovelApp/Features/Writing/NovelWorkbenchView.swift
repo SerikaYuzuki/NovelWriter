@@ -23,7 +23,7 @@ enum WorkbenchColumnLayout: Hashable {
         switch section {
         case .projectInfo, .settings:
             self = .twoColumn
-        case .structure, .plot, .characters, .worldbuilding, .references:
+        case .structure, .plot, .characters, .worldbuilding, .references, .feedback:
             self = .threeColumn
         }
     }
@@ -42,6 +42,7 @@ struct NovelWorkbenchView: View {
     @State private var explicitSyncPresentation = ExplicitSyncPresentation()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
+    @State private var selectedFeedbackID: UUID?
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
     @State private var attachmentImportSession: DocumentSessionToken?
@@ -84,18 +85,6 @@ struct NovelWorkbenchView: View {
         }
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarBackground(Color(nsColor: .underPageBackgroundColor), for: .windowToolbar)
-        // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
-        // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
-        // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
-        .searchable(
-            text: Bindable(editorSearchSession).query,
-            isPresented: searchableIsPresented,
-            placement: .toolbar,
-            prompt: "話内を検索"
-        )
-        .onSubmit(of: .search) {
-            editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
-        }
         .onChange(of: showsWritingActions) { _, isWriting in
             if !isWriting {
                 isPlotCardRailPresented = false
@@ -154,6 +143,9 @@ struct NovelWorkbenchView: View {
                       appState.permitsDocumentInteraction else { return false }
                 return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
             },
+            saveFeedback: { feedback in
+                await appState.saveAssistantFeedback(feedback, session: session, account: account)
+            },
             chapters: appState.document.chapters,
             captureScope: { scope in
                 guard appState.documentSessionToken == session,
@@ -167,15 +159,6 @@ struct NovelWorkbenchView: View {
                     case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
                     }
                 }
-            }
-        )
-    }
-
-    private var searchableIsPresented: Binding<Bool> {
-        Binding(
-            get: { editorSearchSession.isSearchPresented },
-            set: { newValue in
-                editorSearchSession.isSearchPresented = newValue
             }
         )
     }
@@ -194,7 +177,7 @@ struct NovelWorkbenchView: View {
                 projectSidebar
             } content: {
                 workbenchContent
-                    .toolbar { WorkbenchOutlineToolbarContent() }
+                    .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
                     .navigationSplitViewColumnWidth(
                         min: contentColumnWidths.min,
                         ideal: contentColumnWidths.ideal,
@@ -289,6 +272,8 @@ struct NovelWorkbenchView: View {
         case .plot:
             PlotChapterOutlineView()
                 .navigationTitle("プロット")
+        case .feedback:
+            MacAssistantFeedbackOutline(selection: $selectedFeedbackID)
         case .references:
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
@@ -302,21 +287,25 @@ struct NovelWorkbenchView: View {
 
     private var workbenchDetail: some View {
         workbenchDetailContent
-            .toolbar(id: "novelwriter.workbench.v7") {
+            .background {
+                WorkbenchToolbarPersistence(profile: appState.workspaceSelection.section.rawValue)
+                    .id(appState.workspaceSelection.section)
+                    .frame(width: 0, height: 0)
+            }
+            .toolbar(id: WorkbenchToolbarIdentity.current) {
                 WorkbenchToolbarContent(
                     overlayState: overlayState,
                     requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
                     showsWritingActions: showsWritingActions,
                     isPlotCardRailPresented: $isPlotCardRailPresented,
-                    requestEpisodeRename: {
-                        guard let episode = appState.selectedEpisode,
-                              let chapterID = appState.selectedChapterID else { return }
-                        episodePendingRename = EpisodeRenameRequest(
-                            episode: episode, chapterID: chapterID, appState: appState
-                        )
-                    }
+                    requestEpisodeRename: requestEpisodeRename
                 )
             }
+    }
+
+    private func requestEpisodeRename() {
+        guard let episode = appState.selectedEpisode, let chapterID = appState.selectedChapterID else { return }
+        episodePendingRename = EpisodeRenameRequest(episode: episode, chapterID: chapterID, appState: appState)
     }
 
     @ViewBuilder
@@ -357,6 +346,8 @@ struct NovelWorkbenchView: View {
                     await appState.selectChapterAfterTransition(chapterID)
                 }
             }
+        case .feedback:
+            AssistantFeedbackDetail(record: appState.assistantFeedback.first { $0.id == selectedFeedbackID })
         case .references:
             AttachmentDetailView(fileName: selectedAttachmentFileName)
         case .projectInfo:
@@ -395,7 +386,7 @@ struct NovelWorkbenchView: View {
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
         case .plot:
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
-        case .characters, .references:
+        case .characters, .references, .feedback:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
         case .worldbuilding:
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)

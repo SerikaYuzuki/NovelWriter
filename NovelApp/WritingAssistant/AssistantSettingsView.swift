@@ -43,12 +43,7 @@ struct AssistantSettingsView: View {
                 Picker("用途", selection: $purpose) {
                     ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
                 }
-                TextEditor(text: Binding(
-                    get: { prompts[purpose.id] ?? purpose.defaultPrompt },
-                    set: { prompts[purpose.id] = $0 }
-                ))
-                .frame(minHeight: 140)
-                .accessibilityLabel("用途別プロンプト")
+                promptEditor(for: purpose)
                 Button("この用途の初期値に戻す") { prompts[purpose.id] = purpose.defaultPrompt }
             }
             Section {
@@ -74,6 +69,16 @@ struct AssistantSettingsView: View {
             models = Dictionary(uniqueKeysWithValues: AssistantPurpose.allCases.map { ($0.id, preferences.model($0)) })
             prompts = Dictionary(uniqueKeysWithValues: AssistantPurpose.allCases.map { ($0.id, preferences.prompt($0)) })
         }
+    }
+
+    private func promptEditor(for selectedPurpose: AssistantPurpose) -> some View {
+        TextEditor(text: Binding(
+            get: { prompts[selectedPurpose.id] ?? selectedPurpose.defaultPrompt },
+            set: { prompts[selectedPurpose.id] = $0 }
+        ))
+        .id(selectedPurpose)
+        .frame(minHeight: 140)
+        .accessibilityLabel("\(selectedPurpose.rawValue)用プロンプト")
     }
 
     @MainActor

@@ -13,6 +13,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
+    @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
 
@@ -59,40 +60,9 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .defaultCustomization(.visible)
         }
 
-        if showsWritingActions {
-            ToolbarItem(id: "workbench.episode.rename") {
-                Button("話の名前を変更", systemImage: "pencil") {
-                    requestEpisodeRename()
-                }
-                .help("選択中の話の名前を変更")
-                .disabled(appState.selectedEpisode == nil || !appState.permitsDocumentInteraction)
-                .accessibilityIdentifier("workbench.episode.rename")
-            }
-            ToolbarItem(id: "workbench.writing.assistant") {
-                Button("AI支援", systemImage: "sidebar.right") {
-                    NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
-                }
-                .help("AI支援パネルを開閉")
-            }
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.flexible)
         }
-
-        if showsWritingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
-                Button {
-                    Task {
-                        _ = await appState.addEpisodeAfterTransition()
-                    }
-                } label: {
-                    Label("話を追加", systemImage: "square.and.pencil")
-                }
-                .help("選択中の章に話を追加")
-                .disabled(appState.selectedChapter == nil)
-            }
-            .customizationBehavior(.default)
-            .defaultCustomization(.visible)
-        }
-
-        synchronizationItem
 
         if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
@@ -126,6 +96,8 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
+            synchronizationItem
+
             ToolbarItem(id: WorkbenchToolbarItemID.export) {
                 Button {
                     exportPresenter.present()
@@ -149,6 +121,36 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed)
+        }
+        ToolbarItem(id: "workbench.search") {
+            WorkbenchSearchField(query: Bindable(editorSearchSession).query,
+                                 focusRequest: editorSearchSession.focusRequest) {
+                editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
+            }
+            .frame(minWidth: 160, idealWidth: 260, maxWidth: 320)
+        }
+        .customizationBehavior(.default)
+        .defaultCustomization(.visible)
+
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed)
+        }
+        if !showsWritingActions {
+            synchronizationItem
+        }
+        if showsWritingActions {
+            ToolbarItem(id: "workbench.writing.assistant") {
+                Button("AI支援", systemImage: "sidebar.right") {
+                    NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+                }
+                .help("AI支援パネルを開閉")
             }
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
@@ -421,6 +423,7 @@ final class SnapshotMenuPresenter {
 /// Items scoped to the outline create its native tracking separator.
 struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
     @Environment(AppState.self) private var appState
+    var requestEpisodeRename: () -> Void = {}
     var body: some CustomizableToolbarContent {
         if showsWritingActions || showsPlotActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd) {
@@ -433,6 +436,33 @@ struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
                 }
                 .help("章を追加")
             }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWritingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
+                Button {
+                    Task {
+                        _ = await appState.addEpisodeAfterTransition()
+                    }
+                } label: {
+                    Label("話を追加", systemImage: "square.and.pencil")
+                }
+                .help("選択中の章に話を追加")
+                .disabled(appState.selectedChapter == nil)
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+            ToolbarItem(id: "workbench.episode.rename") {
+                Button("話の名前を変更", systemImage: "pencil") {
+                    requestEpisodeRename()
+                }
+                .help("選択中の話の名前を変更")
+                .disabled(appState.selectedEpisode == nil || !appState.permitsDocumentInteraction)
+                .accessibilityIdentifier("workbench.episode.rename")
+            }
+
             .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }

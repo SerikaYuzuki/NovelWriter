@@ -1,12 +1,12 @@
 # macOS Workbenchツールバー
 
-**現行ソース確認: 2026-09-12**
+**現行ソース確認: 2026-09-13**
 
 一段のnative toolbarから現在の作品操作へ到達でき、本文の面積と標準のカスタマイズを保つ。見た目は [STYLE.md](STYLE.md)、保存・同期の意味は [Snapshot Sync v2](SNAPSHOT_SYNC_V2.md) に従う。
 
 ## 1. 現在の所有者と状態
 
-[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v7")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの追加項目だけは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
+[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v8")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの章追加・話追加・話名変更などは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
 
 `AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。旧CloudKitの`workbench.cloud.publish`／`workbench.cloud.sync`は現行項目ではない。ファイルに残る旧Viewや昔の受入記録を現行targetと混同しない。
 
@@ -14,7 +14,7 @@
 
 - Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
 - Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
-- Editor上: 左に話追加、保存・同期状態、同期、話メモ、履歴、書き出し、プロットカード参照。右端に標準の話内検索。
+- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。2026-09-13の利用者提示画像を既定配置にする。
 - 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
@@ -41,13 +41,13 @@
 | `workbench.plot.card.add` | プロットカード追加 | プロットsection、移動・削除可 |
 | `workbench.attachment.add` | 資料取込 | 資料section、移動・削除可 |
 
-system sidebar toggleと`.searchable`は標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。D-089のAI支援toggleは`workbench.writing.assistant`とCmd+Jを使用する。
+話内検索は`workbench.search`の通常項目内にnative NSSearchFieldを置き、移動・削除できる。system sidebar toggleは標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。D-089のAI支援toggleは`workbench.writing.assistant`とCmd+Jを使用する。
 
 ## 4. カスタマイズ方針
 
 個別`ToolbarItem(id:)`で独立した移動／削除を許し、複数操作を一つのgroupへまとめない。OSの`ToolbarCommands()`と標準context menuを使用し、順序を`NovelDocument`、package、同期データへ保存しない。
 
-アプリ固有の操作は全て通常項目として移動・削除を許す。Sidebar開閉、検索、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
+アプリ固有の操作は全て通常項目として移動・削除を許す。Sidebar開閉、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
 
 ## 5. ツールバー外の入口
 
@@ -57,7 +57,7 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 
 話内検索は現在の話本文だけが対象。標準toolbar検索欄を使い、Cmd+Fでfocus、Return／Cmd+Gで次、Shift+Cmd+Gで前へ進む。話切替で結果カーソルをresetする。Outlineにfocusがある場合はCmd+FをOutline絞り込みへ送り、queryを共有しない。
 
-幅は既存の320pt目安（最小240pt、余裕時440pt）。該当なしは一時表示やaccessibility通知で示し、toolbarを二段にしない。
+検索欄は最小160pt、目安260pt、最大320pt。該当なしは一時表示やaccessibility通知で示し、toolbarを二段にしない。
 
 ## 7. 操作の安全境界
 
@@ -99,3 +99,7 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 2026-09-13: 執筆画面下部は見出し行・区切り線・専用の閉じるボタンをなくし、横並びのプロットカード一覧だけにする。開閉は既存のツールバーボタンから行う。プロット編集画面のカード／伏線の上下分割は維持する。
 
 同変更は軽い検証を実施。macOS build成功。更新版の執筆画面で、下部にカード一覧のみが表示され、欄内の見出し・区切り・閉じるボタンがなく、開閉ボタンが表示中になることを確認した。
+
+2026-09-13: toolbar IDをv8へ一度更新して依頼された既定順へ切り替える。以後のnativeカスタマイズは端末内UserDefaultsにsection別で保持し、SwiftUIのwindow再構築後に復元する。split viewのtracking separatorはOSの管理を維持する。検索を削除した場合は本文側のCmd+Fで再追加してfocusする。検索語や配置は作品へ同期しない。
+
+本文とOutlineの検索先は、scene全体の値ではなく実際にfocusがあるViewの`focusedValue`から決める。Scene内のfocus位置に依存しない`focusedSceneValue`を両方の列へ置くと検索先が競合するため使用しない（[Appleの区別](https://developer.apple.com/documentation/swiftui/view/focusedscenevalue%28_%3A_%3A%29)）。Mac実画面で本文→話内検索、Outline→一覧検索のCmd+F分岐を確認した。

@@ -140,3 +140,7 @@ Swift／Rustの検証成功を将来C#の互換成功として扱わない。con
 読込・書出とも`formatVersion`は文字列`"3"`のみ。`documentID`、`title`、`chapters`、`createdAt`、`updatedAt`は必須。各章は`id`、`title`、`episodes`を持ち、各話は`id`、`title`を持つ。`episodes`は空配列を許可するが欠損・nullを許可しない。本文は`episodes/<id>.md`から読み、旧`chapters/`へfallbackしない。対応外versionと欠損配列は原本を変更せず拒否する。
 
 この表とNovelStorage／NovelCoreの拒否・round-tripテストが今回変更した境界。将来のWindows用完全schema・独立fixtureの未完了状態は変わらない。
+
+### 感想・アドバイスのMarkdown（2026-09-13）
+
+保存したAI感想・アドバイスは、[予約名付きMarkdown attachment](sync/v2/assistant-feedback.md)として既存Snapshot／明示package round-tripに含める。entity schema・package schemaは変更しない。対応clientは専用の読み取り画面に分類し、未対応clientは通常資料としてbytesを保持する。日時と用途を含む合成fixtureのencode/decode・削除をappテストで検証する。

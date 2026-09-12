@@ -50,6 +50,7 @@ struct IOSAdaptiveWritingView: View {
     @State private var selectedPlotItem: IOSPlotSelection?
     @State private var selectedCharacterID: CharacterID?
     @State private var selectedWorldNoteID: WorldNoteID?
+    @State private var selectedFeedbackID: UUID?
     @State private var selectedReferenceFileName: String?
 
     init(
@@ -177,6 +178,15 @@ struct IOSAdaptiveWritingView: View {
                     expectedSession: expectedSession,
                     onDeletion: { selectedWorldNoteID = nil }
                 )
+            }
+            .navigationSplitViewStyle(.balanced)
+        case .feedback:
+            NavigationSplitView {
+                regularProjectSidebar
+            } content: {
+                IOSAssistantFeedbackOutline(store: store, selection: $selectedFeedbackID)
+            } detail: {
+                AssistantFeedbackDetail(record: store.assistantFeedback.first { $0.id == selectedFeedbackID })
             }
             .navigationSplitViewStyle(.balanced)
         case .references:
@@ -476,6 +486,7 @@ struct IOSWorkbenchView: View {
                 openPlot: { navigation.showPlot(for: session) },
                 openCharacters: { navigation.showCharacters(for: session) },
                 openWorldbuilding: { navigation.showWorldbuilding(for: session) },
+                openFeedback: { navigation.showFeedback(for: session) },
                 openReferences: { navigation.showReferences(for: session) },
                 openSettings: { navigation.showSettings(for: session) }
             )
@@ -498,6 +509,7 @@ struct IOSWorkbenchView: View {
         case .plot: IOSPlotFeatureView(store: store)
         case .characters: IOSCharacterFeatureView(store: store)
         case .worldbuilding: IOSWorldbuildingFeatureView(store: store)
+        case .feedback: IOSAssistantFeedbackView(store: store)
         case .references: IOSReferencesFeatureView(store: store)
         case .settings: IOSSettingsView(store: store, userDefaults: store.userDefaults)
         case .editor: IOSEditorPane(store: store, userDefaults: store.userDefaults)
@@ -608,13 +620,16 @@ struct IOSEditorPane: View {
                 }
             }
             .inspector(isPresented: $showingAssistant) {
+                let account = store.snapshotSyncV2AccountScope
+                let session = store.currentDocumentSessionToken
                 AssistantPanelView(
                     defaults: userDefaults,
-                    contextID: "\(editingToken)",
+                    contextID: "\(editingToken)-\(account)",
                     episodeTitle: episode.title,
                     currentEpisodeID: episode.id,
                     capture: {
                         guard store.currentEpisodeEditingToken == editingToken,
+                              store.snapshotSyncV2AccountScope == account,
                               !store.isDocumentTransitionInProgress,
                               !store.syncV2AccountTransitionInProgress,
                               store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
@@ -624,9 +639,17 @@ struct IOSEditorPane: View {
                         case .notActive: return AssistantManuscript(title: episode.title, content: store.selectedEpisode?.content ?? "")
                         }
                     }, close: { showingAssistant = false },
+                    saveFeedback: { feedback in
+                        guard store.currentEpisodeEditingToken == editingToken,
+                              store.snapshotSyncV2AccountScope == account,
+                              let session else { return false }
+                        return await store.saveAssistantFeedback(feedback, session: session,
+                                                                 account: account)
+                    },
                     chapters: store.document.chapters,
                     captureScope: { scope in
                         guard store.currentEpisodeEditingToken == editingToken,
+                              store.snapshotSyncV2AccountScope == account,
                               !store.isDocumentTransitionInProgress,
                               !store.syncV2AccountTransitionInProgress,
                               store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }

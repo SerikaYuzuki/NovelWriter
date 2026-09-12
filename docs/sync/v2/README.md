@@ -9,6 +9,8 @@ live compatibility mode.
 
 Use this directory when changing the synchronization contract. For a UI-only change, start from the shared UI projection and the app entry points instead of loading every fixture. A wire/schema change needs matching fixtures and independent conformance evidence.
 
+- [AI feedback attachments](assistant-feedback.md): read-only dated Markdown using the existing attachment wire format.
+
 ## Contract files
 
 - `snapshot.schema.json`: closed v2 manifest envelope.

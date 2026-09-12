@@ -16,6 +16,7 @@ enum IOSWorkspaceRoute: Hashable {
     case plot(session: IOSDocumentSessionToken)
     case characters(session: IOSDocumentSessionToken)
     case worldbuilding(session: IOSDocumentSessionToken)
+    case feedback(session: IOSDocumentSessionToken)
     case references(session: IOSDocumentSessionToken)
     case settings(session: IOSDocumentSessionToken)
     case editor(
@@ -32,6 +33,7 @@ enum IOSWorkspaceRoute: Hashable {
              let .plot(session),
              let .characters(session),
              let .worldbuilding(session),
+             let .feedback(session),
              let .references(session),
              let .settings(session),
              let .editor(session, _, _):
@@ -126,6 +128,11 @@ final class IOSWorkspaceNavigationCoordinator {
     func showWorldbuilding(for session: IOSDocumentSessionToken) {
         prepareProjectPath(for: session)
         path.append(.worldbuilding(session: session))
+    }
+
+    func showFeedback(for session: IOSDocumentSessionToken) {
+        prepareProjectPath(for: session)
+        path.append(.feedback(session: session))
     }
 
     func showReferences(for session: IOSDocumentSessionToken) {

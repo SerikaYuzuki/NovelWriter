@@ -34,11 +34,13 @@ extension IOSDocumentStore {
     @discardableResult
     func importAttachment(
         from sourceURL: URL,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: IOSDocumentSessionToken,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
     ) async -> Attachment? {
         await documentOperationGate.perform { [weak self] in
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !syncV2AccountTransitionInProgress, !Task.isCancelled,
+                  expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
                   validateCurrentDocumentSession(expectedSession),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: expectedSession) else { return nil }
 
@@ -57,12 +59,14 @@ extension IOSDocumentStore {
     @discardableResult
     func deleteAttachment(
         _ attachment: Attachment,
-        expectedSession: IOSDocumentSessionToken
+        expectedSession: IOSDocumentSessionToken,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
     ) async -> Bool {
         let attachmentSession = expectedSession
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  !syncV2AccountTransitionInProgress,
+                  !syncV2AccountTransitionInProgress, !Task.isCancelled,
+                  expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
                   validateCurrentDocumentSession(attachmentSession),
                   attachments.contains(where: { $0.id == attachment.id }),
                   synchronizeActiveEditorForAttachmentMutation(expectedSession: attachmentSession) else { return false }

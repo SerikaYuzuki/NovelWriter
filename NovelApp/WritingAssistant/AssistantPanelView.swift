@@ -10,12 +10,15 @@ struct AssistantPanelView: View {
     let capture: () throws -> AssistantManuscript
     let close: () -> Void
     var applyProofreading: ((AssistantManuscript, String) -> Bool)?
+    var saveFeedback: ((AssistantFeedback) async -> Bool)?
     var chapters: [Chapter] = []
     var captureScope: ((AssistantScope) throws -> AssistantManuscript)?
     @State private var scope = AssistantScope.current
     @State private var pendingPurpose = AssistantPurpose.proofreading
     @State private var purpose = AssistantPurpose.proofreading
     @State private var answer = ""
+    @State private var unsavedFeedback: AssistantFeedback?
+    @State private var isSavingFeedback = false
     @State private var notice: String?
     @State private var pending: AssistantManuscript?
     @State private var pendingConfiguration: AssistantConfiguration?
@@ -54,6 +57,11 @@ struct AssistantPanelView: View {
             if let notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
             }
+            if unsavedFeedback != nil {
+                Button(isSavingFeedback ? "保存中…" : "回答を保存し直す") {
+                    Task { await persistFeedback() }
+                }.disabled(isSavingFeedback)
+            }
             Divider()
             ScrollView {
                 AssistantMarkdownView(source: answer.isEmpty ? "校正・感想・アドバイスがここに表示されます。" : answer)
@@ -76,7 +84,11 @@ struct AssistantPanelView: View {
             }
         })) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("送信する本文").font(.headline)
+                Text("\(pendingPurpose.rawValue)に送信する本文").font(.headline)
+                if pendingPurpose != .proofreading {
+                    Text("回答は「感想・アドバイス」に日時付きで保存し、作品と一緒に同期します。")
+                        .font(.caption)
+                }
                 if pendingPurpose == .proofreading, canApplyProofreading {
                     Text("校正が完了すると本文を上書きし、変更箇所を色で示します。取り消しできます。")
                         .font(.caption)
@@ -160,6 +172,11 @@ struct AssistantPanelView: View {
                         notice = revised == manuscript.content ? "修正はありませんでした。" : "校正を反映しました。追加・変更箇所を黄色で表示しています。削除箇所には色が付きません。保存で色を消せます。取り消しも可能です。"
                     } else {
                         answer = result
+                        if requestPurpose != .proofreading {
+                            unsavedFeedback = AssistantFeedback(id: UUID(), purpose: requestPurpose,
+                                                                scopeTitle: manuscript.title, createdAt: Date(), markdown: result)
+                            await persistFeedback()
+                        }
                     }
                 } catch {
                     guard !Task.isCancelled, requestID == id else { return }
@@ -169,17 +186,31 @@ struct AssistantPanelView: View {
         } catch { notice = error.localizedDescription }
     }
 
+    private func persistFeedback() async {
+        guard let feedback = unsavedFeedback, let saveFeedback, !isSavingFeedback else { return }
+        isSavingFeedback = true
+        defer { isSavingFeedback = false }
+        let saved = await saveFeedback(feedback)
+        guard unsavedFeedback?.id == feedback.id else { return }
+        if saved {
+            unsavedFeedback = nil
+            notice = "「感想・アドバイス」に保存しました。"
+        } else {
+            notice = "回答を保存できませんでした。入力を確定して「回答を保存し直す」を押してください。"
+        }
+    }
+
     private func cancel() {
         requestID = nil; requestTask?.cancel(); requestTask = nil
     }
 
     private func reset() {
-        cancel(); pending = nil; pendingConfiguration = nil; answer = ""; notice = nil
+        cancel(); pending = nil; pendingConfiguration = nil; answer = ""; notice = nil; unsavedFeedback = nil
     }
 }
 
 /// Native Markdown presentation: inline emphasis/links plus headings, lists, quotes and fenced code.
-private struct AssistantMarkdownView: View {
+struct AssistantMarkdownView: View {
     let source: String
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

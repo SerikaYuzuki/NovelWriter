@@ -14,19 +14,23 @@ import SwiftUI
 final class EditorSearchSession {
     var query = ""
     var didMissSearch = false
-    /// `.searchable(isPresented:)` 用。執筆セクションでは既定で表示し、Cmd+F で再フォーカスする。
     var isSearchPresented = true
+    var focusRequest: UUID?
 
     private(set) var selectionRequest: EditorSelectionRequest?
     private var lastSearchEpisodeID: EpisodeID?
     private var lastSearchQuery = ""
     private var lastSearchRange: NSRange?
 
-    /// ツールバー検索欄へフォーカスを移す。既に表示中でも一度閉じて開き直す。
-    func focusSearchField() {
-        isSearchPresented = false
-        Task { @MainActor in
-            isSearchPresented = true
+    /// ツールバー検索欄へフォーカスを移す。既に表示中でも検索欄へ新しいfocus要求を送る。
+    func focusSearchField(in window: NSWindow? = nil) {
+        isSearchPresented = true
+        focusRequest = UUID()
+        if let toolbar = (window ?? NSApp.keyWindow)?.toolbar,
+           let searchID = toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar)
+           .first(where: { $0.rawValue == "workbench.search" }),
+           !toolbar.items.contains(where: { $0.itemIdentifier == searchID }) {
+            toolbar.insertItem(withItemIdentifier: searchID, at: toolbar.items.count)
         }
     }
 

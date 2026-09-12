@@ -79,7 +79,7 @@ struct EditorPaneView: View {
                 )
             }
         }
-        .focusedSceneValue(\.workbenchSearchSurface, .editor)
+        .focusedValue(\.workbenchSearchSurface, .editor)
         .onChange(of: appState.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }

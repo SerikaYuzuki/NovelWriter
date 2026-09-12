@@ -86,8 +86,10 @@ struct WorkbenchVisualTests {
             .toolbar(id: "sync-visibility-test-\(UUID())") {
                 WorkbenchToolbarContent(overlayState: WorkbenchOverlayState(), requestSync: {},
                                         showsWritingActions: true, isPlotCardRailPresented: .constant(false))
+                WorkbenchOutlineToolbarContent()
             }
             .environment(state)
+            .environment(EditorSearchSession())
             .environment(SnapshotMenuPresenter(appState: state))
             .environment(ExportPresenter(appState: state))
         let host = NSHostingView(rootView: root)
@@ -143,6 +145,8 @@ struct WorkbenchVisualTests {
         let toolbar = try #require(window.toolbar)
         #expect(toolbar.items.compactMap { ($0 as? NSTrackingSeparatorToolbarItem)?.dividerIndex } == [0, 1])
         #expect(toolbar.allowsUserCustomization)
+        #expect(toolbar.autosavesConfiguration)
+        #expect(toolbar.identifier.hasPrefix("fuminiwa.test.toolbar."))
         let allowed = try #require(toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar))
         let actions = toolbar.items.filter { $0.itemIdentifier.rawValue.hasPrefix("workbench.") }
         #expect(actions.count >= 10)
@@ -168,6 +172,98 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(400))
         #expect(descendants(host).contains { $0 === editor })
         #expect(host.bounds.maxX - editor.convert(editor.bounds, to: host).maxX < 100)
+
+        let searchID = NSToolbarItem.Identifier("workbench.search")
+        let searchIndex = try #require(toolbar.items.firstIndex { $0.itemIdentifier == searchID })
+        toolbar.removeItem(at: searchIndex)
+        try await Task.sleep(for: .milliseconds(150))
+        state.workspaceSelection = WorkspaceSelection(section: .feedback)
+        try await Task.sleep(for: .milliseconds(250))
+        state.workspaceSelection = WorkspaceSelection(section: .structure)
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(window.toolbar?.items.contains { $0.itemIdentifier == searchID } == false)
+        #expect(window.toolbar?.items.compactMap { ($0 as? NSTrackingSeparatorToolbarItem)?.dividerIndex } == [0, 1])
+    }
+
+    @Test("toolbar customization survives window recreation and keeps search movable")
+    func customizationSurvivesReopen() async throws {
+        let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
+        let search = EditorSearchSession()
+        let toolbarDefaults = makeIsolatedTestUserDefaults()
+        let root = Color.clear
+            .background(WorkbenchToolbarPersistence(profile: "writing", defaults: toolbarDefaults))
+            .toolbar(id: "customization-reopen-\(UUID())") {
+                WorkbenchOutlineToolbarContent()
+                WorkbenchToolbarContent(overlayState: WorkbenchOverlayState(), requestSync: {},
+                                        showsWritingActions: true, isPlotCardRailPresented: .constant(false))
+            }
+            .environment(state).environment(search)
+            .environment(SnapshotMenuPresenter(appState: state)).environment(ExportPresenter(appState: state))
+        func makeWindow() -> NSWindow {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 400),
+                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: root)
+            window.orderFront(nil)
+            return window
+        }
+        let first = makeWindow()
+        defer { first.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        let toolbar = try #require(first.toolbar)
+        let ids = toolbar.items.map(\.itemIdentifier)
+        let searchIndex = try #require(ids.firstIndex { $0.rawValue == "workbench.search" })
+        let assistantIndex = try #require(ids.firstIndex { $0.rawValue == "workbench.writing.assistant" })
+        #expect(searchIndex < assistantIndex)
+        let searchID = ids[searchIndex]
+        let allowed = try #require(toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar))
+        #expect(allowed.contains(searchID))
+        toolbar.removeItem(at: searchIndex)
+        toolbar.insertItem(withItemIdentifier: searchID, at: 0)
+        try await Task.sleep(for: .milliseconds(150))
+        let customized = toolbar.items.map(\.itemIdentifier)
+        #expect(customized.first == searchID)
+        first.close()
+        let second = makeWindow()
+        defer { second.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(second.toolbar?.items.map(\.itemIdentifier) == customized)
+        search.focusSearchField()
+        try await Task.sleep(for: .milliseconds(100))
+        let field = try #require(second.toolbar?.items.first(where: { $0.itemIdentifier == searchID })?.view)
+        #expect(descendants(field).contains { $0 is NSSearchField })
+        let index = try #require(second.toolbar?.items.firstIndex { $0.itemIdentifier == searchID })
+        second.toolbar?.removeItem(at: index)
+        second.close()
+        let third = makeWindow()
+        defer { third.close() }
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(third.toolbar?.items.contains { $0.itemIdentifier == searchID } == false)
+        third.makeKeyAndOrderFront(nil)
+        search.focusSearchField(in: third)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(third.toolbar?.items.contains { $0.itemIdentifier == searchID } == true)
+    }
+
+    @Test("saved feedback is displayed as read-only dated Markdown")
+    func feedbackReadingView() async throws {
+        let record = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "第一章",
+                                       createdAt: Date(timeIntervalSince1970: 1_789_257_600),
+                                       markdown: "## 読後の感想\n\n静かな場面に**緊張感**があります。\n\n- 会話の距離感が伝わります。")
+        let host = NSHostingView(rootView: HStack(spacing: 0) {
+            AssistantFeedbackList(records: [record], selection: .constant(record.id), delete: { _ in true }).frame(width: 280)
+            Divider()
+            AssistantFeedbackDetail(record: record)
+        })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(descendants(host).compactMap { $0 as? NSTextView }.allSatisfy { !$0.isEditable })
+        try await snapshot(host, path: "/tmp/fuminiwa-feedback-reading.png")
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

@@ -16,11 +16,16 @@ struct AssistantPreferences {
     }
 
     func prompt(_ purpose: AssistantPurpose) -> String {
-        defaults.string(forKey: "assistant.prompt.\(purpose.id)") ?? purpose.defaultPrompt
+        let saved = defaults.string(forKey: "assistant.prompt.\(purpose.id)")
+        // Repair only the known default copied by the reused TextEditor binding.
+        if purpose != .proofreading, saved == AssistantPurpose.proofreading.defaultPrompt {
+            return purpose.defaultPrompt
+        }
+        return saved ?? purpose.defaultPrompt
     }
 
     func configuration(_ purpose: AssistantPurpose) throws -> AssistantConfiguration {
-        try AssistantConfiguration(endpoint: endpoint, model: model(purpose), prompt: prompt(purpose))
+        try AssistantConfiguration(endpoint: endpoint, model: model(purpose), prompt: prompt(purpose) + "\n" + purpose.requestInstruction)
     }
 
     func key(endpoint: URL) throws -> String {

@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelSyncV2
 #if os(macOS)
 @testable import FUMINIWA
 #else
@@ -209,5 +210,60 @@ extension AssistantScopeTests {
         for purpose in AssistantPurpose.allCases where purpose != .proofreading {
             #expect(selection.forPurpose(purpose) == selection)
         }
+    }
+}
+
+@Suite("Assistant purpose isolation and saved Markdown")
+struct AssistantFeedbackTests {
+    @Test func repairsOnlyMisassignedDefaultAndKeepsCustomPrompts() throws {
+        let suite = "assistant-purpose.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("model", forKey: "assistant.model")
+        defaults.set(AssistantPurpose.proofreading.defaultPrompt, forKey: "assistant.prompt.感想")
+        let preferences = AssistantPreferences(defaults: defaults)
+        #expect(preferences.prompt(.impressions) == AssistantPurpose.impressions.defaultPrompt)
+        defaults.set("人物への共感を中心に", forKey: "assistant.prompt.感想")
+        #expect(preferences.prompt(.impressions) == "人物への共感を中心に")
+        let config = try preferences.configuration(.impressions)
+        let request = try config.request(manuscript: AssistantManuscript(title: "対象", content: "本文"), apiKey: "test")
+        let data = try #require(request.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let instruction = try #require(body["instructions"] as? String)
+        #expect(instruction.contains("今回の用途は読者としての感想"))
+        #expect(!config.replacesManuscript)
+        #expect(body["text"] == nil)
+        #expect(preferences.prompt(.proofreading) == AssistantPurpose.proofreading.defaultPrompt)
+    }
+
+    @Test func feedbackMarkdownRoundTripAndMalformedFiles() throws {
+        let feedback = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "選択した2話",
+                                         createdAt: Date(timeIntervalSince1970: 1_790_000_000), markdown: "# 感想\n\n**緊張感**が続く。\n\n- 理由\n")
+        let attachment = try feedback.attachment()
+        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: attachment.bytes) == feedback)
+        #expect(AssistantFeedback.decode(fileName: "普通の資料.md", bytes: attachment.bytes) == nil)
+        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: Data("<!-- fuminiwa-feedback-v1 ! -->\n\n本文".utf8)) == nil)
+        #expect(AssistantFeedback.decode(fileName: attachment.fileName, bytes: Data([0xFF])) == nil)
+        let proofreading = AssistantFeedback(id: UUID(), purpose: .proofreading, scopeTitle: "話", createdAt: Date(), markdown: "修正")
+        #expect(throws: AssistantError.self) { try proofreading.attachment() }
+    }
+}
+
+extension AssistantFeedbackTests {
+    @Test func savedMarkdownUsesExistingSnapshotRoundTripAndDeletion() throws {
+        let record = AssistantFeedback(id: UUID(), purpose: .advice, scopeTitle: "二話",
+                                       createdAt: Date(timeIntervalSince1970: 1_790_000_000), markdown: "## 改善案\n\n人物の目的を示す。")
+        let workID = WorkID(UUID())
+        let document = NovelDocument.newDocument(title: "同期試験")
+        let encoded = try SnapshotCodec.encode(SnapshotModel(workId: workID, document: document,
+                                                             documentCreatedAt: record.createdAt, attachments: [record.attachment()]))
+        let received = try SnapshotCodec.decode(manifestBytes: encoded.manifestBytes, objects: encoded.objects)
+        #expect(AssistantFeedback.list(received.attachments) == [record])
+        #expect(received.document == document)
+        let deleted = try SnapshotCodec.encode(SnapshotModel(workId: workID, document: received.document,
+                                                             documentCreatedAt: record.createdAt, attachments: []), parents: [encoded.snapshotId])
+        let receivedDeletion = try SnapshotCodec.decode(manifestBytes: deleted.manifestBytes, objects: deleted.objects)
+        #expect(receivedDeletion.attachments.isEmpty)
+        #expect(receivedDeletion.document == document)
     }
 }

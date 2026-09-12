@@ -136,6 +136,7 @@ targets:
           - Info.plist
       - path: NovelApp/ConnectivityRecovery.swift
       - path: NovelApp/WritingAssistant
+      - path: NovelApp/Features/AssistantFeedback
       - path: NovelApp/AIClipboardPrompt.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
       - path: NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift

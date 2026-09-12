@@ -1,11 +1,19 @@
 import Foundation
 
-enum AssistantPurpose: String, CaseIterable, Identifiable {
+enum AssistantPurpose: String, CaseIterable, Identifiable, Codable, Sendable {
     case proofreading = "校正"
     case impressions = "感想"
     case advice = "アドバイス"
     var id: String {
         rawValue
+    }
+
+    var requestInstruction: String {
+        switch self {
+        case .proofreading: "今回の用途は校正です。"
+        case .impressions: "今回の用途は読者としての感想です。校正・添削・書き換えや修正一覧は返さず、読んで感じたことを本文の根拠とともにMarkdownで述べてください。"
+        case .advice: "今回の用途は執筆へのアドバイスです。校正した本文や修正一覧ではなく、構成・人物・展開を中心に改善の方針をMarkdownで述べてください。"
+        }
     }
 
     var defaultPrompt: String {
