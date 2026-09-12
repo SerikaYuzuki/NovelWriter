@@ -1,0 +1,51 @@
+import Foundation
+import NovelSyncV2
+import NovelSyncV2Application
+
+extension IOSDocumentStore {
+    func renameLibraryWork(
+        _ item: SyncV2LibraryItem, title: String,
+        expectedSession: IOSDocumentSessionToken?,
+        accountScope: IOSSnapshotSyncV2AccountScope
+    ) async -> Bool {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, let application = snapshotSyncV2Application,
+              currentDocumentSessionToken == expectedSession,
+              snapshotSyncV2AccountScope == accountScope,
+              !isSyncV2AccountTransitionActive else { return false }
+        do {
+            // Only a server-only work needs a download; local renames stay offline.
+            if item.availability == .remoteOnly {
+                _ = try await application.open(workID: item.workID)
+            }
+            let renamed = await documentOperationGate.perform { [weak self] in
+                guard let self, currentDocumentSessionToken == expectedSession,
+                      snapshotSyncV2AccountScope == accountScope,
+                      !isSyncV2AccountTransitionActive else { return false }
+                return await performDocumentTransition {
+                    try await saveCoordinator.performExclusive {
+                        guard currentDocumentSessionToken == expectedSession,
+                              snapshotSyncV2AccountScope == accountScope,
+                              !isSyncV2AccountTransitionActive else {
+                            throw SyncV2ApplicationError.safeBoundaryRejected
+                        }
+                        _ = try await application.renameLocalWork(workID: item.workID, title: title)
+                        guard currentDocumentSessionToken == expectedSession,
+                              snapshotSyncV2AccountScope == accountScope else {
+                            throw SyncV2ApplicationError.safeBoundaryRejected
+                        }
+                        if syncV2ActiveWorkID == item.workID {
+                            document.title = title
+                        }
+                    }
+                }
+            }
+            guard renamed else { return false }
+            _ = await refreshLibrary()
+            return true
+        } catch {
+            operationErrorMessage = "作品名を変更できませんでした。接続を確認して再試行してください。"
+            return false
+        }
+    }
+}

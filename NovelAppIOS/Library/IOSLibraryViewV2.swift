@@ -8,6 +8,12 @@ struct IOSLibraryView: View {
     let makeNewDocument: () -> Void
 
     @State private var searchText = ""
+    @State private var pendingRename: SyncV2LibraryItem?
+    @State private var renameSession: IOSDocumentSessionToken?
+    @State private var renameAccountScope: IOSSnapshotSyncV2AccountScope?
+    @State private var renameTitle = ""
+    @State private var renamingIDs: Set<WorkID> = []
+    @State private var renameFailed = false
 
     var body: some View {
         List {
@@ -40,6 +46,9 @@ struct IOSLibraryView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
+                            if renamingIDs.contains(item.workID) {
+                                ProgressView("作品名を変更中…")
+                            }
                             HStack(spacing: 6) {
                                 Text(item.availability.japaneseLabel)
                                 Text(item.remoteProgress.japaneseLabel)
@@ -60,6 +69,16 @@ struct IOSLibraryView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    }
+                    .disabled(renamingIDs.contains(item.workID))
+                    .contextMenu {
+                        Button("作品名を変更", systemImage: "pencil") {
+                            renameTitle = item.title
+                            renameSession = store.currentDocumentSessionToken
+                            renameAccountScope = store.snapshotSyncV2AccountScope
+                            pendingRename = item
+                        }
+                        .disabled(renamingIDs.contains(item.workID))
                     }
                     if item.accountState == .unbound,
                        item.workID == store.syncV2ActiveWorkID {
@@ -87,6 +106,35 @@ struct IOSLibraryView: View {
             }
         }
         .navigationTitle("作品一覧")
+        .alert("作品名を変更", isPresented: Binding(
+            get: { pendingRename != nil },
+            set: {
+                if !$0 {
+                    pendingRename = nil
+                }
+            }
+        )) {
+            TextField("作品名", text: $renameTitle)
+            Button("変更") {
+                guard let item = pendingRename, let scope = renameAccountScope else { return }
+                let session = renameSession
+                let title = renameTitle
+                renamingIDs.insert(item.workID)
+                Task {
+                    renameFailed = await !(store.renameLibraryWork(
+                        item, title: title, expectedSession: session, accountScope: scope
+                    ))
+                    renamingIDs.remove(item.workID)
+                }
+            }
+            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("キャンセル", role: .cancel) {}
+        }
+        .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
+        }
         .searchable(text: $searchText, prompt: "作品を検索")
         .refreshable {
             _ = await store.refreshLibrary()

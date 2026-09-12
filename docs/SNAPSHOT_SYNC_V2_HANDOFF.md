@@ -96,3 +96,11 @@ Apple-only、server-readable、SQLite v2 authority、旧runtimeを戻さない�
 - 当時はlocal／remote branchが文書commit前に一致し、既存`NovelApp 2026-07-16 23-51-50/`だけが未追跡だった。現在のbranchをこの記録に合わせて切り替えず、作業開始時のGit状態を確認する。
 
 `project.yml`と`Scripts/generate-project.sh`がXcode構成の正。device ID、稼働image、server状態は検証時に取得する。
+
+## 2026-09-12 作品一覧の名前変更
+
+macOSの作品行右クリックとiOSの長押しから作品名を変更できる。`SyncV2Application.renameLocalWork`はSQLiteから取得した同じWorkID/documentを使い、titleだけを変更して取得世代付きcheckpointを行う。本文、添付、portable resources、作成日時を保持する。画面側は取得時session/accountを照合し、EditorのIME確定と通常保存を先に終えてから同じdocument gate内で保存を直列化する。現在の作品を変更した場合もモデルのtitleだけを反映し、Editor世代・作品選択を進めない。remote-onlyの明示取得はgate外で行う。wire/schema/serverの変更はない。
+
+検証は保存経路の追加として重たい段階を選択。Swift全488件、macOSアプリ157件、iOSアプリ118件、iOS EditorKit 76件が成功。追加した7件にはSQLite再起動後の名前・添付・resources保持、別作品の変更、古いsession/accountの拒否、remote-only取得後の変更を含む。iOS package build、Swift側独立conformance、source structure・target依存・production/test/AI境界の検査が成功した。macOS実画面でメニュー、既存名を入力済みのダイアログ、確定後も一覧を維持することを確認。署名済みの両OSアプリを更新して起動済み。iPhoneの長押し実操作と端末間同期完了は未確認。
+
+`./Scripts/check.sh`はRustの`cargo`が見つからず停止し、全通し成功ではない。残りのSwift側確認を個別に実施した。全体SwiftFormatは今回未変更の5ファイル（ExplicitSyncButton、EpisodeRenamePresentation、IOSSnapshotSyncV2AdoptionRestartTests、EpisodeRenameTests、ProductionUnboundAttachmentTests）の既存整形差分で失敗。SwiftLintは警告あり・エラーなし。無関係な整形変更や実データ修復は加えていない。

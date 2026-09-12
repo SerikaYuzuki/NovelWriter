@@ -6,6 +6,12 @@ import SwiftUI
 struct LibraryPane: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
+    @State private var pendingRename: StartupLibraryWork?
+    @State private var renameSession: DocumentSessionToken?
+    @State private var renameAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var renameTitle = ""
+    @State private var renamingIDs: Set<UUID> = []
+    @State private var renameFailed = false
     @State private var pendingDeletion: StartupLibraryWork?
     @State private var deletionAccountScope: SnapshotSyncV2AccountScopeToken?
     @State private var deletingIDs: Set<UUID> = []
@@ -61,11 +67,15 @@ struct LibraryPane: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
+                            if renamingIDs.contains(work.id) {
+                                ProgressView().controlSize(.small).accessibilityLabel("作品名を変更中")
+                            }
                         }
                         .tag(work.id)
                         .contextMenu {
                             Button("開く") { open(work) }
                                 .disabled(!canOpen(work))
+                            renameButton(work)
                             deleteButton(work)
                         }
                         .accessibilityIdentifier("library.work.\(work.id.uuidString)")
@@ -90,6 +100,7 @@ struct LibraryPane: View {
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
                     Button("開く") { open(work) }.disabled(!canOpen(work))
+                    renameButton(work)
                     deleteButton(work)
                 }
             } primaryAction: { ids in
@@ -113,6 +124,35 @@ struct LibraryPane: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
+        }
+        .alert("作品名を変更", isPresented: Binding(
+            get: { pendingRename != nil },
+            set: {
+                if !$0 {
+                    pendingRename = nil
+                }
+            }
+        )) {
+            TextField("作品名", text: $renameTitle)
+            Button("変更") {
+                guard let work = pendingRename, let session = renameSession,
+                      let scope = renameAccountScope else { return }
+                let title = renameTitle
+                renamingIDs.insert(work.id)
+                Task {
+                    renameFailed = await !(appState.renameLibraryWork(
+                        work, title: title, expectedSession: session, accountScope: scope
+                    ))
+                    renamingIDs.remove(work.id)
+                }
+            }
+            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("キャンセル", role: .cancel) {}
+        }
+        .alert("作品名を変更できませんでした", isPresented: $renameFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
         }
         .alert("作品を完全に削除しますか？", isPresented: Binding(get: { pendingDeletion != nil }, set: {
             if !$0 {
@@ -142,7 +182,18 @@ struct LibraryPane: View {
     }
 
     private func canOpen(_ work: StartupLibraryWork) -> Bool {
-        work.isOpenable && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
+        work.isOpenable && !renamingIDs.contains(work.id)
+            && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
+    }
+
+    private func renameButton(_ work: StartupLibraryWork) -> some View {
+        Button("作品名を変更…", systemImage: "pencil") {
+            renameTitle = work.title
+            renameSession = appState.documentSessionToken
+            renameAccountScope = appState.snapshotSyncV2AccountScopeToken
+            pendingRename = work
+        }
+        .disabled(!canOpen(work))
     }
 
     private func deleteButton(_ work: StartupLibraryWork) -> some View {
