@@ -47,3 +47,15 @@ GitHub push/PR/mergeは行っていない。週間残高は確認時56%、下限
 macOS通常版のプロット画面で、標準overflow内の「今すぐ同期」を選んでも設定案内が出ず、メニューだけ閉じる状態を再現した。ボタン自身の`confirmationDialog`と一時状態を、作品画面が所有する`ExplicitSyncPresentation`とalertへ移した。作品／account切替による取消と、追加直前のscope照合は維持する。
 
 検証は中ぐらい。変更後のmacOS build成功、macOSアプリテスト142件成功。更新した通常版の画面確認と、Apple認証を含む端末間同期の受入は未実施。サーバー／DB／wireの変更はない。
+
+## 実サーバー受領記録との接続（追補）
+
+通常版でアカウント追加後、サーバーは`createWork`を完了した一方、端末では同コマンドが`quarantined`、受領記録0件となり、snapshot送信前に停止することを確認した。HTTP adapterがPOSTの応答本文を、そのままStoreの`canonicalReceiptEnvelope`へ渡していた。Storeは既存wire契約どおりGET受領記録のenvelopeを要求するため、この組み合わせは受理されなかった。
+
+- POST応答の後に`GET /v2/receipts/{commandId}`を取得し、元応答の正確なbytes、command／work／digest／status／result／全read-back述語を照合してからStoreへ渡す。Store自身の厳密検証も維持する。
+- 初回createが隔離されたままなら自動workerは別IDのcreateを増やさない。「今すぐ同期」に限り、同一bound scopeでcreateだけが隔離されている初期状態から、最古の同一command／bytesを再試行する。別account／fence、他種コマンド、完了済みcreateには適用しない。
+- PostgreSQL由来の小数秒付きRFC 3339 `expiresAt`を、応答検証・転送復元・plannerで一貫して読む。秒単位の既存形式も受け入れる。
+
+HTTP adapterから実SQLiteへの作成受領テスト、応答bytes不一致拒否、restart後の初回create同一ID再試行と異account拒否を追加した。既存の転送fixtureも実サーバー同様の小数秒付き期限に変更した。fake remoteだけのテストでは今回の応答形式の取り違えを検出できていなかった。
+
+検証段階は重たい検証。Swift package全474テスト成功（期限fixture更新後は関連136テストを再実行し成功）。Macアプリ142件／iOSアプリ110件成功は受領記録修正時点、期限修正後のMac／iOS build成功。`./Scripts/check.sh`はPython 60 vectors／Swift conformance 6件成功後、ローカルにcargoがないため停止した。サーバーコード・schema・実DBの直接編集は行っていない。実端末の再送・相手端末への反映は別途受入確認が必要。

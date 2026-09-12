@@ -133,7 +133,7 @@ public extension LocalSyncV2Store {
               let digestBytes = row[9].blob,
               let offset = row[10].int64,
               let expiresRaw = row[11].text,
-              let expiresAt = ISO8601DateFormatter().date(from: expiresRaw),
+              let expiresAt = SyncV2Timestamp.parse(expiresRaw),
               let lifecycle = row[12].text else { throw SyncV2StoreError.invalidCommand }
         guard Self.validUploadTransferLifecycles.contains(lifecycle),
               objectBytes.count == 32,

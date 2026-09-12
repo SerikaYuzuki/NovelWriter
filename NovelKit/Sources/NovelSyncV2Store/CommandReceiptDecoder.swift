@@ -211,7 +211,7 @@ extension LocalSyncV2Store {
                 guard try string(response, "objectId") == payload.object("objectId").rawValue,
                       try (32 ... 2048).contains(string(response, "uploadCapability").count),
                       try UUID(uuidString: string(response, "uploadId")) != nil,
-                      try ISO8601DateFormatter().date(from: string(response, "expiresAt")) != nil else {
+                      try SyncV2Timestamp.parse(string(response, "expiresAt")) != nil else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
             }

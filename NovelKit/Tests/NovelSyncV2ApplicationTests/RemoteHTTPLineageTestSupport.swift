@@ -13,6 +13,10 @@ final class LineageHTTPState: @unchecked Sendable {
     private let replies: [String: LineageHTTPReply]
     private var paths: [String] = []
 
+    init(replies: [String: LineageHTTPReply]) {
+        self.replies = replies
+    }
+
     init(workID: WorkID, snapshots: [EncodedSnapshot], publishResponse: Data?) {
         replies = Self.makeReplies(
             workID: workID,
@@ -45,6 +49,23 @@ final class LineageHTTPState: @unchecked Sendable {
             add(snapshot: snapshot, headers: headers, to: &replies)
         }
         if let publishResponse {
+            if let object = try? JSONSerialization.jsonObject(with: publishResponse) as? [String: Any],
+               let id = object["commandId"] as? String,
+               let receipt = object["receipt"] as? [String: Any] {
+                let envelope: [String: Any] = [
+                    "canonicalResponseBase64URL": publishResponse.base64URLEncodedString(),
+                    "commandId": id, "commandKind": "publish", "originalResponseStatus": 409,
+                    "originalResult": "conflictPending", "readBack": receipt["readBack"]!,
+                    "requestDigest": receipt["requestDigest"]!, "result": "noChanges",
+                    "workId": workID.description
+                ]
+                if let bytes = try? productionJSON(envelope) {
+                    replies["GET /v2/receipts/\(id)"] = LineageHTTPReply(
+                        status: 200, headers: headers, body: bytes
+                    )
+                }
+            }
+
             let path = "POST /v2/works/\(workID.description)/publish"
             replies[path] = LineageHTTPReply(
                 status: 409,

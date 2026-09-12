@@ -329,7 +329,7 @@ private func addResponseFields(
         response["workId"] = payload["workId"]
     case "prepareObject":
         if result == .applied {
-            response["expiresAt"] = "2030-01-01T00:00:00Z"
+            response["expiresAt"] = "2030-01-01T00:00:00.123456+00:00"
             response["objectId"] = payload["objectId"]
             response["uploadCapability"] = String(repeating: "c", count: 32)
             response["uploadId"] = UUID().uuidString.lowercased()

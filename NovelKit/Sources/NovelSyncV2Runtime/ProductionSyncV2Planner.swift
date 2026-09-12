@@ -36,12 +36,6 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         self.scope = scope
     }
 
-    func requestSynchronization(workID: WorkID) async throws {
-        let localScope = try await scope.existingScope(workID: workID)
-        guard case .bound = localScope else { throw SyncV2Failure.authenticationRequired }
-        try await store.requestSynchronization(workID: workID, scope: localScope)
-    }
-
     func pendingWorkIDs() async throws -> [WorkID] {
         guard let binding = try await scope.activeBinding() else { return [] }
         return try await store.pendingWorkIDs(scope: .bound(binding))
@@ -64,6 +58,11 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         }
         if let record = try await store.pendingSealedCommands(scope: localScope, workID: workID).first {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
+        }
+        let records = try await store.allSealedCommands(scope: localScope, workID: workID)
+        if records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .quarantined }),
+           !records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .completed }) {
+            return .blocked(.receiptMismatch)
         }
         let pending = try await store.pendingIntents(scope: localScope, workID: workID)
         guard !pending.isEmpty else { return .idle }
@@ -380,6 +379,12 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
 }
 
 extension ProductionSyncV2Planner {
+    func requestSynchronization(workID: WorkID) async throws {
+        let localScope = try await scope.existingScope(workID: workID)
+        guard case .bound = localScope else { throw SyncV2Failure.authenticationRequired }
+        try await store.requestSynchronization(workID: workID, scope: localScope)
+    }
+
     func markSending(
         _ operation: SyncV2RemoteOperation,
         workID: WorkID
@@ -673,7 +678,7 @@ private extension ProductionSyncV2Planner {
               let object = try JSONSerialization.jsonObject(with: receipt.canonicalResponse) as? [String: Any],
               let uploadRaw = object["uploadId"] as? String, let uploadID = UUID(uuidString: uploadRaw),
               let capability = object["uploadCapability"] as? String, let expiresRaw = object["expiresAt"] as? String,
-              let expires = ISO8601DateFormatter().date(from: expiresRaw) else { return nil }
+              let expires = SyncV2Timestamp.parse(expiresRaw) else { return nil }
         let transfer = SyncV2UploadTransfer(
             transferID: record.commandID,
             workID: view.workID,

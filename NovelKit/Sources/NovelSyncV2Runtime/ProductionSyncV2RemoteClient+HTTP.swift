@@ -44,7 +44,8 @@ extension ProductionSyncV2RemoteClient {
         request.httpBody = command.canonicalBytes
         addHeaders(&request, session: session, binding: command.binding)
         let (data, response) = try await requestData(request, session: session)
-        return try decode(data: data, response: response, command: command)
+        let receipt = try decode(data: data, response: response, command: command)
+        return try await readBack(receipt, command: command, session: session)
     }
 
     func getJSON(

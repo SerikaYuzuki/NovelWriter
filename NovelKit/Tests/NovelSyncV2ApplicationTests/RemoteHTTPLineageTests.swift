@@ -246,9 +246,10 @@ private struct LineageFixture: Sendable {
 
     func client(
         snapshots: [EncodedSnapshot],
-        publishResponse: Data? = nil
+        publishResponse: Data? = nil,
+        overrideState: LineageHTTPState? = nil
     ) throws -> ProductionSyncV2RemoteClient {
-        let state = LineageHTTPState(
+        let state = overrideState ?? LineageHTTPState(
             workID: workID,
             snapshots: snapshots,
             publishResponse: publishResponse
@@ -319,5 +320,61 @@ private struct LineageFixture: Sendable {
 
     func requestCount(path: String) -> Int {
         LineageURLProtocol.state?.count(path: path) ?? 0
+    }
+}
+
+extension RemoteHTTPLineageTests {
+    @Test("HTTP create response is read back before durable acknowledgement", arguments: [false, true])
+    func createReceiptReachesStore(tampered: Bool) async throws {
+        let fixture = LineageFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let scope = V2LocalWorkScope.bound(fixture.binding)
+        let saved = try await store.checkpoint(V2CheckpointRequest(
+            workID: fixture.workID, document: fixture.document,
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+        ), scope: scope)
+        let command = try SealedCommand.decodeCanonical(productionJSON([
+            "binding": ["accountFence": fixture.binding.accountFence, "accountId": fixture.binding.accountID,
+                        "protocolEpoch": 2, "serverInstanceId": fixture.binding.serverInstanceID],
+            "commandId": UUID().uuidString.lowercased(), "commandKind": "createWork", "schemaVersion": 2,
+            "sourceGeneration": saved.generation, "sourceSnapshotId": saved.snapshotID.rawValue,
+            "payload": ["documentId": fixture.documentID.uuidString.lowercased(), "workId": fixture.workID.description]
+        ]))
+        try await store.seal(command, scope: scope)
+        _ = try await store.markSending(commandID: command.commandId, scope: scope)
+        let response = try productionJSON([
+            "commandId": command.commandId.uuidString.lowercased(), "commandKind": "createWork",
+            "documentId": fixture.documentID.uuidString.lowercased(), "head": NSNull(),
+            "workId": fixture.workID.description, "result": "applied",
+            "receipt": ["commandId": command.commandId.uuidString.lowercased(), "commandKind": "createWork",
+                        "workId": fixture.workID.description, "requestDigest": command.requestDigest.rawValue,
+                        "readBack": productionReadBack()]
+        ])
+        let envelope = try productionEnvelope(command: command, response: tampered ? Data("{}".utf8) : response,
+                                              result: .applied, status: 201)
+        let headers = ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"]
+        let receiptPath = "/v2/receipts/\(command.commandId.uuidString.lowercased())"
+        let state = LineageHTTPState(replies: [
+            "POST /v2/works": LineageHTTPReply(status: 201, headers: headers, body: response),
+            "GET \(receiptPath)": LineageHTTPReply(status: 200, headers: headers, body: envelope)
+        ])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        if tampered {
+            await #expect(throws: SyncV2Failure.receiptMismatch) {
+                _ = try await client.execute(.command(SyncV2SealedRemoteCommand(command: command)))
+            }
+            #expect(try await store.receiptReadback(commandID: command.commandId, scope: scope) == nil)
+        } else {
+            let result = try await client.execute(.command(SyncV2SealedRemoteCommand(command: command)))
+            guard case let .command(receipt, _) = result else { Issue.record("missing receipt"); return }
+            try await store.acknowledge(V2CommandAcknowledgement(commandID: command.commandId,
+                                                                 canonicalReceiptEnvelope: receipt.canonicalResponse), scope: scope)
+            #expect(try await store.allSealedCommands(scope: scope, workID: fixture.workID).first?.lifecycle == .completed)
+            #expect(try await store.pendingIntents(scope: scope).count == 1)
+        }
+        #expect(state.count(path: receiptPath) == 1)
+        await store.close()
     }
 }
