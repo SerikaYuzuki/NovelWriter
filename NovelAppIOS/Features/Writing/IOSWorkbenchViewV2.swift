@@ -304,6 +304,7 @@ private struct IOSWritingChapterSection: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("ios.outline.episode.\(episode.id)")
+                .modifier(IOSEpisodeRenameModifier(store: store, chapterID: chapter.id, episode: episode, titleMenu: false))
             }
             .onDelete { offsets in
                 Task { @MainActor in
@@ -424,14 +425,6 @@ struct IOSWorkbenchView: View {
             )
             .navigationDestination(for: IOSWorkspaceRoute.self) { route in
                 destination(route)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("作品一覧") {
-                                Task { await navigation.returnToLibrary(using: store) }
-                            }
-                            .accessibilityIdentifier("ios.workspace.openLibrary")
-                        }
-                    }
             }
         }
         .onAppear {
@@ -594,9 +587,19 @@ struct IOSEditorPane: View {
                 .id(editingToken)
             }
             .navigationTitle(episode.title)
+            .modifier(IOSEpisodeRenameModifier(store: store, chapterID: chapter.id, episode: episode, titleMenu: true))
             .toolbar {
                 IOSExplicitSyncButton(store: store)
-                Button("AI支援", systemImage: "sidebar.right") { showingAssistant.toggle() }
+                Button {
+                    showingAssistant.toggle()
+                } label: {
+                    Label("AI", systemImage: "sparkles")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(IOSPalette.accent)
+                }
+                .accessibilityLabel("AI支援")
+                .accessibilityValue(showingAssistant ? "開いています" : "閉じています")
+                .accessibilityIdentifier("ios.editor.assistant")
                 Menu("プロンプトをコピー", systemImage: "doc.on.clipboard") {
                     Button("この話・校正用") { store.copyEpisodePrompt(purpose: .proofreading, expectedEpisodeID: episode.id) }
                     Button("この話・アドバイス用") { store.copyEpisodePrompt(purpose: .advice, expectedEpisodeID: episode.id) }

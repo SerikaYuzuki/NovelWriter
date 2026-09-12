@@ -58,9 +58,16 @@ extension IOSDocumentStore {
         markDocumentChanged()
     }
 
-    func updateEpisodeTitle(_ title: String, chapterID: ChapterID, episodeID: EpisodeID) {
-        guard permitsSyncSelectionMutation,
-              document.episode(episodeID)?.episode.title != title else { return }
+    func updateEpisodeTitle(
+        _ title: String, chapterID: ChapterID, episodeID: EpisodeID,
+        expectedSession: IOSDocumentSessionToken? = nil,
+        expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
+    ) {
+        guard expectedSession == nil || currentDocumentSessionToken == expectedSession,
+              expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
+              permitsSyncSelectionMutation,
+              let episode = document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID }),
+              episode.title != title else { return }
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         markDocumentChanged()
     }
