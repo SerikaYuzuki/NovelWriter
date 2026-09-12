@@ -59,12 +59,9 @@ struct EditorPaneView: View {
                         }
 
                         if isPlotCardRailPresented {
-                            WritingPlotCardRail(
-                                chapterID: chapterID,
-                                onClose: { isPlotCardRailPresented = false }
-                            )
-                            .frame(height: 240)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            WritingPlotCardRail(chapterID: chapterID)
+                                .frame(height: 240)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .animation(.snappy(duration: 0.2), value: isPlotCardRailPresented)
@@ -134,25 +131,9 @@ private struct WritingPlotCardRail: View {
     @Environment(AppState.self) private var appState
 
     let chapterID: ChapterID
-    let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Label("プロットカード", systemImage: "rectangle.stack")
-                    .font(.headline)
-                Spacer()
-                Button(action: onClose) {
-                    Label("閉じる", systemImage: "xmark")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("プロットカードを閉じる")
-            }
-            .padding(12)
-
-            Divider()
-
+        Group {
             if cards.isEmpty {
                 ContentUnavailableView(
                     "プロットカードがありません",
@@ -179,9 +160,7 @@ private struct WritingPlotCardRail: View {
         .frame(maxWidth: .infinity)
         .frame(maxHeight: .infinity)
         .workbenchGlassChromeStyle()
-        .overlay(alignment: .leading) {
-            Divider()
-        }
+        .accessibilityLabel("プロットカード一覧")
     }
 
     private var cards: [PlotCard] {
