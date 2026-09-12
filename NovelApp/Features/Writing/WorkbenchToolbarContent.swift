@@ -16,6 +16,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(ExportPresenter.self) private var exportPresenter
 
     let overlayState: WorkbenchOverlayState
+    let requestSync: () -> Void
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
 
@@ -82,7 +83,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         }
 
         ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
-            ExplicitSyncButton()
+            ExplicitSyncButton(requestSync: requestSync)
         }
         .customizationBehavior(.disabled)
         .defaultCustomization(.visible)

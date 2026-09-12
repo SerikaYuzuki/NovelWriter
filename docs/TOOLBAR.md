@@ -17,7 +17,7 @@
 - Editor上: 左に話追加、保存・同期状態、同期、話メモ、履歴、書き出し、プロットカード参照。右端に標準の話内検索。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
-幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。
+幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
 ## 3. 現行項目とstable ID
 
@@ -26,7 +26,7 @@
 | `workbench.library` | 作品一覧windowを開く | navigation固定 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync.status` | local保存・remote状態、競合確認等 | 執筆時、固定 |
-| `workbench.snapshot.sync` | サーバーと同期 | 同期可能な執筆中作品、固定 |
+| `workbench.snapshot.sync` | 今すぐ同期。未ログイン／端末内作品は設定案内 | 全section、固定 |
 | `workbench.writing.assistant` | AI支援inspector開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |

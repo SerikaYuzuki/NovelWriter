@@ -38,6 +38,7 @@ struct NovelWorkbenchView: View {
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
 
+    @State private var explicitSyncPresentation = ExplicitSyncPresentation()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
     @State private var overlayState = WorkbenchOverlayState()
@@ -61,10 +62,12 @@ struct NovelWorkbenchView: View {
         .toolbar(id: "novelwriter.workbench.v7") {
             WorkbenchToolbarContent(
                 overlayState: overlayState,
+                requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
                 showsWritingActions: showsWritingActions,
                 isPlotCardRailPresented: $isPlotCardRailPresented
             )
         }
+        .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
         .inspector(isPresented: $isAssistantPresented) {
             if showsWritingActions {
                 AssistantPanelView(
