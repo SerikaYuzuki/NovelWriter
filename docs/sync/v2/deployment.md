@@ -132,3 +132,30 @@ operator change; this document is not evidence of live volume state.
 future S3 adapter requires a new versioned deployment manifest, data-copy plus
 read-back migration, rollback evidence, and a later Decision. It is not an
 ambient environment-variable switch in this deployment.
+
+## Exact role-split v2 upgrade: work deletion (0005)
+
+`SyncServerV2/operations/0005_upgrade.sql` is the narrow operator upgrade for
+an already-attested role-split database with exactly migrations 1–4 and their
+checked-in SHA-384 checksums. It is not the fresh migrator and does not accept
+legacy/single-role databases. Stop API writers, take a PostgreSQL custom-format
+backup, verify restoration in an isolated database, and apply this script as
+`fuminiwa_sync_v2_migrator` with `ON_ERROR_STOP`. It changes only the deletion
+DDL, its runtime grant, and the SQLx migration record, in one transaction.
+The script rejects repeat application; ordinary exact-v2 startup is read-only.
+Retain the previous image/container and backup before replacing the API.
+The old runtime cannot attest the added schema and must not be restarted
+against version 5 without an explicitly reviewed rollback.
+
+2026-09-12: deployed server commit `c23da069e` to the existing
+`fuminiwa-sync-v2-role-split-server` at `https://192.168.11.5:8443`.
+Image digest: `sha256:8b3493dea1e1d23927f4c9352f9eb1ec22ff7d5f01f4dd9f91bcc603a97fe5e5`.
+The migration was rehearsed on a restored, network-isolated PostgreSQL 16
+copy. Live readback retained 4 works and 15 snapshots; deletion markers
+remained zero. Runtime health and trusted HTTPS Auth capabilities returned
+success (Auth epoch 1 / Sync epoch 2); an unauthenticated DELETE reached the
+new route and correctly returned 401. No user's work was deleted and an
+authenticated destructive request was not run against live data.
+Backups, previous container metadata, upgrade SQL and the previous image are
+retained on the server under the private release directory
+`/DATA/AppData/fuminiwa-sync-v2-role-split/releases/work-deletion-c23da069e`.

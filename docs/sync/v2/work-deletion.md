@@ -22,3 +22,7 @@ macOS作品一覧の「削除…」で対象のタイトルと不可逆性を確
 - v2 independent conformance、production/test・AI・同期境界、SwiftLintは成功（既存警告あり）。
 - `Scripts/check.sh`は既存の`ExplicitSyncButton.swift`と`ProductionUnboundAttachmentTests.swift`のSwiftFormat違反で停止。全体成功とはしていない。全packageテストで露呈した非同期テストの待機条件を、送信開始から実際の完了状態へ修正し、該当Application全件を再実行して成功した。
 - server deployと利用者の実作品削除は未実施。機能使用にはserver migration/APIの反映が必要。
+
+## 2026-09-12 サーバー反映
+
+利用者の承認後、既存role-splitサーバーへ反映済み。隔離コピーでbackup復元と0005移行を確認し、本体の4作品・15snapshotを保持して更新した。HTTPS capabilities 200、削除routeの未認証401、runtime healthyを確認。実作品の削除は実行していない。詳細と復旧用資料は[deployment記録](deployment.md)を参照。
