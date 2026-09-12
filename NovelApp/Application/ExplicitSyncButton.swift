@@ -23,8 +23,8 @@ struct ExplicitSyncButton: View {
                 .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
         }
         .help(status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
-            ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
-            : "クリックまたは⌘Sで保存して同期します。"))
+                ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
+                : "使用中は自動で更新を確認します。クリックまたは⌘Sで今すぐ同期します。"))
         .contextMenu {
             if appState.canCloneCurrentWorkIntoActiveAccount {
                 Button("同期用のコピーを作成…") { setup.requestSetup(appState: appState) }

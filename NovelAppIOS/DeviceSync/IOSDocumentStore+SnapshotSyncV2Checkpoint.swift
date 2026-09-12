@@ -7,6 +7,26 @@ import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 
 extension IOSDocumentStore {
+    func runAutomaticSnapshotSyncV2() async {
+        guard startupState == .ready,
+              let workID = syncV2ActiveWorkID,
+              let application = snapshotSyncV2Application else { return }
+        let session = currentDocumentSessionToken
+        let account = snapshotSyncV2AccountScope
+        await application.runAutomaticSynchronization(workID: workID) { [weak self] in
+            await self?.refreshAutomaticSnapshotSyncV2(session: session, account: account)
+        }
+    }
+
+    private func refreshAutomaticSnapshotSyncV2(
+        session: IOSDocumentSessionToken?, account: IOSSnapshotSyncV2AccountScope
+    ) async {
+        guard !Task.isCancelled, currentDocumentSessionToken == session,
+              snapshotSyncV2AccountScope == account,
+              snapshotSyncV2ReprojectionTask == nil else { return }
+        await resumeSnapshotSyncV2()
+    }
+
     @discardableResult
     func checkpointSnapshotSyncV2(
         _ value: NovelDocument,

@@ -114,3 +114,18 @@ macOSの作品行右クリックとiOSの長押しから作品名を変更でき
 検証は中ぐらい（iOS画面への結果反映の局所修正）。合成SQLiteに受信済みInboxを用意した追加テストで、修正前は再起動なしの更新が失敗し、修正後は本文・作品名の反映とInbox適用が成功。iOS app全123テスト成功。本文取得の検証を追加して関連11テストを再実行し成功。同期中の追加編集・session変更・IME・account境界の保護を確認した。変更ファイルのformatとdiff確認も成功。
 
 署名済みiOS build、カリカリくんへの更新インストールと起動が成功。更新前の端末内SQLite一式をリポジトリ外の非公開開発バックアップへコピーし、コピーのquick_check成功。実原稿・credential・ログ内容は文書へ転記していない。実端末でのMacからの新たな同期と、開いたままの受信確認は利用者の確認待ち。インストール／起動成功を端末間同期成功と扱わない。
+
+
+## 2026-09-13 開いている作品の自動同期
+
+macOS / iOS共通の`SyncV2Application.runAutomaticSynchronization`をforegroundの作品画面に接続した。開始時と約10秒ごとに、scope付きの端末内metadata（世代・acknowledged head）とremote headを照合する。本文・全作品一覧のdecodeやdownloadは更新確認に使わない。headが進んだ場合だけ、同じ保存世代・account binding・未処理intentなしを再検査して通常のpublish→検証済みreceipt→Inbox経路へ入れる。変更がなければ新規intentや送信を作らず、停止済みcommandの明示再試行も行わない。
+
+更新確認はWork単位で重複を抑制し、画面のtask終了・非active化で止める。通信エラー時は小さな状態表示だけを更新し、確認間隔を60秒へ延ばす。画面の復帰・作品／account切替ではtaskを張り直す。保存・IME・画面遷移のgate内でネットワークを待たない。受信後の適用は既存のlocal generation／session／account／document gateとSQLite CASを通し、変換中・未保存・modelと異なるnative本文があれば保留する。macOSは状態購読、iOSは既存のreprojectionから反映し、安全になった後の確認で再度適用を試みる。
+
+同一作品の適用では、存在する選択中の話・章を維持する。iOSの全面ロードoverlayはこの適用中に出さず、短いローカル適用境界の入力保護は維持する。本文そのものが変わる場合は既存の明示的なeditor再生成経路を使うため、カーソル・スクロール・Undoの完全な引継ぎまでは今回保証しない。競合の選択は引き続き明示操作。初回remote-only取得、作品棚全体の常時更新、アプリ中断中のpush受信は今回の対象外。サーバー・wire・schema・migrationの変更はない。
+
+検証は重たい段階。共通package全489テスト、macOS app全162テスト、iOS app全124テストが成功。iOSの最終表示整理後は関連12テストも成功。合成SQLiteとfake remoteを使い、手動／自動の同じ受信・検証・適用、head不変時の送信なし、通信失敗からの表示復旧、同時確認の抑制、確認中の編集・cancel・account切替、quarantined publishの非再試行、話選択の維持、iOSの入力gate中にoverlayを出さないことを確認した。Mac実画面で見つけた成功時のidle表示をnoChangesへ更新し、共通の関連テストを再実行して成功した。
+
+`./Scripts/check.sh`はPython独立fixture 61 vector、v2 static boundary、Swift conformance 6テストまで成功し、Rust段階で`cargo`不在により停止。別実行の構造・target依存・v2境界、変更ファイルformat・diff確認は成功。全体SwiftLintは今回変更していない`FuminiwaApp.swift`の既存type_body_length（351行）で失敗した。全体検査の完走／Rust conformance成功とは扱わない。
+
+署名済みmacOS / iOS buildと、カリカリくんへの更新インストール・起動が成功。Mac実画面では更新前の作品と話を開き直し、同期ボタンを押さずに自動確認後の「同期済み」表示を確認した。更新前にMacは保存して終了後のSQLite online backup、iOSはSQLite一式のコピーを非公開のリポジトリ外へ保存し、両コピーのquick_checkが成功した。実原稿は編集していない。実端末間で新しく編集した本文の往復受信は今回未確認であり、fakeでの受信成功・実機へのインストール成功と区別する。

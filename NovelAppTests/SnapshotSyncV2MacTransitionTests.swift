@@ -8,6 +8,25 @@ import Testing
 
 @Suite("macOS Snapshot Sync v2 transition races")
 struct SnapshotSyncV2MacTransitionTests {
+    @Test("background adoption keeps the selected episode and the ready workbench")
+    @MainActor
+    func automaticAdoptionRetainsEpisode() async throws {
+        let fixture = try await makeMacConflictFixture(remoteBehavior: .failure(.offline), committedCapture: .notActive)
+        let selected = try #require(fixture.document.chapters.first?.episodes.last?.id)
+        fixture.state.selectedEpisodeID = selected
+        let inbox = fixture.serverInbox
+        await fixture.remote.setCommandHandler { sealed in
+            try makeAppliedResolveServerExecution(operation: .command(sealed), inbox: inbox)
+        }
+        #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
+        try await eventuallyMac {
+            fixture.state.document.title == "サーバー版"
+        }
+        #expect(fixture.state.selectedEpisodeID == selected)
+        #expect(fixture.state.selectedEpisode?.content == "二話の本文")
+        #expect(fixture.state.startupState.isReady)
+    }
+
     @Test("account switch cancels automatic server adoption")
     @MainActor
     func automaticServerAdoptionCannotCrossAccountScope() async throws {

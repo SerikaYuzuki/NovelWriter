@@ -250,6 +250,7 @@ extension AppState {
                 }
                 switch state.remoteProgress {
                 case .readyForSafeAdoption:
+                    guard saveState == .saved, hasCommittedEditorTextMatchingSelectedEpisode() else { return }
                     _ = await applySnapshotSyncV2ServerVersion(
                         expectedAccountScope: accountScope
                     )
@@ -300,6 +301,7 @@ extension AppState {
                   ),
                   matchesSnapshotSyncV2AccountScope(expectedAccountScope),
                   permitsDocumentTransitionOperation,
+                  hasCommittedEditorTextMatchingSelectedEpisode(),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -417,6 +419,8 @@ extension AppState {
         expectedAccountScope: SnapshotSyncV2AccountScopeToken
     ) async -> Bool {
         guard let adopted = opened.document else { return false }
+        let retainedEpisode = selectedEpisodeID.flatMap { adopted.episode($0) }
+        let retainedChapter = adopted.chapters.first { $0.id == selectedChapterID }
         let workID = expectedSnapshotSession.workID
         let newSession = await application.beginSession(workID: opened.workID)
         guard matchesSnapshotSyncV2Identity(
@@ -435,6 +439,8 @@ extension AppState {
         ) else {
             return false
         }
+        selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? adopted.chapters.first?.id
+        selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? adopted.chapters.first?.episodes.first?.id
         snapshotSyncV2Session = newSession
         return true
     }

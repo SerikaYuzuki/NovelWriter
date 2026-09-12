@@ -397,16 +397,15 @@ private func makeMacConflictDocuments() -> MacConflictDocuments {
     let workID = WorkID(UUID())
     let createdAt = Date(timeIntervalSince1970: 1_720_000_000)
     let documentID = DocumentID(UUID())
-    let document = NovelDocument(
+    var document = NovelDocument(
         id: documentID.rawValue,
         title: "端末版",
         chapters: [Chapter(title: "第一章", content: "本文")]
     )
-    let remoteDocument = NovelDocument(
-        id: documentID.rawValue,
-        title: "サーバー版",
-        chapters: [Chapter(title: "第一章", content: "サーバー本文")]
-    )
+    document.chapters[0].episodes.append(Episode(title: "二話", content: "二話の本文"))
+    var remoteDocument = document
+    remoteDocument.title = "サーバー版"
+    remoteDocument.chapters[0].episodes[0].content = "サーバー本文"
     return MacConflictDocuments(
         workID: workID,
         createdAt: createdAt,

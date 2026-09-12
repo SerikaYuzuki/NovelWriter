@@ -33,6 +33,23 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
         }
     }
 
+    private var headHandler: (@Sendable (WorkID) async throws -> SyncV2RemoteHead?)?
+    private var headReads: [WorkID] = []
+
+    public func setHeadHandler(_ handler: @escaping @Sendable (WorkID) async throws -> SyncV2RemoteHead?) {
+        headHandler = handler
+    }
+
+    public func recordedHeadReads() -> [WorkID] {
+        headReads
+    }
+
+    public func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
+        headReads.append(workID)
+        guard let headHandler else { throw SyncV2Failure.offline }
+        return try await headHandler(workID)
+    }
+
     public init() {}
 
     public func setBehaviors(_ behaviors: [Behavior]) {

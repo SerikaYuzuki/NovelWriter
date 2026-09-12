@@ -22,6 +22,7 @@ public struct SyncV2OperationResult: Sendable {
 
 public actor SyncV2Application {
     var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    var automaticChecks: Set<WorkID> = []
     var syncDiagnostics: [WorkID: String] = [:]
     let kernel: any SyncV2LocalKernel
     let planner: any SyncV2CommandPlanner

@@ -8,8 +8,8 @@ import Testing
 
 @Suite("Explicit production sync")
 struct ExplicitSyncIntegrationTests {
-    @Test("unchanged local work fetches a remote descendant and adopts only through the document gate")
-    func unchangedWorkReceivesRemoteUpdate() async throws {
+    @Test("manual and automatic sync receive a remote descendant through the document gate", arguments: [false, true])
+    func unchangedWorkReceivesRemoteUpdate(automatic: Bool) async throws {
         let configuration = try TestRuntimeConfiguration()
         let workID = WorkID(UUID())
         let document = applicationTestDocument(title: "local")
@@ -43,8 +43,29 @@ struct ExplicitSyncIntegrationTests {
         }
         let app = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         _ = try await app.openLocal(workID: workID)
-        let result = try await app.synchronize(workID: workID)
-        #expect(result.typedResult == .queued)
+        if automatic {
+            try await eventually { await app.workerTasks[workID] == nil }
+            await configuration.remote.setHeadHandler { _ in throw SyncV2Failure.offline }
+            await #expect(throws: SyncV2Failure.offline) {
+                try await app.checkForRemoteUpdates(workID: workID)
+            }
+            #expect(await app.uiState(workID: workID)?.remoteProgress == .offline)
+            #expect(try await store.pendingIntents(scope: productionScope).isEmpty)
+            await configuration.remote.setHeadHandler { _ in
+                try SyncV2RemoteHead(snapshotID: local.snapshotId, generation: 1)
+            }
+            #expect(try await !app.checkForRemoteUpdates(workID: workID))
+            #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)
+            #expect(await configuration.remote.recordedOperations().isEmpty)
+            #expect(try await store.pendingIntents(scope: productionScope).isEmpty)
+            await configuration.remote.setHeadHandler { _ in
+                try SyncV2RemoteHead(snapshotID: remote.snapshotId, generation: 2)
+            }
+            #expect(try await app.checkForRemoteUpdates(workID: workID))
+        } else {
+            let result = try await app.synchronize(workID: workID)
+            #expect(result.typedResult == .queued)
+        }
         try await eventually { try await app.pendingAdoption(workID: workID) != nil }
         #expect(try await store.open(workID: workID, scope: productionScope).document == document)
         let pending = try #require(try await app.pendingAdoption(workID: workID))
@@ -56,6 +77,13 @@ struct ExplicitSyncIntegrationTests {
         ))
         #expect(adopted.document == updated)
         #expect(try await app.pendingAdoption(workID: workID) == nil)
+        if automatic {
+            try await eventually { await app.workerTasks[workID] == nil }
+            let count = await configuration.remote.recordedOperations().count
+            #expect(try await !app.checkForRemoteUpdates(workID: workID))
+            #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)
+            #expect(await configuration.remote.recordedOperations().count == count)
+        }
         await store.close()
     }
 

@@ -22,6 +22,9 @@ public enum SyncV2CommandFailureDisposition: Sendable {
 /// those same bytes until an exact verified receipt acknowledges that intent.
 public protocol SyncV2CommandPlanner: Sendable {
     func requestSynchronization(workID: WorkID) async throws
+    func automaticSyncCandidate(workID: WorkID) async throws -> SyncV2AutomaticSyncCandidate?
+    /// Automatic reconciliation must not revive quarantined commands.
+    func requestAutomaticSynchronization(workID: WorkID, candidate: SyncV2AutomaticSyncCandidate) async throws -> Bool
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan
     /// Enumerates durable outbox work without requiring the work to be opened
     /// in the UI.  This is the restart/connectivity wake boundary.
@@ -48,6 +51,14 @@ public protocol SyncV2CommandPlanner: Sendable {
 
 public extension SyncV2CommandPlanner {
     func requestSynchronization(workID _: WorkID) async throws {}
+
+    func automaticSyncCandidate(workID _: WorkID) async throws -> SyncV2AutomaticSyncCandidate? {
+        nil
+    }
+
+    func requestAutomaticSynchronization(workID _: WorkID, candidate _: SyncV2AutomaticSyncCandidate) async throws -> Bool {
+        false
+    }
 
     func pendingWorkIDs() async throws -> [WorkID] {
         []

@@ -252,6 +252,11 @@ final class IOSDocumentStore {
     var startupState: IOSStartupState = .loading
     var saveState: IOSSaveState = .saved
     var authUIState: IOSAuthUIState = .unavailable
+    var showsDocumentTransitionOverlay: Bool {
+        isDocumentTransitionInProgress && !isNavigationDepartureInProgress && !isRemoteAdoptionInProgress
+    }
+
+    var isRemoteAdoptionInProgress = false
     var isDocumentTransitionInProgress = false
     var isNavigationDepartureInProgress = false
     var documentSessionGeneration: UInt64 = 0

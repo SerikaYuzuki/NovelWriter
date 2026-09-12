@@ -4,8 +4,8 @@ import NovelSyncV2Application
 import NovelSyncV2Store
 
 actor ProductionSyncV2Planner: SyncV2CommandPlanner {
-    private let store: LocalSyncV2Store
-    private let scope: any SyncV2ScopeResolver
+    let store: LocalSyncV2Store
+    let scope: any SyncV2ScopeResolver
     /// Immutable object presence is reusable only in this exact account,
     /// server, protocol, fence, and Work namespace. It is separate from a
     /// command's upload capability session.

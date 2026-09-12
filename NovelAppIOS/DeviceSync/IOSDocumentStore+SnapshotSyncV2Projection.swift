@@ -10,7 +10,8 @@ extension IOSDocumentStore {
     @discardableResult
     func installSnapshotSyncV2Opened(
         _ opened: SyncV2OpenedWork,
-        value: NovelDocument
+        value: NovelDocument,
+        preservingSelection: Bool = false
     ) -> Bool {
         guard opened.document == value,
               opened.documentCreatedAt.timeIntervalSince1970.isFinite,
@@ -22,6 +23,8 @@ extension IOSDocumentStore {
             snapshotSyncOutcome = .failed
             return false
         }
+        let retainedEpisode = preservingSelection ? selectedEpisodeID.flatMap { value.episode($0) } : nil
+        let retainedChapter = preservingSelection ? value.chapters.first(where: { $0.id == selectedChapterID }) : nil
         document = value
         syncV2ActiveWorkID = opened.workID
         documentCreatedAt = opened.documentCreatedAt
@@ -41,8 +44,8 @@ extension IOSDocumentStore {
         syncV2PortableResources = portableMirror.resources
         userDefaults.set(opened.workID.rawValue.uuidString, forKey: Self.lastWorkIDKey)
         syncV2KeepBothPendingWorkID = nil
-        selectedChapterID = value.chapters.first?.id
-        selectedEpisodeID = value.chapters.first?.episodes.first?.id
+        selectedChapterID = retainedEpisode?.chapterID ?? retainedChapter?.id ?? value.chapters.first?.id
+        selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? value.chapters.first?.episodes.first?.id
         advanceDocumentSessionGeneration()
         advanceEditorContentGeneration()
         startupState = .ready
@@ -148,6 +151,10 @@ extension IOSDocumentStore {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             case .readyForSafeAdoption:
                 if let automaticAdoption,
+                   let current = automaticAdoptionExpectation(for: workID, validatingEditorSurface: true),
+                   current.session == automaticAdoption.session,
+                   current.editGeneration == automaticAdoption.editGeneration,
+                   current.accountScope == automaticAdoption.accountScope,
                    await adoptPendingSnapshotSyncV2(
                        expectedSession: automaticAdoption.session,
                        expectedEditGeneration: automaticAdoption.editGeneration,

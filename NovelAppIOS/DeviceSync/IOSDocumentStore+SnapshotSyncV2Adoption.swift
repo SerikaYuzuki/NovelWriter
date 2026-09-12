@@ -42,6 +42,11 @@ extension IOSDocumentStore {
                 operationErrorMessage = "未保存の変更があります。端末へ適用する前に保存してください。"
                 return false
             }
+            // Do not commit an in-progress composition just because a remote
+            // update arrived. The next foreground check can try again.
+            guard automaticAdoptionExpectation(for: activeWorkID, validatingEditorSurface: true) != nil else { return false }
+            isRemoteAdoptionInProgress = true
+            defer { isRemoteAdoptionInProgress = false }
             var adopted = false
             let transitioned = await performDocumentTransition {
                 do {
@@ -118,7 +123,7 @@ extension IOSDocumentStore {
                           currentDocumentSessionToken == expectedSession,
                           localEditGeneration == expectedEditGeneration,
                           snapshotSyncV2AccountScope == expectedAccountScope,
-                          installSnapshotSyncV2Opened(opened, value: value) else { return }
+                          installSnapshotSyncV2Opened(opened, value: value, preservingSelection: true) else { return }
                     let adoptedState = await application.uiState(workID: opened.workID)
                     guard !isSyncV2RemoteAccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }

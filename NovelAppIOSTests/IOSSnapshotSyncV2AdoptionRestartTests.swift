@@ -378,6 +378,39 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
     }
 }
 
+extension IOSSnapshotSyncV2AdoptionRestartTests {
+    @Test("foreground automatic sync applies pending content without a sync button")
+    func foregroundSyncAdoptsWithoutButton() async throws {
+        try await withAdoptionEnvironment { environment in
+            let fixture = try await makePendingAdoptionFixture()
+            environment.track(fixture.configuration)
+            let store = makeStore(environment: environment, fixture: fixture)
+            let application = try await installPendingWork(fixture, into: store)
+            let selected = try #require(store.document.chapters.first?.episodes.last?.id)
+            store.selectedEpisodeID = selected
+            var observedProtectedAdoption = false
+            store.editorCommandSession.registerDocumentLifecycleHandler(id: UUID(), prepare: { true }, resume: {
+                if store.isRemoteAdoptionInProgress {
+                    observedProtectedAdoption = true
+                    #expect(store.isDocumentTransitionInProgress)
+                    #expect(!store.showsDocumentTransitionOverlay)
+                }
+            })
+            let task = Task { await store.runAutomaticSnapshotSyncV2() }
+            defer { task.cancel() }
+            try await eventually {
+                store.document.title == "サーバー版" && store.snapshotSyncOutcome == .idle
+            }
+            #expect(try await application.pendingAdoption(workID: fixture.workID) == nil)
+            #expect(observedProtectedAdoption)
+            #expect(store.selectedEpisodeID == selected)
+            #expect(store.selectedEpisode?.content == "二話の本文")
+            #expect(!store.isDocumentTransitionInProgress)
+            #expect(!store.isRemoteAdoptionInProgress)
+        }
+    }
+}
+
 private actor AdoptionOperationGate {
     private var started = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
@@ -463,7 +496,8 @@ private func makePendingAdoptionFixture() async throws -> PendingAdoptionFixture
     )
     let workID = WorkID(UUID())
     let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
-    let localDocument = NovelDocument.newDocument(title: "端末版")
+    var localDocument = NovelDocument.newDocument(title: "端末版")
+    localDocument.chapters[0].episodes.append(Episode(title: "二話", content: "二話の本文"))
     let local = try SnapshotCodec.encode(
         SnapshotModel(
             workId: workID,

@@ -33,11 +33,6 @@ enum WorkbenchColumnLayout: Hashable {
     }
 }
 
-private struct SyncStatusObservationID: Hashable {
-    let session: AppDocumentSessionToken
-    let account: SnapshotSyncV2AccountScopeToken
-}
-
 struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
@@ -81,9 +76,7 @@ struct NovelWorkbenchView: View {
         .modifier(WorkbenchToolbarTitleVisibility())
         .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
-        .task(id: SyncStatusObservationID(session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken)) {
-            await appState.observeSnapshotSyncV2Status()
-        }
+        .modifier(SnapshotSyncObservationModifier())
         .onReceive(NotificationCenter.default.publisher(for: .toggleWritingAssistant)) { _ in
             if showsWritingActions {
                 isAssistantPresented.toggle()
