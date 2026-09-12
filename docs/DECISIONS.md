@@ -1128,3 +1128,12 @@
 - macOS / iOSの保存直列化は共有sourceへ集約する。SQLite checkpoint、編集中revision、排他操作、IMEとaccount/session gateは維持する。
 - 現行v2のDB schema、認証wire v1、データ保全・障害復旧を旧互換という理由で削除しない。原稿・実DB・未追跡退避フォルダは変更しない。
 - 検証と残件は[CLEANUP_20260912](CLEANUP_20260912.md)に記録する。
+
+## D-091: 明示同期は最新checkpointの送受信確認まで要求する
+
+- 日付: 2026-09-12。利用者が明示syncボタンと同期実態の確認・修正を依頼した。
+- MacのWorkbenchに常設の「今すぐ同期」、iOSの本文画面・作品ホームに同じ操作を置く。サインイン前／未接続作品は設定導線へ案内し、アカウント追加は元のunbound作品を保持した明示cloneとする。
+- IME確定とローカルcheckpointはdocument gate内で先に完了する。通信はgateを離れた既存workerが行い、作品・session・account scopeの遅延完了を別作品へ適用しない。
+- productionの明示同期は変更なしでも既存のcheckpoint intentを再要求し、sealed publish / receipt / verified Inboxによってremote headを確認する。送信待ちが空であることだけを「同期済み」の証拠にしない。既存pending/sealed commandは同一IDで再開する。
+- `publish/noChanges`が新しいremote descendantを返した場合、検証済みInboxと同account/fence/Work/source generationの完了receiptから安全な反映待ちを導く。DB schemaは変更しない。document gateと最新世代を再検査し、未送信変更・競合がなければ反映し、反映前版を履歴に保護する。編集が増えた場合は反映を拒否し、次の同期へ送る。
+- 実装・検証・実環境で未確認の境界は[EXPLICIT_SYNC_20260912](EXPLICIT_SYNC_20260912.md)を参照。

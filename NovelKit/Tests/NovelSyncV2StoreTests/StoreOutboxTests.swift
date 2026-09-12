@@ -4,8 +4,8 @@ import NovelSyncV2
 import NovelSyncV2Store
 import Testing
 
-@Test
-func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent() async throws {
+@Test(arguments: [false, true])
+func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent(editBeforeAdoption: Bool) async throws {
     let root = temporaryStoreRoot("publish-lineage-nochanges")
     defer { try? FileManager.default.removeItem(at: root) }
     let workID = WorkID(UUID())
@@ -39,6 +39,7 @@ func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent() async t
     )
     try await store.stageRemoteGraph(graph, scope: scopeA)
     try await store.verifyInbox(inboxID: graph.inboxID, scope: scopeA)
+    #expect(try await store.pendingFastForward(workID: workID, scope: scopeA) == nil)
     let acknowledgement = try commandAcknowledgement(
         command,
         result: .noChanges,
@@ -64,6 +65,30 @@ func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent() async t
     #expect(try await store.pendingSealedCommands(scope: scopeA).isEmpty)
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
     #expect(try await store.receiptReadback(commandID: command.commandId, scope: scopeA)?.result == .noChanges)
+    #expect(try await store.pendingFastForward(workID: workID, scope: scopeA)?.inboxID == graph.inboxID)
+    await store.close()
+    let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
+    #expect(try await reopened.pendingFastForward(workID: workID, scope: scopeA)?.inboxID == graph.inboxID)
+    if editBeforeAdoption {
+        var edited = document
+        edited.title = "newer local edit"
+        _ = try await reopened.checkpoint(V2CheckpointRequest(
+            workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: checkpoint.generation
+        ), scope: scopeA)
+        #expect(try await reopened.pendingFastForward(workID: workID, scope: scopeA) == nil)
+        await #expect(throws: SyncV2StoreError.staleCAS) {
+            _ = try await reopened.adoptPendingFastForward(workID: workID, inboxID: graph.inboxID, scope: scopeA)
+        }
+        #expect(try await reopened.open(workID: workID, scope: scopeA).document == edited)
+    } else {
+        let adopted = try await reopened.adoptPendingFastForward(workID: workID, inboxID: graph.inboxID, scope: scopeA)
+        #expect(adopted.document == remoteDocument)
+        #expect(try await reopened.pendingFastForward(workID: workID, scope: scopeA) == nil)
+        #expect(try await reopened.history(workID: workID, scope: scopeA).contains {
+            $0.snapshotID == checkpoint.snapshotID && $0.reason == "preRemoteAdoption" && $0.pinned
+        })
+    }
+    await reopened.close()
 }
 
 @Test

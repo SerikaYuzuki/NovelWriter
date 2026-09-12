@@ -592,6 +592,7 @@ struct IOSEditorPane: View {
             }
             .navigationTitle(episode.title)
             .toolbar {
+                IOSExplicitSyncButton(store: store)
                 Button("AI支援", systemImage: "sidebar.right") { showingAssistant.toggle() }
                 Menu("プロンプトをコピー", systemImage: "doc.on.clipboard") {
                     Button("この話・校正用") { store.copyEpisodePrompt(purpose: .proofreading, expectedEpisodeID: episode.id) }

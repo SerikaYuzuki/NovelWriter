@@ -21,6 +21,7 @@ public enum SyncV2CommandFailureDisposition: Sendable {
 /// canonical command bytes is one local transaction. A restart must return
 /// those same bytes until an exact verified receipt acknowledges that intent.
 public protocol SyncV2CommandPlanner: Sendable {
+    func requestSynchronization(workID: WorkID) async throws
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan
     /// Enumerates durable outbox work without requiring the work to be opened
     /// in the UI.  This is the restart/connectivity wake boundary.
@@ -46,6 +47,8 @@ public protocol SyncV2CommandPlanner: Sendable {
 }
 
 public extension SyncV2CommandPlanner {
+    func requestSynchronization(workID _: WorkID) async throws {}
+
     func pendingWorkIDs() async throws -> [WorkID] {
         []
     }

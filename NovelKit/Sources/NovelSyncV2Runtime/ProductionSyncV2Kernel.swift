@@ -233,7 +233,9 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
             )
         } catch { throw mapStoreError(error) }
     }
+}
 
+extension ProductionSyncV2Kernel {
     func stageRemote(_ inbox: SyncV2RemoteInbox) async throws {
         do {
             let localScope = try await scope.existingScope(workID: inbox.workID)
@@ -277,7 +279,13 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         guard let pending = try await store.pendingServerAdoption(
             workID: workID,
             scope: localScope
-        ) else { return nil }
+        ) else {
+            guard let update = try await store.pendingFastForward(workID: workID, scope: localScope) else { return nil }
+            return SyncV2PendingAdoption(
+                workID: workID, inboxID: update.inboxID,
+                expectedLocalVersion: SyncV2LocalVersion(generation: update.generation, snapshotID: update.snapshotID)
+            )
+        }
         return SyncV2PendingAdoption(
             workID: pending.workID,
             inboxID: pending.inboxID,
@@ -295,16 +303,21 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     ) async throws -> SyncV2OpenedWork {
         do {
             let localScope = try await scope.existingScope(workID: transaction.boundary.workID)
-            let result = try await store.adoptPendingServerResolution(
-                workID: transaction.boundary.workID,
-                inboxID: transaction.boundary.inboxID,
-                scope: localScope
-            )
+            let result: V2OpenResult = if try await store.pendingServerAdoption(workID: transaction.boundary.workID, scope: localScope) != nil {
+                try await store.adoptPendingServerResolution(
+                    workID: transaction.boundary.workID, inboxID: transaction.boundary.inboxID, scope: localScope
+                )
+            } else {
+                try await store.adoptPendingFastForward(
+                    workID: transaction.boundary.workID, inboxID: transaction.boundary.inboxID, scope: localScope
+                )
+            }
             return SyncV2OpenedWork(
                 workID: transaction.boundary.workID,
                 document: result.document,
                 documentCreatedAt: result.documentCreatedAt,
                 attachments: result.attachments,
+                resources: result.resources,
                 generation: result.summary.localGeneration,
                 snapshotID: result.summary.currentSnapshotID
             )

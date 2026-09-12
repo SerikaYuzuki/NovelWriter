@@ -36,6 +36,12 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         self.scope = scope
     }
 
+    func requestSynchronization(workID: WorkID) async throws {
+        let localScope = try await scope.existingScope(workID: workID)
+        guard case .bound = localScope else { throw SyncV2Failure.authenticationRequired }
+        try await store.requestSynchronization(workID: workID, scope: localScope)
+    }
+
     func pendingWorkIDs() async throws -> [WorkID] {
         guard let binding = try await scope.activeBinding() else { return [] }
         return try await store.pendingWorkIDs(scope: .bound(binding))
@@ -371,7 +377,9 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         try await store.seal(command, intentID: resolutionIntentID, scope: localScope)
         return .command(command)
     }
+}
 
+extension ProductionSyncV2Planner {
     func markSending(
         _ operation: SyncV2RemoteOperation,
         workID: WorkID
@@ -696,80 +704,6 @@ private extension ProductionSyncV2Planner {
         )
         return transfer
     }
-}
-
-private struct CommandEnvelope<Payload: Encodable>: Encodable {
-    let binding: CommandBinding
-    let commandId: String
-    let commandKind: String
-    let payload: Payload
-    let schemaVersion: Int
-    let sourceGeneration: Int64
-    let sourceSnapshotId: String
-}
-
-private struct CommandBinding: Encodable {
-    let accountFence: String
-    let accountId: String
-    let protocolEpoch: Int64
-    let serverInstanceId: String
-
-    init(binding: V2AccountBinding) {
-        accountFence = binding.accountFence
-        accountId = binding.accountID
-        protocolEpoch = binding.protocolEpoch
-        serverInstanceId = binding.serverInstanceID
-    }
-}
-
-private struct CommandHead: Encodable {
-    let generation: Int64
-    let snapshotId: String
-
-    init(_ head: V2RemoteHead) {
-        generation = head.generation
-        snapshotId = head.snapshotID.rawValue
-    }
-}
-
-private struct PublishPayload: Encodable {
-    let candidateSnapshotId: String
-    let expectedRemoteHead: CommandHead?
-    let workId: String
-}
-
-private struct CreateWorkPayload: Encodable { let documentId: String; let workId: String }
-private struct PrepareObjectPayload: Encodable { let byteCount: Int; let objectId: String; let workId: String }
-private struct FinalizeObjectPayload: Encodable { let byteCount: Int; let objectId: String; let uploadId: String; let workId: String }
-private struct RegisterSnapshotPayload: Encodable { let manifestBase64URL: String; let manifestBytesDigest: String; let snapshotId: String; let workId: String }
-private struct ResolveServerPayload: Encodable {
-    let conflictId: String
-    let conflictRevision: Int64
-    let expectedCurrentSnapshotId: String
-    let expectedLocalGeneration: Int64
-    let preAdoptionSnapshotId: String
-    let remoteSnapshotId: String
-    let workId: String
-}
-
-private struct ResolveDevicePayload: Encodable {
-    let conflictId: String
-    let conflictRevision: Int64
-    let decisionSnapshotId: String
-    let expectedRemoteHead: CommandHead
-    let localCandidateSnapshotId: String
-    let workId: String
-}
-
-private struct CloneWorkPayload: Encodable {
-    let conflictId: String
-    let conflictRevision: Int64
-    let expectedOriginalHead: CommandHead
-    let localCandidateSnapshotId: String
-    let newDocumentId: String
-    let newRootSnapshotId: String
-    let newWorkId: String
-    let sourceWorkId: String
 }
 
 private extension Data {

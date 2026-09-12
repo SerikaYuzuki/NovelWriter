@@ -81,24 +81,13 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
             .defaultCustomization(.visible)
         }
 
-        if showsWritingActions {
-            if appState.canExplicitlySyncCurrentWork {
-                ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
-                    Button {
-                        Task {
-                            await appState.synchronizeSnapshotSyncV2()
-                        }
-                    } label: {
-                        Label("サーバーと同期", systemImage: "arrow.clockwise")
-                    }
-                    .help("この端末の保存内容をサーバーと同期します")
-                    .disabled(!appState.canExplicitlySyncCurrentWork)
-                    .accessibilityIdentifier("workbench.snapshot.sync")
-                }
-                .customizationBehavior(.disabled)
-                .defaultCustomization(.visible)
-            }
+        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
+            ExplicitSyncButton()
+        }
+        .customizationBehavior(.disabled)
+        .defaultCustomization(.visible)
 
+        if showsWritingActions {
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
                 Button {
                     overlayState.toggle(.memo)

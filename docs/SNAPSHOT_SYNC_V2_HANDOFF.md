@@ -1,5 +1,8 @@
 # Snapshot Sync v2 — 現在地と残件
 
+> 2026-09-12 明示同期更新: [作業記録](EXPLICIT_SYNC_20260912.md)。変更なし作品の送受信確認とremote descendantの安全な反映を接続した。Macの現行DBはunbound作品のみで送信記録なし、LAN serverはcreateWork 1件・Snapshot 0件だった。隔離PostgreSQL/HTTP統合検証は成功。実アカウントの端末間往復は未確認。
+
+
 > 2026-09-12追記: UI・offline保存修正の最新結果は[今回の作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)。Macの保存中revision競合、両OSのautosave自己取消、接続復帰wake、iOS明示同期前のlocal flushを修正した。認証済み新規作品の実サーバーへの反映は引き続き署名済み実機での受入が必要。
 
 更新: 2026-09-12（source・target構成の照合）。実機・stagingの最終記録は2026-08-18。**実装・統合中、Release NO-GO**。

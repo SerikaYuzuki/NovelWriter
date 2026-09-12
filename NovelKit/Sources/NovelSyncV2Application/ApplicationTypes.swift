@@ -205,15 +205,15 @@ public struct SyncV2PendingAdoption: Hashable, Sendable {
     public let workID: WorkID
     public let inboxID: UUID
     public let expectedLocalVersion: SyncV2LocalVersion
-    public let conflictID: UUID
-    public let conflictRevision: Int64
+    public let conflictID: UUID?
+    public let conflictRevision: Int64?
 
     public init(
         workID: WorkID,
         inboxID: UUID,
         expectedLocalVersion: SyncV2LocalVersion,
-        conflictID: UUID,
-        conflictRevision: Int64
+        conflictID: UUID? = nil,
+        conflictRevision: Int64? = nil
     ) {
         self.workID = workID
         self.inboxID = inboxID

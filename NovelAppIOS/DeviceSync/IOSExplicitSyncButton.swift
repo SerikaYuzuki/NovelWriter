@@ -1,0 +1,54 @@
+import SwiftUI
+
+struct IOSExplicitSyncButton: View {
+    let store: IOSDocumentStore
+    @State private var showingSetup = false
+    @State private var session: IOSDocumentSessionToken?
+    @State private var account: IOSSnapshotSyncV2AccountScope?
+
+    private var isSignedIn: Bool {
+        if case .signedIn = store.authUIState {
+            return true
+        }
+        return false
+    }
+
+    private var canAdd: Bool {
+        isSignedIn && !store.isCurrentWorkParked &&
+            store.syncV2LibraryItems.first(where: { $0.workID == store.syncV2ActiveWorkID })?.accountState == .unbound
+    }
+
+    var body: some View {
+        Button(store.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath") {
+            if store.canExplicitlySyncCurrentWork {
+                Task { _ = await store.synchronizeSnapshotSyncV2() }
+            } else {
+                session = store.currentDocumentSessionToken
+                account = store.snapshotSyncV2AccountScope
+                showingSetup = true
+            }
+        }
+        .disabled(store.isSnapshotSyncInFlight || store.isDocumentTransitionInProgress || store.isSyncV2RemoteAccountTransitionActive || store.syncV2AccountCloneInFlight)
+        .accessibilityIdentifier("ios.editor.sync")
+        .confirmationDialog("作品を同期する", isPresented: $showingSetup, titleVisibility: .visible) {
+            if canAdd {
+                Button("アカウントへ追加して同期") {
+                    guard session == store.currentDocumentSessionToken,
+                          account == store.snapshotSyncV2AccountScope else { return }
+                    Task { _ = await store.cloneActiveWorkIntoSignedInAccount() }
+                }
+            } else if !isSignedIn {
+                Button("Appleでサインイン") { Task { await store.signInWithApple() } }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(store.isCurrentWorkParked
+                ? "別のアカウントに属する作品です。元のアカウントでサインインしてください。"
+                : canAdd
+                ? "この端末の原本を残して、同期用の作品をアカウントに追加します。"
+                : "サインイン後、もう一度「今すぐ同期」から作品をアカウントに追加できます。")
+        }
+        .onChange(of: store.currentDocumentSessionToken) { _, _ in showingSetup = false }
+        .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in showingSetup = false }
+    }
+}

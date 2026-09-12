@@ -116,6 +116,7 @@ public extension SyncV2Application {
                 typedResult: .conflictPending
             )
         }
+        try await planner.requestSynchronization(workID: workID)
         return try await synchronizePendingCommand(workID: workID)
     }
 }

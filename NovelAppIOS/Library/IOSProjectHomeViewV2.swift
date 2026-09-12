@@ -39,8 +39,7 @@ struct IOSProjectHomeView: View {
                     ?? (store.snapshotSyncOutcome == .offline
                         ? "端末に保存済み・通信待ち" : "端末に保存済み"))
                     .foregroundStyle(.secondary)
-                Button("今すぐ同期") { Task { _ = await store.synchronizeSnapshotSyncV2() } }
-                    .disabled(!store.canExplicitlySyncCurrentWork)
+                IOSExplicitSyncButton(store: store)
                 if store.snapshotSyncConflict != nil {
                     Text("この端末とサーバーの変更が分かれています")
                         .foregroundStyle(.orange)

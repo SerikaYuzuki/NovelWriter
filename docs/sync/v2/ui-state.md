@@ -42,8 +42,7 @@ the stale sheet from the same result rather than choosing a branch.
 | `quarantined(fenceChanged)` | `安全確認後に同期を再開します` | fence/bootstrap/replan is required |
 | `failed` | `同期を再試行できます` | local state remains safe; retry is explicit or scheduled |
 
-An explicit sync with no changes returns `noChanges` and is success, not
-failure. The UI never turns a no-op into an error toast. All states expose a
+An explicit production sync reconciles the current checkpoint through the sealed publish and verified receipt path even when no new edit exists. A verified unchanged remote head returns `noChanges` and is success, not failure. An empty local outbox alone is not evidence of current remote equality. A verified remote descendant is projected as `readyForSafeAdoption` until the document gate and local generation allow its installation. The UI never turns a no-op into an error toast. All states expose a
 local-save indicator independently from remote progress.
 
 ## Current Swift projection

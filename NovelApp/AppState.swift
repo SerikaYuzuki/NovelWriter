@@ -213,7 +213,7 @@ final class AppState {
     }
 
     var canExplicitlySyncCurrentWork: Bool {
-        permitsDocumentTransitionOperation
+        permitsDocumentTransitionOperation && !isSnapshotSyncInFlight
     }
 
     var canCloneCurrentWorkIntoActiveAccount: Bool {

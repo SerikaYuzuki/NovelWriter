@@ -70,7 +70,7 @@ extension IOSDocumentStore {
     }
 
     func resumeSnapshotSyncV2() async {
-        guard !isSyncV2RemoteAccountTransitionActive,
+        guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let resumedWorkID = syncV2ActiveWorkID
         // A parked lane is intentionally local-only.  Reprojection may still
@@ -106,32 +106,41 @@ extension IOSDocumentStore {
 
     @discardableResult
     func synchronizeSnapshotSyncV2() async -> Bool {
-        guard !isSyncV2RemoteAccountTransitionActive,
+        guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               let workID = syncV2ActiveWorkID else { return false }
         guard syncV2LibraryItems.first(where: { $0.workID == workID })?.accountState
             != .parkedDifferentAccount else { return false }
+        isSnapshotSyncInFlight = true
+        defer { isSnapshotSyncInFlight = false }
         let expectedAccountScope = snapshotSyncV2AccountScope
         let expectedSession = currentDocumentSessionToken
-        guard await saveNow(),
+        let saved = await documentOperationGate.perform { [weak self] in
+            guard let self, currentDocumentSessionToken == expectedSession,
+                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            return await prepareForEditorSurfaceDeparture()
+        }
+        guard saved,
               !isSyncV2RemoteAccountTransitionActive,
               syncV2ActiveWorkID == workID,
               currentDocumentSessionToken == expectedSession,
               snapshotSyncV2AccountScope == expectedAccountScope else { return false }
-        isSnapshotSyncInFlight = true
-        defer { isSnapshotSyncInFlight = false }
         do {
             let result = try await application.synchronize(workID: workID)
             guard !isSyncV2RemoteAccountTransitionActive,
                   syncV2ActiveWorkID == workID,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             applySnapshotSyncV2State(result.state)
+            if case .failure = result.typedResult {
+                operationErrorMessage = result.state.japaneseLabel
+                return false
+            }
             return true
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
                syncV2ActiveWorkID == workID,
                snapshotSyncV2AccountScope == expectedAccountScope {
-                snapshotSyncOutcome = .offline
+                operationErrorMessage = "同期を開始できませんでした。サインインと作品の同期設定を確認してください。原稿はこの端末に保存されています。"
             }
             return false
         }

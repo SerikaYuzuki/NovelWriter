@@ -224,19 +224,37 @@ extension AppState {
         }
     }
 
-    /// Explicit toolbar sync first drains the local checkpoint, then wakes the
-    /// shared planner in a detached UI task. The toolbar never waits for a
-    /// remote receipt; `.noChanges` is still rendered as successful sync.
+    /// Explicit sync commits editor input locally before requesting the durable
+    /// worker. Remote receipts are projected asynchronously after the gate ends.
     func synchronizeSnapshotSyncV2() async {
-        guard permitsDocumentTransitionOperation,
-              await saveNow(),
-              let application = snapshotSyncV2Application else { return }
-        guard let workID = currentSnapshotSyncV2WorkID else { return }
-        Task { @MainActor [weak self] in
-            _ = try? await application.synchronize(workID: workID)
-            await self?.refreshSnapshotSyncV2UIState()
-            await self?.refreshSnapshotLibrary()
+        guard canExplicitlySyncCurrentWork,
+              let application = snapshotSyncV2Application,
+              let workID = currentSnapshotSyncV2WorkID else { return }
+        let expectedSession = documentSessionToken
+        let expectedAccount = snapshotSyncV2AccountScopeToken
+        isSnapshotSyncInFlight = true
+        defer { isSnapshotSyncInFlight = false }
+        let saved = await documentOperationGate.perform { [weak self] in
+            guard let self, documentSessionToken == expectedSession,
+                  snapshotSyncV2AccountScopeToken == expectedAccount,
+                  editorCommandSession.prepareForDocumentTransition() else { return false }
+            defer { editorCommandSession.resumeAfterDocumentTransition() }
+            return await saveNow()
         }
+        guard saved, documentSessionToken == expectedSession,
+              snapshotSyncV2AccountScopeToken == expectedAccount,
+              currentSnapshotSyncV2WorkID == workID else { return }
+        do {
+            _ = try await application.synchronize(workID: workID)
+        } catch {
+            guard documentSessionToken == expectedSession,
+                  snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+            operationMessage = "同期を開始できませんでした。サインインと接続状態を確認してください。原稿はこの端末に保存されています。"
+        }
+        guard documentSessionToken == expectedSession,
+              snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+        await refreshSnapshotSyncV2UIState()
+        await refreshSnapshotLibrary()
     }
 
     func refreshSnapshotSyncV2UIState() async {

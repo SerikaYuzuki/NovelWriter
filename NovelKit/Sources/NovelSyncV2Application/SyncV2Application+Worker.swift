@@ -291,7 +291,11 @@ extension SyncV2Application {
                 conflict = command.kind.isConflictResolution ? .clear : .retain
             }
         case .noChanges:
-            if command.kind == .resolveServer {
+            if command.kind == .publish, let adoption = try await kernel.pendingAdoption(workID: workID) {
+                result = .adoptionPending
+                progress = .readyForSafeAdoption(inboxID: adoption.inboxID)
+                conflict = .clear
+            } else if command.kind == .resolveServer {
                 guard let adoption = try await kernel.pendingAdoption(
                     workID: workID
                 ) else { throw SyncV2Failure.receiptMismatch }
