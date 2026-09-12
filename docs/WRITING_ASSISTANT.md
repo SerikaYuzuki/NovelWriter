@@ -1,10 +1,10 @@
 # 明示送信のAI支援（D-089）
 
-2026-09-12の利用者依頼に基づく新規実装。旧provider研究コードは再利用せず、通常版のmacOS右inspectorとiOSの適応inspectorから現在の1話を送信する。
+2026-09-12の利用者依頼に基づく新規実装。旧provider研究コードは再利用せず、通常版のmacOS下部パネルとiOSの適応inspectorから現在の1話を送信する。
 
 ## 操作と設定
 
-- toolbar「AI支援」で開閉。macOSはAI支援メニューとCmd+Jも使用できる。
+- toolbar「AI支援」で開閉。macOSはAI支援メニューとCmd+Jも使用できる。macOSではプロットカードの右パネルと干渉しないよう画面下部に表示し、上の境界をドラッグして高さを調整できる。閉じると本文領域が元に戻る。
 - 校正／感想／アドバイスを選び、「本文を確認して送信…」で現在の話のタイトルと本文を固定する。送信先と全文を確認し「この本文を送信」で1回送信する。
 - API URLはHTTPSの完全なChat Completions endpoint。初期URLはOpenAI。モデルは利用者が入力し、用途別プロンプトも変更できる。
 - 設定は端末内UserDefaults、キーはendpoint別のKeychain（端末限定・クラウド同期なし）。キーをUserDefaults、作品、同期DB、ログへ保存しない。

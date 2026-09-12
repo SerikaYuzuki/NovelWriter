@@ -27,7 +27,7 @@
 | `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | navigation固定 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、primaryAction固定。macOS 26.1以降は表示優先度high |
-| `workbench.writing.assistant` | AI支援inspector開閉 | 執筆時、移動・削除可 |
+| `workbench.writing.assistant` | AI支援下部パネル開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
 | `workbench.export` | 書き出す… | 移動・削除可 |

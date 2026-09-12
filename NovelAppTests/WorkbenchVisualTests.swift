@@ -1,4 +1,5 @@
 import AppKit
+import EditorKit
 import Foundation
 @testable import FUMINIWA
 import NovelCore
@@ -79,6 +80,43 @@ struct WorkbenchVisualTests {
         #expect(toolbar.visibleItems?.contains(where: { $0 === syncItem }) == true)
         #expect(syncItem.visibilityPriority > .standard)
         #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
+    }
+
+    @Test("assistant opens below the editor and closes without replacing its text view")
+    func assistantBottomPanelPreservesEditor() async throws {
+        let defaults = makeIsolatedTestUserDefaults()
+        let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
+        let episode = Episode(title: "本文", content: "表示確認用の本文")
+        let chapter = Chapter(title: "第一章", episodes: [episode])
+        state.document = NovelDocument(title: "下部パネル確認", chapters: [chapter])
+        state.selectedChapterID = chapter.id
+        state.selectedEpisodeID = episode.id
+        let root = NovelWorkbenchView()
+            .environment(state)
+            .environment(EditorSettings())
+            .environment(EditorSearchSession())
+            .environment(state.editorCommandSession)
+            .environment(SnapshotMenuPresenter(appState: state))
+            .environment(ExportPresenter(appState: state))
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(200))
+        let editor = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == episode.content })
+        let height = try #require(editor.enclosingScrollView).bounds.height
+        NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(descendants(host).contains { $0 === editor })
+        #expect(try #require(editor.enclosingScrollView).bounds.height < height - 150)
+        try await snapshot(host, path: "/tmp/fuminiwa-assistant-bottom.png")
+        NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(descendants(host).contains { $0 === editor })
+        #expect(abs(try #require(editor.enclosingScrollView).bounds.height - height) < 5)
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

@@ -53,15 +53,36 @@ struct NovelWorkbenchView: View {
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
     @State private var isAssistantPresented = false
+    @State private var assistantHeight: CGFloat = 260
+    @GestureState private var assistantResize: CGFloat = 0
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            workbenchSplitView
-                .id(workbenchColumnLayout)
+            VStack(spacing: 0) {
+                workbenchSplitView
+                    .id(workbenchColumnLayout)
 
-            if !showsWritingActions {
-                WorkbenchStatusBarView()
+                if !showsWritingActions {
+                    WorkbenchStatusBarView()
+                }
+            }
+            .frame(minHeight: 240)
+
+            if isAssistantPresented, showsWritingActions {
+                Divider()
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture().updating($assistantResize) { value, state, _ in
+                        state = -value.translation.height
+                    }.onEnded { value in
+                        assistantHeight = min(400, max(220, assistantHeight - value.translation.height))
+                    })
+                    .accessibilityLabel("AI支援の高さを調整")
+                assistantBottomPanel
+                    .frame(height: min(400, max(220, assistantHeight + assistantResize)))
+                    .background(.thinMaterial)
+                    .accessibilityIdentifier("workbench.assistant.bottom")
             }
         }
         .toolbar(id: "novelwriter.workbench.v7") {
@@ -75,26 +96,6 @@ struct NovelWorkbenchView: View {
         .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
         .task(id: SyncStatusObservationID(session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken)) {
             await appState.observeSnapshotSyncV2Status()
-        }
-        .inspector(isPresented: $isAssistantPresented) {
-            if showsWritingActions {
-                AssistantPanelView(
-                    defaults: appState.userDefaults,
-                    contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))",
-                    episodeTitle: appState.selectedEpisode?.title ?? "未選択",
-                    capture: {
-                        guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
-                            throw AssistantError.emptyContent
-                        }
-                        switch appState.activeCommittedTextCapture() {
-                        case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
-                        case .compositionInProgress: throw AssistantError.composing
-                        case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
-                        }
-                    }, close: { isAssistantPresented = false }
-                )
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 600)
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleWritingAssistant)) { _ in
             if showsWritingActions {
@@ -145,6 +146,24 @@ struct NovelWorkbenchView: View {
                 isImportingAttachment = true
             }
         }
+    }
+
+    private var assistantBottomPanel: some View {
+        AssistantPanelView(
+            defaults: appState.userDefaults,
+            contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))",
+            episodeTitle: appState.selectedEpisode?.title ?? "未選択",
+            capture: {
+                guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
+                    throw AssistantError.emptyContent
+                }
+                switch appState.activeCommittedTextCapture() {
+                case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                case .compositionInProgress: throw AssistantError.composing
+                case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
+                }
+            }, close: { isAssistantPresented = false }
+        )
     }
 
     private var searchableIsPresented: Binding<Bool> {
