@@ -41,16 +41,15 @@
 
 ## 4. 検証の選び方
 
-- Markdownのみ: 参照・リンク・sourceとの一致・差分を確認する。契約本文を変えていなければアプリ全体を毎回ビルドしない。
-- 入力変更: 純粋Rulesと実adapterのIME / Undo / Redoを確認する。
-- 保存・同期変更: 変更境界のfixture / store / application / restart / account隔離を確認し、SwiftとRustの契約を揃える。
-- **マージ前**: [Scripts/check.sh](../Scripts/check.sh)を`All checks passed`まで通す（D-014）。この要件は今回の文書整理では変更しない。
+D-086により、編集内容に応じて**検証なし／軽い／中ぐらい／重たい**を選ぶ。段階の定義と例は[AGENTS](../AGENTS.md)に集約する。マージ前の一律全通しは廃止し、選択した段階の結果で判断する。関係しない既存のコード失敗を、文書変更の完了条件にしない。
 
-`check.sh`はv2 conformanceから始まり、構造・依存、format / lint、Swift package、macOS、iOS compile / Simulatorを検証する。conformanceのローカル入口は実PostgreSQL用のopt-in URLを除き、実DB検証を明示SKIPする。全体成功も実DB・LAN・実機・公開の成功を意味しない。
+重たい検証では[Scripts/check.sh](../Scripts/check.sh)を使う。v2 conformance、構造・依存、format / lint、Swift package、macOS、iOS compile / Simulatorを含む。conformanceのローカル入口は実PostgreSQL用のopt-in URLを除き、実DB検証を明示SKIPする。全体成功も実DB・LAN・実機・公開の成功を意味しない。
 
-## 5. この文書改訂での証拠
+## 5. 文書改訂時の記録
 
-2026-09-12の確認:
+4段階検証・account lifecycle・Windows方針を反映した今回の追記は、利用者指定により**検証なし**。下表は先行する全面整理（`78c638fa5`）で行った確認の保存であり、この追記で再実行していない。
+
+2026-09-12の先行確認:
 
 | 確認 | 結果・限界 |
 | --- | --- |

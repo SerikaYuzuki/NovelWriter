@@ -11,7 +11,7 @@
 | モジュール境界と入力・保存契約 | [DESIGN](DESIGN.md) |
 | 採択理由・置換関係 | [DECISIONS](DECISIONS.md) |
 | 現行source、負債、検証、Git | [CODE_HEALTH](CODE_HEALTH.md) |
-| 利用者が選ぶ未決事項 | [OWNER_DECISIONS](OWNER_DECISIONS.md) |
+| 利用者が決めた方針と残る実装事項 | [OWNER_DECISIONS](OWNER_DECISIONS.md) |
 | 不具合・提案・PRを書く | [不具合template](../.github/ISSUE_TEMPLATE/bug_report.md)、[提案template](../.github/ISSUE_TEMPLATE/feature_request.md)、[PR template](../.github/PULL_REQUEST_TEMPLATE.md) |
 
 ## 現行の製品要件
@@ -66,3 +66,5 @@ Auth wire v1は現在も使う。**Sync v1の凍結とは別**である。契約
 - 設計・現行実装・検証結果・履歴を区別し、sourceで確認した日時と受入の限界を書く。
 - schema / fixtureと結びつく規範は一緒に改訂する。凍結文書は上位の案内から位置づけを示す。
 - 製品の判断を伴わない通常の修正を、毎回の承認待ちにしない。新しい選択は選択肢と影響を具体化する。
+
+同日の追加決定D-086〜D-088により、検証は編集内容に応じた4段階（なし／軽い／中ぐらい／重たい）へ変更した。独自account回復なし、削除猶予30日、backup保持1年、Windows 11のみ・MSIなどのインストーラー配布は判断済み。今回の方針反映は検証なしとし、先行する全文整理の確認結果を再実行したことにはしない。

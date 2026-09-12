@@ -4,7 +4,7 @@
 
 各OSで同じ原稿を安全に扱うため、portable形式、同期wire、domainの意味、純粋ロジックの入出力を共有する。通常保存は各端末のSQLite v2で、DBファイル自体を端末間へ渡さない。Swift側の共有実装は存在するが、WindowsはW0未完了で、Windowsアプリ／reader／writerの実装完了を示すものではない。
 
-上位契約は [DESIGN.md](DESIGN.md)、D-036／D-080、同期の厳密仕様は [SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md) と [sync/v2](sync/v2/README.md)、認証は [AUTH.md](AUTH.md)。旧wireとCloudKitはliveへ戻さない。
+上位契約は [DESIGN.md](DESIGN.md)、D-036／D-080／D-088、同期の厳密仕様は [SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md) と [sync/v2](sync/v2/README.md)、認証は [AUTH.md](AUTH.md)。旧wireとCloudKitはliveへ戻さない。
 
 ## 1. 共有するもの／OSごとに実装するもの
 
@@ -18,7 +18,7 @@
 | 出力 | TXT／Markdown／EPUBの論理結果とfixture | platform別exporter |
 | UI | 機能と操作の意味 | native control／layout／shortcut／accessibility |
 
-Apple版はNovelKitを共有し、WindowsはWinUI 3 + C# / .NETで同じ境界を独立実装する。SwiftUI、AppKit、UIKit、TextKit、Windows handleを保存／wire／共有domainへ持ち込まない。
+Apple版はNovelKitを共有し、WindowsはWindows 11のみを対象に、WinUI 3 + C# / .NETで同じ境界を独立実装する(D-088)。配布はMSIなどのインストーラー形式とし、特定の形式や作成ツールはこの決定だけでは固定しない。SwiftUI、AppKit、UIKit、TextKit、Windows handleを保存／wire／共有domainへ持ち込まない。
 
 ## 2. `.novelpkg` 相互運用契約
 
@@ -76,7 +76,7 @@ Apple版はNovelKitを共有し、WindowsはWinUI 3 + C# / .NETで同じ境界�
 
 ## 3. Windows / WinUI版の層構成
 
-Windowsコードは同じrepositoryの`Windows/`へ置く計画。Core、Storage.Sqlite、Storage.Novelpkg、Sync.Protocol、Sync.Http、Export、Editor rules、Editor.WinUI、App.WinUIを責務として分ける。実在しないprojectや検証scriptへ「実装済み」とリンクしない。
+Windows 11向けコードは同じrepositoryの`Windows/`へ置く計画。Core、Storage.Sqlite、Storage.Novelpkg、Sync.Protocol、Sync.Http、Export、Editor rules、Editor.WinUI、App.WinUIを責務として分ける。実在しないprojectや検証scriptへ「実装済み」とリンクしない。
 
 Coreは依存なし、Storage.Novelpkg／Export／Editor rulesはCoreへ、SQLiteはCore／Sync domainへ、HTTPはSync domainへ依存する。Appがnative UIと各境界を組み立て、保存層へWinUI型を出さない。DB file、path、bookmark、UI設定は同期・portableデータへ入れない。
 
@@ -113,13 +113,15 @@ Windows reader／writerが存在する段階からは、互換変更の同一com
 | W3 | Sync v2／Auth境界、account／conflict／historyの実機接続 |
 | W4 | 執筆支援parityとWindows配布 |
 
-W1開始時に.NET SDK、Windows App SDK、最低Windows、配布方式をDecisionへ固定する。W2前にnative editorを選ぶ。Windows認証の入口は現行Apple-only契約の下で別途設計し、未実装providerを先出ししない。これらは今回の文書整理で決めない。
+D-088でWindows 11のみの対応と、MSIなどのインストーラー配布を採択した。W0は引き続き未完了。W1開始時に.NET SDK、Windows App SDK、具体的なインストーラー形式・作成ツールを要件に合わせて選び、採用内容を記録する。W2前にnative editorを選ぶ。Windows認証の入口は現行Apple-only契約の下で別途設計し、未実装providerを先出ししない。
 
 Windows側のportable取込はfolderとして扱う。書き出し先の親folderとportable名を選び、`.novelpkg`directoryを生成する。通常の「開く／新規」を外部packageの直接編集へ読み替えない。
 
 ## 6. 作業の受け渡し
 
-schema／fixture／Swift側とC#／Windows固有実装の担当を分け、同じbranchを両OSで同時編集しない。互換契約変更は本書・schema・fixtureを同時更新する。Windows実装前はMac検証、実装後は両OSの同一commit検証を添える。
+schema／fixture／Swift側とC#／Windows固有実装の担当を分け、同じbranchを両OSで同時編集しない。互換契約変更は本書・schema・fixtureを同時更新する。互換性へ影響する実装変更は、Windows実装前はMac、実装後は両OSの同一commitに対する検証を添える。
+
+作業ごとの検証はD-086の「なし／軽い／中ぐらい／重たい」を変更の影響で選ぶ。今回のような方針記録・説明変更は「なし」、局所文言・表示等は「軽い」限定確認、単一機能は「中ぐらい」の対象testとbuild、保存・認証scope・互換・共有層へ影響する変更は「重たい」の全体`Scripts/check.sh`と関連境界検証を使う。mergeだけを理由に全体検証へ格上げしない。今回の方針追記は検証なしで、W0／W1の完了証拠を追加したものではない。
 
 ## 7. Sync v2の相互運用
 

@@ -31,7 +31,7 @@
 | 認証 | Sign in with Apple、FUMINIWA session。Auth wire v1 / Sync epoch 2 |
 | 作品受け渡し | `.novelpkg` v1〜v3読込 / v3書出 |
 | 原稿出力 | TXT / Markdown / EPUB 3 |
-| Windows | WinUI 3 + C# / .NETを計画。W0未完了 |
+| Windows | Windows 11のみ。WinUI 3 + C# / .NET、MSIなどのインストーラー配布を計画。W0未完了 |
 
 現在のv2にGRDBやS3への依存はない。以前の計画に出てくるそれらを導入済みと扱わない。サーバーはserver-readableで、E2EEではない（D-078 / D-080）。macOSはGitHub Releasesによる直接配布・非Sandbox方針（D-011）。配布・公開の受入は別途必要である。
 
@@ -169,6 +169,10 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 人物、プロット・伏線、世界観、資料を同じ作品とsessionに属する機能として扱う。世界観本文にもEditorKitの入力契約を適用する。portable resourceはlocal SQLiteで保全し、online対象との違いはv2 entity契約とCROSS_PLATFORMに従う。
 
+### 6.6 認証とアカウントライフサイクル
+
+D-087のaccount lifecycleは方針採択・実装前。Appleログイン以外の独自回復を提供せず、削除の取消猶予は30日、backup保持は1年とする。通常の再認証・session復旧・端末内原稿保全とは区別し、詳細は[AUTH](AUTH.md)へ集約する。
+
 ## 7. 未実装・将来の機能
 
 作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、provider統合、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
@@ -207,7 +211,7 @@ Apple間はSwiftの共通moduleを使う。Windowsとはschema、fixture、ド�
 
 依頼の成果と制約を先に把握し、必要な境界だけ読む。関連するモデル・実装・テスト・文書を一つの目的のために更新し、無関係な機能やリファクタリングを混ぜない。手順の細分化や毎回の全資料通読は要求しない。
 
-依頼範囲の編集と検証まで進める。設計変更が必要なときはDECISIONSへ追加し、既存の採択理由を消さずに置換範囲を示す。未決の製品方針は[OWNER_DECISIONS](OWNER_DECISIONS.md)へ置く。
+依頼範囲の編集と、D-086で選択した段階の検証まで進める。検証なしも選択肢とし、マージ前の一律全通しを要求しない。設計変更が必要なときはDECISIONSへ追加し、既存の採択理由を消さずに置換範囲を示す。利用者の決定と残る実装事項は[OWNER_DECISIONS](OWNER_DECISIONS.md)へ置く。
 
 ## 11. 直近の次タスク
 
@@ -226,3 +230,4 @@ Apple間はSwiftの共通moduleを使う。Windowsとはschema、fixture、ド�
 ## 変更履歴
 
 - **2026-09-12**: D-080〜D-085と現行target構成に合わせ全面整理。v1 / CloudKit / GRDB / S3を現行扱いしていた説明を修正し、過去の全変更履歴をarchiveへ保全。製品・wire・保存契約の新規採択は行っていない。
+- **2026-09-12 追記**: 利用者決定D-086〜D-088を反映。検証を4段階へ変更し、独自account回復なし・削除猶予30日・backup1年・Windows 11／インストーラー配布を採択。今回の追記は検証なし。

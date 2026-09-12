@@ -20,6 +20,12 @@
 
 `authProtocolEpoch=1`／`authProtocolVersion=1.0.0`はAuth wire自体の世代であり、変更しない。一方、現在liveなSnapshot SyncはD-080の新namespaceで`syncProtocolEpoch=2`（Sync v2の`PROTOCOL_EPOCH`）である。Authのcapabilities、exchange、refresh、`/me`が返すsession bindingは常にこのSync v2 epoch `2`を返す。`authProtocolEpoch`と`syncProtocolEpoch`を同じ値として扱わず、AccountFenceはserver instance＋Sync v2 epoch `2`＋AccountID＋AccountAuthEpochへbindする。
 
+## アカウント回復・削除・backupの製品方針（D-087）
+
+Appleでの通常login以外のアカウント回復は提供しない。別providerや運営による本人確認でaccountを回復する導線は作らない。通常のApple再ログイン、session refresh、lost-response／再起動からの既存認証処理の復旧は維持する。
+
+利用者の明示的なaccount削除には取消猶予30日を設け、backup保持は1年とする。これらは採択済みの製品方針であり、期間の起算、取消操作、削除確定、backupからの復元制約などのversioned lifecycle／wire／state machineは未設計・未実装である。本書の更新は機能実装やdeploy完了を示さない。Apple通知だけを利用者の明示削除要求へ読み替えない。
+
 ## 1. 採択する境界
 
 認証は次の4層を一方向に通す。
@@ -179,7 +185,7 @@ tableとdomainは複数identityを許すが、v1ではlink／unlink UIとHTTP AP
 - login中のactive session、現在のidentityへのfresh reauthentication、新providerのone-time link attemptをすべて要求する。
 - email、氏名、Apple private relay address、同じ端末、同じIPを根拠にautomatic linkしない。
 - 新identityが同じAccountIDに既に属すればidempotent success、別AccountIDに属すれば存在を漏らさないtyped conflictとし、automatic mergeしない。
-- unlinkは別のactive identityまたは明示的なrecovery手段がある場合だけ許す。最後のlogin手段を消さない。
+- 将来unlinkを設計する場合も、別のactive identityなしに最後のlogin手段を消さない。現行はApple-onlyでlink／unlinkを提供せず、D-087により別providerや運営本人確認によるアカウント回復も提供しない。
 - link／unlink後もAccountID／Tenant／WorkIDは不変。全sessionを再認証へ送り、account fenceをrotateする。
 - Account mergeはv1 scope外。別Accountへ作品を移す場合は明示Export／Importまたはnew WorkID cloneを使う。
 
@@ -200,7 +206,7 @@ server-to-server endpointは[versioned Apple notification contract](auth/v1/appl
 | --- | --- |
 | `email-enabled / email-disabled` | receiptだけを記録する。emailを保存せず、AccountID／session／fenceを変えない |
 | `consent-revoked` | identityを`revoked`、provider credentialを失効／消去、全sessionを`reauthRequired`または`revoked`、fence rotate。原稿は削除しない |
-| `account-deleted` | identityを`providerDeleted`、credential／session失効、fence rotate。別identityがあればAccountは維持し、唯一のidentityならAccountを`locked`にして明示的な回復／削除policyへ渡す |
+| `account-deleted` | identityを`providerDeleted`、credential／session失効、fence rotate。別identityがあればAccountは維持し、唯一のidentityならAccountを`locked`にし、D-087を反映するversioned lifecycleへ引き継ぐ。別provider／運営本人確認の回復へ送らず、通知だけでremote原稿をhard-deleteしない |
 
 Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を購読し、foreground／通知時にcredential stateを確認する。client通知だけをserver削除の証拠にせず、server通知と次回API authenticationも独立authorityにする。Appleの[TN3194](https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple)に従い、失効時はnetworkをsign-out／reauthへ移すが、端末内原稿を削除しない。
 
@@ -224,7 +230,7 @@ Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を�
 - 同じAccountIDでもfenceを検証して再開する。別AccountIDの未取得remote行・titleを新scopeへ表示しない。検証済みlocal作品は保留状態としてlocal open／editを維持する。別accountへの移動は明示Export／Importまたはnew WorkID cloneだけとし、暗黙rebindしない（D-080 / D-084）。
 - `serverReadableV1`の説明は初回オンライン保存の確認とprivacy説明から到達できるようにし、「Appleでサインイン」だけで運用者にも読めないと誤認させない。
 
-## 10. 受入基準と利用者判断
+## 10. 受入基準と採択済みlifecycle方針
 
 各R番号は旧計画の分類名として保持する。着手順や未実装を示すものではない。変更した境界に対応する検証を選び、実装・実DB・署名済み実機・公開運用の結果を分けて記録する。
 
@@ -233,7 +239,7 @@ Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を�
 - Apple-only v1、4層境界、AccountID不変、state／transition、fence rotation、typed auth error、auth endpoint request／responseをdesign fixtureへ固定する。
 - 同時初回login、Apple exchange各durable phaseのprocess kill、lost response、nonce／issuer／audience／signature失敗、refresh exact replay／別operation reuse／古いresponse、notification duplicate／unknown subject／再認証との順序、consent revoke、Mac／iOS grant別client_id revokeと部分失敗、account switch、same AccountID＋new fence、different AccountID、auth↔sync binding一致、offline継続をfixture化する。
 - provider linkingはpolicy fixtureだけを置き、v1 OpenAPI route／feature flag／UIを追加しない。
-- Appleが唯一のidentityだった場合のrecoveryと、`account-deleted`／利用者のアプリ内削除要求後のremote data保持／削除期間を後続Product Decisionにする。これはApp Store提出前のRelease blockerであり、`locked`のまま永久保管する設計ではGOにしない。
+- D-087の「Apple通常login以外の回復なし・明示account削除の取消猶予30日・backup保持1年」をversioned lifecycle契約へ具体化する。期間の起算や詳細state machineは未設計であり、この方針採択だけでApp Store提出前のRelease blockerを閉じない。
 
 ### R4 Rust Auth Gate
 
@@ -251,10 +257,10 @@ Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を�
 
 - Apple Production configuration、macOS／iOS App IDのprimary grouping、lookup HMAC keyとauth-vault KEK／DEKのkill-resumable rotation／旧鍵廃棄、server-to-server notification、token revoke、backupからのcredential／fence整合復旧を実環境で確認する。
 - TLS、rate limit、brute-force／replay防止、token／PII log scan、DB role、incident時の全session revoke＋fence rotationをsecurity reviewする。
-- recovery／アプリ内account deletion開始導線、Apple token revoke、remote data削除完了のread-back、server-readable disclosure、署名済みMac＋iPhoneの失効／再認証を通すまでProduction GOにしない。
+- D-087に沿ったアプリ内account deletion開始・取消導線、Apple token revoke、remote data削除完了のread-back、backup保持、server-readable disclosure、署名済みMac＋iPhoneの通常失効／再認証を通すまでProduction GOにしない。別provider／運営本人確認の回復機能をGateへ追加しない。
 
-### 利用者が決めるもの
+### 方針決定後に残る設計
 
-公開前に、Appleが唯一のidentityだった場合の回復手段、account削除の取消猶予、remote原稿とbackupの保持・削除期間を決める。実装側はその選択肢とデータへの影響を提示してからversioned lifecycle契約へ落とす。既に採択済みのApple-only／server-readableを再承認の対象に戻さない。
+D-087の製品方針は決定済みで、回復手段・取消猶予・backup保持期間を判断待ちへ戻さない。実装側は期間の起算、取消と削除の状態遷移、Apple失効通知との関係、backup復元時の扱いをversioned lifecycle／fixtureへ具体化する。未指定の起算日や「1年」を365日に置き換える解釈を、この文書整理で追加しない。Apple-only／server-readableも採択済みである。
 
 今の優先課題と検証順は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を使う。将来OIDC adapterやlink UI／APIを追加する場合は別Decisionとし、既存AccountIDを作り直さない。

@@ -16,13 +16,13 @@
 | AI支援 | 共有prompt builderとmacOS copy、iOS側API | providerなし。iOSの全copy入口は未完了 |
 | 配布設定 | `project.yml`にHardened Runtime、macOS 14／iOS 17、署名設定あり | 設定の存在は署名済み配布物・公証・clean installの証拠ではない |
 
-今回行ったのはソースと文書の照合。過去の「All checks passed」、旧CloudKitのsource freeze、focused test件数を2026-09-12の実行結果として再掲しない。
+上表は文書整理時のソース照合と過去証跡の区別を保つための記録。今回のD-086〜088の方針追記は検証なし。過去の「All checks passed」、旧CloudKitのsource freeze、focused test件数を新しい実行結果として再掲しない。
 
 ## 2. 直近の優先事項
 
 1. 既存のiOS執筆体験をv2へ接続し、作品棚／ホーム／履歴／競合の診断UIを製品UIへ整える。既存の製品要件は [IOS.md](IOS.md) と [STYLE.md](STYLE.md)。
 2. signin済み新規作品がlocal-onlyに留まった実機報告を再現し、local checkpoint後の明示account scope・remote登録・head確認までを検証する。任意の既存unbound作品の自動採用で解決しない。
-3. 現行commitで標準ローカル検証を通す。handoffのD-076大規模認証ファイルによる停止記録は、最新の分割状態と再実行結果で更新する。
+3. 保存・認証などへ影響する修復はD-086の「重たい」検証で標準ローカル検証と関連境界を確認する。handoffのD-076大規模認証ファイルによる停止記録は、実際に分割・再実行した時点の結果で更新する。
 4. 認証済みstaging read-back、Mac↔iPhone往復、offline分岐・3択・履歴／復元・restart・account切替を実機で記録する。
 
 これは実装の依存順であり、公開判断を先取りしない。今回のmd整理ではコード、server、旧データを変更しない。
@@ -48,18 +48,34 @@ SQLiteはmigration／integrity失敗時に空DBへfallbackせず、backup、rest
 ## 5. 公開前に残る技術Gate
 
 - v2の独立conformance、shared kernel、account／namespace隔離、restart、staging実DB、backup／restore、運用保護。
-- Authの失効／refresh／account switch／Apple障害、app内account deletion開始とremote削除完了read-backなど、採択済み契約の公開条件。
+- Authの失効／refresh／account switch／Apple障害、app内account deletion開始とremote削除完了read-backなど、採択済み契約の公開条件。D-087のAppleログインのみの回復・独自回復なし、削除取消猶予30日、backup保存1年をversioned lifecycle契約と実装へ反映する。方針採択だけでこのGateを閉じない。
 - iOS / iPadOSとMacのIME、Undo、keyboard、VoiceOver、Dynamic Type、Light／Dark、Reduce Transparency、長文／大量データ、scene／終了。
 - AppIcon、Finder／Dock／About／配布物のブランド表示と実在する機能だけの説明。
 - Developer ID署名、公証、stapling、Gatekeeper、cleanな別Mac／新規userでのinstall・起動・Recovery。
 - versioning、更新、rollback、旧版とのportable互換、データ保持／救出導線。
+- WindowsはWindows 11のみを対象にMSIなどのインストーラーで配布する(D-088)。具体的な形式・作成ツールは未選定で、W0とWindows実装・配布受入は未完了。
 
 conformance成功、build、preview、signin成功、deploy、remote head確認、実機受入、公開の各段階を別に記録する。満たした証拠がない項目は未完了のまま残す。
 
-## 6. 判断が必要になる境界
+## 6. 作業ごとの検証
 
-既存UIの復旧、仕様内の不具合修正、local検証は実装判断として進められる。公開時期／対象platformの優先順を変える、既定のUIや機能を削る、providerを再開する、Windowsの最低対応OS／配布方式を選ぶ場合は利用者の判断を得てDecisionへ記録する。これらを先に決めないと現行の修復が進められない、という扱いにはしない。
+D-086に従い、変更の影響から次のいずれかを選ぶ。mergeや文書のファイル名だけを理由に重くしない。
 
-## 7. 履歴
+| 段階 | 対象と内容 |
+| --- | --- |
+| なし | 今回のような方針記録・説明変更。test、build、リンク／差分check、reviewは行わず、編集に必要な読取だけ行う |
+| 軽い | 局所文言・表示等について、影響する範囲だけ限定確認 |
+| 中ぐらい | 単一機能の対象testと対象build |
+| 重たい | 保存、認証scope、互換、共有層等へ影響する変更に、全体`Scripts/check.sh`と関連境界検証 |
+
+公開Gateの未完了は維持するが、方針を記録するたびに全Gateを実行する意味ではない。
+
+## 7. 採択済みの判断と今後の境界
+
+回復はAppleログインのみで独自回復なし、削除取消猶予30日、backup保存1年(D-087)。WindowsはWindows 11のみを対象にMSIなどのインストーラー配布(D-088)。これらを未決へ戻さず、具体的な仕様・実装へ反映する。
+
+既存UIの復旧や仕様内の修正、既定内のtoolchain選定は実装判断として進める。公開時期／対象platformの優先順変更、既定UIや機能の削減、provider再開など、新しい製品上の選択が必要な場合に利用者へ具体案を示す。既決事項の再承認で現行修復を止めない。
+
+## 8. 履歴
 
 [整理前の技術Gate・AI研究証跡の全文](archive/product-guidance-20260912/COMMERCIALIZATION_IMPLEMENTATION.md)、[当時の総合監査](COMMERCIALIZATION_AUDIT_2026-07-19.md)は履歴として保存する。旧Experimental providerはD-075で実装削除済みで、公開Gateの達成や将来APIの採用根拠にはしない。

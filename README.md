@@ -2,7 +2,7 @@
 
 ことばを育て、物語を編む。日本語の長編・中編小説を、通信を待たずに書くためのアプリです。
 
-macOSはSwiftUI + `NSTextView`、iOS / iPadOSはSwiftUI + `UITextView`を使います。本文エディタはTextKit 2です。Windows版はWinUI 3 + C# / .NETでの別実装を計画しています。
+macOSはSwiftUI + `NSTextView`、iOS / iPadOSはSwiftUI + `UITextView`を使います。本文エディタはTextKit 2です。Windows版はWindows 11のみを対象に、WinUI 3 + C# / .NETでの別実装とMSIなどのインストーラー配布を計画しています。
 
 ## 現在の状態
 
@@ -14,7 +14,7 @@ macOSはSwiftUI + `NSTextView`、iOS / iPadOSはSwiftUI + `UITextView`を使い�
 - AI支援は校正／アドバイス用promptのコピーです。アプリ内でAIを実行する機能はありません。iOSの画面導線には未接続箇所があります。
 - **一般公開の受入は未完了です。** Apple認証の過去の実機成功と、二端末同期・競合・履歴復元の完了は別です。既知の問題と最新証拠は[v2引き継ぎ](docs/SNAPSHOT_SYNC_V2_HANDOFF.md)にまとめています。
 
-次の作業はv2上の執筆体験と同期の残件を解消し、Mac / iPhoneで確認することです。Windows W0、Package Validator全体、公開・配布のGateは別途残ります。[コードの現状](docs/CODE_HEALTH.md)と[判断が必要な事項](docs/OWNER_DECISIONS.md)を参照してください。
+次の作業はv2上の執筆体験と同期の残件を解消し、Mac / iPhoneで確認することです。Windows W0、Package Validator全体、公開・配布のGateは別途残ります。[コードの現状](docs/CODE_HEALTH.md)と[決定済み方針と残る実装事項](docs/OWNER_DECISIONS.md)を参照してください。
 
 ## 開発を始める
 
@@ -29,7 +29,7 @@ Xcodeで`FUMINIWA`（macOS）か`FUMINIWAIOS`（iOS）を選びます。`project
 
 ## 検証
 
-変更中は対象に応じた検証を使い、マージ前にはローカルで全体Gateを通します（D-014）。
+編集内容に応じて「検証なし／軽い／中ぐらい／重たい」を選びます（D-086）。マージ前も一律には全体検証を要求しません。目安は[AGENTS](AGENTS.md)を参照してください。重たい検証で使う全体チェックは次です。
 
 ```sh
 ./Scripts/check.sh

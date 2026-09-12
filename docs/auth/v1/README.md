@@ -41,7 +41,9 @@ identity lookupはdomain-separated／4-byte big-endian length-prefixed canonical
 
 `AccountFence`はtoken個体ではなく、`serverInstanceId + sync protocol epoch + AccountID + AccountAuthEpoch`へbindしたopaque値である。access／refresh token rotation、current-session revoke、同一Apple identityへの再認証では変えない。identity／security scope変更、全session失効、Apple consent revoke等ではserverがAccountAuthEpochを単調増加させ、fenceを変える。clientは同じAccountIDでも旧fenceのcursor、object presence、Intent、SealedAttemptを送らずquarantineし、authenticated sync capabilitiesとfull bootstrapから再計画する。別AccountIDへloginしただけでlocal workをadoptしない。
 
-利用者によるserver account削除、remote payload retention、Apple token revoke、再認証、完了read-backを含むlifecycle APIはauth wire v1のscope外である。ただしaccount creationをApp Store版へ出す前に、Appleの[Offering account deletion in your app](https://developer.apple.com/support/offering-account-deletion-in-your-app/)と最新Review Guidelinesに適合するapp内account deletion UI／API、監査済みretention／revoke動作を別Decision・versioned contract・fixtureとして完成させることを **App Store Release blocker** とする。scope外であることを、削除導線なしで出荷してよい根拠にしない。
+D-087で、Appleの通常login以外のアカウント回復は提供せず、利用者の明示account削除の取消猶予を30日、backup保持を1年と採択した。別provider／運営本人確認による回復は追加しない。通常のApple再ログイン、refresh、lost-response復旧は既存の認証契約として維持する。
+
+利用者によるserver account削除、取消、remote payload retention、Apple token revoke、完了read-backを含むlifecycle APIはauth wire v1のscope外であり、D-087を反映するversioned契約は未設計・未実装である。期間の起算や詳細state machineはこの方針から推測して補わない。account creationをApp Store版へ出す前に、Appleの[Offering account deletion in your app](https://developer.apple.com/support/offering-account-deletion-in-your-app/)と最新Review Guidelinesに適合するapp内account deletion UI／API、D-087に沿うretention／revoke動作をversioned contract・fixture・実装として完成させることを **App Store Release blocker** とする。scope外であることを、削除導線なしで出荷してよい根拠にしない。
 
 ## Exact JCS and receipts
 

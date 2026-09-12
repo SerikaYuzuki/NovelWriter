@@ -49,7 +49,7 @@ local checkpoint、captured accountとvaultのbinding、durable intent、createW
 
 ## 受入基準
 
-検証は変更した境界に合わせる。候補手段は[conformance](sync/v2/CONFORMANCE.md)、[server README](../SyncServerV2/README.md)、[Auth DB gate](../SyncServerV2/AUTH_INTEGRATION.md)。本文・説明だけの修正で実機や実DBを毎回動かす必要はない。merge前はD-014に従い標準`Scripts/check.sh`を完走し、必要な領域検証を合わせる。
+検証はD-086 / [AGENTS](../AGENTS.md)に従い、編集内容から「なし／軽い／中ぐらい／重たい」を選ぶ。merge前も一律の全通しは要求しない。保存・認証scope等に影響する重たい変更では`Scripts/check.sh`と関係する[conformance](sync/v2/CONFORMANCE.md)、[server検証](../SyncServerV2/README.md)、[Auth DB gate](../SyncServerV2/AUTH_INTEGRATION.md)を使う。今回の方針記録は検証なし。
 
 以下は2026-08-18時点で未完了として引き継がれ、9月12日の文書改訂では再実施していない。
 
@@ -71,7 +71,7 @@ local checkpoint、captured accountとvaultのbinding、durable intent、createW
 
 ## 利用者の判断と実機確認
 
-公開前のaccount回復範囲、削除の取消猶予、remote原稿とbackupの保持期間は[OWNER_DECISIONS](OWNER_DECISIONS.md)にまとめる。実装側が具体案と影響を提示してから決定する。
+D-087でAppleログイン以外の独自account回復は提供しないこと、account削除の取消猶予30日、backup保持1年を採択した。判断待ちへ戻さず、この方針をversioned lifecycleへ実装する。検証段階とWindows方針を含む[決定済み事項](OWNER_DECISIONS.md)も参照する。
 
 UI不足の復旧は既決要件に沿って進める。準備した画面の受入確認、署名・Appleシート・端末trust設定など利用者操作が必要な検証は、その段階で対象と操作を限定して依頼する。既定仕様をもう一度承認してもらう手続きにはしない。
 

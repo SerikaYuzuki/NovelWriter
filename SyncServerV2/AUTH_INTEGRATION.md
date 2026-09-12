@@ -6,6 +6,13 @@ an integration runner, not a record of a successful run. Source reviewed
 and wire/implementation differences are listed in [AUTH.md](../docs/AUTH.md).
 Run the command from the repository root.
 
+D-087 adopts no account recovery outside ordinary Apple login, a 30-day
+cancellation grace period for explicit account deletion, and one year of backup
+retention. The versioned lifecycle is not yet designed or implemented; this
+runner does not establish completion of that feature. Its refresh, lost-response,
+and process-restart recovery scenarios remain ordinary authentication recovery,
+not an alternate-provider or operator identity-verification recovery service.
+
 The normal `cargo test` suite is network-free and does not open PostgreSQL.
 The transaction/race gate is explicit and fails closed unless it receives a
 fresh, disposable database named `auth_v2_test` or

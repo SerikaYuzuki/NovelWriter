@@ -2,6 +2,10 @@
 
 > **状態**: D-078のprovider ingress規範契約。client向け[`openapi.yaml`](openapi.yaml)とは別のApple→Rust server境界。2026-09-12のsource照合では`SyncServerV2/src/auth_service.rs`と`auth_apple.rs`に処理があるが、HTTP routeは`/v1/auth/apple/notifications`で、下記規範URLと一致しない。差分解消と実通知の検証は未完了。本文のwire契約は変更していない。
 
+## D-087の製品方針との境界
+
+Appleの通常login以外のアカウント回復は提供しない。通常の再ログイン、refresh、lost-response復旧は維持する。明示account削除の取消猶予30日とbackup保持1年は採択済みだが、期間起算と詳細state machineを含むversioned lifecycleは未設計・未実装である。Appleの`account-deleted`通知を利用者の明示削除要求や取消猶予の開始へ自動的に読み替えず、下記の通知処理からremote原稿をhard-deleteしない。
+
 ## HTTP境界
 
 - endpointは`POST /v1/auth/providers/apple/notifications`、TLS 1.2以上、`Content-Type: application/json`、body上限64 KiBとする。

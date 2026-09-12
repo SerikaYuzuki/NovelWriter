@@ -16,9 +16,11 @@
 | Account transition | D-084。owner付き停止、park / quarantine、scope再計画を適用 |
 | CloudKit・旧entity同期 | D-079 / D-080で通常経路から廃止。D-059〜D-074の旧同期仕様は移行経緯として読む |
 | UI・互換・配布 | D-020、D-036、D-040、D-044、D-056〜D-058等の製品要件は維持。現在の接続状況は[IOS](IOS.md) / [STYLE](STYLE.md) / [CROSS_PLATFORM](CROSS_PLATFORM.md) |
-| 検証・生成 | D-014 / D-015。マージ前のローカル全体GateとXcodeGenを維持 |
+| 検証・生成 | **D-086**で編集内容に応じた4段階へ変更。D-014のローカル実行／GitHub Actions不使用とD-015のXcodeGenは維持 |
+| Account回復・削除・backup | **D-087**。独自回復なし、削除取消猶予30日、backup保持1年。lifecycle実装はこれから |
+| Windows対象・配布 | **D-088**。Windows 11のみ、MSIなどのインストーラー配布。W0未完了 |
 
-文書の全面整理では設計決定の採択・破棄を追加していない。旧本文は残し、入口・現況・適用範囲を更新した。製品上の選択が必要なものは[OWNER_DECISIONS](OWNER_DECISIONS.md)に分ける。
+先行する文書全面整理では旧本文を残して入口・現況・適用範囲を更新した。その後の利用者回答をD-086〜D-088として採択した。決定済み方針と残る実装事項は[OWNER_DECISIONS](OWNER_DECISIONS.md)にまとめる。
 
 ---
 
@@ -107,7 +109,7 @@
 
 ## D-014: CI/CD はローカル実行のみ。GitHub Actions は使わない
 
-- **日付**: 2026-07-07 / **状態**: 承認(ユーザー判断。Phase 0 の GitHub Actions CI を置き換え)
+- **日付**: 2026-07-07 / **状態**: 一部破棄（→ D-086。マージ前の一律全通しだけを置換。ローカル検証／GitHub Actions不使用は維持）
 - **内容**: クラウド CI(GitHub Actions)は廃止。検証は `Scripts/check.sh` をローカルで実行する。内容は SwiftFormat(lint)→ SwiftLint → `swift test` → iOS 向けコンパイルチェックで、旧 CI と同一。マージ前に必ず実行する運用とする。
 - **理由**: ユーザーの方針。個人開発では macOS ランナーの待ち時間・管理コストに見合わない。GitHub Flow(ブランチ + PR)自体は継続する。
 - **補足**: Phase 0 で一度 GitHub Actions を構築し正常動作を確認済み(履歴: `.github/workflows/ci.yml`、初回 run で lint 設定の不備を1件検出・修正)。将来チーム開発になったら本決定を破棄して復活させればよい。
@@ -1069,3 +1071,40 @@
   3. concurrent loserが縮退前に一時roleへ接続済みでも、lock取得直後に実効superuserとcatalog属性を再検査し、縮退済みならpool／backendをcloseしてpermanent bootstrapへbounded retryする。縮退済みroleから`pg_authid`／secret verifierを読むことは禁止し、一時roleのlogin拒否は新規接続で検証する。
   4. exact-v2 repeatはprovision profileを起動せず、公式OID10 secretをmount／connectせず、DDL、role変更、GRANT、metadata修復を行わず、permanent bootstrapによるread-only attestationだけを実行する。freshでprovisionを忘れたmigratorはfail closedする。unknown／legacyはmarker／catalog／data fingerprintを保持したままfail closedする。隔離Gateはfresh、concurrent 2 migrators、runtime DDL deny、migration DML deny、temp-admin login reject、repeat、unknown／legacy unchanged、旧container／volume pre/post unchangedを必須証跡とする。
 - **詳細**: `SyncServerV2/docker-compose.yml`、`SyncServerV2/scripts/bootstrap-admin.sql`、`SyncServerV2/src/bin/sync_v2_migrator.rs`、`SyncServerV2/src/bin/sync_v2_role_split_runner.rs`、`docs/sync/v2/deployment.md`を正とする。
+
+## D-086: 編集内容に応じて検証を4段階から選ぶ
+
+- **日付**: 2026-09-12 / **状態**: 採択・文書運用へ適用
+- **利用者の決定**: 検証なし、軽い検証、中ぐらいの検証、重たい検証を分け、編集内容に従って通す。今回の決定内容のMarkdown反映は検証なしとする。
+- **内容**:
+  1. ファイル拡張子や変更行数だけでなく、動作・データ・契約への実際の影響から段階を選ぶ。具体的な目安は[AGENTS](../AGENTS.md)の表へ集約する。
+  2. 検証なしは、今回のような方針記録・説明整理を追加のテスト、build、lint、リンク検査、レビューなしで完了できる段階。編集に必要な読取・保存・コミットは行う。
+  3. 軽い検証は限定された影響を確かめる最小限、中ぐらいは該当機能／moduleのテストと必要なtarget build、重たい検証は`Scripts/check.sh`と影響する境界の検証を使う。共有の保存・migration・互換・認証scope等に及ぶコード変更は重たい検証の対象とする。
+  4. マージ前も選択した段階を適用し、マージという理由だけで全体検証を要求しない。関係しない既存のコード失敗は、検証なし／軽い検証で完了する変更の条件にしない。
+  5. 関連する確認で問題が分かった場合は影響に応じて範囲を広げる。十分な結果の後で無関係な検証を反復しない。利用者の明示した検証範囲を優先し、結果をなし／成功／失敗／未実施として記録する。
+- **置き換える範囲**: D-014と従来ガイドの「マージ前に必ず全通し」を置換する。`Scripts/check.sh`自体は重たい検証用の入口として維持し、旧コメントや履歴の一律実行指示より本Decisionを優先する。GitHub Actions不使用、ローカル検証、各製品機能の受入契約は維持する。
+- **理由**: 変更による影響と検証の負担を対応させ、文書反映や小さな編集を無関係な全体検証で止めない。
+- **今回の適用**: 文書反映のみ・検証なし。先行する全面整理の検証結果は履歴として残し、再実行済みとは記載しない。
+
+## D-087: Apple以外のアカウント回復を提供せず、削除猶予30日・backup保持1年とする
+
+- **日付**: 2026-09-12 / **状態**: 製品方針採択・lifecycle実装前
+- **利用者の決定**: Appleログイン以外のアカウント回復は行わない。アカウント削除の猶予は30日、バックアップ保持期間は1年とする。
+- **内容**:
+  1. Apple-onlyを維持し、別provider・メール回復・運営による本人確認やaccount付替えの回復を提供しない。同じApple identityによる通常の再ログイン、session refresh、lost-response再試行は維持する。
+  2. 利用者の明示的なFUMINIWAアカウント削除に30日の取消猶予を設ける。サインアウトやApple認証の失効だけで端末内原稿を削除しない。
+  3. backup保持期間は1年とする。backupの保持は、利用者向けアカウント回復サービスを提供する約束ではない。
+  4. 期間の起算、暦の扱い、期限のAPI表現、取消と削除ジョブ、Apple token revoke、remote完了記録、backup復元後の削除状態の維持は、versioned lifecycleで具体化する。未指定の条件をこの文書で既決扱いせず、今回wire／schemaを変更しない。
+- **置き換える範囲**: D-078／AUTHの後続Product Decisionとして残していた回復方針・削除猶予・backup保持期間を確定する。AccountID／Fence、local-first、server-readable、別accountへの暗黙adopt禁止は維持する。
+- **実装との境界**: [AUTH](AUTH.md)と公開技術Gateへ方針を反映する。削除・取消・期限管理が動作した証拠はまだなく、判断済みを実装済み・公開GOへ読み替えない。期間の再承認待ちには戻さない。
+
+## D-088: Windows 11のみを対象にインストーラーで配布する
+
+- **日付**: 2026-09-12 / **状態**: 方針採択・Windows実装前
+- **利用者の決定**: Windowsは11のみ対応予定。MSIなどのインストーラーで配布する。
+- **内容**:
+  1. Windows版の対応範囲をWindows 11に限定する。Windows 10以前への互換要件を追加しない。
+  2. 配布はMSIなどのインストーラー形式とする。MSIへの排他的固定や、特定のinstaller作成ツールの採用までは決めていない。
+  3. D-036のWinUI 3 + C# / .NET、portable形式・同期契約・fixtureを共有する境界を維持する。SDK、native editor、installer作成ツールは既定要件に沿って実装時に選ぶ。
+- **置き換える範囲**: CROSS_PLATFORMの未決だった対象Windowsと配布方式を確定する。W0／Windows実装／双方向round-trip／配布物の受入は未完了のまま残す。
+- **詳細**: [CROSS_PLATFORM](CROSS_PLATFORM.md)。今回の文書反映でWindowsプロジェクトやinstallerを作成したことにはしない。

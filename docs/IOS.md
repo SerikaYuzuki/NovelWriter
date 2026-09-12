@@ -49,9 +49,9 @@ iPhone / iPadで、通信を待たず日本語小説を編集・保存する。�
 
 まず既存の製品要件をv2へ接続する。旧Viewは表示と操作意図の参考に限り、旧package保存・CloudKit・Note同期をコピーしない。新規作品のlocal-only問題、全体検証の既知停止点、staging再検証の順序はhandoffへ集約する。
 
-変更箇所に応じてnavigation／session、EditorKitのIMEとUndo、v2 local checkpoint、account隔離、clipboardの範囲を確認する。実装変更の統合前に [Scripts/check.sh](../Scripts/check.sh) を全通しする。ビルド成功、Preview、過去のfocused test件数を実機受入の代わりにしない。
+検証はD-086に従い変更の影響で選ぶ。方針記録・説明変更は「なし」、局所文言・表示等は「軽い」限定確認、単一機能は「中ぐらい」の対象testとbuild、保存・認証scope・互換・共有層へ影響する変更は「重たい」の [Scripts/check.sh](../Scripts/check.sh) 全体と関連境界検証を使う。mergeだけを理由に全体検証へ格上げしない。対象に応じてnavigation／session、IMEとUndo、local checkpoint、account隔離、clipboardの範囲を選び、build成功や過去のtest件数を実機受入の代わりにしない。今回の方針追記は検証なし。
 
-署名済みiPhone / iPadで次を記録して初めてUI受入とする。
+製品としてのUI受入には、署名済みiPhone / iPadで次の記録を揃える。これは毎回の変更検証へ一律に課す手順ではない。
 
 - 棚・ホーム・全機能の遷移、狭幅／回転／Split View、VoiceOver／Dynamic Type／hardware keyboard。
 - 日本語IME中の選択・話切替・戻る操作、執筆補助のUndo、scene退避・終了・再起動後の確定本文。
@@ -62,6 +62,6 @@ Files原本のopen-in-place、共同編集、複数作品同時編集、Windows�
 
 ## 5. 参照と履歴
 
-- 見た目と操作の規約: [STYLE.md](STYLE.md)。決定: [DECISIONS.md](DECISIONS.md) D-056〜058、D-075、D-080、D-084。
+- 見た目と操作の規約: [STYLE.md](STYLE.md)。決定: [DECISIONS.md](DECISIONS.md) D-056〜058、D-075、D-080、D-084、D-086。
 - 公開技術Gate: [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)。portable契約: [CROSS_PLATFORM.md](CROSS_PLATFORM.md)。
 - [旧IOS-1〜6計画・CloudKit実装記録の全文](archive/product-guidance-20260912/IOS.md)。過去の「実装済み」は当時のtargetに対する記録として読む。
