@@ -325,7 +325,7 @@ struct NovelWorkbenchView: View {
                 }
             }
         case .plot:
-            PlotBoardView(focusedSelection: appState.plotOutlineSelection) { chapterID in
+            PlotAndFlagSplitView { chapterID in
                 Task {
                     guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
                     await appState.selectChapterAfterTransition(chapterID)

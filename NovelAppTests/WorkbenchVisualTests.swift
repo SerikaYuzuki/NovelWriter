@@ -32,6 +32,29 @@ struct WorkbenchVisualTests {
         try await snapshot(host, path: "/tmp/fuminiwa-visual-flags.png")
     }
 
+    @Test("plot detail keeps a usable flag editor below the card board")
+    func plotDetailShowsUsableLowerFlagPane() async throws {
+        let state = AppState(dependencies: AppDependencies(userDefaults: makeIsolatedTestUserDefaults()), initialStartupState: .ready)
+        let flag = Flag(title: "配置確認", note: "下段の伏線メモ")
+        state.document = NovelDocument(title: "配置確認", chapters: [Chapter(title: "第一章")], flags: [flag])
+        state.selectedFlagID = flag.id
+        state.selectPlotOutline(.unassigned)
+        state.addPlotCard(chapterID: nil)
+        let host = NSHostingView(rootView: PlotAndFlagSplitView(onChapterJump: { _ in }).environment(state))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 680), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let note = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == flag.note })
+        let scroll = try #require(note.enclosingScrollView)
+        #expect(scroll.frame.height > 80)
+        #expect(scroll.frame.width > 200)
+        try await snapshot(host, path: "/tmp/fuminiwa-visual-plot-and-flags.png")
+    }
+
     @Test("library can render without a network or credential")
     func offlineViewsRender() async throws {
         let defaults = makeIsolatedTestUserDefaults()
