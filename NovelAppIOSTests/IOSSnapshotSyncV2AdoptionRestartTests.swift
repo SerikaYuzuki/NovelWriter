@@ -12,6 +12,45 @@ import Testing
 @MainActor
 @Suite("iOS Snapshot Sync v2 pending adoption restart", .serialized)
 struct IOSSnapshotSyncV2AdoptionRestartTests {
+    @Test("explicit sync adopts received content without restarting the app")
+    func explicitSyncAdoptsWithoutRestart() async throws {
+        try await withAdoptionEnvironment { environment in
+            let fixture = try await makePendingAdoptionFixture()
+            environment.track(fixture.configuration)
+            let store = makeStore(environment: environment, fixture: fixture)
+            let application = try await installPendingWork(fixture, into: store)
+
+            #expect(store.document.title == "端末版")
+            #expect(await store.synchronizeSnapshotSyncV2())
+            try await eventually {
+                let pending = try await application.pendingAdoption(workID: fixture.workID)
+                return store.document.title == "サーバー版" && pending == nil
+                    && store.selectedEpisode?.content == "Macで更新した本文"
+                    && store.snapshotSyncOutcome == .idle
+            }
+        }
+    }
+
+    @Test("explicit sync does not apply a received version after the editor boundary changes", arguments: [false, true])
+    func explicitSyncPreservesChangedBoundary(changeSession: Bool) async throws {
+        try await withAdoptionEnvironment { environment in
+            let fixture = try await makePendingAdoptionFixture()
+            environment.track(fixture.configuration)
+            let store = makeStore(environment: environment, fixture: fixture)
+            let application = try await installPendingWork(fixture, into: store)
+
+            #expect(await store.synchronizeSnapshotSyncV2())
+            if changeSession {
+                store.advanceDocumentSessionGeneration()
+            } else {
+                store.updateDocumentTitle("同期中の追加入力")
+            }
+            try await eventually { store.snapshotSyncV2ReprojectionTask == nil }
+            #expect(store.document.title == (changeSession ? "端末版" : "同期中の追加入力"))
+            #expect(try await application.pendingAdoption(workID: fixture.workID) != nil)
+        }
+    }
+
     @Test("clean active work adopts a durable server choice after restart resume")
     func cleanResumeAdoptsAfterRestart() async throws {
         try await withAdoptionEnvironment { environment in
@@ -194,12 +233,16 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
                 expectedAccountScope: scope, refreshGeneration: 6
             )
         }
-        if localFinishesFirst { #expect(finishLocal()) }
+        if localFinishesFirst {
+            #expect(finishLocal())
+        }
         #expect(store.applySnapshotSyncV2RemoteCatalogPage(
             remoteItems: [remote], nextCursor: nil,
             expectedAccountScope: scope, refreshGeneration: 5
         ))
-        if !localFinishesFirst { #expect(finishLocal()) }
+        if !localFinishesFirst {
+            #expect(finishLocal())
+        }
         #expect(store.syncV2LibraryItems.count == 2)
         let retainedLocal = try #require(store.syncV2LibraryItems.first { $0.workID == local.workID })
         #expect(retainedLocal.title == local.title)
@@ -443,6 +486,7 @@ private func makePendingAdoptionFixture() async throws -> PendingAdoptionFixture
 
     var remoteDocument = localDocument
     remoteDocument.title = "サーバー版"
+    remoteDocument.chapters[0].episodes[0].content = "Macで更新した本文"
     let remote = try SnapshotCodec.encode(
         SnapshotModel(
             workId: workID,

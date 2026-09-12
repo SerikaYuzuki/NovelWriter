@@ -125,16 +125,33 @@ extension IOSDocumentStore {
               syncV2ActiveWorkID == workID,
               currentDocumentSessionToken == expectedSession,
               snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+        // Pin the clean editor boundary before the asynchronous worker starts.
+        // Any subsequent editing or session/account change invalidates adoption.
+        let automaticAdoption = automaticAdoptionExpectation(
+            for: workID,
+            validatingEditorSurface: true
+        )
         do {
             let result = try await application.synchronize(workID: workID)
             guard !isSyncV2RemoteAccountTransitionActive,
                   syncV2ActiveWorkID == workID,
+                  currentDocumentSessionToken == expectedSession,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             applySnapshotSyncV2State(result.state)
             if case .failure = result.typedResult {
                 operationErrorMessage = result.state.japaneseLabel
                 return false
             }
+            // synchronize queues the transfer; its return value is not the
+            // final received state. Reuse the lifecycle observer and guarded
+            // Inbox adoption so an open editor updates without a restart.
+            startSnapshotSyncV2Reprojection(
+                application,
+                workID: workID,
+                automaticAdoption: automaticAdoption,
+                expectedAccountScope: expectedAccountScope,
+                resumesWorker: false
+            )
             return true
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
