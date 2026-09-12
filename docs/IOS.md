@@ -72,3 +72,7 @@ Files原本のopen-in-place、共同編集、複数作品同時編集、Windows�
 ## 2026-09-12 作品一覧への明示入口
 
 作品ホーム・執筆・設定など各作品画面の右上に「作品一覧」を常設する。一覧画面の見出しも「作品一覧」に統一した。ボタンはIME確定と端末保存をdocument operation gate内で完了してからnavigation pathを空にする。保存中に作品・account・経路が変わった場合は、その後の画面を一覧へ戻さない。通常の階層Backは維持する。
+
+## 2026-09-12 作品一覧から開けない不具合
+
+実機のView Debuggerで修正版の作品一覧が表示されていることを確認。行のtapが一律に`openRemoteOnly`を呼び、local/cached行をremote-onlyの事前条件で拒否していた。`openPrivateDocument`による既存のlocal/remote振り分けへ接続し、localではcheckpoint後にSQLiteから開く。remote-onlyの非同期取得完了時の遷移は維持する。サインアウト表示を含むlocal行選択とnavigation/sessionの14テスト成功。`worker/plan-blocked receiptMismatch`はquarantined createWorkの同期停止であり、この修正で受領検証を緩和したり実DBを修復・削除したりしない。

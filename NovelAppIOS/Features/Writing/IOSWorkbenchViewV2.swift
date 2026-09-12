@@ -419,7 +419,7 @@ struct IOSWorkbenchView: View {
         NavigationStack(path: path) {
             IOSLibraryView(
                 store: store,
-                openWork: openRemote,
+                openWork: openWork,
                 makeNewDocument: makeNew
             )
             .navigationDestination(for: IOSWorkspaceRoute.self) { route in
@@ -511,13 +511,8 @@ struct IOSWorkbenchView: View {
         }
     }
 
-    private func openRemote(_ id: WorkID) {
-        Task {
-            guard await store.openRemoteOnly(workID: id),
-                  store.syncV2ActiveWorkID == id,
-                  let session = store.currentDocumentSessionToken else { return }
-            navigation.showProjectHome(for: session)
-        }
+    private func openWork(_ id: WorkID) {
+        Task { await navigation.openLibraryWork(id, using: store) }
     }
 
     private func makeNew() {

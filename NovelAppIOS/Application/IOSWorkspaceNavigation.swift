@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelSyncV2
 import Observation
 
 struct IOSWorkspaceEditorDeparture: Equatable {
@@ -55,6 +56,17 @@ final class IOSWorkspaceNavigationCoordinator {
 
     var activeEditorDeparture: IOSWorkspaceEditorDeparture? {
         Self.editorDeparture(in: path)
+    }
+
+    @discardableResult
+    func openLibraryWork(_ workID: WorkID, using store: IOSDocumentStore) async -> Bool {
+        // The shelf contains both local and remote-only works. The store owns
+        // that routing; local opens must never enter the remote-only guard.
+        guard await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)),
+              store.syncV2ActiveWorkID == workID,
+              let session = store.currentDocumentSessionToken else { return false }
+        showProjectHome(for: session)
+        return true
     }
 
     @discardableResult

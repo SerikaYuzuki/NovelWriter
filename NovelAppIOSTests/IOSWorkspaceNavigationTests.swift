@@ -29,6 +29,27 @@ struct IOSWorkspaceNavigationTests {
         #expect(await store.openPrivateDocument(id: session.workingCopyID))
     }
 
+    @Test("一覧の端末保存済み作品はサーバー専用経路を使わず開く", arguments: [false, true])
+    func localShelfSelectionOpensProject(signedOut: Bool) async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let selectedWork = try #require(store.syncV2ActiveWorkID)
+        #expect(await store.makeNewDocument())
+        #expect(store.syncV2ActiveWorkID != selectedWork)
+        if signedOut {
+            store.authUIState = .signedOut
+        }
+        let navigation = IOSWorkspaceNavigationCoordinator()
+        #expect(await navigation.openLibraryWork(selectedWork, using: store))
+        let session = try #require(store.currentDocumentSessionToken)
+        #expect(store.syncV2ActiveWorkID == selectedWork)
+        #expect(navigation.path == [.projectHome(session: session)])
+        #expect(store.snapshotSyncV2RemoteOnlyOpenTask == nil)
+    }
+
     @Test("account scope park removes every stale document route")
     func accountScopeParkReturnsToLibrary() {
         let session = makeSession(packageName: "account-work.novelpkg")
