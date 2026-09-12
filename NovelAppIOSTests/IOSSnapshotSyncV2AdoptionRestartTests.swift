@@ -165,6 +165,49 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         }
     }
 
+    @Test("local shelf and remote catalog both survive either completion order", arguments: [false, true])
+    func concurrentLocalAndRemoteCatalog(localFinishesFirst: Bool) throws {
+        let id = UUID().uuidString
+        let suiteName = "dev.serikayuzuki.fuminiwa.ios.catalog-race.\(id)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FUMINIWA-iOS-catalog-race-\(id)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: root)
+        store.authSession = makeAuthSession(accountID: "account", fence: "fence")
+        store.authUIState = .signedIn(accountID: "account")
+        let scope = store.snapshotSyncV2AccountScope
+        store.remoteCatalogRefreshGeneration = 5
+        // A local reprojection starts after the catalog request, as at launch.
+        store.libraryRefreshGeneration = 6
+        let local = SyncV2LibraryItem(
+            workID: WorkID(UUID()), title: "端末で編集中", availability: .localOnly,
+            accountState: .active, localGeneration: 9
+        )
+        let remote = SyncV2RemoteCatalogEntry(
+            workID: WorkID(UUID()), title: "Macの作品", head: nil
+        )
+        func finishLocal() -> Bool {
+            store.applySnapshotSyncV2LibraryProjection(
+                SyncV2LibraryProjection(items: [local]),
+                expectedAccountScope: scope, refreshGeneration: 6
+            )
+        }
+        if localFinishesFirst { #expect(finishLocal()) }
+        #expect(store.applySnapshotSyncV2RemoteCatalogPage(
+            remoteItems: [remote], nextCursor: nil,
+            expectedAccountScope: scope, refreshGeneration: 5
+        ))
+        if !localFinishesFirst { #expect(finishLocal()) }
+        #expect(store.syncV2LibraryItems.count == 2)
+        let retainedLocal = try #require(store.syncV2LibraryItems.first { $0.workID == local.workID })
+        #expect(retainedLocal.title == local.title)
+        #expect(retainedLocal.localGeneration == 9)
+        #expect(retainedLocal.availability == .localOnly)
+        #expect(store.syncV2LibraryItems.first { $0.workID == remote.workID }?.availability == .remoteOnly)
+    }
+
     @Test("an old account catalog page cannot repopulate the switched shelf")
     func staleAccountCatalogPageIsIgnored() throws {
         let id = UUID().uuidString
@@ -178,6 +221,7 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         store.authSession = makeAuthSession(accountID: "old-account", fence: "old-fence")
         store.authUIState = .signedIn(accountID: "old-account")
         store.libraryRefreshGeneration = 7
+        store.remoteCatalogRefreshGeneration = 7
         store.historyRefreshGeneration = 11
         let expectedScope = store.snapshotSyncV2AccountScope
         let staleItem = SyncV2RemoteCatalogEntry(
@@ -205,7 +249,6 @@ struct IOSSnapshotSyncV2AdoptionRestartTests {
         #expect(store.applySnapshotSyncV2RemoteCatalogPage(
             remoteItems: [staleItem],
             nextCursor: nil,
-            localProjection: SyncV2LibraryProjection(items: []),
             expectedAccountScope: expectedScope,
             refreshGeneration: 7
         ) == false)

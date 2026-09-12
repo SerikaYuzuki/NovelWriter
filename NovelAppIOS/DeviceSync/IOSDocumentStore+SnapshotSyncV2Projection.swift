@@ -187,9 +187,6 @@ extension IOSDocumentStore {
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
         libraryRefreshGeneration &+= 1
         let refreshGeneration = libraryRefreshGeneration
-        // Taking library projection ownership also retires an older catalog
-        // request. Its generation-mismatched defer cannot clear this latch.
-        syncV2RemoteCatalogIsLoading = false
         if let workID, let state = await application.uiState(workID: workID) {
             guard !isSyncV2AccountTransitionActive,
                   libraryRefreshGeneration == refreshGeneration,

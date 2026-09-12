@@ -54,6 +54,7 @@ extension IOSDocumentStore {
         cancelSnapshotSyncV2BackgroundOperations()
         syncV2KeepBothPendingWorkID = nil
         libraryRefreshGeneration &+= 1
+        remoteCatalogRefreshGeneration &+= 1
         historyRefreshGeneration &+= 1
         syncV2RemoteCatalogIsLoading = false
         advanceDocumentSessionGeneration()

@@ -402,6 +402,7 @@ final class IOSDocumentStore {
     @ObservationIgnored var syncV2PortableCreatedAt: Date?
     @ObservationIgnored var verifiedPrivateDocumentIDs: Set<IOSPrivateDocumentID> = []
     @ObservationIgnored var libraryRefreshGeneration: UInt64 = 0
+    @ObservationIgnored var remoteCatalogRefreshGeneration: UInt64 = 0
     @ObservationIgnored var historyRefreshGeneration: UInt64 = 0
 
     @ObservationIgnored

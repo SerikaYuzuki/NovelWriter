@@ -135,9 +135,6 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         libraryRefreshGeneration &+= 1
         let refreshGeneration = libraryRefreshGeneration
-        // A local shelf refresh supersedes any older remote page. Its task may
-        // finish, but the generation CAS below prevents it from publishing.
-        syncV2RemoteCatalogIsLoading = false
         let projection = try await application.library()
         return applySnapshotSyncV2LibraryProjection(
             projection,
@@ -180,14 +177,14 @@ extension IOSDocumentStore {
               let application = snapshotSyncV2Application else { return false }
         guard !syncV2RemoteCatalogIsLoading else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
-        libraryRefreshGeneration &+= 1
-        let refreshGeneration = libraryRefreshGeneration
+        remoteCatalogRefreshGeneration &+= 1
+        let refreshGeneration = remoteCatalogRefreshGeneration
         let cursor = reset ? nil : syncV2RemoteCatalogCursor
         let existingItems = reset ? [] : syncV2RemoteCatalogItems
         syncV2RemoteCatalogIsLoading = true
         syncV2RemoteCatalogError = nil
         defer {
-            if libraryRefreshGeneration == refreshGeneration {
+            if remoteCatalogRefreshGeneration == refreshGeneration {
                 syncV2RemoteCatalogIsLoading = false
             }
         }
@@ -197,7 +194,7 @@ extension IOSDocumentStore {
                 pageSize: 100
             )
             guard !isSyncV2RemoteAccountTransitionActive,
-                  libraryRefreshGeneration == refreshGeneration,
+                  remoteCatalogRefreshGeneration == refreshGeneration,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
             var rows = Dictionary(
                 uniqueKeysWithValues: existingItems.map { ($0.workID, $0) }
@@ -208,17 +205,15 @@ extension IOSDocumentStore {
             let remoteItems = rows.values.sorted {
                 $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
-            let projection = try await application.library()
             return applySnapshotSyncV2RemoteCatalogPage(
                 remoteItems: remoteItems,
                 nextCursor: page.nextCursor,
-                localProjection: projection,
                 expectedAccountScope: expectedAccountScope,
                 refreshGeneration: refreshGeneration
             )
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
-               libraryRefreshGeneration == refreshGeneration,
+               remoteCatalogRefreshGeneration == refreshGeneration,
                snapshotSyncV2AccountScope == expectedAccountScope {
                 syncV2RemoteCatalogError = error.localizedDescription
             }
@@ -230,14 +225,16 @@ extension IOSDocumentStore {
     func applySnapshotSyncV2RemoteCatalogPage(
         remoteItems: [SyncV2RemoteCatalogEntry],
         nextCursor: String?,
-        localProjection: SyncV2LibraryProjection,
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         refreshGeneration: UInt64
     ) -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
-              libraryRefreshGeneration == refreshGeneration,
+              remoteCatalogRefreshGeneration == refreshGeneration,
               snapshotSyncV2AccountScope == expectedAccountScope else { return false }
-        let localItems = localProjection.items.filter { item in
+        // Merge into the current local rows, not a projection captured before
+        // network I/O. A concurrent local refresh will likewise merge this cache.
+        let localItems = syncV2LibraryItems.filter { item in
+            guard item.availability != .remoteOnly else { return false }
             if item.accountState == .parkedDifferentAccount {
                 return exposesParkedSyncV2Items
             }

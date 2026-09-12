@@ -76,3 +76,9 @@ Files原本のopen-in-place、共同編集、複数作品同時編集、Windows�
 ## 2026-09-12 作品一覧から開けない不具合
 
 実機のView Debuggerで修正版の作品一覧が表示されていることを確認。行のtapが一律に`openRemoteOnly`を呼び、local/cached行をremote-onlyの事前条件で拒否していた。`openPrivateDocument`による既存のlocal/remote振り分けへ接続し、localではcheckpoint後にSQLiteから開く。remote-onlyの非同期取得完了時の遷移は維持する。サインアウト表示を含むlocal行選択とnavigation/sessionの14テスト成功。`worker/plan-blocked receiptMismatch`はquarantined createWorkの同期停止であり、この修正で受領検証を緩和したり実DBを修復・削除したりしない。
+
+## 2026-09-12 Macの作品がiPhoneの一覧に出ない不具合
+
+実機ではサーバー一覧3件の取得に成功していたが、並行する端末内projectionの更新により共通の世代が進み、正常な応答を破棄していた。サーバー一覧専用の更新世代を分離し、取得した一覧を現在の端末内行と合成する。アカウント遷移時は両方の世代を無効化し、以前のアカウントの応答は引き続き拒否する。端末内更新は通信の完了を待たない。検証は中ぐらいを選択し、更新完了順の両ケース、旧アカウント応答の拒否、既存の同期投影・アカウント遷移を含む30テストが成功。
+
+署名済みiPhone向けビルドをXcodeから実行し、View Debuggerで作品一覧に4行が表示されることを確認した。既存の`worker/plan-blocked receiptMismatch`は引き続き記録されており、今回の一覧修正による解消対象ではない。
