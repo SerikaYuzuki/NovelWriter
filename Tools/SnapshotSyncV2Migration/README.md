@@ -1,14 +1,21 @@
-# Snapshot Sync v2 legacy export
+# Snapshot Sync v2 — 独立した旧データ移行ツール
 
-これはv2切替前の旧v1 SQLiteを`.novelpkg` backupへ変換する、live appから分離された
-macOS専用の移行ツールです。入力SQLiteはread-onlyで開き、出力はstage rootだけへ
+これは旧v1 SQLiteのexport、独立したprovenance authority生成、v2 client SQLiteへのadoptionを扱う、live appから分離されたmacOS専用packageです。2026-09-12に`Package.swift`とCLI sourceを照合しました。現在の製品開発で毎回使うツールではなく、明示された移行作業だけを対象にします。
+
+| executable | 成果物 | 成功の境界 |
+| --- | --- | --- |
+| `snapshot-sync-v2-export` | read-only package stageと証拠 | portable backupの生成。v2採用ではない |
+| `snapshot-sync-v2-authority-builder` | stage外のprovenance authority | 独立入力との照合。v2採用ではない |
+| `snapshot-sync-v2-migration` | verifiedなclient SQLite adoption | 明示commit・read-back。remote publishではない |
+
+規範とquarantine条件は[migration.md](../../docs/sync/v2/migration.md)、今の優先順位は[現行ハンドオフ](../../docs/SNAPSHOT_SYNC_V2_HANDOFF.md)を参照してください。以下はexport／authority生成の参照手順です。実行前に対象archive・期待件数・digestを今回の証拠へ置き換えます。入力SQLiteはread-onlyで開き、出力はstage rootだけへ
 書き込みます。stageにはadoption markerを作らないため、途中終了しても通常の作品棚へ
 取り込まれません。
 
 ```sh
 swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-export \
   --source-is-verified-archive \
-  --expected-work-count 62 \
+  --expected-work-count <verified-work-count> \
   /path/to/legacy-v1.sqlite \
   /path/to/classification.csv \
   /path/to/new-stage-root \
@@ -20,7 +27,7 @@ classification CSVは8列（`workID,classification,currentSnapshotID,currentSnap
 ledgerの証拠を使います。受理する分類は`verified`、`verified_candidate`、`quarantine`、
 `legacy_quarantine_test_batch`、`needs-review`、`needs_review`、
 `legacy_quarantine_ambiguous_user_touched`です。
-各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。`--expected-work-count`は必須で、今回の監査済みarchiveでは`62`を指定します。
+各出力は`verified/`、`quarantine/`、`needs-review/`へWorkID名で保存されます。`--expected-work-count`は必須です。以前の監査例は62件でしたが、固定値として再利用せず今回のarchive inventoryから指定します。
 
 stageのprovenance format v2では、旧SQLiteのwire証拠とpackage read-back後の採用証拠を別の値として記録します。`sourceWireSnapshotID`／`sourceWireSnapshotDigest`／`sourceProjectionDigest`／`sourceObjectClosureSHA256`はread-only SQLiteの独立解析から、`adoptionSnapshotID`／`adoptionProjectionDigest`／`inventoryEvidenceSHA256`は`.novelpkg`のread-backから再計算します。`sourceProjectionVersion`と`adoptionProjectionVersion`も別々に必須です。`snapshotID`と`projectionDigest`は互換aliasに過ぎず、sourceとadoptionを代用できません。`inventoryEvidenceSHA256`は絶対pathを除いたcanonical JSONで、空ディレクトリを含むpackage treeの全entryを対象にします。source projectionとadoption projectionは異なる正当なdigestであり、builderは両者を比較しません。
 
@@ -47,7 +54,7 @@ swift run --package-path Tools/SnapshotSyncV2Migration snapshot-sync-v2-authorit
   --expected-classification-digest <sha256> \
   --expected-source-sqlite-digest <sha256> \
   --expected-archive-manifest-digest <sha256> \
-  --expected-work-count 62 \
+  --expected-work-count <verified-work-count> \
   --authority-id <operator-identity> \
   --authority-root /path/to/new-authority-root
 ```

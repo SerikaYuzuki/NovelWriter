@@ -1,8 +1,19 @@
 # v2 conformance and red-team checks
 
-The following checks are the minimum document-only gate. The independent Swift
-and Rust runners must additionally exercise every scenario fixture without
-sharing canonicalization or state-machine code.
+This document records the conformance coverage and the original static-check
+reference. Current executable entry points (source reviewed 2026-09-12) are
+`Scripts/conformance-v2.py`, `Scripts/check-sync-v2-boundary.sh`, and
+`Scripts/conformance-v2.sh`, run from the repository root. Prefer those maintained
+scripts for fixture integrity and runtime checks. The embedded reference below
+also covers JSON Schema/OpenAPI/DDL assertions; those broader assertions are
+not all performed by `conformance-v2.py`. The Swift and Rust runners
+must agree on fixtures without sharing canonicalization or state-machine code.
+
+A contract/document check, runtime test, opt-in PostgreSQL Gate, and physical
+device acceptance establish different facts. Match the check to the changed
+boundary and report which layer ran. Current implementation evidence is in the
+[handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md); this file is not a record of a new
+successful run.
 
 ## Rust HTTP source-to-test map
 
@@ -20,6 +31,11 @@ it remains an explicit NO-GO/skip and does not connect anywhere.
 | Catalog/history pagination and sealed cursors | `src/http.rs` list/history/cursor helpers | opt-in HTTP gate cursor continuation checks |
 | One active conflict and closed useDevice/useServer/keepBoth/restore results | `src/postgres.rs` publish/resolve/restore; `src/application.rs` payload validation | `tests/fixtures.rs`; opt-in repository scenarios and stale-resolution HTTP check |
 | Foreign/absent 404 non-disclosure and body/path bounds | `src/http.rs` scope, digest/UUID parsing, body limits | opt-in HTTP gate; `tests/domain.rs` canonical/schema bounds |
+
+## Original static-check reference
+
+The following preserved reference explains the artifact assertions. It is not
+the current recommended command sequence or evidence that a Gate passed.
 
 ```sh
 find docs/sync/v2 -name '*.json' -print0 | xargs -0 -n1 jq -e . >/dev/null

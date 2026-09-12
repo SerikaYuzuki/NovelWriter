@@ -1,85 +1,41 @@
-# AGENTS.md — AIエージェント向け作業ガイド
+# FUMINIWA 作業ガイド
 
-**ふみにわ（FUMINIWA）**はmacOS ファーストのマルチプラットフォーム日本語小説執筆アプリ。現行 macOS 版は SwiftUI シェル + `NSTextView`(TextKit 2)エディタ、将来の Windows 版は WinUI 3 + C# / .NET とし、`.novelpkg` フォルダパッケージを共通互換境界にする。
+ふみにわは日本語小説の執筆アプリ。macOS / iOS は SwiftUI と EditorKit を使い、通常保存は端末内 SQLite、同期は Snapshot Sync v2。`.novelpkg` は明示的な取り込み・書き出しの互換形式である。
 
-**設計の正は [docs/DESIGN.md](docs/DESIGN.md)、決定の記録は [docs/DECISIONS.md](docs/DECISIONS.md)(D-001〜)。この2つを読んでから作業すること。** コードの live 経路・負債・GitHub の載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md)。OS 間互換は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md)。通常版 AI は [docs/CLIPBOARD_AI_ASSIST.md](docs/CLIPBOARD_AI_ASSIST.md)（provider 統合の保管場所は [docs/AI_INTEGRATION.md](docs/AI_INTEGRATION.md)）。次タスクは DESIGN.md の「11. 直近の次タスク」。次世代Device Syncは [docs/SNAPSHOT_SYNC.md](docs/SNAPSHOT_SYNC.md) と [docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md) **0章**、新server認証は [docs/AUTH.md](docs/AUTH.md)。CloudKitの0-current章と1〜15章は移行履歴であり、現行コードは参照しない。UI 完了記録（UIPOLISH / UIREFRESH / UIREVISION / UIFIX / UIDESIGN / PHASE4）は次タスクではない。
+## 必要なときに読む
 
-## 現在地(2026-08-16 時点)
+全資料の通読は不要。変更する責務に応じて参照する。
 
-- 執筆・保存・書き出し・iOS 段階導線・SQLite local canonical・Snapshot Sync・package自動snapshotまでは現行sourceとして動く。D-077〜D-079でserver-readable v1／Sign in with Appleを採択し、Rust serverとSwift clientの実装を進めている。旧CloudKitアダプター、entitlement、bootstrap、専用テストターゲットは削除済み
-- 現行sourceの自動保存はSQLiteへ耐久化し、SyncIntentをlocal commitした後にremote workerがSealedAttemptを作って自動再開する。`.novelpkg`はimport/export専用で、二つの保存系を同時authorityにしない
-- 通常版 AI は校正／アドバイス用 prompt の clipboard copy だけ。provider / network は通常 target に無い(D-075)
-- 「商業化」は実装・品質・配布技術に限る(D-042)。価格・法務・販促は明示依頼が無い限り触らない
-- **次の実装**: 監査済みのD-077／D-078 R0 sync＋auth設計契約に対する独立conformance harnessをSwift／Rust／将来C#で検証する。設計契約の変更が必要ならDecision／schema／fixtureを同時更新して再監査する。v1の外部identity providerはAppleだけで、未実装providerのadapter／UIを作らない。R1以降の順序とGateは[docs/SNAPSHOT_SYNC_HANDOFF.md](docs/SNAPSHOT_SYNC_HANDOFF.md)を正とする。WindowsはW0
-- **GitHub**: `origin/main` には iOS / Device Sync / D-071〜074 がまだ無い。載せ方は [docs/CODE_HEALTH.md](docs/CODE_HEALTH.md) 7章。利用者の明示が無い限り origin へ push しない
+| 作業 | 参照先 |
+| --- | --- |
+| 設計・モジュール境界を変える | [DESIGN](docs/DESIGN.md) と [DECISIONS](docs/DECISIONS.md) の該当決定 |
+| 現行経路、既知の問題、次の実装を調べる | [CODE_HEALTH](docs/CODE_HEALTH.md)、[v2引き継ぎ](docs/SNAPSHOT_SYNC_V2_HANDOFF.md) |
+| 保存・同期・認証を変える | [Snapshot Sync v2](docs/SNAPSHOT_SYNC_V2.md)、[v2契約一覧](docs/sync/v2/README.md)、[AUTH](docs/AUTH.md) |
+| 本文入力・IME・Undoを変える | [DESIGN 4.3〜4.5](docs/DESIGN.md#43-editorkit) と該当する EditorKit の Rules / 統合テスト |
+| 画面・操作を変える | [STYLE](docs/STYLE.md)、macOS は [TOOLBAR](docs/TOOLBAR.md)、iOS は [IOS](docs/IOS.md) |
+| package・OS間互換を変える | [CROSS_PLATFORM](docs/CROSS_PLATFORM.md) と NovelStorage の fixture |
+| 校正・アドバイス用コピーを変える | [CLIPBOARD_AI_ASSIST](docs/CLIPBOARD_AI_ASSIST.md) |
+| その他の資料・履歴を探す | [文書一覧](docs/README.md) |
 
-## リポジトリ構成
+## 保つ境界
 
-```
-NovelApp/              macOS 通常 App(AppState / Workbench)
-NovelAppIOS/           iOS / iPadOS 通常 App(IOSDocumentStore / 段階 navigation)
-NovelKit/              ローカル Swift Package
-  Sources/NovelCore/        モデル。依存ゼロ
-  Sources/NovelStorage/     .novelpkg の読み書き
-  Sources/NovelExport/      TXT / Markdown / EPUB 3
-  Sources/NovelSync/        Device Sync の OS 非依存 domain（live は Note。Work/Episode は履歴）
-  Sources/NovelLibrary/     Mac / iOS 共有の local library 状態・attestation・registry 値型
-  Sources/NovelSyncTesting/ test 専用 fake
-  Sources/EditorKit/        EditorView / プラグイン / IndentRules / Platform adapters
-  Sources/NovelUI/          共有 SwiftUI 部品(薄い)
-  Sources/PreviewSupport/   Preview 用固定データ
-project.yml            XcodeGen 定義。FUMINIWA.xcodeproj は生成物(コミット禁止)
-Scripts/check.sh       ローカル CI。マージ前に全通し
-docs/                  DESIGN.md / DECISIONS.md / CODE_HEALTH.md ほか
-```
+- 通常編集・自動保存・画面遷移・終了はローカルで完結する。SQLite checkpointを先に確定し、remote workerを再開する。ネットワークを待たせず、packageとの二重正本や旧CloudKit/v1へのfallbackを作らない（D-080）。
+- 編集中の本文は EditorKit 側が所有する。明示的な話・作品切替を除き、SwiftUI更新から本文を書き戻さない。IME変換中はモデル反映・プラグイン介入をせず、TextKit 2の`textLayoutManager`を使う。公開APIへ`NSTextView` / `UITextView`を出さない（D-005 / D-006）。
+- 作品遷移・復元・確認操作は、取得時のWorkID/sessionとdocument operation gateを守る。IME確定→ローカル保存→installの順にし、非同期完了を別作品や別accountへ適用しない。読込失敗を空の新規作品へ置き換えない（D-039 / D-041 / D-084）。
+- `NovelCore`は依存ゼロ。実際の依存グラフは`NovelKit/Package.swift`、通常targetの組み込みは`project.yml`を確認する。旧sourceの存在を現行経路の根拠にしない。
+- 章・話の順序は配列順だけが正。package内部はNovelStorageへ閉じ込める。互換契約を変える場合はDecision、schema、fixture、関連文書を同じ変更で揃える。
+- 通常版AI支援は明示scopeのpromptコピーだけ。自動送信・chat起動・response取込・provider実装を追加しない（D-075）。画面には利用できる機能だけを出す。
 
-## 破ってはいけないルール
+## 作業の進め方と完了
 
-1. **依存方向**(DESIGN 9.1): NovelCore は何にも依存しない。NovelStorage / NovelExport / EditorKit / NovelUI / NovelSync / NovelLocalStore / NovelAuth → NovelCore のみ。旧CloudKit adapterは現行Packageに存在しない。違反はコンパイルで落ちるように Package.swift が組んである
-2. **テキスト所有権**(D-005 / D-028): 編集中の本文の正は `NSTextView` 側。SwiftUI の update サイクルから `textView.string` を書き換えるのは話切り替え時のみ。素朴な双方向 `Binding<String>` は禁止。IME 変換中(`hasMarkedText`)はモデル反映もプラグイン介入もしない
-3. **TextKit 2**(D-006): `NSTextView.layoutManager` に触れない(触れると TextKit 1 に暗黙フォールバックする)。`textLayoutManager` を使う
-4. **公開APIに `NSTextView` / `UITextView` を出さない**(DESIGN 9.2)。AppKit 依存コードは `EditorKit/Platform/` 配下 + `#if canImport(AppKit)` 内のみ
-5. **章順は `NovelDocument.chapters`、話順は `Chapter.episodes` の配列順が唯一の正**(D-004 / D-028)。order フィールドを追加しない。v3保存形式ではmanifestだけが両方の順序を持ち、本文・メモのファイル名はEpisodeID(UUID)ベース
-6. **`.novelpkg` の内部構造を NovelStorage の外に漏らさない**(DESIGN 9.3)
-7. **エディタ機能は EditorPlugin として追加する**(DESIGN 4.4)。EditorView / MacTextAdapter を直接太らせない。純粋な判定ロジックは `Rules/` に切り出してテストする
-8. **UI を触る PR は [docs/STYLE.md](docs/STYLE.md)(デザイン言語)に従う**。chromeは既定でシステムLight／Darkへ追従し、利用者が明示した場合だけLight／Darkへ固定できる。本文キャンバスの利用者設定とは分離する(D-040 / D-044)。色・タイポ・余白・文言の規約と、提出前チェックリスト(STYLE.md 9章)がある。トークン外の hex 直書き・フォントサイズ直指定・常設の影は規約違反
-9. **`.novelpkg` の互換契約を変更する場合は [docs/CROSS_PLATFORM.md](docs/CROSS_PLATFORM.md) と golden fixture を同時に更新する**(D-036)。OS 固有パス・bookmark・handle・UI設定を package に保存しない。Windows 実装後は双方向 round-trip を完了条件にする
-10. **起動中・復旧中に編集可能なWorkbenchを出さない**(D-039)。読込失敗を新規作品へ自動fallbackせず、recent URLと原稿を保持する。manifest / world参照payloadは必須valid UTF-8、メモは欠損のみ省略可能で、存在するファイルの読込失敗を空文字へ変換しない
-11. **実在する機能だけをUIへ出す**(D-040 / D-075)。provider処理・プライバシー・同意設計のないAI placeholder、状態、送信shortcutを復活させない。通常版に許可するAI支援は、実際にplain textをsystem clipboardへ書く「校正用／アドバイス用プロンプトをコピー」だけで、AI実行済みと見える文言を使わない。`Cmd+S`は`AppState.saveNow()`系のSQLite保存直列化へ寄せ、続けてSnapshot Syncのremote workerを起こす(D-077〜D-079)。local commit＋SyncIntentを完了し、networkを待たない
-12. **作品ライフサイクルの対象を動的に読み直さない**(D-041)。開く／新規／別名保存／資料／snapshot／終了前保存はdocument operation gateで直列化し、現在作品に属する非同期操作と確認UIは呼び出し／表示時のsession tokenを検査する。遷移前はフォームとEditorKit境界のIMEを旧作品へ確定し、最終保存／installまでWorkbench全体の変更を止める。終了要求後は新しい作品操作を受け付けない。lock順はdocument operation gate → `DocumentSaveCoordinator`。gate付きpublic API同士の呼び出しは禁止
-13. **将来provider統合を再開してもlocal identityをproviderへ送らない**(D-043 / D-075)。選択本文以外のdocument session、editor surface、episode、UTF-16 range、source digest、URL／pathをprovider payloadへ追加しない。providerと外部サービスの自動fallbackをせず、prompt／response／diff／provider設定で`.novelpkg`を変更しない。現在は実providerを接続しない。再開時はAPI・request型を最新の前提で再設計する
-14. **provider統合のUI／適用ロジックを分岐させない**(D-075)。再開時は選択snapshot、exact preview、送信確認、cancel、diff、stale、Copy、明示Applyを一つのprovider-neutral orchestrator／UIへまとめ、provider・credential・model設定・transportだけをadapterごとに分離する。旧ExperimentalのUI／sidecarを再利用する前提にしない
-15. **clipboard prompt支援をprovider機能へ拡張しない**(D-075)。通常版のprompt生成はprovider、network、Keychain、subprocessへ依存させない。選択／話／章の明示scope以外の原稿、metadata、local identity、URL／pathを加えず、コピー後の自動送信／paste／chat起動／response取込／Applyを行わない。system clipboardを履歴非保持またはsecure erase可能と扱わない
+開始時にブランチと差分を確認し、今回の土台を保った作業ブランチを作る。現行v2の変更を古いmainへ載せ替えない。無関係な変更・原稿・DB・`NovelApp 20…/`退避フォルダを保持し、区切りで今回の変更だけをコミットする。
 
-## エディタにプラグインを足す手順(Phase 2 で確立)
+依頼された範囲の調査・編集・ローカル検証・その変更で起きた不具合修正まで続ける。通常の可逆な作業に逐次確認を挟まない。仕様選択が必要な場合は、根拠・選択肢・推奨・影響を示し、独立に進められる作業を続ける。現在の判断待ちは[OWNER_DECISIONS](docs/OWNER_DECISIONS.md)。
 
-1. 判定ロジックを `EditorKit/Rules/` に純関数で書く(AppKit 禁止、`String` + UTF-16 `NSRange`。変換は `Range(_:in:)` 経由)+ swift-testing でテスト
-2. `EditorKit/Plugins/` に `EditorPlugin` 準拠の薄いクラスを作り、Rules の判定を `EditorAction` に写像する
-3. `MacTextAdapter.Coordinator` の `pipeline`(現在 `[IMEGuardPlugin(), IndentPlugin()]`)に登録。**IMEGuardPlugin より後ろに置くこと**
-4. `EditorKitTests/MacTextAdapterIntegrationTests.swift` の方式(実 NSTextView + Coordinator を直接組み立てて delegate を駆動)で統合テストを書く。**Undo で戻ることも必ずテストする**
+検証は変更に合わせる。Markdownのみなら参照先・現行sourceとの整合・差分を確認し、アプリ全体の再ビルドを毎回の条件にしない。コード変更では関係するテストを実行し、入力処理はIMEとUndo/Redoを実adapterで確認する。**マージ前の全体Gateは引き続き`./Scripts/check.sh`の成功**（D-014）。未実施・失敗・対象外を区別し、過去の成功を今回の成功として記載しない。
 
-## 開発ワークフロー
+GitHubへのpush / PR / merge、デプロイ、実データ削除はその操作の依頼があるときに行う。既に指定された対象と範囲について同じ許可を取り直さない。価格・法務・販促は明示依頼の範囲で扱う（D-042）。
 
-- **GitHub Flow**: main から `feat/…` ブランチ → PR(テンプレート: .github/PULL_REQUEST_TEMPLATE.md)。main への直接 push 禁止。**作業開始直後にブランチを切り、区切りごとに WIP コミットする**(未コミットの作業ツリーは main への自動同期で消えることがある)
-- **検証はローカルのみ**(D-014。GitHub Actions は使わない): PR 前に `./Scripts/check.sh` が「All checks passed」まで通ること(SwiftFormat lint / SwiftLint / swift test / iOS向けコンパイルチェック / NovelApp ビルド)
-- Xcode プロジェクトは `./Scripts/generate-project.sh` で生成(D-015)。project.yml が正。旧`NovelWriter.xcodeproj`を直接開かない
-- 単体テストは swift-testing(`@Test`)。XCTest は使わない
-- コミットは意味単位で `feat:` / `fix:` / `docs:` / `chore:` / `style:` プレフィックス。本文は日本語可
-- 必要ツール: Xcode 16+、Node.js 18+、`brew install swiftformat swiftlint xcodegen jq ripgrep`
+Xcodeプロジェクトは`./Scripts/generate-project.sh`で生成する。`project.yml`を編集元とし、生成された`FUMINIWA.xcodeproj`、`.derivedData/`、署名設定・秘密情報をコミットしない。Swiftのテストはswift-testing（`@Test`）を使う。
 
-## 設計判断のしかた
-
-- 新しい設計判断をしたら docs/DECISIONS.md に D-XXX として追記する(既存の決定を覆す場合は元を消さず「破棄」とマークして新しい番号で)
-- DESIGN.md の内容と実装が食い違ったら、実装を直すか DESIGN.md を更新するかを明示的に決めて、変更履歴に記録する
-- 作業は小さい単位で: モデル追加 / Repository 変更 / プラグイン追加 / UI追加 / テスト追加 / リファクタリングを1つの PR に混ぜすぎない(DESIGN 10章)
-
-## 既知の注意点
-
-- 現行package保存要求はrevisionベースで直列化している(D-017)。保存契機は`AppState.saveNow()`／`saveAndSyncSnapshotNow()`へ寄せ、自動保存から直接network送信を始めない(D-073)。D-077ではこの境界をWorkIDのSQLite commitへ差し替え、commit後のHTTP workerだけを自動起動する
-- D-077の新同期はSnapshot／HTTP境界へ実装し、Note／Work／Episode経路へ旧CloudKit分岐を足さない。旧CloudKitレコードはアプリから変更・削除せず、必要な移行は別の非破壊ツールで扱う
-- `AppState.swift` はプロパティと `init` だけにする。chooser・lifecycle・outline・保存・スナップショットは既存の `AppState+…` extension へ寄せ、新しい 200 行を本体へ足さない
-- `.derivedData/` と `NovelApp 20??-…` 退避フォルダはコミットしない
-- W0 と Package Validator Gate は未完了。invalid UTF-8 の部分補修だけで package 検証・Windows 互換・公開準備の完了を宣言しない
-- Experimentalのprovider UI・fake provider・Codex sidecar実装はD-075で削除済み。EditorKitの選択transactionとclipboard promptは残す。AIを再開する場合は旧実装を再利用せず、最新APIと新Decisionから再設計する。clipboard 成功を provider の privacy へ一般化しない
-- `EditorContext` は delegate ごとの本文スナップショット。超長文の性能は将来の最適化
-- GitHub `origin/main` とローカル `main` は履歴が分岐している。載せ方は CODE_HEALTH.md 7章。ローカル merge と GitHub PR を混同しない
+完了報告には変更点、検証結果、残る制約・判断点を記す。コード実装、ローカル検証、staging、実機受入、公開完了はそれぞれの証拠で報告する。

@@ -1,14 +1,14 @@
-# D-076 R5 legacy同期 source inventory
+# D-076 R5 legacy同期 source inventory（履歴）
 
-このファイルは、Episode／Work履歴同期を `NovelSyncLegacy` と
-`NovelSyncCloudKitLegacy` へ移す前の source inventory である。R5aで通常の
-production compositionから `workTransport` を外したが、現在の `NovelSync` と
-`NovelSyncCloudKit` には履歴sourceがまだ含まれている。ここに書いた候補を
-target分離済みとは扱わない。
+このファイルは、D-076 R5でEpisode／Work同期を別targetへ分離する案を検討した当時のsource inventoryである。D-079でCloudKit adapterは廃止され、D-080以降の通常AppはSnapshot Sync v2へ切り替わった。以下の候補一覧やR5完了条件を、現在のtarget追加・コード移動の指示として使わない。
+
+現在の接続関係は[CODE_HEALTH.md](CODE_HEALTH.md)と`project.yml`／`NovelKit/Package.swift`、次の作業は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を確認する。旧sourceの所在や削除済みAPIを調査するときだけ、以下の一覧を当時の履歴と照合する。
+
+記録時点ではR5aで通常compositionから`workTransport`を外していたが、`NovelSync`と`NovelSyncCloudKit`には履歴sourceが残っており、候補のtarget分離は完了していなかった。
 
 ## 移動候補（純粋なlegacy domain）
 
-`NovelSyncLegacy` の初回移動候補は、現在のlive Note domainから参照されない
+`NovelSyncLegacy` の初回移動候補は、当時のlive Note domainから参照されない
 次のsourceである。
 
 ```text

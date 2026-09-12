@@ -2,7 +2,7 @@
 
 **基準日: 2026-08-09 / 現在の扱い: D-075で実装・fixture・testを削除した履歴資料。実provider統合は最新stable SDKの明示再評価まで延期**
 
-本書は、ふみにわ（FUMINIWA）の個人用Experimental AIとして調査・実装したCodex SDK sidecar隔離feasibilityを、再開時に検証可能な形で残す日付固定の結果記録である。現在の製品ロードマップや実行承認ではない。延期判断は[D-054](DECISIONS.md)、当時の詳細な技術契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)を正とする。
+本書は、ふみにわ（FUMINIWA）の個人用Experimental AIとして調査・実装したCodex SDK sidecar隔離feasibilityを残す日付固定の結果記録である。SDKの当時の評価と実験範囲を調べるときに読み、現在の製品ロードマップや実行承認として使わない。延期はD-054、実装削除と再設計方針はD-075（[DECISIONS.md](DECISIONS.md)）、当時の技術契約は[AI_INTEGRATION.md](AI_INTEGRATION.md)に記録している。現行の非通信AI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を参照する。
 
 ## 1. 結論
 

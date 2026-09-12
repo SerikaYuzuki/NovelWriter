@@ -1,10 +1,10 @@
-# UI修正再設計: Glass Outline・Plot再構成・執筆補助・作品情報
+# UI改定記録: Glass Outline・Plot再構成・執筆補助・作品情報
 
-**状態: UI-REV-1〜9 / UI-REF-1〜6完了。次は Phase 5-1。追加のWorkbench再調整は [UIREFRESH.md](UIREFRESH.md) に記録した。**
+UI-REV-1〜9の完了記録。後続のUI-REF-1〜6は[UIREFRESH.md](UIREFRESH.md)に残す。Phase 5も完了しており、現在の次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。
 
-本書は、UI-FIX-1〜5完了後に確認された方向違いを修正する実装指示書である。旧UI-FIXの完了記録は [UIFIX.md](UIFIX.md) に残し、本書で上書きする点だけを明示する。前提は [../AGENTS.md](../AGENTS.md)、全体設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、見た目は [STYLE.md](STYLE.md) を正とする。
+本書はUI-FIX後の画面修正、ルビ・傍点、作品情報の設計理由と検証条件を記録する。回帰調査に必要な節だけ読み、旧UI-FIXから変わった点は[UIFIX.md](UIFIX.md)と比較する。現在の見た目は[STYLE.md](STYLE.md)、toolbarは[TOOLBAR.md](TOOLBAR.md)を正とし、本文の数値や配置は後続Decisionも確認する。
 
-すべて **1サブフェーズ = 1ブランチ = 1PR** とし、スタックPRは禁止する。前PRがmainへマージされてから次のブランチを切る。
+以下のサブフェーズと検証順は当時の計画である。現在の作業手順は[AGENTS.md](../AGENTS.md)を使う。
 
 ## 1. 修正する認識
 

@@ -1,6 +1,6 @@
 # Sign in with Apple server notification contract v1
 
-> **状態**: D-078 R0のprovider ingress契約。client向け[`openapi.yaml`](openapi.yaml)とは別のApple→Rust server境界であり、実装済みを示さない。
+> **状態**: D-078のprovider ingress規範契約。client向け[`openapi.yaml`](openapi.yaml)とは別のApple→Rust server境界。2026-09-12のsource照合では`SyncServerV2/src/auth_service.rs`と`auth_apple.rs`に処理があるが、HTTP routeは`/v1/auth/apple/notifications`で、下記規範URLと一致しない。差分解消と実通知の検証は未完了。本文のwire契約は変更していない。
 
 ## HTTP境界
 

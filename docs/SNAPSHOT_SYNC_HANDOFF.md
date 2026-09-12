@@ -1,6 +1,8 @@
-# Snapshot Sync 実装ハンドオフ
+# Snapshot Sync v1 実装計画・合格条件（履歴）
 
-> **状態**: D-077／[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を実装へ移すための境界と合格条件。Production認証境界は[AUTH.md](AUTH.md)を正とする。現時点は設計のみで、server／SQLite client／Production認証は未実装。利用者から実装着手の指示があるまでコードを追加しない。
+本書はD-077の[Snapshot Sync v1設計](SNAPSHOT_SYNC.md)を実装へ移す際に作成した計画である。現在の作業再開には[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を使う。v2の規範契約は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)と[sync/v2/](sync/v2/)にある。
+
+以下のR0〜R8、成果物、承認・検証の記述はv1当時の委譲境界を残す履歴であり、現在の実装状況や着手待ちを表さない。作成時点ではserver／SQLite client／Production認証は未実装だった。旧CloudKit migrationや外部CASを含む手順をv2の次タスクとして再実行しない。
 
 ## 1. 実装者へ渡す不変条件
 

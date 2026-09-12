@@ -4,14 +4,10 @@ This directory is the versioned **design contract** selected by D-080. It is
 intentionally independent from `docs/sync/v1/`: v1 is an archive format, not a
 live compatibility mode.
 
-- **Contract status**: implementation-ready design after schema/fixture/DDL
-  conformance checks. A contract defect is a design P0.
-- **Implementation status**: not yet satisfied. Swift/Rust runtime, migrations,
-  deployment, and device acceptance are later implementation Gates; their
-  absence while this is a document-only phase is not itself a contract P0.
+- **Contract**: closed wire/schema/fixture/DDL selected by D-080 through D-085. A contract defect is a design issue; implementation behavior does not silently replace it.
+- **Implementation**: Swift v2 domain/store/application/runtime and the Rust server exist. Production, device acceptance, and all integration Gates are not complete. See the [current handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md) for dated evidence and open work.
 
-An implementation may claim a Gate only after its independent runner passes
-the exact artifacts here. Code behavior never silently overrides this contract.
+Use this directory when changing the synchronization contract. For a UI-only change, start from the shared UI projection and the app entry points instead of loading every fixture. A wire/schema change needs matching fixtures and independent conformance evidence.
 
 ## Contract files
 
@@ -55,16 +51,14 @@ newline. Implementations must use RFC 8785 JCS, not `JSONSerialization` or a
 JSONB round trip. The fixture is intentionally composed only of strings,
 integers, arrays, and objects whose sorted JCS order is unambiguous.
 
-## Conformance commands
+## Verification entry points
+
+Run commands from the repository root. Select the smallest check that covers the changed boundary:
 
 ```sh
-jq -e . docs/sync/v2/snapshot.schema.json >/dev/null
-jq -e . docs/sync/v2/command.schema.json >/dev/null
-find docs/sync/v2/fixtures -name '*.json' -print0 | xargs -0 -n1 jq -e . >/dev/null
-printf '%s' "$(jq -cS . docs/sync/v2/fixtures/canonical/snapshot.json)" \
-  | shasum -a 256
-git diff --check
+python3 Scripts/conformance-v2.py       # independent canonical fixture bytes/hashes
+./Scripts/check-sync-v2-boundary.sh     # live/test/archive composition
+./Scripts/conformance-v2.sh            # independent Python/Swift/Rust suite
 ```
 
-The last command is a smoke check for this simple fixture only. The real
-runner must implement RFC 8785 and compare the expected digest exactly.
+The independent suite intentionally disables PostgreSQL integration. Real DB transaction/role tests require separately provisioned disposable databases; see [CONFORMANCE.md](CONFORMANCE.md) and the [server README](../../../SyncServerV2/README.md). A suite pass is not staging or device acceptance.

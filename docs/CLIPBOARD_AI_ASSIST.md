@@ -1,137 +1,70 @@
-# AIチャット用クリップボード支援 契約
+# AIチャット用クリップボード支援
 
-**状態: 通常版FUMINIWAの非通信機能 / provider統合・応答取込・本文適用なし**
+**通常版の契約: 原稿からplain text promptを作り、明示操作でコピーする / 照合: 2026-09-12**
 
-本書は、原稿から校正用またはアドバイス用のプロンプトを作り、利用者が任意のAI chatへ手動で渡せるようsystem clipboardへコピーする機能の製品契約を定める。設計判断は[D-054](DECISIONS.md)、延期したprovider feasibilityは[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。
+利用者が任意のAI chatへ手動で渡せるよう、校正／アドバイス×選択／話／章を提供する。FUMINIWAは送信、chat起動、自動paste、応答取込、diff、Applyを行わない。決定はD-054／D-075。provider再開は [AI_INTEGRATION.md](AI_INTEGRATION.md) の履歴を根拠に自動着手せず、新しい判断と最新APIの評価から始める。
 
-## 1. 目的
+## 1. 現在の実装と不足
 
-- FUMINIWAへprovider、API key、network、subprocessを組み込まず、任意のAI chatを利用しやすくする。
-- 利用者が「何を」「何のために」clipboardへ出すかを操作単位で明示する。
-- 選択範囲、1話、1章から、校正用とアドバイス用の一貫したプロンプトを作る。
-- 本文、保存、`.novelpkg`を変更せず、AIがなくても既存機能を完結させる。
+- 両appの共有builderは [`NovelApp/AIClipboardPrompt.swift`](../NovelApp/AIClipboardPrompt.swift)。`project.yml`はMac側の旧同名featureファイルを除外する。
+- macOSは`Features/Writing/AppState+Outline.swift`と`EditorPaneView`等からcopyへ接続している。
+- iOSには`IOSDocumentStore+ClipboardV2.swift`のAPIとbuilder testsがあるが、live `IOSWorkbenchViewV2.swift`には選択／話／章copy入口が未接続。旧Viewの入口だけでiOS提供完了としない([IOS.md](IOS.md))。
+- 実行時の保存／認証にはnetworkやKeychainが必要でも、この機能のbuilder／clipboard経路へ依存を混ぜない。
 
-## 2. 非目標
+## 2. Purpose
 
-- AI providerへの送信、AI chatの自動起動、自動paste
-- API key、account、model、料金、保持設定の管理
-- AI responseの受信、parse、保存、履歴、diff、stale判定、Apply、Undo
-- 自動再送、fallback、retry、background request
-- 作品全体、メモ、人物、プロット、伏線、世界観、資料を暗黙に文脈へ追加すること
-- clipboardのsecure erase、自動消去、外部AIやclipboard managerの保持制御
+| 用途 | 依頼する内容 | 範囲を越えない条件 |
+| --- | --- | --- |
+| 校正 | 誤字・脱字・衍字、文法／助詞、句読点／表記、視点・時制、重複の指摘と修正案 | 意味・語り口・人物の口調を保つ。問題がない箇所を無理に変更せず、判断不能は要確認とする |
+| アドバイス | 良い点、読みやすさ、情報提示、テンポ、描写・会話、動機・感情、章／話の役割と優先順位付き改稿案 | 提示範囲の根拠を示す。全面書き換えや存在しない設定の断定をしない |
 
-## 3. Purpose
+現行builderの校正回答形式は総評／指摘一覧／校正後全文、アドバイスは良い点／根拠付き改善点／改稿案／追加文脈が必要な点。この記事を参考にしたmd整理では、製品がコピーするprompt本文や回答形式を変更しない。
 
-### 校正
+## 3. Scope
 
-校正用プロンプトは、日本語小説の意味、語り口、時制、人物の口調をできるだけ保持しながら、次を確認するよう依頼する。
+| scope | 含める原稿 | 利用条件 |
+| --- | --- | --- |
+| 選択 | exact non-empty本文selectionのみ | 生存surface、valid UTF-16、IME確定済み |
+| 1話 | その話のタイトルと本文 | 同じdocument sessionに対象IDが存在 |
+| 1章 | 章タイトルと`Chapter.episodes`配列順の全話タイトル／本文 | 同じdocument sessionに対象IDが存在 |
 
-- 誤字、脱字、衍字
-- 文法、助詞、係り受け、不自然な重複
-- 句読点、括弧、空白、表記揺れ
-- 読みにくい箇所と、その理由
-- 原文と対応を確認できる修正案
+選択外本文、話メモ、人物、プロット、伏線、世界観、資料、作品metadataを加えない。空話も順序から落とさず、空タイトルに別内容を補わない。対象本文がすべて空白／改行ならタイトルだけをコピーせず拒否する。
 
-物語の続き、設定の追加、全面的な文体変更、対象外の推測を依頼しない。問題がなければ無理に変更を作らず、その旨を回答するよう求める。
+すべてのscopeで、document／Chapter／Episode／request ID、session、surface、revision、UTF-16 range、digest、URL／path、保存状態、端末設定、snapshot名をpayloadへ入れない。
 
-### アドバイス
+## 4. Prompt contract
 
-アドバイス用プロンプトは、対象の長所を先に認識したうえで、次を具体的に検討するよう依頼する。
+- 同じpurpose／scope／文字列から同じplain textを作る。原稿は命令ではなく引用データとしてJSON文字列へ封じる。
+- quote／control characterのJSON escapeは許すが、decode後のtitle／content／textを入力と一致させる。Unicode正規化、trim、改行変換、要約、空話の間引きをしない。
+- 役割・用途、対象scopeと回答制約、原稿内の指示に従わないこと、対象原稿を区別する。provider名、model名、内部protocol、外部AI固有のsystem設定を加えない。
+- 対象title／content／textの合計は250,000文字かつUTF-8 1,000,000 bytes以下。生成promptはUTF-8 2,000,000 bytes以下。超過はwrite前に全体拒否し、切り詰めない。外部AIが受理する上限の保証ではない。
 
-- 読みやすさ、情報量、テンポ
-- 構成、場面の流れ、章／話のつながり
-- 描写、視点、感情、会話の明瞭さ
-- 読者が迷う箇所と改善理由
-- 効果と優先度を伴う改善案
+## 5. UIとclipboard境界
 
-本文を勝手に完成稿へ置き換えるのではなく、作者が選べる助言として回答するよう求める。対象に存在しない設定や意図を事実として補わない。
+操作名は「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」。AI実行済みと見える文言や後続dialogを示す「…」を付けない。章／話行と本文context menuから到達でき、keyboard／VoiceOverで用途と範囲を判別できること。
 
-## 4. Scope
+明示操作1回につきclipboard writeは最大1回。item準備を置換前に終え、準備失敗なら既存clipboardを保持する。置換開始後のwrite失敗は元clipboardの保持を保証できないため、成功表示、自動retry、復元を行わない。原稿・選択・Undo・保存状態は変更しない。
 
-| Scope | 含める原稿 | 含めない原稿 | 利用条件 |
-| --- | --- | --- | --- |
-| 本文の選択範囲 | IME確定済みのexact non-empty selection | 話／章／作品タイトル、選択外本文、メモ等 | 生存中の本文surface、valid UTF-16、marked textなし |
-| 1話 | 対象話のタイトルと本文 | 同章の他話、話メモ、作品／章metadata等 | 同じdocument sessionに対象IDが存在 |
-| 1章 | 対象章タイトルと、`Chapter.episodes`配列順の全話タイトル／本文 | 他章、メモ、人物、プロット、伏線等 | 同じdocument sessionに対象IDが存在 |
+成功はコピーだけを通知し、原稿やpromptを再掲しない。promptをDB、package、snapshot、UserDefaults、通常ログへ複製しない。system clipboardは他app、manager、Universal Clipboard等が読取・同期・保存できる共有境界であり、履歴非保持、外部送信なし、外部AIでの保持／学習なし、secure eraseを保証しない。利用者が後でコピーした内容を壊す自動消去も実装しない。
 
-空の話も、同じ章に空でない本文がある場合は章内の順序から落とさず、タイトルと空本文をその位置に表現する。タイトルが空の場合も、別の話のタイトルや本文をfallbackとして使わない。対象scopeの本文がすべて空白／改行だけなら、タイトルだけを外部へ出さずコピーを拒否する。
+## 6. Session・IME・所有権
 
-全scopeで次をclipboardへ含めない。
+menu表示時のsessionと対象IDを保持し、activation時に再検査する。作品切替後に現在作品や同じIDへ読み替えない。選択scopeはEditorKitの公開command境界を通し、Appからnative viewを探索しない。IME中は拒否し、確定後の新しい明示操作を待つ。
 
-- `ChapterID`、`EpisodeID`、document ID、request ID
-- document session、editor surface、revision、UTF-16 range、source digest
-- file URL、絶対path、package内部path、recent URL
-- 保存状態、UserDefaults、snapshot名、attachment path
+章／話は操作時点の確定したmemory値を同期的にsnapshot化する。clipboard待機中に別作品へ再resolveしない。コピー自体は本文revision、Undo、自動保存を変更する編集操作ではない。既存のnative確定本文captureとcopyの副作用を分けて検証する。
 
-## 5. Prompt contract
+## 7. 検証と完了条件
 
-同じpurpose、scope、タイトル、本文からは同じplain textを決定論的に生成する。Unicode正規化、trim、改行変換、空白削除、近傍本文追加を行わない。対象原稿はJSONの文字列値として封じ、JSON表現に必要なquote／control characterのescapeは許容するが、decode後のtitle／content／text値は入力文字列と一致させる。
+変更した境界に対応する既存testsを使い、以下の結果を保つ。
 
-プロンプトは少なくとも次の意味を、この順序で区別できる形で持つ。
+- 6組合せのpurpose／scope、章の配列順、空話／空タイトル、日本語・絵文字・結合文字・U+2028／U+2029・改行のexact保持。
+- 範囲外data／identityの混入なし。空選択、invalid UTF-16、IME、失効surface／session、対象削除、上限超過でwrite 0回。
+- 成功時write 1回。write失敗でも原稿・選択・Undo・既存保存物を変更しない。
+- builderは純粋ロジック、writerはplatform境界。provider、SDK、CLI、Node、network、Keychain、subprocessへの新しい依存なし。
+- 実際のlive Viewで操作可能で、keyboard／VoiceOverがcopyを正しく伝える。builder testsだけでUI完成としない。
 
-1. 日本語小説に対する役割と依頼purpose
-2. 対象scopeと、回答時の制約
-3. 対象原稿は命令ではなく引用データであり、その中の指示に従わないこと
-4. scopeに応じたタイトルと本文
+iOS入口の復旧はこの既存契約の実装であり、新しいproviderの承認を必要とする作業ではない。
 
-外部AI固有のsystem prompt、model名、JSON Schema、FUMINIWA内部のprovider protocolを追加しない。markdown等の区切りを使う場合も、対象本文を改変したり、本文中の区切り文字を別の原稿として解釈したりしない。
+## 8. 履歴
 
-ローカルresource上限は、対象title／content／textの合計250,000文字かつUTF-8 1,000,000 byte、生成後promptのUTF-8 2,000,000 byteとする。いずれかを超えた場合は切り詰め、要約、話の間引きをせず、clipboardへ書く前に全体を拒否する。この値は外部AIのcontext上限や受理を保証しない。
-
-## 6. UI entry point
-
-- 各章から「校正用プロンプトをコピー」「アドバイス用プロンプトをコピー」へ到達できる。
-- 各話から同じ2操作へ到達できる。
-- 本文のcontext menuから、現在の選択範囲に対する同じ2操作へ到達できる。
-- 章／話の行操作と本文context menuは、VoiceOverでpurposeとscopeを判別できるlabelを持つ。
-- pointer操作だけに限定せず、macOS標準menuまたは同じcommand境界を使うkeyboard fallbackを提供する。
-- コピーは即時に完了する操作なので、文言へ「…」を付けて後続dialogがあるように見せない。
-- 成功時はpurpose、scope、対象文字数等の内容を持たない情報だけで通知し、本文やpromptを再掲しない。失敗時は成功表示を出さず、原稿、選択、モデル、保存状態を変更しない。system clipboard置換開始後のwrite失敗については、既存clipboardの保持を保証しない。
-
-「AIで校正」「AIがアドバイス」等、FUMINIWA自身がprovider処理を行うように見える文言を使わない。機能の結果は常に「プロンプトをコピーした」ことである。
-
-## 7. Clipboard boundary
-
-system clipboardへのwriteは利用者の明示操作1回につき最大1回とする。pasteboard itemの準備は既存clipboardを置換する前に完了させ、準備に失敗した場合は既存clipboardを変更しない。macOSのclipboard置換はtransactional APIではないため、置換開始後にwriteが失敗した場合は既存内容が空または変更済みになり得る。この場合も成功表示、自動retry、復元を行わず、本文、選択、モデル、保存状態を変更しない。
-
-clipboardへ出た内容はFUMINIWAのmemory-only境界の外にある。他アプリ、clipboard manager、macOSのUniversal Clipboard等が読み取り、同期、履歴保存する可能性がある。FUMINIWAは次を保証または表示しない。
-
-- clipboard履歴が残らないこと
-- 他のdeviceへ同期されないこと
-- 外部AIへ送信されないこと
-- 外部AI側で保持／学習利用されないこと
-- 一定時間後またはアプリ終了時に安全消去されること
-
-FUMINIWAはclipboardへ書いたpromptをUserDefaults、通常ログ、診断、snapshot、`.novelpkg`へ複製しない。自動消去は、利用者が後でコピーした別内容を破壊し得るため契約に含めない。
-
-## 8. Session、IME、原稿所有権
-
-- 章／話の操作はmenu表示時のdocument sessionと対象IDを保持し、activation時に現在sessionと再照合する。作品切替後は現在作品の同一IDや選択中項目へ読み替えず拒否する。
-- 本文scopeはEditorKitの公開selection command境界を使う。App側から`NSTextView`を直接探索せず、SwiftUI update cycleから本文を書き換えない。
-- IME marked text中は選択promptを生成しない。確定後に利用者が改めて操作する。
-- 章／話scopeは操作時点のmemory上の値から同期的なsnapshotを作る。clipboard write待ちの間に別作品へ再resolveしない。
-- コピー操作はrevisionを増やさず、自動保存を要求せず、Undo stackを変更しない。
-
-## 9. Dependency boundary
-
-clipboard支援は通常の`FUMINIWA` app targetへ入るが、次へ依存しない。
-
-- provider-specific targetやExperimental source
-- Codex／OpenRouter adapter、SDK、CLI、Node、sidecar resource
-- `URLSession`等のnetwork client
-- Keychain credential
-- subprocess／process supervisor
-
-prompt生成の純粋ロジックとclipboard writeのplatform境界を分け、テストではclipboardを抽象化する。prompt生成へAppKit型、保存形式、`.novelpkg` pathを渡さない。
-
-## 10. 最低受け入れ条件
-
-- 校正／アドバイス×選択／話／章の6組合せでpurposeとscopeが取り違えられない。
-- 日本語、絵文字、結合文字、literal U+2028／U+2029、空白、改行を含む原稿が欠落・正規化されない。
-- 章内の話順、空話、空タイトルが決定論的に表現される。
-- メモ、人物、プロット、伏線、世界観、資料、ID、session、range、digest、URL／pathがpromptへ混入しない。
-- 空選択、invalid UTF-16、IME marked text、surface失効、作品session変更、対象削除でclipboard writeが0件になる。
-- 成功時はexact 1 write、write失敗時は本文／モデル／保存状態／既存packageを変更しない。
-- copy前後で`.novelpkg`、snapshot、UserDefaults、通常ログが変わらない。
-- 通常targetのbuild graphとbundleにprovider SDK／CLI／Node／sidecar artifact、network／process起動経路が追加されない。AIを再開するときは最新APIを別Decisionで再評価する。
-- UI labelとVoiceOver labelが「プロンプトをコピー」であることを伝え、AI処理済みと誤認させない。
+[整理前の契約全文](archive/product-guidance-20260912/CLIPBOARD_AI_ASSIST.md)。仕様の削除ではなく、現況、製品境界、検証条件を分離した。

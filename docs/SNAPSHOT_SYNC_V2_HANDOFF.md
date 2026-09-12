@@ -1,260 +1,93 @@
-# Snapshot Sync v2 implementation handoff
+# Snapshot Sync v2 — 現在地と残件
 
-- Last updated: 2026-08-18
-- Status: implementation and device verification in progress; release NO-GO
-- Branch: `codex/snapshot-sync-v2`
-- Implementation baseline before this handoff: `71ee6e8a0`
-  (`fix: accept lowercase auth response UUIDs`)
+更新: 2026-09-12（source・target構成の照合）。実機・stagingの最終記録は2026-08-18。**実装・統合中、Release NO-GO**。
 
-This file is the current implementation handoff for Snapshot Sync v2. The
-normative design remains [SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md),
-[DECISIONS.md](DECISIONS.md) D-080 through D-085, and
-[`docs/sync/v2/`](sync/v2/). The old
-[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md) is v1 history and must not
-be used as the v2 implementation status.
+この文書は実装状況と次の成果を示す。規範は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、[DECISIONS.md](DECISIONS.md) D-080〜D-085、[sync/v2/](sync/v2/)、認証は[AUTH.md](AUTH.md)。旧[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)はv1の履歴である。
 
-## 1. Product boundary that must remain true
+## 現行sourceで確認できること
 
-- SQLite v2 is the sole live local authority. Ordinary editing, autosave,
-  navigation, and termination do not read or write `.novelpkg`.
-- A local checkpoint commits the document, immutable Snapshot and objects,
-  local head and generation, recovery metadata, and durable remote work in one
-  SQLite transaction. HTTP starts only after that commit and never blocks the
-  editor or navigation.
-- Remote data enters SQLite Inbox/staging before it can reach an editor. IME,
-  session, generation, unsaved-change, pending-intent, and document-operation
-  gates remain mandatory.
-- macOS and iOS use the shared NovelKit v2 domain, store, worker, conflict, and
-  status projection. Platform apps keep only capture, navigation, IME, and
-  platform UI concerns.
-- Sign in with Apple maps to an immutable FUMINIWA AccountID and FUMINIWA
-  access/refresh session. Apple tokens are not synchronization bearer tokens.
-- Account scope is exact. Data from another AccountID or stale account fence
-  must not be listed, downloaded, adopted, or used to clear pending work.
-- The live path must not restore CloudKit or the old Note/Work/Episode sync,
-  v1 SQLite, v1 server schemas, or dual-read compatibility adapters.
-- No-op synchronization and an unchanged manual save are successful states,
-  not user-facing failures.
+| 境界 | 実装と根拠 | まだ証明していないこと |
+| --- | --- | --- |
+| 保存・同期 | `NovelSyncV2`、`NovelSyncV2Store`、`NovelSyncV2Application`、`NovelSyncV2Runtime`を両Appが使用。SQLite BLOBとcheckpointがlocal authority | 両実機の安定した往復同期・異常終了復旧 |
+| portable受渡し | `NovelSyncV2PortableBridge`が明示Import／Exportを担当。旧package／CloudKit lifecycleは`project.yml`でlive target外 | 全portable edge caseの製品受入 |
+| 認証 | `NovelAuth`／`NovelAuthApple`、Rust `auth*.rs`、両Appの認証extensionが存在 | 本番notification、鍵rotation、backup復旧、account lifecycle |
+| iOS導線 | `IOSWorkbenchViewV2.swift`に作品ホームから7機能への導線、regular幅の`NavigationSplitView`、`IOSEditorPane`がある | 以前の製品UIとの同等性。執筆補助・prompt copyのlive接続、ホーム等の仕上げ、実機受入 |
+| 新規作品 | `makeNewDocument`→`checkpointAndInstallNewDocument`でaccount/sessionを固定・再検査。`ProductionSyncV2Kernel`→`ProductionScopeResolver.scopeForCheckpoint`は新Workを有効なepoch 2のaccountへbindする経路を持つ | 2026-08-18に報告された「signed-in新規作品が端末のみ」の解消。原因はsourceだけでは確定しない |
+| server | `SyncServerV2`にAxum／SQLx、BYTEA object store、role-split bootstrap／migrator／runtimeがある | 現在稼働中のimage・DB・TLS・authenticated head。9月12日はremoteへ接続していない |
+| 標準検証 | iOS `IOSDocumentStore+AuthenticationV2.swift`は現在も822行 | `check.sh`全通し成功。下記の8月18日失敗記録を参照 |
 
-## 2. Verified current state
+旧ハンドオフの「iOSはminimal shellだけ」は現行sourceの説明として使わない。一方、画面やAPIが存在するだけで製品UIの復旧完了とも扱わない。詳細は[IOS.md](IOS.md)と[STYLE.md](STYLE.md)を参照する。
 
-The following evidence was observed on the current branch. It is narrower than
-release acceptance and must not be generalized beyond the stated boundary.
+## 次に解消する課題
 
-### Shared local and server implementation
+### P0: iOSの執筆体験をv2へ接続する
 
-- Snapshot Sync v2 domain, canonical JSON/Snapshot IDs, SQLite journal,
-  Outbox/sealed-command replay, Inbox graph, conflict primitives, restore
-  records, and application facade exist in NovelKit.
-- macOS and iOS production/test compositions are compile-time separated.
-  Focused app-host tests verified that test runs use temporary SQLite, fake
-  transport, isolated defaults, and test vaults without creating production v2
-  SQLite/WAL/SHM files.
-- Rust v2 is account-scoped and transaction-based. Canonical manifest bytes are
-  stored as bytes rather than reserialized JSON identity. PostgreSQL runtime,
-  migrator, bootstrap, and provisioning roles are separated and fail closed
-  against an unrecognized database.
-- Rust/Swift canonical fixtures and focused store/auth/application tests have
-  passed during implementation. These are component evidence only.
-
-### Real iPhone authentication and LAN staging
-
-- The signed iOS app reached the staging endpoint at
-  `https://192.168.11.5:8443` after the current Caddy root was installed and
-  trusted on the device.
-- Sign in with Apple completed on a physical iPhone. The observed phases were
-  challenge creation, native Apple authorization, and server exchange.
-- A cold app restart restored the FUMINIWA session; the sign-in button did not
-  return.
-- The server response contract was correct. The final client-side failure was
-  caused by treating a valid lowercase wire UUID as if Swift's uppercase
-  `UUID.uuidString` were the canonical spelling. Commit `71ee6e8a0` removed
-  that typed-value false rejection while retaining raw canonical-wire checks.
-- Stale challenge/exchange journals, a stuck account-transition lease, and
-  duplicate edge `no-store` headers were fixed in the commits immediately
-  preceding `71ee6e8a0`.
-- At the time of this handoff the live Compose project was observed as
-  `fuminiwa-sync-v2-role-split`, with edge container
-  `fuminiwa-sync-v2-role-split-edge`. Re-read Docker state before operating;
-  [SNAPSHOT_SYNC_V2_STAGING.md](SNAPSHOT_SYNC_V2_STAGING.md) still contains
-  generic example names.
-- The staging CA fingerprint observed on 2026-08-18 was
-  `8E:1F:4F:B0:3C:ED:32:9F:34:4F:5B:E4:09:C3:F7:F0:B6:30:CE:21:D0:E6:04:4F:9F:E2:F3:89:F7:EC:43:EC`.
-  Caddy trust can rotate; export and compare the live public root again instead
-  of assuming this fingerprint is permanent.
-
-Do not put an SSH password, Apple private key, `.env` contents, refresh token,
-vault key, or CA private key in source, this handoff, logs, or a command line.
-
-## 3. Known regressions and blockers
-
-### P0: restore the existing iOS product UI on top of v2
-
-The current v2 iOS live path presents a minimal shell and has regressed the
-previous writing experience. The user explicitly reported that the prior
-writing-screen requirements, navigation, and polished project UI appear to
-have disappeared. This is not an intentional product redesign.
-
-Current live presentation files include:
+目的は、既存の執筆要件と作品導線をv2保存・同期の上で使えるようにすること。live UIは以下にある。
 
 - `NovelAppIOS/Features/Writing/IOSWorkbenchViewV2.swift`
 - `NovelAppIOS/Library/IOSProjectHomeViewV2.swift`
 - `NovelAppIOS/Library/IOSLibraryViewV2.swift`
 
-Useful visual and interaction references remain under the legacy/retired iOS
-paths, but only presentation and product behavior may be adapted. Do not copy
-their CloudKit, Note/Work/Episode sync, document authority, or storage logic
-back into the live target. Preserve the current v2 application-service calls
-and account/session safety gates while restoring the established editor,
-project-home cards, shelf navigation, history/conflict entry points, and
-accessibility behavior.
+旧UIは見た目と操作の参照に使える。storage／CloudKit／Note・Work・Episode同期を復活させず、shared application facade、session、IME、document gateを維持する。現在は画面遷移が接続済みだが、live editorに旧執筆補助やprompt copy導線が接続されておらず、作品ホームにSnapshot ID入力等の診断UIも残る。
 
-Acceptance is a signed physical-device walkthrough, not merely a SwiftUI
-preview or successful build.
+完了の証拠は、復旧した操作と残る差分の一覧、必要なnavigation／編集回帰検証、署名済みiPhoneでの操作確認。プレビューやbuild成功だけでは完了にしない。
 
-### P0: a new signed-in work remains local-only
+### P0: signed-in新規作品の端末のみ表示を再現・切り分けする
 
-On the real iPhone, a new work named `V2実機確認` with a small test body was
-created while signed in. The shelf projected `端末のみ　同期を再試行できます`
-instead of pending and then synchronized. Treat this text as a disposable test
-artifact, not manuscript authority.
+2026-08-18のiPhoneではsigned-in状態で作った試験作品が`端末のみ　同期を再試行できます`に留まった。現行sourceには新規Workのaccount binding経路があるため、「binding未実装」を原因として直し始めない。
 
-Trace the complete path from
-`IOSDocumentStore.makeNewDocument()` through the shared application/store:
+local checkpoint、captured accountとvaultのbinding、durable intent、createWork→upload→register→publish、worker再開、remote head read-back、棚projectionのどこで止まるかを特定する。成果は原因を示す再現、対象境界の回帰検証、再起動／offlineでも先にlocal保存が完了する証拠、および実機の`同期待ち`→`同期済み`確認。
 
-1. create the new WorkID and document locally;
-2. checkpoint atomically;
-3. create or require an explicit AccountID binding according to the v2
-   contract;
-4. seal the exact create/register/publish commands;
-5. resume the worker after local commit;
-6. read back the remote head and project `同期待ち` then `同期済み`.
+既存のunbound作品をloginだけでadoptする修正は不可。新規作成時の明示online scopeと、既存作品の移動・複製は別の境界にする。
 
-Do not solve this by automatic adoption of arbitrary pre-login works. A work
-created inside an authenticated new-work flow may be born in the captured
-account scope; an existing unbound work still needs the explicit online-save
-or clone boundary required by D-080.
+### P1: 標準検証と運用文書の差分
 
-### P1: the standard repository gate is not green
+- `IOSDocumentStore+AuthenticationV2.swift`は822行で、D-076の800行基準を超える。責務分割を検討し、コード変更後に標準検証を完走する。文書だけを直して成功へ読み替えない。
+- Apple notificationの規範URLは`/v1/auth/providers/apple/notifications`、現行routeは`/v1/auth/apple/notifications`。通知統合前に[認証契約](AUTH.md)との不一致を解消する。
+- [CA export script](../Scripts/export-sync-v2-staging-ca.sh)は旧v2 edge名`fuminiwa-sync-v2-edge`に固定され、checked-in Composeの`fuminiwa-sync-v2-role-split-edge`と一致しない。namespace文字列の確認のみでepoch 2も検査していない。[STAGING](SNAPSHOT_SYNC_V2_STAGING.md)の前提を確認してから使う。
+- auth／syncはschemaを分離しているが、現在のruntime DB roleは両方の必要DMLを持つ。migration/runtime分離を、auth/sync別credentialの受入証拠にはしない。
 
-The latest complete `./Scripts/check.sh` attempt stopped at D-076 because:
+## 受入基準
 
-```text
-NovelAppIOS/DocumentLifecycle/IOSDocumentStore+AuthenticationV2.swift
-822 lines: new large Swift file (>800 lines) requires a D-076 debt entry
-```
+検証は変更した境界に合わせる。候補手段は[conformance](sync/v2/CONFORMANCE.md)、[server README](../SyncServerV2/README.md)、[Auth DB gate](../SyncServerV2/AUTH_INTEGRATION.md)。本文・説明だけの修正で実機や実DBを毎回動かす必要はない。merge前はD-014に従い標準`Scripts/check.sh`を完走し、必要な領域検証を合わせる。
 
-The conformance and fixture stages before that point passed. Split the auth
-file by responsibility instead of recording fresh debt when practical, then
-run the standard gate to `All checks passed`. Do not claim the gate passed
-from focused auth tests alone.
+以下は2026-08-18時点で未完了として引き継がれ、9月12日の文書改訂では再実施していない。
 
-### Release and real-device gates still open
+| 受入対象 | 必要な証拠 |
+| --- | --- |
+| 同一AccountIDのMac↔iPhone同期 | 双方向の編集とremote head read-back |
+| 同時offline編集 | active conflictが1件だけになる |
+| 競合3択 | この端末／サーバー／両方を実機で選び、元のlocal candidateを復元できる |
+| 履歴・復元 | 両platformで事前checkpointを保持して復元できる |
+| 障害・再起動 | process kill／lost response後にexact commandを再開する |
+| offline | 起動・open・編集・autosave・closeがnetworkを待たない |
+| remote-only作品 | account確認後に取得・openできる |
+| no-op | 変更なし同期・保存が成功として表示される |
+| account/fence | switch／rotation後にcross-account表示・送信・暗黙adoptが起きない |
+| iOS製品UI | VoiceOver、Dynamic Type、IME、hardware keyboard、background／scene lifecycle／終了 |
+| staging・公開運用 | exact image/project、TLS、authenticated capabilities/head、backup/restore、本番認証・account lifecycle |
 
-- Mac to iPhone and iPhone to Mac round-trip for the same AccountID.
-- Offline edit of the same work on both devices producing exactly one active
-  conflict.
-- All three choices on real devices: this device, server, and keep both.
-- Confirmation that the pre-resolution local candidate remains restorable.
-- Snapshot history and restore on both platforms.
-- Process-kill/lost-response restart with exact operation replay.
-- Offline launch/open/edit/autosave/close without waiting for network.
-- Remote-only download and open.
-- No-op sync and unchanged save remaining successful in both UIs.
-- Account switch/fence rotation without cross-account listing or adoption.
-- VoiceOver, Dynamic Type, IME, hardware keyboard, scene/background, and
-  termination checks after the iOS UI is restored.
-- Full `./Scripts/check.sh`, authenticated staging read-back, and backup/restore
-  evidence after the above behavior is stable.
+次の引き継ぎには、変更点・検証日・対象revision・実行環境・結果・残件を記す。source確認、component test、staging、実機を分ける。原稿、token、鍵、`.env`、passwordを記録しない。
 
-Snapshot Sync v2 is therefore not complete even though Apple authentication
-and several focused test suites have passed.
+## 利用者の判断と実機確認
 
-## 4. Next-session implementation order
+公開前のaccount回復範囲、削除の取消猶予、remote原稿とbackupの保持期間は[OWNER_DECISIONS](OWNER_DECISIONS.md)にまとめる。実装側が具体案と影響を提示してから決定する。
 
-Follow this order unless a new concrete failure changes the dependency:
+UI不足の復旧は既決要件に沿って進める。準備した画面の受入確認、署名・Appleシート・端末trust設定など利用者操作が必要な検証は、その段階で対象と操作を限定して依頼する。既定仕様をもう一度承認してもらう手続きにはしない。
 
-1. Re-read this file, `SNAPSHOT_SYNC_V2.md`, D-080 through D-085, and
-   `git status`. Keep the untracked `NovelApp 2026-07-16 23-51-50/` backup out
-   of all commits.
-2. Restore the established iOS writing/project/shelf UI while retaining the v2
-   WorkID session, shared application facade, document gate, IME boundary, and
-   account-scope CAS checks.
-3. Add focused UI/navigation tests for the restored routes and a signed iPhone
-   smoke test. Verify that the workbench is the product UI, not the minimal v2
-   diagnostic shell.
-4. Reproduce and fix the signed-in new-work local-only path. Add restart and
-   no-network tests proving local save succeeds before upload, and an account
-   test proving another AccountID cannot see the work.
-5. Split `IOSDocumentStore+AuthenticationV2.swift` below the D-076 threshold
-   without changing the auth wire or account-transition semantics.
-6. Run focused NovelKit, macOS, iOS, Rust, canonical fixture, and deployment
-   boundary tests; then run `./Scripts/check.sh` to completion.
-7. Deploy only the resulting v2 staging image/project. Read back TLS,
-   unauthenticated auth capabilities, authenticated sync capabilities, account
-   scope, and a published head. Do not infer readiness from container health.
-8. Ask the user for the physical Mac/iPhone walkthrough: create, round-trip,
-   offline divergence, each conflict choice, restore, restart, and account
-   switch. Record exact results before declaring completion.
+Apple-only、server-readable、SQLite v2 authority、旧runtimeを戻さない方針は採択済み。通常の原因調査や境界を守る修正のために再承認を求めない。
 
-## 5. User priorities and legacy-data scope
+## 履歴: 2026-08-18の実装・実機記録
 
-- Product behavior and the established writing UI take priority over further
-  compatibility or archive engineering.
-- The user explicitly said old works and legacy data may be discarded and does
-  not want more time spent maintaining the old implementation. Do not build
-  dual-read, conversion shims, or legacy runtime fallback merely to preserve
-  them.
-- No legacy deletion was performed in the session represented by this
-  handoff. If deletion is useful later, resolve exact legacy-only targets first
-  and keep the current v2 database, current source tree, credentials, and the
-  untracked backup folder out of scope. Never use a broad or unresolved path.
-- The user is available to operate the physical devices when a test reaches an
-  Apple sheet, trust setting, app action, or other step that cannot be driven
-  safely from the development environment.
+以下は当時の観測の保存であり、現在の再検証結果ではない。
 
-## 6. Git and resumption checklist
+- branchは`codex/snapshot-sync-v2`、実装baselineは`71ee6e8a0`（`fix: accept lowercase auth response UUIDs`）。Swift／Rust canonical fixture、focused store/auth/application tests、およびApp hostの一時SQLite／fake transport／isolated defaults／test vault分離確認が成功した記録がある。
+- 署名済みiOS appが`https://192.168.11.5:8443`へ到達し、端末でCaddy rootをtrustした後、challenge→Apple native authorization→exchangeを完了した。cold restartでもFUMINIWA sessionが復元した。
+- lowercase wire UUIDをSwiftのuppercase `UUID.uuidString`と比較したfalse rejectionを`71ee6e8a0`で修正した。raw canonical-wire検査は維持した。
+- 直前の修正は`c10a2b0fa`（stuck iOS sign-in retry）、`e07e1abef`（stale challenge lanes）、`dc7fee947`（Caddyの重複no-store header）、`50b81d0e0`（Apple認証phase診断）。
+- 当時のCompose projectは`fuminiwa-sync-v2-role-split`、edgeは`fuminiwa-sync-v2-role-split-edge`。root SHA-256は`8E:1F:4F:B0:3C:ED:32:9F:34:4F:5B:E4:09:C3:F7:F0:B6:30:CE:21:D0:E6:04:4F:9F:E2:F3:89:F7:EC:43:EC`。trustはrotateし得るため現在値として再利用しない。
+- 最新の標準`check.sh`試行はconformance／fixture段階後に、`IOSDocumentStore+AuthenticationV2.swift`の822行・新規800行超過で停止した。focused test合格を全通し合格に読み替えない。
+- 利用者は既存作品・legacy dataの保全のために旧実装へ追加工数を割かず、製品UIを優先する意向を示した。旧データ削除自体はこの記録の作業では実施していない。必要になってもexact legacy-only対象を解決し、現行v2 DB・source・credential・既存未追跡backupは除外する。
+- 当時はlocal／remote branchが文書commit前に一致し、既存`NovelApp 2026-07-16 23-51-50/`だけが未追跡だった。現在のbranchをこの記録に合わせて切り替えず、作業開始時のGit状態を確認する。
 
-At handoff creation, local and remote were aligned before the documentation
-commit, and the only untracked path was the existing backup folder. A new
-session should verify rather than assume this remains true:
-
-```sh
-git switch codex/snapshot-sync-v2
-git status --short --branch
-git log -12 --oneline
-git rev-parse HEAD
-git rev-parse origin/codex/snapshot-sync-v2
-```
-
-The most recent authentication repair sequence at the implementation baseline
-is:
-
-```text
-71ee6e8a0 fix: accept lowercase auth response UUIDs
-c10a2b0fa fix: recover stuck iOS Apple sign-in retry
-e07e1abef fix: recover stale Apple challenge lanes
-dc7fee947 fix: avoid duplicate sync cache headers at caddy edge
-50b81d0e0 fix: add safe Apple authentication phase diagnostics
-```
-
-Use `project.yml` and `Scripts/generate-project.sh` as the Xcode project
-authority. Rediscover connected device identifiers at test time; do not encode
-one session's device ID into source or scripts.
-
-## 7. Definition of the next useful handoff
-
-The next session should leave a smaller, evidence-backed handoff containing:
-
-- which prior UI routes were restored and which still differ;
-- why authenticated new-work upload failed and the exact invariant that fixed
-  it;
-- the final `./Scripts/check.sh` result;
-- staging image/project identity and authenticated read-back;
-- one row per physical Mac/iPhone scenario with pass/fail and no manuscript
-  content;
-- any remaining release NO-GO item.
-
-Do not replace this with a generic “tests pass” statement. Preserve the
-distinction between component tests, staging integration, and actual device
-acceptance.
+`project.yml`と`Scripts/generate-project.sh`がXcode構成の正。device ID、稼働image、server状態は検証時に取得する。

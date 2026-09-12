@@ -1,8 +1,6 @@
-# Codex Darwin process supervisor 契約
+# Codex Darwin process supervisor 設計履歴
 
-**状態: Checkpoint B2 の合成helper向けnative primitiveをB4-Dまでの研究成果として保持 / D-054によりB4-E以降と実Codex SDK・CLI、network、credential、OS-level sandbox接続は最新stable SDK／APIの明示再評価まで延期**
-
-> 履歴資料。D-075で`FUMINIWAExperimental`専用のSwift／Node supervisor実装とfixtureは削除した。以下は当時の安全条件であり、現行runtime／再利用契約ではない。将来のprovider統合は新しいDecisionから再設計する。
+Checkpoint B2〜B4-Dのprocess隔離研究を残す資料。D-075で`FUMINIWAExperimental`専用のSwift／Node supervisor実装とfixtureは削除した。以下は当時の検証条件であり、現行runtimeや再利用契約ではない。将来のprovider統合を検討するときは、最新の公式API／SDKと新しいDecisionから再設計する。現在のAI支援は[clipboard prompt copy](../../docs/CLIPBOARD_AI_ASSIST.md)を参照する。
 
 本書は、当時`FUMINIWAExperimental`だけにcompileされるDarwin process supervisorの起動、I/O上限、終了競合、process group cleanupと、その保証外を定めた。Swift／Node間のwire契約は[PROTOCOL.md](PROTOCOL.md)、配布rootのcanonical manifestは[MANIFEST.md](MANIFEST.md)、AI全体の履歴条件は[AI_INTEGRATION.md](../../docs/AI_INTEGRATION.md)を正とする。
 

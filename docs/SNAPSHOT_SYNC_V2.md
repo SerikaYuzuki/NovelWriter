@@ -1,6 +1,7 @@
 # FUMINIWA Snapshot Sync v2
 
-Status: normative implementation contract, D-080 through D-085. The v2
+Status: normative implementation contract, D-080 through D-085; source reviewed
+2026-09-12. The v2
 Swift/Rust runtime is under integration and is not release-complete. The
 latest verified implementation state, known regressions, and next-session
 order are recorded in [SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md).
@@ -23,21 +24,24 @@ components are physically separated from v1:
   CloudKit path. A missing or invalid v2 database is a startup error, not an
   empty-database fallback.
 
-The development volume is `fuminiwa-sync-v2-data`. Initial server object
+The checked-in role-split deployment uses
+`fuminiwa-sync-v2-role-split-data`; `fuminiwa-sync-v2-data` names the earlier
+deployment and is not the current Compose target. See
+[`deployment.md`](sync/v2/deployment.md) for D-081 through D-085. Initial server object
 bytes are PostgreSQL `BYTEA`. The Rust domain depends on an `ObjectStore`
 trait; `PostgresObjectStore` is the only v2 implementation and a future S3
 adapter requires a new deployment migration/gate. No external CAS root or
 object Docker volume is part of this contract. The client never connects to
 PostgreSQL or an object store directly.
 
-Before SQLx migrations run, the server performs a fail-closed database
+Before SQLx migrations run, the one-shot migrator performs a fail-closed database
 identity check. It permits a genuinely fresh database (PostgreSQL system
 objects and SQLx's own `_sqlx_migrations` bookkeeping do not count as user
 data) or an existing database whose `sync_v2.server_meta` contains the exact
 v2 namespace, protocol, schema, and DDL contract markers. A legacy, partial,
 nonempty, or otherwise unrecognized user schema is rejected before migration
-can create, alter, or seed anything. The guard is also required when opening
-an already-migrated current v2 database.
+can create, alter, or seed anything. The runtime performs read-only identity
+and role/ACL attestation when opening an already-migrated v2 database; it has no migration authority.
 
 The v2 media type is `application/vnd.fuminiwa.sync.v2+jcs`. Every accepted
 JSON body is already RFC 8785 JCS UTF-8. The server stores the exact accepted
@@ -52,7 +56,7 @@ creating a network transport:
 
 | Mode | Local root | Network namespace | Allowed mutation |
 | --- | --- | --- | --- |
-| `production` | `Library/SnapshotSyncV2/` | `/v2/...` | v2 SQLite and v2 server only |
+| `production` | platform Application Support + `FUMINIWA/SnapshotSyncV2/` | `/v2/...` | v2 SQLite and v2 server only |
 | `test(TestDependencies)` | typed temporary test root | typed fake only | test SQLite only |
 | `preview` | none | none | none |
 
@@ -177,7 +181,8 @@ divergence, not an overwrite instruction.
 ## 7. Migration and release gates
 
 Legacy processing separates verified Export backup projection from v2
-adoption. The current migration tool may prove only the former. The implemented
+adoption. The standalone tool has separate export, authority-builder, and adoption
+executables. Export success proves only the former; the implemented
 adoption phase reads that immutable artifact, stages a new client SQLite
 database, verifies bytes, logical model and account scope, then writes a
 distinct adoption marker. Unknown account scope is quarantined. Neither phase
@@ -186,7 +191,7 @@ cannot invoke its reader. Direct PostgreSQL/operator adoption is not
 implemented and remains NO-GO; an adopted client Work reaches the server only
 through the normal authenticated create/upload/register/publish wire path.
 
-Before v2 is enabled, Swift and Rust independent harnesses must agree on all
+A completed v2 cutover requires Swift and Rust independent harnesses to agree on all
 canonical bytes, SHA-256 IDs, schema failures, command digests, account
 isolation, conflict choices, restore graph, and process-restart states. The
 fixture set in `docs/sync/v2/fixtures/` is the minimum shared corpus.
@@ -267,8 +272,10 @@ bytes can be committed, and crash recovery never treats an uncommitted marker
 as success.
 
 v2 reuses the frozen Auth v1 wire/state contract, not a v1 sync database. The
-new v2 PostgreSQL deployment implements it in a separately owned `auth_v1`
-schema/role; the bearer session and capabilities response provide the opaque
+new v2 PostgreSQL deployment implements it in the separate `auth_v1`
+schema. The current deployment separates migration ownership from the runtime
+role; that runtime serves both auth and sync. Schema separation alone is not
+proof of separate auth/sync process credentials. The bearer session and capabilities response provide the opaque
 `AccountID`, server instance, protocol epoch, and AccountFence. `sync_v2`
 never stores or joins Apple subject, email, refresh token, or provider
 credential. It stores only opaque account scope and checks it on every

@@ -1,10 +1,10 @@
-# Workbench 透明感・余白・セクション構成の再設計
+# Workbench 透明感・余白・セクション構成の改定記録
 
-**状態: UI-REF-1〜6完了。次は Phase 5-1(Export Core + プレーンテキスト / Markdown)。**
+UI-REF-1〜6の完了記録。透明感、入力余白、セクション列構成、世界観ノートの設計理由を調べるときに読む。Phase 5も完了しており、現在の次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。
 
-本書は、UI-REV-1〜9完了後に確認された手触り・導線の不足を、Phase 5(出力)へ入る前に解消するための作業指示書である。完了記録の正は本書、前段の再設計は [UIREVISION.md](UIREVISION.md)、見た目は [STYLE.md](STYLE.md)、決定は [DECISIONS.md](DECISIONS.md) D-032 とする。
+以下はUI-REV-1〜9完了後、Phase 5へ入る前の計画と検証記録である。前段は[UIREVISION.md](UIREVISION.md)、現在の見た目は[STYLE.md](STYLE.md)、当時の判断は[DECISIONS.md](DECISIONS.md) D-032に記録している。本文中のpackage保存やAI panelへの言及を現在の実装契約に戻さない。
 
-すべて **1サブフェーズ = 1ブランチ = 1PR**。スタックPRは禁止する。
+当時は1サブフェーズごとに独立したブランチとPRで進めた。現在の作業手順は[AGENTS.md](../AGENTS.md)を使う。
 
 ## 1. 修正する認識
 

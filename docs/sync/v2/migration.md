@@ -3,14 +3,18 @@
 Migration has two separate products and success boundaries:
 
 1. **Export backup projection** reads legacy v1/package data and produces a
-   verified, read-only backup artifact plus evidence. The current
-   `Tools/SnapshotSyncV2Migration` work is this phase only; its success never
-   means a Work was adopted into v2.
+   verified, read-only backup artifact plus evidence. The `snapshot-sync-v2-export` executable performs this phase; its success
+   never means a Work was adopted into v2.
 2. **v2 adoption** consumes a verified backup artifact, stages a new v2
    Work/Snapshot/object closure in the client SQLite store, verifies the
    logical model/account scope, and writes a separate adoption marker
    transaction. This client adoption path is the only implemented cutover
-   path.
+   path. The standalone package also provides
+   `snapshot-sync-v2-authority-builder` and `snapshot-sync-v2-migration`; see
+   its [README](../../../Tools/SnapshotSyncV2Migration/README.md).
+
+This is an explicit migration contract, not the next product task. Current
+priorities and historical data scope are in the [handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md).
 
 Both are explicit, offline, resumable operations. The live v2 runtime never
 opens the archive reader. Each source is represented in `migration_ledger`
@@ -41,7 +45,7 @@ resumed safely after a crash. They are never exposed by the live HTTP API.
 portable projection, and every referenced object to read back successfully.
 Any invalid UTF-8, unknown account scope, duplicate identity, symlink, digest
 mismatch, or unsupported payload goes to `quarantined` with evidence and never
-becomes a v2 Work. A migration run has exactly one declared target database:
+becomes a v2 Work. A migration run has exactly one declared target database.
 
 ## External provenance authority
 

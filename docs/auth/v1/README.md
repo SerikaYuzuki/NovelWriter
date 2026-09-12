@@ -1,6 +1,6 @@
-# FUMINIWA Auth wire v1 — R0 design contract
+# FUMINIWA Auth wire v1 — versioned contract
 
-このdirectoryはD-078で確定したSnapshot Sync用認証の **実装前wire契約** である。Rust auth server、Sign in with Apple adapter、Keychain client、Production deploymentが実装済みであることを示さない。HTTPの正は[`openapi.yaml`](openapi.yaml)、状態遷移のcross-language acceptanceは[`fixtures/`](fixtures/)である。
+このdirectoryはD-078で確定した認証wireの規範契約である。2026-09-12時点でSwift／Rust実装があり、live Sync v2から再利用する。契約の存在やfixture合格はProduction受入の完了を意味しない。実装対応と既知の差分は[AUTH.md](../../AUTH.md)、検証履歴は[現行ハンドオフ](../../SNAPSHOT_SYNC_V2_HANDOFF.md)を参照する。HTTPの正は[`openapi.yaml`](openapi.yaml)、状態遷移のcross-language acceptanceは[`fixtures/`](fixtures/)である。
 
 `authProtocolEpoch=1`／`authProtocolVersion=1.0.0`はAuth protocol v1の値として維持する。現在のlive SyncはD-080の新namespaceでprotocol epoch `2`なので、capabilitiesとすべてのsession bindingの`syncProtocolEpoch`は`2`である。これはAuth epochとは別の値であり、Auth implementationはSync v2の`PROTOCOL_EPOCH`をbindingへ注入する。AccountFenceのbindingもserver instance＋Sync epoch `2`＋AccountID＋AccountAuthEpochで評価する。
 

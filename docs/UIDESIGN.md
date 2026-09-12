@@ -1,10 +1,10 @@
-# UI刷新 実行計画(Phase UI2: Workbench)
+# UI刷新 完了記録(Phase UI2: Workbench)
 
-**状態: 完了。** UI2-1〜UI2-5 と凍結確認の軽微な調整を完了し、次は Phase 5(出力)へ進む。
+UI2-1〜UI2-5と凍結確認を完了した当時の設計・操作記録である。画面の成立経緯を調べるために残し、現在の実装指示や次タスクには使わない。現行の見た目は[STYLE.md](STYLE.md)、toolbarは[TOOLBAR.md](TOOLBAR.md)、次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。
 
 > **現行設計との差分(2026-08-07):** 本書はPhase UI2当時の完了記録である。未実装AI panel／AI状態／`Cmd+J`はD-040で出荷UIから撤去し、下端は保存状態と文字数だけを示すstatus barへ変更した。chromeはシステムLight／Darkへ追従する。新規作業は [DESIGN.md](DESIGN.md)、[TOOLBAR.md](TOOLBAR.md)、D-040を正とし、本書のAI実装指示を使わない。
 
-> **完了後の上部 chrome 改定:** UI2-3 で実装したペイン内 `EditorTopBarView` は当時の完了記録として以下に残す。次期設計では D-024 / [TOOLBAR.md](TOOLBAR.md) がこれを置き換え、3列に追従する一体型 native toolbar へ段階移行する。
+> **完了後の上部 chrome 改定:** UI2-3で実装したペイン内`EditorTopBarView`は、後続のD-024 / [TOOLBAR.md](TOOLBAR.md)で3列に追従するnative toolbarへ置き換える方針になった。以下の図と実装順はUI2当時を表す。
 
 GUI を「モードを切り替える画面」から、長時間の執筆・構造整理を同じ机の上で行う **macOS専用ワークベンチ** へ刷新した。当時検討したAI支援部分は上記のとおり後続判断で撤去済みである。
 前提は [../AGENTS.md](../AGENTS.md)、現行設計は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md)(特に D-040)を参照する。

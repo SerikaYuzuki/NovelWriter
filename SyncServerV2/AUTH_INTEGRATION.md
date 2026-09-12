@@ -1,5 +1,11 @@
 # Auth v1 isolated PostgreSQL gate
 
+Use this gate when changing auth transactions or race/replay behavior. It is
+an integration runner, not a record of a successful run. Source reviewed
+2026-09-12; current release evidence is in the [handoff](../docs/SNAPSHOT_SYNC_V2_HANDOFF.md),
+and wire/implementation differences are listed in [AUTH.md](../docs/AUTH.md).
+Run the command from the repository root.
+
 The normal `cargo test` suite is network-free and does not open PostgreSQL.
 The transaction/race gate is explicit and fails closed unless it receives a
 fresh, disposable database named `auth_v2_test` or

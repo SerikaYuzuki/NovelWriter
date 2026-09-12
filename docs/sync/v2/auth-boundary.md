@@ -4,7 +4,9 @@ Snapshot Sync v2 reuses `docs/auth/v1/` as the authentication wire and state
 contract, not an old sync database or an Apple credential shortcut. The new
 v2 PostgreSQL volume implements those tables in the separately namespaced
 `auth_v1` schema and implements sync content in `sync_v2`. The checked-in
-Compose revision uses a dedicated migration owner and runtime role. The runtime
+Compose revision uses a dedicated migration owner and runtime role. Auth and
+sync have different schemas but currently share that runtime credential; this
+is not evidence of auth/sync process or database-role isolation. The runtime
 role is granted only the exact `auth_v1`/`sync_v2` table DML, read-only
 `server_meta`/`deployment_binding`, and PostgreSQL sequence `USAGE` only; it
 has no migration-table, schema/database DDL, ownership,

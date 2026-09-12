@@ -1,8 +1,12 @@
 # ふみにわ（旧称NovelWriter）商業化総合監査レポート
 
+これは2026-07-19時点の監査・提案を保存した履歴資料であり、現在の実装評価や作業一覧ではない。本文の「現状」「未実装」、価格・市場・法務情報、リンク先は監査当時を指し、今回の文書整理では再調査していない。名称、iOS、保存・同期、AIの扱いは後続Decisionで変わっている。
+
+技術Gateを確認するときは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)、現在の設計と次タスクは[DESIGN.md](DESIGN.md)を使う。過去の問題提起の根拠を追うときだけ該当節を読む。価格・法務・販促への提案は、D-042の現行開発スコープや実行指示へ自動的に戻さない。
+
 - 監査日: 2026-07-19
-- 対象: macOS版の現行仕様・実装・保存形式・配布物・UI/UX・商品戦略・運用
-- 結論: **優れた技術試作ではあるが、現状のまま有償販売できる製品ではない**
+- 対象: 監査時点のmacOS版の仕様・実装・保存形式・配布物・UI/UX・商品戦略・運用
+- 当時の結論: **優れた技術試作ではあるが、現状のまま有償販売できる製品ではない**
 - 本文中の優先度: `P0` = 課金・一般配布前に必須、`P1` = 有償ベータ〜1.0必須、`P2` = 差別化と定着、`P3` = 検証後の拡張
 - この文書は監査と提案のみを行い、実装変更は含まない
 - **2026-08-07追補**: 製品名は「ふみにわ / FUMINIWA」に決定した。本文の`NovelWriter`は監査時点の旧称であり、競合`novelWriter`とは別物を指す。名称変更の実装状況はD-038以降を正とし、商標・ストア・ドメインの最終clearanceは引き続き販売前条件とする。
@@ -1504,27 +1508,27 @@ NovelWriterを商業化するうえで、最大の機会は「AIを載せた多�
 
 ## 付録B: 主なローカル根拠
 
-行番号は監査対象commit `462233d`時点。否定的所見だけでなく、既にある保護も含めた。
+以下は監査対象commit `462233d`のpath・行番号で、現在のファイル位置・内容とは異なる。移動済みsourceを現行ファイルへ誤誘導しないよう、当時の参照を文字列で保持する。否定的所見だけでなく、既にあった保護も含めた。
 
 | 所見 | 根拠 |
 |---|---|
-| 編集可能placeholderを表示後に非同期bootstrap | [FuminiwaApp.swift](../NovelApp/FuminiwaApp.swift)、[AppState.swift L147-L153](../NovelApp/AppState.swift#L147-L153) |
-| 前回作品のload失敗後に新規作成・recent更新 | [AppState.swift L175-L236](../NovelApp/AppState.swift#L175-L236) |
-| Episode本文/メモの読込失敗を空へ変換 | [NovelpkgRepository.swift L104-L127](../NovelKit/Sources/NovelStorage/NovelpkgRepository.swift#L104-L127) |
-| WorldNote本文の読込失敗を空へ変換 | [NovelpkgRepository+World.swift L20-L24](../NovelKit/Sources/NovelStorage/NovelpkgRepository+World.swift#L20-L24) |
-| 保存時に既知directoryを再構築し、未知root itemだけをcopy | [NovelpkgRepository.swift L236-L268](../NovelKit/Sources/NovelStorage/NovelpkgRepository.swift#L236-L268)、[L365-L399](../NovelKit/Sources/NovelStorage/NovelpkgRepository.swift#L365-L399) |
-| 現行failure testはorphanをload直後に残す確認まで | [NovelpkgRepositoryFailureTests.swift L34-L68](../NovelKit/Tests/NovelStorageTests/NovelpkgRepositoryFailureTests.swift#L34-L68) |
-| Snapshot作成は最終名へ直接書き、日時表示はFS属性由来 | [NovelpkgRepository+Snapshots.swift L33-L67](../NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift#L33-L67)、[L70-L122](../NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift#L70-L122) |
-| Snapshot復元はworking packageを使う | [NovelpkgRepository+Snapshots.swift L125-L140](../NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift#L125-L140)以降 |
-| Save As後の追保存結果を呼出元へ返さない | [AppState.swift L330-L336](../NovelApp/AppState.swift#L330-L336) |
-| Episode切替時に本文を差し替え、Undoをclear | [MacTextAdapter.swift L79-L94](../NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift#L79-L94) |
-| macOS標準の補正/検査を一律OFF | [MacTextAdapter.swift L120-L143](../NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift#L120-L143) |
-| 毎変更で全文Stringをmodelへ通知 | [MacTextAdapter.swift L210-L242](../NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift#L210-L242) |
-| `.novelpkg`のUTType/Document Typesを意図的に未宣言 | [DocumentPanelPresenter.swift L14-L18](../NovelApp/DocumentPanelPresenter.swift#L14-L18) |
-| dark外観強制 | [NovelWorkbenchView.swift L30-L37](../NovelApp/NovelWorkbenchView.swift#L30-L37) |
-| 未接続AI panelとdummy status | [NovelWorkbenchView.swift L465-L515](../NovelApp/NovelWorkbenchView.swift#L465-L515)、[L547-L649](../NovelApp/NovelWorkbenchView.swift#L547-L649) |
-| Hardened Runtime無効、AppIcon/Document Type設定なし | [project.yml L47-L67](../project.yml#L47-L67) |
-| W0未完了とMac writerの未保証を明記 | [CROSS_PLATFORM.md L1-L5](CROSS_PLATFORM.md#L1-L5)、[L104-L127](CROSS_PLATFORM.md#L104-L127) |
+| 編集可能placeholderを表示後に非同期bootstrap | `NovelApp/FuminiwaApp.swift`、`NovelApp/AppState.swift L147-L153` |
+| 前回作品のload失敗後に新規作成・recent更新 | `NovelApp/AppState.swift L175-L236` |
+| Episode本文/メモの読込失敗を空へ変換 | `NovelKit/Sources/NovelStorage/NovelpkgRepository.swift L104-L127` |
+| WorldNote本文の読込失敗を空へ変換 | `NovelKit/Sources/NovelStorage/NovelpkgRepository+World.swift L20-L24` |
+| 保存時に既知directoryを再構築し、未知root itemだけをcopy | `NovelKit/Sources/NovelStorage/NovelpkgRepository.swift L236-L268`、`NovelKit/Sources/NovelStorage/NovelpkgRepository.swift L365-L399` |
+| 現行failure testはorphanをload直後に残す確認まで | `NovelKit/Tests/NovelStorageTests/NovelpkgRepositoryFailureTests.swift L34-L68` |
+| Snapshot作成は最終名へ直接書き、日時表示はFS属性由来 | `NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift L33-L67`、`NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift L70-L122` |
+| Snapshot復元はworking packageを使う | `NovelKit/Sources/NovelStorage/NovelpkgRepository+Snapshots.swift L125-L140`以降 |
+| Save As後の追保存結果を呼出元へ返さない | `NovelApp/AppState.swift L330-L336` |
+| Episode切替時に本文を差し替え、Undoをclear | `NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift L79-L94` |
+| macOS標準の補正/検査を一律OFF | `NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift L120-L143` |
+| 毎変更で全文Stringをmodelへ通知 | `NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift L210-L242` |
+| `.novelpkg`のUTType/Document Typesを意図的に未宣言 | `NovelApp/DocumentPanelPresenter.swift L14-L18` |
+| dark外観強制 | `NovelApp/NovelWorkbenchView.swift L30-L37` |
+| 未接続AI panelとdummy status | `NovelApp/NovelWorkbenchView.swift L465-L515`、`NovelApp/NovelWorkbenchView.swift L547-L649` |
+| Hardened Runtime無効、AppIcon/Document Type設定なし | `project.yml L47-L67` |
+| W0未完了とMac writerの未保証を明記 | `docs/CROSS_PLATFORM.md L1-L5`、`docs/CROSS_PLATFORM.md L104-L127` |
 
 ## 付録C: 参照した主な公開資料
 

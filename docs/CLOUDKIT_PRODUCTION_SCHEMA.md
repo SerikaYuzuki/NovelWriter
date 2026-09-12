@@ -1,8 +1,10 @@
-# CloudKit署名・Production Schemaチェックリスト
+# CloudKit署名・Production Schema検証記録（履歴）
 
-この文書はD-063のApple外部Gateを再現可能に実行するためのoperator checklistである。containerはprivate databaseだけを使い、固定identifierは`iCloud.dev.serikayuzuki.fuminiwa.sync`、zoneは`FUMINIWA.DeviceSync.v1`である。署名済みempty-catalog smokeをremote CRUD、paired device、Production deploy、Release GOへ読み替えない。live 契約は[DEVICE_SYNC.md](DEVICE_SYNC.md) 0章。0章の件数は当時の local 証跡であり、再計測せずに更新しない。
+この文書はD-063／D-071のCloudKit検証で用いたチェックリストと、2026-08-13時点の証跡を保存する。CloudKit adapter／entitlement／bootstrapはD-079で廃止されているため、以下の署名設定、record操作、Production deployは現在のApp向け手順ではない。新しい同期の検証は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)、stagingの操作は[SNAPSHOT_SYNC_V2_STAGING.md](SNAPSHOT_SYNC_V2_STAGING.md)を参照する。
 
-## 0. 現在の検証状態（2026-08-13）
+当時のcontainerはprivate databaseの`iCloud.dev.serikayuzuki.fuminiwa.sync`、zoneは`FUMINIWA.DeviceSync.v1`だった。記録の解釈には[DEVICE_SYNC.md](DEVICE_SYNC.md)を使い、過去のテスト件数を現在の実機同期・Production・Releaseの合格へ読み替えない。旧CloudKitを調査する場合も、このチェックリストを現行Appの起動・配布手順へ組み込まない。
+
+## 0. 当時の検証状態（2026-08-13）
 
 - `NovelSync`: 156 / 156件（18 suites）。うちN4 in-memory paired／offline／process-kill／account分離を含む
 - `NovelSyncCloudKit`: 91 / 91件（25 suites）。`FUMINIWANote*V1` codec、catalog isolate、conflict inspector、engine pending filter、workID query fallbackを含む
@@ -10,7 +12,7 @@
 - D-071 live経路のsource inventoryはlegacy 7 type＋Note 7 typeの14 type。Note typeの`workID`はQUERYABLE。inline JSONまたはentity `payloadAsset`＋`payloadByteCount`
 - 署名済みMac＋iPhone paired、Development schemaのDashboard目視照合、実CloudKit create／fetch／update／delete、Production schema deployは **未実施**
 - `./Scripts/check.sh`は`All checks passed`。N2〜N4 local成功をempty-catalog smoke、paired native、Release GOへ読み替えない
-- 次の実装待ちは無い。残るN4は操作者の署名済みMac＋iPhone検証（本書5章）
+- 当時の残るN4は操作者の署名済みMac＋iPhone検証（本書5章）だった。現在の次タスクではない
 
 ここまでが (a) source＋unit の証跡である。(b) Simulator／fakeはMac／iOSの短い3択layout test。(c) 署名済み実CloudKitは未実施。Release NO-GOを維持する。
 
@@ -38,7 +40,7 @@ D-071の通常App live経路は`FUMINIWANote*V1` entity recordである。source
 
 `productionSchemaChecklist`はsourceに残るCloudKit codecの全量inventoryとして14 typeを列挙する。Production schemaへ含める場合は、全typeのsystem field `recordName`に`QUERYABLE` indexを1つ作り、Note 7 typeにはカスタムfield `workID`のQUERYABLE indexも付ける。通常のD-071操作だけでは旧Episode／Work 6 typeがDevelopment schemaへ自動materializeされない。codec testはfield名／型のsource契約を検査するだけで、Dashboard上のschema生成やProduction deployを証明しない。
 
-### 現行D-071 live経路（7 type）
+### 当時のD-071 live経路（7 type）
 
 | Record type | Fields（型。`?`はoptional） | 必須index |
 | --- | --- | --- |

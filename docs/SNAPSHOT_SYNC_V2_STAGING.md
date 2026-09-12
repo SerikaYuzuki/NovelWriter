@@ -1,48 +1,40 @@
-# Snapshot Sync v2 LAN staging trust
+# Snapshot Sync v2 — LAN stagingのTLS確認
 
-This procedure is for the isolated staging deployment only:
+この手順は隔離staging用。checked-in Composeの既定値は次のとおりで、2026-09-12にsourceを照合した。現在の稼働状態は確認していない。
 
 ```text
-https://192.168.11.5:8443
-project: fuminiwa-sync-v2
-edge: fuminiwa-sync-v2-edge
+URL:     https://192.168.11.5:8443
+project: fuminiwa-sync-v2-role-split
+edge:    fuminiwa-sync-v2-role-split-edge
 ```
 
-The edge uses Caddy's internal CA. The CA certificate is public material, but
-it is not a production trust anchor. Do not copy a private key, weaken
-certificate validation, or add `-k` to application requests.
+目的は、試験端末が正しいstaging CAを信頼し、その通信経路でAuth／Sync v2へ到達できると確認すること。Caddyのinternal CAは本番trust anchorではない。公開root証明書だけを扱い、private keyのコピー、`-k`、アプリの証明書検証無効化は行わない。
 
-## Export and verify the CA
+## 現行export scriptの制約
 
-The export script reads only the public root from the exact v2 edge container.
-It also checks the leaf certificate SAN, prints SHA-256 fingerprints, and
-performs an HTTPS auth-capabilities read-back with the exported CA:
+[Scripts/export-sync-v2-staging-ca.sh](../Scripts/export-sync-v2-staging-ca.sh)は公開rootの取得、SAN確認、`curl --cacert`によるAuth capabilities確認を行う。ただし現在はedge名が`fuminiwa-sync-v2-edge`に固定され、role-split Composeと一致しない。container名を指定する引数もない。**role-split環境でそのまま使える手順ではない。** この文書改訂ではscriptを変更・実行していない。
+
+scriptを更新する場合は、確認したexact v2 edgeだけを対象にし、従来の非破壊・公開証明書のみという境界を保つ。更新までは運用者からそのedgeの公開CAファイルとfingerprintを受け取る。旧containerが残っていても、別edgeのrootを対象証明書として採用しない。
+
+修正後に使うexportの入口は次のとおり。
 
 ```sh
-# The script may prompt for SSH/sudo interactively, but never reads or stores
-# a password. It stages the public CA briefly under the remote user's /tmp.
 Scripts/export-sync-v2-staging-ca.sh \
   --output "$HOME/Downloads/fuminiwa-sync-v2-root.crt"
 ```
 
-Record the printed root fingerprint before installing trust. A successful
-run must report all of the following:
+scriptはSSH／sudoの対話入力が必要になる場合があるがpasswordを読み取って保存しない。remoteの一時領域には公開CAだけを置く。成功メッセージは現状以下だが、namespace文字列のみを検査しており、**`syncProtocolEpoch=2`を証明していない**。
 
 ```text
 leaf SAN: IP Address:192.168.11.5
 HTTPS auth capabilities: HTTP 200 (v2 namespaces verified)
 ```
 
-If the host's sudo policy does not retain a timestamp across SSH sessions,
-run the export from an operator shell that has the approved v2-only sudo
-policy, or have an administrator provide the public CA file. Never grant the
-script access to the old `fuminiwa-sync-dev-*` containers or volumes.
+## Trustの設定
 
-## macOS trust (explicit, manual opt-in)
+取得したrootのSHA-256 fingerprintを別の信頼できる経路と照合する。過去のfingerprintは[ハンドオフの履歴](SNAPSHOT_SYNC_V2_HANDOFF.md)にあり、現在の正とはしない。
 
-Inspect the fingerprint printed by the export script and compare it through a
-separate trusted channel. Only after that comparison, install the public CA
-into the login keychain:
+macOSでは確認済み公開CAだけをlogin keychainへ追加する。
 
 ```sh
 security add-trusted-cert \
@@ -51,34 +43,15 @@ security add-trusted-cert \
   "$HOME/Downloads/fuminiwa-sync-v2-root.crt"
 ```
 
-This command is intentionally not run by the export script. Remove the
-staging trust after testing with Keychain Access or:
+iPhone／iPadでは確認済み`.crt`を端末へ渡してprofileをインストールし、設定の **一般 → 情報 → 証明書信頼設定** で対象rootのtrustを有効にする。表示名だけに頼らずfingerprintを照合する。これは端末全体のstaging trustなので、検証後は対象を確認してKeychain Accessまたは端末設定から解除・削除する。
 
-```sh
-security delete-certificate \
-  -c "FUMINIWA" \
-  "$HOME/Library/Keychains/login.keychain-db"
-```
+## 成功条件
 
-The exact certificate and fingerprint must be checked before removal if more
-than one certificate has the same display name.
+検証時の日時、exact project／edge、image、root fingerprintと以下の結果を記録する。tokenやprivate keyは記録しない。
 
-## iPhone / iPad trust (explicit, manual opt-in)
+- 端末と同じ通信経路でSANとTLS chainが一致する。
+- public `/v1/auth/capabilities`がHTTP 200を返し、Auth epoch 1とSync epoch 2を確認できる。
+- signed-in appでauthenticated `/v2/capabilities`のAccountID／server instance／Fenceがsession bindingと一致する。
+- 対象試験Workのremote headをread-backできる。
 
-1. Transfer the verified `.crt` file to the device using AirDrop or Files.
-2. Open it and approve the configuration-profile installation in Settings.
-3. In **Settings > General > About > Certificate Trust Settings**, enable full
-   trust for the FUMINIWA Snapshot Sync v2 staging root.
-4. Confirm the displayed certificate fingerprint matches the export output.
-
-This is a device-wide staging trust. Disable it and remove the profile after
-the physical test. The app must continue to use normal URLSession certificate
-validation; it must not ship a pinned staging root or an unverified transport.
-
-## Device read-back
-
-After trust is installed, run the app against the v2 URL and verify the
-capabilities request succeeds without a certificate warning. The server's
-`8092` listener must remain private to the Compose network. A healthy Docker
-container alone is not sufficient evidence: the device-facing TLS chain and
-the authenticated capabilities response must both be read back.
+container healthとpublic Auth capabilitiesは接続の一部だけを確認する。authenticated scopeや作品同期の代わりにはならない。Axumの8092番portはCompose内部に留める。新規構築・再起動・権限分離の手順は[server README](../SyncServerV2/README.md)と[deployment契約](sync/v2/deployment.md)を参照する。

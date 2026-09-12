@@ -1,8 +1,8 @@
-# UI Fix 実行計画: 執筆密度・章／話階層・Workbench操作
+# UI Fix 完了記録: 執筆密度・章／話階層・Workbench操作
 
-**状態: UI-FIX-1 / UI-FIX-2a / UI-FIX-2b / UI-FIX-2c / UI-FIX-3 / UI-FIX-4 / UI-FIX-5 完了。後続のUI-REF-1〜6も完了し、Phase 5-1へ進む。**
+UI-FIX-1 / UI-FIX-2a〜2c / UI-FIX-3〜5の完了記録。章／話を分けた原稿モデルや、当時のWorkbench修正理由を調べるときに読む。後続のPhase 5も完了しており、現在の次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。
 
-本書は、Toolbar-2 完了後に確認された UI 修正と、「章」と「話」を分離する原稿構造の改訂を実装するための作業指示書である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)、デザイン言語は [STYLE.md](STYLE.md)、現行 toolbar の設計は [TOOLBAR.md](TOOLBAR.md) とする。
+以下の数値、画面配置、保存操作は記録当時の実装計画であり、後続Decisionで変わった部分を含む。現在のデザイン言語は[STYLE.md](STYLE.md)、toolbarは[TOOLBAR.md](TOOLBAR.md)、保存・履歴は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)を正とする。
 
 Phase 5 の旧出力仕様は `Chapter` が本文を直接持つ前提だった。章／話階層を出力実装後に導入すると全レンダラとテストを作り直すため、本計画を Phase 5-1 より先に完了し、出力仕様も [PHASE5.md](PHASE5.md) で更新済みである。
 

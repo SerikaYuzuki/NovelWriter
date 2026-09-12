@@ -1,68 +1,65 @@
-# 商業化基盤 実装状況
+# 公開に向けた実装・品質Gate
 
-**基準日: 2026-08-09 / 状態: 実装面の公開準備中（公開用ビルド品質は未完了）**
+**現況整理: 2026-09-12 / Release NO-GO**
 
-本書は[商業化総合監査](COMMERCIALIZATION_AUDIT_2026-07-19.md)のうち、アプリの実装・機能・UI/UX・データ安全・性能・アクセシビリティ・互換性・ビルド／配布技術だけを実装へ落とす進捗表である(D-042)。価格、法務、販促、決済、事業運用は、明示依頼がない限り本書のGateやバックログに含めない。設計の正は[DESIGN.md](DESIGN.md)、個別判断は[DECISIONS.md](DECISIONS.md)を優先する。
+原稿保全、執筆体験、互換性、検証、配布技術の完了条件を追跡する(D-042)。価格、法務、販促、決済、事業運用は明示依頼がない限りこのbacklogへ加えない。設計は [DESIGN.md](DESIGN.md)、直近の実装課題は [v2 handoff](SNAPSHOT_SYNC_V2_HANDOFF.md) を優先する。
 
-## 今回までに実装した範囲
+## 1. 現在確認できる範囲
 
-| Gate | 現在の結果 | 境界 |
+| 項目 | ソース・過去証跡で確認できること | 未完了との境界 |
 | --- | --- | --- |
-| Brand | 日本語名「ふみにわ」、配布名`FUMINIWA`、bundle ID、Document Type / UTTypeを移行 | `.novelpkg` v1〜v3、NovelKit系名称、legacy toolbar IDは互換資産として維持 |
-| Preference migration | 旧bundle domainからrecent URL、section、Editor設定をallowlistで一度だけ移行 | 新値を上書きせず、旧domainと旧作品を削除・一括移動しない |
-| Safe Launch | `loading` / `ready` / `recovery`を分離。読込失敗時は原稿もrecent URLも変更しない | Recoveryは再試行、Finder表示、別作品選択、明示的新規作成を提供 |
-| Lifecycle safety | 同時bootstrapを共有Taskへ合流。作品切替・別名保存・資料・snapshotをFIFO化し、古い確認操作をsessionで拒否。切替前にフォーム／IMEを旧作品へ確定してWorkbench変更を止め、終了要求後の作品操作を遮断 | 外部rename／削除、同期・別プロセス競合の検出は後続Gate。待機TaskのcancellationとSave As確定失敗時に残るcopyの案内／cleanupはP2 follow-up |
-| Payload integrity | manifest参照の話本文、world参照本文を必須valid UTF-8としてfail-closed。存在するメモもvalid UTF-8を要求 | 空メモのファイル省略は互換仕様として維持。完全なpackage validatorではない |
-| Product truth | 実処理のないprovider panel、AI状態、`Cmd+J`を出荷UIから撤去。通常版には実在する非通信操作としてclipboard prompt copyだけを表示 | 「校正用／アドバイス用プロンプトをコピー」と正確に表現し、AI実行、送信、応答、Applyがあるように見せない |
-| Clipboard AI支援 | 校正／アドバイス×本文選択／話／章のplain text promptを明示操作でsystem clipboardへコピー | provider／network／key／process／`NovelAI`依存なし。clipboardは他アプリ、manager、Universal Clipboardから読まれ得る共有境界で、履歴非保持やsecure eraseを保証しない |
-| AI technical contract | EditorKitの選択transactionと通常版のclipboard promptだけを現行面として保持。旧Experimental provider／sidecar実装はD-075で削除 | provider再開時は旧APIを流用せず、最新stable SDK／APIを新Decisionの下で再評価する。通常版のprovider／network／key／実原稿送信は0件。`.novelpkg`は変更しない |
-| Native UX | chromeはシステムLight／Darkへ追従。本文キャンバスは独立した利用者設定で既定暗色 | 下部は保存状態、再試行、話／全体文字数、検索不一致だけを示す |
-| Explicit save | Fileメニューの`Cmd+S`を`AppState.saveNow()`へ接続。iCloud結線済みなら続けて明示同期(D-073) | `ready`な作品だけを自動保存・終了前保存と同じrevision直列化で端末へ保存し、結線済みだけiCloudへ送る |
-| Build baseline | Hardened Runtimeをproject設定で有効化 | Developer ID署名・公証済み配布物、別Mac検証の完了を意味しない |
+| 保存と同期 | Mac／iOSのv2 composition、SQLite checkpoint、Outbox／Inbox、conflict／restore実装 | paired実機・staging read-back・全体Gateは別 |
+| macOS UI | 既存Workbench、機能section、v2状態表示、履歴／同期への接続 | 現在の全操作を実機受入済みとはしない |
+| iOS UI | 段階route、複数列、各機能View、v2本文Editor | 執筆補助とprompt入口がlive Viewへ未接続。ホーム等に診断UIが残る |
+| Apple認証 | 2026-08-18に実iPhoneでsigninと再起動後のsession復元を確認した記録 | 公開認証、account lifecycle、全端末受入とは別 |
+| portable形式 | NovelStorageのcodecとv2 portable bridge、関連tests | 完全なPackage Validator、W0、Windows往復は未完了 |
+| AI支援 | 共有prompt builderとmacOS copy、iOS側API | providerなし。iOSの全copy入口は未完了 |
+| 配布設定 | `project.yml`にHardened Runtime、macOS 14／iOS 17、署名設定あり | 設定の存在は署名済み配布物・公証・clean installの証拠ではない |
 
-## Experimental provider研究履歴（実装削除済み）
+今回行ったのはソースと文書の照合。過去の「All checks passed」、旧CloudKitのsource freeze、focused test件数を2026-09-12の実行結果として再掲しない。
 
-[AI_INTEGRATION.md](AI_INTEGRATION.md)とD-043 / D-046〜D-053はAIを出荷した記録ではなく、B4-Dまでの研究成果と将来再開時の安全契約である。D-075でprovider／fake UI／sidecarの実装・fixture・testを削除し、実provider、B4-E以降、network、credential、実原稿送信は最新stable SDK／APIの明示再評価まで延期した。実装結果と未達Gateは[Codex SDK feasibility実装レポート](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を正とする。
+## 2. 直近の優先事項
 
-通常版の現行AI支援は[clipboard prompt契約](CLIPBOARD_AI_ASSIST.md)だけであり、旧Experimental基盤、provider、Node／CLI／sidecar、network、Keychain、process supervisorへ依存しない。Package Validator GateとExternal Change / Conflict Gateは引き続き公開Release作業として優先する。
+1. 既存のiOS執筆体験をv2へ接続し、作品棚／ホーム／履歴／競合の診断UIを製品UIへ整える。既存の製品要件は [IOS.md](IOS.md) と [STYLE.md](STYLE.md)。
+2. signin済み新規作品がlocal-onlyに留まった実機報告を再現し、local checkpoint後の明示account scope・remote登録・head確認までを検証する。任意の既存unbound作品の自動採用で解決しない。
+3. 現行commitで標準ローカル検証を通す。handoffのD-076大規模認証ファイルによる停止記録は、最新の分割状態と再実行結果で更新する。
+4. 認証済みstaging read-back、Mac↔iPhone往復、offline分岐・3択・履歴／復元・restart・account切替を実機で記録する。
 
-現行AI実装で完成扱いにできる範囲は上表のEditorKit選択transactionとclipboard promptだけである。以下のprovider／sidecar詳細はD-075前の研究履歴であり、実装・出荷・再利用契約ではない。
+これは実装の依存順であり、公開判断を先取りしない。今回のmd整理ではコード、server、旧データを変更しない。
 
-B3の`candidateRootDigest`、root内のself manifest、packager自身が再計算したdigest、B4-Aのproposal、B4-B／B4-C observation、observed runtime／local probeはいずれもproduction approvalではない。production catalogは意図的に空で、承認済みcandidate／Node／SDK／CLIと実行経路は0件である。packaging失敗後のpartial rootは手動で隔離・削除し、B4-C observationをauthority／capabilityへ昇格させず、B4-D abstract channelをactual processへ結合しない。Node version、完全なloaded artifact inventory、immutable verify-to-use、same-user swap、anti-rollback、OS containmentは未達であり、B4-E以降を実装せず延期した。これはCodex／OpenRouterが利用可能または公開可能という意味ではない。
+## 3. Package Validator / W0
 
-B4-A inventoryは、B3全copy集合であるdeployment candidateと、`evaluatedSource`／`resolutionMetadata`／`executable`／`conditional`／`provenance`／`requestData`／`operatingSystemTrust`／`forbidden`のroleを分離する。content identityも`exactFile`／`boundedRequestData`／`operatingSystemProvided`／`forbidden`を区別する。provenanceを実評価sourceと数えず、request dataをartifact identityへ混ぜず、OS trustを暗黙の無制限allowlistにしない。
+packageは通常autosaveの正本ではなくImport／Export境界。以下を [CROSS_PLATFORM.md](CROSS_PLATFORM.md) の共通schema／fixtureへまとめ、既存の部分検証と不足を区別する。
 
-domainで実装済みのhard guardは、app-provided inputとraw structured output、stream delta、decoded resultの文字数／UTF-8 byte数、注意点20件上限、wall-clock timeout、result usageの検証である。細切れdeltaはdomainでboundedに集約してUI更新数を抑える。providerはstreaming／cancellation／usage reportingを必須とし、`outputTokens`は必須かつ非負、`inputTokens`は省略可能だが存在時は非負としてfail-closedにする。ただしusageは事後報告であり費用capそのものではない。実providerの`maximumOutputTokens`相当parameter、実送信直前payload capture、wire event byte／件数、process resource limitはadapter Gateであり、現在は未実装である。
+- 全domainのduplicate ID、不正参照、version別必須項目、UUID／ID filename、日時、valid UTF-8。
+- symlink／junction／reparse point、package外参照、Windows禁止名、Unicode衝突、depth／file数／byte／path budget。
+- 参照されない原稿と非hidden未知resourceの保全、元を直接修復しない検証済み修復コピー。
+- Import／Exportの採用前検証とread-back、途中失敗時の元データ・既存destinationの保持。
+- v1〜v3の独立fixtureとMac内round-trip。Windows実装後は双方の往復。
 
-2026-08-09の調査baselineはTypeScript SDK `0.147.0`である。合成captureではliteral U+2028／U+2029を含む同じCLI出力がNode 22.23.1ではround-tripし、Node 26.4.0ではSDK内部で分断される差、生stderr／errorがSDK例外へ入り、Abortがdirect childへのsignalに留まることを確認した。これらは日付固定の互換性証拠であって将来の採用値ではない。再開時は最新stable SDK／API、Node／native境界、tool、session保持、output cap、cancel、artifact、OS隔離をゼロから再評価し、旧0.147.0のversion／path／hashを流用しない。
+missing／invalid UTF-8拒否やportable bridgeのtestsだけでこのGate全体を閉じない。
 
-provider／service側の保持期間と学習利用、SDK／CLI local artifact、料金単位とrequest上限の一次資料根拠は未検証のまま延期している。通常版clipboard支援はprovider情報を表示せず、system clipboardへ出た後の保持、同期、外部AI利用を保証しない。
+## 4. 外部変更と復旧
 
-OpenRouterを含む実adapterは現行backlogに置かない。将来再開する場合もCodexと別adapter／別PRとし、自動fallbackを行わず、新しいexact previewと明示確認を必要とする安全契約は維持する。
+旧計画の「開いたpackageの外部更新検出」は、現在の通常SQLite編集へそのまま適用しない。外部package取込／書出、資料取込のsource変更・移動・削除・lock、失敗時の再試行と原本保全を検証する。open-in-placeを追加するなら保存所有者と競合UIを別Decisionで設計する。
 
-## 次の一単位: Package Validator Gate
+SQLiteはmigration／integrity失敗時に空DBへfallbackせず、backup、restore、process kill、lost response、容量不足の証拠を揃える。remote conflictはv2の単一競合・3択で扱い、復元前候補を保持する。
 
-次はpackageを開く前、保存物を置換する前、修復コピーを採用する前に共通利用できる検証境界を作る。
+## 5. 公開前に残る技術Gate
 
-1. 全domainのduplicate ID、参照先欠損、IDファイル名の不一致を型付きエラーにする
-2. package rootと既知pathの各componentでsymlinkを拒否し、package外を読み書きしない
-3. 深さ、ファイル数、JSON／本文／添付／総byte数にresource budgetを設ける
-4. manifestから参照されない本文・メモ・世界観本文を消さずにinventory化し、隔離または修復コピーへ保全する
-5. 元packageを直接修復せず、検証済みの別コピーを作って差分と採用判断を利用者へ示す
-6. 一時packageを置換前に検証し、失敗時は既存packageとdirty状態を維持する
-7. schemaとgolden / failure fixtureへ統合し、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)のW0残件を同じ契約で前進させる。このGateだけでW0完了とはしない
+- v2の独立conformance、shared kernel、account／namespace隔離、restart、staging実DB、backup／restore、運用保護。
+- Authの失効／refresh／account switch／Apple障害、app内account deletion開始とremote削除完了read-backなど、採択済み契約の公開条件。
+- iOS / iPadOSとMacのIME、Undo、keyboard、VoiceOver、Dynamic Type、Light／Dark、Reduce Transparency、長文／大量データ、scene／終了。
+- AppIcon、Finder／Dock／About／配布物のブランド表示と実在する機能だけの説明。
+- Developer ID署名、公証、stapling、Gatekeeper、cleanな別Mac／新規userでのinstall・起動・Recovery。
+- versioning、更新、rollback、旧版とのportable互換、データ保持／救出導線。
 
-## 続く一単位: External Change / Conflict Gate
+conformance成功、build、preview、signin成功、deploy、remote head確認、実機受入、公開の各段階を別に記録する。満たした証拠がない項目は未完了のまま残す。
 
-Finderでの移動／削除、同期サービス、別プロセスによる変更を検出し、黙って旧URLへ別作品を再作成したり外部更新を上書きしたりしない。現在作品と外部状態を比較し、状況に応じて再読込、別名保存、競合コピーの保全を利用者が選べるようにする。
+## 6. 判断が必要になる境界
 
-## 実装面で残る主要Gate
+既存UIの復旧、仕様内の不具合修正、local検証は実装判断として進められる。公開時期／対象platformの優先順を変える、既定のUIや機能を削る、providerを再開する、Windowsの最低対応OS／配布方式を選ぶ場合は利用者の判断を得てDecisionへ記録する。これらを先に決めないと現行の修復が進められない、という扱いにはしない。
 
-- AppIcon、ロゴ、Finder / Dock / About / DMGを含むブランド視覚品質
-- Developer ID署名、公証、stapling、Hardened Runtime、クリーンな別Mac／新規ユーザーでのGatekeeper検証
-- 更新機構、versioning、release note、rollback、旧版との文書互換検証
-- インストール、初回起動、既存利用者移行、Recovery、アンインストール／データ保持の説明
-- アクセシビリティ、キーボード、VoiceOver、Light／Dark、Reduce Transparency、長文／大量データの実機QA
-- アプリ内のバックアップ／復旧手順、診断情報、失敗時の救出導線
+## 7. 履歴
 
-これらを通るまでは「実装面の公開準備完了」「原稿を失わない」「Windows互換完了」「AI対応」と表現しない。
+[整理前の技術Gate・AI研究証跡の全文](archive/product-guidance-20260912/COMMERCIALIZATION_IMPLEMENTATION.md)、[当時の総合監査](COMMERCIALIZATION_AUDIT_2026-07-19.md)は履歴として保存する。旧Experimental providerはD-075で実装削除済みで、公開Gateの達成や将来APIの採用根拠にはしない。

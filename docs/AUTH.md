@@ -1,8 +1,20 @@
-# Snapshot Sync Production 認証ハンドオフ
+# Snapshot Sync 認証契約と実装状況
 
-> **状態**: D-077／D-078のProduction認証を実装する前の設計契約。現時点では設計のみで、Rust／Swift認証module、Production session、provider linking UI／APIは未実装。v1で利用者へ出す外部providerは **Sign in with Appleだけ** とし、将来のOIDC provider追加でも内部AccountIDを変えない。
+2026-09-12に現行sourceを照合した。Auth v1は設計だけの段階を終え、Swiftの`NovelAuth`／`NovelAuthApple`とRustの`SyncServerV2/src/auth*.rs`に実装がある。現行の同期はSync v2、認証wireはAuth v1を使う。実装の存在と公開可能性は別であり、Production受入は未完了。
 
-本書は認証module、credential、session、account fence、Apple失効処理の正とする。認証HTTP wireとstate fixtureは[auth/v1/](auth/v1/)、現在liveな同期payload、SQLite／CAS、Conflict、retentionの正は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、実装順は[SNAPSHOT_SYNC_HANDOFF.md](SNAPSHOT_SYNC_HANDOFF.md)、同期HTTP bearer境界は[sync/v2/openapi.yaml](sync/v2/openapi.yaml)に従う（`sync/v1/`はarchive）。
+本書は認証、credential、session、AccountFenceの設計境界を説明する。HTTP・状態遷移の規範は[auth/v1/](auth/v1/)、同期は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、現在の不具合・検証記録は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を参照する。v1同期の旧ハンドオフを実装順として使わない。
+
+## 現在の実装と確認範囲
+
+| 領域 | 現行source | 確認範囲・残件 |
+| --- | --- | --- |
+| Swift session・HTTP・Keychain | `NovelKit/Sources/NovelAuth/` | `AuthSessionCoordinator`、`AuthHTTPTransport`、`KeychainAuthSessionVault`を実装。以前の別module名は責務の構想であり、存在するtargetではない |
+| Apple native認証 | `NovelKit/Sources/NovelAuthApple/AppleSignInCoordinator.swift` | Mac／iOS compositionから接続。2026-08-18のiPhone成功・再起動記録はハンドオフの履歴を参照 |
+| Rust認証・session・通知 | `SyncServerV2/src/auth*.rs` | Apple verifier、wire、transaction、vault、HTTP実装あり。Productionの鍵rotation・backup復旧・実通知の受入を意味しない |
+| account transition | shared v2 application/store、各AppのAuthenticationV2 extension | D-084のowner付き停止・scope遷移が実装されている |
+| PostgreSQL権限 | `SyncServerV2/docker-compose.yml`、`src/postgres.rs` | migration ownerとruntimeを分離。runtimeは`auth_v1`と`sync_v2`両schemaの必要DMLを持つ。schema分離をauth/sync別credential達成と扱わない |
+
+通知URLに未解決の差分がある。[Apple notification契約](auth/v1/apple-notification.md)は`/v1/auth/providers/apple/notifications`、現行`auth_http.rs`は`/v1/auth/apple/notifications`を登録する。本書改訂では契約・コードのどちらも変更していない。通知統合前に契約へ実装を合わせるか、Decision／wire／fixtureを同時に改訂して再検証する。
 
 ### Auth v1 と live Sync v2 のepoch
 
@@ -25,7 +37,7 @@ FUMINIWA access token / rotating refresh token / account fence
 - Apple identity token／authorization codeを同期APIのbearerとして使わない。
 - AccountIDはprovider subject、email、氏名から導出せず、serverが暗号学的乱数から一度生成する。link／unlink／再認証／fence更新で変えない。
 - 同期APIが受け取るprincipalは`AccountID`、内部Tenant ID、FUMINIWA session ID、account-fence generationだけとする。Apple／OIDC claimを`sync-domain`へ出さない。
-- request bodyからowner／AccountID／Tenant IDを受け取らず、認証済みprincipalだけがtenantを選ぶ。
+- tenantは認証済みprincipalだけが選ぶ。sync command bodyのAccountID／bindingはprincipalとの一致確認に使い、検索scopeの選択権限を与えない。
 - v1はAppleだけを有効化する。provider-neutralなtableとportは先に固定するが、OIDC adapter、provider link／unlink API、account merge、link UIは実装しない。
 - development固定Bearer tokenは別の`DevTokenAuthenticator`としてProduction build／configurationからfail-closedで除外し、Production accountの代用にしない。
 
@@ -50,14 +62,14 @@ account fenceはsession tokenでもprovider identityでもなく、同じAccount
 - 同一Accountの複数端末へ同じcurrent fenceを返す。access／refresh token更新、通常の再login、端末単位logoutではrotateしない。
 - provider link／unlink、provider credential revocation、`account-deleted`通知、全session logout、account lock、account-wideなcredential漏えい対応ではgenerationを進め、既存sessionを失効させる。消費済みFUMINIWA refresh tokenの再利用だけなら該当session familyを失効するが、他sessionとAccountAuthEpoch／Fenceは変えない。account-wide compromiseと判定した別の明示security transitionだけが全session失効＋epoch rotateを行う。
 - access tokenは発行時fence generationへbindする。旧token／旧fenceはobject存在、Work、receiptの有無を返す前にrejectする。
-- `/v1/capabilities`だけがaccount fence headerなしで現在のAccountID／fenceを返す。AccountIDが同じでもfenceが違えば、clientは旧remote presence、cursor、Intent／Attemptを権威として再利用しない。
+- `/v2/capabilities`がsync account fence headerなしで現在のAccountID／fenceを返す。AccountIDが同じでもfenceが違えば、clientは旧remote presence、cursor、Intent／Attemptを権威として再利用しない。
 - 同一AccountID＋新fenceでは旧network stateをquarantineし、bootstrap、missing照会、read-backから再計画する。別AccountIDでは旧scopeのworkをparkし、loginだけでautomatic adopt／rebindしない。
 
 provider issuerはauth session／auditの属性であり、Work bindingやremote-presence identityへ入れない。同期bindingの正は`server instance + protocol epoch + AccountID + account fence`である。これによりAppleから将来OIDCへ認証手段を変えても作品identityを変えない。
 
 ## 4. Rust server module境界
 
-最初から細かいcrateへ分裂させず、依存を次に固定する。
+以下は責務の分離であり、実在crateの一覧ではない。現行は単一の`SyncServerV2` crate内で`auth_domain.rs`、`auth_application.rs`、`auth_apple.rs`、`auth_postgres.rs`、`auth_http.rs`等へ分ける。
 
 ```text
 sync-auth
@@ -87,7 +99,7 @@ VerifiedExternalIdentity
 
 email、氏名、private relay address、Apple固有credential stateを戻り値へ含めない。`subject`の平文はapplication serviceがlookup HMACとauth-vault用ciphertextを同一transactionへ確定した後にmemoryから破棄する。
 
-`sync-api` middlewareはFUMINIWA access tokenを検証し、`AuthenticatedPrincipal(AccountID, TenantID, SessionID, fenceGeneration)`へ変換する。route handler、PostgreSQL sync transaction、S3 key builderはこのprincipalだけを使い、provider tableをjoinしない。
+`sync-api` middlewareはFUMINIWA access tokenを検証し、`AuthenticatedPrincipal(AccountID, TenantID, SessionID, fenceGeneration)`へ変換する。route handler、PostgreSQL sync transaction、`PostgresObjectStore`はこのprincipalだけを使い、provider tableをjoinしない。
 
 ## 5. PostgreSQL責務
 
@@ -122,7 +134,9 @@ Apple code exchangeは`providerCallStarted`を最初のnetwork byteより前にc
 
 Apple provider credentialは同じexternal identityでもoriginal authorization audience／`client_id`ごとに別grantとして所有する。Mac audienceとiOS／iPadOS audienceは同じAccountIDへ収束しても、`(external identity, audience, credential generation)`を別rowにする。再認証で同じaudienceの新refresh tokenを得た場合は、新generationを暗号化・read-backしてactiveへした後だけ旧generationをsupersedeし、別audienceのactive grantを変えない。consent revoke／account deletionは全active／superseded-but-not-revoked credentialを列挙し、それぞれ元のauthorization requestと一致する`client_id`でApple revokeを行う。一部失敗はAccount削除完了へ読み替えずdurable retryに残し、各credentialのApple revoke receiptをread-backできるまでremote削除完了にしない。
 
-## 6. Swift client moduleと保存境界
+## 6. Swift clientの責務と保存境界
+
+以下の図の`NovelAuthDomain`／`NovelAuthHTTP`／`NovelAuthKeychain`は設計上の責務名である。現行targetは`NovelAuth`（domain・HTTP・Keychain・session coordinator）と`NovelAuthApple`の2つで、`NovelKit/Package.swift`が構成の正となる。
 
 ```text
 NovelAuthDomain
@@ -207,10 +221,12 @@ Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を�
 - 初回のオンライン保存設定と再認証にはApple標準のSign in with Apple buttonだけを出し、provider picker、email／password form、未実装provider、AccountIDを表示しない。
 - 通常の作品棚とeditorは認証画面を経由せずlocalから開く。access token expiryは小さな「ログインが必要」状態に留め、modalで執筆、autosave、遷移、closeを塞がない。
 - sign-outの文言は「オンライン保存からサインアウト」とし、端末内原稿を削除する操作に見せない。アカウント削除とは別操作であることを明示する。
-- 同じAccountIDへ戻った場合は送信を安全に再開する。別AccountIDなら「別のオンラインアカウントです」とだけ示し、旧accountの作品名／存在を新account側へ漏らさず、明示Export／Import以外で移さない。
+- 同じAccountIDでもfenceを検証して再開する。別AccountIDの未取得remote行・titleを新scopeへ表示しない。検証済みlocal作品は保留状態としてlocal open／editを維持する。別accountへの移動は明示Export／Importまたはnew WorkID cloneだけとし、暗黙rebindしない（D-080 / D-084）。
 - `serverReadableV1`の説明は初回オンライン保存の確認とprivacy説明から到達できるようにし、「Appleでサインイン」だけで運用者にも読めないと誤認させない。
 
-## 10. GateとLuna実装順
+## 10. 受入基準と利用者判断
+
+各R番号は旧計画の分類名として保持する。着手順や未実装を示すものではない。変更した境界に対応する検証を選び、実装・実DB・署名済み実機・公開運用の結果を分けて記録する。
 
 ### R0 Auth Contract Gate
 
@@ -237,14 +253,8 @@ Apple clientは`ASAuthorizationAppleIDProviderCredentialRevokedNotification`を�
 - TLS、rate limit、brute-force／replay防止、token／PII log scan、DB role、incident時の全session revoke＋fence rotationをsecurity reviewする。
 - recovery／アプリ内account deletion開始導線、Apple token revoke、remote data削除完了のread-back、server-readable disclosure、署名済みMac＋iPhoneの失効／再認証を通すまでProduction GOにしない。
 
-Lunaには次の順で、各段階を別PRとして依頼する。
+### 利用者が決めるもの
 
-1. **R0文書／fixtureのみ**: auth state、request／response、Apple claim fixture、fence／account-switch scenarioをfreezeする。コードを書かない。
-2. **Rust pure domain＋migration**: provider-neutral state／port、table／constraint、transaction test。network adapterはまだ入れない。
-3. **Apple adapter**: code exchange、JWT／JWKS、credential vault、typed failure。同期routeへ直結しない。
-4. **FUMINIWA session＋fence**: opaque token、refresh rotation、capabilities、Axum principal middleware。
-5. **Apple notification／revoke**: idempotent receipt、revocation transaction、fence rotation、operator recovery。
-6. **Swift auth**: `NovelAuthDomain`→Keychain／HTTP→Apple adapter→App compositionの順。UIより先にaccount-switch／offline fixtureを通す。
-7. **Integration／Production hardening**: real signed devices、lost response、restart、notification duplicate、backup restore、security audit。
+公開前に、Appleが唯一のidentityだった場合の回復手段、account削除の取消猶予、remote原稿とbackupの保持・削除期間を決める。実装側はその選択肢とデータへの影響を提示してからversioned lifecycle契約へ落とす。既に採択済みのApple-only／server-readableを再承認の対象に戻さない。
 
-将来OIDC adapterやlink UI／APIはApple-only v1の合格後に別Decision／PRで追加し、既存AccountIDを作り直さない。
+今の優先課題と検証順は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を使う。将来OIDC adapterやlink UI／APIを追加する場合は別Decisionとし、既存AccountIDを作り直さない。

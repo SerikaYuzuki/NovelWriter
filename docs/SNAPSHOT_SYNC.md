@@ -1,8 +1,10 @@
-# FUMINIWA Snapshot Sync 設計
+# FUMINIWA Snapshot Sync v1 設計（履歴）
 
-> **状態**: D-077／D-078で採択した次世代の保存・同期契約。protocol v1は`serverReadableV1`／E2EEなし、Productionの外部identity providerはSign in with Appleだけに確定した。現時点は設計のみで、Rust server、SQLite client、auth、migrationは未実装。現行Appの保存先はまだ`.novelpkg`であり、本書を追加しただけでSQLite移行済み・出荷可能とは扱わない。
->
-> **対象**: macOS 14以降、iOS / iPadOS 17以降、将来のWindows。通常利用はlocal-first、同期とオンライン履歴は同じ不変Snapshotを扱う。
+本書はD-077／D-078で採択したSnapshot Sync v1の設計記録である。D-080により、通常macOS／iOS Appの同期経路は別namespaceのv2へ置き換わった。現在の設計は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、実装状況と次の作業は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)を参照する。
+
+以下はv1の設計判断、用語、schemaと移行案を比較するために保存している。作成時はRust server／SQLite client／authが未実装だったが、その記述は現在の実装状況を表さない。外部CAS、S3、SyncIntent／SealedAttempt、CloudKit migrationの具体契約をv2へそのまま適用しない。凍結済みのv1 wireとfixtureは[sync/v1/](sync/v1/)に残す。
+
+local-first、原稿保全、server-readable、Apple-only認証などの継承範囲と変更点は[DECISIONS.md](DECISIONS.md) D-080以降を正とする。本書の実装順やRelease Gateはv1当時の記録である。
 
 ## 1. 製品契約
 

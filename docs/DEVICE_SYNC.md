@@ -1,12 +1,12 @@
-# FUMINIWA Device Sync 契約
+# FUMINIWA Device Sync 設計・検証履歴
 
-> **状態**: D-077〜D-079のSQLite local canonical／Rust Snapshot Sync／`serverReadableV1`／Sign in with Appleを現行契約とする。Rust server、client、auth、Production hardeningは継続中でRelease NO-GO。旧CloudKit adapter、entitlement、runtimeは削除済みで、新しい同期はCloudKitへ接続しない。旧CloudKit recordの削除やremote操作はこのアプリから行わない。新規設計の正は[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)と本書0章。0-histと1〜15章は履歴で、新しい同期コードへ分岐を足さない。負債とGitHubの載せ方は[CODE_HEALTH.md](CODE_HEALTH.md)
->
-> **対象**: macOS 14以降、iOS / iPadOS 17以降。将来のWindows / Android実装を妨げない
->
-> **正とする上位契約**: [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) D-077／D-078、[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)、[AUTH.md](AUTH.md)、[IOS.md](IOS.md)、[CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+本書は、Episode同期、whole-work同期、CloudKit Note同期からSnapshot Sync v1へ移った経緯を残す履歴資料である。0章を含む本文の「現行」「次」「完了」は各方式を実装・検証した当時を指し、現在の作業指示や出荷判定には使わない。
 
-## 0. D-077のSQLite／Snapshot Sync契約
+現在のmacOS／iOS通常targetはSnapshot Sync v2だけを同期経路とする。設計は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、実装状況と残る検証は[SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md)、コードの接続関係は[CODE_HEALTH.md](CODE_HEALTH.md)を参照する。CloudKit adapterはD-079で廃止され、v1もD-080で履歴になった。旧recordや保存データを変更・削除する手順として本書を実行しない。
+
+履歴を読む範囲は、v1設計の比較なら0章、Note同期の調査なら0-current章、whole-work同期なら0-hist章、Episode同期なら1〜15章に絞る。記録されたテスト件数は現在のv2検証を証明しない。
+
+## 0. D-077のSQLite／Snapshot Sync v1契約（履歴）
 
 - 端末内のcommit済み正本は1 local profileのSQLite、byte payloadはapp-private content-addressed storeとする。`.novelpkg`はImport／Exportだけに使う
 - native editor確定後、current entity、dense whole-work Snapshot、SyncIntentを同じtransactionで保存する。workerは送信直前にSealedAttemptを作り、autosave、画面遷移、background、close、quitはremoteを待たない
@@ -18,7 +18,7 @@
 - 旧CloudKitはread-only migration sourceとし、新serverと二重authorityにしない。詳細、schema責務、API、migration、Release Gateは[SNAPSHOT_SYNC.md](SNAPSHOT_SYNC.md)を正とする
 - protocol v1はserver-readable／E2EEなし、Productionの外部identity providerはSign in with Appleだけとする。同期APIはApple tokenでなくFUMINIWA発行sessionを使い、認証失効中もlocal編集を止めない。詳細は[AUTH.md](AUTH.md)を正とする
 
-## 0-current. D-071の現行Notes型／cloud library実装（移行前）
+## 0-current. D-071のNotes型／cloud library実装（履歴）
 
 D-071以降、通常のMac／iOS Appが使うlive同期は、作品全体を1つのrevision資産として送ることではない。画面の正は各端末のapp-private `.novelpkg`、転送の正はAppleメモの1枚に相当するentity record、作品の正は棚の上の1 `SyncWorkID` である。D-063のcatalog／private copy／account fenceは維持し、remote-only openはentity一式をpackageへ組み立てる。後続の0-hist章と1〜15章はD-059〜D-061の実装・検証履歴として残す。
 

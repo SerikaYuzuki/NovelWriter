@@ -7,6 +7,23 @@ the caller's SQLx transaction; object bytes, upload state, ownership and the
 command receipt cannot commit independently. The v1 `SyncServer/` directory,
 database, Docker project and volumes are never read or mounted.
 
+## Status and task entry points
+
+Source reviewed 2026-09-12. The server, Auth v1 adapter, role-split deployment,
+and local conformance tools are implemented; release acceptance remains open.
+The [current handoff](../docs/SNAPSHOT_SYNC_V2_HANDOFF.md) separates current
+source from 2026-08-18 staging/device observations.
+
+- Protocol changes: [v2 contract](../docs/sync/v2/README.md) and fixtures.
+- Ownership/bootstrap changes: [deployment contract](../docs/sync/v2/deployment.md).
+- Auth transactions: [AUTH_INTEGRATION.md](AUTH_INTEGRATION.md) and [Auth contract](../docs/AUTH.md).
+- Device TLS: [staging guide](../docs/SNAPSHOT_SYNC_V2_STAGING.md).
+
+Run the commands below from the repository root. Deployment examples mutate
+an explicitly selected v2 environment; reading or editing this README does not
+require starting the stack. Confirm the target project/volume before executing
+fresh provisioning. Exact-v2 restart uses the base Compose file only.
+
 ## Local development and LAN staging
 
 ```sh
@@ -131,9 +148,9 @@ data read-back.
 ## Verification
 
 ```sh
-cargo fmt --check
-cargo test --offline
-cargo clippy --offline --all-targets -- -D warnings
+cargo fmt --manifest-path SyncServerV2/Cargo.toml --check
+cargo test --manifest-path SyncServerV2/Cargo.toml --offline
+cargo clippy --manifest-path SyncServerV2/Cargo.toml --offline --all-targets -- -D warnings
 ```
 
 The PostgreSQL integration gate is opt-in. Set
@@ -153,9 +170,9 @@ an initialized database:
 
 ```sh
 FUMINIWA_V2_TEST_DATABASE_URL='postgres://.../fuminiwa_v2_test_repository_<uuid>' \
-  cargo run --bin sync_v2_scenario_runner
+  cargo run --manifest-path SyncServerV2/Cargo.toml --bin sync_v2_scenario_runner
 FUMINIWA_V2_TEST_DATABASE_URL='postgres://.../fuminiwa_v2_test_http_<uuid>' \
-  cargo test --test integration_gate postgres_and_http_scenarios_are_opt_in \
+  cargo test --manifest-path SyncServerV2/Cargo.toml --test integration_gate postgres_and_http_scenarios_are_opt_in \
   -- --exact --nocapture
 ```
 
@@ -254,10 +271,10 @@ used by macOS and iOS. Trusting the Caddy staging CA is a separate test-device
 setup step; do not weaken certificate validation in the app. Keep the server's
 `8092` port unexposed from the host.
 
-The non-installing export and verification procedure is documented in
+The public-root export and verification boundary is documented in
 [`docs/SNAPSHOT_SYNC_V2_STAGING.md`](../docs/SNAPSHOT_SYNC_V2_STAGING.md).
-Run [`Scripts/export-sync-v2-staging-ca.sh`](../Scripts/export-sync-v2-staging-ca.sh)
-to export only the public root, print its SHA-256 fingerprint, verify the leaf
-SAN `IP Address:192.168.11.5`, and read back `/v1/auth/capabilities` using
-`curl --cacert`. The script never uses `-k` and never installs trust; macOS and
-iOS trust are explicit, manual opt-in steps.
+The current export script still targets `fuminiwa-sync-v2-edge`, not this
+Compose revision's `fuminiwa-sync-v2-role-split-edge`, and checks namespace
+strings without checking Sync epoch 2. Resolve that mismatch before using it
+for this deployment. Its successful output alone is not a v2 epoch, account,
+or Work read-back. Device trust remains a separate explicit setup step.

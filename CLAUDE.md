@@ -1,5 +1,5 @@
-# CLAUDE.md
+# FUMINIWA
 
 @AGENTS.md
 
-作業ガイドはすべて AGENTS.md にある(Codex 等の他エージェントと共用)。設計は docs/DESIGN.md、決定記録は docs/DECISIONS.md を参照。
+共通の作業ガイドは[AGENTS.md](AGENTS.md)。詳細はその参照表から作業に必要なものだけを読む。

@@ -1,10 +1,13 @@
 # FUMINIWA Codex canonical deployment manifest v1
 
-**Status: retained B1-B4-D feasibility artifact. D-054 defers B4-E and all
-production provider/runtime work until an explicit re-evaluation of the latest
-stable SDK/API. This manifest is not an active deployment plan.**
+This is a historical B1–B4-D feasibility record. D-075 removed the Swift/Node
+implementation, fixtures, tests, and Experimental target. Read it only when
+investigating the old artifact-identity design; it is not an active deployment
+plan or a contract to reuse. A future provider integration starts with current
+official API/SDK research and a new Decision. The current product feature is
+[clipboard prompt copy](../../docs/CLIPBOARD_AI_ASSIST.md).
 
-This document defines the bytes measured by `sidecar_bundle_sha256` in Codex
+The historical format below defines the bytes measured by `sidecar_bundle_sha256` in Codex
 sidecar protocol v1. It is a supply-chain identity format, not a package
 installer, a code-signing replacement, or an OS sandbox.
 
@@ -491,7 +494,10 @@ Until those properties and the remaining isolation/process Gates in
 `docs/AI_INTEGRATION.md` are proven, manifest v1 is only a canonical identity
 primitive and `codex_sdk` mode remains forbidden.
 
-## Local test command
+## Historical local test command
+
+D-075 removed the following test files and target. These commands record the
+old verification setup; they are not runnable checks for the current app.
 
 The manifest oracle, filesystem rejection, packager copy, B4-A policy, B4-B
 Node inspector, B4-C suspended identity, and B4-D interactive transport suites

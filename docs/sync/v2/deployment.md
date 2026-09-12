@@ -13,8 +13,8 @@ sync schema:      sync_v2 (separate schema namespace)
 object bytes:     sync_v2.global_blobs.raw_bytes BYTEA
 ```
 
-The v2 Compose revision uses one initialization role plus three isolated
-application roles:
+The v2 Compose revision uses one official initialization role, one temporary
+bootstrap-admin role, and three persistent application roles:
 
 - The official PostgreSQL OID-10 initialization role is used only by the
   one-shot `bootstrap-admin` service. It creates
@@ -39,8 +39,8 @@ application roles:
 The server opens its pool only as `fuminiwa_sync_v2_runtime`; it never invokes
 SQLx migrations or writes deployment metadata. Startup performs catalog
 identity, role/ACL, exact marker, and binding read-back. PostgreSQL has no
-  separate sequence `EXECUTE` privilege; `USAGE` is the exact minimum
-  PostgreSQL privilege required for the server's nextval-backed inserts.
+separate sequence `EXECUTE` privilege; `USAGE` is the exact minimum
+PostgreSQL privilege required for the server's nextval-backed inserts.
 
 Fresh bootstrap is the only path that creates roles, applies grants, or
 downgrades the temporary admin. A re-run against an exact v2 volume first
@@ -124,8 +124,9 @@ and ACLs, apply a versioned non-destructive ownership/grants migration, and
 read back every role/object/privilege before any cutover. Until that tool and
 rollback evidence exist, retain the old v2 stack/volume and deploy the new
 Compose project only with a newly provisioned
-`fuminiwa-sync-v2-role-split-data` volume. The existing
-`fuminiwa-sync-v2-data` staging volume remains untouched.
+`fuminiwa-sync-v2-role-split-data` volume. The earlier `fuminiwa-sync-v2-data` volume is outside this deployment
+procedure. Its current existence and contents must be inventoried before an
+operator change; this document is not evidence of live volume state.
 
 `PostgresObjectStore` is the only initial `ObjectStore` implementation. A
 future S3 adapter requires a new versioned deployment manifest, data-copy plus

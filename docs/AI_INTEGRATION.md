@@ -1,10 +1,10 @@
-# AI統合 技術契約
+# AI provider統合の設計・研究履歴
 
-**状態: D-075でprovider／fake UI／sidecarの実装・fixture・testを削除。以下はB4-Dまでの研究を残す履歴・再設計条件であり、現行の実装・build target・production catalogではない / B4-E以降は最新stable SDK／APIの明示再評価まで延期 / 通常版の現行AI支援はprovider非依存のclipboard prompt copy**
+通常版のAI支援は、校正／アドバイス用プロンプトを明示的にコピーする[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)を正とする。provider／networkへの接続はない。
 
-本書は、ふみにわ（FUMINIWA）が将来provider統合を再開するときの実装境界と安全条件、およびB4-Dまでに固定した研究成果を定める。個別判断は[DECISIONS.md](DECISIONS.md)のD-040 / D-043 / D-046〜D-054、現行のAI支援は[CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)、実装順は[DESIGN.md](DESIGN.md)、公開Releaseの技術Gateは[COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)を正とする。
+本書はB4-Dまでのprovider統合研究と、その際に検討した安全条件を残す。実装・fixture・test・Experimental targetはD-075で削除済みであり、本文のAPIや実装順を再利用契約として扱わない。将来の統合を明示的に検討するときだけ読み、最新の公式API／SDKと要件から新しいDecisionを作る。
 
-この契約を文書化したことや純粋domainを追加したことは、AI機能、Codex接続、OpenRouter接続、履歴非保持、配布可能性の完成を意味しない。
+判断経緯は[DECISIONS.md](DECISIONS.md) D-043、D-046〜D-054、D-075、当時の成果と未達条件は[CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md](CODEX_SDK_FEASIBILITY_REPORT_2026-08-09.md)を参照する。研究記録の存在は、実provider接続、履歴非保持、配布可能性を証明しない。
 
 ## 0. 現在の判断
 

@@ -1,8 +1,8 @@
-# Phase 4.5 / Phase 5 実行計画: 安定化・作品ライフサイクル・出力
+# Phase 4.5 / Phase 5 完了記録: 安定化・作品ライフサイクル・出力
 
-**状態: Phase 4.5 / UI-FIX-1〜5 / UI-REV-1〜9 / UI-REF-1〜6 / UI-POL-1〜4 / Phase 5完了。Phase 5の提供形式はTXT / Markdown / EPUB 3で、PDFは対象外。D-037の「AI実装後にPDF」という固定順はD-040で破棄され、次はPackage Validator Gate。AIとPDFは公開Gate後に別々に再評価する。** Workbench再調整は [UIREFRESH.md](UIREFRESH.md)、UI磨き上げは [UIPOLISH.md](UIPOLISH.md) に記録した。
+Phase 4.5とPhase 5の完了記録。提供形式はTXT / Markdown / EPUB 3で、PDFはこの段階の対象外だった。出力仕様の成立経緯や回帰を確認するときに読む。Workbench再調整は[UIREFRESH.md](UIREFRESH.md)、UI磨き上げは[UIPOLISH.md](UIPOLISH.md)に記録している。
 
-本書は、Phase UI2 完了後の実装指示書兼完了記録である。前提は [../AGENTS.md](../AGENTS.md)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)(特に D-017 / D-022 / D-037)。
+以下のpackage保存、別名保存、snapshotコピー、実装順は当時の計画である。通常Appの保存・履歴はSQLite v2へ置き換わっており、現在の契約は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。出力機能の完了は、Package Validator、Windows互換、公開Gateの完了を意味しない。
 
 ## この計画で解決すること
 
@@ -179,8 +179,8 @@ Phase 5 の前提を小さな PR で満たす。以下の各小節は **1 ブラ
 
 **完了条件:** 3形式すべてを同じ原稿から書き出せ、失敗時にも原稿と既存出力が残る。
 
-## Phase 5 完了後の順序
+## Phase 5 完了時に記録した順序
 
-Phase 5完了後の現行順序は、商業化の **Package Validator Gate**、続いて **External Change / Conflict Gate** と公開Gateである(D-040)。AI支援とPDFは公開Gate後に需要・費用・プライバシー・権利リスクを別々に評価する。iPadでの執筆需要が明確な場合だけ、D-013に従ってPhase 7の順序を再判定する。
+当時は **Package Validator Gate**、**External Change / Conflict Gate**、公開Gateの順を記録した(D-040)。AI支援とPDFの固定順を撤回し、別々に再評価する方針だった。その後のiOS実装、clipboard支援、Snapshot Sync v2への変更は[DECISIONS.md](DECISIONS.md)と[DESIGN.md](DESIGN.md)に反映されているため、この順序を現在の着手指示として使わない。
 
 次の大きな機能を始める前に、Phase 4.5-3 の性能記録、出力の不具合、未実施の Nice to have を棚卸しし、「安定化 PR」と新機能を混ぜない。

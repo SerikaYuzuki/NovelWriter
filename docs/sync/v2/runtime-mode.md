@@ -1,31 +1,23 @@
-# v2 RuntimeMode and physical isolation
+# v2 RuntimeModeと実行環境の分離
 
-The application composition is selected before any root, URL, Keychain, or
-transport is constructed. The public shape is intentionally closed:
+目的は、test／previewの操作から利用者のSQLite、URL、Keychainへ到達できない構成にすること。規範はD-080、現行型は`NovelKit/Sources/NovelSyncV2Application/RuntimeMode.swift`、組み立ては`NovelSyncV2Runtime/SnapshotSyncV2Runtime.swift`にある（2026-09-12 source照合）。
 
 ```swift
-enum RuntimeMode: Sendable {
-    case production(ProductionDependencies)
-    case test(TestDependencies)
-    case preview(PreviewDependencies)
-}
-
-struct TestDependencies: Sendable {
-    let root: TestRoot
-    let transport: FakeTransport
-    let keychain: TestKeychain
+public enum RuntimeMode: Sendable {
+    case production(ProductionRuntimeConfiguration)
+    case test(TestRuntimeConfiguration)
+    case preview(PreviewRuntimeConfiguration)
 }
 ```
 
-`ProductionDependencies`, `TestRoot`, `FakeTransport`, and `TestKeychain` are
-distinct types. A test cannot construct a production root, production URL, or
-production Keychain through this API; a production composition cannot accept a
-test root. There is no archive case in `RuntimeMode`. Archive reading belongs
-to a separate offline migration executable and cannot construct a live worker.
+| mode | 構成 | 成功条件 |
+| --- | --- | --- |
+| production | `ProductionLocalRoot`、optional `ProductionHTTPSOrigin`／auth vault、document gate | platform Application Support配下の`FUMINIWA/SnapshotSyncV2/`だけを開き、online未設定でもlocal編集できる |
+| test | `TestLocalRoot`、`TestDefaults`、`TestSyncV2Vault`、`FakeSyncV2RemoteClient` | runごとの一時root・defaults・fakeから利用者領域や本番transportへ到達できない |
+| preview | 固定値 | SQLite／network／Keychain I/Oを起こさない |
 
-`preview` uses fixed values and no SQLite/network/Keychain. `test` requires a
-temporary root and injected fake transport/keychain. It rejects symlink roots,
-production URLs, and any URL whose host is not the test harness. `production`
-derives the v2 root from the platform application-support container and uses
-only the `/v2` HTTPS origin. The runtime mode is not selected by an arbitrary
-UserDefaults string after startup.
+modeはrootやtransportの生成前に決まる。任意のUserDefaults値で起動後に切り替えない。production構成はtest rootを受け取らず、test構成はproduction URL／Keychainを受け取らない。rootはsymlinkと領域外pathを拒否し、production originはcredential、query、fragmentを含まないHTTPS originに限定する。
+
+archive readerは別のoffline executableであり、RuntimeModeにarchive caseを追加しない。live appへv1 reader、dual-read、fallbackを接続しない。
+
+検証は`Scripts/check-sync-v2-boundary.sh`と対応するapplication/runtime testsを使う。testが利用者のDB／WAL／SHMを生成しないことまで確認し、型定義があるだけで分離達成としない。

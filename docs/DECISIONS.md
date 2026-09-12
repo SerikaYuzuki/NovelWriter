@@ -2,6 +2,24 @@
 
 設計・技術選定の決定を記録する。新しい決定は末尾に追加し、覆す場合は元の決定を消さず「破棄(→ D-XXX)」とマークする。
 
+## 現行決定への入口（2026-09-12整理）
+
+この記録は採択時の理由・条件を保存する。全項目を毎回読む必要はなく、変更する境界と下表の置換関係から該当決定を読む。日付付きの「実装中」「完了」は当時の証拠であり、今日の受入状況は[CODE_HEALTH](CODE_HEALTH.md)と[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)で確認する。
+
+| 境界 | 適用する決定・置換関係 |
+| --- | --- |
+| 本文・IME・TextKit・章と話 | D-004〜D-006、D-028、D-033、D-055。現在の入口は[DESIGN 4章](DESIGN.md#4-各モジュールの責務) |
+| 作品ライフサイクル・復旧 | D-039 / D-041。通常保存先はD-077を経てD-080のv2 SQLiteへ置換 |
+| 通常版AI | D-054のclipboard支援を維持。D-075で旧provider / sidecar実装を削除。過去の統合計画を現行作業へ戻さない |
+| 同期と保存 | **D-080〜D-085が現行**。D-077〜D-079のlocal-first / server-readable / Apple / account境界を継承し、v1のwire / schema / runtimeを置換 |
+| PostgreSQLのrole | D-081のsequence grantはD-082でUSAGE-onlyへ部分撤回。bootstrapはD-083に加えD-085の初期化専用OID分離を適用 |
+| Account transition | D-084。owner付き停止、park / quarantine、scope再計画を適用 |
+| CloudKit・旧entity同期 | D-079 / D-080で通常経路から廃止。D-059〜D-074の旧同期仕様は移行経緯として読む |
+| UI・互換・配布 | D-020、D-036、D-040、D-044、D-056〜D-058等の製品要件は維持。現在の接続状況は[IOS](IOS.md) / [STYLE](STYLE.md) / [CROSS_PLATFORM](CROSS_PLATFORM.md) |
+| 検証・生成 | D-014 / D-015。マージ前のローカル全体GateとXcodeGenを維持 |
+
+文書の全面整理では設計決定の採択・破棄を追加していない。旧本文は残し、入口・現況・適用範囲を更新した。製品上の選択が必要なものは[OWNER_DECISIONS](OWNER_DECISIONS.md)に分ける。
+
 ---
 
 ## D-001: UI は SwiftUI + AppKit(NSTextView)アダプタ構成

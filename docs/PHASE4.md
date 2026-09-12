@@ -1,9 +1,10 @@
-# Phase 4 実行計画: 小説執筆支援機能
+# Phase 4 完了記録: 小説執筆支援機能
 
-Phase 4 の詳細なサブフェーズ分解。**実行エージェント(Codex 等)はこのファイルを作業指示書として使うこと。**
-前提知識は [../AGENTS.md](../AGENTS.md)(必読)、設計は [DESIGN.md](DESIGN.md)、決定記録は [DECISIONS.md](DECISIONS.md)。
+Phase 4-1〜4-6の実装目的、当時の計画と完了条件を残す記録である。機能の成立経緯や回帰を調べるときに必要な節だけ読む。現在の次タスクは[DESIGN.md](DESIGN.md) 11章を参照する。
 
-## 進め方の共通ルール
+以下のpackage配置は当時のformat v2の説明であり、現在のSQLite正本や`.novelpkg` format v3の契約ではない。現在の保存境界は[SNAPSHOT_SYNC_V2.md](SNAPSHOT_SYNC_V2.md)、portable形式は[CROSS_PLATFORM.md](CROSS_PLATFORM.md)を正とする。
+
+## 当時の進め方
 
 - **1サブフェーズ = 1ブランチ = 1PR**。着手順は 4-1 → 4-2 → 4-4 を必須の背骨とし、4-3 / 4-5 / 4-6 はその後に任意の順で
 - 各サブフェーズ内のコミットは「モデル(+テスト)→ 保存層(+テスト)→ UI」の順の意味単位で
