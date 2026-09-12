@@ -60,6 +60,7 @@ public extension SyncV2CommandPlanner {
 /// capability/upload/register/publish or conflict/restore sequence internally;
 /// the application service never builds URLs or interprets HTTP/SQL details.
 public protocol SyncV2RemoteClient: Sendable {
+    func deleteWork(workID: WorkID, binding: SyncV2AccountScopeBinding) async throws
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
     func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
@@ -69,6 +70,10 @@ public protocol SyncV2RemoteClient: Sendable {
 }
 
 public extension SyncV2RemoteClient {
+    func deleteWork(workID _: WorkID, binding _: SyncV2AccountScopeBinding) async throws {
+        throw SyncV2Failure.fatal(.unexpected)
+    }
+
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
         _ = workID
         throw SyncV2ApplicationError.workNotFound
@@ -96,6 +101,9 @@ public extension SyncV2RemoteClient {
 }
 
 public protocol SyncV2LocalKernel: Sendable {
+    func prepareWorkDeletion(workID: WorkID) async throws -> SyncV2WorkDeletion
+    func completeWorkDeletion(_ deletion: SyncV2WorkDeletion) async throws
+    func workDeletions() async throws -> [SyncV2WorkDeletion]
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
     /// Retires the active account binding without rebinding the Work. The
@@ -153,4 +161,18 @@ public protocol SyncV2LocalKernel: Sendable {
     func installRemoteOnly(
         _ inbox: SyncV2RemoteInbox
     ) async throws -> SyncV2OpenedWork
+}
+
+public extension SyncV2LocalKernel {
+    func prepareWorkDeletion(workID _: WorkID) async throws -> SyncV2WorkDeletion {
+        throw SyncV2ApplicationError.safeBoundaryRejected
+    }
+
+    func completeWorkDeletion(_: SyncV2WorkDeletion) async throws {
+        throw SyncV2ApplicationError.safeBoundaryRejected
+    }
+
+    func workDeletions() async throws -> [SyncV2WorkDeletion] {
+        []
+    }
 }

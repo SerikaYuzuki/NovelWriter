@@ -6,6 +6,9 @@ import SwiftUI
 struct LibraryPane: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
+    @State private var pendingDeletion: StartupLibraryWork?
+    @State private var deletionAccountScope: SnapshotSyncV2AccountScopeToken?
+    @State private var deletingIDs: Set<UUID> = []
     @State private var showingHistory = false
     @State private var selection: UUID?
     @State private var searchText = ""
@@ -62,7 +65,8 @@ struct LibraryPane: View {
                         .tag(work.id)
                         .contextMenu {
                             Button("開く") { open(work) }
-                                .disabled(!work.isOpenable)
+                                .disabled(!canOpen(work))
+                            deleteButton(work)
                         }
                         .accessibilityIdentifier("library.work.\(work.id.uuidString)")
                     }
@@ -85,7 +89,8 @@ struct LibraryPane: View {
             }
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
-                    Button("開く") { open(work) }.disabled(!work.isOpenable)
+                    Button("開く") { open(work) }.disabled(!canOpen(work))
+                    deleteButton(work)
                 }
             } primaryAction: { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
@@ -100,7 +105,7 @@ struct LibraryPane: View {
                         open(work)
                     }
                 }
-                .disabled(!works.contains { $0.id == selection && $0.isOpenable })
+                .disabled(!works.contains { $0.id == selection && canOpen($0) })
             }
             .padding(.horizontal, 12)
             Text(connectionLabel)
@@ -108,6 +113,25 @@ struct LibraryPane: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
+        }
+        .alert("作品を完全に削除しますか？", isPresented: Binding(get: { pendingDeletion != nil }, set: {
+            if !$0 {
+                pendingDeletion = nil
+            }
+        })) {
+            Button("削除", role: .destructive) {
+                guard let work = pendingDeletion, let accountScope = deletionAccountScope else { return }
+                deletingIDs.insert(work.id)
+                Task {
+                    if await appState.deleteLibraryWork(work, accountScope: accountScope) {
+                        selection = nil
+                    }
+                    deletingIDs.remove(work.id)
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("「\(pendingDeletion?.title ?? "")」の本文・履歴・添付ファイルを、この端末と同期先サーバーから削除します。元に戻せません。別の作品として作ったコピーは残ります。")
         }
         .frame(minWidth: 220)
         .sheet(isPresented: $showingHistory) {
@@ -117,8 +141,20 @@ struct LibraryPane: View {
         }
     }
 
+    private func canOpen(_ work: StartupLibraryWork) -> Bool {
+        work.isOpenable && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
+    }
+
+    private func deleteButton(_ work: StartupLibraryWork) -> some View {
+        Button("削除…", systemImage: "trash", role: .destructive) {
+            deletionAccountScope = appState.snapshotSyncV2AccountScopeToken
+            pendingDeletion = work
+        }
+        .disabled(deletingIDs.contains(work.id) || work.availability == .parked || work.availability == .excluded)
+    }
+
     private func open(_ work: StartupLibraryWork) {
-        guard work.isOpenable else { return }
+        guard canOpen(work) else { return }
         Task {
             if await appState.openLibraryWork(work) {
                 openWindow(id: "workbench")
@@ -190,6 +226,9 @@ struct LibraryPane: View {
     }
 
     private func label(for work: StartupLibraryWork) -> String {
+        if appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID) {
+            return "削除待ち・接続時に再試行"
+        }
         switch work.remoteProgress {
         case .pending, .syncing, .retryable:
             return "同期待ち"

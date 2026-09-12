@@ -704,3 +704,18 @@ CREATE INDEX inbox_by_work ON inbox_batches(work_id, state);
 -- acknowledges only that still-pending Intent, and applies the Inbox CAS. A
 -- sealed Intent, active Conflict, extra pending Intent, or concurrent edit
 -- rejects the transition without changing current, Inbox, or Intent state.
+
+-- Work deletion journal. It deliberately outlives works and contains no manuscript.
+CREATE TABLE work_deletions (
+  work_id TEXT PRIMARY KEY,
+  server_instance_id TEXT,
+  protocol_epoch INTEGER,
+  account_id TEXT,
+  account_fence TEXT,
+  phase TEXT NOT NULL CHECK (phase IN ('pending', 'completed')),
+  created_at TEXT NOT NULL,
+  CHECK (
+    (server_instance_id IS NULL AND protocol_epoch IS NULL AND account_id IS NULL AND account_fence IS NULL) OR
+    (server_instance_id IS NOT NULL AND protocol_epoch IS NOT NULL AND protocol_epoch > 0 AND account_id IS NOT NULL AND account_fence IS NOT NULL)
+  )
+);

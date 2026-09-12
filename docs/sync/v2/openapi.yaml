@@ -56,6 +56,31 @@ paths:
         '422': { $ref: '#/components/responses/TypedError' }
         '426': { $ref: '#/components/responses/ProtocolMismatch' }
         default: { $ref: '#/components/responses/TypedError' }
+  /v2/works/{workId}:
+    delete:
+      operationId: v2DeleteWork
+      description: Idempotent permanent deletion in the authenticated account. Unknown IDs receive the same response and are reserved against future creation. See work-deletion.md.
+      parameters:
+        - { $ref: '#/components/parameters/WorkId' }
+        - { $ref: '#/components/parameters/ServerInstance' }
+        - { $ref: '#/components/parameters/ProtocolEpoch' }
+        - { $ref: '#/components/parameters/AccountFence' }
+      responses:
+        '200':
+          description: All live work data removed; Cache-Control no-store and Pragma no-cache.
+          content:
+            application/vnd.fuminiwa.sync.v2+jcs:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [result, workId]
+                properties:
+                  result: { const: deleted }
+                  workId: { type: string, format: uuid }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/FenceMismatch' }
+        '426': { $ref: '#/components/responses/ProtocolMismatch' }
+        default: { $ref: '#/components/responses/TypedError' }
   /v2/works/{workId}/head:
     get:
       operationId: v2GetHead

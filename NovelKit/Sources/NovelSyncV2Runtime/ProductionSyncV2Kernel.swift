@@ -14,6 +14,28 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         self.remote = remote
     }
 
+    func workDeletions() async throws -> [SyncV2WorkDeletion] {
+        var result: [SyncV2WorkDeletion] = []
+        for id in try await store.workDeletionIDs() {
+            if let record = try await store.workDeletion(workID: id) {
+                result.append(record.applicationValue)
+            }
+        }
+        return result
+    }
+
+    func prepareWorkDeletion(workID: WorkID) async throws -> SyncV2WorkDeletion {
+        try await store.prepareWorkDeletion(workID: workID, activeBinding: scope.activeBinding()).applicationValue
+    }
+
+    func completeWorkDeletion(_ deletion: SyncV2WorkDeletion) async throws {
+        guard let record = try await store.workDeletion(workID: deletion.workID), record.applicationValue == deletion else { throw SyncV2ApplicationError.safeBoundaryRejected }
+        // Recheck the account after the remote await; a different login cannot complete this intent.
+        let activeBinding = try await scope.activeBinding()
+        guard record.binding == nil || record.binding == activeBinding else { throw SyncV2Failure.accountFenceChanged }
+        try await store.completeWorkDeletion(record)
+    }
+
     func checkpoint(
         _ capture: SyncV2CheckpointCapture
     ) async throws -> SyncV2LocalCheckpoint {
@@ -44,6 +66,7 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
 
     func open(workID: WorkID) async throws -> SyncV2OpenedWork {
         do {
+            guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }
             let localScope = try await scope.existingScope(workID: workID)
             let result = try await store.open(workID: workID, scope: localScope)
             return SyncV2OpenedWork(
@@ -609,5 +632,13 @@ private extension SyncV2RemoteInbox {
                 generation: expectedRemoteHead.generation
             )
         )
+    }
+}
+
+private extension V2WorkDeletion {
+    var applicationValue: SyncV2WorkDeletion {
+        SyncV2WorkDeletion(workID: workID, binding: binding.map {
+            SyncV2AccountScopeBinding(accountID: $0.accountID, accountFence: $0.accountFence, serverInstanceID: $0.serverInstanceID, protocolEpoch: $0.protocolEpoch)
+        }, completed: completed)
     }
 }

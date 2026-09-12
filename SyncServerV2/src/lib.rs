@@ -17,3 +17,5 @@ pub use auth::RuntimeMode;
 pub use domain::{AuthenticatedPrincipal, CommandKind, SealedCommand, SyncError};
 pub use http::{router, AppState};
 pub use postgres::Repository;
+
+mod work_deletion;

@@ -29,6 +29,8 @@ public actor SyncV2Application {
     let gate: any SyncV2DocumentGate
     let libraryProvider: any SyncV2LibraryProvider
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
+    var deletionTasks: [WorkID: Task<Void, Error>] = [:]
+    var deletingWorkIDs: Set<WorkID> = []
     var workerTasks: [WorkID: Task<Void, Never>] = [:]
     /// Identity of the currently installed worker for each Work.  A cancelled
     /// task can still resume after a non-cooperative remote await, so a task

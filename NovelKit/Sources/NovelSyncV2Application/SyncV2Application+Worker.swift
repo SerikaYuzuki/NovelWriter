@@ -7,6 +7,9 @@ extension SyncV2Application {
     /// keeps command bytes and operation IDs stable.
     public func resumePending() async throws {
         guard runtimeIdentity != .preview, remoteSchedulingSuspensions.isEmpty else { return }
+        for deletion in try await kernel.workDeletions() where !deletion.completed {
+            Task { try? await self.deleteWork(workID: deletion.workID) }
+        }
         for workID in try await planner.pendingWorkIDs() {
             scheduleWorker(for: workID)
         }
@@ -24,7 +27,7 @@ extension SyncV2Application {
 
     func scheduleWorker(for workID: WorkID) {
         wakeEpochs[workID, default: 0] &+= 1
-        guard workerTasks[workID] == nil,
+        guard !deletingWorkIDs.contains(workID), workerTasks[workID] == nil,
               runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty else {
             return

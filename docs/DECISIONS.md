@@ -1137,3 +1137,7 @@
 - productionの明示同期は変更なしでも既存のcheckpoint intentを再要求し、sealed publish / receipt / verified Inboxによってremote headを確認する。送信待ちが空であることだけを「同期済み」の証拠にしない。既存pending/sealed commandは同一IDで再開する。
 - `publish/noChanges`が新しいremote descendantを返した場合、検証済みInboxと同account/fence/Work/source generationの完了receiptから安全な反映待ちを導く。DB schemaは変更しない。document gateと最新世代を再検査し、未送信変更・競合がなければ反映し、反映前版を履歴に保護する。編集が増えた場合は反映を拒否し、次の同期へ送る。
 - 実装・検証・実環境で未確認の境界は[EXPLICIT_SYNC_20260912](EXPLICIT_SYNC_20260912.md)を参照。
+
+## D-092: 作品一覧から端末とサーバーの作品を完全削除する
+
+2026-09-12採択。利用者の明示依頼により、macOS作品一覧の右クリックから本文・履歴・添付を完全削除する。端末intentを先に確定し、bound作品はserver成功後にlocal purgeする。通常保存・別作品の操作はHTTPを待たない。失敗は削除待ちとして再試行し、削除済みWorkIDの再作成を拒否する。詳細は[削除契約](sync/v2/work-deletion.md)。アカウント削除猶予とは別で、backupや別端末の物理消去を保証しない。

@@ -142,6 +142,43 @@ enum V2StoreSchema {
 
     static func open(_ db: OpaquePointer, create: Bool) throws {
         let sql = try resourceSQL()
+        if create {
+            return try openBase(db, create: true, sql: sql)
+        }
+        try execute(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")
+        if (try? attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
+            return
+        }
+        let marker = "\n-- Work deletion journal."
+        let source = String(decoding: sql, as: UTF8.self)
+        guard let boundary = source.range(of: marker) else { throw SyncV2StoreError.schemaMismatch }
+        let previous = Data(source[..<boundary.lowerBound].utf8)
+        // Attest and, if needed, migrate only an already-known previous schema.
+        // Unknown or tampered databases never acquire a deletion journal.
+        do {
+            try openBase(db, create: false, sql: previous)
+        } catch {
+            // Another store opener may have completed the additive upgrade.
+            try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
+            return
+        }
+        try execute(db, "BEGIN IMMEDIATE")
+        do {
+            if (try? attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))) != nil {
+                try execute(db, "COMMIT")
+                return
+            }
+            try execute(db, String(source[boundary.lowerBound...]))
+            try updateMetadata(db, checksum: checksum(sql))
+            try attest(db, expectedSQL: sql, expectedChecksum: checksum(sql))
+            try execute(db, "COMMIT")
+        } catch {
+            try execute(db, "ROLLBACK")
+            throw error
+        }
+    }
+
+    private static func openBase(_ db: OpaquePointer, create: Bool, sql: Data) throws {
         let expectedChecksum = checksum(sql)
         guard sqlite3_exec(
             db,

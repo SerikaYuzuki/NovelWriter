@@ -14,6 +14,7 @@ public extension LocalSyncV2Store {
         _ graph: V2RemoteSnapshotGraph,
         scope: V2LocalWorkScope
     ) throws {
+        try requireNotDeleting(graph.workID)
         guard case let .bound(binding) = scope else {
             throw SyncV2StoreError.accountMismatch
         }
@@ -525,11 +526,14 @@ extension LocalSyncV2Store {
         return graph
     }
 
+    // Atomic graph installation keeps its validation and writes in one routine.
+    // swiftlint:disable:next function_body_length
     func adoptGraphTransaction(
         _ graph: V2RemoteSnapshotGraph,
         expectedConflict: V2ServerResolutionRequest?,
         binding: V2AccountBinding
     ) throws {
+        try requireNotDeleting(graph.workID)
         _ = try validateGraph(graph)
         try validateGraphParents(graph)
         let inboxID = graph.inboxID.uuidString.lowercased()

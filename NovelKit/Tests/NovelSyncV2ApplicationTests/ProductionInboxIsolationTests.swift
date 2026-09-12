@@ -83,9 +83,7 @@ struct ProductionInboxIsolationTests {
         _ = try await app.open(workID: targetWorkID)
         try await app.resumePending()
         try await eventually {
-            await configuration.remote.recordedOperations().contains {
-                commandKind($0) == .publish
-            }
+            await app.uiState(workID: targetWorkID)?.lastFailure == .receiptMismatch
         }
         #expect(await app.uiState(workID: targetWorkID)?.lastFailure == .receiptMismatch)
 

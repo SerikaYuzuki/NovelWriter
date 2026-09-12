@@ -225,6 +225,12 @@ extension ProductionRestartTests {
         #expect(try await restarted.open(workID: fixture.workID).document?.title == "両方保持の追加入力")
         #expect(try await restarted.open(workID: clone.workID).document?.title == "端末版")
         let sourceStore = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .openExisting)
+        try await eventually {
+            try await sourceStore.allSealedCommands(scope: productionScope, workID: fixture.workID).contains {
+                $0.commandKind == "publish" && $0.sourceGeneration == newerIntent.sourceGeneration &&
+                    $0.sourceSnapshotID == newerIntent.sourceSnapshotID && $0.lifecycle == .sealed
+            }
+        }
         let sealedCommands = try await sourceStore.allSealedCommands(
             scope: productionScope,
             workID: fixture.workID

@@ -33,6 +33,7 @@ public struct SyncV2AccountTransitionRemoteSuspensionToken: Hashable, Sendable {
 }
 
 public enum SyncV2ApplicationError: Error, Equatable, Sendable {
+    case workDeletionPending
     case workNotFound
     case invalidRuntimeMode
     case previewReadOnly
@@ -220,5 +221,16 @@ public struct SyncV2PendingAdoption: Hashable, Sendable {
         self.expectedLocalVersion = expectedLocalVersion
         self.conflictID = conflictID
         self.conflictRevision = conflictRevision
+    }
+}
+
+public struct SyncV2WorkDeletion: Sendable, Equatable {
+    public let workID: WorkID
+    public let binding: SyncV2AccountScopeBinding?
+    public let completed: Bool
+    public init(workID: WorkID, binding: SyncV2AccountScopeBinding?, completed: Bool) {
+        self.workID = workID
+        self.binding = binding
+        self.completed = completed
     }
 }

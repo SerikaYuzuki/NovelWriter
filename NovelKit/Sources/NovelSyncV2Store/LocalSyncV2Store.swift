@@ -67,6 +67,7 @@ public extension LocalSyncV2Store {
         documentCreatedAt: Date,
         scope: V2LocalWorkScope
     ) throws {
+        try requireNotDeleting(workID)
         try inTransaction {
             let anchor = try Self.iso8601(documentCreatedAt)
             if let row = try scopedWorkRow(workID: workID, scope: scope) {
@@ -184,6 +185,7 @@ public extension LocalSyncV2Store {
         _ request: V2CheckpointRequest,
         scope: V2LocalWorkScope
     ) throws -> V2CheckpointResult {
+        try requireNotDeleting(request.workID)
         let existing = try scopedWorkRow(workID: request.workID, scope: scope)
         if existing == nil, try workExists(workID: request.workID) {
             throw SyncV2StoreError.workNotFound
@@ -272,6 +274,8 @@ public extension LocalSyncV2Store {
         newDocumentID: DocumentID,
         destination: V2AccountBinding
     ) throws -> V2CheckpointResult {
+        try requireNotDeleting(sourceWorkID)
+        try requireNotDeleting(newWorkID)
         guard sourceWorkID != newWorkID,
               let source = try scopedWorkRow(
                   workID: sourceWorkID,

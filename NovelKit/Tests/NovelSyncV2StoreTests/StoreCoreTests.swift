@@ -432,7 +432,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
     let databaseURL = await store.databaseURL
     await store.close()
     let canonicalData = try SnapshotSyncV2SchemaContract.resourceSQL()
-    let canonical = String(decoding: canonicalData, as: UTF8.self)
+    let canonical = String(decoding: canonicalData, as: UTF8.self).components(separatedBy: "\n-- Work deletion journal.")[0]
     let transferStart = try #require(canonical.range(of: "CREATE TABLE upload_transfers ("))
     let transferEnd = try #require(
         canonical.range(of: "CREATE TABLE remote_receipts (", range: transferStart.upperBound ..< canonical.endIndex)
@@ -459,6 +459,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
         .joined()
     let rewrite = """
     BEGIN IMMEDIATE;
+    DROP TABLE work_deletions;
     ALTER TABLE restore_records RENAME TO restore_records_modern;
     \(legacyRestoreDDL)
     INSERT INTO restore_records(
@@ -486,7 +487,7 @@ func legacyRestoreStateMigratesPreparedAndSealedRowsWithoutDataLoss() async thro
     let migrated = try LocalSyncV2Store(root: root, policy: .openExisting)
     let schema = try await migrated.schemaVersionAndChecksum()
     #expect(schema.0 == SnapshotSyncV2SchemaContract.version)
-    #expect(schema.1 == SnapshotSyncV2SchemaContract.checksum(Data(canonical.utf8)))
+    #expect(schema.1 == SnapshotSyncV2SchemaContract.checksum(canonicalData))
     let rotated = V2AccountBinding(
         accountID: bindingA.accountID,
         accountFence: "legacy-migrated-fence",

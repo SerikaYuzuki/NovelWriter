@@ -341,6 +341,11 @@ extension AppState {
                 }
                 return
             }
+            if userDefaults.bool(forKey: "fuminiwa.v2.startInLibrary") {
+                await refreshSnapshotLibrary()
+                startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks, presentation: .localAndRemote, connection: lastStartupLibraryConnection))
+                return
+            }
             let workID = userDefaults.string(forKey: "fuminiwa.v2.activeWorkID")
                 .flatMap(UUID.init(uuidString:))
                 .map { WorkID($0) }
@@ -366,6 +371,12 @@ extension AppState {
                     snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
                     await refreshSnapshotSyncV2UIState()
                     shouldCreateFreshWork = false
+                } catch SyncV2ApplicationError.workDeletionPending {
+                    userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
+                    userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
+                    await refreshSnapshotLibrary()
+                    startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks, presentation: .localAndRemote, connection: lastStartupLibraryConnection))
+                    return
                 } catch SyncV2ApplicationError.workNotFound {
                     // A fresh database may follow quarantine of an old v2
                     // schema. The persisted preference then points to a
@@ -520,6 +531,7 @@ extension AppState {
         )
         snapshotSyncV2ActiveWorkID = workID
         snapshotSyncV2DocumentCreatedAt = Self.normalizedSnapshotSyncV2Date(createdAt)
+        userDefaults.removeObject(forKey: "fuminiwa.v2.startInLibrary")
         userDefaults.set(workID.rawValue.uuidString, forKey: "fuminiwa.v2.activeWorkID")
         snapshotSyncV2Session = nil
         saveState = .saved

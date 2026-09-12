@@ -692,6 +692,7 @@ async fn postgres_and_http_scenarios_are_opt_in() {
         .await
         .expect("Snapshot Sync v2 PostgreSQL scenario failed");
     verify_http_contract(&context).await;
+    verify_work_deletion(&context).await;
     context.repo.pool.close().await;
 }
 
@@ -708,4 +709,107 @@ fn integration_url_requires_an_isolated_sync_test_database() {
     ] {
         assert!(support::validate_test_database_url(rejected).is_err());
     }
+}
+
+async fn verify_work_deletion(context: &ScenarioContext) {
+    let account = &context.account_a.account_id;
+    let foreign_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sync_v2.snapshots WHERE account_id=$1")
+            .bind(&context.account_b.account_id)
+            .fetch_one(&context.repo.pool)
+            .await
+            .unwrap();
+    // A foreign WorkID cannot address another account's work.
+    let (status, _, _) = request(
+        context,
+        account,
+        "DELETE",
+        &format!("/v2/works/{}", context.foreign_work),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let foreign_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2)",
+    )
+    .bind(&context.account_b.account_id)
+    .bind(context.foreign_work)
+    .fetch_one(&context.repo.pool)
+    .await
+    .unwrap();
+    assert!(foreign_exists);
+    let works: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT work_id FROM sync_v2.works WHERE account_id=$1 ORDER BY work_id",
+    )
+    .bind(account)
+    .fetch_all(&context.repo.pool)
+    .await
+    .unwrap();
+    // Delete source first, then all remaining conflict/restore/clone graphs.
+    let mut ordered = vec![context.primary_work];
+    ordered.extend(works.into_iter().filter(|w| *w != context.primary_work));
+    for work in ordered {
+        for _ in 0..2 {
+            let (status, headers, bytes) = request(
+                context,
+                account,
+                "DELETE",
+                &format!("/v2/works/{work}"),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{}",
+                String::from_utf8_lossy(&bytes)
+            );
+            assert_eq!(headers["cache-control"], "no-store");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap(),
+                serde_json::json!({"result":"deleted","workId":work})
+            );
+        }
+        let bytes = command_bytes(
+            account,
+            CommandKind::CreateWork,
+            Uuid::new_v4(),
+            work,
+            [0x11; 32],
+            1,
+            serde_json::json!({"documentId":Uuid::new_v4(),"workId":work}),
+        );
+        let command = parse_command(&bytes).unwrap();
+        assert!(context
+            .repo
+            .command(&context.account_a, &command)
+            .await
+            .is_err());
+    }
+    for table in [
+        "works",
+        "snapshots",
+        "history",
+        "active_conflicts",
+        "upload_capabilities",
+        "receipts",
+    ] {
+        let count: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM sync_v2.{table} WHERE account_id=$1"
+        ))
+        .bind(account)
+        .fetch_one(&context.repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "remaining {table}");
+    }
+    let foreign_after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sync_v2.snapshots WHERE account_id=$1")
+            .bind(&context.account_b.account_id)
+            .fetch_one(&context.repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(foreign_before, foreign_after);
 }

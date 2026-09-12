@@ -9,6 +9,7 @@ public enum SyncV2StoreError: Error, Equatable, Sendable {
     case sqlite(String)
     case schemaMismatch
     case workNotFound
+    case workDeletionPending
     case generationMismatch
     case snapshotNotFound
     case invalidSnapshot

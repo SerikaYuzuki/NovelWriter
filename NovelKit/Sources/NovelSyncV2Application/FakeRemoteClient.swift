@@ -1,4 +1,5 @@
 import Foundation
+import NovelSyncV2
 
 public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
     public typealias CommandHandler = @Sendable (SyncV2SealedRemoteCommand) throws -> SyncV2RemoteExecution
@@ -13,6 +14,24 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
     private var operations: [SyncV2RemoteOperation] = []
     private var continuations: [CheckedContinuation<Void, Never>] = []
     private var commandHandler: CommandHandler?
+
+    private var deletionFailure: SyncV2Failure? = .offline
+    private var deletions: [WorkID] = []
+
+    public func setDeletionFailure(_ failure: SyncV2Failure?) {
+        deletionFailure = failure
+    }
+
+    public func recordedDeletions() -> [WorkID] {
+        deletions
+    }
+
+    public func deleteWork(workID: WorkID, binding _: SyncV2AccountScopeBinding) async throws {
+        deletions.append(workID)
+        if let deletionFailure {
+            throw deletionFailure
+        }
+    }
 
     public init() {}
 

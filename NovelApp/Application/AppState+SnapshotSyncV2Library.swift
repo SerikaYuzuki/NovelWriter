@@ -48,6 +48,10 @@ extension AppState {
             return
         }
         guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        let pendingDeletionIDs = await (try? application.pendingDeletionWorkIDs()) ?? []
+        let deletedIDs = await (try? application.deletedWorkIDs()) ?? []
+        guard matchesSnapshotSyncV2AccountScope(accountScope) else { return }
+        snapshotSyncPendingDeletionWorkIDs = pendingDeletionIDs
         let parkedWorkIDs = Set(
             projection.items
                 .filter { $0.accountState == .parkedDifferentAccount }
@@ -86,7 +90,7 @@ extension AppState {
             return (item.workID, work)
         })
         for remote in snapshotSyncRemoteCatalogItems {
-            if parkedWorkIDs.contains(remote.workID) {
+            if parkedWorkIDs.contains(remote.workID) || deletedIDs.contains(remote.workID) {
                 continue
             }
             if let local = worksByID[remote.workID] {

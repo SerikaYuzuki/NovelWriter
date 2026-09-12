@@ -9,7 +9,7 @@ use axum::{
     extract::{rejection::BytesRejection, DefaultBodyLimit, Path, Query, State},
     http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::Response,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -358,6 +358,7 @@ pub fn router(state: AppState) -> Router {
                 .post(command)
                 .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
+        .route("/v2/works/{work_id}", delete(delete_work))
         .route("/v2/works/{work_id}/head", get(head))
         .route("/v2/works/{work_id}/history", get(history))
         .route("/v2/snapshots/{snapshot_id}/manifest", get(manifest))
@@ -557,6 +558,28 @@ async fn list_works(
         serde_json::json!({"items":items,"nextCursor":next_cursor,"result":"noChanges"}),
     )
 }
+async fn delete_work(
+    Path(work): Path<String>,
+    headers: HeaderMap,
+    state: State<AppState>,
+) -> Response {
+    let p = match principal(&headers, &state).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let work = match parse_uuid_path(&work) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    match state.repo.delete_work(&p, work).await {
+        Ok(()) => canonical_response(
+            StatusCode::OK,
+            serde_json::json!({"result":"deleted","workId":work.to_string()}),
+        ),
+        Err(error) => error_response(error),
+    }
+}
+
 async fn head(Path(work): Path<String>, headers: HeaderMap, state: State<AppState>) -> Response {
     let work = match parse_uuid_path(&work) {
         Ok(value) => value,

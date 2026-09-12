@@ -43,6 +43,7 @@ pub const POSTGRES_INIT_ROLE: &str = "fuminiwa_sync_v2_postgres_init";
 const SYNC_RUNTIME_DML_TABLES: &[&str] = &[
     "account_scopes",
     "works",
+    "deleted_works",
     "global_blobs",
     "account_objects",
     "snapshots",
@@ -112,6 +113,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "deployment_binding",
                 "account_scopes",
                 "works",
+                "deleted_works",
                 "global_blobs",
                 "account_objects",
                 "snapshots",
@@ -174,6 +176,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "deployment_binding_pkey",
                 "account_scopes_pkey",
                 "works_pkey",
+                "deleted_works_pkey",
                 "global_blobs_pkey",
                 "account_objects_pkey",
                 "snapshots_pkey",
@@ -1296,7 +1299,7 @@ impl Repository {
     ) -> Result<(), sqlx::Error> {
         Self::verify_server_meta(pool, server_instance_id).await
     }
-    async fn scope<'a>(
+    pub(crate) async fn scope<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
         p: &AuthenticatedPrincipal,
@@ -2080,6 +2083,16 @@ impl Repository {
         // its bound state before receipt replay for every non-bootstrap
         // command, otherwise a lost-ACK retry could still read a completed
         // response from a parked Work.
+        let deleted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.deleted_works WHERE account_id=$1 AND work_id=$2)",
+        )
+        .bind(&p.account_id)
+        .bind(cmd.work_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if deleted {
+            return Err(SyncError::NotFound);
+        }
         if cmd.kind != CommandKind::CreateWork {
             self.require_work(&mut tx, p, cmd.work_id).await?;
         }
@@ -3211,6 +3224,17 @@ impl Repository {
     ) -> SyncResult<(i32, Vec<u8>)> {
         let payload = &c.value["payload"];
         let new_work = uuid(payload, "newWorkId").map_err(SyncError::SchemaViolation)?;
+        let deleted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.deleted_works WHERE account_id=$1 AND work_id=$2)",
+        )
+        .bind(&p.account_id)
+        .bind(new_work)
+        .fetch_one(&mut **tx)
+        .await?;
+        if deleted {
+            return Err(SyncError::NotFound);
+        }
+
         let new_document = uuid(payload, "newDocumentId").map_err(SyncError::SchemaViolation)?;
         let source_snapshot = digest_field(payload, "localCandidateSnapshotId")
             .map_err(SyncError::SchemaViolation)?;

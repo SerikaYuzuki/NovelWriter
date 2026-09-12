@@ -50,6 +50,10 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     /// The planner is a single ordered state machine; keep its branch ordering
     /// explicit so sealed command replay cannot be reordered by helpers.
     func nextCommand(workID: WorkID) async throws -> SyncV2CommandPlan {
+        if try await store.workDeletion(workID: workID) != nil {
+            await invalidateCaches(for: [workID])
+            return .idle
+        }
         let localScope = try await scope.existingScope(workID: workID)
         guard case .bound = localScope else {
             await invalidateCaches(for: [workID])

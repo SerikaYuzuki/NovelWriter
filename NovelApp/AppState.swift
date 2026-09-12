@@ -107,6 +107,7 @@ final class AppState {
     var lastStartupLibraryConnection: StartupLibraryConnection = .offline
     var authSession: FuminiwaSession?
     var authUIState: AuthUIState
+    var snapshotSyncPendingDeletionWorkIDs: Set<WorkID> = []
     var snapshotSyncV2UIState: SyncUIState?
     var snapshotSyncConflict: SyncV2ConflictProjection?
     var snapshotSyncHistory: [SyncV2HistoryItem] = []
