@@ -90,34 +90,44 @@ public extension SyncV2Application {
     }
 
     func synchronize(workID: WorkID) async throws -> SyncV2OperationResult {
-        if let adoption = try await kernel.pendingAdoption(workID: workID) {
-            let state = setState(
-                workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
-                remoteProgress: .readyForSafeAdoption(inboxID: adoption.inboxID),
-                result: .adoptionPending,
-                conflict: .clear
-            )
-            return SyncV2OperationResult(
-                state: state,
-                typedResult: .adoptionPending
-            )
+        syncDiagnostics[workID] = nil
+        var diagnosticStage = "pending-adoption"
+        do {
+            if let adoption = try await kernel.pendingAdoption(workID: workID) {
+                let state = setState(
+                    workID: workID,
+                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    remoteProgress: .readyForSafeAdoption(inboxID: adoption.inboxID),
+                    result: .adoptionPending,
+                    conflict: .clear
+                )
+                return SyncV2OperationResult(
+                    state: state,
+                    typedResult: .adoptionPending
+                )
+            }
+            diagnosticStage = "active-conflict"
+            if let conflict = try await kernel.activeConflict(workID: workID) {
+                let state = setState(
+                    workID: workID,
+                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    remoteProgress: .needsChoice,
+                    result: .conflictPending,
+                    conflict: .set(conflict)
+                )
+                return SyncV2OperationResult(
+                    state: state,
+                    typedResult: .conflictPending
+                )
+            }
+            diagnosticStage = "request-sync"
+            try await planner.requestSynchronization(workID: workID)
+            diagnosticStage = "plan-command"
+            return try await synchronizePendingCommand(workID: workID)
+        } catch {
+            recordSyncDiagnostic(workID: workID, stage: diagnosticStage, error: error)
+            throw error
         }
-        if let conflict = try await kernel.activeConflict(workID: workID) {
-            let state = setState(
-                workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
-                remoteProgress: .needsChoice,
-                result: .conflictPending,
-                conflict: .set(conflict)
-            )
-            return SyncV2OperationResult(
-                state: state,
-                typedResult: .conflictPending
-            )
-        }
-        try await planner.requestSynchronization(workID: workID)
-        return try await synchronizePendingCommand(workID: workID)
     }
 }
 
@@ -136,6 +146,7 @@ private extension SyncV2Application {
             )
             return SyncV2OperationResult(state: state, typedResult: .noChanges)
         case let .blocked(failure):
+            recordSyncDiagnostic(workID: workID, stage: "plan-blocked", error: failure)
             let state = record(failure: failure, workID: workID)
             return SyncV2OperationResult(
                 state: state,

@@ -41,6 +41,7 @@ extension SyncV2Application {
         while !Task.isCancelled {
             guard isCurrentWorker(workID: workID, owner: owner) else { return }
             let observedWake = wakeEpochs[workID, default: 0]
+            syncDiagnostics[workID] = nil
             do {
                 let plan = try await planner.nextCommand(workID: workID)
                 guard isCurrentWorker(workID: workID, owner: owner) else { return }
@@ -54,6 +55,7 @@ extension SyncV2Application {
                         return
                     }
                 case let .blocked(failure):
+                    recordSyncDiagnostic(workID: workID, stage: "worker/plan-blocked", error: failure)
                     guard isCurrentWorker(workID: workID, owner: owner) else { return }
                     record(failure: failure, workID: workID)
                     if finishWorkerIfUnchanged(
@@ -92,6 +94,7 @@ extension SyncV2Application {
                 }
             } catch {
                 guard isCurrentWorker(workID: workID, owner: owner) else { return }
+                recordSyncDiagnosticIfAbsent(workID: workID, stage: "worker/plan-command", error: error)
                 let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
                 record(failure: failure, workID: workID)
                 if finishWorkerIfUnchanged(
@@ -120,8 +123,13 @@ extension SyncV2Application {
             remoteProgress: .syncing(operationID: operationID(sending)),
             result: .queued
         )
+        var diagnosticStage = "worker/remote"
+        if case let .command(command) = sending {
+            diagnosticStage += "/" + command.command.commandKind
+        }
         do {
             let execution = try await remote.execute(sending)
+            diagnosticStage = "worker/accept"
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
             try await accept(execution, for: sending, workID: workID, owner: owner)
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
@@ -130,6 +138,7 @@ extension SyncV2Application {
             if !isCurrentWorker(workID: workID, owner: owner) {
                 return false
             }
+            recordSyncDiagnostic(workID: workID, stage: diagnosticStage, error: error)
             let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
             try await planner.recordFailure(
                 operation: sending,

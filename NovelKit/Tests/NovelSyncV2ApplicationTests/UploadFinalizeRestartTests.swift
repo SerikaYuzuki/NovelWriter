@@ -16,6 +16,7 @@ import Testing
     let scope = TestScopeResolver(vault: config.vault, store: store)
     var uploaded = Set<UUID>()
     var finalized = Set<UUID>()
+    var published = false
     for _ in 0 ..< 100 {
         // Drop all in-memory transfer and object-presence caches at every step.
         let planner = ProductionSyncV2Planner(store: store, scope: scope)
@@ -31,8 +32,6 @@ import Testing
             if command.commandKind == "registerSnapshot" {
                 #expect(!uploaded.isEmpty)
                 #expect(finalized == uploaded)
-                await store.close()
-                return
             }
             if command.commandKind == "finalizeObject" {
                 let payload = try productionPayload(command)
@@ -40,14 +39,26 @@ import Testing
                 #expect(uploaded.contains(id))
                 finalized.insert(id)
             }
+            if command.commandKind == "publish" {
+                let payload = try productionPayload(command)
+                #expect(payload["expectedRemoteHead"] is NSNull)
+                published = true
+            }
+            let head = command.commandKind == "publish"
+                ? try V2RemoteHead(snapshotID: command.sourceSnapshotId, generation: 1) : nil
             let status = ["createWork", "prepareObject"].contains(command.commandKind) ? 201 : 200
-            let response = try productionResponse(command: command, result: .applied, head: nil, cloneHead: nil, status: status)
+            let response = try productionResponse(command: command, result: .applied, head: head, cloneHead: nil, status: status)
             let envelope = try productionEnvelope(command: command, response: response, result: .applied, status: status)
             try await store.acknowledge(V2CommandAcknowledgement(
                 commandID: command.commandId, canonicalReceiptEnvelope: envelope
             ), scope: productionScope)
+        case .idle:
+            #expect(published)
+            #expect(try await store.pendingIntents(scope: productionScope, workID: workID).isEmpty)
+            await store.close()
+            return
         default:
-            Issue.record("transfer stopped before registration")
+            Issue.record("transfer stopped before publication")
             await store.close()
             return
         }

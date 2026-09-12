@@ -21,6 +21,7 @@ public struct SyncV2OperationResult: Sendable {
 }
 
 public actor SyncV2Application {
+    var syncDiagnostics: [WorkID: String] = [:]
     let kernel: any SyncV2LocalKernel
     let planner: any SyncV2CommandPlanner
     let remote: any SyncV2RemoteClient

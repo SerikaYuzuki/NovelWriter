@@ -39,6 +39,19 @@ struct PublishPayload: Encodable {
     let candidateSnapshotId: String
     let expectedRemoteHead: CommandHead?
     let workId: String
+
+    enum CodingKeys: String, CodingKey { case candidateSnapshotId, expectedRemoteHead, workId }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(candidateSnapshotId, forKey: .candidateSnapshotId)
+        try container.encode(workId, forKey: .workId)
+        if let expectedRemoteHead {
+            try container.encode(expectedRemoteHead, forKey: .expectedRemoteHead)
+        } else {
+            try container.encodeNil(forKey: .expectedRemoteHead)
+        }
+    }
 }
 
 struct CreateWorkPayload: Encodable { let documentId: String; let workId: String }

@@ -67,3 +67,11 @@ HTTP adapterから実SQLiteへの作成受領テスト、応答bytes不一致拒
 アップロード済みとfinalize済みを分離し、保存済み転送記録のupload IDを再起動後にも復元してfinalizeへ渡す。remote objectの存在cacheはprepareの`noChanges`による確認に限る。端末DBやサーバーDBの直接補修は行わず、既存のアップロード記録から再開する。
 
 検証は中ぐらい。関連Application 66件成功、各操作ごとにplannerを作り直して全uploadがfinalizeを通る追加テスト1件成功、Mac／iOS build、baseline lint成功。既存テストでfinalize一覧が空でも通っていた条件も、upload ID一覧との一致を要求するよう修正した。実サーバーの作品登録・publish成功は、更新版での再送後に確認する。
+
+## 初回publishと一時診断（追補）
+
+利用者から「同期を開始できませんでした」の報告後、端末ではfinalize 9件／registerSnapshot 1件が完了し、publishコマンド作成前に止まる状態を確認した。`PublishPayload`の合成Encodableがnilの`expectedRemoteHead`キーを省略していたため、初回publishの必須nullを明示するencodeへ修正した。新規作品のテストをregister到達で終えず、初回publishのnull検査・受領・pending intent解消まで延長した。
+
+利用者の依頼によりDebug build限定の一時診断を追加した。Macの停止メッセージ末尾とOS log（subsystem `dev.serikayuzuki.fuminiwa`、category `sync-debug`）へ、同期段階・Error型・enum case名を出す。Errorのassociated value、原稿、DBエラー本文、URL、account／work ID、認証情報は含めない。Release buildでは診断文字列を生成・表示しない。調査終了後にこの一時表示を撤去する。
+
+検証は中ぐらい。Application 68件、Macアプリ142件成功。診断の秘密値除外・初回publish完了テストを再実行して成功、Mac／iOS build成功。実端末のpublish成功は更新版の再送後に確認する。
