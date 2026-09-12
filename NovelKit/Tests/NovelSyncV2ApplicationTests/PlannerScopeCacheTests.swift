@@ -97,6 +97,12 @@ struct PlannerScopeCacheTests {
             return upload.uploadID
         })
         #expect(!oldUploadIDs.isEmpty)
+        let finalizedIDs = Set(firstOperations.compactMap { operation -> UUID? in
+            guard case let .command(command) = operation, command.kind == .finalizeObject else { return nil }
+            return (try? productionPayload(command.command)["uploadId"] as? String)
+                .flatMap(UUID.init(uuidString:))
+        })
+        #expect(finalizedIDs == oldUploadIDs)
 
         _ = try await app.checkpoint(
             workID: workID,
@@ -115,7 +121,7 @@ struct PlannerScopeCacheTests {
         }
 
         let secondOperations = await remote.recordedOperations()
-        let reusedOldUploadIDs = secondOperations.compactMap { operation -> UUID? in
+        let reusedOldUploadIDs = secondOperations.dropFirst(firstOperations.count).compactMap { operation -> UUID? in
             guard case let .command(command) = operation, command.kind == .finalizeObject else { return nil }
             return (try? productionPayload(command.command)["uploadId"] as? String)
                 .flatMap(UUID.init(uuidString:))

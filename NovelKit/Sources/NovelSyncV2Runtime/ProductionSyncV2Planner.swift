@@ -214,6 +214,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
 
     private struct TransferProgress {
         let prepared: Set<ObjectID>
+        let uploaded: Set<ObjectID>
         let finalized: Set<ObjectID>
         let registered: Bool
     }
@@ -225,6 +226,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         records: [V2SealedCommandRecord]
     ) async throws -> TransferProgress {
         var prepared = Set<ObjectID>()
+        var uploaded = Set<ObjectID>()
         var finalized = Set<ObjectID>()
         var registered = false
         for record in records {
@@ -236,13 +238,9 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
                         continue
                     }
                     if transfer.lifecycle == "acknowledged" {
-                        remoteObjectPresence.insert(
-                            RemoteObjectPresenceKey(
-                                binding: view.binding,
-                                workID: workID,
-                                objectID: transfer.objectID
-                            )
-                        )
+                        uploaded.insert(object)
+                        let key = transferSessionKey(for: record, objectID: object, view: view)
+                        transfers[key] = try await makeTransfer(from: record, view: view)
                     }
                 }
                 prepared.insert(object)
@@ -264,7 +262,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
                 continue
             }
         }
-        return TransferProgress(prepared: prepared, finalized: finalized, registered: registered)
+        return TransferProgress(prepared: prepared, uploaded: uploaded, finalized: finalized, registered: registered)
     }
 
     private func nextUpload(
@@ -275,7 +273,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         progress: TransferProgress
     ) async throws -> SyncV2CommandPlan? {
         let candidates = view.snapshot.manifest.entries.map(\.objectId).filter {
-            progress.prepared.contains($0) && !progress.finalized.contains($0) &&
+            progress.prepared.contains($0) && !progress.uploaded.contains($0) && !progress.finalized.contains($0) &&
                 !remoteObjectPresence.contains(
                     RemoteObjectPresenceKey(
                         binding: view.binding,
@@ -468,13 +466,6 @@ extension ProductionSyncV2Planner {
             byteCount: completion.acknowledgedByteCount,
             scope: localScope
         )
-        remoteObjectPresence.insert(
-            RemoteObjectPresenceKey(
-                binding: key.binding,
-                workID: key.workID,
-                objectID: completion.objectID
-            )
-        )
     }
 }
 
@@ -651,16 +642,6 @@ private extension ProductionSyncV2Planner {
     func makeTransfer(from record: V2SealedCommandRecord, view: V2ImmutableTransferView) async throws -> SyncV2UploadTransfer? {
         let objectID = try objectID(record)
         if let stored = try await store.uploadTransfer(commandID: record.commandID, scope: .bound(view.binding)) {
-            if stored.lifecycle == "acknowledged" {
-                remoteObjectPresence.insert(
-                    RemoteObjectPresenceKey(
-                        binding: view.binding,
-                        workID: view.workID,
-                        objectID: stored.objectID
-                    )
-                )
-                return nil
-            }
             return SyncV2UploadTransfer(
                 transferID: stored.transferID,
                 workID: stored.workID,

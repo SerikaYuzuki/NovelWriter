@@ -59,3 +59,11 @@ macOS通常版のプロット画面で、標準overflow内の「今すぐ同期�
 HTTP adapterから実SQLiteへの作成受領テスト、応答bytes不一致拒否、restart後の初回create同一ID再試行と異account拒否を追加した。既存の転送fixtureも実サーバー同様の小数秒付き期限に変更した。fake remoteだけのテストでは今回の応答形式の取り違えを検出できていなかった。
 
 検証段階は重たい検証。Swift package全474テスト成功（期限fixture更新後は関連136テストを再実行し成功）。Macアプリ142件／iOSアプリ110件成功は受領記録修正時点、期限修正後のMac／iOS build成功。`./Scripts/check.sh`はPython 60 vectors／Swift conformance 6件成功後、ローカルにcargoがないため停止した。サーバーコード・schema・実DBの直接編集は行っていない。実端末の再送・相手端末への反映は別途受入確認が必要。
+
+## upload後のfinalize順序（追補）
+
+実端末の再送でcreate／prepareの受領確認は通過したが、`finalizeObject`が一度も実行されず`registerSnapshot`が拒否される次の停止点を確認した。plannerがPUT uploadのacknowledgementを「利用可能なremote object」としてcacheへ入れていたため、finalizeを省略していた。
+
+アップロード済みとfinalize済みを分離し、保存済み転送記録のupload IDを再起動後にも復元してfinalizeへ渡す。remote objectの存在cacheはprepareの`noChanges`による確認に限る。端末DBやサーバーDBの直接補修は行わず、既存のアップロード記録から再開する。
+
+検証は中ぐらい。関連Application 66件成功、各操作ごとにplannerを作り直して全uploadがfinalizeを通る追加テスト1件成功、Mac／iOS build、baseline lint成功。既存テストでfinalize一覧が空でも通っていた条件も、upload ID一覧との一致を要求するよう修正した。実サーバーの作品登録・publish成功は、更新版での再送後に確認する。
