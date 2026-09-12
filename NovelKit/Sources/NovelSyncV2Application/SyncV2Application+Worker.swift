@@ -381,6 +381,10 @@ extension SyncV2Application {
         for failure: SyncV2Failure
     ) -> SyncV2CommandFailureDisposition {
         switch failure {
+        case .retryable(.uploadExpired):
+            // The server rejected this capability before committing a receipt.
+            // Retire the sealed command so the next attempt can prepare anew.
+            .quarantine
         case .offline, .authenticationRequired, .retryable:
             .requeue
         case .accountFenceChanged, .quarantined, .fatal, .receiptMismatch:

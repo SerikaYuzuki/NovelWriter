@@ -85,3 +85,12 @@ HTTP adapterから実SQLiteへの作成受領テスト、応答bytes不一致拒
 applicationの状態変更をcoalesced AsyncStreamで通知し、Workbenchのsession／accountに結び付いたtaskが最新状態を再取得する。toolbar overflowへ購読を所有させず、window終了や作品／account変更で解除する。以前はworker完了後のUI更新が明示refresh頼みだったため、この購読を追加した。
 
 検証は中ぐらい。Macアプリ146件成功、最終の関連6テスト成功、共有Application 68件成功、Mac／iOS build、baseline lint成功。未変更の⌘Sでもremote要求が出ること、unboundが送信されないこと、背景処理後に通信待ちへ自動更新することを確認した。native toolbarの560pt幅で実際にoverflowが発生しても同期項目がvisibleItemsに残ることを検証した。極端に狭い340pt幅ではOSが高優先度項目も隠すため、全幅での常時表示を保証するものではない。
+
+## finalizeObject の期限切れ回復（2026-09-12）
+
+実サーバーの集計で、uploaded のまま期限切れとなった capability が1件あり、finalizeObject の完了 receipt は増えていなかった。クライアントには二つの問題があった。
+
+- ACK 済み transfer は期限切れでも再利用していた。期限判定を ACK 済みにも適用し、未確定 object は次の試行で prepare からやり直す。完了済み finalize の記録は引き続き尊重する。
+- サーバーの事前拒否は `error` 項目の応答だが、finalize は receipt として読んで receiptMismatch にしていた。409 の typed upload error を読み、uploadExpired の sealed command は隔離して同じ期限切れ command の無限再送を防ぐ。応答喪失など、成否不明の場合の同一 command 再送は維持する。
+
+検証は中ぐらい。実 SQLite を使い、各操作で planner を再生成し、ACK 直後の期限切れから再準備・finalize・register・publish まで進むケースを追加した。サーバーと同じ期限切れ応答の判別も確認した。関連68テスト、Mac/iOS Debug build、既存 baseline を使った lint は成功。実データの変更やサーバーの変更は行っていない。更新版での実同期完了は未確認。

@@ -234,7 +234,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             case "prepareObject":
                 let object = try objectID(record)
                 if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope) {
-                    if transfer.lifecycle == "prepared", transfer.expiresAt <= Date() {
+                    if transfer.expiresAt <= Date() {
                         continue
                     }
                     if transfer.lifecycle == "acknowledged" {

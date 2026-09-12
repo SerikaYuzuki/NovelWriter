@@ -223,7 +223,7 @@ extension ProductionSyncV2RemoteClient {
         return object
     }
 
-    private func decode(
+    func decode(
         data: Data,
         response: URLResponse,
         command: SealedCommand
@@ -239,6 +239,14 @@ extension ProductionSyncV2RemoteClient {
         }
         guard [200, 201, 409].contains(http.statusCode) else {
             throw mapStatus(http.statusCode)
+        }
+        // A pre-commit rejection has no receipt envelope. Preserve its typed
+        // upload error instead of reporting a failed receipt verification.
+        if http.statusCode == 409,
+           command.commandKind == "finalizeObject",
+           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["error"] is String {
+            throw typedUploadFailure(data: data)
         }
         let envelope = try decodeResponseEnvelope(data: data, command: command)
         let head = try parseHead(envelope.object["head"])
@@ -390,7 +398,7 @@ extension ProductionSyncV2RemoteClient {
         } catch {
             return .retryable(.serverUnavailable)
         }
-        guard let code = object["code"] as? String else {
+        guard let code = (object["error"] ?? object["code"]) as? String else {
             return .retryable(.serverUnavailable)
         }
         switch code {
