@@ -258,13 +258,21 @@ extension SyncV2Application {
         let hasPending = local.intentID != nil
         let durableConflict = try await kernel.activeConflict(workID: workID) != nil
         let hasConflict = states[workID]?.conflict != nil || durableConflict
+        let progress: SyncV2RemoteProgress = if hasConflict {
+            .needsChoice
+        } else if workerTasks[workID] != nil, let active = states[workID]?.remoteProgress,
+                  case .syncing = active {
+            active
+        } else {
+            hasPending ? .pending : .noChanges
+        }
         let state = setState(
             workID: workID,
             localDurability: .saved(
                 generation: local.generation,
                 snapshotID: local.snapshotID
             ),
-            remoteProgress: hasConflict ? .needsChoice : (hasPending ? .pending : .noChanges),
+            remoteProgress: progress,
             result: result
         )
         if hasPending, !hasConflict {

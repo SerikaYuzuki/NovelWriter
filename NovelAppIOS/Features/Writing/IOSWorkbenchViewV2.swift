@@ -612,6 +612,7 @@ struct IOSEditorPane: View {
                     defaults: userDefaults,
                     contextID: "\(editingToken)",
                     episodeTitle: episode.title,
+                    currentEpisodeID: episode.id,
                     capture: {
                         guard store.currentEpisodeEditingToken == editingToken,
                               !store.isDocumentTransitionInProgress,

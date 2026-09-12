@@ -129,3 +129,18 @@ macOS / iOS共通の`SyncV2Application.runAutomaticSynchronization`をforeground
 `./Scripts/check.sh`はPython独立fixture 61 vector、v2 static boundary、Swift conformance 6テストまで成功し、Rust段階で`cargo`不在により停止。別実行の構造・target依存・v2境界、変更ファイルformat・diff確認は成功。全体SwiftLintは今回変更していない`FuminiwaApp.swift`の既存type_body_length（351行）で失敗した。全体検査の完走／Rust conformance成功とは扱わない。
 
 署名済みmacOS / iOS buildと、カリカリくんへの更新インストール・起動が成功。Mac実画面では更新前の作品と話を開き直し、同期ボタンを押さずに自動確認後の「同期済み」表示を確認した。更新前にMacは保存して終了後のSQLite online backup、iOSはSQLite一式のコピーを非公開のリポジトリ外へ保存し、両コピーのquick_checkが成功した。実原稿は編集していない。実端末間で新しく編集した本文の往復受信は今回未確認であり、fakeでの受信成功・実機へのインストール成功と区別する。
+
+
+## 2026-09-13 同期中表示の安定化
+
+共有workerがcreate／prepare／finalizeなどの中間receiptごとにidle／noChangesへ戻り、次の処理でsyncingへ切り替わるため、Mac・iOSの同期中表示が途中で完了に見えていた。成功receipt・upload acknowledgementではsyncingを維持し、plannerのidleとworker owner／wake epochを照合して処理が尽きた時だけnoChangesへ切り替える。同期中の通常保存・変更なしの保存でも、そのworkerのsyncingを維持する。エラー・競合・安全なInbox採用待ちの表示は引き続き各状態を使う。保存・wire・schema・サーバーの変更はない。
+
+検証は共有処理の変更として重たい段階を選択。中間receipt後の次のplanを止める再現テストで、修正前の完了表示と保存時の表示後退を確認し、修正後はapplied／noChangesと保存中の編集あり／なしの4ケースが成功した。worker race／checkpoint／automatic syncの関連テストも成功した。
+
+共通package全490テストの直列実行では489件成功、既存のProductionInboxIsolationTests 1件が2秒の待機切れで失敗した。同じテストを変更前のe2620f524から別の一時ディレクトリへ取り出して実行し、同じ失敗を再現した。並列実行では他の既存待機テストも時間切れになったが、対象を絞った確認または直列実行では成功した。既存テストの待機時間はこの変更で書き換えていない。
+
+macOS app全166テスト、iOS app全128テストが成功し、校正を現在の1話に固定した最終範囲選択・Mac同期表示の関連9テストも成功した。独立conformance（Python 61 vector、Swift、Rust）、source structure、target依存、AI／v2境界は成功。check.shはその後の既存3ファイルのSwiftFormat違反で停止し、別実行のSwiftLintは既存FuminiwaApp.swiftの351行type_body_lengthで失敗した。全体検証の完走とは扱わない。
+
+更新前にMac SQLite online backupとiOS SQLite一式のコピーをリポジトリ外の非公開開発バックアップへ保存し、両コピーのintegrity_checkが成功した。実原稿やAPIキーはテストに使っておらず、AIへの実送信は未実施。実通信中のアイコン推移と新しい本文の端末間往復は実機受入で確認する。
+
+署名済みmacOS／iOS buildは最終レイアウト調整後も成功した。Mac更新版を起動し、チェック欄の操作・内容に応じた高さと「同期済み」の表示を確認。カリカリくんへの最終版インストールは成功したが、起動確認は端末ロック（Locked）で未完了。インストール成功を実機受入完了とは扱わない。

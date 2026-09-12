@@ -144,3 +144,70 @@ struct AssistantScopeTests {
         }
     }
 }
+
+extension AssistantScopeTests {
+    @Test func checkboxSelectionCombinesChaptersAndEpisodes() {
+        let first = Episode(title: "一", content: "本文")
+        let second = Episode(title: "二", content: "本文")
+        let chapters = [Chapter(title: "章", episodes: [first, second])]
+        var scope = AssistantScope.current
+        scope.setSelected([first.id, second.id], to: true, chapters: chapters, currentID: first.id)
+        #expect(scope.selectedEpisodeIDs(chapters: chapters, currentID: first.id) == [first.id, second.id])
+        scope.setSelected([second.id], to: false, chapters: chapters, currentID: first.id)
+        #expect(scope == .current)
+        scope.setSelected([first.id, second.id], to: false, chapters: chapters, currentID: first.id)
+        #expect(scope == .episodes([]))
+    }
+
+    @Test func multipleSelectionUsesDocumentOrderAndOnlySelectedText() throws {
+        let first = Episode(title: "一", content: "保存済み")
+        let second = Episode(title: "二", content: "二本文", memo: "対象外メモ")
+        let third = Episode(title: "三", content: "三本文")
+        let excluded = Episode(title: "除外", content: "対象外本文")
+        let chapters = [Chapter(title: "前章", episodes: [second, excluded, first]),
+                        Chapter(title: "後章", episodes: [third])]
+        var captures = 0
+        let result = try AssistantScope.episodes([first.id, third.id, second.id]).capture(
+            chapters: chapters, currentID: first.id
+        ) {
+            captures += 1
+            return AssistantManuscript(title: "一", content: "最新本文")
+        }
+        #expect(captures == 1)
+        #expect(result.content == "# 前章\n\n## 二\n二本文\n\n## 一\n最新本文\n\n# 後章\n\n## 三\n三本文")
+        #expect(result.title == "選択した3話")
+    }
+
+    @Test func selectedSetRejectsMissingOrEmptyTargetsAndRespectsIME() throws {
+        let first = Episode(title: "一", content: "本文")
+        let second = Episode(title: "二", content: "第二本文")
+        let chapters = [Chapter(title: "章", episodes: [first, second])]
+        for ids: Set<EpisodeID> in [[], [EpisodeID()], [first.id, EpisodeID()], [first.id, second.id]] {
+            #expect(throws: AssistantError.self) {
+                try AssistantScope.episodes(ids).capture(chapters: chapters, currentID: first.id) {
+                    throw AssistantError.composing
+                }
+            }
+        }
+        let result = try AssistantScope.episodes([second.id]).capture(chapters: chapters, currentID: first.id) {
+            throw AssistantError.composing
+        }
+        #expect(result.content == second.content)
+        let empty = Chapter(title: "空", episodes: [Episode(title: "一", content: "  "), Episode(title: "二", content: "\n")])
+        #expect(throws: AssistantError.self) {
+            try AssistantScope.episodes(Set(empty.episodes.map(\.id))).capture(chapters: [empty], currentID: nil) {
+                throw AssistantError.composing
+            }
+        }
+    }
+}
+
+extension AssistantScopeTests {
+    @Test func proofreadingAlwaysUsesCurrentEpisode() {
+        let selection = AssistantScope.episodes([EpisodeID(), EpisodeID()])
+        #expect(selection.forPurpose(.proofreading) == .current)
+        for purpose in AssistantPurpose.allCases where purpose != .proofreading {
+            #expect(selection.forPurpose(purpose) == selection)
+        }
+    }
+}

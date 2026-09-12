@@ -55,6 +55,7 @@ extension SyncV2Application {
                         owner: owner,
                         observedWake: observedWake
                     ) {
+                        projectCompletedWorker(workID: workID)
                         return
                     }
                 case let .blocked(failure):
@@ -218,7 +219,7 @@ extension SyncV2Application {
             setState(
                 workID: workID,
                 localDurability: states[workID]?.localDurability ?? .unsaved,
-                remoteProgress: .pending,
+                remoteProgress: .syncing(operationID: planned.transferID),
                 result: .queued
             )
         default:
@@ -299,7 +300,7 @@ extension SyncV2Application {
                 conflict = .clear
             } else {
                 result = .sent
-                progress = .idle
+                progress = .syncing(operationID: command.command.commandId)
                 conflict = command.kind.isConflictResolution ? .clear : .retain
             }
         case .noChanges:
@@ -316,7 +317,7 @@ extension SyncV2Application {
                 conflict = .clear
             } else {
                 result = .noChanges
-                progress = .noChanges
+                progress = .syncing(operationID: command.command.commandId)
                 conflict = command.kind.isConflictResolution ? .clear : .retain
             }
         case .conflictPending:
@@ -344,6 +345,13 @@ extension SyncV2Application {
             result: result,
             conflict: conflict
         )
+    }
+
+    /// A receipt completes one operation. Only a stable idle read completes the lane.
+    private func projectCompletedWorker(workID: WorkID) {
+        guard let state = states[workID], case .syncing = state.remoteProgress else { return }
+        setState(workID: workID, localDurability: state.localDurability,
+                 remoteProgress: .noChanges, result: .noChanges)
     }
 
     private func finishWorkerIfUnchanged(

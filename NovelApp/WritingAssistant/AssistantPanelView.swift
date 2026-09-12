@@ -6,6 +6,7 @@ struct AssistantPanelView: View {
     let defaults: UserDefaults
     let contextID: String
     let episodeTitle: String
+    let currentEpisodeID: EpisodeID?
     let capture: () throws -> AssistantManuscript
     let close: () -> Void
     var applyProofreading: ((AssistantManuscript, String) -> Bool)?
@@ -31,27 +32,20 @@ struct AssistantPanelView: View {
                     .labelStyle(.iconOnly)
                 Button("閉じる", systemImage: "xmark", action: close).labelStyle(.iconOnly)
             }
-            Picker("送る範囲", selection: $scope) {
-                Text("現在の話「\(episodeTitle)」").tag(AssistantScope.current)
-                ForEach(chapters) { chapter in
-                    Section(chapter.title) {
-                        Text("章全体：\(chapter.title)").tag(AssistantScope.chapter(chapter.id))
-                        ForEach(chapter.episodes) { episode in
-                            Text("話：\(episode.title)").tag(AssistantScope.episode(episode.id))
-                        }
-                    }
-                }
-            }
-            if scope != .current {
-                Text("選んだ範囲の回答をここに表示します。本文への自動反映は行いません。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             Picker("用途", selection: $purpose) {
                 ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
+            if purpose == .proofreading {
+                Text("校正する範囲：現在の1話（\(episodeTitle)）")
+                    .font(.subheadline)
+            } else {
+                AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $scope)
+            }
             HStack {
                 Button("本文を確認して送信…", action: prepare)
-                    .disabled(requestTask != nil)
+                    .disabled(requestTask != nil || effectiveScope.selectedEpisodeIDs(
+                        chapters: chapters, currentID: currentEpisodeID
+                    ).isEmpty)
                 if requestTask != nil {
                     ProgressView().controlSize(.small)
                     Button("中止") { cancel(); notice = "中止しました。" }
@@ -98,24 +92,29 @@ struct AssistantPanelView: View {
             }.padding(20).frame(minWidth: 340, idealWidth: 500, minHeight: 420)
         }
         .onChange(of: contextID) { _, _ in reset(); scope = .current }
+        .onChange(of: purpose) { _, _ in reset() }
         .onChange(of: scope) { _, _ in reset() }
         .onChange(of: chapters.map { $0.id.description + $0.episodes.map(\.id.description).joined() }) { _, _ in reset(); scope = .current }
         .onDisappear { reset() }
     }
 
+    private var effectiveScope: AssistantScope {
+        scope.forPurpose(purpose)
+    }
+
     private var canApplyProofreading: Bool {
-        scope == .current && applyProofreading != nil
+        effectiveScope == .current && applyProofreading != nil
     }
 
     private func prepare() {
         do {
             let configuration = try AssistantPreferences(defaults: defaults).configuration(purpose)
             let manuscript: AssistantManuscript
-            if scope == .current {
+            if effectiveScope == .current {
                 manuscript = try capture()
             } else {
                 guard let captureScope else { throw AssistantError.emptyContent }
-                manuscript = try captureScope(scope)
+                manuscript = try captureScope(effectiveScope)
             }
             // Validate size before showing a preview; do not read credentials until Send.
             _ = try configuration.request(manuscript: manuscript, apiKey: "validation-only")

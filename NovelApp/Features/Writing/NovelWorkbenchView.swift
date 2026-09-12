@@ -136,6 +136,7 @@ struct NovelWorkbenchView: View {
             defaults: appState.userDefaults,
             contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))-\(appState.snapshotSyncV2AccountScopeToken)",
             episodeTitle: appState.selectedEpisode?.title ?? "未選択",
+            currentEpisodeID: episodeID,
             capture: {
                 guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
                     throw AssistantError.emptyContent
