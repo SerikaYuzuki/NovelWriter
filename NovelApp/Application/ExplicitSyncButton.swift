@@ -18,16 +18,12 @@ struct ExplicitSyncButton: View {
 
     var body: some View {
         Button(action: requestSync) {
-            HStack(spacing: 5) {
-                Image(systemName: status.systemImage)
-                Text(status.title)
-            }
-            .fixedSize()
-            .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
+            Image(systemName: status.systemImage)
+                .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
         }
-        .help(appState.snapshotSyncCurrentWorkAccountState == .unbound
+        .help(status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
             ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
-            : "クリックまたは⌘Sで保存して同期します。")
+            : "クリックまたは⌘Sで保存して同期します。"))
         .contextMenu {
             if appState.canCloneCurrentWorkIntoActiveAccount {
                 Button("同期用のコピーを作成…") { setup.requestSetup(appState: appState) }
