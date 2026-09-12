@@ -1,0 +1,7 @@
+# ふみにわ — 本と芽のアイコン
+
+2026-09-12作成。内蔵image_genで生成。モデル名は指定・確認できないため、利用者了承のうえ内蔵生成を使用した。生成原本は `fuminiwa-book-sprout-v1.png`。OSのAppIconへの組み込みは未実施。
+
+## 生成プロンプト
+
+Use case: logo-brand. Create one finished square app icon artwork for FUMINIWA (ふみにわ), a Japanese novel-writing app whose visual character is a quiet study. Concept approved by user: an open book with a small sprout growing from its central fold. A single distinctive, beautifully proportioned emblem: two warm ivory folded pages curve upward like gentle garden beds, with a short stem and exactly two simple leaves in muted sage green. Book and sprout should read as one harmonious sculptural symbol, not a stack of separate clipart. Deep ink-indigo background, subtle soft illumination, restrained pale blue highlights on the page edges. Contemporary premium macOS/iOS app icon quality, tactile matte paper with shallow elegant relief, almost frontal view, exceptionally clean silhouette, calm literary mood. Strong legibility at 32px, large centered emblem taking about 68 percent of width, generous balanced margins. Full-bleed opaque square indigo background reaching all four corners; do not bake in an outer rounded-square mask, border, device frame, or drop shadow outside the square. No text, no letters, no handwriting, no tiny page lines, no pens, no sparkles, no extra objects, no watermark, no mockup, no contact sheet. Deliver a single high-quality 1024x1024 square image.
