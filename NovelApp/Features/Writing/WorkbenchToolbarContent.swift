@@ -11,6 +11,7 @@ import SwiftUI
 /// システムの固定アンカーに委ねる。
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
@@ -41,11 +42,15 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         if appState.startupState.isReady {
             ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
                 Button {
-                    openWindow(id: "library")
+                    Task {
+                        guard await appState.returnToSnapshotLibrary() else { return }
+                        openWindow(id: "library")
+                        dismissWindow(id: "workbench")
+                    }
                 } label: {
                     Label("作品一覧", systemImage: "books.vertical")
                 }
-                .help("作品一覧ウィンドウを開く")
+                .help("保存して作品一覧に戻る")
                 .disabled(!appState.permitsDocumentTransitionOperation)
                 .accessibilityIdentifier("workbench.library")
             }

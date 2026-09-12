@@ -171,6 +171,13 @@ struct FuminiwaApp: App {
     #endif
 
     var body: some Scene {
+        Window("作品一覧", id: "library") {
+            LibraryWindowView()
+                .environment(appState)
+                .environment(documentPanelPresenter)
+                .task { await bootstrapIfNeeded() }
+        }
+        .defaultSize(width: 760, height: 520)
         Window("ふみにわ", id: "workbench") {
             ContentView()
                 .environment(appState)
@@ -184,7 +191,7 @@ struct FuminiwaApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {
-                LibraryWindowCommand()
+                LibraryWindowCommand().environment(appState)
                 Divider()
                 Button("新しい作品") {
                     documentPanelPresenter.presentNewDocument()
@@ -343,14 +350,6 @@ struct FuminiwaApp: App {
             SidebarCommands()
             ToolbarCommands()
         }
-
-        Window("作品一覧", id: "library") {
-            LibraryWindowView()
-                .environment(appState)
-                .environment(documentPanelPresenter)
-                .task { await bootstrapIfNeeded() }
-        }
-        .defaultSize(width: 760, height: 520)
 
         Settings {
             TabView {

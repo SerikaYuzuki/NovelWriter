@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryWindowView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var presenter
 
@@ -27,6 +28,7 @@ struct LibraryWindowView: View {
         .frame(minWidth: 700, minHeight: 420)
         .onChange(of: presenter.completedDocumentOperation) { _, _ in
             openWindow(id: "workbench")
+            dismissWindow(id: "library")
         }
         .task {
             await appState.refreshSnapshotLibrary()
@@ -47,11 +49,20 @@ struct LibraryWindowView: View {
 }
 
 struct LibraryWindowCommand: View {
+    @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        Button("作品一覧…") { openWindow(id: "library") }
-            .keyboardShortcut("l", modifiers: [.command, .shift])
+        Button("作品一覧…") {
+            Task {
+                guard await appState.returnToSnapshotLibrary() else { return }
+                openWindow(id: "library")
+                dismissWindow(id: "workbench")
+            }
+        }
+        .keyboardShortcut("l", modifiers: [.command, .shift])
+        .disabled(!appState.permitsDocumentTransitionOperation)
     }
 }
 

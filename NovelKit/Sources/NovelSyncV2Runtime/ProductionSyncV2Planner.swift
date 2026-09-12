@@ -53,8 +53,9 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         let localScope = try await scope.existingScope(workID: workID)
         guard case .bound = localScope else {
             await invalidateCaches(for: [workID])
-            let pending = try await store.pendingIntents(scope: localScope, workID: workID)
-            return pending.isEmpty ? .idle : .blocked(.authenticationRequired)
+            // Local-only works have no remote lane. Their durable intent is
+            // retained locally; opening or saving them is not an auth failure.
+            return .idle
         }
         if let record = try await store.pendingSealedCommands(scope: localScope, workID: workID).first {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))

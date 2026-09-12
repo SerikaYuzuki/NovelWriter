@@ -10,6 +10,7 @@ struct LibraryPane: View {
     @State private var selection: UUID?
     @State private var searchText = ""
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -121,6 +122,7 @@ struct LibraryPane: View {
         Task {
             if await appState.openLibraryWork(work) {
                 openWindow(id: "workbench")
+                dismissWindow(id: "library")
             }
         }
     }

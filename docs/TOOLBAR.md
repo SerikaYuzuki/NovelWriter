@@ -12,7 +12,7 @@
 
 ## 2. 既定レイアウト
 
-- Sidebar上: 標準開閉と作品一覧windowを開く入口。
+- Sidebar上: 標準開閉と作品一覧へ戻る入口。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
 - Outline上: 作品名・章数などのidentityと、そのsection固有の章／人物／ノート／資料追加。
 - Editor上: 左に話追加、保存・同期状態、同期、話メモ、履歴、書き出し、プロットカード参照。右端に標準の話内検索。
 - 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
@@ -24,7 +24,7 @@
 
 | ID | 操作 | 配置・カスタマイズ |
 | --- | --- | --- |
-| `workbench.library` | 作品一覧windowを開く | navigation固定 |
+| `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | navigation固定 |
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、primaryAction固定。macOS 26.1以降は表示優先度high |
 | `workbench.writing.assistant` | AI支援inspector開閉 | 執筆時、移動・削除可 |
@@ -74,3 +74,5 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 ## 9. 履歴
 
 [旧レイアウト計画・実装順・手動確認項目の全文](archive/product-guidance-20260912/TOOLBAR.md)。旧仕様のCloudKitラベルとpackage snapshotは現行実装の指示ではない。
+
+作品一覧を先頭の起動sceneとする。一覧で作品を開けた場合、新規作成・取り込みが成功した場合は編集windowを開いて一覧windowを閉じる。失敗した場合は現在のwindowを維持する。メニューの「作品一覧…」もtoolbarと同じ保存境界を通る。
