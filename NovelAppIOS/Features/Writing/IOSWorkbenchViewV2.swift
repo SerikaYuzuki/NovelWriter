@@ -424,6 +424,14 @@ struct IOSWorkbenchView: View {
             )
             .navigationDestination(for: IOSWorkspaceRoute.self) { route in
                 destination(route)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("作品一覧") {
+                                Task { await navigation.returnToLibrary(using: store) }
+                            }
+                            .accessibilityIdentifier("ios.workspace.openLibrary")
+                        }
+                    }
             }
         }
         .onAppear {

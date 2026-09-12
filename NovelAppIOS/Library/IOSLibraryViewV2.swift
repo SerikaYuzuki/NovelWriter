@@ -86,7 +86,7 @@ struct IOSLibraryView: View {
                 Button(".novelpkg を取り込む") { store.isImporterPresented = true }
             }
         }
-        .navigationTitle("作品棚")
+        .navigationTitle("作品一覧")
         .searchable(text: $searchText, prompt: "作品を検索")
         .refreshable {
             _ = await store.refreshLibrary()

@@ -68,3 +68,7 @@ Files原本のopen-in-place、共同編集、複数作品同時編集、Windows�
 - 見た目と操作の規約: [STYLE.md](STYLE.md)。決定: [DECISIONS.md](DECISIONS.md) D-056〜058、D-075、D-080、D-084、D-086。
 - 公開技術Gate: [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)。portable契約: [CROSS_PLATFORM.md](CROSS_PLATFORM.md)。
 - [旧IOS-1〜6計画・CloudKit実装記録の全文](archive/product-guidance-20260912/IOS.md)。過去の「実装済み」は当時のtargetに対する記録として読む。
+
+## 2026-09-12 作品一覧への明示入口
+
+作品ホーム・執筆・設定など各作品画面の右上に「作品一覧」を常設する。一覧画面の見出しも「作品一覧」に統一した。ボタンはIME確定と端末保存をdocument operation gate内で完了してからnavigation pathを空にする。保存中に作品・account・経路が変わった場合は、その後の画面を一覧へ戻さない。通常の階層Backは維持する。

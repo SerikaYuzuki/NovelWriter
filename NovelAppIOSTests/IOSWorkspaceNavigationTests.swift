@@ -8,6 +8,27 @@ import UIKit
 @MainActor
 @Suite("iOS workspace navigation", .serialized)
 struct IOSWorkspaceNavigationTests {
+    @Test("作品一覧ボタンは端末保存後に全階層から一覧へ戻る", arguments: [false, true])
+    func explicitLibraryButtonSavesAndReturns(fromEditor: Bool) async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let session = try #require(store.currentDocumentSessionToken)
+        let navigation = IOSWorkspaceNavigationCoordinator()
+        navigation.showProjectHome(for: session)
+        if fromEditor {
+            try navigation.showEditor(for: session, chapterID: #require(store.selectedChapterID),
+                                      episodeID: #require(store.selectedEpisodeID))
+        }
+        #expect(await navigation.returnToLibrary(using: store))
+        #expect(navigation.path.isEmpty)
+        #expect(store.currentDocumentSessionToken == session)
+        #expect(!store.isDocumentTransitionInProgress)
+        #expect(await store.openPrivateDocument(id: session.workingCopyID))
+    }
+
     @Test("account scope park removes every stale document route")
     func accountScopeParkReturnsToLibrary() {
         let session = makeSession(packageName: "account-work.novelpkg")

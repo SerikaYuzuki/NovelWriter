@@ -61,7 +61,9 @@ struct AssistantClientTests {
 
     @Test("purpose models retain the old global selection until individually configured")
     func purposeModels() throws {
-        let defaults = makeIsolatedTestUserDefaults()
+        let suite = "AssistantClientTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set("old-model", forKey: "assistant.model")
         defaults.set("proof-model", forKey: "assistant.model.校正")
         let preferences = AssistantPreferences(defaults: defaults)

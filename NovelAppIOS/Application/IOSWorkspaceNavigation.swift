@@ -57,6 +57,35 @@ final class IOSWorkspaceNavigationCoordinator {
         Self.editorDeparture(in: path)
     }
 
+    @discardableResult
+    func returnToLibrary(using store: IOSDocumentStore) async -> Bool {
+        guard !path.isEmpty, let session = store.currentDocumentSessionToken else { return false }
+        let expectedPath = path
+        let accountScope = store.snapshotSyncV2AccountScope
+        return await store.documentOperationGate.perform {
+            guard store.currentDocumentSessionToken == session,
+                  store.snapshotSyncV2AccountScope == accountScope,
+                  self.path == expectedPath,
+                  !store.isDocumentTransitionInProgress else { return false }
+            store.isDocumentTransitionInProgress = true
+            store.isNavigationDepartureInProgress = true
+            defer {
+                store.isNavigationDepartureInProgress = false
+                store.isDocumentTransitionInProgress = false
+            }
+            let departure = IOSWorkspaceEditorDeparture(
+                session: session,
+                chapterID: store.selectedChapterID,
+                episodeID: store.selectedEpisodeID
+            )
+            guard await store.flushDeviceSyncBeforeNavigationDeparture(departure),
+                  store.currentDocumentSessionToken == session,
+                  store.snapshotSyncV2AccountScope == accountScope,
+                  self.path == expectedPath else { return false }
+            return self.updatePath([]) { _ in true }
+        }
+    }
+
     func showProjectHome(for session: IOSDocumentSessionToken) {
         activeSession = session
         path = [.projectHome(session: session)]
