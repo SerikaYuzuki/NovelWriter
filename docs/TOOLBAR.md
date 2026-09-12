@@ -20,6 +20,8 @@
 
 幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
+作品一覧とWorkbenchは標準expanded toolbar styleを使い、操作列とは別のnativeタイトル帯にドラッグ領域を確保する。本文背景のドラッグ判定は変更しない。
+
 ## 3. 現行項目とstable ID
 
 | ID | 操作 | 配置・カスタマイズ |
@@ -28,7 +30,7 @@
 | `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
 | `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、primaryAction固定。macOS 26.1以降は表示優先度high |
 | `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
-| `workbench.writing.assistant` | AI支援下部パネル開閉 | 執筆時、移動・削除可 |
+| `workbench.writing.assistant` | AI支援右パネル開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
 | `workbench.export` | 書き出す… | 移動・削除可 |

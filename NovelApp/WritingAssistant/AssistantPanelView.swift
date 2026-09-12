@@ -1,3 +1,4 @@
+import NovelCore
 import SwiftUI
 
 /// Requests expire on context change; the host owns guarded native-editor application.
@@ -8,6 +9,9 @@ struct AssistantPanelView: View {
     let capture: () throws -> AssistantManuscript
     let close: () -> Void
     var applyProofreading: ((AssistantManuscript, String) -> Bool)?
+    var chapters: [Chapter] = []
+    var captureScope: ((AssistantScope) throws -> AssistantManuscript)?
+    @State private var scope = AssistantScope.current
     @State private var pendingPurpose = AssistantPurpose.proofreading
     @State private var purpose = AssistantPurpose.proofreading
     @State private var answer = ""
@@ -27,7 +31,21 @@ struct AssistantPanelView: View {
                     .labelStyle(.iconOnly)
                 Button("閉じる", systemImage: "xmark", action: close).labelStyle(.iconOnly)
             }
-            Text("対象：現在の話「\(episodeTitle)」").font(.caption)
+            Picker("送る範囲", selection: $scope) {
+                Text("現在の話「\(episodeTitle)」").tag(AssistantScope.current)
+                ForEach(chapters) { chapter in
+                    Section(chapter.title) {
+                        Text("章全体：\(chapter.title)").tag(AssistantScope.chapter(chapter.id))
+                        ForEach(chapter.episodes) { episode in
+                            Text("話：\(episode.title)").tag(AssistantScope.episode(episode.id))
+                        }
+                    }
+                }
+            }
+            if scope != .current {
+                Text("選んだ範囲の回答をここに表示します。本文への自動反映は行いません。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker("用途", selection: $purpose) {
                 ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
@@ -65,7 +83,7 @@ struct AssistantPanelView: View {
         })) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("送信する本文").font(.headline)
-                if pendingPurpose == .proofreading, applyProofreading != nil {
+                if pendingPurpose == .proofreading, canApplyProofreading {
                     Text("校正が完了すると本文を上書きし、変更箇所を色で示します。取り消しできます。")
                         .font(.caption)
                 }
@@ -79,14 +97,26 @@ struct AssistantPanelView: View {
                 }
             }.padding(20).frame(minWidth: 340, idealWidth: 500, minHeight: 420)
         }
-        .onChange(of: contextID) { _, _ in reset() }
+        .onChange(of: contextID) { _, _ in reset(); scope = .current }
+        .onChange(of: scope) { _, _ in reset() }
+        .onChange(of: chapters.map { $0.id.description + $0.episodes.map(\.id.description).joined() }) { _, _ in reset(); scope = .current }
         .onDisappear { reset() }
+    }
+
+    private var canApplyProofreading: Bool {
+        scope == .current && applyProofreading != nil
     }
 
     private func prepare() {
         do {
             let configuration = try AssistantPreferences(defaults: defaults).configuration(purpose)
-            let manuscript = try capture()
+            let manuscript: AssistantManuscript
+            if scope == .current {
+                manuscript = try capture()
+            } else {
+                guard let captureScope else { throw AssistantError.emptyContent }
+                manuscript = try captureScope(scope)
+            }
             // Validate size before showing a preview; do not read credentials until Send.
             _ = try configuration.request(manuscript: manuscript, apiKey: "validation-only")
             pendingPurpose = purpose
@@ -103,11 +133,12 @@ struct AssistantPanelView: View {
         do {
             let key = try AssistantPreferences(defaults: defaults).key(endpoint: config.endpoint)
             let requestPurpose = pendingPurpose
+            let shouldApply = canApplyProofreading
             let effectiveConfig = try AssistantConfiguration(endpoint: config.endpoint.absoluteString, model: config.model,
-                                                             prompt: config.prompt + (requestPurpose == .proofreading && applyProofreading != nil
+                                                             prompt: config.prompt + (requestPurpose == .proofreading && shouldApply
                                                                  ? "\n校正した全文をJSONオブジェクト {\"content\":\"校正後の全文\"} のみで返してください。説明・引用・Markdown囲みは不要です。省略せず、校正対象外の文字、改行、空白を保持してください。"
                                                                  : "\n回答はMarkdownで記述してください。"),
-                                                             replacesManuscript: requestPurpose == .proofreading && applyProofreading != nil)
+                                                             replacesManuscript: requestPurpose == .proofreading && shouldApply)
             let request = try effectiveConfig.request(manuscript: manuscript, apiKey: key)
             let id = UUID()
             requestID = id
@@ -121,7 +152,7 @@ struct AssistantPanelView: View {
                 do {
                     let result = try await AssistantClient.send(request)
                     guard !Task.isCancelled, requestID == id else { return }
-                    if requestPurpose == .proofreading, let applyProofreading {
+                    if requestPurpose == .proofreading, shouldApply, let applyProofreading {
                         let revised = try AssistantClient.proofreadContent(result)
                         guard applyProofreading(manuscript, revised) else {
                             notice = "本文や対象が変わったため反映しませんでした。入力を確定して再実行してください。"

@@ -1,4 +1,5 @@
 import Foundation
+import NovelCore
 #if os(macOS)
 @testable import FUMINIWA
 #else
@@ -99,5 +100,47 @@ struct AssistantClientTests {
         let schema = try #require(format["schema"] as? [String: Any])
         #expect(schema["required"] as? [String] == ["content"])
         #expect(schema["additionalProperties"] as? Bool == false)
+    }
+}
+
+@Suite("Assistant explicit scope")
+struct AssistantScopeTests {
+    @Test func chapterKeepsOrderAndUsesLiveText() throws {
+        let first = Episode(title: "一話", content: "保存済み", memo: "送らないメモ")
+        let second = Episode(title: "二話", content: "二話の本文")
+        let chapter = Chapter(title: "選択章", episodes: [second, first])
+        let other = Chapter(title: "対象外", content: "秘密")
+        let result = try AssistantScope.chapter(chapter.id).capture(chapters: [other, chapter], currentID: first.id) {
+            AssistantManuscript(title: first.title, content: "確定した最新本文")
+        }
+        #expect(result == AssistantManuscript(title: "選択章", content: "# 二話\n二話の本文\n\n# 一話\n確定した最新本文"))
+    }
+
+    @Test func unrelatedEpisodeDoesNotCaptureActiveEditor() throws {
+        let episode = Episode(title: "指定話", content: "  本文\r\n", memo: "非公開")
+        let result = try AssistantScope.episode(episode.id).capture(chapters: [Chapter(title: "章", episodes: [episode])], currentID: EpisodeID()) {
+            throw AssistantError.composing
+        }
+        #expect(result == AssistantManuscript(title: episode.title, content: episode.content))
+    }
+
+    @Test func rejectsCompositionAndMissingTargets() {
+        let chapter = Chapter(title: "章", content: "本文")
+        #expect(throws: AssistantError.self) {
+            try AssistantScope.chapter(chapter.id).capture(chapters: [chapter], currentID: chapter.episodes[0].id) {
+                throw AssistantError.composing
+            }
+        }
+        #expect(throws: AssistantError.self) {
+            try AssistantScope.episode(EpisodeID()).capture(chapters: [chapter], currentID: nil) {
+                AssistantManuscript(title: "", content: "")
+            }
+        }
+        let empty = Chapter(title: "空章", content: "  ")
+        #expect(throws: AssistantError.self) {
+            try AssistantScope.chapter(empty.id).capture(chapters: [empty], currentID: nil) {
+                AssistantManuscript(title: "", content: "")
+            }
+        }
     }
 }

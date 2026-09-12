@@ -622,7 +622,22 @@ struct IOSEditorPane: View {
                         case .compositionInProgress: throw AssistantError.composing
                         case .notActive: return AssistantManuscript(title: episode.title, content: store.selectedEpisode?.content ?? "")
                         }
-                    }, close: { showingAssistant = false }
+                    }, close: { showingAssistant = false },
+                    chapters: store.document.chapters,
+                    captureScope: { scope in
+                        guard store.currentEpisodeEditingToken == editingToken,
+                              !store.isDocumentTransitionInProgress,
+                              !store.syncV2AccountTransitionInProgress,
+                              store.syncV2KeepBothPendingWorkID == nil else { throw AssistantError.emptyContent }
+                        return try scope.capture(chapters: store.document.chapters, currentID: episode.id) {
+                            guard let selected = store.selectedEpisode else { throw AssistantError.emptyContent }
+                            switch store.editorCommandSession.captureActiveCommittedText() {
+                            case let .captured(text): return AssistantManuscript(title: selected.title, content: text)
+                            case .compositionInProgress: throw AssistantError.composing
+                            case .notActive: return AssistantManuscript(title: selected.title, content: selected.content)
+                            }
+                        }
+                    }
                 )
             }
         } else {

@@ -178,6 +178,7 @@ struct FuminiwaApp: App {
                 .task { await bootstrapIfNeeded() }
         }
         .defaultSize(width: 760, height: 520)
+        .windowToolbarStyle(.expanded)
         Window("ふみにわ", id: "workbench") {
             ContentView()
                 .environment(appState)
@@ -189,6 +190,8 @@ struct FuminiwaApp: App {
                 .environment(editorCommandSession)
                 .task { await bootstrapIfNeeded() }
         }
+        // Keep a native title strip available for dragging even when toolbar items fill the row.
+        .windowToolbarStyle(.expanded)
         .commands {
             CommandGroup(replacing: .newItem) {
                 LibraryWindowCommand().environment(appState)

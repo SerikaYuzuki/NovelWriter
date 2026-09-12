@@ -172,6 +172,20 @@ struct NovelWorkbenchView: View {
                       appState.snapshotSyncV2AccountScopeToken == account,
                       appState.permitsDocumentInteraction else { return false }
                 return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+            },
+            chapters: appState.document.chapters,
+            captureScope: { scope in
+                guard appState.documentSessionToken == session,
+                      appState.snapshotSyncV2AccountScopeToken == account,
+                      appState.permitsDocumentInteraction else { throw AssistantError.emptyContent }
+                return try scope.capture(chapters: appState.document.chapters, currentID: appState.selectedEpisodeID) {
+                    guard let episode = appState.selectedEpisode else { throw AssistantError.emptyContent }
+                    switch appState.activeCommittedTextCapture() {
+                    case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                    case .compositionInProgress: throw AssistantError.composing
+                    case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
+                    }
+                }
             }
         )
     }
