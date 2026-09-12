@@ -6,9 +6,9 @@ import SwiftUI
 
 /// Workbench 上部の一段 native toolbar(docs/TOOLBAR.md Toolbar-2 / D-024)。
 ///
-/// `NovelWorkbenchView` だけが `.toolbar(id:)` を所有する。編集操作は個別の
-/// `ToolbarItem(id:)` とし、Sidebar 開閉・Outline identity・右端検索は
-/// システムの固定アンカーに委ねる。
+/// `NovelWorkbenchView` のdetailがカスタマイズを所有する。Outlineの追加操作は
+/// `WorkbenchOutlineToolbarContent`へ分け、各列のnative tracking separatorを保つ。
+/// アプリ操作は個別に移動・削除でき、Sidebar開閉と検索はOS標準項目を使う。
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -32,16 +32,16 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
     }
 
     private var synchronizationButton: some CustomizableToolbarContent {
-        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync, placement: .primaryAction) {
+        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
             ExplicitSyncButton(requestSync: requestSync)
         }
-        .customizationBehavior(.disabled)
+        .customizationBehavior(.default)
         .defaultCustomization(.visible)
     }
 
     var body: some CustomizableToolbarContent {
         if appState.startupState.isReady {
-            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
+            ToolbarItem(id: WorkbenchToolbarItemID.library) {
                 Button {
                     Task {
                         guard await appState.returnToSnapshotLibrary() else { return }
@@ -55,7 +55,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .disabled(!appState.permitsDocumentTransitionOperation)
                 .accessibilityIdentifier("workbench.library")
             }
-            .customizationBehavior(.disabled)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
 
@@ -77,7 +77,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
         }
 
         if showsWritingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
+            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
                 Button {
                     Task {
                         _ = await appState.addEpisodeAfterTransition()
@@ -88,7 +88,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .help("選択中の章に話を追加")
                 .disabled(appState.selectedChapter == nil)
             }
-            .customizationBehavior(.disabled)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
 
@@ -108,7 +108,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                         .frame(width: 320, height: 260)
                 }
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
@@ -123,7 +123,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                         .frame(width: 360, height: 320)
                 }
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.export) {
@@ -135,7 +135,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .help("原稿を書き出す…")
                 .disabled(exportPresenter.state.isExporting)
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
@@ -150,7 +150,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .controlSize(.large)
                 .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
 
@@ -163,80 +163,13 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 }
                 .help("プロットカードを追加")
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
-
-        if showsWritingActions || showsPlotActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
-                Button {
-                    Task {
-                        _ = await appState.addChapterAfterTransition()
-                    }
-                } label: {
-                    Label("章を追加", systemImage: "plus")
-                }
-                .help("章を追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsCharacterActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd, placement: .navigation) {
-                Button {
-                    appState.addCharacter()
-                } label: {
-                    Label("登場人物を追加", systemImage: "person.badge.plus")
-                }
-                .help("登場人物を追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsWorldbuildingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.worldNoteAdd, placement: .navigation) {
-                Button {
-                    appState.addWorldNote()
-                } label: {
-                    Label("ノートを追加", systemImage: "note.text.badge.plus")
-                }
-                .help("ノートを追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsReferenceActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd, placement: .navigation) {
-                Button {
-                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
-                } label: {
-                    Label("資料を取り込む", systemImage: "paperclip")
-                }
-                .help("資料を取り込む")
-                .disabled(!appState.supportsAttachments)
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-    }
-
-    private var showsCharacterActions: Bool {
-        appState.workspaceSelection.section == .characters
     }
 
     private var showsPlotActions: Bool {
         appState.workspaceSelection.section == .plot
-    }
-
-    private var showsWorldbuildingActions: Bool {
-        appState.workspaceSelection.section == .worldbuilding
-    }
-
-    private var showsReferenceActions: Bool {
-        appState.workspaceSelection.section == .references
     }
 
     private var selectedPlotChapterID: ChapterID? {
@@ -482,5 +415,86 @@ final class SnapshotMenuPresenter {
         if !success {
             restoreErrorMessage = "スナップショットを復元できませんでした。現在の作品はこの端末に保持されています。"
         }
+    }
+}
+
+/// Items scoped to the outline create its native tracking separator.
+struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
+    @Environment(AppState.self) private var appState
+    var body: some CustomizableToolbarContent {
+        if showsWritingActions || showsPlotActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd) {
+                Button {
+                    Task {
+                        _ = await appState.addChapterAfterTransition()
+                    }
+                } label: {
+                    Label("章を追加", systemImage: "plus")
+                }
+                .help("章を追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsCharacterActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
+                Button {
+                    appState.addCharacter()
+                } label: {
+                    Label("登場人物を追加", systemImage: "person.badge.plus")
+                }
+                .help("登場人物を追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWorldbuildingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.worldNoteAdd) {
+                Button {
+                    appState.addWorldNote()
+                } label: {
+                    Label("ノートを追加", systemImage: "note.text.badge.plus")
+                }
+                .help("ノートを追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsReferenceActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
+                Button {
+                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
+                } label: {
+                    Label("資料を取り込む", systemImage: "paperclip")
+                }
+                .help("資料を取り込む")
+                .disabled(!appState.supportsAttachments)
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+    }
+
+    private var showsWritingActions: Bool {
+        appState.workspaceSelection.section == .structure
+    }
+
+    private var showsPlotActions: Bool {
+        appState.workspaceSelection.section == .plot
+    }
+
+    private var showsCharacterActions: Bool {
+        appState.workspaceSelection.section == .characters
+    }
+
+    private var showsWorldbuildingActions: Bool {
+        appState.workspaceSelection.section == .worldbuilding
+    }
+
+    private var showsReferenceActions: Bool {
+        appState.workspaceSelection.section == .references
     }
 }

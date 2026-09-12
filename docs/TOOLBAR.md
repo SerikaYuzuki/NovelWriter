@@ -6,40 +6,40 @@
 
 ## 1. 現在の所有者と状態
 
-[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)が`.toolbar(id: "novelwriter.workbench.v7")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。複数paneから独立toolbarを足さない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
+[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v7")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの追加項目だけは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
 
 `AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。旧CloudKitの`workbench.cloud.publish`／`workbench.cloud.sync`は現行項目ではない。ファイルに残る旧Viewや昔の受入記録を現行targetと混同しない。
 
 ## 2. 既定レイアウト
 
-- Sidebar上: 標準開閉と作品一覧へ戻る入口。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
-- Outline上: 作品名・章数などのidentityと、そのsection固有の章／人物／ノート／資料追加。
+- Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
+- Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
 - Editor上: 左に話追加、保存・同期状態、同期、話メモ、履歴、書き出し、プロットカード参照。右端に標準の話内検索。
 - 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
 幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
-作品一覧とWorkbenchは標準expanded toolbar styleを使い、操作列とは別のnativeタイトル帯にドラッグ領域を確保する。本文背景のドラッグ判定は変更しない。
+作品一覧とWorkbenchは標準unified toolbar styleを使う。SidebarとOutlineの区切りはnativeの追従に任せ、項目に必要な幅を下回ると独立した区切りになり、余裕が戻ると再び列境界へ追従する。本文背景のドラッグ判定は変更しない。
 
 ## 3. 現行項目とstable ID
 
 | ID | 操作 | 配置・カスタマイズ |
 | --- | --- | --- |
-| `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | navigation固定 |
-| `workbench.episode.add` | 選択章へ話を追加 | 執筆時、navigation固定 |
-| `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、primaryAction固定。macOS 26.1以降は表示優先度high |
+| `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | 移動・削除可 |
+| `workbench.episode.add` | 選択章へ話を追加 | 執筆時、移動・削除可 |
+| `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、移動・削除可。macOS 26.1以降は表示優先度high |
 | `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
 | `workbench.writing.assistant` | AI支援右パネル開閉 | 執筆時、移動・削除可 |
 | `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
 | `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
 | `workbench.export` | 書き出す… | 移動・削除可 |
 | `workbench.plot.card.rail` | 選択章のプロットカード参照pane | 移動・削除可 |
-| `workbench.chapter.add` | 章追加 | 執筆／プロット時、navigation固定 |
-| `workbench.character.add` | 人物追加 | 人物section、固定 |
-| `workbench.world.note.add` | 世界観ノート追加 | 世界観section、固定 |
+| `workbench.chapter.add` | 章追加 | 執筆／プロット時、移動・削除可 |
+| `workbench.character.add` | 人物追加 | 人物section、移動・削除可 |
+| `workbench.world.note.add` | 世界観ノート追加 | 世界観section、移動・削除可 |
 | `workbench.plot.card.add` | プロットカード追加 | プロットsection、移動・削除可 |
-| `workbench.attachment.add` | 資料取込 | 資料section、固定 |
+| `workbench.attachment.add` | 資料取込 | 資料section、移動・削除可 |
 
 system sidebar toggleと`.searchable`は標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。D-089のAI支援toggleは`workbench.writing.assistant`とCmd+Jを使用する。
 
@@ -47,7 +47,7 @@ system sidebar toggleと`.searchable`は標準項目。IDへ作品名・entity I
 
 個別`ToolbarItem(id:)`で独立した移動／削除を許し、複数操作を一つのgroupへまとめない。OSの`ToolbarCommands()`と標準context menuを使用し、順序を`NovelDocument`、package、同期データへ保存しない。
 
-Sidebar・identity・section追加は構造を保つ固定項目。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
+アプリ固有の操作は全て通常項目として移動・削除を許す。Sidebar開閉、検索、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
 
 ## 5. ツールバー外の入口
 
@@ -87,3 +87,11 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 2026-09-12 話名変更: 執筆ツールバーの「話の名前を変更」と話一覧の右クリックから、名前変更ダイアログを開く。既存の一覧内直接編集も維持する。ダイアログはpane側で所有し、toolbar overflow内へ閉じ込めない。確定時に取得元の作品session・account scope・章内の話の存在を検証し、本文、選択中の話、Editorの内容世代を変えずmetadataを通常保存する。空白だけの名前は確定できない。
 
 2026-09-12 作品一覧の名前変更: 作品行の右クリック「作品名を変更…」で作品名を編集する。一覧の表示名だけを変更するのではなく、同じWorkIDの作品metadataをSQLiteへcheckpointする。本文・資料・履歴を保持し、編集中の作品や話を切り替えない。端末内の作品は通信待ちなし、サーバーのみの作品は明示的な取得後に変更する。確認元session/accountを検証し、取得中はdocument gateを占有しない。
+
+### 2026-09-12 メモアプリの参考動画に合わせた確認
+
+中ぐらいの検証。macOSの表示・プロット選択11テスト成功。native toolbarにSidebarとOutlineの2本のtracking separatorがあること、中央列の縮小・復帰とAI開閉で同じ本文viewを保つこと、アプリ操作がnativeのカスタマイズ候補でありnavigation固定でないことを確認した。
+
+参考: [Appleのtoolbarとsplit-viewの説明](https://developer.apple.com/videos/play/wwdc2020/10104/)。
+
+更新版macOSで中央列を224ptから約440ptへ広げ、操作列が境界に追従し、作品名が本文上端に留まることを確認。標準カスタマイズ画面で各操作を確認した。同期項目のpalette名を「保存して同期」とし、表示5テストを再実行して成功。macOS通常版build成功。iOS変更・実API送信は対象外。

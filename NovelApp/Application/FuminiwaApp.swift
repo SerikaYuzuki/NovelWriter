@@ -178,7 +178,7 @@ struct FuminiwaApp: App {
                 .task { await bootstrapIfNeeded() }
         }
         .defaultSize(width: 760, height: 520)
-        .windowToolbarStyle(.expanded)
+        .windowToolbarStyle(.unified)
         Window("ふみにわ", id: "workbench") {
             ContentView()
                 .environment(appState)
@@ -190,8 +190,8 @@ struct FuminiwaApp: App {
                 .environment(editorCommandSession)
                 .task { await bootstrapIfNeeded() }
         }
-        // Keep a native title strip available for dragging even when toolbar items fill the row.
-        .windowToolbarStyle(.expanded)
+        // Native unified chrome keeps split-view tracking separators in the toolbar row.
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
                 LibraryWindowCommand().environment(appState)

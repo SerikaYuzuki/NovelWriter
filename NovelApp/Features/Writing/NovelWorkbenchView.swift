@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
 /// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
 /// 執筆画面の保存・同期状態はEditor上端の小さな記号へ集約する。上部 chrome は
-/// `WorkbenchToolbarContent` が一箇所で所有する。
+/// detailがカスタマイズを所有し、Outlineの追加操作は列scopeを保って提供する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
     var ideal: CGFloat
@@ -77,21 +77,8 @@ struct NovelWorkbenchView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
-        .toolbar(id: "novelwriter.workbench.v7") {
-            WorkbenchToolbarContent(
-                overlayState: overlayState,
-                requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
-                showsWritingActions: showsWritingActions,
-                isPlotCardRailPresented: $isPlotCardRailPresented,
-                requestEpisodeRename: {
-                    guard let episode = appState.selectedEpisode,
-                          let chapterID = appState.selectedChapterID else { return }
-                    episodePendingRename = EpisodeRenameRequest(
-                        episode: episode, chapterID: chapterID, appState: appState
-                    )
-                }
-            )
-        }
+        .navigationTitle(documentDisplayTitle)
+        .modifier(WorkbenchToolbarTitleVisibility())
         .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
         .task(id: SyncStatusObservationID(session: appState.documentSessionToken, account: appState.snapshotSyncV2AccountScopeToken)) {
@@ -213,6 +200,7 @@ struct NovelWorkbenchView: View {
                 projectSidebar
             } content: {
                 workbenchContent
+                    .toolbar { WorkbenchOutlineToolbarContent() }
                     .navigationSplitViewColumnWidth(
                         min: contentColumnWidths.min,
                         ideal: contentColumnWidths.ideal,
@@ -301,8 +289,6 @@ struct NovelWorkbenchView: View {
         switch appState.workspaceSelection.section {
         case .structure:
             OutlineContainerView()
-                .navigationTitle(documentDisplayTitle)
-                .navigationSubtitle("\(appState.document.chapters.count)章")
         case .characters:
             CharacterListView()
                 .navigationTitle("登場人物")
@@ -320,13 +306,45 @@ struct NovelWorkbenchView: View {
         }
     }
 
-    @ViewBuilder
     private var workbenchDetail: some View {
+        workbenchDetailContent
+            .toolbar(id: "novelwriter.workbench.v7") {
+                WorkbenchToolbarContent(
+                    overlayState: overlayState,
+                    requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
+                    showsWritingActions: showsWritingActions,
+                    isPlotCardRailPresented: $isPlotCardRailPresented,
+                    requestEpisodeRename: {
+                        guard let episode = appState.selectedEpisode,
+                              let chapterID = appState.selectedChapterID else { return }
+                        episodePendingRename = EpisodeRenameRequest(
+                            episode: episode, chapterID: chapterID, appState: appState
+                        )
+                    }
+                )
+            }
+    }
+
+    @ViewBuilder
+    private var workbenchDetailContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
             EditorPaneView(
                 isPlotCardRailPresented: $isPlotCardRailPresented
             )
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text(documentDisplayTitle)
+                        .accessibilityIdentifier("workbench.editor.workTitle")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .help(documentDisplayTitle)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.thinMaterial)
+            }
         case .characters:
             CharacterDetailView { appearance in
                 Task {
@@ -725,5 +743,15 @@ private struct SectionSurface<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .workbenchGlassChromeStyle()
+    }
+}
+
+private struct WorkbenchToolbarTitleVisibility: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content.navigationTitle("")
+        }
     }
 }

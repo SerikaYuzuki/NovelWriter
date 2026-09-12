@@ -100,18 +100,19 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(200))
         let toolbar = try #require(window.toolbar)
         let syncItem = try #require(toolbar.items.first { $0.itemIdentifier.rawValue.contains("workbench.snapshot.sync") })
+        #expect(syncItem.paletteLabel == "保存して同期")
         #expect(toolbar.visibleItems?.contains(where: { $0 === syncItem }) == true)
         #expect(syncItem.visibilityPriority > .standard)
         #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
     }
 
     @Test("assistant opens beside the editor and closes without replacing its text view")
-    func assistantBottomPanelPreservesEditor() async throws {
+    func nativeChromeAndAssistantPreserveEditor() async throws {
         let defaults = makeIsolatedTestUserDefaults()
         let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
         let episode = Episode(title: "本文", content: "表示確認用の本文")
         let chapter = Chapter(title: "第一章", episodes: [episode])
-        state.document = NovelDocument(title: "下部パネル確認", chapters: [chapter])
+        state.document = NovelDocument(title: "執筆画面の作品名", chapters: [chapter])
         state.selectedChapterID = chapter.id
         state.selectedEpisodeID = episode.id
         let root = NovelWorkbenchView()
@@ -130,6 +131,32 @@ struct WorkbenchVisualTests {
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(400))
         let editor = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == episode.content })
+        window.toolbarStyle = .unified
+        try await Task.sleep(for: .milliseconds(200))
+        let tracking = try #require(window.toolbar?.items.compactMap { $0 as? NSTrackingSeparatorToolbarItem }.last)
+        let split = tracking.splitView
+        let dividerIndex = 1
+        let controller = try #require(split.delegate as? NSSplitViewController)
+        let outlineView = controller.splitViewItems[1].viewController.view
+        let originalWidth = outlineView.frame.width
+        let originalPosition = outlineView.frame.maxX
+        let toolbar = try #require(window.toolbar)
+        #expect(toolbar.items.compactMap { ($0 as? NSTrackingSeparatorToolbarItem)?.dividerIndex } == [0, 1])
+        #expect(toolbar.allowsUserCustomization)
+        let allowed = try #require(toolbar.delegate?.toolbarAllowedItemIdentifiers?(toolbar))
+        let actions = toolbar.items.filter { $0.itemIdentifier.rawValue.hasPrefix("workbench.") }
+        #expect(actions.count >= 10)
+        #expect(actions.allSatisfy { !$0.isNavigational && allowed.contains($0.itemIdentifier) })
+        split.setPosition(originalPosition - 100, ofDividerAt: dividerIndex)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(outlineView.frame.width < originalWidth - 50)
+        #expect(descendants(host).contains { $0 === editor })
+        try await snapshot(#require(window.contentView?.superview), path: "/tmp/fuminiwa-toolbar-narrow.png")
+        split.setPosition(originalPosition, ofDividerAt: dividerIndex)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(abs(outlineView.frame.width - originalWidth) < 2)
+        #expect(descendants(host).contains { $0 === editor })
+        try await snapshot(#require(window.contentView?.superview), path: "/tmp/fuminiwa-toolbar-wide.png")
 
         NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
         try await Task.sleep(for: .milliseconds(400))

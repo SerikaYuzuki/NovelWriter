@@ -18,7 +18,8 @@ struct ExplicitSyncButton: View {
 
     var body: some View {
         Button(action: requestSync) {
-            Image(systemName: status.systemImage)
+            Label("保存して同期", systemImage: status.systemImage)
+                .labelStyle(.iconOnly)
                 .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
         }
         .help(status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
