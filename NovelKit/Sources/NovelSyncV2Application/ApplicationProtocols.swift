@@ -12,6 +12,7 @@ public enum SyncV2CommandFailureDisposition: Sendable {
     case requeue
     case quarantine
     case park
+    case replanRejectedPublish
 }
 
 /// Owns the durable pending-intent -> sealed-command transition.

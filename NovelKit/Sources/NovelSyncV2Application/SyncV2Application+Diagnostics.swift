@@ -5,10 +5,9 @@ import os
 #endif
 
 extension SyncV2Application {
-    /// Temporary Debug-build diagnostics. Never include associated error values:
+    /// Bounded failure diagnostics. Never include associated error values:
     /// those can contain database text, paths, server payloads or manuscript data.
     func recordSyncDiagnostic(workID: WorkID, stage: String, error: any Error) {
-        #if DEBUG
         let mirror = Mirror(reflecting: error)
         let errorCase = mirror.displayStyle == .enum ? mirror.children.first?.label : nil
         let simpleCase = mirror.displayStyle == .enum && mirror.children.isEmpty ? String(describing: error) : "unclassified"
@@ -17,7 +16,6 @@ extension SyncV2Application {
         #if canImport(os)
         Logger(subsystem: "dev.serikayuzuki.fuminiwa", category: "sync-debug")
             .error("\(code, privacy: .public)")
-        #endif
         #endif
     }
 

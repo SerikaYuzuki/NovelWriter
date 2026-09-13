@@ -150,6 +150,9 @@ extension SyncV2Application {
                 disposition: disposition(for: failure)
             )
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
+            if failure == .retryable(.publishLineageRejected) {
+                return true
+            }
             record(failure: failure, workID: workID)
             throw failure
         }
@@ -392,6 +395,8 @@ extension SyncV2Application {
         for failure: SyncV2Failure
     ) -> SyncV2CommandFailureDisposition {
         switch failure {
+        case .retryable(.publishLineageRejected):
+            .replanRejectedPublish
         case .retryable(.uploadExpired):
             // The server rejected this capability before committing a receipt.
             // Retire the sealed command so the next attempt can prepare anew.

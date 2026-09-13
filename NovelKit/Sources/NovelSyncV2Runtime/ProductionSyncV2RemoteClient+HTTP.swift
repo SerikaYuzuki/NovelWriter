@@ -237,6 +237,10 @@ extension ProductionSyncV2RemoteClient {
               contentType == mediaType else {
             throw SyncV2Failure.fatal(.unexpected)
         }
+        if http.statusCode == 422, command.commandKind == "publish",
+           data == Data(#"{"error":"lineageViolation","result":"parked","retryable":false}"#.utf8) {
+            throw SyncV2Failure.retryable(.publishLineageRejected)
+        }
         guard [200, 201, 409].contains(http.statusCode) else {
             throw mapStatus(http.statusCode)
         }

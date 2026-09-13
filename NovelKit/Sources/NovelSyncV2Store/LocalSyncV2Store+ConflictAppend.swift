@@ -7,6 +7,7 @@ extension LocalSyncV2Store {
         inboxID: UUID,
         conflictID: UUID,
         revision: Int64,
+        baseSnapshotID: SnapshotID?,
         localSnapshotID: SnapshotID,
         remoteSnapshotID: SnapshotID,
         sourceGeneration: Int64,
@@ -20,30 +21,33 @@ extension LocalSyncV2Store {
               let encoded = graph.snapshots.first(where: { $0.snapshotId == remoteSnapshotID }) else {
             throw SyncV2StoreError.invalidRemoteHead
         }
-        let candidate = try appendConflict(
+        guard graph.workID == workID,
+              graph.expectedCurrentSnapshotID == localSnapshotID,
+              graph.expectedLocalGeneration == sourceGeneration,
+              try inboxState(inboxID: inboxID, binding: binding) == "verified",
+              revision > 0 else { throw SyncV2StoreError.invalidSnapshot }
+        let material = ConflictAppendMaterial(
             workID: workID,
-            baseSnapshotID: nil,
+            baseSnapshotID: baseSnapshotID,
             localSnapshotID: localSnapshotID,
             remote: V2RemoteSnapshot(
-                inboxID: inboxID,
-                workID: workID,
-                encoded: encoded,
+                inboxID: inboxID, workID: workID, encoded: encoded,
                 expectedCurrentSnapshotID: localSnapshotID,
                 expectedLocalGeneration: sourceGeneration,
                 expectedRemoteHead: expectedHead
             ),
-            sourceGeneration: sourceGeneration,
-            scope: scope
+            sourceGeneration: sourceGeneration, binding: binding
         )
-        guard candidate.conflictID == conflictID, candidate.revision == revision else {
-            throw SyncV2StoreError.staleConflictAction
+        return try inTransaction {
+            try commitConflictDelivery(material, scope: scope,
+                                       remoteIdentity: (conflictID, revision))
         }
-        return candidate
     }
 
     func commitConflictDelivery(
         _ material: ConflictAppendMaterial,
-        scope: V2LocalWorkScope
+        scope: V2LocalWorkScope,
+        remoteIdentity: (id: UUID, revision: Int64)? = nil
     ) throws -> V2ConflictCandidate {
         guard let current = try scopedWorkRow(workID: material.workID, scope: scope),
               current[2].int64 == material.sourceGeneration,
@@ -66,10 +70,23 @@ extension LocalSyncV2Store {
             binding: material.binding
         )
         if let existing = try matchingConflict(activeRow, material: material) {
+            if let remoteIdentity {
+                guard existing.conflictID == remoteIdentity.id,
+                      existing.revision == remoteIdentity.revision else {
+                    throw SyncV2StoreError.staleConflictAction
+                }
+            }
             return existing
         }
-        let conflictID = activeRow?[0].text.flatMap(UUID.init(uuidString:)) ?? UUID()
-        let revision = (activeRow?[1].int64 ?? 0) + 1
+        if let remoteIdentity, let activeRow {
+            guard activeRow[0].text == remoteIdentity.id.uuidString.lowercased(),
+                  let previous = activeRow[1].int64,
+                  remoteIdentity.revision > previous else {
+                throw SyncV2StoreError.staleConflictAction
+            }
+        }
+        let conflictID = remoteIdentity?.id ?? activeRow?[0].text.flatMap(UUID.init(uuidString:)) ?? UUID()
+        let revision = remoteIdentity?.revision ?? (activeRow?[1].int64 ?? 0) + 1
         try persistConflictHead(
             activeRow: activeRow,
             conflictID: conflictID,

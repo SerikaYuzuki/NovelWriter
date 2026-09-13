@@ -71,7 +71,7 @@ public struct FuminiwaRuntimeEnvironment: Equatable, Sendable {
         return defaults
     }
 
-    private static let defaultSyncServerURL = "https://192.168.11.5:8443"
+    private static let defaultSyncServerURL = "https://sync.serika.work"
 
     /// A persisted v1 HTTP endpoint is never adopted by the v2 production
     /// runtime. Invalid or retired preferences fall back to the isolated v2

@@ -32,7 +32,9 @@ public extension LocalSyncV2Store {
             summary: summary,
             snapshot: snapshot,
             pendingIntent: intent,
-            expectedRemoteHead: acknowledgedHead(workID: workID)
+            expectedRemoteHead: intent.kind == "checkpoint"
+                ? publishBaseHead(workID: workID, snapshotID: intent.sourceSnapshotID)
+                : acknowledgedHead(workID: workID)
         )
     }
 

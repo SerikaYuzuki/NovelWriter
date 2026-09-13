@@ -255,11 +255,8 @@ extension LocalSyncV2Store {
             context.work[3].blob == context.command.sourceSnapshotId.bytes
         let candidateMatches = try context.payload.snapshot("candidateSnapshotId") ==
             context.command.sourceSnapshotId
-        let headMatches = try expectedHeadMatchesWork(
-            payload: context.payload,
-            key: "expectedRemoteHead",
-            workID: context.workID
-        )
+        let headMatches = try context.payload.remoteHead("expectedRemoteHead") ==
+            publishBaseHead(workID: context.workID, snapshotID: context.command.sourceSnapshotId)
         let intentMatches: Bool
         do {
             try requireIntent(

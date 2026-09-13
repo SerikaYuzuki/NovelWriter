@@ -2,6 +2,7 @@ import Foundation
 import NovelAuth
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2Store
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -46,22 +47,50 @@ extension ProductionSyncV2RemoteClient {
         if traversal.memo[id] != nil {
             return []
         }
-        guard !traversal.active.contains(id),
-              traversal.visited.count + traversal.active.count <
-              SnapshotFetchTraversal.maximumSnapshots else {
+        if let localStore,
+           let snapshot = try await localStore.committedSnapshot(
+               workID: workID,
+               snapshotID: id,
+               scope: .bound(V2AccountBinding(
+                   accountID: session.accountID,
+                   accountFence: session.accountFence,
+                   serverInstanceID: session.serverInstanceID.uuidString.lowercased()
+               ))
+           ) {
+            // The store validates this immutable snapshot and its parent rows.
+            // Inbox lineage verification can follow those committed parents;
+            // downloading the entire history again adds no evidence.
+            traversal.memo[id] = snapshot
+            return [snapshot]
+        }
+        guard !traversal.active.contains(id) else {
             throw SyncV2Failure.fatal(.invalidLocalState)
         }
         traversal.active.insert(id)
         defer { traversal.active.remove(id) }
-
-        let (manifest, bytes) = try await fetchManifest(
-            id: id,
-            session: session
+        let cached = try await localStore?.verifiedInboxSnapshot(
+            workID: workID, snapshotID: id,
+            scope: .bound(V2AccountBinding(accountID: session.accountID, accountFence: session.accountFence,
+                                           serverInstanceID: session.serverInstanceID.uuidString.lowercased()))
         )
-        let objects = try await fetchObjects(
-            manifest: manifest,
-            session: session
-        )
+        let manifest: SnapshotManifest
+        let bytes: Data
+        let objects: [ObjectID: Data]
+        if let cached {
+            manifest = cached.manifest
+            bytes = cached.manifestBytes
+            objects = cached.objects
+        } else {
+            guard traversal.networkSnapshots < SnapshotFetchTraversal.maximumSnapshots else {
+                throw SyncV2Failure.fatal(.invalidLocalState)
+            }
+            traversal.networkSnapshots += 1
+            (manifest, bytes) = try await fetchManifest(id: id, session: session)
+            objects = try await fetchObjects(manifest: manifest, session: session, traversal: traversal)
+        }
+        guard manifest.workId == workID else {
+            throw SyncV2Failure.quarantined(.invalidRemoteData)
+        }
         var result = try await fetchParents(
             workID: workID,
             manifest: manifest,
@@ -116,14 +145,23 @@ extension ProductionSyncV2RemoteClient {
 
     private func fetchObjects(
         manifest: SnapshotManifest,
-        session: FuminiwaSession
+        session: FuminiwaSession,
+        traversal: SnapshotFetchTraversal
     ) async throws -> [ObjectID: Data] {
         var objects: [ObjectID: Data] = [:]
         for entry in manifest.entries {
+            if let bytes = traversal.objects[entry.objectId] {
+                guard bytes.count == entry.byteCount else {
+                    throw SyncV2Failure.quarantined(.invalidRemoteData)
+                }
+                objects[entry.objectId] = bytes
+                continue
+            }
             let bytes = try await fetchObject(
                 entry: entry,
                 session: session
             )
+            traversal.objects[entry.objectId] = bytes
             objects[entry.objectId] = bytes
         }
         return objects
@@ -192,9 +230,12 @@ extension ProductionSyncV2RemoteClient {
 
 final class SnapshotFetchTraversal: @unchecked Sendable {
     static let maximumSnapshots = 128
+    var networkSnapshots = 0
     var active: Set<SnapshotID> = []
     var visited: Set<SnapshotID> = []
     var memo: [SnapshotID: EncodedSnapshot] = [:]
+    /// Scoped to one authenticated graph fetch; never shared across accounts.
+    var objects: [ObjectID: Data] = [:]
 }
 
 func remoteClientWorkID(for command: SealedCommand) throws -> WorkID {

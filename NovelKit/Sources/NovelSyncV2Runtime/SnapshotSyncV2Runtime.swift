@@ -90,7 +90,8 @@ public enum SnapshotSyncV2Runtime {
                     vault: vault,
                     clientVersion: configuration.clientVersion,
                     clientPlatform: configuration.clientPlatform,
-                    sessionProvider: provider
+                    sessionProvider: provider,
+                    localStore: store
                 )
             } else {
                 remote = OfflineProductionSyncV2RemoteClient()

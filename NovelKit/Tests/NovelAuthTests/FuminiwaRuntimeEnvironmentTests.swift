@@ -4,6 +4,17 @@ import Testing
 
 @Suite("FUMINIWA production runtime endpoint")
 struct FuminiwaRuntimeEnvironmentTests {
+    @Test("both production app hosts default to the public v2 tunnel")
+    func defaultEndpointUsesPublicTunnel() throws {
+        let (defaults, suiteName) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let environment = FuminiwaRuntimeEnvironment(userDefaults: defaults, environment: [:])
+
+        #expect(environment.networkPolicy == .enabled)
+        #expect(environment.syncServerURL?.absoluteString == "https://sync.serika.work")
+    }
+
     @Test("retired HTTP preference cannot reconnect the v1 server")
     func retiredHTTPPreferenceFallsBackToV2HTTPS() throws {
         let (defaults, suiteName) = try makeDefaults()
@@ -19,7 +30,7 @@ struct FuminiwaRuntimeEnvironmentTests {
         )
 
         #expect(environment.networkPolicy == .enabled)
-        #expect(environment.syncServerURL?.absoluteString == "https://192.168.11.5:8443")
+        #expect(environment.syncServerURL?.absoluteString == "https://sync.serika.work")
     }
 
     @Test("an explicit HTTPS v2 endpoint remains configurable")

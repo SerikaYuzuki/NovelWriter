@@ -289,6 +289,7 @@ extension ProductionSyncV2Kernel {
                 inboxID: inboxID,
                 conflictID: conflict.conflictID,
                 revision: conflict.revision,
+                baseSnapshotID: conflict.baseSnapshotID,
                 localSnapshotID: conflict.localSnapshotID,
                 remoteSnapshotID: conflict.remoteSnapshotID,
                 sourceGeneration: conflict.sourceGeneration,

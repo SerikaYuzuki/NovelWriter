@@ -394,7 +394,7 @@ public extension InMemorySyncV2RuntimeState {
                   }) else { return }
             pending[index].sending = false
             commands[workID] = pending
-        case .quarantine:
+        case .quarantine, .replanRejectedPublish:
             blocked[workID] = .quarantined(.unsafeLocalState)
         case .park:
             blocked[workID] = .quarantined(.differentAccount)

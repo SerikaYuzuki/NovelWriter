@@ -453,6 +453,13 @@ extension ProductionSyncV2Planner {
         guard case let .command(planned) = operation else { return }
         let localScope = try await scope.existingScope(workID: workID)
         switch disposition {
+        case .replanRejectedPublish:
+            do {
+                try await store.replanRejectedPublish(commandID: planned.command.commandId, scope: localScope)
+            } catch {
+                try await store.quarantine(commandID: planned.command.commandId, scope: localScope)
+                throw error
+            }
         case .requeue:
             try await store.requeue(
                 commandID: planned.command.commandId,

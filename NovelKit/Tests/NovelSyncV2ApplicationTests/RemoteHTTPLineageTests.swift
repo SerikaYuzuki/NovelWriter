@@ -82,6 +82,11 @@ struct RemoteHTTPLineageTests {
         #expect(inbox.snapshots.map(\.snapshotId) == expected)
         #expect(Set(inbox.snapshots.map(\.snapshotId)).count == 4)
         #expect(fixture.requestCount(path: "/v2/snapshots/\(base.snapshotId.rawValue)/manifest") == 1)
+        let sharedObjects = Set(base.objects.keys).intersection(decision.objects.keys)
+        #expect(!sharedObjects.isEmpty)
+        for objectID in sharedObjects {
+            #expect(fixture.requestCount(path: "/v2/objects/\(objectID.rawValue)") == 1)
+        }
     }
 
     @Test("lineage budget rejects an oversized graph")
@@ -247,7 +252,8 @@ private struct LineageFixture: Sendable {
     func client(
         snapshots: [EncodedSnapshot],
         publishResponse: Data? = nil,
-        overrideState: LineageHTTPState? = nil
+        overrideState: LineageHTTPState? = nil,
+        localStore: LocalSyncV2Store? = nil
     ) throws -> ProductionSyncV2RemoteClient {
         let state = overrideState ?? LineageHTTPState(
             workID: workID,
@@ -283,7 +289,8 @@ private struct LineageFixture: Sendable {
         return try ProductionSyncV2RemoteClient(
             origin: ProductionHTTPSOrigin(url: URL(string: "https://lineage.test")!),
             vault: InMemoryAuthSessionVault(session: auth),
-            session: session
+            session: session,
+            localStore: localStore
         )
     }
 
@@ -324,6 +331,126 @@ private struct LineageFixture: Sendable {
 }
 
 extension RemoteHTTPLineageTests {
+    @Test("verified unadopted history is reusable without bypassing Inbox verification")
+    func verifiedInboxAnchorsLaterDownload() async throws {
+        let fixture = LineageFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let scope = V2LocalWorkScope.bound(fixture.binding)
+        let saved = try await store.checkpoint(V2CheckpointRequest(
+            workID: fixture.workID, document: fixture.document,
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+        ), scope: scope)
+        var parent = saved.snapshotID
+        var snapshots: [EncodedSnapshot] = []
+        for index in 0 ..< 130 {
+            let snapshot = try fixture.snapshot(title: "received-\(index)", parents: [parent])
+            snapshots.append(snapshot)
+            parent = snapshot.snapshotId
+        }
+        let staged = try V2RemoteSnapshotGraph(
+            workID: fixture.workID, headSnapshotID: parent, snapshots: snapshots,
+            expectedCurrentSnapshotID: saved.snapshotID, expectedLocalGeneration: saved.generation,
+            expectedRemoteHead: V2RemoteHead(snapshotID: parent, generation: 131)
+        )
+        try await store.stageRemoteGraph(staged, scope: scope)
+        #expect(try await store.verifiedInboxSnapshot(workID: fixture.workID, snapshotID: parent, scope: scope) == nil)
+        try await store.verifyInbox(inboxID: staged.inboxID, scope: scope)
+        let remote = try fixture.snapshot(title: "new remote", parents: [parent])
+        let client = try fixture.client(snapshots: [remote], localStore: store)
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.count == 132)
+        #expect(fixture.requestCount(path: "/v2/snapshots/\(parent.rawValue)/manifest") == 0)
+        #expect(try await store.open(workID: fixture.workID, scope: scope).summary.currentSnapshotID == saved.snapshotID)
+        let graph = try V2RemoteSnapshotGraph(
+            workID: fixture.workID, headSnapshotID: remote.snapshotId, snapshots: inbox.snapshots,
+            expectedCurrentSnapshotID: saved.snapshotID, expectedLocalGeneration: saved.generation,
+            expectedRemoteHead: V2RemoteHead(snapshotID: remote.snapshotId, generation: 132)
+        )
+        try await store.stageRemoteGraph(graph, scope: scope)
+        try await store.verifyInbox(inboxID: graph.inboxID, scope: scope)
+        let wrongScope = V2LocalWorkScope.bound(V2AccountBinding(
+            accountID: "other-account", accountFence: fixture.binding.accountFence,
+            serverInstanceID: fixture.binding.serverInstanceID
+        ))
+        #expect(try await store.verifiedInboxSnapshot(workID: fixture.workID, snapshotID: parent, scope: wrongScope) == nil)
+        await store.close()
+    }
+
+    @Test("only an exact pre-commit publish lineage rejection permits replanning", arguments: [false, true])
+    func publishLineageRejectionIsTyped(exact: Bool) async throws {
+        let fixture = LineageFixture()
+        let base = try fixture.snapshot(title: "base")
+        let local = try fixture.snapshot(title: "local", parents: [base.snapshotId])
+        let command = try fixture.publishCommand(source: local,
+                                                 expectedRemoteHead: V2RemoteHead(snapshotID: base.snapshotId, generation: 1))
+        let body = exact
+            ? Data(#"{"error":"lineageViolation","result":"parked","retryable":false}"#.utf8)
+            : Data(#"{"error":"schemaViolation","result":"parked","retryable":false}"#.utf8)
+        let state = LineageHTTPState(replies: [
+            "POST /v2/works/\(fixture.workID.description)/publish": LineageHTTPReply(
+                status: 422,
+                headers: ["Content-Type": "application/vnd.fuminiwa.sync.v2+jcs", "Cache-Control": "no-store", "Pragma": "no-cache"],
+                body: body
+            )
+        ])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        await #expect(throws: exact ? SyncV2Failure.retryable(.publishLineageRejected) : .fatal(.unexpected)) {
+            _ = try await client.execute(.command(SyncV2SealedRemoteCommand(command: command)))
+        }
+        #expect(state.count(path: "/v2/receipts/\(command.commandId.uuidString.lowercased())") == 0)
+    }
+
+    @Test("committed lineage beyond the network budget is reused without downloading ancestors", arguments: [false, true])
+    func longCommittedHistoryAnchorsRemoteGraph(remoteChanged: Bool) async throws {
+        let fixture = LineageFixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let scope = V2LocalWorkScope.bound(fixture.binding)
+        var head: SnapshotID?
+        for generation in 0 ..< 130 {
+            let saved = try await store.checkpoint(V2CheckpointRequest(
+                workID: fixture.workID,
+                document: fixture.document(title: "local-\(generation)"),
+                documentCreatedAt: fixture.createdAt,
+                expectedGeneration: Int64(generation)
+            ), scope: scope)
+            head = saved.snapshotID
+        }
+        let anchor = try #require(head)
+        let remote = try await remoteChanged
+            ? fixture.snapshot(title: "remote", parents: [anchor])
+            : #require(store.committedSnapshot(workID: fixture.workID, snapshotID: anchor, scope: scope))
+        // The stub deliberately contains no local history. A redundant GET
+        // would fail, rather than silently passing against a full server fixture.
+        let client = try fixture.client(snapshots: [remote], localStore: store)
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.map(\.snapshotId) == (remoteChanged ? [anchor, remote.snapshotId] : [anchor]))
+        #expect(fixture.requestCount(path: "/v2/snapshots/\(anchor.rawValue)/manifest") == 0)
+        let graph = try V2RemoteSnapshotGraph(
+            inboxID: inbox.inboxID,
+            workID: fixture.workID,
+            headSnapshotID: remote.snapshotId,
+            snapshots: inbox.snapshots,
+            expectedCurrentSnapshotID: anchor,
+            expectedLocalGeneration: 130,
+            expectedRemoteHead: V2RemoteHead(snapshotID: remote.snapshotId, generation: 131)
+        )
+        try await store.stageRemoteGraph(graph, scope: scope)
+        try await store.verifyInbox(inboxID: inbox.inboxID, scope: scope)
+        #expect(try await store.open(workID: fixture.workID, scope: scope).summary.currentSnapshotID == anchor)
+        let wrongFence = V2LocalWorkScope.bound(V2AccountBinding(
+            accountID: fixture.binding.accountID,
+            accountFence: "different-fence",
+            serverInstanceID: fixture.binding.serverInstanceID
+        ))
+        #expect(try await store.committedSnapshot(workID: fixture.workID, snapshotID: anchor, scope: wrongFence) == nil)
+        #expect(try await store.committedSnapshot(workID: WorkID(UUID()), snapshotID: anchor, scope: scope) == nil)
+        await store.close()
+    }
+
     @Test("HTTP create response is read back before durable acknowledgement", arguments: [false, true])
     func createReceiptReachesStore(tampered: Bool) async throws {
         let fixture = LineageFixture()
