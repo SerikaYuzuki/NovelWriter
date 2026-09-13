@@ -22,26 +22,26 @@ struct SystemPlainTextClipboardWriter: PlainTextClipboardWriting {
     }
 }
 
-enum AIClipboardPromptCopyFailure: Sendable, Equatable {
+enum ManuscriptCopyFailure: Sendable, Equatable {
     case staleContext
     case compositionInProgress
     case emptyContent
     case contentTooLarge
-    case promptEncodingFailed
+    case copyPreparationFailed
     case clipboardWriteFailed
 }
 
-enum AIClipboardPromptCopyOutcome: Sendable, Equatable {
+enum ManuscriptCopyOutcome: Sendable, Equatable {
     case success
-    case failure(AIClipboardPromptCopyFailure)
+    case failure(ManuscriptCopyFailure)
 }
 
-/// prompt本文を持たない、コピー結果の一時通知。
-struct AIClipboardPromptCopyNotice: Identifiable, Sendable, Equatable {
+/// コピー文字列本文を持たない、コピー結果の一時通知。
+struct ManuscriptCopyNotice: Identifiable, Sendable, Equatable {
     let id: UUID
-    let outcome: AIClipboardPromptCopyOutcome
+    let outcome: ManuscriptCopyOutcome
 
-    init(id: UUID = UUID(), outcome: AIClipboardPromptCopyOutcome) {
+    init(id: UUID = UUID(), outcome: ManuscriptCopyOutcome) {
         self.id = id
         self.outcome = outcome
     }
@@ -49,23 +49,23 @@ struct AIClipboardPromptCopyNotice: Identifiable, Sendable, Equatable {
     var title: String {
         switch outcome {
         case .success:
-            "プロンプトをコピーしました"
+            "コピーしました"
         case .failure:
-            "プロンプトをコピーできませんでした"
+            "コピーできませんでした"
         }
     }
 
     var message: String {
         switch outcome {
         case .success:
-            "プロンプトをシステムクリップボードへコピーしました。AIチャットには送信していません。"
+            "クリップボードへコピーしました。"
         case let .failure(failure):
             failure.message
         }
     }
 }
 
-private extension AIClipboardPromptCopyFailure {
+private extension ManuscriptCopyFailure {
     var message: String {
         switch self {
         case .staleContext:
@@ -76,8 +76,8 @@ private extension AIClipboardPromptCopyFailure {
             "対象本文が空です。本文を入力するか、空でない範囲を選択してください。"
         case .contentTooLarge:
             "対象が大きすぎるため、内容を切り詰めずコピーを中止しました。話単位または短い選択範囲でお試しください。"
-        case .promptEncodingFailed:
-            "プロンプトを安全な文字列へ変換できませんでした。本文はコピーしていません。"
+        case .copyPreparationFailed:
+            "コピーする文字列を準備できませんでした。本文はコピーしていません。"
         case .clipboardWriteFailed:
             "システムクリップボードへ書き込めませんでした。もう一度お試しください。"
         }

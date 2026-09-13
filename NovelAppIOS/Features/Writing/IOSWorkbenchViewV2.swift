@@ -570,13 +570,9 @@ struct IOSEditorPane: View {
                     initialText: episode.content,
                     commandSession: store.editorCommandSession,
                     selectionContextMenuCommands: [
-                        EditorSelectionContextMenuCommand(title: "校正用プロンプトをコピー", systemImageName: "doc.on.clipboard") { snapshot in
+                        EditorSelectionContextMenuCommand(title: "選択範囲をコピー", systemImageName: "doc.on.clipboard") { snapshot in
                             guard store.currentEpisodeEditingToken == editingToken else { return }
-                            store.copySelectionPrompt(text: snapshot.text, purpose: .proofreading, expectedEpisodeID: episode.id)
-                        },
-                        EditorSelectionContextMenuCommand(title: "アドバイス用プロンプトをコピー", systemImageName: "doc.on.clipboard") { snapshot in
-                            guard store.currentEpisodeEditingToken == editingToken else { return }
-                            store.copySelectionPrompt(text: snapshot.text, purpose: .advice, expectedEpisodeID: episode.id)
+                            store.copySelectionManuscript(text: snapshot.text, expectedEpisodeID: episode.id)
                         }
                     ],
                     configuration: IOSEditorFontPreference.configuration(
@@ -612,11 +608,9 @@ struct IOSEditorPane: View {
                 .accessibilityLabel("AI支援")
                 .accessibilityValue(showingAssistant ? "開いています" : "閉じています")
                 .accessibilityIdentifier("ios.editor.assistant")
-                Menu("プロンプトをコピー", systemImage: "doc.on.clipboard") {
-                    Button("この話・校正用") { store.copyEpisodePrompt(purpose: .proofreading, expectedEpisodeID: episode.id) }
-                    Button("この話・アドバイス用") { store.copyEpisodePrompt(purpose: .advice, expectedEpisodeID: episode.id) }
-                    Button("この章・校正用") { store.copyChapterPrompt(purpose: .proofreading, expectedChapterID: chapter.id) }
-                    Button("この章・アドバイス用") { store.copyChapterPrompt(purpose: .advice, expectedChapterID: chapter.id) }
+                Menu("コピー", systemImage: "doc.on.clipboard") {
+                    Button("この話をコピー") { store.copyEpisodeManuscript(expectedEpisodeID: episode.id) }
+                    Button("この章をコピー") { store.copyChapterManuscript(expectedChapterID: chapter.id) }
                 }
             }
             .inspector(isPresented: $showingAssistant) {

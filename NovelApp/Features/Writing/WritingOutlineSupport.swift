@@ -115,7 +115,7 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                AIClipboardPromptMenu(
+                ManuscriptCopyMenu(
                     target: .chapter(
                         chapterID: chapter.id,
                         session: expectedSession
@@ -167,7 +167,7 @@ struct OutlineEpisodeRow: View {
                 .foregroundStyle(.secondary)
             }
 
-            AIClipboardPromptMenu(
+            ManuscriptCopyMenu(
                 target: .episode(
                     episodeID: episode.id,
                     chapterID: chapterID,
@@ -204,7 +204,7 @@ struct EpisodeOutlineContextMenu: View {
         }
         .disabled(!isCurrentSession)
 
-        AIClipboardPromptContextMenu(
+        ManuscriptCopyContextMenu(
             target: .episode(
                 episodeID: request.episode.id,
                 chapterID: request.chapterID,
@@ -284,7 +284,7 @@ struct ChapterOutlineContextMenu: View {
         }
         .disabled(!isCurrentSession || chapter.episodes.isEmpty)
 
-        AIClipboardPromptContextMenu(
+        ManuscriptCopyContextMenu(
             target: .chapter(
                 chapterID: chapter.id,
                 session: chapterItem.session

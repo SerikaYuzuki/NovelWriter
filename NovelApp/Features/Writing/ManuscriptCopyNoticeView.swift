@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// 原稿やprompt本文を再掲せず、clipboard copyの結果だけを伝える一時通知。
-struct AIClipboardPromptCopyNoticeView: View {
-    let notice: AIClipboardPromptCopyNotice
+struct ManuscriptCopyNoticeView: View {
+    let notice: ManuscriptCopyNotice
     let onDismiss: () -> Void
 
     var body: some View {

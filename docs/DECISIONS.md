@@ -1148,3 +1148,7 @@
 2026-09-12。同期不具合修正に伴い初回publishの条件を明確化する。同期前に複数のローカルcheckpointがあっても、必要な親Snapshotとobjectを親から順に登録し、公開headがまだnullの場合は最新checkpointを最初のheadにできる。古い版を途中の公開headにする必要はない。headが既にある場合のexpected head・祖先照合・競合条件は維持する。wire／SQLite／PostgreSQLの形とepochは変えない。
 
 同じ作品に対する計画要求はまとめ、同じintentを二重にsealしない。失敗したpublishの明示再試行では、既存のsealed intentとcommand ID／bytesを再利用し、受領検証を省略しない。D-090の現行v2限定を保ち、旧形式へのfallback・実原稿の削除・履歴の再生成は行わない。
+
+## D-094: 原稿コピーからAIプロンプトを外す
+
+2026-09-13、利用者の指定により校正／アドバイス用プロンプトコピーを、選択範囲／話／章のplain textコピーへ置き換える。D-054／D-075のコピー用途・JSON囲み・AI依頼文はこの決定で上書きする。タイトルと本文、配列順、明示scope、session／IME検査、clipboard write境界は維持する。D-089のAI明示送信、目的別設定、感想・アドバイスの保存は変更しない。詳細は[原稿コピー](CLIPBOARD_AI_ASSIST.md)。

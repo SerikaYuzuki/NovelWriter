@@ -5,7 +5,7 @@ import NovelCore
 import Testing
 
 @MainActor
-struct AIClipboardPromptAppStateTests {
+struct ManuscriptCopyAppStateTests {
     @Test("選択範囲はexact Unicodeを一度だけclipboardへ書き本文を状態に保持しない")
     func selectionCopiesExactTextWithoutDocumentMutation() throws {
         let harness = makeHarness(capture: .captured("Editor確定全文"))
@@ -17,8 +17,7 @@ struct AIClipboardPromptAppStateTests {
         let documentBefore = state.document
         let saveStateBefore = state.saveState
 
-        let didCopy = state.copySelectionAIChatPrompt(
-            purpose: .advice,
+        let didCopy = state.copySelectionManuscript(
             selectedText: exactSelection,
             episodeID: episodeID,
             in: chapterID,
@@ -27,18 +26,18 @@ struct AIClipboardPromptAppStateTests {
 
         #expect(didCopy)
         #expect(harness.clipboard.receivedTexts.count == 1)
-        #expect(try selectionText(in: #require(harness.clipboard.receivedTexts.first)) == exactSelection)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .success)
+        #expect(try #require(harness.clipboard.receivedTexts.first) == exactSelection)
+        #expect(state.manuscriptCopyNotice?.outcome == .success)
         #expect(
-            state.aiClipboardPromptCopyNotice?.message ==
-                "プロンプトをシステムクリップボードへコピーしました。AIチャットには送信していません。"
+            state.manuscriptCopyNotice?.message ==
+                "クリップボードへコピーしました。"
         )
         #expect(state.document == documentBefore)
         #expect(state.saveState == saveStateBefore)
         #expect(state.documentSessionToken == session)
 
-        state.dismissAIClipboardPromptCopyNotice()
-        #expect(state.aiClipboardPromptCopyNotice == nil)
+        state.dismissManuscriptCopyNotice()
+        #expect(state.manuscriptCopyNotice == nil)
     }
 
     @Test("現在話はEditorの確定本文をモデルより優先し許可外fieldを含めない")
@@ -54,18 +53,14 @@ struct AIClipboardPromptAppStateTests {
         state.updateDocumentSynopsis("SYNOPSIS_FORBIDDEN_57A9")
         let documentBefore = state.document
 
-        #expect(state.copyEpisodeAIChatPrompt(
-            purpose: .proofreading,
+        #expect(state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: state.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
-        let manuscript = try manuscript(in: prompt)
-        #expect(manuscript["title"] as? String == "公開する話題")
-        #expect(manuscript["content"] as? String == "Editor側の確定本文\n")
-        #expect(Set(manuscript.keys) == ["title", "content"])
+        #expect(prompt == "公開する話題\n\nEditor側の確定本文\n")
         #expect(!prompt.contains("モデル側の古い本文"))
         #expect(!prompt.contains("章SECRET"))
         #expect(!prompt.contains("MEMO_FORBIDDEN_57A9"))
@@ -84,15 +79,14 @@ struct AIClipboardPromptAppStateTests {
         state.updateEpisodeTitle("対象話", for: episodeID, in: chapterID)
         state.updateSelectedEpisodeContent("モデル確定本文")
 
-        #expect(state.copyEpisodeAIChatPrompt(
-            purpose: .advice,
+        #expect(state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: state.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
-        #expect(try manuscript(in: prompt)["content"] as? String == "モデル確定本文")
+        #expect(prompt == "対象話\n\nモデル確定本文")
     }
 
     @Test("世界観Editorのcaptureは本文scopeへ混入せずselectionを拒否しモデルへfallbackする")
@@ -105,8 +99,7 @@ struct AIClipboardPromptAppStateTests {
         state.selectProjectSection(.worldbuilding)
         let session = state.documentSessionToken
 
-        #expect(!state.copySelectionAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copySelectionManuscript(
             selectedText: "世界観の選択範囲",
             episodeID: episodeID,
             in: chapterID,
@@ -114,15 +107,14 @@ struct AIClipboardPromptAppStateTests {
         ))
         #expect(harness.clipboard.receivedTexts.isEmpty)
 
-        #expect(state.copyEpisodeAIChatPrompt(
-            purpose: .proofreading,
+        #expect(state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: session
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
-        #expect(try manuscript(in: prompt)["content"] as? String == "本文モデル")
+        #expect(prompt == state.document.episode(episodeID)?.episode.title.appending("\n\n本文モデル"))
         #expect(!prompt.contains("WORLD_EDITOR_FORBIDDEN_57A9"))
         #expect(!prompt.contains("世界観の選択範囲"))
     }
@@ -140,28 +132,20 @@ struct AIClipboardPromptAppStateTests {
         let secondEpisodeID = try #require(state.selectedEpisodeID)
         state.updateSelectedEpisodeContent("二話の古いモデル本文")
 
-        #expect(state.copyChapterAIChatPrompt(
-            purpose: .proofreading,
+        #expect(state.copyChapterManuscript(
             chapterID: chapterID,
             expectedSession: state.documentSessionToken
         ))
 
         let prompt = try #require(harness.clipboard.receivedTexts.first)
-        let chapter = try manuscript(in: prompt)
-        let episodes = try #require(chapter["episodes"] as? [[String: Any]])
-        #expect(chapter["title"] as? String == "対象章")
-        #expect(episodes.count == 2)
-        #expect(episodes[0]["title"] as? String == "第一話")
-        #expect(episodes[0]["content"] as? String == "一話のモデル本文")
-        #expect(episodes[1]["title"] as? String == "第二話")
-        #expect(episodes[1]["content"] as? String == "二話のEditor確定本文")
+        #expect(prompt == "対象章\n\n第一話\n\n一話のモデル本文\n\n第二話\n\n二話のEditor確定本文")
         #expect(!prompt.contains("二話の古いモデル本文"))
         #expect(secondEpisodeID == state.selectedEpisodeID)
     }
 }
 
 @MainActor
-struct AIClipboardPromptAppStateFailureTests {
+struct ManuscriptCopyAppStateFailureTests {
     @Test("IME変換中は選択・話・章の全copyを拒否しclipboardへ一度も書かない")
     func compositionInProgressRejectsEveryScope() throws {
         let harness = makeHarness(capture: .compositionInProgress)
@@ -171,27 +155,24 @@ struct AIClipboardPromptAppStateFailureTests {
         state.updateSelectedEpisodeContent("確定済みモデル本文")
         let session = state.documentSessionToken
 
-        #expect(!state.copySelectionAIChatPrompt(
-            purpose: .proofreading,
+        #expect(!state.copySelectionManuscript(
             selectedText: "選択本文",
             episodeID: episodeID,
             in: chapterID,
             expectedSession: session
         ))
-        #expect(!state.copyEpisodeAIChatPrompt(
-            purpose: .proofreading,
+        #expect(!state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: session
         ))
-        #expect(!state.copyChapterAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copyChapterManuscript(
             chapterID: chapterID,
             expectedSession: session
         ))
 
         #expect(harness.clipboard.receivedTexts.isEmpty)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .failure(.compositionInProgress))
+        #expect(state.manuscriptCopyNotice?.outcome == .failure(.compositionInProgress))
     }
 
     @Test("古い作品sessionと右クリック後に変わった話選択を再検査してzero writeにする")
@@ -204,8 +185,7 @@ struct AIClipboardPromptAppStateFailureTests {
         var staleSession = session
         staleSession.generation &+= 1
 
-        #expect(!state.copyEpisodeAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copyEpisodeManuscript(
             episodeID: oldEpisodeID,
             in: chapterID,
             expectedSession: staleSession
@@ -213,8 +193,7 @@ struct AIClipboardPromptAppStateFailureTests {
 
         state.addEpisode(to: chapterID, title: "切替先")
         #expect(state.selectedEpisodeID != oldEpisodeID)
-        #expect(!state.copySelectionAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copySelectionManuscript(
             selectedText: "古いmenuの選択",
             episodeID: oldEpisodeID,
             in: chapterID,
@@ -222,7 +201,7 @@ struct AIClipboardPromptAppStateFailureTests {
         ))
 
         #expect(harness.clipboard.receivedTexts.isEmpty)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .failure(.staleContext))
+        #expect(state.manuscriptCopyNotice?.outcome == .failure(.staleContext))
     }
 
     @Test("同じcurrent sessionでも存在しない章・話IDは再解決してzero writeにする")
@@ -234,20 +213,18 @@ struct AIClipboardPromptAppStateFailureTests {
         let missingChapterID = ChapterID()
         let session = state.documentSessionToken
 
-        #expect(!state.copyEpisodeAIChatPrompt(
-            purpose: .proofreading,
+        #expect(!state.copyEpisodeManuscript(
             episodeID: missingEpisodeID,
             in: chapterID,
             expectedSession: session
         ))
-        #expect(!state.copyChapterAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copyChapterManuscript(
             chapterID: missingChapterID,
             expectedSession: session
         ))
 
         #expect(harness.clipboard.receivedTexts.isEmpty)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .failure(.staleContext))
+        #expect(state.manuscriptCopyNotice?.outcome == .failure(.staleContext))
     }
 
     @Test("空本文はclipboardを呼ばずfailure noticeにしprompt本文を保持しない")
@@ -259,17 +236,16 @@ struct AIClipboardPromptAppStateFailureTests {
         state.updateEpisodeTitle("タイトルだけ", for: episodeID, in: chapterID)
         state.updateSelectedEpisodeContent(" \n　")
 
-        #expect(!state.copyEpisodeAIChatPrompt(
-            purpose: .proofreading,
+        #expect(!state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: state.documentSessionToken
         ))
 
         #expect(harness.clipboard.receivedTexts.isEmpty)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .failure(.emptyContent))
-        #expect(state.aiClipboardPromptCopyNotice?.message.contains("タイトルだけ") == false)
-        #expect(state.aiClipboardPromptCopyNotice?.message.contains(" \n　") == false)
+        #expect(state.manuscriptCopyNotice?.outcome == .failure(.emptyContent))
+        #expect(state.manuscriptCopyNotice?.message.contains("タイトルだけ") == false)
+        #expect(state.manuscriptCopyNotice?.message.contains(" \n　") == false)
     }
 
     @Test("clipboard failureはfalseを返し作品状態を変更しない")
@@ -281,15 +257,14 @@ struct AIClipboardPromptAppStateFailureTests {
         let documentBefore = state.document
         let saveStateBefore = state.saveState
 
-        #expect(!state.copyEpisodeAIChatPrompt(
-            purpose: .advice,
+        #expect(!state.copyEpisodeManuscript(
             episodeID: episodeID,
             in: chapterID,
             expectedSession: state.documentSessionToken
         ))
 
         #expect(harness.clipboard.receivedTexts.count == 1)
-        #expect(state.aiClipboardPromptCopyNotice?.outcome == .failure(.clipboardWriteFailed))
+        #expect(state.manuscriptCopyNotice?.outcome == .failure(.clipboardWriteFailed))
         #expect(state.document == documentBefore)
         #expect(state.saveState == saveStateBefore)
     }
@@ -299,41 +274,26 @@ struct AIClipboardPromptAppStateFailureTests {
 private func makeHarness(
     capture: EditorCommittedTextCaptureResult,
     clipboardSucceeds: Bool = true
-) -> AIClipboardPromptTestHarness {
+) -> ManuscriptCopyTestHarness {
     let clipboard = RecordingPlainTextClipboardWriter(succeeds: clipboardSucceeds)
     let captureStub = CommittedTextCaptureStub(result: capture)
-    let suiteName = "FUMINIWAAIClipboardPrompt.\(UUID().uuidString)"
+    let suiteName = "FUMINIWAManuscriptCopy.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
     defaults.removePersistentDomain(forName: suiteName)
     let state = AppState(
         dependencies: AppDependencies(
-            repository: AIClipboardPromptRepository(),
+            repository: ManuscriptCopyRepository(),
             userDefaults: defaults,
             clipboardWriter: clipboard,
             activeCommittedTextCapture: { captureStub.result }
         ),
         initialStartupState: .ready
     )
-    return AIClipboardPromptTestHarness(
+    return ManuscriptCopyTestHarness(
         state: state,
         clipboard: clipboard,
         captureStub: captureStub
     )
-}
-
-private func selectionText(in prompt: String) throws -> String {
-    try #require(manuscript(in: prompt)["text"] as? String)
-}
-
-private func manuscript(in prompt: String) throws -> [String: Any] {
-    let beginning = "--- BEGIN FUMINIWA MANUSCRIPT JSON ---\n\n"
-    let ending = "\n\n--- END FUMINIWA MANUSCRIPT JSON ---"
-    let beginningRange = try #require(prompt.range(of: beginning))
-    let jsonStart = beginningRange.upperBound
-    let endingRange = try #require(prompt.range(of: ending, range: jsonStart ..< prompt.endIndex))
-    let data = Data(prompt[jsonStart ..< endingRange.lowerBound].utf8)
-    let envelope = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    return try #require(envelope["manuscript"] as? [String: Any])
 }
 
 @MainActor
@@ -361,13 +321,13 @@ private final class CommittedTextCaptureStub {
 }
 
 @MainActor
-private struct AIClipboardPromptTestHarness {
+private struct ManuscriptCopyTestHarness {
     let state: AppState
     let clipboard: RecordingPlainTextClipboardWriter
     let captureStub: CommittedTextCaptureStub
 }
 
-private actor AIClipboardPromptRepository: DocumentRepository {
+private actor ManuscriptCopyRepository: DocumentRepository {
     func load(from _: URL) async throws -> NovelDocument {
         .newDocument()
     }

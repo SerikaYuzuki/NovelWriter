@@ -109,7 +109,7 @@ IME変換中はモデル反映もプラグイン介入もしない。変換確�
 
 ### 4.9 AI支援
 
-明示scopeのclipboard promptを維持し、D-089に基づき現在の1話のpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。原稿の自動編集はしない。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
+原稿コピーはD-094のplain textとし、AI支援はD-089に基づき現在の1話のpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。原稿の自動編集はしない。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
 
 ### 4.10 作品棚
 
@@ -141,7 +141,7 @@ macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocu
 
 macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選択・recovery・既存Workbenchへ分岐する。ready以外で編集可能なWorkbenchを作らない。iOSは作品棚→作品ホーム→機能画面の階層と、iPadの複数列を使う。
 
-現在のiOSには主要routeがあるが、旧操作バー・promptコピー等の導線復元と実機確認が残る。[IOS](IOS.md)が現況と受入条件を整理する。過去のUI完了文書は製品意図を調べる資料であり、v2での完了証拠にはしない。
+現在のiOSには主要routeがあるが、各導線の実機確認が残る。原稿コピーはD-094で選択／話／章のplain textへ更新した。[IOS](IOS.md)が現況と受入条件を整理する。過去のUI完了文書は製品意図を調べる資料であり、v2での完了証拠にはしない。
 
 ## 6. 製品要件
 

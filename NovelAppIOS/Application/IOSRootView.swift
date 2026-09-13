@@ -73,7 +73,7 @@ struct IOSRootView: View {
                 showCurrentProjectHome()
             }
         }
-        .alert(item: $store.promptCopyNotice) { notice in
+        .alert(item: $store.manuscriptCopyNotice) { notice in
             Alert(
                 title: Text(notice.title),
                 message: Text(notice.message),

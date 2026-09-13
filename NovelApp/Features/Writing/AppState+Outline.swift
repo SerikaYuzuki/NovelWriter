@@ -16,13 +16,12 @@ extension AppState {
         }
     }
 
-    /// 本文右クリックで取得したexact selectionから、AIチャット用promptをコピーする。
+    /// 本文右クリックで取得したexact selectionから、原稿をコピーする。
     ///
     /// context menu表示後に作品や話が変わっていた場合は、同じ文字列が存在しても
-    /// 現在選択へ読み替えない。IME変換中も未確定文字を欠いたpromptを作らない。
+    /// 現在選択へ読み替えない。IME変換中も未確定文字を欠いたコピー文字列を作らない。
     @discardableResult
-    func copySelectionAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copySelectionManuscript(
         selectedText: String,
         episodeID: EpisodeID,
         in chapterID: ChapterID,
@@ -30,44 +29,42 @@ extension AppState {
     ) -> Bool {
         let episodeStillExists = document.chapters.first(where: { $0.id == chapterID })?
             .episodes.contains(where: { $0.id == episodeID }) == true
-        let isCurrentSelection = isCurrentAIClipboardPromptContext(expectedSession) &&
+        let isCurrentSelection = isCurrentManuscriptCopyContext(expectedSession) &&
             workspaceSelection.section == .structure &&
             selectedChapterID == chapterID &&
             selectedEpisodeID == episodeID &&
             episodeStillExists
         guard isCurrentSelection else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         switch activeCommittedTextCapture() {
         case .captured:
-            return copyAIClipboardPrompt(
-                purpose: purpose,
+            return copyManuscript(
                 source: .selection(text: selectedText)
             )
         case .compositionInProgress:
-            return failAIClipboardPromptCopy(.compositionInProgress)
+            return failManuscriptCopy(.compositionInProgress)
         case .notActive:
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
     }
 
-    /// 指定話のタイトルと本文だけを含むAIチャット用promptをコピーする。
+    /// 指定話のタイトルと本文だけを含む原稿をコピーする。
     @discardableResult
-    func copyEpisodeAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copyEpisodeManuscript(
         episodeID: EpisodeID,
         in chapterID: ChapterID,
         expectedSession: DocumentSessionToken
     ) -> Bool {
-        guard isCurrentAIClipboardPromptContext(expectedSession) else {
-            return failAIClipboardPromptCopy(.staleContext)
+        guard isCurrentManuscriptCopyContext(expectedSession) else {
+            return failManuscriptCopy(.staleContext)
         }
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
         guard let episode = chapter.episodes.first(where: { $0.id == episodeID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         let content: String
@@ -78,7 +75,7 @@ extension AppState {
             case let .captured(committedText):
                 content = committedText
             case .compositionInProgress:
-                return failAIClipboardPromptCopy(.compositionInProgress)
+                return failManuscriptCopy(.compositionInProgress)
             case .notActive:
                 content = episode.content
             }
@@ -86,24 +83,22 @@ extension AppState {
             content = episode.content
         }
 
-        return copyAIClipboardPrompt(
-            purpose: purpose,
+        return copyManuscript(
             source: .episode(title: episode.title, content: content)
         )
     }
 
-    /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むpromptをコピーする。
+    /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むコピー文字列をコピーする。
     @discardableResult
-    func copyChapterAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copyChapterManuscript(
         chapterID: ChapterID,
         expectedSession: DocumentSessionToken
     ) -> Bool {
-        guard isCurrentAIClipboardPromptContext(expectedSession) else {
-            return failAIClipboardPromptCopy(.staleContext)
+        guard isCurrentManuscriptCopyContext(expectedSession) else {
+            return failManuscriptCopy(.staleContext)
         }
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         var activeEpisodeContent: (id: EpisodeID, text: String)?
@@ -119,85 +114,81 @@ extension AppState {
             case let .captured(committedText):
                 activeEpisodeContent = (activeEpisodeID, committedText)
             case .compositionInProgress:
-                return failAIClipboardPromptCopy(.compositionInProgress)
+                return failManuscriptCopy(.compositionInProgress)
             case .notActive:
                 break
             }
         }
 
         let episodes = chapter.episodes.map { episode in
-            AIClipboardPromptEpisode(
+            ManuscriptCopyEpisode(
                 title: episode.title,
                 content: activeEpisodeContent?.id == episode.id
                     ? activeEpisodeContent?.text ?? episode.content
                     : episode.content
             )
         }
-        return copyAIClipboardPrompt(
-            purpose: purpose,
+        return copyManuscript(
             source: .chapter(title: chapter.title, episodes: episodes)
         )
     }
 
-    func dismissAIClipboardPromptCopyNotice() {
-        aiClipboardPromptNoticeDismissTask?.cancel()
-        aiClipboardPromptNoticeDismissTask = nil
-        aiClipboardPromptCopyNotice = nil
+    func dismissManuscriptCopyNotice() {
+        manuscriptCopyNoticeDismissTask?.cancel()
+        manuscriptCopyNoticeDismissTask = nil
+        manuscriptCopyNotice = nil
     }
 
-    private func isCurrentAIClipboardPromptContext(_ expectedSession: DocumentSessionToken) -> Bool {
+    private func isCurrentManuscriptCopyContext(_ expectedSession: DocumentSessionToken) -> Bool {
         permitsDocumentInteraction && documentSessionToken == expectedSession
     }
 
     @discardableResult
-    private func copyAIClipboardPrompt(
-        purpose: AIClipboardPromptPurpose,
-        source: AIClipboardPromptSource
+    private func copyManuscript(
+        source: ManuscriptCopySource
     ) -> Bool {
         do {
-            let prompt = try AIClipboardPromptBuilder.make(purpose: purpose, source: source)
+            let prompt = try ManuscriptCopyBuilder.make(source: source)
             guard clipboardWriter.writePlainText(prompt.text) else {
-                return failAIClipboardPromptCopy(.clipboardWriteFailed)
+                return failManuscriptCopy(.clipboardWriteFailed)
             }
-            presentAIClipboardPromptCopyNotice(.success)
+            presentManuscriptCopyNotice(.success)
             return true
-        } catch let error as AIClipboardPromptError {
-            return failAIClipboardPromptCopy(copyFailure(for: error))
+        } catch let error as ManuscriptCopyError {
+            return failManuscriptCopy(copyFailure(for: error))
         } catch {
-            return failAIClipboardPromptCopy(.promptEncodingFailed)
+            return failManuscriptCopy(.copyPreparationFailed)
         }
     }
 
-    private func copyFailure(for error: AIClipboardPromptError) -> AIClipboardPromptCopyFailure {
+    private func copyFailure(for error: ManuscriptCopyError) -> ManuscriptCopyFailure {
         switch error {
         case .emptyContent:
             .emptyContent
-        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .promptUTF8ByteLimitExceeded:
+        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .outputUTF8ByteLimitExceeded:
             .contentTooLarge
-        case .encodingFailed:
-            .promptEncodingFailed
         }
     }
 
     @discardableResult
-    private func failAIClipboardPromptCopy(_ failure: AIClipboardPromptCopyFailure) -> Bool {
-        presentAIClipboardPromptCopyNotice(.failure(failure))
+    private func failManuscriptCopy(_ failure: ManuscriptCopyFailure) -> Bool {
+        presentManuscriptCopyNotice(.failure(failure))
         return false
     }
 
-    private func presentAIClipboardPromptCopyNotice(_ outcome: AIClipboardPromptCopyOutcome) {
-        aiClipboardPromptNoticeDismissTask?.cancel()
-        let notice = AIClipboardPromptCopyNotice(outcome: outcome)
-        aiClipboardPromptCopyNotice = notice
-        aiClipboardPromptNoticeDismissTask = Task { @MainActor [weak self] in
+    private func presentManuscriptCopyNotice(_ outcome: ManuscriptCopyOutcome) {
+        manuscriptCopyNoticeDismissTask?.cancel()
+        let notice = ManuscriptCopyNotice(outcome: outcome)
+        manuscriptCopyNotice = notice
+        manuscriptCopyNoticeDismissTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .seconds(5))
             } catch {
                 return
             }
-            guard let self, aiClipboardPromptCopyNotice?.id == notice.id else { return }
-            aiClipboardPromptCopyNotice = nil
-            aiClipboardPromptNoticeDismissTask = nil
+            guard let self, manuscriptCopyNotice?.id == notice.id else { return }
+            manuscriptCopyNotice = nil
+            manuscriptCopyNoticeDismissTask = nil
         }
     }
 

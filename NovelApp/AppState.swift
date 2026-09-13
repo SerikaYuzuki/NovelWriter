@@ -115,7 +115,7 @@ final class AppState {
     var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
     @ObservationIgnored var snapshotSyncAutoAdoptionTask: Task<Void, Never>?
-    var aiClipboardPromptCopyNotice: AIClipboardPromptCopyNotice?
+    var manuscriptCopyNotice: ManuscriptCopyNotice?
     var isSnapshotSyncInFlight = false
     var externalDocumentOpenErrorMessage: String?
     var operationMessage: String?
@@ -182,7 +182,7 @@ final class AppState {
     @ObservationIgnored var pendingSignInRequest = false
     @ObservationIgnored var terminationTask: Task<Bool, Never>?
     @ObservationIgnored var bootstrapTask: Task<Void, Never>?
-    @ObservationIgnored var aiClipboardPromptNoticeDismissTask: Task<Void, Never>?
+    @ObservationIgnored var manuscriptCopyNoticeDismissTask: Task<Void, Never>?
     @ObservationIgnored var hasCompletedBootstrap = false
     @ObservationIgnored var saveCoordinator: V2DocumentSaveCoordinator!
     @ObservationIgnored let resignActiveObserver = NotificationObserverToken()
@@ -279,7 +279,7 @@ final class AppState {
         snapshotSyncLibraryWorks = []
         snapshotSyncRemoteCatalogItems = []
         snapshotSyncCurrentWorkAccountState = nil
-        aiClipboardPromptCopyNotice = nil
+        manuscriptCopyNotice = nil
         documentSessionToken = AppDocumentSessionToken(
             generation: 0,
             documentID: placeholder.id,

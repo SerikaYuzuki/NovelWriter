@@ -264,7 +264,7 @@ final class IOSDocumentStore {
     var localEditGeneration: UInt64 = 0
     var isImporterPresented = false
     var pendingExportURL: URL?
-    var promptCopyNotice: IOSPromptCopyNotice?
+    var manuscriptCopyNotice: IOSManuscriptCopyNotice?
     var operationErrorMessage: String?
     var attachments: [Attachment] = []
     var libraryItems: [IOSDocumentLibraryItem] = []

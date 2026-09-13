@@ -38,7 +38,7 @@ struct EditorPaneView: View {
                                 selectionRequest: editorSearchSession.selectionRequest,
                                 commandSession: editorCommandSession,
                                 aiSelectionSession: aiSelectionSession,
-                                selectionContextMenuCommands: selectionPromptCommands(
+                                selectionContextMenuCommands: selectionCopyCommands(
                                     episodeID: episode.id,
                                     chapterID: chapterID,
                                     session: session
@@ -89,30 +89,17 @@ struct EditorPaneView: View {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
     }
 
-    private func selectionPromptCommands(
+    private func selectionCopyCommands(
         episodeID: EpisodeID,
         chapterID: ChapterID,
         session: DocumentSessionToken
     ) -> [EditorSelectionContextMenuCommand] {
         [
             EditorSelectionContextMenuCommand(
-                title: "選択範囲の校正用プロンプトをコピー",
-                systemImageName: "checkmark.bubble"
+                title: "選択範囲をコピー",
+                systemImageName: "doc.on.doc"
             ) { snapshot in
-                appState.copySelectionAIChatPrompt(
-                    purpose: .proofreading,
-                    selectedText: snapshot.text,
-                    episodeID: episodeID,
-                    in: chapterID,
-                    expectedSession: session
-                )
-            },
-            EditorSelectionContextMenuCommand(
-                title: "選択範囲のアドバイス用プロンプトをコピー",
-                systemImageName: "lightbulb"
-            ) { snapshot in
-                appState.copySelectionAIChatPrompt(
-                    purpose: .advice,
+                appState.copySelectionManuscript(
                     selectedText: snapshot.text,
                     episodeID: episodeID,
                     in: chapterID,

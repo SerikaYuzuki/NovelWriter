@@ -1,55 +1,55 @@
 import Foundation
 import NovelCore
 
-/// 通常版のAI支援は、明示した本文をローカルでprompt化してclipboardへコピーするだけに留める。
+/// 明示した範囲の原稿だけをclipboardへコピーする。
 extension IOSDocumentStore {
-    func copySelectionPrompt(
+    func copySelectionManuscript(
         text: String,
-        purpose: AIClipboardPromptPurpose,
+
         expectedEpisodeID: EpisodeID
     ) {
         guard selectedEpisodeID == expectedEpisodeID else {
             showPromptFailure(.staleContext)
             return
         }
-        copyPrompt(purpose: purpose, source: .selection(text: text))
+        copyPrompt(source: .selection(text: text))
     }
 
-    func copyEpisodePrompt(purpose: AIClipboardPromptPurpose, expectedEpisodeID: EpisodeID) {
+    func copyEpisodeManuscript(expectedEpisodeID: EpisodeID) {
         guard selectedEpisodeID == expectedEpisodeID else {
-            if promptCopyNotice == nil {
+            if manuscriptCopyNotice == nil {
                 showPromptFailure(.staleContext)
             }
             return
         }
-        guard let episode = synchronizedSelectedEpisodeForPrompt() else {
-            if promptCopyNotice == nil {
+        guard let episode = synchronizedSelectedEpisodeForCopy() else {
+            if manuscriptCopyNotice == nil {
                 showPromptFailure(.staleContext)
             }
             return
         }
-        copyPrompt(purpose: purpose, source: .episode(title: episode.title, content: episode.content))
+        copyPrompt(source: .episode(title: episode.title, content: episode.content))
     }
 
-    func copyChapterPrompt(purpose: AIClipboardPromptPurpose, expectedChapterID: ChapterID) {
+    func copyChapterManuscript(expectedChapterID: ChapterID) {
         guard selectedChapterID == expectedChapterID else {
             showPromptFailure(.staleContext)
             return
         }
-        guard synchronizedSelectedEpisodeForPrompt() != nil,
+        guard synchronizedSelectedEpisodeForCopy() != nil,
               let chapter = document.chapters.first(where: { $0.id == expectedChapterID }) else {
-            if promptCopyNotice == nil {
+            if manuscriptCopyNotice == nil {
                 showPromptFailure(.staleContext)
             }
             return
         }
         let episodes = chapter.episodes.map {
-            AIClipboardPromptEpisode(title: $0.title, content: $0.content)
+            ManuscriptCopyEpisode(title: $0.title, content: $0.content)
         }
-        copyPrompt(purpose: purpose, source: .chapter(title: chapter.title, episodes: episodes))
+        copyPrompt(source: .chapter(title: chapter.title, episodes: episodes))
     }
 
-    private func synchronizedSelectedEpisodeForPrompt() -> Episode? {
+    private func synchronizedSelectedEpisodeForCopy() -> Episode? {
         guard let selectedChapterID, let selectedEpisodeID else { return nil }
         switch editorCommandSession.captureActiveCommittedText() {
         case let .captured(text):
@@ -63,7 +63,7 @@ extension IOSDocumentStore {
         return document.episode(selectedEpisodeID)?.episode
     }
 
-    private func copyPrompt(purpose: AIClipboardPromptPurpose, source: AIClipboardPromptSource) {
+    private func copyPrompt(source: ManuscriptCopySource) {
         guard startupState == .ready,
               syncV2ActiveWorkID != nil,
               !isDocumentTransitionInProgress,
@@ -73,25 +73,24 @@ extension IOSDocumentStore {
             return
         }
         do {
-            let prompt = try AIClipboardPromptBuilder.make(purpose: purpose, source: source)
+            let prompt = try ManuscriptCopyBuilder.make(source: source)
             guard clipboardWriter.writePlainText(prompt.text) else {
                 showPromptFailure(.clipboardWriteFailed)
                 return
             }
-            promptCopyNotice = .success
-        } catch let error as AIClipboardPromptError {
+            manuscriptCopyNotice = .success
+        } catch let error as ManuscriptCopyError {
             switch error {
             case .emptyContent: showPromptFailure(.emptyContent)
-            case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .promptUTF8ByteLimitExceeded:
+            case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .outputUTF8ByteLimitExceeded:
                 showPromptFailure(.contentTooLarge)
-            case .encodingFailed: showPromptFailure(.promptEncodingFailed)
             }
         } catch {
-            showPromptFailure(.promptEncodingFailed)
+            showPromptFailure(.copyPreparationFailed)
         }
     }
 
-    private func showPromptFailure(_ failure: IOSPromptCopyFailure) {
-        promptCopyNotice = IOSPromptCopyNotice(failure: failure)
+    private func showPromptFailure(_ failure: IOSManuscriptCopyFailure) {
+        manuscriptCopyNotice = IOSManuscriptCopyNotice(failure: failure)
     }
 }
