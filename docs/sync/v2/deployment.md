@@ -196,7 +196,7 @@ take a custom-format PostgreSQL backup, restore it into an isolated database,
 and rehearse the upgrade there. Verify recorded versions, preserved account
 and work data, runtime role attestation, then start the new API and check both
 trusted HTTPS health/auth responses and authenticated upload behavior.
-See [implementation record](../../REVIEW_IMPLEMENTATION_20260913.md) for actual
+See [implementation record](../../CODE_HEALTH.md) for actual
 results; these instructions alone are not deployment evidence.
 
 ## アカウント削除の運用追加（2026-09-14）

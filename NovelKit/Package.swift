@@ -139,7 +139,7 @@ let package = Package(
             dependencies: ["NovelUI"]
         ),
         .testTarget(
-            name: "NovelConformanceTests"
+            name: "NovelAuthConformanceTests"
         )
     ]
 )

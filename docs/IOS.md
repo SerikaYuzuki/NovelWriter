@@ -1,18 +1,17 @@
 # iOS / iPadOS の製品契約と現在地
 
-**ソース確認: 2026-09-12 / 対象: iOS・iPadOS 17以降 / Release NO-GO**
+対象はiOS・iPadOS 17以降。一般公開の受入は未完了。
 
 iPhone / iPadで、通信を待たず日本語小説を編集・保存する。作品棚から作品ホーム、各機能へ進む段階導線と、iPadの適応的な複数列を維持する。保存・同期の正は [Snapshot Sync v2](SNAPSHOT_SYNC_V2.md)、実機記録と次の修復は [v2 handoff](SNAPSHOT_SYNC_V2_HANDOFF.md)。本書は製品要件と現行コードの差を扱う。
 
 ## 1. 現在の実装
 
-2026-09-13追記: 作品ホームのスナップショット履歴は「履歴を見る」から専用sheetへ開く。
+作品ホームのスナップショット履歴は「履歴を見る」から専用sheetへ開く。
 履歴行はsheet内のListでスクロールし、ホームの高さを件数で増やさない。
-Release buildとiPhoneへの更新・起動は成功し、利用者が実機で別画面表示を確認した。
 
 [`project.yml`](../project.yml) が通常targetと除外ソースの正。ディスクに旧Viewがあることを、現行画面へ接続済みという証拠にしない。
 
-| 対象 | 2026-09-12に確認したソース | 完了と区別する点 |
+| 対象 | 現在のソース | 完了と区別する点 |
 | --- | --- | --- |
 | 作品棚・作品ホーム | `Library/IOSLibraryViewV2.swift`、`IOSProjectHomeViewV2.swift` | ボタンとList中心。既存カードUIの品質に到達したとは扱わない |
 | 段階導線・iPad複数列 | `Features/Writing/IOSWorkbenchViewV2.swift` | 執筆・作品情報・プロット・人物・世界観・資料・感想アドバイス・設定へのrouteあり。実機受入は別 |
@@ -23,14 +22,12 @@ Release buildとiPhoneへの更新・起動は成功し、利用者が実機で�
 | 外観・本文フォント | `Features/Settings/IOSSettingsViewV2.swift`、`Platform/iOS/IOSAppearance.swift` | 初回Dark、System／Light／Dark選択、端末内本文フォント設定あり |
 | 保存・認証 | v2 application/store、`DocumentLifecycle`と`DeviceSync/*V2*` | SQLite checkpointとApple認証の実装あり。新規作品のremote反映とpaired実機Gateは未完了 |
 
-2026-08-18のhandoffは、署名済みiPhoneでApple認証と再起動後のsession復元を確認した記録である。「minimal shell」という当時の評価を、全routeが存在しない意味へ広げない。一方、今回のソース確認だけで執筆UIの回帰が解消したとも扱わない。
-
 ## 2. 維持する製品スコープ
 
 - 作品棚 → 作品ホーム → 各機能 → Outline / Detail。iPhoneは段階遷移、iPadは同じ意味を複数列へ展開する。
 - 章／話の追加、選択、タイトル編集、並べ替え、本文、話メモ、検索、文字数、作品情報、人物、プロット／伏線、世界観、資料、設定。
 - 本文下に`……`／`――`／`ルビ`／`傍点`の執筆補助。44pt以上の操作面、IME中の拒否、失効した選択の拒否、1回のUndoで戻せること。
-- 選択／話／章のplain textコピー（D-094）。AI依頼文と用途選択は付けない。範囲と安全条件は [CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)。D-089の別機能として、[現在の1話を明示送信するAI支援](WRITING_ASSISTANT.md)を追加した。
+- 選択／話／章のplain textコピー（D-094）。AI依頼文と用途選択は付けない。範囲と安全条件は [CLIPBOARD_AI_ASSIST.md](CLIPBOARD_AI_ASSIST.md)。D-089の別機能として、[範囲を確認して明示送信するAI支援](WRITING_ASSISTANT.md)を追加した。
 - 保存・同期状態は上部の小さな記号と必要時の説明。本文見出し、タイトル入力、文字数、下部status barを重複常設しない。
 - 履歴と3択競合に到達でき、復元前の内容を保全する。利用者へSnapshot IDやDB操作を要求しない。
 - chromeは初回Dark、以後は利用者の選択を保持する。本文キャンバスは独立した端末設定とする。
@@ -51,7 +48,7 @@ Release buildとiPhoneへの更新・起動は成功し、利用者が実機で�
 
 ## 4. 次の修復と完了条件
 
-2026-09-12の今回の接続・検証結果は[作業記録](WORKBENCH_IMPLEMENTATION_20260912.md)参照。Xcode 27.0（27A5194q）のSDKでbuildし、iPhone Simulatorでappテストを実施した。最低対応OSの17は維持する。最新OSでの配布受入・iPadの全size class受入とは区別する。
+2026-09-12の今回の接続・検証結果は[作業記録](DESIGN.md)参照。Xcode 27.0（27A5194q）のSDKでbuildし、iPhone Simulatorでappテストを実施した。最低対応OSの17は維持する。最新OSでの配布受入・iPadの全size class受入とは区別する。
 
 
 まず既存の製品要件をv2へ接続する。旧Viewは表示と操作意図の参考に限り、旧package保存・CloudKit・Note同期をコピーしない。新規作品のlocal-only問題、全体検証の既知停止点、staging再検証の順序はhandoffへ集約する。
@@ -66,12 +63,6 @@ Release buildとiPhoneへの更新・起動は成功し、利用者が実機で�
 - 変更のない保存／同期が成功扱いであり、通信不能でもlocal編集を継続できること。
 
 Files原本のopen-in-place、共同編集、複数作品同時編集、Windows実装と旧provider研究は別スコープ。D-089のAPI支援は今回の対象。iOS受入によってPackage Validatorや公開配布Gateが完了するわけではない。
-
-## 5. 参照と履歴
-
-- 見た目と操作の規約: [STYLE.md](STYLE.md)。決定: [DECISIONS.md](DECISIONS.md) D-056〜058、D-075、D-080、D-084、D-086。
-- 公開技術Gate: [COMMERCIALIZATION_IMPLEMENTATION.md](COMMERCIALIZATION_IMPLEMENTATION.md)。portable契約: [CROSS_PLATFORM.md](CROSS_PLATFORM.md)。
-- [旧IOS-1〜6計画・CloudKit実装記録の全文](archive/product-guidance-20260912/IOS.md)。過去の「実装済み」は当時のtargetに対する記録として読む。
 
 ## 2026-09-12 作品一覧への明示入口
 

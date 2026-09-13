@@ -39,7 +39,7 @@ Apple版はNovelKitを共有し、WindowsはWindows 11のみを対象に、WinUI
 
 - JSON と `.md` は UTF-8 (BOM なし)で読み書きする。JSON のキー名は現在の camelCase を維持する
 - 本文、メモ、タイトルなどの Unicode 文字列は、保存時に NFC / NFD 変換や改行変換を暗黙に行わない。入力された値を保持する
-- 改行の正規化が必要な出力形式は [PHASE5.md](PHASE5.md) の Export 境界で行い、`.novelpkg` の読み書きでは本文を書き換えない
+- 改行の正規化が必要な出力形式は [EXPORT.md](EXPORT.md) の Export 境界で行い、`.novelpkg` の読み書きでは本文を書き換えない
 - JSON内のUUID値はハイフン付き36文字を受理し、英字の大小を区別せず解釈する。新規保存時のJSON値とIDファイル名は大文字形式をcanonicalとする。IDファイル名はcanonicalな大文字名を要求し、JSON値と大小文字だけ異なるファイルを本文欠損として黙って扱わない
 - Snapshot Sync境界では同じUUID logical valueをlowercaseでcanonical化する。Importはpackage UUIDをcase-insensitive parseしてからlowercase SQLite／wire値へ変換し、Exportはuppercase package値／IDファイル名へ戻す。packageのraw UUID表記をObjectIDへ直接hashしない
 - ChapterIDとEpisodeIDは文書全体で一意、その他のentity IDは各domain内で一意とする。重複IDは後勝ちで上書きせず、読み込み／書き出し前検証で型付きエラーにする
@@ -130,10 +130,6 @@ Sync v2のexact JCS UTF-8 bytes、SHA-256、lowercase UUID、closed command／en
 初版server object bytesはPostgreSQL BYTEA、clientはSQLite BLOB。S3／外部CASは将来の別migration／Gateであり、v1設計から戻さない。Auth wire epoch 1とSync epoch 2を混同せず、同期はFUMINIWA AccountID／sessionを使い、Apple tokenをsync bearerへ流用しない。
 
 Swift／Rustの検証成功を将来C#の互換成功として扱わない。conformance、server integration、staging、実機の各証拠を分け、公開条件は [技術Gate](COMMERCIALIZATION_IMPLEMENTATION.md) で追跡する。
-
-## 8. 履歴
-
-[旧v1計画・Note／Work／Episode互換契約の全文](archive/product-guidance-20260912/CROSS_PLATFORM.md)を保存する。旧CloudKitとv1のmigration／fallbackは現行実装へ追加しない。旧データへの削除操作は文書整理の範囲外。
 
 ## D-090: 現行manifestの最小フィールド契約
 

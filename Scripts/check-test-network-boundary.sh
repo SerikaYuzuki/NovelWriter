@@ -70,9 +70,7 @@ for defaults_boundary in \
   expected_source="${defaults_boundary#*|}"
   standard_defaults="$(
     rg -n 'UserDefaults\.standard' "$source_root" \
-      --glob '*.swift' \
-      --glob '!**/Legacy/**' \
-      --glob '!**/Retired*/**' || true
+      --glob '*.swift' || true
   )"
   standard_count="$(printf '%s\n' "$standard_defaults" | awk 'NF { count += 1 } END { print count + 0 }')"
   if [[ "$standard_count" -ne 1 ]] || [[ "$standard_defaults" != "$expected_source":* ]]; then
@@ -147,9 +145,7 @@ while IFS= read -r source; do
   fi
 done < <(
   rg --files NovelApp NovelAppIOS NovelAppTests NovelAppIOSTests \
-    --glob '*.swift' \
-    --glob '!**/Legacy/**' \
-    --glob '!**/Retired*/**'
+    --glob '*.swift'
 )
 
 while IFS= read -r source; do
@@ -206,9 +202,7 @@ while IFS= read -r source; do
   fi
 done < <(
   rg -l 'SnapshotSyncV2[A-Za-z0-9]*Override|snapshotSyncV2[A-Za-z0-9]*Override' NovelApp \
-    --glob '*.swift' \
-    --glob '!**/Legacy/**' \
-    --glob '!**/Retired*/**'
+    --glob '*.swift'
 )
 
 # The LAN development endpoint belongs only to the runtime resolver. App

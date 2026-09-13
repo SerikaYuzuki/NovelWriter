@@ -102,7 +102,7 @@ no-change／remote descendant、scope不一致、重複object取得、offline編
 不安定性は残る。`check.sh`は既存3ファイルの整形エラーで停止する。
 
 この時点では未知の履歴に128件上限が残っていた。後続の
-[長い履歴の取り込み改善](LARGE_HISTORY_IMPORT_20260913.md)で、非再帰の順次取得へ変更し、
+[長い履歴の取り込み改善](SNAPSHOT_SYNC_V2.md)で、非再帰の順次取得へ変更し、
 128件の打ち切りを除去した。
 
 ## iOSの履歴表示

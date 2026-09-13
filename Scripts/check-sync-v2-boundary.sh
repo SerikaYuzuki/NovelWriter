@@ -1,7 +1,6 @@
 #!/bin/bash
 # D-080: Snapshot Sync v2 is a new live namespace.  This static gate audits
-# only production composition; archive/migration files may retain historical
-# v1 names, but they must not be reachable from the live app or v2 router.
+# all production composition; no retired transport is accepted.
 set -euo pipefail
 
 repo_root="${FUMINIWA_V2_BOUNDARY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -26,9 +25,7 @@ for file in "${required[@]}"; do
 done
 
 # Keep old CloudKit/Note/Work/Episode transports out of production app code.
-# The DeviceSync/Legacy tree is an audit/archive boundary and is deliberately
-# excluded from this production-only search.
-if rg -n --glob '!**/DeviceSync/Legacy/**' \
+if rg -n \
   -e 'NovelSyncCloudKit|CKSyncEngine|(^|[^A-Za-z])import[[:space:]]+CloudKit' \
   -e 'NoteSync(Client|Coordinator|Transport)?' \
   -e 'WorkSync(Client|Coordinator|Transport)?' \

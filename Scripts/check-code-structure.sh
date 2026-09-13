@@ -1,5 +1,5 @@
 #!/bin/bash
-# D-076 R1: keep source-size debt explicit while the Feature refactor is staged.
+# Enforce the current Swift responsibility/size boundaries (D-076).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -10,15 +10,6 @@ if [[ "$actual_swiftlint_version" != "$required_swiftlint_version" ]]; then
   echo "error: SwiftLint $required_swiftlint_version is required (found $actual_swiftlint_version)" >&2
   exit 1
 fi
-
-# Existing cohesive algorithms and transitional coordinators are temporary debt.
-# The value is a ceiling, not a target. R3/R5 must remove entries as they split.
-# Keep this as a case statement: the system bash on macOS is still bash 3.2.
-large_file_ceiling() {
-  case "$1" in
-    *) echo "" ;;
-  esac
-}
 
 failure=0
 while IFS= read -r file; do
@@ -33,16 +24,8 @@ while IFS= read -r file; do
     continue
   fi
 
-  max_allowed="$(large_file_ceiling "$file")"
-  if [[ -z "$max_allowed" ]]; then
-    echo "error: new large Swift file (>800 lines) requires a D-076 debt entry: $file ($line_count)" >&2
-    failure=1
-    continue
-  fi
-  if (( line_count > max_allowed )); then
-    echo "error: D-076 large-file debt grew beyond its ceiling: $file ($line_count > $max_allowed)" >&2
-    failure=1
-  fi
+  echo "error: Swift source exceeds 800 lines; split its responsibility: $file ($line_count)" >&2
+  failure=1
 done < <(
   rg --files NovelApp NovelAppIOS NovelKit/Sources \
     | rg '\.swift$' \

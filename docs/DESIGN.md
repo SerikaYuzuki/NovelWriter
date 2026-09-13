@@ -1,8 +1,6 @@
 # ふみにわ 現行設計
 
-2026-09-12更新。文書改訂前のsource `32e60bdf6`、`project.yml`、`NovelKit/Package.swift`を照合した。設計の決定理由は[DECISIONS](DECISIONS.md)、実装の残件は[CODE_HEALTH](CODE_HEALTH.md)、同期の受入状況は[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)に置く。
-
-旧v0.94の全文・変更履歴は[改訂前の設計書](archive/2026-09-12-DESIGN.md)に保存した。本書では現行契約と実装箇所を案内し、未完了の受入を区別する。章番号はsourceコメントの参照を維持するため残す。
+現行構成は`project.yml`と`NovelKit/Package.swift`で確認する。設計の決定理由は[DECISIONS](DECISIONS.md)、実装の残件は[CODE_HEALTH](CODE_HEALTH.md)、同期の受入状況は[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)に置く。
 
 ## 1. 目的
 
@@ -54,7 +52,7 @@
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
 
-旧同期・旧Library・旧serverと除外画面はD-090で削除した。履歴はGitと凍結文書で参照する。
+旧同期・旧Library・旧serverと除外画面はD-090で削除した。履歴はGitで参照する。
 
 ## 4. 各モジュールの責務
 
@@ -109,7 +107,7 @@ IME変換中はモデル反映もプラグイン介入もしない。変換確�
 
 ### 4.9 AI支援
 
-原稿コピーはD-094のplain textとし、AI支援はD-089に基づき現在の1話のpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。原稿の自動編集はしない。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
+原稿コピーはD-094のplain textとし、AI支援はD-089に基づき校正は現在の1話、感想・アドバイスは選択した話をpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。macOSの校正反映は明示操作と本文・sessionの一致検査を通す。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
 
 ### 4.10 作品棚
 
@@ -125,7 +123,7 @@ account / fence変更をまたぐACK、catalog、history、worker完了を新sco
 
 ### 4.12 旧CloudKit経路
 
-現行adapter・entitlementでは使わない。比較記録は[DEVICE_SYNC](DEVICE_SYNC.md)に残す。現在の同期修正はv2へ行う。
+現行adapter・entitlementでは使わない。比較記録は[DEVICE_SYNC](SNAPSHOT_SYNC_V2.md)に残す。現在の同期修正はv2へ行う。
 
 ## 5. App側の設計
 
@@ -213,11 +211,9 @@ Apple間はSwiftの共通moduleを使う。Windowsとはschema、fixture、ド�
 
 依頼範囲の編集と、D-086で選択した段階の検証まで進める。検証なしも選択肢とし、マージ前の一律全通しを要求しない。設計変更が必要なときはDECISIONSへ追加し、既存の採択理由を消さずに置換範囲を示す。利用者の決定と残る実装事項は[OWNER_DECISIONS](OWNER_DECISIONS.md)へ置く。
 
-## 11. 直近の次タスク
+## 11. 残件
 
-[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)の現況を確認し、iOSの未接続UI、認証済み新規作品のlocal-only報告、D-076構造Gateの失敗を扱う。主要routeやaccount bindingのコードは存在するため、「全体が未実装」と決めつけず、残る失敗を再現して直す。
-
-その後、Mac / iPhone間の往復、offline分岐、競合3択、履歴復元、再起動、account切替を確認する。Package Validator / Windows W0 / 公開認証運用 / 配布技術のGateは別に残り、コード・fixtureの成功だけで一般公開を宣言しない。
+未完了の実装と受入は[CODE_HEALTH](CODE_HEALTH.md)に集約する。修正済み不具合を時系列で次タスクへ残さない。一般公開は実機・認証・復旧・配布の証拠で判断する。
 
 ## 12. 非目標
 
@@ -226,8 +222,3 @@ Apple間はSwiftの共通moduleを使う。Windowsとはschema、fixture、ド�
 - 外部原本のopen-in-place、SQLite DB自体のonline共有、旧CloudKit/v1へのfallback。
 - ログイン後の既存unbound作品の自動adopt、別AccountIDへのWorkIDの付け替え。
 - 通常版からのAI送信・自動本文書換え。価格・法務・販促の追加は明示依頼の範囲のみ（D-042）。
-
-## 変更履歴
-
-- **2026-09-12**: D-080〜D-085と現行target構成に合わせ全面整理。v1 / CloudKit / GRDB / S3を現行扱いしていた説明を修正し、過去の全変更履歴をarchiveへ保全。製品・wire・保存契約の新規採択は行っていない。
-- **2026-09-12 追記**: 利用者決定D-086〜D-088を反映。検証を4段階へ変更し、独自account回復なし・削除猶予30日・backup1年・Windows 11／インストーラー配布を採択。今回の追記は検証なし。

@@ -4,15 +4,14 @@ This is the isolated v2 server namespace selected by D-080. It uses Axum,
 SQLx/PostgreSQL and `sync_v2` tables; object bytes are initially PostgreSQL
 `BYTEA` behind the `ObjectStore` trait. Mutating `ObjectStore` operations use
 the caller's SQLx transaction; object bytes, upload state, ownership and the
-command receipt cannot commit independently. The v1 `SyncServer/` directory,
-database, Docker project and volumes are never read or mounted.
+command receipt cannot commit independently. Only the configured v2 database
+and volume are opened.
 
 ## Status and task entry points
 
-Source reviewed 2026-09-12. The server, Auth v1 adapter, role-split deployment,
+The server, Auth v1 adapter, account deletion worker, role-split deployment,
 and local conformance tools are implemented; release acceptance remains open.
-The [current handoff](../docs/SNAPSHOT_SYNC_V2_HANDOFF.md) separates current
-source from 2026-08-18 staging/device observations.
+See [current status](../docs/CODE_HEALTH.md) and [backup/deletion operations](../docs/ACCOUNT_RETENTION_OPERATIONS.md).
 
 - Protocol changes: [v2 contract](../docs/sync/v2/README.md) and fixtures.
 - Ownership/bootstrap changes: [deployment contract](../docs/sync/v2/deployment.md).

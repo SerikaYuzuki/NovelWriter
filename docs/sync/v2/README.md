@@ -1,8 +1,7 @@
 # Snapshot Sync wire v2
 
-This directory is the versioned **design contract** selected by D-080. It is
-intentionally independent from `docs/sync/v1/`: v1 is an archive format, not a
-live compatibility mode.
+This directory is the current Snapshot Sync v2 contract. Auth v1 is a
+separate live authentication protocol; retired Sync v1 is not a fallback.
 
 - **Contract**: closed wire/schema/fixture/DDL selected by D-080 through D-085. A contract defect is a design issue; implementation behavior does not silently replace it.
 - **Implementation**: Swift v2 domain/store/application/runtime and the Rust server exist. Production, device acceptance, and all integration Gates are not complete. See the [current handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md) for dated evidence and open work.
@@ -66,3 +65,5 @@ python3 Scripts/conformance-v2.py       # independent canonical fixture bytes/ha
 The independent suite intentionally disables PostgreSQL integration. Real DB transaction/role tests require separately provisioned disposable databases; see [CONFORMANCE.md](CONFORMANCE.md) and the [server README](../../../SyncServerV2/README.md). A suite pass is not staging or device acceptance.
 
 - [作品の完全削除](work-deletion.md): scope付き削除intent、再試行、復活防止、追加DDL [work-deletion.sql](work-deletion.sql)。
+
+現在の実装にない旧移行ツールは[取り込み・更新境界](migration.md)を参照する。

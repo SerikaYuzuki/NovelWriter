@@ -36,7 +36,7 @@ JWS検証後、identity rowをlockし、`provider_notification_receipts`、ident
 
 notification `event_time`と同秒またはそれより後に同じidentityの検証済みsign-inが既にcommit済みなら、古い通知で新credential／sessionを巻き戻さない。receiptを`staleAfterReauthentication`として保存し、remote laneを`providerValidationPending`へparkしてserver-side credential validationを行う。Appleがcredentialをvalidと検証した場合はAccountAuthEpoch／Fenceを変えず再開する。`invalid_grant`または署名付きprovider stateがrevoked／notFoundを示す **authoritative invalid** だけが上記revoke transitionを1回適用できる。timeout、DNS、TLS、rate limit、Apple 5xx、応答decode不能は`transientIndeterminate`としてdurable retryし、新credential、session、AccountAuthEpoch／Fenceを変えない。認証が止まっても端末内open／edit／autosave／history／Exportは止めない。
 
-検証済みの新規loginは、同じidentityの全audienceに残る古い検証待ちを失効させる。古いworker結果はpending状態とattemptの照合で拒否する。provider validationの一時停止は同期remote laneに限定し、logoutを妨げない。Apple revokeはHTTP 200だけを完了とし、その他の応答は永続retryに残す。これらの実装と隔離DB検証は[2026-09-13実装記録](../../REVIEW_IMPLEMENTATION_20260913.md)を参照する。実通知と上記URL差分の受入は別途残る。
+検証済みの新規loginは、同じidentityの全audienceに残る古い検証待ちを失効させる。古いworker結果はpending状態とattemptの照合で拒否する。provider validationの一時停止は同期remote laneに限定し、logoutを妨げない。Apple revokeはHTTP 200だけを完了とし、その他の応答は永続retryに残す。これらの実装と隔離DB検証は[2026-09-13実装記録](../../CODE_HEALTH.md)を参照する。実通知と上記URL差分の受入は別途残る。
 
 ## Acceptance fixture
 

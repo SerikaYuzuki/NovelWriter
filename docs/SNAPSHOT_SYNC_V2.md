@@ -18,8 +18,8 @@ components are physically separated from v1:
   BLOBs in the initial implementation;
 - the Rust service uses the v2 API namespace and a new PostgreSQL schema and
   new PostgreSQL Docker volume;
-- v1 databases, package snapshots, server rows, and old caches are read-only
-  archive inputs for an explicit migration/import tool, never a live fallback;
+- old databases and archives are not opened by the live runtime;
+  current portable import uses validated `.novelpkg` files;
 - the live client has no v1 dual-read, dual-write, schema fallback, or
   CloudKit path. A missing or invalid v2 database is a startup error, not an
   empty-database fallback.
@@ -180,16 +180,9 @@ divergence, not an overwrite instruction.
 
 ## 7. Migration and release gates
 
-Legacy processing separates verified Export backup projection from v2
-adoption. The standalone tool has separate export, authority-builder, and adoption
-executables. Export success proves only the former; the implemented
-adoption phase reads that immutable artifact, stages a new client SQLite
-database, verifies bytes, logical model and account scope, then writes a
-distinct adoption marker. Unknown account scope is quarantined. Neither phase
-deletes, rewrites, or automatically uploads the archive, and the live app
-cannot invoke its reader. Direct PostgreSQL/operator adoption is not
-implemented and remains NO-GO; an adopted client Work reaches the server only
-through the normal authenticated create/upload/register/publish wire path.
+Current import/update boundaries are in [migration](sync/v2/migration.md).
+The retired standalone v1 tools are not shipped. Existing SQL migration
+files and storage markers remain part of the deployed schema.
 
 A completed v2 cutover requires Swift and Rust independent harnesses to agree on all
 canonical bytes, SHA-256 IDs, schema failures, command digests, account
@@ -197,8 +190,7 @@ isolation, conflict choices, restore graph, and process-restart states. The
 fixture set in `docs/sync/v2/fixtures/` is the minimum shared corpus.
 
 See [`docs/sync/v2/README.md`](sync/v2/README.md) for the versioned wire and
-fixture files. Existing `docs/sync/v1/` remains historical and is not edited by
-this decision.
+fixture files. Retired v1 sources and documents are available in Git history.
 
 ## 8. Closed canonical validation
 

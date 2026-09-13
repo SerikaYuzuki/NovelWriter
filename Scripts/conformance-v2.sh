@@ -28,7 +28,7 @@ mkdir -p "$swift_scratch/cache" "$swift_scratch/clang"
 )
 
 echo "==> v2 canonical fixture integrity (Rust)"
-env -u FUMINIWA_V2_TEST_DATABASE_URL \
+env -u FUMINIWA_V2_TEST_DATABASE_URL -u FUMINIWA_ACCOUNT_DELETION_TEST_URL -u AUTH_V2_TEST_DATABASE_URL \
   cargo test --manifest-path SyncServerV2/Cargo.toml --tests
 
 echo "==> v2 PostgreSQL integration (explicitly disabled in local gate)"

@@ -57,25 +57,12 @@ SQLiteはmigration／integrity失敗時に空DBへfallbackせず、backup、rest
 
 conformance成功、build、preview、signin成功、deploy、remote head確認、実機受入、公開の各段階を別に記録する。満たした証拠がない項目は未完了のまま残す。
 
-## 6. 作業ごとの検証
+## 6. 検証
 
-D-086に従い、変更の影響から次のいずれかを選ぶ。mergeや文書のファイル名だけを理由に重くしない。
-
-| 段階 | 対象と内容 |
-| --- | --- |
-| なし | 今回のような方針記録・説明変更。test、build、リンク／差分check、reviewは行わず、編集に必要な読取だけ行う |
-| 軽い | 局所文言・表示等について、影響する範囲だけ限定確認 |
-| 中ぐらい | 単一機能の対象testと対象build |
-| 重たい | 保存、認証scope、互換、共有層等へ影響する変更に、全体`Scripts/check.sh`と関連境界検証 |
-
-公開Gateの未完了は維持するが、方針を記録するたびに全Gateを実行する意味ではない。
+変更影響に応じた検証段階は[AGENTS](../AGENTS.md)に集約する。公開受入を通常の文書編集へ一律適用しない。
 
 ## 7. 採択済みの判断と今後の境界
 
 回復はAppleログインのみで独自回復なし、削除取消猶予30日、backup保存1年(D-087)。WindowsはWindows 11のみを対象にMSIなどのインストーラー配布(D-088)。これらを未決へ戻さず、具体的な仕様・実装へ反映する。
 
 既存UIの復旧や仕様内の修正、既定内のtoolchain選定は実装判断として進める。公開時期／対象platformの優先順変更、既定UIや機能の削減、provider再開など、新しい製品上の選択が必要な場合に利用者へ具体案を示す。既決事項の再承認で現行修復を止めない。
-
-## 8. 履歴
-
-[整理前の技術Gate・AI研究証跡の全文](archive/product-guidance-20260912/COMMERCIALIZATION_IMPLEMENTATION.md)、[当時の総合監査](COMMERCIALIZATION_AUDIT_2026-07-19.md)は履歴として保存する。旧Experimental providerはD-075で実装削除済みで、公開Gateの達成や将来APIの採用根拠にはしない。
