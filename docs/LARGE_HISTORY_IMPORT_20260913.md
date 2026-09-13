@@ -48,7 +48,7 @@ PostgreSQL統合はcheck.shの規定どおり無効。server変更はない。
 
 macOS／iOSの署名付きRelease buildは成功。Macでは作品一覧への起動と、
 既存2作品の「同期済み」を確認した。iPhoneへの更新インストールも成功した。
-起動確認は端末ロックで待機中。
+端末ロック解除後に利用者がアプリを開き、更新版の起動成功も確認した。
 更新前に両端末のSQLiteを非公開backupへ保存し、integrity_checkがokであることを確認した。
 初回取り込みの受入は隔離HTTP fixtureと空のSQLiteで行い、実端末の作品は削除していない。
 
