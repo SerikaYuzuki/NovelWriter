@@ -8,6 +8,33 @@ import NovelSyncV2
 #endif
 import Testing
 
+@Suite("Assistant Markdown presentation")
+struct AssistantMarkdownTests {
+    @Test func japaneseEmphasisPreservesCodeAndEscapes() {
+        let text = AssistantMarkdown.inline("まず、**「人物の動機」**が伝わる。")
+        #expect(String(text.characters) == "まず、「人物の動機」が伝わる。")
+        #expect(text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        #expect(String(AssistantMarkdown.inline("`**literal**`").characters) == "**literal**")
+        #expect(String(AssistantMarkdown.inline(#"\*\*literal\*\*"#).characters) == "**literal**")
+    }
+
+    @Test func responseBlocksPreserveCodeAndDistinguishSyntax() {
+        let source = "# 感想\n\n段落の**強調**\n続き\n\n> 引用文\n> 二行目\n\n1. 展開\n  - 人物\n- [x] 確認\n\n---\n\n```swift\n# 見出しではない\n| 表ではない |\n```"
+        #expect(AssistantMarkdown.blocks(source) == [
+            .heading(1, "感想"), .paragraph("段落の**強調**\n続き"), .quote("引用文\n二行目"),
+            .item("1.", "展開", 0), .item("•", "人物", 1), .item("☑", "確認", 0), .rule,
+            .code("swift", "# 見出しではない\n| 表ではない |")
+        ])
+        #expect(AssistantMarkdown.blocks("#タグ\n\n~~~\n未完のコード") == [.paragraph("#タグ"), .code("", "未完のコード")])
+    }
+
+    @Test func tableCellsKeepEscapesInlineCodeAndMissingValues() {
+        let source = "| 観点 | 評価 |\n| :--- | ---: |\n| `a|b` | 良好 |\n| a\\|b | |"
+        #expect(AssistantMarkdown.blocks(source) == [.table([["観点", "評価"], ["`a|b`", "良好"], ["a\\|b", ""]])])
+        #expect(AssistantMarkdown.blocks("見出し\n===\n\n本文") == [.heading(1, "見出し"), .paragraph("本文")])
+    }
+}
+
 @Suite("Writing assistant request boundary")
 struct AssistantClientTests {
     @Test("request preserves the exact manuscript and contains no implicit context")

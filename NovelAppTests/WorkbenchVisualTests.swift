@@ -245,25 +245,28 @@ struct WorkbenchVisualTests {
         #expect(third.toolbar?.items.contains { $0.itemIdentifier == searchID } == true)
     }
 
-    @Test("saved feedback is displayed as read-only dated Markdown")
-    func feedbackReadingView() async throws {
+    @Test("saved feedback is displayed as read-only dated Markdown", arguments: [380.0, 900.0])
+    func feedbackReadingView(width: Double) async throws {
         let record = AssistantFeedback(id: UUID(), purpose: .impressions, scopeTitle: "第一章",
                                        createdAt: Date(timeIntervalSince1970: 1_789_257_600),
-                                       markdown: "## 読後の感想\n\n静かな場面に**緊張感**があります。\n\n- 会話の距離感が伝わります。")
+                                       markdown: "# 読後の感想\n\n静かな場面に**緊張感**があります。\n\n## 印象に残った点\n\n> 言葉が少ないからこそ、感情が伝わる。\n\n1. 会話の距離感\n2. 人物の行動\n\n---\n\n| 観点 | 感想 |\n| --- | --- |\n| 構成 | 自然な流れ |\n| 描写 | 情景が浮かぶ |\n\n```text\n場面 → 選択 → 結果\n```\n\n- [x] 読み終えた")
         let host = NSHostingView(rootView: HStack(spacing: 0) {
-            AssistantFeedbackList(records: [record], selection: .constant(record.id), delete: { _ in true }).frame(width: 280)
-            Divider()
+            if width > 600 {
+                AssistantFeedbackList(records: [record], selection: .constant(record.id), delete: { _ in true }).frame(width: 280)
+                Divider()
+            }
             AssistantFeedbackDetail(record: record)
         })
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 900),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
+        window.appearance = NSAppearance(named: width > 600 ? .aqua : .darkAqua)
         window.orderFront(nil)
         defer { window.close() }
         try await Task.sleep(for: .milliseconds(150))
         #expect(descendants(host).compactMap { $0 as? NSTextView }.allSatisfy { !$0.isEditable })
-        try await snapshot(host, path: "/tmp/fuminiwa-feedback-reading.png")
+        try await snapshot(#require(window.contentView?.superview), path: "/tmp/fuminiwa-feedback-reading-\(Int(width)).png")
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

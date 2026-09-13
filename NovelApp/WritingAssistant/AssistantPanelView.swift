@@ -208,25 +208,3 @@ struct AssistantPanelView: View {
         cancel(); pending = nil; pendingConfiguration = nil; answer = ""; notice = nil; unsavedFeedback = nil
     }
 }
-
-/// Native Markdown presentation: inline emphasis/links plus headings, lists, quotes and fenced code.
-struct AssistantMarkdownView: View {
-    let source: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(source.components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
-                let fenced = source.components(separatedBy: "\n").prefix(index).count(where: { $0.hasPrefix("```") }) % 2 == 1
-                if line.hasPrefix("```") {
-                    Divider()
-                } else if fenced {
-                    Text(verbatim: line).font(.system(.body, design: .monospaced))
-                } else if line.hasPrefix("#") {
-                    Text(.init(String(line.drop(while: { $0 == "#" || $0 == " " }))))
-                        .font(line.hasPrefix("###") ? .headline : .title3).bold()
-                } else {
-                    Text(.init(line.hasPrefix("- ") || line.hasPrefix("* ") ? "• " + line.dropFirst(2) : line))
-                }
-            }
-        }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
