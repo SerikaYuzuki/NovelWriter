@@ -151,9 +151,14 @@ public struct SnapshotID: Hashable, Codable, Sendable, CustomStringConvertible {
 public enum SHA256Digest {
     #if canImport(CryptoKit)
     public static func hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map {
-            String(format: "%02x", $0)
-        }.joined()
+        let digits = Array("0123456789abcdef".utf8)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(64)
+        for byte in SHA256.hash(data: data) {
+            bytes.append(digits[Int(byte >> 4)])
+            bytes.append(digits[Int(byte & 0x0F)])
+        }
+        return String(decoding: bytes, as: UTF8.self)
     }
     #else
     @available(*, unavailable, message: "Snapshot Sync v2 requires CryptoKit for SHA-256")

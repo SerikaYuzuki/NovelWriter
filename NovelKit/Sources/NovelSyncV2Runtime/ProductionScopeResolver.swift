@@ -35,7 +35,7 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
     func existingScope(workID: WorkID) async throws -> V2LocalWorkScope {
         if let binding = try await activeBinding() {
             do {
-                _ = try await store.open(
+                _ = try await store.workSummary(
                     workID: workID,
                     scope: .bound(binding)
                 )
@@ -46,11 +46,11 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
             }
         }
         do {
-            _ = try await store.open(workID: workID, scope: .unbound)
+            _ = try await store.workSummary(workID: workID, scope: .unbound)
             return .unbound
         } catch SyncV2StoreError.workNotFound {
             do {
-                _ = try await store.open(workID: workID, scope: .parked)
+                _ = try await store.workSummary(workID: workID, scope: .parked)
                 return .parked
             } catch SyncV2StoreError.workNotFound {
                 throw SyncV2ApplicationError.workNotFound
@@ -60,7 +60,11 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
 
     func scopeForCheckpoint(workID: WorkID) async throws -> V2LocalWorkScope {
         do {
-            return try await existingScope(workID: workID)
+            let localScope = try await existingScope(workID: workID)
+            // Retain full validation before saving over an existing current
+            // pointer; routine command scope checks need only membership.
+            _ = try await store.open(workID: workID, scope: localScope)
+            return localScope
         } catch SyncV2ApplicationError.workNotFound {
             if let binding = try await activeBinding() {
                 return .bound(binding)
@@ -71,6 +75,8 @@ actor ProductionScopeResolver: SyncV2ScopeResolver {
 }
 
 protocol ProductionScopeStore: Sendable {
+    func workSummary(workID: WorkID, scope: V2LocalWorkScope) async throws -> V2WorkSummary
+
     func open(
         workID: WorkID,
         scope: V2LocalWorkScope
@@ -104,18 +110,18 @@ actor TestScopeResolver: SyncV2ScopeResolver {
     func existingScope(workID: WorkID) async throws -> V2LocalWorkScope {
         if let binding = try await activeBinding() {
             do {
-                _ = try await store.open(workID: workID, scope: .bound(binding))
+                _ = try await store.workSummary(workID: workID, scope: .bound(binding))
                 return .bound(binding)
             } catch SyncV2StoreError.workNotFound {
                 // Continue to the unbound lookup.
             }
         }
         do {
-            _ = try await store.open(workID: workID, scope: .unbound)
+            _ = try await store.workSummary(workID: workID, scope: .unbound)
             return .unbound
         } catch SyncV2StoreError.workNotFound {
             do {
-                _ = try await store.open(workID: workID, scope: .parked)
+                _ = try await store.workSummary(workID: workID, scope: .parked)
                 return .parked
             } catch SyncV2StoreError.workNotFound {
                 throw SyncV2ApplicationError.workNotFound
@@ -125,7 +131,11 @@ actor TestScopeResolver: SyncV2ScopeResolver {
 
     func scopeForCheckpoint(workID: WorkID) async throws -> V2LocalWorkScope {
         do {
-            return try await existingScope(workID: workID)
+            let localScope = try await existingScope(workID: workID)
+            // Retain full validation before saving over an existing current
+            // pointer; routine command scope checks need only membership.
+            _ = try await store.open(workID: workID, scope: localScope)
+            return localScope
         } catch SyncV2ApplicationError.workNotFound {
             return try await activeBinding().map(V2LocalWorkScope.bound) ?? .unbound
         }

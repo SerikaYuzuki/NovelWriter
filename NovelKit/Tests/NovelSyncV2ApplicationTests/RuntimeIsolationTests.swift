@@ -275,6 +275,10 @@ private func fileInventory(at root: URL) -> FileInventory {
 }
 
 private actor FailingScopeStore: ProductionScopeStore {
+    func workSummary(workID _: WorkID, scope _: V2LocalWorkScope) throws -> V2WorkSummary {
+        throw error
+    }
+
     let error: SyncV2StoreError
 
     init(error: SyncV2StoreError) {

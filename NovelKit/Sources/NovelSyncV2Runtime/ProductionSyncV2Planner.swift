@@ -77,7 +77,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         if let record = try await store.pendingSealedCommands(scope: localScope, workID: workID).first {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
         }
-        let records = try await store.allSealedCommands(scope: localScope, workID: workID)
+        let records = try await store.planningGuardCommands(scope: localScope, workID: workID)
         if records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .quarantined }),
            !records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .completed }) {
             return .blocked(.receiptMismatch)
@@ -90,18 +90,21 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             // a second publish against an already sealed intent in the meantime.
             return .blocked(.fatal(.unexpected))
         }
-        return try await planPending(workID: workID, scope: localScope, pending: pending)
+        return try await planPending(
+            workID: workID, scope: localScope, pending: pending,
+            hasCreatedWork: records.contains { $0.commandKind == "createWork" && $0.lifecycle == .completed }
+        )
     }
 
     private func planPending(
         workID: WorkID,
         scope localScope: V2LocalWorkScope,
-        pending: [V2PendingIntent]
+        pending: [V2PendingIntent],
+        hasCreatedWork: Bool
     ) async throws -> SyncV2CommandPlan {
         guard let view = try await store.immutableTransferView(workID: workID, scope: localScope) else {
             return .blocked(.fatal(.invalidLocalState))
         }
-        let records = try await store.allSealedCommands(scope: localScope, workID: workID)
         let activeConflict = try await store.activeConflict(workID: workID, scope: localScope)
         if let intent = pending.first(where: {
             $0.kind == "conflictResolution" &&
@@ -128,7 +131,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             workID: workID,
             scope: localScope,
             view: view,
-            records: records,
+            hasCreatedWork: hasCreatedWork,
             active: activeConflict,
             resolutionIntentID: resolutionIntent?.intentID
         )
@@ -162,19 +165,18 @@ private extension ProductionSyncV2Planner {
         workID: WorkID,
         scope localScope: V2LocalWorkScope,
         view: V2ImmutableTransferView,
-        records: [V2SealedCommandRecord],
+        hasCreatedWork: Bool,
         active: V2ConflictCandidate?,
         resolutionIntentID: UUID?
     ) async throws -> SyncV2CommandPlan {
-        let completedKinds = Set(records.filter { $0.lifecycle == .completed }.map(\.commandKind))
-        if !completedKinds.contains("createWork"), view.summary.acknowledgedHeadGeneration == nil {
+        if !hasCreatedWork, view.summary.acknowledgedHeadGeneration == nil {
             let command = try makeCreateWork(view)
             try await store.seal(command, scope: localScope)
             return .command(command)
         }
         if let dependency = try await store.nextSnapshotTransferView(for: view, scope: localScope),
            let plan = try await planSnapshotRegistration(
-               workID: workID, scope: localScope, view: dependency, records: records
+               workID: workID, scope: localScope, view: dependency
            ) {
             return plan
         }
@@ -195,14 +197,13 @@ private extension ProductionSyncV2Planner {
     private func planSnapshotRegistration(
         workID: WorkID,
         scope localScope: V2LocalWorkScope,
-        view: V2ImmutableTransferView,
-        records: [V2SealedCommandRecord]
+        view: V2ImmutableTransferView
     ) async throws -> SyncV2CommandPlan? {
-        let currentRecords = records.filter {
-            $0.lifecycle == .completed &&
-                $0.sourceSnapshotID == view.snapshot.snapshotId &&
-                $0.sourceGeneration == view.sourceGeneration
-        }
+        // Read only this dependency occurrence, not every historical request.
+        let currentRecords = try await store.completedTransferCommands(
+            scope: localScope, workID: workID,
+            snapshotID: view.snapshot.snapshotId, generation: view.sourceGeneration
+        )
         let progress = try await transferProgress(
             workID: workID,
             scope: localScope,

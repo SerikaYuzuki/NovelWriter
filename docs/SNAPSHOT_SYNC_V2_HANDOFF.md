@@ -156,3 +156,29 @@ D-089を更新し、感想・アドバイスを日時付きMarkdown attachment�
 Mac実画面で、画像指定の既定配置、並べ替え→終了→再起動の保持、元の順への復帰、話内検索とCmd+Fの本文／Outline分岐、専用回答画面を確認。合成Markdownの日時・見出し・箇条書きと読み取り専用表示も描画テストで確認した。作品本文やAPIキーをAIへ実送信していない。
 
 Mac／iPhoneの更新前データを非公開の開発バックアップへ保全し、両SQLiteコピーのintegrity_checkが成功。最終macOS／iOS署名buildとiPhoneへのインストールは成功。Mac更新版の起動を確認。iPhoneはLockedで起動確認が未完了。今回追加した回答の実端末間転送は未実施で、保存・同期形式のテスト成功と区別する。
+
+
+## 2026-09-13 執筆中のCPU負荷の削減
+
+iPhone実機のTime Profilerで、30秒区間のsampled CPU timeは修正前Debugで30.430秒、うちmain threadは1.456秒だった。inclusive 26.170秒がplanner、17.803秒が`allSealedCommands`に重なっていた。約3,300件の保存済みcommandを計画のたびに全件復元する処理が主な負荷だった。これらは重複を含むサンプル時間で、消費電力・温度そのものの測定ではない。
+
+- plannerのguardはcreateWork / quarantinedだけ、転送履歴は完全なbinding・WorkID・source Snapshot・generationでSQLite側を絞る。履歴は削除せず、row順・sealed request bytes・再送・receipt検証を維持する。
+- scope resolverは`workSummary`で所属だけ確認する。本文を開く処理とimmutable transfer bytesの読込で内容を検証する。checkpoint前には従来どおり`open`での検証も残し、破損状態を新規作品扱いにしない。
+- SHA-256とSQLite BLOBのhex表現は、1バイトごとのFoundation format呼出をUTF-8変換へ変更した。表現・ハッシュ・wire・SQLite schemaの変更はない。
+- macOS / iOSの通常RunをReleaseに設定した。Testは引き続き`Debug-Test`で、実データやネットワークから隔離する。
+
+検証は共有同期基盤の変更として重たい段階を選択した。
+
+| 確認 | 今回の結果 |
+| --- | --- |
+| 実機Time Profiler | 履歴読込のみを修正したDebugは27.812秒（main 1.153秒）。scope修正も含むReleaseで利用者が30秒入力した区間は9.698秒（main 4.248秒）。最終planner inclusiveは4.262秒。入力量・同期残量・ビルド条件が違うため、統制したベンチマークや発熱解消の証明ではない |
+| 待機中の実機 | Releaseの別30秒区間は0.024秒。入力中の改善率へ混ぜない |
+| 保存・実機同期 | iOSの最終ローカルsnapshotとacknowledged remote headの一致、およびコピーしたDBのintegrity_check成功を確認。Mac・iOSの更新前バックアップも成功 |
+| 署名済みRelease | 両OSでbuild成功。iPhoneへinstall / launch成功、MacのRelease実行パスと作品画面の起動を確認。Macに以前から出ていた同期失敗表示まで解消したとは扱わない |
+| Swift package全体 | 493件中492成功。既知のProductionInboxIsolationTestsのwrong-work inbox 1件が今回も失敗。全体成功ではない |
+| 追加回帰テスト | 世代・scope・quarantineの絞り込み、全256 byteのhex表現、scope照会とcheckpoint前openの分離の3件成功 |
+| Appテスト | macOSの保存・同期・account scope 17件、iOSの保存・同期21件が成功。入力部品は変更しておらず、専用IME / Undoテストは今回未実施 |
+| 重たい全体Gate | Python / Swift / Rust conformance、構造・依存検査は成功。check.shは変更していないEpisodeRenamePresentation / EpisodeRenameTests / ProductionUnboundAttachmentTestsのformatで停止。別途SwiftLintには既存FuminiwaAppとWorkbenchVisualTestsの長さ違反が残る |
+| 実行分離 | TestはDebug-Test、RunはReleaseの生成schemeを確認。test-network / sync-v2 boundary検査は成功 |
+
+計測ログは端末内の一時領域、バックアップは利用者のApplication Support下に置いた。原稿・command payload・認証情報はこの記録に含めない。温度・長時間の電池消費は未計測。

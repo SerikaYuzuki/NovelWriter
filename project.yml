@@ -45,6 +45,9 @@ schemes:
     build:
       targets:
         NovelApp: all
+    # Everyday writing should use optimized app and package code.
+    run:
+      config: Release
     test:
       config: Debug-Test
       targets:
@@ -53,6 +56,9 @@ schemes:
     build:
       targets:
         FUMINIWAIOS: all
+    # Everyday writing should use optimized app and package code.
+    run:
+      config: Release
     test:
       config: Debug-Test
       targets:
