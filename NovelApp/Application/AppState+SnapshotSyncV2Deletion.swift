@@ -19,7 +19,7 @@ extension AppState {
             isDocumentTransitionInProgress = true
             defer { isDocumentTransitionInProgress = false }
             do {
-                try await saveCoordinator.performExclusive {
+                let result = try await saveCoordinator.performExclusiveAfterFlushing {
                     guard matchesSnapshotSyncV2AccountScope(accountScope) else { throw SyncV2ApplicationError.safeBoundaryRejected }
                     _ = try await application.prepareWorkDeletion(workID: work.workID)
                     guard matchesSnapshotSyncV2AccountScope(accountScope) else { throw SyncV2ApplicationError.safeBoundaryRejected }
@@ -55,6 +55,10 @@ extension AppState {
                             connection: lastStartupLibraryConnection
                         ))
                     }
+                }
+                guard case .completed = result else {
+                    operationMessage = "保存できなかったため削除を中止しました。原稿を保持しています。保存を再試行してください。"
+                    return false
                 }
                 return true
             } catch {

@@ -21,7 +21,7 @@ extension AppState {
             }
             guard let url = try? feedback.temporaryFile() else { return false }
             defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-            return await self.addAttachment(from: url, expectedSession: session) != nil
+            return await self.addAttachmentWithinSaveBoundary(from: url, expectedSession: session) != nil
         }
     }
 
@@ -30,7 +30,7 @@ extension AppState {
         await mutateAssistantFeedback(session: session, account: account) {
             guard self.assistantFeedback.contains(feedback),
                   let attachment = self.attachments.first(where: { $0.fileName == feedback.fileName }) else { return false }
-            return await self.deleteAttachment(attachment, expectedSession: session)
+            return await self.deleteAttachmentWithinSaveBoundary(attachment, expectedSession: session)
         }
     }
 

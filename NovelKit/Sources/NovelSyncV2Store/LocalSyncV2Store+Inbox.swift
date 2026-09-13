@@ -287,23 +287,31 @@ extension LocalSyncV2Store {
     }
 
     func topologicalSnapshots(_ graph: V2RemoteSnapshotGraph) throws -> [EncodedSnapshot] {
-        let byID = Dictionary(uniqueKeysWithValues: graph.snapshots.map { ($0.snapshotId, $0) })
+        var byID: [SnapshotID: EncodedSnapshot] = [:]
+        for snapshot in graph.snapshots {
+            guard byID.updateValue(snapshot, forKey: snapshot.snapshotId) == nil else {
+                throw SyncV2StoreError.invalidSnapshot
+            }
+        }
         var output: [EncodedSnapshot] = []
         var visited = Set<SnapshotID>()
-        func visit(_ snapshot: EncodedSnapshot) throws {
-            if visited.contains(snapshot.snapshotId) {
-                return
-            }
-            for parent in snapshot.manifest.parentSnapshotIds {
-                if let parentSnapshot = byID[parent] {
-                    try visit(parentSnapshot)
+        var active = Set<SnapshotID>()
+        for snapshot in graph.snapshots {
+            var stack: [(SnapshotID, Bool)] = [(snapshot.snapshotId, false)]
+            while let (id, exiting) = stack.popLast() {
+                guard !visited.contains(id), let current = byID[id] else { continue }
+                if exiting {
+                    active.remove(id)
+                    visited.insert(id)
+                    output.append(current)
+                } else {
+                    guard active.insert(id).inserted else { throw SyncV2StoreError.invalidSnapshot }
+                    stack.append((id, true))
+                    for parent in current.manifest.parentSnapshotIds.reversed() {
+                        stack.append((parent, false))
+                    }
                 }
             }
-            visited.insert(snapshot.snapshotId)
-            output.append(snapshot)
-        }
-        for snapshot in graph.snapshots {
-            try visit(snapshot)
         }
         return output
     }
@@ -431,6 +439,18 @@ extension LocalSyncV2Store {
         }
     }
 
+    func loadVerifiedInboxObject(inboxID: String, objectID: ObjectID, byteCount: Int) throws -> Data {
+        guard let bytes = try query(
+            "SELECT bytes FROM inbox_objects WHERE inbox_id=? AND object_id=? AND verified IN (0,1)",
+            [.text(inboxID), .blob(objectID.bytes)]
+        ).first?[0].blob,
+            bytes.count == byteCount,
+            ObjectID(data: bytes) == objectID else {
+            throw SyncV2StoreError.invalidSnapshot
+        }
+        return bytes
+    }
+
     func loadInboxGraph(
         inboxID: UUID,
         binding: V2AccountBinding
@@ -454,6 +474,8 @@ extension LocalSyncV2Store {
         }
         let workID = try WorkID(uuidString: work)
         var snapshots: [EncodedSnapshot] = []
+        // Keep one verified allocation per object across the complete history.
+        var objectBytes: [ObjectID: Data] = [:]
         for row in try query(
             """
             SELECT snapshot_id,manifest_bytes FROM inbox_snapshots
@@ -473,7 +495,7 @@ extension LocalSyncV2Store {
             for entry in manifest.entries {
                 guard let object = try query(
                     """
-                    SELECT o.byte_count,o.bytes,c.byte_count,c.content_type
+                    SELECT o.byte_count,c.byte_count,c.content_type,c.object_id
                     FROM inbox_objects o JOIN inbox_closure c
                       ON c.inbox_id=o.inbox_id AND c.object_id=o.object_id
                     WHERE c.inbox_id=? AND c.snapshot_id=?
@@ -482,13 +504,17 @@ extension LocalSyncV2Store {
                     [.text(text), .blob(snapshotBytes), .text(entry.entityKey)]
                 ).first,
                     object[0].int64 == Int64(entry.byteCount),
-                    object[2].int64 == Int64(entry.byteCount),
-                    object[3].text == entry.contentType.rawValue,
-                    let bytes = object[1].blob,
-                    ObjectID(data: bytes) == entry.objectId else {
+                    object[1].int64 == Int64(entry.byteCount),
+                    object[2].text == entry.contentType.rawValue,
+                    object[3].blob == entry.objectId.bytes else {
                     throw SyncV2StoreError.invalidSnapshot
                 }
-                objects[entry.objectId] = bytes
+                if objectBytes[entry.objectId] == nil {
+                    objectBytes[entry.objectId] = try loadVerifiedInboxObject(
+                        inboxID: text, objectID: entry.objectId, byteCount: entry.byteCount
+                    )
+                }
+                objects[entry.objectId] = objectBytes[entry.objectId]
             }
             snapshots.append(EncodedSnapshot(
                 manifest: manifest,

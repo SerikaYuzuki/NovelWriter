@@ -59,7 +59,7 @@ public extension LocalSyncV2Store {
                   bytes_digest=excluded.bytes_digest,
                   expires_at=excluded.expires_at,
                   lifecycle=CASE
-                    WHEN upload_transfers.lifecycle='acknowledged' THEN upload_transfers.lifecycle
+                    WHEN upload_transfers.lifecycle IN ('acknowledged','quarantined','parked') THEN upload_transfers.lifecycle
                     ELSE excluded.lifecycle END
                 WHERE upload_transfers.transfer_id=excluded.transfer_id
                   AND upload_transfers.work_id=excluded.work_id
@@ -250,4 +250,53 @@ private extension LocalSyncV2Store {
     static let validUploadTransferLifecycles: Set<String> = [
         "prepared", "sending", "acknowledged", "quarantined", "parked"
     ]
+}
+
+public extension LocalSyncV2Store {
+    func quarantineUpload(transferID: UUID, workID: WorkID, reason: String, scope: V2LocalWorkScope) throws {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        try inTransaction {
+            guard try scopedWorkRow(workID: workID, scope: scope) != nil else { throw SyncV2StoreError.accountMismatch }
+            let id = transferID.uuidString.lowercased()
+            try exec("""
+            UPDATE upload_transfers SET lifecycle='quarantined'
+            WHERE transfer_id=? AND work_id=? AND server_instance_id=? AND protocol_epoch=?
+              AND account_id=? AND account_fence=? AND lifecycle IN ('prepared','sending','quarantined')
+            """, [.text(id), .text(workID.description)] + binding.values)
+            guard try changes() == 1 else { throw SyncV2StoreError.invalidLifecycle }
+            try exec("""
+            INSERT INTO quarantine_records(quarantine_id,work_id,account_id,reason,evidence_bytes,created_at)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(quarantine_id) DO UPDATE SET reason=excluded.reason
+            """, [.text(id), .text(workID.description), .text(binding.accountID), .text("upload:" + reason),
+                  .blob(Data()), .text(Self.iso8601(Date()))])
+        }
+    }
+
+    func quarantinedUploadReason(workID: WorkID, scope: V2LocalWorkScope) throws -> String? {
+        guard case let .bound(binding) = scope,
+              try scopedWorkRow(workID: workID, scope: scope) != nil else { throw SyncV2StoreError.accountMismatch }
+        let reason = try query("""
+        SELECT q.reason FROM upload_transfers u JOIN quarantine_records q ON q.quarantine_id=u.transfer_id
+        WHERE u.work_id=? AND u.server_instance_id=? AND u.protocol_epoch=?
+          AND u.account_id=? AND u.account_fence=? AND u.lifecycle='quarantined'
+          AND q.reason LIKE 'upload:%' ORDER BY q.created_at LIMIT 1
+        """, [.text(workID.description)] + binding.values).first?[0].text
+        return reason.map { String($0.dropFirst("upload:".count)) }
+    }
+}
+
+extension LocalSyncV2Store {
+    func retryQuarantinedUploads(workID: WorkID, scope: V2LocalWorkScope) throws {
+        guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
+        let rows = try query("""
+        SELECT u.transfer_id FROM upload_transfers u JOIN quarantine_records q ON q.quarantine_id=u.transfer_id
+        WHERE u.work_id=? AND u.server_instance_id=? AND u.protocol_epoch=? AND u.account_id=? AND u.account_fence=?
+          AND u.lifecycle='quarantined' AND q.reason LIKE 'upload:%'
+        """, [.text(workID.description)] + binding.values)
+        for row in rows {
+            guard let id = row[0].text else { throw SyncV2StoreError.invalidLifecycle }
+            try exec("UPDATE upload_transfers SET lifecycle='prepared' WHERE transfer_id=?", [.text(id)])
+            try exec("DELETE FROM quarantine_records WHERE quarantine_id=?", [.text(id)])
+        }
+    }
 }

@@ -243,7 +243,7 @@ public actor SyncV2Application {
 extension SyncV2Application {
     func checkpointGeneration(workID: WorkID) async throws -> Int64 {
         do {
-            return try await kernel.open(workID: workID).generation
+            return try await kernel.currentGeneration(workID: workID)
         } catch SyncV2ApplicationError.workNotFound {
             return 0
         }

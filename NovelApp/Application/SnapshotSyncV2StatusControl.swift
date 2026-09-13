@@ -58,8 +58,10 @@ struct SnapshotSyncV2StatusControl: View {
             return "同期を再試行できます。編集内容はこの端末に残っています。"
         case .syncing:
             return "同期中です。執筆はそのまま続けられます。"
-        case .failed, .receiptMismatch:
-            return "同期で実エラーが発生しました。編集内容はこの端末に残っています。"
+        case let .failed(reason):
+            return reason.japaneseDescription
+        case .receiptMismatch:
+            return "同期結果を確認できませんでした。原稿はこの端末に残っています。"
         }
     }
 

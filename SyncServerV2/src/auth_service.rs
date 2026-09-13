@@ -174,6 +174,33 @@ impl ProductionAuthService {
         Ok(count)
     }
 
+    pub async fn run_apple_validation_batch(&self, limit: i64) -> Result<usize, AuthError> {
+        let entries = self
+            .application
+            .repository
+            .claim_apple_validations(chrono::Utc::now(), limit)
+            .await?;
+        let count = entries.len();
+        for entry in entries {
+            let credential = VerifiedProviderCredential {
+                audience: entry.audience,
+                vault_context: entry.vault_context,
+                encrypted_refresh_token: entry.secret,
+            };
+            let result = self.apple.validate_credential(&credential).await;
+            self.application
+                .repository
+                .finish_apple_validation(
+                    entry.credential_id,
+                    result.as_ref().map(|_| ()),
+                    chrono::Utc::now(),
+                    entry.attempt,
+                )
+                .await?;
+        }
+        Ok(count)
+    }
+
     fn parsed(kind: &str, body: &[u8]) -> Result<ParsedAuthCommand, AuthApiError> {
         parse_auth_command(kind, body).map_err(AuthApiError::from)
     }
@@ -200,6 +227,14 @@ impl ProductionAuthService {
 impl AccessAuthenticator for ProductionAuthService {
     async fn authenticate_access(&self, token: &str) -> Result<AuthenticatedAccess, AuthError> {
         let principal = self.application.authenticate_access(token).await?;
+        if self
+            .application
+            .repository
+            .provider_validation_pending(principal.account_id.as_str())
+            .await?
+        {
+            return Err(AuthError::ProviderValidationPending);
+        }
         Ok(AuthenticatedAccess {
             account_id: principal.account_id.to_string(),
             account_fence: URL_SAFE_NO_PAD.encode(principal.account_fence),

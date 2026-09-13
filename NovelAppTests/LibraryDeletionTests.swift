@@ -9,8 +9,8 @@ import Testing
 
 @MainActor @Suite("Library deletion")
 struct LibraryDeletionTests {
-    @Test("deleting the last local work retires the editor and restart stays in the empty library")
-    func lastWorkDeletion() async throws {
+    @Test("deleting the last local work flushes dirty edits before retiring the editor", arguments: [false, true])
+    func lastWorkDeletion(dirty: Bool) async throws {
         let config = try TestRuntimeConfiguration(account: nil)
         let store = try LocalSyncV2Store(root: config.localRoot.url, policy: .createNew)
         let workID = WorkID(UUID())
@@ -32,10 +32,16 @@ struct LibraryDeletionTests {
         state.installV2Document(document, workID: workID, createdAt: createdAt)
         await state.refreshSnapshotLibrary()
         let work = try #require(state.snapshotSyncLibraryWorks.first)
+        if dirty {
+            state.document.title = "last unsaved edit"
+            state.markDocumentDirty()
+        }
         #expect(await state.deleteLibraryWork(work, accountScope: state.snapshotSyncV2AccountScopeToken))
         #expect(state.currentSnapshotSyncV2WorkID == nil)
         #expect(!state.startupState.isReady)
         #expect(state.snapshotSyncLibraryWorks.isEmpty)
+        #expect(await state.saveNow())
+        #expect(await state.saveBeforeTermination())
         let restarted = AppState(dependencies: AppDependencies(userDefaults: defaults))
         restarted.snapshotSyncV2Application = app
         await restarted.bootstrap()

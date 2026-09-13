@@ -11,7 +11,7 @@
 | モジュール境界と入力・保存契約 | [DESIGN](DESIGN.md) |
 | 採択理由・置換関係 | [DECISIONS](DECISIONS.md) |
 | 現行source、負債、検証、Git | [CODE_HEALTH](CODE_HEALTH.md) |
-| 2026-09-13の全体レビューと改善優先順位 | [PROJECT_REVIEW_20260913](PROJECT_REVIEW_20260913.md)（対象commit `6cbff1801`、Fable 5.1の独立レビューを統合。実装修正・公開受入は未実施） |
+| 2026-09-13の全体レビューと改善優先順位 | [PROJECT_REVIEW_20260913](PROJECT_REVIEW_20260913.md)（対象commit `6cbff1801`、Fable 5.1の独立レビューを統合。修正状況は[実装記録](REVIEW_IMPLEMENTATION_20260913.md)を参照） |
 | 利用者が決めた方針と残る実装事項 | [OWNER_DECISIONS](OWNER_DECISIONS.md) |
 | 不具合・提案・PRを書く | [不具合template](../.github/ISSUE_TEMPLATE/bug_report.md)、[提案template](../.github/ISSUE_TEMPLATE/feature_request.md)、[PR template](../.github/PULL_REQUEST_TEMPLATE.md) |
 
@@ -23,7 +23,7 @@
 | macOS toolbar | [TOOLBAR](TOOLBAR.md) | 現行接続と製品要件 |
 | iOS / iPadOS | [IOS](IOS.md) | 現行routeと未接続・受入待ちを区別 |
 | package・Windows | [CROSS_PLATFORM](CROSS_PLATFORM.md) | 互換契約。Windows W0未完了 |
-| AI用promptのコピー | [CLIPBOARD_AI_ASSIST](CLIPBOARD_AI_ASSIST.md) | providerなし。iOS入口に残件 |
+| 原稿のplain textコピー | [CLIPBOARD_AI_ASSIST](CLIPBOARD_AI_ASSIST.md) | 選択範囲・話・章を明示してコピー |
 | 公開・配布の技術Gate | [COMMERCIALIZATION_IMPLEMENTATION](COMMERCIALIZATION_IMPLEMENTATION.md) | 一般公開の受入未完了 |
 
 ## 同期v2・認証

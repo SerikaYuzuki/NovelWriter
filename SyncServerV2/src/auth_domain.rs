@@ -339,6 +339,9 @@ impl VerifiedExternalIdentity {
     pub fn subject(&self) -> &str {
         &self.subject
     }
+    pub fn provider_authenticated_at_unix(&self) -> i64 {
+        self.provider_authenticated_at_unix
+    }
     pub fn provider_credential(&self) -> Option<&VerifiedProviderCredential> {
         self.provider_credential.as_ref()
     }
@@ -595,6 +598,13 @@ pub trait AppleProvider: Send + Sync {
         credential: &VerifiedProviderCredential,
         operation_id: &OperationId,
     ) -> Result<(), AuthError>;
+    /// Only an authoritative invalid_grant may return InvalidExternalIdentity.
+    async fn validate_credential(
+        &self,
+        _credential: &VerifiedProviderCredential,
+    ) -> Result<(), AuthError> {
+        Err(AuthError::ProviderExchangeIndeterminate)
+    }
 }
 
 pub fn digest_request(bytes: &[u8]) -> [u8; 32] {
@@ -659,6 +669,8 @@ pub enum AuthError {
     NotFound,
     #[error("provider exchange indeterminate")]
     ProviderExchangeIndeterminate,
+    #[error("provider validation pending")]
+    ProviderValidationPending,
     #[error("vault error")]
     Vault,
     #[error("database error: {0}")]

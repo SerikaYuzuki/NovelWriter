@@ -227,7 +227,7 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("value")
             .and_then(Value::as_str)
-            .map_or(true, |text| text.len() > 1_048_576)
+            .map_or(true, |text| text.chars().count() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -324,7 +324,7 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             value
                 .get(*name)
                 .and_then(Value::as_str)
-                .map_or(true, |text| text.len() > 1_048_576)
+                .map_or(true, |text| text.chars().count() > 1_048_576)
         }) {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -340,7 +340,10 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             "speechStyle",
         ] {
             if !value.get(name).is_some_and(|field| {
-                field.is_null() || field.as_str().is_some_and(|text| text.len() <= 1_048_576)
+                field.is_null()
+                    || field
+                        .as_str()
+                        .is_some_and(|text| text.chars().count() <= 1_048_576)
             }) {
                 return Err(SyncError::SchemaViolation(key.into()));
             }
@@ -370,11 +373,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("title")
             .and_then(Value::as_str)
-            .map_or(true, |text| text.len() > 1_048_576)
+            .map_or(true, |text| text.chars().count() > 1_048_576)
             || value
                 .get("memo")
                 .and_then(Value::as_str)
-                .map_or(true, |text| text.len() > 1_048_576)
+                .map_or(true, |text| text.chars().count() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -411,11 +414,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
             || value
                 .get("note")
                 .and_then(Value::as_str)
-                .map_or(true, |text| text.len() > 1_048_576)
+                .map_or(true, |text| text.chars().count() > 1_048_576)
             || value
                 .get("title")
                 .and_then(Value::as_str)
-                .map_or(true, |text| text.len() > 1_048_576)
+                .map_or(true, |text| text.chars().count() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -439,11 +442,11 @@ pub fn validate_entity_payload(key: &str, value: &Value) -> SyncResult<()> {
         if value
             .get("content")
             .and_then(Value::as_str)
-            .map_or(true, |text| text.len() > 1_048_576)
+            .map_or(true, |text| text.chars().count() > 1_048_576)
             || value
                 .get("title")
                 .and_then(Value::as_str)
-                .map_or(true, |text| text.len() > 1_048_576)
+                .map_or(true, |text| text.chars().count() > 1_048_576)
         {
             return Err(SyncError::SchemaViolation(key.into()));
         }
@@ -991,4 +994,28 @@ pub fn binding_matches(value: &Value, p: &AuthenticatedPrincipal) -> bool {
         && b.get("accountFence").and_then(Value::as_str) == Some(&p.account_fence)
         && b.get("serverInstanceId").and_then(Value::as_str) == Some(&p.server_instance_id)
         && b.get("protocolEpoch").and_then(Value::as_i64) == Some(p.protocol_epoch)
+}
+
+#[cfg(test)]
+mod unicode_limit_tests {
+    use super::*;
+    #[test]
+    fn string_limit_counts_unicode_scalars_not_utf8_bytes() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../docs/sync/v2/fixtures/boundaries/unicode-string-limit.json"
+        ))
+        .unwrap();
+        for sample in fixture["samples"].as_array().unwrap() {
+            let scalars: Vec<char> = sample.as_str().unwrap().chars().collect();
+            for count in fixture["scalarCounts"].as_array().unwrap() {
+                let count = count.as_u64().unwrap() as usize;
+                let text: String = scalars.iter().copied().cycle().take(count).collect();
+                let value = serde_json::json!({"value": text});
+                assert_eq!(
+                    validate_entity_payload(fixture["entityKey"].as_str().unwrap(), &value).is_ok(),
+                    count <= fixture["maxScalars"].as_u64().unwrap() as usize
+                );
+            }
+        }
+    }
 }

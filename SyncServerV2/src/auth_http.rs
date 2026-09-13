@@ -431,6 +431,12 @@ fn error_response(error: AuthApiError, scope: ErrorScope) -> Response {
             "interactiveAppleSignIn",
             "afterInteractiveAuthentication",
         ),
+        AuthError::ProviderValidationPending => (
+            503,
+            "temporarilyUnavailable",
+            "retrySameRequestAfterBackoff",
+            "afterBackoff",
+        ),
         AuthError::ProviderExchangeIndeterminate => (
             502,
             "providerExchangeIndeterminate",
@@ -507,6 +513,7 @@ fn auth_error_kind(error: &AuthError) -> &'static str {
         AuthError::InvalidChallengePhase => "invalidChallengePhase",
         AuthError::InvalidExternalIdentity => "invalidExternalIdentity",
         AuthError::ProviderExchangeIndeterminate => "providerExchangeIndeterminate",
+        AuthError::ProviderValidationPending => "providerValidationPending",
         AuthError::RefreshTokenReused => "refreshTokenReused",
         AuthError::AccountNotFound => "accountNotFound",
         AuthError::SessionRevoked => "sessionRevoked",

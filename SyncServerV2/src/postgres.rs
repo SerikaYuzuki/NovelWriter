@@ -454,6 +454,13 @@ impl Repository {
         let mut connection = pool.acquire().await?;
         Self::verify_runtime_role(&mut connection, expected_role).await?;
         Self::verify_database_identity(&mut connection).await?;
+        // Older deployments require the explicit notification-order migration.
+        // Never serve a new binary against a partially upgraded auth contract.
+        sqlx::query("SELECT i.last_provider_auth_at,c.validation_event_type FROM auth_v1.external_identities i,auth_v1.provider_credentials c LIMIT 0")
+            .execute(&mut *connection).await?;
+        sqlx::query("SELECT partial_bytes FROM sync_v2.upload_capabilities LIMIT 0")
+            .execute(&mut *connection)
+            .await?;
         Self::verify_server_meta_read_only(&mut connection, server_instance_id).await
     }
 
@@ -3497,6 +3504,7 @@ impl Repository {
             return Err(SyncError::SizeLimitExceeded);
         };
         let mut tx = self.pool.begin().await?;
+        self.scope(&mut tx, p).await?;
         let row=sqlx::query("SELECT object_id,byte_count,account_fence,state,expires_at,command_id,work_id FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 FOR UPDATE").bind(&p.account_id).bind(upload_id).fetch_optional(&mut *tx).await?.ok_or(SyncError::NotFound)?;
         if row.try_get::<String, _>("account_fence")? != p.account_fence {
             return Err(SyncError::UploadCapabilityMismatch);
@@ -3526,7 +3534,7 @@ impl Repository {
             .map_err(|_| SyncError::ObjectDigestMismatch)?;
         self.object_store.put(&mut tx, &object_id, bytes).await?;
         if state == "prepared" {
-            sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded' WHERE account_id=$1 AND upload_id=$2 AND state='prepared'")
+            sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded',partial_bytes='\\x'::bytea WHERE account_id=$1 AND upload_id=$2 AND state='prepared'")
                 .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
         }
         tx.commit().await?;

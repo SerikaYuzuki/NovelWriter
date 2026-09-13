@@ -13,6 +13,8 @@ public enum SyncV2CommandFailureDisposition: Sendable {
     case quarantine
     case park
     case replanRejectedPublish
+    case rejectUpload(SyncV2FatalReason)
+    case rejectCommand(SyncV2FatalReason)
 }
 
 /// Owns the durable pending-intent -> sealed-command transition.
@@ -118,6 +120,7 @@ public protocol SyncV2LocalKernel: Sendable {
     func workDeletions() async throws -> [SyncV2WorkDeletion]
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
+    func currentGeneration(workID: WorkID) async throws -> Int64
     /// Retires the active account binding without rebinding the Work. The
     /// retained local bytes remain editable offline, while the old remote
     /// lane is parked and cannot be adopted by a later account.
@@ -176,6 +179,10 @@ public protocol SyncV2LocalKernel: Sendable {
 }
 
 public extension SyncV2LocalKernel {
+    func currentGeneration(workID: WorkID) async throws -> Int64 {
+        try await open(workID: workID).generation
+    }
+
     func prepareWorkDeletion(workID _: WorkID) async throws -> SyncV2WorkDeletion {
         throw SyncV2ApplicationError.safeBoundaryRejected
     }

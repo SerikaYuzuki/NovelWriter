@@ -19,3 +19,5 @@ pub use http::{router, AppState};
 pub use postgres::Repository;
 
 mod work_deletion;
+
+pub mod upload_chunks;

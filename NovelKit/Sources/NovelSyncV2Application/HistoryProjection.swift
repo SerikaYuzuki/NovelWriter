@@ -50,6 +50,24 @@ public struct SyncV2LocalHistoryPage: Hashable, Sendable {
 /// with the same SnapshotID remain two rows because their retention and restore
 /// authority are different.
 public struct SyncV2HistoryItem: Hashable, Sendable {
+    public var displayReason: String {
+        switch reason {
+        case "autosave": "自動保存"
+        case "explicit": "手動保存"
+        case "navigation": "画面切替時の保存"
+        case "close": "終了時の保存"
+        case "restore": "履歴から復元"
+        case "migration": "作品の取り込み"
+        case "conflictResolution": "競合の解決"
+        case "keepBoth": "両方の原稿を保存"
+        case "preRestore": "復元前の原稿"
+        case "explicitAccountClone": "別の作品としてコピー"
+        case "preRemoteAdoption": "同期内容の反映前"
+        case "remoteAdoption", "remoteBaseline": "同期内容の取り込み"
+        default: "保存履歴"
+        }
+    }
+
     public let occurrenceID: UUID
     public let snapshotID: SnapshotID
     public let reason: String

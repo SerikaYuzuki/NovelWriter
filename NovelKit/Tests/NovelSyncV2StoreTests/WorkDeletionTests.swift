@@ -78,3 +78,60 @@ import Testing
     #expect(try await upgraded.workDeletionIDs().isEmpty)
     await upgraded.close()
 }
+
+@Test func pendingDeletionReplansOnlyWithinSameAccountAfterFenceRotation() async throws {
+    let root = temporaryStoreRoot("deletion-fence")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let workID = WorkID(UUID())
+    _ = try await store.checkpoint(
+        V2CheckpointRequest(workID: workID, document: makeDocument(title: "preserved"),
+                            documentCreatedAt: testDate, expectedGeneration: 0), scope: scopeA
+    )
+    let old = try await store.prepareWorkDeletion(workID: workID, activeBinding: bindingA)
+    let rotated = V2AccountBinding(accountID: bindingA.accountID, accountFence: "new-fence",
+                                   serverInstanceID: bindingA.serverInstanceID)
+    try await store.transitionAccountScopes(from: bindingA, to: rotated)
+    await store.close()
+    let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
+    for wrong in [
+        V2AccountBinding(accountID: "other", accountFence: rotated.accountFence, serverInstanceID: rotated.serverInstanceID),
+        V2AccountBinding(accountID: rotated.accountID, accountFence: rotated.accountFence, serverInstanceID: "other"),
+        V2AccountBinding(accountID: rotated.accountID, accountFence: rotated.accountFence, serverInstanceID: rotated.serverInstanceID, protocolEpoch: 99)
+    ] {
+        await #expect(throws: SyncV2StoreError.accountMismatch) {
+            try await reopened.prepareWorkDeletion(workID: workID, activeBinding: wrong)
+        }
+    }
+    let current = try await reopened.prepareWorkDeletion(workID: workID, activeBinding: rotated)
+    #expect(current.binding == rotated)
+    #expect(!current.completed)
+    await #expect(throws: SyncV2StoreError.invalidLifecycle) { try await reopened.completeWorkDeletion(old) }
+    try await reopened.completeWorkDeletion(current)
+    #expect(try await reopened.workDeletion(workID: workID)?.completed == true)
+    await reopened.close()
+}
+
+@Test func deletingPortableResourcesKeepsSharedBytesUntilLastReference() async throws {
+    let root = temporaryStoreRoot("deletion-resource")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let first = WorkID(UUID()), second = WorkID(UUID())
+    let shared = PortableResource(pathComponents: ["opaque.bin"], kind: .regularFile, bytes: Data("shared".utf8))
+    let owned = PortableResource(pathComponents: ["private.bin"], kind: .regularFile, bytes: Data("owned".utf8))
+    for workID in [first, second] {
+        _ = try await store.checkpoint(V2CheckpointRequest(
+            workID: workID, document: makeDocument(title: "resources"), documentCreatedAt: testDate,
+            expectedGeneration: 0, resources: workID == first ? [shared, owned] : [shared]
+        ), scope: scopeA)
+    }
+    let deletion = try await store.prepareWorkDeletion(workID: first, activeBinding: bindingA)
+    try await store.completeWorkDeletion(deletion)
+    #expect(try await store.open(workID: second, scope: scopeA).resources == [shared])
+    let url = await store.databaseURL
+    #expect(try sqliteScalarInt(databaseURL: url, sql: "SELECT COUNT(*) FROM resources") == 1)
+    let last = try await store.prepareWorkDeletion(workID: second, activeBinding: bindingA)
+    try await store.completeWorkDeletion(last)
+    #expect(try sqliteScalarInt(databaseURL: url, sql: "SELECT COUNT(*) FROM resources") == 0)
+    await store.close()
+}

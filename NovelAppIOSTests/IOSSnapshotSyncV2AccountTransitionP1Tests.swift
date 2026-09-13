@@ -633,7 +633,9 @@ struct IOSAccountRequestRecoveryTests {
         await store.signInWithApple()
 
         #expect(store.authSession?.accountID == replacementSession.accountID)
-        #expect(store.authUIState == .signedIn(accountID: replacementSession.accountID))
+        // The fixture catalog rejects authentication; retain the new session
+        // but expose the reauthentication action instead of hiding that failure.
+        #expect(store.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
         #expect(store.syncV2AccountTransitionRequested == false)
         #expect(store.syncV2AccountTransitionRequestOwner == nil)
         #expect(store.syncV2RemoteSuspensionToken == nil)

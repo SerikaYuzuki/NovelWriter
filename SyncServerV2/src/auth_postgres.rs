@@ -87,7 +87,7 @@ impl AuthPostgresRepository {
             tx.commit().await.map_err(Self::map_db)?;
             return Ok(());
         }
-        let identity = sqlx::query("SELECT identity_id,account_id FROM auth_v1.external_identities WHERE provider_config_id=$1 AND exact_issuer=$2 AND subject_lookup_hmac=$3 AND state='active' FOR UPDATE")
+        let identity = sqlx::query("SELECT identity_id,account_id,last_provider_auth_at FROM auth_v1.external_identities WHERE provider_config_id=$1 AND exact_issuer=$2 AND subject_lookup_hmac=$3 AND state='active' FOR UPDATE")
             .bind(APPLE_PROVIDER_CONFIG)
             .bind(APPLE_ISSUER)
             .bind(subject_lookup)
@@ -111,7 +111,18 @@ impl AuthPostgresRepository {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(Self::map_db)?;
-            if latest.is_some_and(|value| value >= notification.event_time_unix) {
+            let last_auth: Option<i64> = identity
+                .try_get("last_provider_auth_at")
+                .map_err(Self::map_db)?;
+            let destructive = matches!(
+                notification.notification_type.as_str(),
+                "consent-revoked" | "account-deleted"
+            );
+            if destructive && last_auth.is_some_and(|value| value >= notification.event_time_unix) {
+                sqlx::query("UPDATE auth_v1.provider_credentials SET state='providerValidationPending',validation_event_type=$2,revoke_next_attempt_at=NULL,revoke_lease_until=NULL WHERE identity_id=$1 AND state='active'")
+                    .bind(identity_id).bind(&notification.notification_type).execute(&mut *tx).await.map_err(Self::map_db)?;
+                (Some(account_id), "staleAfterReauthentication")
+            } else if latest.is_some_and(|value| value >= notification.event_time_unix) {
                 (Some(account_id), "staleAfterReauthentication")
             } else {
                 let destructive = matches!(
@@ -125,7 +136,7 @@ impl AuthPostgresRepository {
                     .execute(&mut *tx).await.map_err(Self::map_db)?;
                     sqlx::query("UPDATE auth_v1.auth_sessions SET state='reauthRequired' WHERE account_id=$1 AND state='active'")
                     .bind(&account_id).execute(&mut *tx).await.map_err(Self::map_db)?;
-                    sqlx::query("UPDATE auth_v1.provider_credentials SET state='revokeRetryPending' WHERE identity_id=$1 AND state='active'")
+                    sqlx::query("UPDATE auth_v1.provider_credentials SET state='revokeRetryPending',revoke_lease_until=NULL,revoke_next_attempt_at=NULL WHERE identity_id=$1 AND state IN ('active','providerValidationPending')")
                     .bind(identity_id).execute(&mut *tx).await.map_err(Self::map_db)?;
                 }
                 let outcome = if matches!(
@@ -157,6 +168,25 @@ impl AuthPostgresRepository {
         now: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<PendingAppleRevocation>, AuthError> {
+        self.claim_apple_credentials(now, limit, "revokeRetryPending")
+            .await
+    }
+
+    pub async fn claim_apple_validations(
+        &self,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<PendingAppleRevocation>, AuthError> {
+        self.claim_apple_credentials(now, limit, "providerValidationPending")
+            .await
+    }
+
+    async fn claim_apple_credentials(
+        &self,
+        now: DateTime<Utc>,
+        limit: i64,
+        state: &str,
+    ) -> Result<Vec<PendingAppleRevocation>, AuthError> {
         if !(1..=64).contains(&limit) {
             return Err(AuthError::InvalidRequest);
         }
@@ -165,7 +195,7 @@ impl AuthPostgresRepository {
         let rows = sqlx::query(
             "SELECT credential_id,original_audience,vault_context,key_version,ciphertext,revoke_attempts
                FROM auth_v1.provider_credentials
-              WHERE state='revokeRetryPending'
+              WHERE state=$3
                 AND (revoke_next_attempt_at IS NULL OR revoke_next_attempt_at <= $1)
                 AND (revoke_lease_until IS NULL OR revoke_lease_until <= $1)
               ORDER BY created_at,credential_id
@@ -174,6 +204,7 @@ impl AuthPostgresRepository {
         )
         .bind(now)
         .bind(limit)
+        .bind(state)
         .fetch_all(&mut *tx)
         .await
         .map_err(Self::map_db)?;
@@ -185,10 +216,11 @@ impl AuthPostgresRepository {
                 "UPDATE auth_v1.provider_credentials
                     SET revoke_attempts=revoke_attempts+1,revoke_lease_until=$2,
                         revoke_last_error=NULL
-                  WHERE credential_id=$1 AND state='revokeRetryPending'",
+                  WHERE credential_id=$1 AND state=$3",
             )
             .bind(id)
             .bind(lease_until)
+            .bind(state)
             .execute(&mut *tx)
             .await
             .map_err(Self::map_db)?;
@@ -216,7 +248,7 @@ impl AuthPostgresRepository {
     ) -> Result<(), AuthError> {
         let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
         match outcome {
-            Ok(()) | Err(AuthError::InvalidExternalIdentity) => {
+            Ok(()) => {
                 sqlx::query(
                     "UPDATE auth_v1.provider_credentials
                         SET state='revoked',revoked_at=COALESCE(revoked_at,$2),
@@ -1254,6 +1286,15 @@ impl AuthRepository for AuthPostgresRepository {
                 .map_err(Self::map_db)?;
             (account, tenant, 1, fence, iid)
         };
+        sqlx::query("UPDATE auth_v1.external_identities SET last_provider_auth_at=GREATEST(last_provider_auth_at,$2) WHERE identity_id=$1")
+            .bind(identity_id).bind(identity.provider_authenticated_at_unix())
+            .execute(&mut *tx).await.map_err(Self::map_db)?;
+        // A verified login supersedes outstanding notification checks for this
+        // identity across all audiences. Completion holds this same identity lock
+        // and requires pending state, so an old device's result cannot revoke the
+        // newly authenticated session (including a same-second login).
+        sqlx::query("UPDATE auth_v1.provider_credentials SET state='superseded',validation_event_type=NULL,revoke_lease_until=NULL,revoke_next_attempt_at=NULL WHERE identity_id=$1 AND state='providerValidationPending'")
+            .bind(identity_id).execute(&mut *tx).await.map_err(Self::map_db)?;
         if let Some(credential) = identity.provider_credential() {
             if credential.audience != audience {
                 return Err(AuthError::ProviderNotAllowed);
@@ -1291,7 +1332,7 @@ impl AuthRepository for AuthPostgresRepository {
                     &credential_plaintext,
                 )
                 .await?;
-            sqlx::query("UPDATE auth_v1.provider_credentials SET state='superseded' WHERE identity_id=$1 AND original_audience=$2 AND state='active'")
+            sqlx::query("UPDATE auth_v1.provider_credentials SET state='superseded' WHERE identity_id=$1 AND original_audience=$2 AND state IN ('active','providerValidationPending')")
                 .bind(identity_id)
                 .bind(&credential.audience)
                 .execute(&mut *tx)
@@ -1918,4 +1959,76 @@ fn verify_response_digest(bytes: &[u8], expected: &[u8]) -> Result<(), AuthError
         return Err(AuthError::Vault);
     }
     Ok(())
+}
+
+impl AuthPostgresRepository {
+    pub async fn provider_validation_pending(&self, account_id: &str) -> Result<bool, AuthError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM auth_v1.provider_credentials c JOIN auth_v1.external_identities i ON i.identity_id=c.identity_id WHERE i.account_id=$1 AND c.state='providerValidationPending')")
+            .bind(account_id).fetch_one(&self.pool).await.map_err(Self::map_db)
+    }
+
+    pub async fn finish_apple_validation(
+        &self,
+        credential_id: Uuid,
+        outcome: Result<(), &AuthError>,
+        now: DateTime<Utc>,
+        attempt: i32,
+    ) -> Result<(), AuthError> {
+        let mut tx = self.pool.begin().await.map_err(Self::map_db)?;
+        // Use the same identity -> account -> credential lock order as sign-in.
+        let identity: Option<Uuid> = sqlx::query_scalar(
+            "SELECT identity_id FROM auth_v1.provider_credentials WHERE credential_id=$1",
+        )
+        .bind(credential_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(Self::map_db)?;
+        let Some(identity_id) = identity else {
+            return Ok(());
+        };
+        let account_id: String = sqlx::query_scalar(
+            "SELECT account_id FROM auth_v1.external_identities WHERE identity_id=$1 FOR UPDATE",
+        )
+        .bind(identity_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(Self::map_db)?;
+        sqlx::query("SELECT account_id FROM auth_v1.accounts WHERE account_id=$1 FOR UPDATE")
+            .bind(&account_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(Self::map_db)?;
+        let row = sqlx::query("SELECT validation_event_type FROM auth_v1.provider_credentials WHERE credential_id=$1 AND state='providerValidationPending' AND revoke_attempts=$2 FOR UPDATE")
+            .bind(credential_id).bind(attempt).fetch_optional(&mut *tx).await.map_err(Self::map_db)?;
+        let Some(row) = row else {
+            return Ok(());
+        }; // superseded sign-in / stale lease
+        match outcome {
+            Ok(()) => {
+                sqlx::query("UPDATE auth_v1.provider_credentials SET state='active',validation_event_type=NULL,revoke_lease_until=NULL,revoke_next_attempt_at=NULL,revoke_last_error=NULL WHERE credential_id=$1")
+                    .bind(credential_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+            }
+            Err(AuthError::InvalidExternalIdentity) => {
+                let deleted = row
+                    .try_get::<Option<String>, _>("validation_event_type")
+                    .map_err(Self::map_db)?
+                    .as_deref()
+                    == Some("account-deleted");
+                sqlx::query("UPDATE auth_v1.accounts SET auth_epoch=auth_epoch+1,fence=$2,state=CASE WHEN $3 AND NOT EXISTS(SELECT 1 FROM auth_v1.external_identities i WHERE i.account_id=$1 AND i.identity_id<>$4 AND i.state='active') THEN 'deletionPending' ELSE state END,updated_at=now() WHERE account_id=$1")
+                    .bind(&account_id).bind(random_fence()?).bind(deleted).bind(identity_id)
+                    .execute(&mut *tx).await.map_err(Self::map_db)?;
+                sqlx::query("UPDATE auth_v1.auth_sessions SET state='reauthRequired' WHERE account_id=$1 AND state='active'")
+                    .bind(&account_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+                sqlx::query("UPDATE auth_v1.provider_credentials SET state='revokeRetryPending',validation_event_type=NULL,revoke_lease_until=NULL,revoke_next_attempt_at=NULL WHERE identity_id=$1 AND state IN ('active','providerValidationPending')")
+                    .bind(identity_id).execute(&mut *tx).await.map_err(Self::map_db)?;
+            }
+            Err(_) => {
+                let delay = 2_i64.saturating_pow(attempt.clamp(0, 10) as u32).min(3600);
+                sqlx::query("UPDATE auth_v1.provider_credentials SET revoke_lease_until=NULL,revoke_next_attempt_at=$2,revoke_last_error='providerIndeterminate' WHERE credential_id=$1")
+                    .bind(credential_id).bind(now + chrono::Duration::seconds(delay))
+                    .execute(&mut *tx).await.map_err(Self::map_db)?;
+            }
+        }
+        tx.commit().await.map_err(Self::map_db)
+    }
 }

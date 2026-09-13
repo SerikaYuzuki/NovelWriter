@@ -692,6 +692,7 @@ async fn postgres_and_http_scenarios_are_opt_in() {
         .await
         .expect("Snapshot Sync v2 PostgreSQL scenario failed");
     verify_http_contract(&context).await;
+    verify_chunk_upload_http(&context).await;
     verify_work_deletion(&context).await;
     context.repo.pool.close().await;
 }
@@ -812,4 +813,59 @@ async fn verify_work_deletion(context: &ScenarioContext) {
             .await
             .unwrap();
     assert_eq!(foreign_before, foreign_after);
+}
+
+async fn verify_chunk_upload_http(context: &ScenarioContext) {
+    use fuminiwa_sync_server_v2::domain::sha256;
+    use serde_json::json;
+    let p = &context.account_a;
+    let bytes = vec![0x72; 8 * 1024 * 1024 + 3];
+    let object = sha256(&bytes);
+    let prepare = json!({
+        "binding": {"accountFence":p.account_fence,"accountId":p.account_id,"protocolEpoch":2,"serverInstanceId":p.server_instance_id},
+        "commandId":Uuid::new_v4(),"commandKind":"prepareObject",
+        "payload":{"byteCount":bytes.len(),"objectId":hex::encode(object),"workId":context.primary_work},
+        "schemaVersion":2,"sourceGeneration":1,"sourceSnapshotId":hex::encode(context.root_snapshot)
+    });
+    let command = parse_command(&canonical_json(&prepare).unwrap()).unwrap();
+    let (_, raw) = context.repo.command(p, &command).await.unwrap();
+    let prepared: Value = serde_json::from_slice(&raw).unwrap();
+    let app = router(AppState {
+        repo: Arc::new(context.repo.clone()),
+        access_authenticator: fixture_authenticator(),
+    });
+    for (start, end) in [
+        (0, 8 * 1024 * 1024),
+        (0, 8 * 1024 * 1024),
+        (8 * 1024 * 1024, bytes.len()),
+    ] {
+        let mut request = Request::builder()
+            .method("PUT")
+            .uri(format!(
+                "/v2/uploads/{}",
+                prepared["uploadId"].as_str().unwrap()
+            ))
+            .body(Body::from(bytes[start..end].to_vec()))
+            .unwrap();
+        *request.headers_mut() = headers(&p.account_id);
+        request.headers_mut().insert(
+            "content-type",
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        request.headers_mut().insert(
+            "x-fuminiwa-client-version",
+            HeaderValue::from_static("1.0.0"),
+        );
+        request.headers_mut().insert(
+            "x-fuminiwa-upload-capability",
+            HeaderValue::from_str(prepared["uploadCapability"].as_str().unwrap()).unwrap(),
+        );
+        request.headers_mut().insert(
+            "content-range",
+            HeaderValue::from_str(&format!("bytes {start}-{}/{}", end - 1, bytes.len())).unwrap(),
+        );
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
 }

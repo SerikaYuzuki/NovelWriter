@@ -328,8 +328,8 @@ private struct SnapshotHistorySheet: View {
                 List(appState.snapshotSyncHistory, id: \.occurrenceID) { entry in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.reason)
-                            Text(entry.createdAt, style: .date)
+                            Text(entry.displayReason)
+                            Text(entry.createdAt.formatted(date: .abbreviated, time: .standard))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

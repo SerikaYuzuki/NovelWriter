@@ -173,6 +173,9 @@ pub trait AppleTransport: Send + Sync {
         request: &AppleTokenRequest,
     ) -> Result<AppleTokenResponse, AuthError>;
     async fn revoke_credential(&self, request: &AppleRevokeRequest) -> Result<(), AuthError>;
+    async fn validate_credential(&self, _request: &AppleRevokeRequest) -> Result<(), AuthError> {
+        Err(AuthError::ProviderExchangeIndeterminate)
+    }
 }
 
 #[derive(Clone)]
@@ -239,6 +242,48 @@ impl AppleTransport for ProductionAppleTransport {
         })
     }
 
+    async fn validate_credential(&self, request: &AppleRevokeRequest) -> Result<(), AuthError> {
+        let response = self
+            .client
+            .post(APPLE_TOKEN_ENDPOINT)
+            .form(&[
+                ("client_id", request.client_id.as_str()),
+                ("client_secret", request.client_secret.as_str()),
+                ("refresh_token", request.token.as_str()),
+                ("grant_type", "refresh_token"),
+            ])
+            .send()
+            .await
+            .map_err(|_| AuthError::ProviderExchangeIndeterminate)?;
+        let status = response.status();
+        let body = bounded_body(response).await?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| AuthError::ProviderExchangeIndeterminate)?;
+        if status == reqwest::StatusCode::BAD_REQUEST
+            && value.get("error").and_then(|v| v.as_str()) == Some("invalid_grant")
+        {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        if status == reqwest::StatusCode::OK
+            && value
+                .get("access_token")
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| !v.is_empty() && v.len() <= 4096)
+            && value
+                .get("token_type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("bearer"))
+            && value
+                .get("expires_in")
+                .and_then(|v| v.as_i64())
+                .is_some_and(|v| v > 0)
+        {
+            Ok(())
+        } else {
+            Err(AuthError::ProviderExchangeIndeterminate)
+        }
+    }
+
     async fn revoke_credential(&self, request: &AppleRevokeRequest) -> Result<(), AuthError> {
         let response = self
             .client
@@ -254,12 +299,33 @@ impl AppleTransport for ProductionAppleTransport {
             .map_err(|_| AuthError::ProviderExchangeIndeterminate)?;
         let status = response.status();
         let _ = bounded_body(response).await?;
-        if status.is_success() {
-            Ok(())
-        } else if status.is_server_error() {
-            Err(AuthError::ProviderExchangeIndeterminate)
-        } else {
-            Err(AuthError::InvalidExternalIdentity)
+        // A provider rejection is not evidence that the credential was revoked.
+        // Keep every non-200 outcome durable and retryable, including 429 and
+        // client configuration errors. Apple returns 200 for already-revoked tokens.
+        apple_revocation_outcome(status)
+    }
+}
+
+fn apple_revocation_outcome(status: reqwest::StatusCode) -> Result<(), AuthError> {
+    if status == reqwest::StatusCode::OK {
+        Ok(())
+    } else {
+        Err(AuthError::ProviderExchangeIndeterminate)
+    }
+}
+
+#[cfg(test)]
+mod revocation_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn only_confirmed_revocation_is_terminal() {
+        assert!(apple_revocation_outcome(reqwest::StatusCode::OK).is_ok());
+        for code in [204, 400, 401, 403, 404, 429, 500, 503] {
+            assert!(matches!(
+                apple_revocation_outcome(reqwest::StatusCode::from_u16(code).unwrap()),
+                Err(AuthError::ProviderExchangeIndeterminate)
+            ));
         }
     }
 }
@@ -432,6 +498,33 @@ impl<T: AppleTransport, V: CredentialVault + Clone> AppleProvider
                 encrypted_refresh_token,
             }),
         )
+    }
+
+    async fn validate_credential(
+        &self,
+        credential: &VerifiedProviderCredential,
+    ) -> Result<(), AuthError> {
+        let token = self
+            .vault
+            .open(
+                "apple_provider_refresh_v1",
+                &credential.vault_context,
+                &credential.encrypted_refresh_token,
+            )
+            .await?;
+        let token = std::str::from_utf8(&token).map_err(|_| AuthError::Vault)?;
+        if token.is_empty() || token.len() > 4096 {
+            return Err(AuthError::Vault);
+        }
+        self.transport
+            .validate_credential(&AppleRevokeRequest {
+                client_id: self.signer.client_id(&credential.audience)?.into(),
+                client_secret: self
+                    .signer
+                    .sign(&credential.audience, Utc::now().timestamp())?,
+                token: token.into(),
+            })
+            .await
     }
 
     async fn revoke(

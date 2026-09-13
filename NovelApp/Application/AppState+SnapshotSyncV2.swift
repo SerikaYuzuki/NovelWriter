@@ -306,10 +306,21 @@ extension AppState {
               currentSnapshotSyncV2WorkID == workID else { return }
         snapshotSyncV2UIState = state
         snapshotSyncConflict = state?.conflict
+        if state?.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
+            authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
+        }
+        if case let .failed(reason) = state?.remoteProgress {
+            operationMessage = reason.japaneseDescription
+        }
         #if DEBUG
         if let diagnostic = await application.syncDebugDiagnostic(workID: workID),
            matchesSnapshotSyncV2AccountScope(accountScope), currentSnapshotSyncV2WorkID == workID {
-            operationMessage = "同期が停止しました。原稿はこの端末に保存されています。\n\n一時診断: \(diagnostic)"
+            let guidance: String = if case let .failed(reason) = state?.remoteProgress {
+                reason.japaneseDescription
+            } else {
+                "同期が停止しました。原稿はこの端末に保存されています。"
+            }
+            operationMessage = "\(guidance)\n\n一時診断: \(diagnostic)"
         }
         #endif
         if let progress = state?.remoteProgress,

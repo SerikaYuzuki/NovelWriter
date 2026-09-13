@@ -6,7 +6,9 @@ use crate::{
 };
 use axum::{
     body::Bytes,
-    extract::{rejection::BytesRejection, DefaultBodyLimit, Path, Query, State},
+    extract::{
+        rejection::BytesRejection, DefaultBodyLimit, FromRequest, Path, Query, Request, State,
+    },
     http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::Response,
     routing::{delete, get, post, put},
@@ -936,19 +938,18 @@ async fn missing_objects(
         .body(axum::body::Body::from(bytes))
         .unwrap()
 }
+// Bound aggregate buffering even for authenticated concurrent uploads.
+static UPLOAD_READ_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
 async fn upload(
     Path(upload): Path<String>,
     headers: HeaderMap,
     state: State<AppState>,
-    body: Result<Bytes, BytesRejection>,
+    request: Request,
 ) -> Response {
     let upload = match parse_uuid_path(&upload) {
         Ok(value) => value,
         Err(error) => return error_response(error),
-    };
-    let body = match body_or_error(body) {
-        Ok(body) => body,
-        Err(response) => return response,
     };
     if let Err(response) = require_media_type(&headers, OBJECT_MEDIA_TYPE) {
         return response;
@@ -963,7 +964,46 @@ async fn upload(
     else {
         return error_response(SyncError::UploadCapabilityMismatch);
     };
-    match state.repo.upload(&p, upload, capability, &body).await {
+    let range = if let Some(value) = headers.get("content-range") {
+        if headers.get_all("content-range").iter().count() != 1 {
+            return error_response(SyncError::SizeLimitExceeded);
+        }
+        match value
+            .to_str()
+            .ok()
+            .and_then(|value| crate::upload_chunks::UploadRange::parse(value).ok())
+        {
+            Some(range) => Some(range),
+            None => return error_response(SyncError::SizeLimitExceeded),
+        }
+    } else {
+        None
+    };
+    let _permit = match UPLOAD_READ_PERMITS.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) => return error_response(SyncError::Retryable),
+    };
+    let body = match tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        Bytes::from_request(request, &state.0),
+    )
+    .await
+    {
+        Ok(result) => match body_or_error(result) {
+            Ok(body) => body,
+            Err(response) => return response,
+        },
+        Err(_) => return error_response(SyncError::Retryable),
+    };
+    let result = if let Some(range) = range {
+        state
+            .repo
+            .upload_chunk(&p, upload, capability, range, &body)
+            .await
+    } else {
+        state.repo.upload(&p, upload, capability, &body).await
+    };
+    match result {
         Ok(()) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .header("x-fuminiwa-result", "applied")
@@ -1197,5 +1237,68 @@ mod tests {
         let mut object = HeaderMap::new();
         object.insert(CONTENT_TYPE, HeaderValue::from_static(OBJECT_MEDIA_TYPE));
         assert!(require_media_type(&object, OBJECT_MEDIA_TYPE).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod upload_authentication_tests {
+    use super::*;
+    use crate::auth::{FixtureAccessAuthenticator, RuntimeMode};
+    use crate::object_store::PostgresObjectStore;
+    use std::{
+        convert::Infallible,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tower::ServiceExt;
+
+    struct UnreadBody;
+    impl http_body::Body for UnreadBody {
+        type Data = Bytes;
+        type Error = Infallible;
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Bytes>, Infallible>>> {
+            panic!("unauthorized upload body must not be polled")
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_invalid_and_wrong_scope_tokens_do_not_read_uploads() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://fixture@127.0.0.1:1/unused_test")
+            .unwrap();
+        let app = router(AppState {
+            repo: Arc::new(Repository {
+                pool: pool.clone(),
+                object_store: Arc::new(PostgresObjectStore { pool }),
+                server_instance_id: "test-instance".into(),
+                protocol_epoch: 2,
+            }),
+            access_authenticator: Arc::new(
+                FixtureAccessAuthenticator::new(RuntimeMode::Test, "fixture-fence".into()).unwrap(),
+            ),
+        });
+        for (token, expected) in [
+            (None, 401),
+            (Some("Bearer invalid"), 401),
+            (Some("Bearer dev:test:fixture-fence"), 403),
+        ] {
+            let mut request = Request::builder()
+                .method("PUT")
+                .uri("/v2/uploads/00000000-0000-4000-8000-000000000001")
+                .header(CONTENT_TYPE, OBJECT_MEDIA_TYPE)
+                .header("x-fuminiwa-server-instance", "wrong-instance");
+            if let Some(token) = token {
+                request = request.header("authorization", token);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(axum::body::Body::new(UnreadBody)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), expected);
+        }
     }
 }

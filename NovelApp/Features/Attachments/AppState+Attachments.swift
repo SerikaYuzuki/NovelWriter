@@ -14,7 +14,54 @@ extension AppState {
     }
 
     @discardableResult
-    func addAttachment(
+    func addAttachment(from sourceURL: URL, expectedSession: DocumentSessionToken? = nil) async -> Attachment? {
+        var added: Attachment?
+        let succeeded = await performSnapshotDataMutation(expectedSession: expectedSession) {
+            added = await self.addAttachmentWithinSaveBoundary(from: sourceURL, expectedSession: expectedSession)
+            return added != nil
+        }
+        return succeeded ? added : nil
+    }
+
+    @discardableResult
+    func deleteAttachment(_ attachment: Attachment, expectedSession: DocumentSessionToken? = nil) async -> Bool {
+        await performSnapshotDataMutation(expectedSession: expectedSession) {
+            await self.deleteAttachmentWithinSaveBoundary(attachment, expectedSession: expectedSession)
+        }
+    }
+
+    func saveExplicitSnapshot() async -> Bool {
+        await performSnapshotDataMutation {
+            await self.checkpointSnapshotSyncV2(self.document, reason: .explicit)
+        }
+    }
+
+    private func performSnapshotDataMutation(
+        expectedSession: DocumentSessionToken? = nil,
+        operation: () async -> Bool
+    ) async -> Bool {
+        let session = expectedSession ?? documentSessionToken
+        let account = snapshotSyncV2AccountScopeToken
+        return await documentOperationGate.perform {
+            guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
+                  self.permitsDocumentInteraction,
+                  self.editorCommandSession.prepareForDocumentTransition() else { return false }
+            defer { self.editorCommandSession.resumeAfterDocumentTransition() }
+            let result = await self.saveCoordinator.performExclusiveAfterFlushing(flushAfter: true) {
+                guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account,
+                      self.permitsDocumentInteraction, !Task.isCancelled else { return false }
+                return await operation()
+            }
+            guard self.documentSessionToken == session, self.snapshotSyncV2AccountScopeToken == account else { return false }
+            if case let .completed(saved, savedAfterOperation) = result {
+                return saved && savedAfterOperation
+            }
+            return false
+        }
+    }
+
+    @discardableResult
+    func addAttachmentWithinSaveBoundary(
         from sourceURL: URL,
         expectedSession: DocumentSessionToken? = nil
     ) async -> Attachment? {
@@ -48,7 +95,7 @@ extension AppState {
     }
 
     @discardableResult
-    func deleteAttachment(
+    func deleteAttachmentWithinSaveBoundary(
         _ attachment: Attachment,
         expectedSession: DocumentSessionToken? = nil
     ) async -> Bool {

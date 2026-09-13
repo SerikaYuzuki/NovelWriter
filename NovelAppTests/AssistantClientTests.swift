@@ -100,6 +100,26 @@ struct AssistantClientTests {
         #expect(try preferences.configuration(.advice).model == "old-model")
     }
 
+    @Test("incomplete AI answers describe the cause without exposing partial manuscript output",
+          arguments: ["max_output_tokens", "content_filter", "unknown"])
+    func incompleteAnswerReason(reason: String) throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "status": "incomplete", "incomplete_details": ["reason": reason],
+            "output": [["type": "message", "content": [["type": "output_text", "text": "partial"]]]]
+        ])
+        do {
+            _ = try AssistantClient.decode(data)
+            Issue.record("incomplete answer was accepted")
+        } catch let error as AssistantError {
+            let expected: AssistantError = switch reason {
+            case "max_output_tokens": .incompleteOutput
+            case "content_filter": .filteredOutput
+            default: .unfinishedOutput
+            }
+            #expect(error.localizedDescription == expected.localizedDescription)
+        }
+    }
+
     @Test("OpenAI uses Responses and only completed text is accepted")
     func responsesAndCatalog() throws {
         let config = try AssistantConfiguration(endpoint: "https://api.openai.com/v1/chat/completions", model: "latest-model", prompt: "校正")

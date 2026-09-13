@@ -58,6 +58,12 @@ extension IOSDocumentStore {
         snapshotSyncState = state
         snapshotSyncConflict = state?.conflict
         guard let state else { return }
+        if state.remoteProgress == .authenticationRequired, case .signedIn = authUIState {
+            authUIState = .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。")
+        }
+        if case let .failed(reason) = state.remoteProgress {
+            operationErrorMessage = reason.japaneseDescription
+        }
         switch state.remoteProgress {
         case .idle, .noChanges:
             snapshotSyncOutcome = .idle

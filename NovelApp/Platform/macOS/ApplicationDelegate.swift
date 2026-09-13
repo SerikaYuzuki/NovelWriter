@@ -83,6 +83,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
             let shouldTerminate = await appState.saveBeforeTermination()
             if !shouldTerminate {
+                appState.operationMessage = "保存できなかったため終了を中止しました。原稿は開いたままです。保存を再試行するか、作品を書き出して保管してください。"
                 // 取消後の次の終了要求は、新しいsingle-flightとして再試行できる。
                 terminationReplyTask = nil
                 reply(false)

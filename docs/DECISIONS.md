@@ -1152,3 +1152,11 @@
 ## D-094: 原稿コピーからAIプロンプトを外す
 
 2026-09-13、利用者の指定により校正／アドバイス用プロンプトコピーを、選択範囲／話／章のplain textコピーへ置き換える。D-054／D-075のコピー用途・JSON囲み・AI依頼文はこの決定で上書きする。タイトルと本文、配列順、明示scope、session／IME検査、clipboard write境界は維持する。D-089のAI明示送信、目的別設定、感想・アドバイスの保存は変更しない。詳細は[原稿コピー](CLIPBOARD_AI_ASSIST.md)。
+
+## D-095: 250 MiB添付は分割送信し、自宅サーバーで検証する
+
+2026-09-13。レビュー修正と利用者の自宅サーバー優先方針に基づく。Cloudflareの現行設定は無料プラン・1リクエスト100 MBである。object上限250 MiBを維持し、8 MiBを超えるuploadは同じupload ID・capability・account scopeに結び付いたContent-Range付きPUTへ分ける。完成時の全体digest検証とfinalize前にはobjectを利用可能にしない。
+
+重複範囲は同じbytesに限って再送可能。途中位置の飛び越し、異なるbytesでの上書き、別scopeを拒否する。通信失敗・再起動では最初からの完全なchunk再送も許容し、全chunk成功後だけ端末のuploadをacknowledgeする。部分データは自宅サーバーのPostgreSQLへ保存し、期限切れまたは作品削除で解放する。通常の小さなPUTとのwire互換は保持する。新clientより先に対応serverを反映する。
+
+有料Cloudflareストレージ・計算枠は追加せず、処理と保持は可能な限り `192.168.11.5` を使う。

@@ -153,9 +153,12 @@ async fn run_once() -> Result<()> {
                 )
                 .await?;
                 Repository::verify_migration_owner_attestation(&migration_pool).await?;
+                if env::args().any(|arg| arg == "--upgrade-review-20260913") {
+                    upgrade_review_20260913(&migration_pool, &server_instance_id).await?;
+                }
                 Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE)
                     .await?;
-                println!("Snapshot Sync v2 role bootstrap already attested; no changes made");
+                println!("Snapshot Sync v2 role and runtime contract attested");
                 return Ok(());
             }
             attest_bootstrap_session(&mut bootstrap_session).await?;
@@ -171,6 +174,9 @@ async fn run_once() -> Result<()> {
             )
             .await?;
             Repository::verify_migration_owner_attestation(&migration_pool).await?;
+            if env::args().any(|arg| arg == "--upgrade-review-20260913") {
+                upgrade_review_20260913(&migration_pool, &server_instance_id).await?;
+            }
             Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE)
                 .await?;
             if Repository::inspect_database_identity_on_connection(&mut bootstrap_session).await?
@@ -178,7 +184,7 @@ async fn run_once() -> Result<()> {
             {
                 return Err("v2 role bootstrap read-back changed the database identity".into());
             }
-            println!("Snapshot Sync v2 role bootstrap already attested; no changes made");
+            println!("Snapshot Sync v2 role and runtime contract attested");
             return Ok(());
         }
         DatabaseIdentity::Fresh => {
@@ -599,4 +605,34 @@ fn read_secret_path(path: &str) -> Result<String> {
         return Err("v2 database secret file is empty".into());
     }
     Ok(value)
+}
+
+/// Explicit, bounded upgrade of an already-attested v2 deployment. The caller
+/// holds the deployment advisory lock and verified the fixed migration owner.
+async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Result<()> {
+    let binding: Option<String> = sqlx::query_scalar(
+        "SELECT server_instance_id FROM sync_v2.deployment_binding WHERE singleton=true",
+    )
+    .fetch_optional(pool)
+    .await?;
+    if binding.as_deref() != Some(server_instance_id) {
+        return Err(
+            "review upgrade target server instance mismatched; no migration applied".into(),
+        );
+    }
+    let versions: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT version,success FROM public._sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await?;
+    let previous: Vec<_> = (1..=5).map(|version| (version, true)).collect();
+    let current: Vec<_> = (1..=7).map(|version| (version, true)).collect();
+    let intermediate: Vec<_> = (1..=6).map(|version| (version, true)).collect();
+    if versions != previous && versions != intermediate && versions != current {
+        return Err("review upgrade requires exactly the known v2 migration history".into());
+    }
+    // SQLx validates every recorded checksum and applies only the remaining
+    // checked-in migration; unknown/changed history fails closed.
+    sqlx::migrate!("./migrations").run(pool).await?;
+    println!("Review 20260913 schema upgrade applied and recorded");
+    Ok(())
 }

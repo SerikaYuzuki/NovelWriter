@@ -204,3 +204,28 @@ the source Work/head unchanged, inserts the new document object, Work, root
 Snapshot/head and both history occurrences, resolves the exact conflict
 revision, and completes the receipt. Any mismatch or insert failure rolls back
 all of it.
+
+## Bounded uploads (D-095)
+
+`PUT /v2/uploads/{uploadId}` retains the small-object full-body form. A large
+object may instead use exactly one `Content-Range: bytes start-end/total`
+header per request. `end` is inclusive; each body contains at most 8 MiB and
+exactly `end-start+1` bytes. `total` must match the prepared object size and
+remain at most 250 MiB. The same authenticated account/fence, upload ID and
+capability apply to every request. Authentication/scope checks precede body
+buffering; concurrent upload readers are bounded to two.
+
+The server accepts the next contiguous range or an exact-byte replay of an
+already received range. It rejects gaps, conflicting replays, malformed or
+repeated range headers, wrong totals and expired capabilities. Partial bytes
+remain in the capability row, never an available object. The final range
+must pass full-object SHA-256 validation before the server marks it uploaded.
+`finalizeObject` is still required for account availability. Completed uploads
+release partial bytes; the background worker releases expired partial bytes.
+Work deletion removes their capability rows in the same deletion transaction.
+
+Each accepted range returns the existing empty 204/no-store/applied response.
+The client acknowledges the upload locally only after all ranges succeed.
+A lost response/restart may replay from offset zero with the same bytes and
+capability; it never fabricates an acknowledgement from a partial response.
+Deploy the range-capable server before clients that use this extension.

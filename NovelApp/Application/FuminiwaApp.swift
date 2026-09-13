@@ -225,10 +225,7 @@ struct FuminiwaApp: App {
 
                 Button("スナップショットを保存") {
                     Task {
-                        _ = await appState.checkpointSnapshotSyncV2(
-                            appState.document,
-                            reason: .explicit
-                        )
+                        _ = await appState.saveExplicitSnapshot()
                         await snapshotMenuPresenter.refresh()
                     }
                 }

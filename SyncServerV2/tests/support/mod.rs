@@ -1775,6 +1775,7 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         "ObjectStore committed bytes outside the caller transaction",
     )?;
     exercise_upload_expiry(&repo, &account_a, primary_work).await?;
+    exercise_chunked_upload(&repo, &account_a, &account_b, primary_work).await?;
 
     let (root_snapshot, _) =
         register_snapshot(&repo, &account_a, primary_work, template_bytes, 1).await?;
@@ -1906,4 +1907,155 @@ pub async fn run_repository_scenarios(url: &str) -> ScenarioResult<ScenarioConte
         receipt_id: create_command.command_id,
         rejected_resolution,
     })
+}
+
+async fn exercise_chunked_upload(
+    repo: &Repository,
+    principal: &AuthenticatedPrincipal,
+    foreign: &AuthenticatedPrincipal,
+    work_id: Uuid,
+) -> ScenarioResult<()> {
+    use fuminiwa_sync_server_v2::upload_chunks::{UploadRange, MAX_UPLOAD_CHUNK_BYTES};
+    let bytes = vec![0x6d; 250 * 1024 * 1024];
+    let object_id = sha256(&bytes);
+    let prepare = command(
+        principal,
+        Uuid::new_v4(),
+        CommandKind::PrepareObject,
+        work_id,
+        [0x34; 32],
+        1,
+        json!({"byteCount":bytes.len(),"objectId":hex::encode(object_id),"workId":work_id}),
+    )?;
+    let (_, response) = repo.command(principal, &prepare).await?;
+    let value = response_value(&response)?;
+    let upload_id = Uuid::parse_str(
+        value["uploadId"]
+            .as_str()
+            .ok_or_else(|| failure("chunk upload ID missing"))?,
+    )?;
+    let capability = value["uploadCapability"]
+        .as_str()
+        .ok_or_else(|| failure("chunk capability missing"))?;
+    let first = UploadRange {
+        start: 0,
+        end: MAX_UPLOAD_CHUNK_BYTES - 1,
+        total: bytes.len(),
+    };
+    ensure(
+        repo.upload_chunk(
+            foreign,
+            upload_id,
+            capability,
+            first,
+            &bytes[..MAX_UPLOAD_CHUNK_BYTES],
+        )
+        .await
+        .is_err(),
+        "foreign account appended bytes",
+    )?;
+    ensure(
+        repo.upload_chunk(
+            principal,
+            upload_id,
+            "wrong",
+            first,
+            &bytes[..MAX_UPLOAD_CHUNK_BYTES],
+        )
+        .await
+        .is_err(),
+        "wrong capability appended bytes",
+    )?;
+    repo.upload_chunk(
+        principal,
+        upload_id,
+        capability,
+        first,
+        &bytes[..MAX_UPLOAD_CHUNK_BYTES],
+    )
+    .await?;
+    ensure(
+        repo.object_store
+            .get(&principal.account_id, &object_id)
+            .await
+            .is_err(),
+        "partial object became readable",
+    )?;
+    let restarted = Repository {
+        pool: repo.pool.clone(),
+        object_store: repo.object_store.clone(),
+        server_instance_id: repo.server_instance_id.clone(),
+        protocol_epoch: repo.protocol_epoch,
+    };
+    restarted
+        .upload_chunk(
+            principal,
+            upload_id,
+            capability,
+            first,
+            &bytes[..MAX_UPLOAD_CHUNK_BYTES],
+        )
+        .await?;
+    let wrong = vec![0x6e; MAX_UPLOAD_CHUNK_BYTES];
+    ensure(
+        restarted
+            .upload_chunk(principal, upload_id, capability, first, &wrong)
+            .await
+            .is_err(),
+        "conflicting replay replaced bytes",
+    )?;
+    let gap = UploadRange {
+        start: MAX_UPLOAD_CHUNK_BYTES + 1,
+        end: MAX_UPLOAD_CHUNK_BYTES + 1,
+        total: bytes.len(),
+    };
+    ensure(
+        restarted
+            .upload_chunk(principal, upload_id, capability, gap, &bytes[..1])
+            .await
+            .is_err(),
+        "gap accepted",
+    )?;
+    for start in (MAX_UPLOAD_CHUNK_BYTES..bytes.len()).step_by(MAX_UPLOAD_CHUNK_BYTES) {
+        let end = (start + MAX_UPLOAD_CHUNK_BYTES).min(bytes.len());
+        let range = UploadRange {
+            start,
+            end: end - 1,
+            total: bytes.len(),
+        };
+        restarted
+            .upload_chunk(principal, upload_id, capability, range, &bytes[start..end])
+            .await?;
+    }
+    // Replay after completion must not start a second partial object.
+    restarted
+        .upload_chunk(
+            principal,
+            upload_id,
+            capability,
+            first,
+            &bytes[..MAX_UPLOAD_CHUNK_BYTES],
+        )
+        .await?;
+    let staged: i32 = sqlx::query_scalar("SELECT octet_length(partial_bytes) FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2")
+        .bind(&principal.account_id).bind(upload_id).fetch_one(&repo.pool).await?;
+    ensure(staged == 0, "completed upload retained staging bytes")?;
+    let finalize = command(
+        principal,
+        Uuid::new_v4(),
+        CommandKind::FinalizeObject,
+        work_id,
+        [0x34; 32],
+        1,
+        json!({"byteCount":bytes.len(),"objectId":hex::encode(object_id),"uploadId":upload_id,"workId":work_id}),
+    )?;
+    repo.command(principal, &finalize).await?;
+    ensure(
+        repo.object_store
+            .get(&principal.account_id, &object_id)
+            .await?
+            == bytes,
+        "250 MiB reconstruction differed",
+    )?;
+    Ok(())
 }

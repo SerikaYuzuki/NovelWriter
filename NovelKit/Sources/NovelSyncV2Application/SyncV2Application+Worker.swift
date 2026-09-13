@@ -144,10 +144,17 @@ extension SyncV2Application {
             }
             recordSyncDiagnostic(workID: workID, stage: diagnosticStage, error: error)
             let failure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
+            let failureDisposition: SyncV2CommandFailureDisposition = if case .upload = sending, case let .fatal(reason) = failure {
+                .rejectUpload(reason)
+            } else if case .command = sending, case let .fatal(reason) = failure {
+                .rejectCommand(reason)
+            } else {
+                disposition(for: failure)
+            }
             try await planner.recordFailure(
                 operation: sending,
                 workID: workID,
-                disposition: disposition(for: failure)
+                disposition: failureDisposition
             )
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
             if failure == .retryable(.publishLineageRejected) {

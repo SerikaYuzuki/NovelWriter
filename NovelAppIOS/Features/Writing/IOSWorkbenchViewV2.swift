@@ -464,8 +464,14 @@ struct IOSWorkbenchView: View {
             get: { navigation.path },
             set: { value in
                 if let departure = navigation.editorDeparture(for: value) {
+                    let originalPath = navigation.path
+                    let session = store.currentDocumentSessionToken
+                    let account = store.snapshotSyncV2AccountScope
                     Task {
-                        guard await store.flushDeviceSyncBeforeNavigationDeparture(departure) else { return }
+                        guard await store.flushDeviceSyncBeforeNavigationDeparture(departure),
+                              navigation.path == originalPath,
+                              store.currentDocumentSessionToken == session,
+                              store.snapshotSyncV2AccountScope == account else { return }
                         navigation.updatePath(value) { _ in true }
                     }
                 } else {

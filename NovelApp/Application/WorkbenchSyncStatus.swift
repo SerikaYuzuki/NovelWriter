@@ -43,6 +43,8 @@ struct WorkbenchSyncStatus: Equatable {
         case .authenticationRequired: return Self(title: "要サインイン", systemImage: "person.crop.circle.badge.exclamationmark", isWarning: true)
         case .fenceChanged, .parkedDifferentAccount, .quarantined:
             return Self(title: "同期を確認", systemImage: "lock.shield", isWarning: true)
+        case .failed(.remoteDataUnavailable): return Self(title: "同期先を確認", systemImage: "exclamationmark.circle", isWarning: true)
+        case .failed(.uploadTooLarge): return Self(title: "送信上限を超過", systemImage: "exclamationmark.circle", isWarning: true)
         case .failed, .receiptMismatch: return Self(title: "同期失敗", systemImage: "exclamationmark.circle", isWarning: true)
         }
     }

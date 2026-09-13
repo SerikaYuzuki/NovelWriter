@@ -173,3 +173,28 @@ trusted HTTPS capabilities endpoint returned Auth 1 / Sync 2. The isolated
 PostgreSQL/HTTP test environment was removed after the 79 Rust tests passed.
 This deployment check does not itself prove an individual client's pending
 publish has completed.
+
+## Exact role-split v2 upgrade: review fixes (0006–0007)
+
+The explicit `sync_v2_migrator --upgrade-review-20260913` path accepts only an
+attested role-split database with the checked-in migration checksums and a
+complete history through version 5, 6 or 7. Under the existing deployment lock,
+SQLx applies only the remaining migrations. Ordinary startup does not upgrade.
+The new runtime requires both provider-notification ordering and staged-upload
+columns and refuses an older database. Runtime privileges remain DML-only.
+
+0006 adds the verified Apple authentication watermark and durable provider
+validation state. A verified login supersedes pending validation across all
+audiences of that identity. Same-second notification/auth ordering is treated
+as uncertain and validated with Apple. Indeterminate responses retain retry
+state; only an authoritative invalid credential causes account invalidation.
+0007 stores incomplete upload bytes on the existing capability row. Final
+hash verification, explicit finalize and expiry cleanup remain server-owned.
+
+Before cutover: retain the old image and container metadata, stop API writers,
+take a custom-format PostgreSQL backup, restore it into an isolated database,
+and rehearse the upgrade there. Verify recorded versions, preserved account
+and work data, runtime role attestation, then start the new API and check both
+trusted HTTPS health/auth responses and authenticated upload behavior.
+See [implementation record](../../REVIEW_IMPLEMENTATION_20260913.md) for actual
+results; these instructions alone are not deployment evidence.

@@ -394,6 +394,8 @@ public extension InMemorySyncV2RuntimeState {
                   }) else { return }
             pending[index].sending = false
             commands[workID] = pending
+        case let .rejectUpload(reason), let .rejectCommand(reason):
+            blocked[workID] = .fatal(reason)
         case .quarantine, .replanRejectedPublish:
             blocked[workID] = .quarantined(.unsafeLocalState)
         case .park:

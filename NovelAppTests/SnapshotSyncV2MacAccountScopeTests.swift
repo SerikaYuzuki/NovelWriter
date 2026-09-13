@@ -453,7 +453,11 @@ struct SnapshotSyncV2MacAuthBoundaryTests {
         await signingIn.value
         await duplicateSigningIn.value
         #expect(state.interactiveAuthOperationCount == 0)
-        #expect(state.authUIState == .signedIn(accountID: session.accountID))
+        // This remote fixture returns authenticationRequired for the catalog.
+        // The new login remains durable, while the UI must offer reauthentication.
+        #expect(state.authSession?.accountID == session.accountID)
+        #expect(state.authUIState == .failed("認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"))
+        #expect(state.permitsDocumentInteraction)
     }
 }
 

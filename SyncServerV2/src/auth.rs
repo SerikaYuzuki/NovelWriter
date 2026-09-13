@@ -78,10 +78,14 @@ pub async fn authenticate(
     server_instance: &str,
 ) -> Result<AuthenticatedPrincipal, SyncError> {
     let token = bearer_token(headers).ok_or(SyncError::Unauthorized)?;
-    let principal = authenticator
-        .authenticate_access(token)
-        .await
-        .map_err(|_| SyncError::Unauthorized)?;
+    let principal =
+        authenticator
+            .authenticate_access(token)
+            .await
+            .map_err(|error| match error {
+                AuthError::ProviderValidationPending => SyncError::Retryable,
+                _ => SyncError::Unauthorized,
+            })?;
     if principal.account_fence.is_empty() {
         return Err(SyncError::Unauthorized);
     }

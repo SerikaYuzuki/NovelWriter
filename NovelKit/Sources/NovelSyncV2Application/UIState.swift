@@ -37,7 +37,9 @@ public enum SyncV2RemoteProgress: Equatable, Sendable {
         case .retryable: "端末に保存済み・同期を再試行します"
         case .needsChoice: "競合の確認が必要です"
         case .readyForSafeAdoption: "サーバーの版を適用できます"
-        case .failed, .receiptMismatch: "同期を再試行できます"
+        case .failed(.remoteDataUnavailable): "同期先のデータを利用できません"
+        case .failed(.uploadTooLarge): "送信上限を超えています"
+        case .failed, .receiptMismatch: "同期できませんでした"
         }
     }
 }

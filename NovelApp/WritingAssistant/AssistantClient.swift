@@ -31,6 +31,7 @@ struct AssistantManuscript: Encodable, Equatable {
 }
 
 enum AssistantError: LocalizedError {
+    case incompleteOutput, filteredOutput, unfinishedOutput
     case invalidConfiguration, emptyContent, tooLarge, missingKey, credentialFailure, invalidResponse, http(Int), composing
     var errorDescription: String? {
         switch self {
@@ -39,6 +40,9 @@ enum AssistantError: LocalizedError {
         case .tooLarge: "本文が長すぎます。1話25万文字・1MB以内で利用してください。"
         case .missingKey: "設定でこのAPI URLのAPIキーを保存してください。"
         case .credentialFailure: "APIキーをKeychainから読み書きできませんでした。"
+        case .incompleteOutput: "AIの回答が出力上限に達し、途中で止まりました。対象の本文を短くして再試行してください。"
+        case .filteredOutput: "AI提供元の制限により、回答を完了できませんでした。"
+        case .unfinishedOutput: "AIの回答が完了していません。時間をおいて再試行してください。"
         case .invalidResponse: "APIから読み取れる回答が返りませんでした。"
         case let .http(status): "APIへの接続に失敗しました（HTTP \(status)）。設定や利用上限を確認してください。"
         case .composing: "日本語入力を確定してから、もう一度操作してください。"
@@ -192,11 +196,25 @@ enum AssistantClient {
                 let content: [Content]?
             }
 
+            struct IncompleteDetails: Decodable { let reason: String? }
+            enum CodingKeys: String, CodingKey {
+                case status, output
+                case incompleteDetails = "incomplete_details"
+            }
+
+            let incompleteDetails: IncompleteDetails?
             let status: String
             let output: [Item]
         }
         if let response = try? JSONDecoder().decode(ResponsesResult.self, from: data) {
-            guard response.status == "completed" else { throw AssistantError.invalidResponse }
+            if response.status == "incomplete" {
+                switch response.incompleteDetails?.reason {
+                case "max_output_tokens": throw AssistantError.incompleteOutput
+                case "content_filter": throw AssistantError.filteredOutput
+                default: throw AssistantError.unfinishedOutput
+                }
+            }
+            guard response.status == "completed" else { throw AssistantError.unfinishedOutput }
             let text = response.output.filter { $0.type == "message" }
                 .flatMap { $0.content ?? [] }.filter { $0.type == "output_text" }
                 .compactMap(\.text).joined(separator: "\n")

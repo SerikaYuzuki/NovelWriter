@@ -137,6 +137,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     seed_apple_config(&pool).await?;
     run_scenarios(&pool).await?;
+    run_provider_order_scenarios(&pool).await?;
     Ok(())
 }
 
@@ -371,6 +372,9 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     .try_get("count")?;
     ensure(distinct_audiences == 2, "multi-audience grants collapsed")?;
 
+    // Both audiences have an in-flight notification check when Mac signs in.
+    let old_credentials: Vec<uuid::Uuid> = sqlx::query_scalar("UPDATE auth_v1.provider_credentials SET state='providerValidationPending',validation_event_type='consent-revoked',revoke_attempts=1 WHERE state='active' RETURNING credential_id")
+        .fetch_all(pool).await?;
     let resume_provider = ScenarioAppleProvider {
         subject: "same-concurrent-apple-subject".into(),
         credential_by_audience: Arc::new(HashMap::new()),
@@ -433,6 +437,28 @@ async fn run_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     ensure(
         resume_provider.calls.load(Ordering::SeqCst) == 1,
         "providerResultKnown restart called Apple a second time",
+    )?;
+    for credential in old_credentials {
+        repository
+            .finish_apple_validation(
+                credential,
+                Err(&AuthError::InvalidExternalIdentity),
+                chrono::Utc::now(),
+                1,
+            )
+            .await?;
+    }
+    ensure(
+        !repository
+            .provider_validation_pending(mac_grant.principal.account_id.as_str())
+            .await?,
+        "fresh login retained an older audience validation",
+    )?;
+    ensure(
+        app.authenticate_access(&mac_grant.access_token)
+            .await
+            .is_ok(),
+        "old audience result invalidated the authenticated account",
     )?;
     let resume_state = sqlx::query("SELECT c.phase,o.state AS operation_state FROM auth_v1.auth_challenges c JOIN auth_v1.auth_operations o ON o.operation_id=c.exchange_operation_id WHERE c.challenge_id=$1")
         .bind(uuid::Uuid::parse_str(resume_challenge.challenge_id.as_str())?)
@@ -822,4 +848,147 @@ mod tests {
         ));
         assert!(!is_isolated_database_name("production_auth_v2_test_copy"));
     }
+}
+
+async fn run_provider_order_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    use fuminiwa_sync_server_v2::auth_apple::AppleS2SNotification;
+    let verified_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM auth_v1.external_identities WHERE last_provider_auth_at IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        verified_count > 0,
+        "real sign-in must persist the provider ordering watermark"
+    );
+    let repository = AuthPostgresRepository::new(
+        pool.clone(),
+        Arc::new(ScenarioVault::default()),
+        [0x31; 32],
+        "00000000-0000-4000-8000-000000000001".into(),
+    )?;
+    let identity = uuid::Uuid::new_v4();
+    let credential = uuid::Uuid::new_v4();
+    let account = "acct_notification_review";
+    let now = chrono::Utc::now();
+    sqlx::query("INSERT INTO auth_v1.accounts(account_id,tenant_id,state,auth_epoch,fence) VALUES($1,'tenant_notification_review','active',1,$2)")
+        .bind(account).bind(vec![0x41u8;32]).execute(pool).await?;
+    sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state,last_provider_auth_at) VALUES($1,$2,$3,$4,1,$5,'active',$6)")
+        .bind(identity).bind(account).bind(APPLE_PROVIDER_CONFIG).bind(APPLE_ISSUER).bind(vec![0x51u8;32]).bind(now.timestamp()).execute(pool).await?;
+    sqlx::query("INSERT INTO auth_v1.provider_credentials(credential_id,identity_id,original_audience,vault_context,credential_generation,key_version,ciphertext,state) VALUES($1,$2,'dev.serikayuzuki.fuminiwa','notification-fixture',1,1,$3,'active')")
+        .bind(credential).bind(identity).bind(vec![0x61u8;32]).execute(pool).await?;
+    let stale = AppleS2SNotification {
+        notification_type: "consent-revoked".into(),
+        subject: "fixture".into(),
+        jti: "notification-stale".into(),
+        audience: "dev.serikayuzuki.fuminiwa".into(),
+        issued_at_unix: now.timestamp(),
+        event_time_unix: now.timestamp(),
+    };
+    repository
+        .record_apple_notification(&stale, &[0x51; 32], [0x71; 32])
+        .await?;
+    repository
+        .record_apple_notification(&stale, &[0x51; 32], [0x71; 32])
+        .await?;
+    assert!(repository.provider_validation_pending(account).await?);
+    let epoch: i64 =
+        sqlx::query_scalar("SELECT auth_epoch FROM auth_v1.accounts WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(epoch, 1);
+    let entries = repository.claim_apple_validations(now, 16).await?;
+    let entry = entries
+        .iter()
+        .find(|e| e.credential_id == credential)
+        .ok_or("validation was not queued")?;
+    repository
+        .finish_apple_validation(
+            credential,
+            Err(&AuthError::ProviderExchangeIndeterminate),
+            now,
+            entry.attempt,
+        )
+        .await?;
+    assert!(repository.provider_validation_pending(account).await?);
+    // A restarted repository reclaims durable work after backoff.
+    let restarted = AuthPostgresRepository::new(
+        pool.clone(),
+        Arc::new(ScenarioVault::default()),
+        [0x31; 32],
+        "00000000-0000-4000-8000-000000000001".into(),
+    )?;
+    let retry = restarted
+        .claim_apple_validations(now + chrono::Duration::seconds(60), 16)
+        .await?;
+    let entry = retry
+        .iter()
+        .find(|e| e.credential_id == credential)
+        .ok_or("validation retry was not durable")?;
+    restarted
+        .finish_apple_validation(credential, Ok(()), now, entry.attempt)
+        .await?;
+    assert!(!restarted.provider_validation_pending(account).await?);
+    let epoch: i64 =
+        sqlx::query_scalar("SELECT auth_epoch FROM auth_v1.accounts WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(
+        epoch, 1,
+        "valid new credential must preserve the fence/epoch"
+    );
+    let mut next = stale.clone();
+    next.jti = "notification-recheck".into();
+    restarted
+        .record_apple_notification(&next, &[0x51; 32], [0x72; 32])
+        .await?;
+    let entries = restarted.claim_apple_validations(now, 16).await?;
+    let entry = entries
+        .iter()
+        .find(|e| e.credential_id == credential)
+        .ok_or("second validation missing")?;
+    restarted
+        .finish_apple_validation(
+            credential,
+            Err(&AuthError::InvalidExternalIdentity),
+            now,
+            entry.attempt,
+        )
+        .await?;
+    restarted
+        .finish_apple_validation(
+            credential,
+            Err(&AuthError::InvalidExternalIdentity),
+            now,
+            entry.attempt,
+        )
+        .await?;
+    let epoch: i64 =
+        sqlx::query_scalar("SELECT auth_epoch FROM auth_v1.accounts WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(epoch, 2, "authoritative rejection rotates only once");
+    // A provider 4xx classification must remain retryable in durable revocation state.
+    restarted
+        .finish_apple_revocation(credential, Err(&AuthError::InvalidExternalIdentity), now, 1)
+        .await?;
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM auth_v1.provider_credentials WHERE credential_id=$1")
+            .bind(credential)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(state, "revokeRetryPending");
+    restarted
+        .finish_apple_revocation(credential, Ok(()), now, 2)
+        .await?;
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM auth_v1.provider_credentials WHERE credential_id=$1")
+            .bind(credential)
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(state, "revoked");
+    Ok(())
 }

@@ -12,10 +12,25 @@ public extension LocalSyncV2Store {
     func prepareWorkDeletion(workID: WorkID, activeBinding: V2AccountBinding?) throws -> V2WorkDeletion {
         try inTransaction {
             if let existing = try workDeletion(workID: workID) {
-                guard existing.binding == nil || existing.binding == activeBinding else {
+                guard let previous = existing.binding, previous != activeBinding else { return existing }
+                guard let activeBinding,
+                      previous.serverInstanceID == activeBinding.serverInstanceID,
+                      previous.protocolEpoch == activeBinding.protocolEpoch,
+                      previous.accountID == activeBinding.accountID else {
                     throw SyncV2StoreError.accountMismatch
                 }
-                return existing
+                if existing.completed {
+                    return existing
+                }
+                guard try !workExists(workID: workID)
+                    || scopedWorkRow(workID: workID, scope: .bound(activeBinding)) != nil else {
+                    throw SyncV2StoreError.accountMismatch
+                }
+                // A new credential generation may retry the same account's intent,
+                // but cannot complete an in-flight deletion from the old generation.
+                try exec("UPDATE work_deletions SET account_fence=? WHERE work_id=? AND phase='pending'",
+                         [.text(activeBinding.accountFence), .text(workID.description)])
+                return V2WorkDeletion(workID: workID, binding: activeBinding, completed: false)
             }
             let binding: V2AccountBinding?
             if try scopedWorkRow(workID: workID, scope: .unbound) != nil {
@@ -121,7 +136,7 @@ public extension LocalSyncV2Store {
                 "intent_subsumptions", "restore_records", "conflict_candidates", "conflicts", "inbox_batches",
                 "upload_transfers", "remote_receipts", "sync_intents", "sealed_commands", "history_occurrences",
                 "snapshot_remote_equivalents", "snapshot_parents", "quarantine_records", "work_resources",
-                "account_bindings", "snapshots", "works"
+                "binding_transitions", "account_bindings", "snapshots", "works"
             ] {
                 try exec("DELETE FROM \(table) WHERE work_id=?", id)
             }
@@ -140,7 +155,6 @@ public extension LocalSyncV2Store {
                 DELETE
                 FROM resources
                 WHERE object_id=?
-                  AND gc_root=0
                   AND NOT EXISTS(SELECT 1
                 FROM work_resources r
                 WHERE r.object_id=resources.object_id)

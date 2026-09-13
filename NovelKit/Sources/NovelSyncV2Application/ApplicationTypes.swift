@@ -73,6 +73,19 @@ public enum SyncV2FatalReason: String, Equatable, Sendable {
     case unsupportedCommand
     case invalidLocalState
     case unexpected
+    case remoteDataUnavailable
+    case uploadTooLarge
+
+    public var japaneseDescription: String {
+        switch self {
+        case .remoteDataUnavailable:
+            "同期先の作品またはデータを利用できません。原稿はこの端末に残っています。作品を書き出して保管し、取り込み直すと別の作品として同期できます。"
+        case .uploadTooLarge:
+            "同期経路の送信上限を超えています。原稿はこの端末に保存されています。添付容量または接続先の制限を確認してください。"
+        case .unsupportedCommand, .invalidLocalState, .unexpected:
+            "同期できませんでした。原稿はこの端末に保存されています。接続先を確認して再試行してください。"
+        }
+    }
 }
 
 public enum SyncV2CheckpointReason: String, Codable, Sendable {

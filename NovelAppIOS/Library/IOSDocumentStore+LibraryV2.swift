@@ -215,7 +215,13 @@ extension IOSDocumentStore {
             if !isSyncV2RemoteAccountTransitionActive,
                remoteCatalogRefreshGeneration == refreshGeneration,
                snapshotSyncV2AccountScope == expectedAccountScope {
-                syncV2RemoteCatalogError = error.localizedDescription
+                if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
+                    let message = "認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"
+                    authUIState = .failed(message)
+                    syncV2RemoteCatalogError = message
+                } else {
+                    syncV2RemoteCatalogError = error.localizedDescription
+                }
             }
             return false
         }

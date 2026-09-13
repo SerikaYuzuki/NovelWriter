@@ -258,10 +258,7 @@ struct SnapshotPopover: View {
                 Spacer()
                 Button {
                     Task {
-                        _ = await appState.checkpointSnapshotSyncV2(
-                            appState.document,
-                            reason: .explicit
-                        )
+                        _ = await appState.saveExplicitSnapshot()
                         await presenter.refresh()
                     }
                 } label: {

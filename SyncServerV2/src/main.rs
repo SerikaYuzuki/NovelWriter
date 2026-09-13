@@ -61,10 +61,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| startup_error("auth service", error))?,
     );
     let revocation_service = auth_service.clone();
+    let upload_cleanup = repository.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             ticker.tick().await;
+            if upload_cleanup.expire_partial_uploads().await.is_err() {
+                tracing::warn!("expired upload cleanup failed");
+            }
+            if let Err(error) = revocation_service.run_apple_validation_batch(16).await {
+                tracing::warn!(?error, "apple validation worker iteration failed");
+            }
             if let Err(error) = revocation_service.run_apple_revocation_batch(16).await {
                 tracing::warn!(?error, "apple revocation worker iteration failed");
             }

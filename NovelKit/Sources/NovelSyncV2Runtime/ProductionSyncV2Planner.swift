@@ -74,6 +74,12 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             // retained locally; opening or saving them is not an auth failure.
             return .idle
         }
+        if let reason = try await store.quarantinedUploadReason(workID: workID, scope: localScope) {
+            return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
+        }
+        if let reason = try await store.quarantinedCommandReason(workID: workID, scope: localScope) {
+            return .blocked(.fatal(SyncV2FatalReason(rawValue: reason) ?? .unexpected))
+        }
         if let record = try await store.pendingSealedCommands(scope: localScope, workID: workID).first {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
         }
@@ -450,8 +456,14 @@ extension ProductionSyncV2Planner {
         workID: WorkID,
         disposition: SyncV2CommandFailureDisposition
     ) async throws {
-        guard case let .command(planned) = operation else { return }
         let localScope = try await scope.existingScope(workID: workID)
+        if case let .upload(transfer) = operation, case let .rejectUpload(reason) = disposition {
+            try await store.quarantineUpload(transferID: transfer.transferID, workID: workID,
+                                             reason: reason.rawValue, scope: localScope)
+            await invalidateCaches(for: [workID])
+            return
+        }
+        guard case let .command(planned) = operation else { return }
         switch disposition {
         case .replanRejectedPublish:
             do {
@@ -465,7 +477,10 @@ extension ProductionSyncV2Planner {
                 commandID: planned.command.commandId,
                 scope: localScope
             )
-        case .quarantine:
+        case let .rejectCommand(reason):
+            try await store.quarantine(commandID: planned.command.commandId, scope: localScope, reason: reason.rawValue)
+            await invalidateCaches(for: [workID])
+        case .quarantine, .rejectUpload:
             try await store.quarantine(
                 commandID: planned.command.commandId,
                 scope: localScope

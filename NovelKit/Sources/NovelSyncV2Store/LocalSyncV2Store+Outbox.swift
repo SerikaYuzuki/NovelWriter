@@ -132,14 +132,18 @@ public extension LocalSyncV2Store {
 
     func quarantine(
         commandID: UUID,
-        scope: V2LocalWorkScope
+        scope: V2LocalWorkScope,
+        reason: String? = nil
     ) throws {
-        try transitionCommand(
-            commandID: commandID,
-            scope: scope,
-            from: ["sealed", "sending", "conflictPending"],
-            to: "quarantined"
-        )
+        try inTransaction {
+            try transitionCommand(
+                commandID: commandID, scope: scope,
+                from: ["sealed", "sending", "conflictPending"], to: "quarantined"
+            )
+            if let reason {
+                try recordCommandFailureReason(commandID: commandID, reason: reason)
+            }
+        }
     }
 
     func park(

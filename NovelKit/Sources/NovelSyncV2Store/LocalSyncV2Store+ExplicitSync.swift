@@ -14,6 +14,7 @@ public extension LocalSyncV2Store {
                   row[6].text == V2SyncLane.normal.rawValue else {
                 throw SyncV2StoreError.accountMismatch
             }
+            try retryQuarantinedUploads(workID: workID, scope: scope)
             try retryInitialCreateWork(workID: workID, scope: scope)
             try retryQuarantinedPublish(workID: workID, scope: scope)
             guard try pendingIntents(scope: scope, workID: workID).isEmpty else { return }

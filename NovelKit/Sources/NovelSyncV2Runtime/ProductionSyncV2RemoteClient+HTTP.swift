@@ -92,7 +92,6 @@ extension ProductionSyncV2RemoteClient {
         )
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
-        request.httpBody = transfer.exactBytes
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue(
@@ -113,17 +112,29 @@ extension ProductionSyncV2RemoteClient {
             accountFence: session.accountFence,
             server: session.serverInstanceID.uuidString.lowercased()
         )
-        let (data, response) = try await requestData(request, session: session)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 204,
-              http.value(forHTTPHeaderField: "X-Fuminiwa-Result") == "applied",
-              http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
-              http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache" else {
-            if let http = response as? HTTPURLResponse, http.statusCode == 409 {
-                throw typedUploadFailure(data: data)
+        let chunkSize = 8 * 1024 * 1024
+        let isChunked = transfer.exactBytes.count > chunkSize
+        var offset = 0
+        repeat {
+            try Task.checkCancellation()
+            let end = min(offset + chunkSize, transfer.exactBytes.count)
+            request.httpBody = transfer.exactBytes.subdata(in: offset ..< end)
+            if isChunked {
+                request.setValue("bytes \(offset)-\(end - 1)/\(transfer.exactBytes.count)", forHTTPHeaderField: "Content-Range")
             }
-            throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
-        }
+            let (data, response) = try await requestData(request, session: session)
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 204,
+                  http.value(forHTTPHeaderField: "X-Fuminiwa-Result") == "applied",
+                  http.value(forHTTPHeaderField: "Cache-Control")?.lowercased() == "no-store",
+                  http.value(forHTTPHeaderField: "Pragma")?.lowercased() == "no-cache" else {
+                if let http = response as? HTTPURLResponse, http.statusCode == 409 {
+                    throw typedUploadFailure(data: data)
+                }
+                throw mapStatus((response as? HTTPURLResponse)?.statusCode ?? 599)
+            }
+            offset = end
+        } while offset < transfer.exactBytes.count
         return .upload(
             SyncV2UploadCompletion(
                 transferID: transfer.transferID,
@@ -168,6 +179,10 @@ extension ProductionSyncV2RemoteClient {
         do {
             return try await session.data(for: request)
         } catch {
+            if (error as NSError).domain == NSURLErrorDomain,
+               (error as NSError).code == NSURLErrorNotConnectedToInternet {
+                throw SyncV2Failure.offline
+            }
             throw SyncV2Failure.retryable(.lostResponse)
         }
     }
@@ -383,6 +398,10 @@ extension ProductionSyncV2RemoteClient {
             .authenticationRequired
         case 403:
             .accountFenceChanged
+        case 404:
+            .fatal(.remoteDataUnavailable)
+        case 413:
+            .fatal(.uploadTooLarge)
         case 408, 429, 500 ... 599:
             .retryable(.serverUnavailable)
         default:

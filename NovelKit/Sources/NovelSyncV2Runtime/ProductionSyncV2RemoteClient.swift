@@ -167,6 +167,9 @@ public actor ProductionSyncV2SessionProvider: SyncV2SessionProvider {
             }
         }
         if (error as NSError).domain == NSURLErrorDomain {
+            if (error as NSError).code == NSURLErrorNotConnectedToInternet {
+                return SyncV2Failure.offline
+            }
             return SyncV2Failure.retryable(.lostResponse)
         }
         return error
