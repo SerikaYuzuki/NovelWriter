@@ -11,6 +11,7 @@
 | モジュール境界と入力・保存契約 | [DESIGN](DESIGN.md) |
 | 採択理由・置換関係 | [DECISIONS](DECISIONS.md) |
 | 現行source、負債、検証、Git | [CODE_HEALTH](CODE_HEALTH.md) |
+| 2026-09-13の全体レビューと改善優先順位 | [PROJECT_REVIEW_20260913](PROJECT_REVIEW_20260913.md)（対象commit `6cbff1801`、Fable 5.1の独立レビューを統合。実装修正・公開受入は未実施） |
 | 利用者が決めた方針と残る実装事項 | [OWNER_DECISIONS](OWNER_DECISIONS.md) |
 | 不具合・提案・PRを書く | [不具合template](../.github/ISSUE_TEMPLATE/bug_report.md)、[提案template](../.github/ISSUE_TEMPLATE/feature_request.md)、[PR template](../.github/PULL_REQUEST_TEMPLATE.md) |
 
