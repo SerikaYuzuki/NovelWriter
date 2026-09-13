@@ -3,16 +3,17 @@ import NovelSyncV2
 
 extension LocalSyncV2Store {
     public func appendConflictFromVerifiedInbox(
-        workID: WorkID,
+        _ candidate: V2ConflictCandidate,
         inboxID: UUID,
-        conflictID: UUID,
-        revision: Int64,
-        baseSnapshotID: SnapshotID?,
-        localSnapshotID: SnapshotID,
-        remoteSnapshotID: SnapshotID,
-        sourceGeneration: Int64,
         scope: V2LocalWorkScope
     ) throws -> V2ConflictCandidate {
+        let workID = candidate.workID
+        let conflictID = candidate.conflictID
+        let revision = candidate.revision
+        let baseSnapshotID = candidate.baseSnapshotID
+        let localSnapshotID = candidate.localSnapshotID
+        let remoteSnapshotID = candidate.remoteSnapshotID
+        let sourceGeneration = candidate.sourceGeneration
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
         let graph = try loadInboxGraph(inboxID: inboxID, binding: binding)
         guard graph.headSnapshotID == remoteSnapshotID,

@@ -1,9 +1,9 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
-import NovelSyncV2Store
 @testable import NovelSyncV2Application
 @testable import NovelSyncV2Runtime
+import NovelSyncV2Store
 import Testing
 
 @Suite("Snapshot Sync v2 unbound production work")

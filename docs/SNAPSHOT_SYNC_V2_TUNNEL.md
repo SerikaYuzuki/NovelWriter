@@ -101,9 +101,9 @@ no-change／remote descendant、scope不一致、重複object取得、offline編
 途中の実行では既知の`ProductionInboxIsolationTests`のwrong-work待機テストが失敗しており、
 不安定性は残る。`check.sh`は既存3ファイルの整形エラーで停止する。
 
-新規にHTTP取得する未知の履歴には引き続き128件の安全上限がある。
-既存端末での再同期はlocal／verified Inboxを再利用するが、履歴の多い作品を
-空の端末へ初めて取得する経路の分割取得は別途必要。
+この時点では未知の履歴に128件上限が残っていた。後続の
+[長い履歴の取り込み改善](LARGE_HISTORY_IMPORT_20260913.md)で、非再帰の順次取得へ変更し、
+128件の打ち切りを除去した。
 
 ## iOSの履歴表示
 

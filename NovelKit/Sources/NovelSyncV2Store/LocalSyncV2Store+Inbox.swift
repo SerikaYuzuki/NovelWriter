@@ -214,13 +214,11 @@ extension LocalSyncV2Store {
         }
         try validateAcyclic(parents)
         var reachable = Set<SnapshotID>()
-        func collect(_ snapshot: SnapshotID) {
-            guard reachable.insert(snapshot).inserted else { return }
-            for parent in parents[snapshot, default: []] where parents[parent] != nil {
-                collect(parent)
-            }
+        var pending = [graph.headSnapshotID]
+        while let snapshot = pending.popLast() {
+            guard reachable.insert(snapshot).inserted else { continue }
+            pending.append(contentsOf: parents[snapshot, default: []].filter { parents[$0] != nil })
         }
-        collect(graph.headSnapshotID)
         guard reachable == Set(parents.keys) else {
             throw SyncV2StoreError.invalidSnapshot
         }
@@ -231,21 +229,25 @@ extension LocalSyncV2Store {
     func validateAcyclic(_ parents: [SnapshotID: [SnapshotID]]) throws {
         var visiting = Set<SnapshotID>()
         var visited = Set<SnapshotID>()
-        func visit(_ snapshot: SnapshotID) throws {
-            if visited.contains(snapshot) {
-                return
+        for root in parents.keys where !visited.contains(root) {
+            var pending: [(id: SnapshotID, finishing: Bool)] = [(root, false)]
+            while let next = pending.popLast() {
+                if visited.contains(next.id) {
+                    continue
+                }
+                if next.finishing {
+                    visiting.remove(next.id)
+                    visited.insert(next.id)
+                    continue
+                }
+                guard visiting.insert(next.id).inserted else {
+                    throw SyncV2StoreError.invalidSnapshot
+                }
+                pending.append((next.id, true))
+                for parent in parents[next.id, default: []] where parents[parent] != nil {
+                    pending.append((parent, false))
+                }
             }
-            guard visiting.insert(snapshot).inserted else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-            for parent in parents[snapshot, default: []] where parents[parent] != nil {
-                try visit(parent)
-            }
-            visiting.remove(snapshot)
-            visited.insert(snapshot)
-        }
-        for snapshot in parents.keys {
-            try visit(snapshot)
         }
     }
 

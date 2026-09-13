@@ -285,15 +285,12 @@ extension ProductionSyncV2Kernel {
         do {
             let localScope = try await scope.existingScope(workID: workID)
             _ = try await store.appendConflictFromVerifiedInbox(
-                workID: workID,
-                inboxID: inboxID,
-                conflictID: conflict.conflictID,
-                revision: conflict.revision,
-                baseSnapshotID: conflict.baseSnapshotID,
-                localSnapshotID: conflict.localSnapshotID,
-                remoteSnapshotID: conflict.remoteSnapshotID,
-                sourceGeneration: conflict.sourceGeneration,
-                scope: localScope
+                V2ConflictCandidate(
+                    conflictID: conflict.conflictID, revision: conflict.revision, workID: workID,
+                    baseSnapshotID: conflict.baseSnapshotID, localSnapshotID: conflict.localSnapshotID,
+                    remoteSnapshotID: conflict.remoteSnapshotID, sourceGeneration: conflict.sourceGeneration
+                ),
+                inboxID: inboxID, scope: localScope
             )
         } catch { throw mapStoreError(error) }
     }

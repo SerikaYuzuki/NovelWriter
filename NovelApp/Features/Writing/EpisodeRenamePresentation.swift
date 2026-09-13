@@ -35,7 +35,11 @@ struct EpisodeRenameDialog: ViewModifier {
     func body(content: Content) -> some View {
         content.alert("話の名前を変更", isPresented: Binding(
             get: { request != nil },
-            set: { if !$0 { request = nil } }
+            set: {
+                if !$0 {
+                    request = nil
+                }
+            }
         )) {
             TextField("話の名前", text: Binding(
                 get: { request?.title ?? "" },

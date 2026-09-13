@@ -44,68 +44,71 @@ extension ProductionSyncV2RemoteClient {
         session: FuminiwaSession,
         traversal: SnapshotFetchTraversal
     ) async throws -> [EncodedSnapshot] {
-        if traversal.memo[id] != nil {
-            return []
-        }
-        if let localStore,
-           let snapshot = try await localStore.committedSnapshot(
-               workID: workID,
-               snapshotID: id,
-               scope: .bound(V2AccountBinding(
-                   accountID: session.accountID,
-                   accountFence: session.accountFence,
-                   serverInstanceID: session.serverInstanceID.uuidString.lowercased()
-               ))
-           ) {
-            // The store validates this immutable snapshot and its parent rows.
-            // Inbox lineage verification can follow those committed parents;
-            // downloading the entire history again adds no evidence.
-            traversal.memo[id] = snapshot
-            return [snapshot]
-        }
-        guard !traversal.active.contains(id) else {
-            throw SyncV2Failure.fatal(.invalidLocalState)
-        }
-        traversal.active.insert(id)
-        defer { traversal.active.remove(id) }
-        let cached = try await localStore?.verifiedInboxSnapshot(
-            workID: workID, snapshotID: id,
-            scope: .bound(V2AccountBinding(accountID: session.accountID, accountFence: session.accountFence,
-                                           serverInstanceID: session.serverInstanceID.uuidString.lowercased()))
-        )
-        let manifest: SnapshotManifest
-        let bytes: Data
-        let objects: [ObjectID: Data]
-        if let cached {
-            manifest = cached.manifest
-            bytes = cached.manifestBytes
-            objects = cached.objects
-        } else {
-            guard traversal.networkSnapshots < SnapshotFetchTraversal.maximumSnapshots else {
-                throw SyncV2Failure.fatal(.invalidLocalState)
+        var pending: [(id: SnapshotID, finishing: Bool)] = [(id, false)]
+        var result: [EncodedSnapshot] = []
+        while let next = pending.popLast() {
+            try Task.checkCancellation()
+            if traversal.completed.contains(next.id) {
+                continue
             }
-            traversal.networkSnapshots += 1
-            (manifest, bytes) = try await fetchManifest(id: id, session: session)
-            objects = try await fetchObjects(manifest: manifest, session: session, traversal: traversal)
+            if next.finishing {
+                guard let snapshot = traversal.memo[next.id] else {
+                    throw SyncV2Failure.quarantined(.invalidRemoteData)
+                }
+                traversal.active.remove(next.id)
+                traversal.completed.insert(next.id)
+                result.append(snapshot)
+                if result.count.isMultiple(of: 32) {
+                    await Task.yield()
+                }
+                continue
+            }
+            guard traversal.active.insert(next.id).inserted else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
+            let scope = V2LocalWorkScope.bound(V2AccountBinding(
+                accountID: session.accountID, accountFence: session.accountFence,
+                serverInstanceID: session.serverInstanceID.uuidString.lowercased()
+            ))
+            if let snapshot = try await localStore?.committedSnapshot(
+                workID: workID, snapshotID: next.id, scope: scope
+            ) {
+                // Committed parents remain a verified lineage anchor in SQLite.
+                try traversal.include(snapshot.manifest)
+                traversal.memo[next.id] = snapshot
+                pending.append((next.id, true))
+                continue
+            }
+            let snapshot = try await loadUncommittedSnapshot(
+                workID: workID, id: next.id, scope: scope,
+                session: session, traversal: traversal
+            )
+            traversal.memo[next.id] = snapshot
+            pending.append((next.id, true))
+            for parent in snapshot.manifest.parentSnapshotIds.reversed() {
+                pending.append((parent, false))
+            }
         }
+        return result
+    }
+
+    private func loadUncommittedSnapshot(
+        workID: WorkID, id: SnapshotID, scope: V2LocalWorkScope,
+        session: FuminiwaSession, traversal: SnapshotFetchTraversal
+    ) async throws -> EncodedSnapshot {
+        if let cached = try await localStore?.verifiedInboxSnapshot(
+            workID: workID, snapshotID: id, scope: scope
+        ) {
+            try traversal.include(cached.manifest)
+            return cached
+        }
+        let (manifest, bytes) = try await fetchManifest(id: id, session: session)
         guard manifest.workId == workID else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
-        var result = try await fetchParents(
-            workID: workID,
-            manifest: manifest,
-            session: session,
-            traversal: traversal
-        )
-        let snapshot = EncodedSnapshot(
-            manifest: manifest,
-            manifestBytes: bytes,
-            objects: objects
-        )
-        traversal.visited.insert(id)
-        traversal.memo[id] = snapshot
-        result.append(snapshot)
-        return result
+        try traversal.include(manifest)
+        let objects = try await fetchObjects(manifest: manifest, session: session, traversal: traversal)
+        return EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects)
     }
 
     private func fetchManifest(
@@ -150,6 +153,7 @@ extension ProductionSyncV2RemoteClient {
     ) async throws -> [ObjectID: Data] {
         var objects: [ObjectID: Data] = [:]
         for entry in manifest.entries {
+            try Task.checkCancellation()
             if let bytes = traversal.objects[entry.objectId] {
                 guard bytes.count == entry.byteCount else {
                     throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -200,24 +204,6 @@ extension ProductionSyncV2RemoteClient {
         return rawObject
     }
 
-    private func fetchParents(
-        workID: WorkID,
-        manifest: SnapshotManifest,
-        session: FuminiwaSession,
-        traversal: SnapshotFetchTraversal
-    ) async throws -> [EncodedSnapshot] {
-        var result: [EncodedSnapshot] = []
-        for parent in manifest.parentSnapshotIds {
-            result += try await fetchSnapshot(
-                workID: workID,
-                id: parent,
-                session: session,
-                traversal: traversal
-            )
-        }
-        return result
-    }
-
     private func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
         SealedCommand.Binding(
             accountFence: session.accountFence,
@@ -229,10 +215,25 @@ extension ProductionSyncV2RemoteClient {
 }
 
 final class SnapshotFetchTraversal: @unchecked Sendable {
-    static let maximumSnapshots = 128
-    var networkSnapshots = 0
+    // The v2 contract bounds unique objects, not the number of history versions.
+    private let maximumObjects: Int
+    private var objectIDs: Set<ObjectID> = []
+
+    init(maximumObjects: Int = SnapshotSyncV2Limits.maxEntries) {
+        self.maximumObjects = maximumObjects
+    }
+
+    func include(_ manifest: SnapshotManifest) throws {
+        for entry in manifest.entries {
+            objectIDs.insert(entry.objectId)
+            guard objectIDs.count <= maximumObjects else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
+        }
+    }
+
     var active: Set<SnapshotID> = []
-    var visited: Set<SnapshotID> = []
+    var completed: Set<SnapshotID> = []
     var memo: [SnapshotID: EncodedSnapshot] = [:]
     /// Scoped to one authenticated graph fetch; never shared across accounts.
     var objects: [ObjectID: Data] = [:]

@@ -132,6 +132,20 @@ public struct V2ConflictCandidate: Hashable, Sendable {
     public let localSnapshotID: SnapshotID
     public let remoteSnapshotID: SnapshotID
     public let sourceGeneration: Int64
+
+    public init(
+        conflictID: UUID, revision: Int64, workID: WorkID,
+        baseSnapshotID: SnapshotID?, localSnapshotID: SnapshotID,
+        remoteSnapshotID: SnapshotID, sourceGeneration: Int64
+    ) {
+        self.conflictID = conflictID
+        self.revision = revision
+        self.workID = workID
+        self.baseSnapshotID = baseSnapshotID
+        self.localSnapshotID = localSnapshotID
+        self.remoteSnapshotID = remoteSnapshotID
+        self.sourceGeneration = sourceGeneration
+    }
 }
 
 public struct V2ServerResolutionRequest: Hashable, Sendable {

@@ -99,17 +99,21 @@ func remoteConflictPreservesVerifiedGraphBaseAndServerIdentity() async throws {
     let identity = UUID()
     await #expect(throws: SyncV2StoreError.self) {
         try await store.appendConflictFromVerifiedInbox(
-            workID: workID, inboxID: graph.inboxID, conflictID: identity, revision: 2,
-            baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
-            remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation, scope: scopeA
+            V2ConflictCandidate(
+                conflictID: identity, revision: 2, workID: workID,
+                baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
+                remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation
+            ), inboxID: graph.inboxID, scope: scopeA
         )
     }
     try await store.verifyInbox(inboxID: graph.inboxID, scope: scopeA)
     for _ in 0 ..< 2 {
         let conflict = try await store.appendConflictFromVerifiedInbox(
-            workID: workID, inboxID: graph.inboxID, conflictID: identity, revision: 2,
-            baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
-            remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation, scope: scopeA
+            V2ConflictCandidate(
+                conflictID: identity, revision: 2, workID: workID,
+                baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
+                remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation
+            ), inboxID: graph.inboxID, scope: scopeA
         )
         #expect(conflict.conflictID == identity)
         #expect(conflict.revision == 2)
@@ -117,9 +121,11 @@ func remoteConflictPreservesVerifiedGraphBaseAndServerIdentity() async throws {
     }
     await #expect(throws: SyncV2StoreError.staleConflictAction) {
         try await store.appendConflictFromVerifiedInbox(
-            workID: workID, inboxID: graph.inboxID, conflictID: UUID(), revision: 2,
-            baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
-            remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation, scope: scopeA
+            V2ConflictCandidate(
+                conflictID: UUID(), revision: 2, workID: workID,
+                baseSnapshotID: base.snapshotID, localSnapshotID: local.snapshotID,
+                remoteSnapshotID: remote.snapshotId, sourceGeneration: local.generation
+            ), inboxID: graph.inboxID, scope: scopeA
         )
     }
     #expect(try await store.open(workID: workID, scope: scopeA).document == edited)

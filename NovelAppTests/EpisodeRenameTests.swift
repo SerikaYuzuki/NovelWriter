@@ -62,6 +62,9 @@ struct EpisodeRenameTests {
 }
 
 private actor RenameRepository: DocumentRepository {
-    func load(from _: URL) async throws -> NovelDocument { .newDocument() }
+    func load(from _: URL) async throws -> NovelDocument {
+        .newDocument()
+    }
+
     func save(_: NovelDocument, to _: URL) async throws {}
 }

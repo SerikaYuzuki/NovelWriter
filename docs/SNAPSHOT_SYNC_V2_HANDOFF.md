@@ -1,5 +1,7 @@
 # Snapshot Sync v2 — 現在地と残件
 
+> 2026-09-13 追加改善: [長い履歴の初回取り込み](LARGE_HISTORY_IMPORT_20260913.md)。128件の打ち切りを除去し、取得・検証を非再帰化。検証結果と制約は作業記録を参照。
+
 > 2026-09-13 公開入口追加: [Cloudflare Tunnel記録](SNAPSHOT_SYNC_V2_TUNNEL.md)。`sync.serika.work`を既存v2サーバーへ接続し、両Appの共通defaultを更新。公開HTTPS・未認証401・Macの変更なし同期を確認。履歴再取得とoffline競合受信を修正し、Macでサーバー版を採用後の同期済み、利用者によるiPhoneモバイル通信での同期済みを確認。一般配布の受入完了とは区別する。
 
 > 2026-09-12 明示同期更新: [作業記録](EXPLICIT_SYNC_20260912.md)。変更なし作品の送受信確認とremote descendantの安全な反映を接続した。Macの現行DBはunbound作品のみで送信記録なし、LAN serverはcreateWork 1件・Snapshot 0件だった。隔離PostgreSQL/HTTP統合検証は成功。実アカウントの端末間往復は未確認。

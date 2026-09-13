@@ -89,12 +89,46 @@ struct RemoteHTTPLineageTests {
         }
     }
 
-    @Test("lineage budget rejects an oversized graph")
-    func oversizedGraphFailsClosed() async throws {
+    @Test("object budget is enforced before object download")
+    func graphObjectBudgetFailsClosed() async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "budget")
+        let client = try fixture.client(snapshots: [snapshot])
+        let session = try await client.loadSession()
+        await #expect(throws: SyncV2Failure.quarantined(.invalidRemoteData)) {
+            try await client.fetchSnapshot(
+                workID: fixture.workID, id: snapshot.snapshotId, session: session,
+                traversal: SnapshotFetchTraversal(maximumObjects: snapshot.objects.count - 1)
+            )
+        }
+        for objectID in snapshot.objects.keys {
+            #expect(fixture.requestCount(path: "/v2/objects/\(objectID.rawValue)") == 0)
+        }
+    }
+
+    @Test("cancelled history traversal does not fetch or return a partial graph")
+    func cancelledTraversalStopsBeforeFetching() async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "cancel")
+        let client = try fixture.client(snapshots: [snapshot])
+        let session = try await client.loadSession()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.fetchSnapshot(
+                workID: fixture.workID, id: snapshot.snapshotId, session: session,
+                traversal: SnapshotFetchTraversal()
+            )
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(fixture.requestCount(path: "/v2/snapshots/\(snapshot.snapshotId.rawValue)/manifest") == 0)
+    }
+
+    @Test("a cold device imports 512 snapshots without a history-count cutoff")
+    func longHistoryImportsIntoEmptyStore() async throws {
         let fixture = LineageFixture()
         var snapshots: [EncodedSnapshot] = []
         var parent: SnapshotID?
-        for index in 0 ... 128 {
+        for index in 0 ..< 512 {
             let snapshot = try fixture.snapshot(
                 title: "\(index)",
                 parents: parent.map { [$0] } ?? []
@@ -104,12 +138,25 @@ struct RemoteHTTPLineageTests {
         }
         let client = try fixture.client(snapshots: snapshots)
 
-        do {
-            _ = try await client.downloadRemoteOnly(workID: fixture.workID)
-            Issue.record("oversized lineage was accepted")
-        } catch let error as SyncV2Failure {
-            #expect(error == .fatal(.invalidLocalState))
-        }
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.map(\.snapshotId) == snapshots.map(\.snapshotId))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try LocalSyncV2Store(root: root, policy: .createNew)
+        let scope = V2LocalWorkScope.bound(fixture.binding)
+        let graph = try V2RemoteSnapshotGraph(
+            inboxID: inbox.inboxID, workID: fixture.workID, headSnapshotID: inbox.headSnapshotID,
+            snapshots: inbox.snapshots, expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
+            expectedRemoteHead: V2RemoteHead(snapshotID: inbox.headSnapshotID,
+                                             generation: inbox.expectedRemoteHead.generation)
+        )
+        try await store.stageRemoteGraph(graph, scope: scope)
+        try await store.verifyInbox(inboxID: inbox.inboxID, scope: scope)
+        try await store.adoptInbox(inboxID: inbox.inboxID, scope: scope)
+        let opened = try await store.open(workID: fixture.workID, scope: scope)
+        #expect(opened.document == fixture.document(title: "511"))
+        #expect(opened.summary.currentSnapshotID == snapshots.last?.snapshotId)
+        await store.close()
     }
 }
 

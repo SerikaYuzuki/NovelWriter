@@ -61,19 +61,24 @@ struct IOSSnapshotSyncV2P1Tests {
 
         let state = store.snapshotSyncState
         #expect(state?.workID == store.syncV2ActiveWorkID)
-        #expect(state?.localDurability != .saving)
+        guard case .saved = state?.localDurability else {
+            Issue.record("checkpoint did not project a durable local save")
+            return
+        }
         #expect(state?.japaneseLabel == state?.remoteProgress.japaneseLabel)
-        #expect(
-            state?.japaneseLabel == "同期待ち"
-                || state?.japaneseLabel == "端末に保存済み・通信待ち"
-        )
+        // The worker may already be sending when saveNow returns. All three
+        // states mean the local checkpoint is safe but remote delivery is pending.
+        switch state?.remoteProgress {
+        case .pending, .syncing, .offline: break
+        default: Issue.record("unexpected post-checkpoint state: \(String(describing: state?.remoteProgress))")
+        }
     }
 
     private func makeEnvironment() -> TestEnvironment {
         let id = UUID().uuidString
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FUMINIWA-iOS-v2-p1-(id)", isDirectory: true)
-        let suiteName = "dev.serikayuzuki.fuminiwa.ios.v2.p1.(id)"
+            .appendingPathComponent("FUMINIWA-iOS-v2-p1-\(id)", isDirectory: true)
+        let suiteName = "dev.serikayuzuki.fuminiwa.ios.v2.p1.\(id)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return TestEnvironment(root: root, defaults: defaults, suiteName: suiteName)

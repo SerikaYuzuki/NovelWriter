@@ -365,9 +365,11 @@ struct FuminiwaApp: App {
             }.frame(width: 520, height: 620)
         }
     }
+}
 
+private extension FuminiwaApp {
     @MainActor
-    private func bootstrapIfNeeded() async {
+    func bootstrapIfNeeded() async {
         guard !didBootstrap else { return }
         didBootstrap = true
         applicationDelegate.attach(appState: appState)

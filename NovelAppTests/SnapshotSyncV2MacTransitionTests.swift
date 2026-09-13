@@ -89,6 +89,7 @@ struct SnapshotSyncV2MacTransitionTests {
         stateReference.state = fixture.state
         stateReference.vault = fixture.configuration.vault
         #expect(await fixture.state.resolveSnapshotConflict(using: .useServer))
+        try await waitForResolveServerOperation(fixture)
 
         let serverInbox = fixture.serverInbox
         await fixture.remote.setCommandHandler { sealed in

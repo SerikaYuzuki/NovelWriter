@@ -80,13 +80,16 @@ struct ProductionInboxIsolationTests {
         }
 
         let app = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
-        _ = try await app.open(workID: targetWorkID)
-        try await app.resumePending()
+        // Test runtime construction already resumes durable commands. Opening
+        // or resuming again races the rejection with a later planner wake.
         try await eventually {
             await app.uiState(workID: targetWorkID)?.lastFailure == .receiptMismatch
         }
-        #expect(await app.uiState(workID: targetWorkID)?.lastFailure == .receiptMismatch)
+        let state = await app.uiState(workID: targetWorkID)
+        #expect(state?.lastFailure == .receiptMismatch)
 
+        let sealed = try await store.allSealedCommands(scope: productionScope, workID: targetWorkID)
+        #expect(sealed.first { $0.commandID == publish.commandId }?.lifecycle == .quarantined)
         let afterWorks = try await store.listWorks(scope: productionScope)
         #expect(afterWorks.map(\.workID) == beforeWorks.map(\.workID))
         let target = try await store.open(workID: targetWorkID, scope: productionScope)
