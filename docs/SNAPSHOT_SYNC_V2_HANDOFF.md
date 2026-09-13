@@ -26,3 +26,5 @@
 DB更新は[deployment](sync/v2/deployment.md)の対象version・role attestation・backup・復元確認に従う。実行用serverにDDL権限を持たせない。新しいschemaを必要とするserverは、更新前DBでは起動を拒否する。
 
 残る公開運用・Windows互換・実機受入は、それぞれの契約と独立した証拠で完了を判定する。
+
+明示アカウント削除・backup保持の2026-09-13実装と運用状況は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。

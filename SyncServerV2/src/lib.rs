@@ -1,3 +1,4 @@
+pub mod account_deletion;
 pub mod application;
 pub mod auth;
 pub mod auth_apple;

@@ -24,7 +24,7 @@
 
 Appleでの通常login以外のアカウント回復は提供しない。別providerや運営による本人確認でaccountを回復する導線は作らない。通常のApple再ログイン、session refresh、lost-response／再起動からの既存認証処理の復旧は維持する。
 
-利用者の明示的なaccount削除には取消猶予30日を設け、backup保持は1年とする。これらは採択済みの製品方針であり、期間の起算、取消操作、削除確定、backupからの復元制約などのversioned lifecycle／wire／state machineは未設計・未実装である。本書の更新は機能実装やdeploy完了を示さない。Apple通知だけを利用者の明示削除要求へ読み替えない。
+利用者の明示的なaccount削除は[lifecycle v1](auth/v1/account-deletion.md)として実装した。予約から720時間の取消猶予、期限到来時のremote消去、Apple失効retry、日次backupの1暦年保持を自宅サーバーで運用する。Apple通知だけを利用者の明示削除要求へ読み替えない。API・運用の反映と、利用者向けアプリ画面の未実装を区別する。証跡・残件は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)。
 
 ## 1. 採択する境界
 

@@ -21,7 +21,8 @@ info:
     with one tenant. A verified `(provider configuration, exact issuer, subject)` maps
     uniquely to that AccountID. Email, name, relay address, and unverified client
     fields are never identity, account-link, deduplication, or recovery keys. v1 has
-    no identity link/unlink, account merge, account deletion, or provider selection API.
+    no identity link/unlink, account merge, or provider selection API.
+    Explicit deletion is the separately versioned account-deletion lifecycle v1.
 
     Snapshot content protection is fixed to `serverReadableV1`, `e2ee=false`.
     TLS and server-managed encryption at rest are required, but authorized server
@@ -43,7 +44,9 @@ info:
     SHA-256 over exact accepted canonical command bytes. No client-authoritative
     request digest field or header exists.
 
-    Every mutation is receipt-idempotent. All auth `operationId` and `rotationId`
+    Account-deletion commands use requestId state idempotency as specified in
+    account-deletion.md; they return current lifecycle state on replay.
+    Other mutations are receipt-idempotent. All auth `operationId` and `rotationId`
     values share one server-instance-global identifier registry, so reuse at another
     command kind fails closed even when the command-specific receipt scope differs.
     Challenge create, Apple exchange, refresh
@@ -407,6 +410,56 @@ paths:
           $ref: '#/components/responses/UpgradeRequired'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/auth/account-deletion:
+    get:
+      operationId: getAccountDeletion
+      summary: Read explicit account deletion lifecycle v1.
+      security:
+        - accessTokenAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountDeletionState'
+        '401':
+          $ref: '#/components/responses/AccessUnauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: changeAccountDeletion
+      summary: Request deletion after 720 hours or cancel before the deadline.
+      description: Exact JCS, maximum 1024 bytes. See account-deletion.md for state idempotency and scope rules.
+      security:
+        - accessTokenAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientVersion'
+      requestBody:
+        required: true
+        content:
+          application/vnd.fuminiwa.auth.v1+jcs:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, lifecycleVersion, requestId]
+              properties:
+                action:
+                  enum: [request, cancel]
+                lifecycleVersion:
+                  const: 1
+                requestId:
+                  $ref: '#/components/schemas/LowercaseUuid'
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountDeletionState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/AccessUnauthorized'
+        '413':
+          description: Request exceeds 1024 bytes.
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -1299,6 +1352,30 @@ components:
           const: afterBackoff
 
   responses:
+    AccountDeletionState:
+      description: Current lifecycle state; no Apple identity or manuscript content.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/vnd.fuminiwa.auth.v1+jcs:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [lifecycleVersion, state]
+            properties:
+              lifecycleVersion:
+                const: 1
+              state:
+                enum: [none, pending, cancelled, deleted]
+              requestId:
+                $ref: '#/components/schemas/LowercaseUuid'
+              requestedAt:
+                type: string
+                format: date-time
+              deleteAfter:
+                type: string
+                format: date-time
     BadRequest:
       description: Syntax, media type, closed schema, identifier, or exact-JCS validation failed.
       content:

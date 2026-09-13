@@ -1160,3 +1160,10 @@
 重複範囲は同じbytesに限って再送可能。途中位置の飛び越し、異なるbytesでの上書き、別scopeを拒否する。通信失敗・再起動では最初からの完全なchunk再送も許容し、全chunk成功後だけ端末のuploadをacknowledgeする。部分データは自宅サーバーのPostgreSQLへ保存し、期限切れまたは作品削除で解放する。通常の小さなPUTとのwire互換は保持する。新clientより先に対応serverを反映する。
 
 有料Cloudflareストレージ・計算枠は追加せず、処理と保持は可能な限り `192.168.11.5` を使う。
+
+
+## D-096: 明示削除lifecycle v1と自宅サーバーのbackup自動運用（2026-09-13）
+
+D-087の30日・1年を実装へ具体化する。削除は認証済みの明示予約から720時間、期限前のみ取消可。猶予中の通常利用を維持し、Apple通知や非活動期間では起算しない。requestId単位の状態冪等性とaccount/scope lockを使い、remote消去とそのmarkerをatomicにする。account削除完了はApple失効成功後に記録する。Apple失効は永続retry、端末内原稿は対象外。
+
+backupは自宅サーバーで毎日暗号化取得し、作成から1暦年（2/29は翌年2/28）保持する。新backupの成功後のみ既知の期限切れbackupを整理する。Cloudflare有料枠を追加しない。API規範は[account-deletion](auth/v1/account-deletion.md)、反映と復元制約は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)。このDecisionは利用者向け画面、別機器退避、一般公開の完了を意味しない。

@@ -43,7 +43,7 @@ identity lookupはdomain-separated／4-byte big-endian length-prefixed canonical
 
 D-087で、Appleの通常login以外のアカウント回復は提供せず、利用者の明示account削除の取消猶予を30日、backup保持を1年と採択した。別provider／運営本人確認による回復は追加しない。通常のApple再ログイン、refresh、lost-response復旧は既存の認証契約として維持する。
 
-利用者によるserver account削除、取消、remote payload retention、Apple token revoke、完了read-backを含むlifecycle APIはauth wire v1のscope外であり、D-087を反映するversioned契約は未設計・未実装である。期間の起算や詳細state machineはこの方針から推測して補わない。account creationをApp Store版へ出す前に、Appleの[Offering account deletion in your app](https://developer.apple.com/support/offering-account-deletion-in-your-app/)と最新Review Guidelinesに適合するapp内account deletion UI／API、D-087に沿うretention／revoke動作をversioned contract・fixture・実装として完成させることを **App Store Release blocker** とする。scope外であることを、削除導線なしで出荷してよい根拠にしない。
+利用者によるserver account削除・取消・remote消去・Apple revoke・完了記録は[明示削除lifecycle v1](account-deletion.md)へ実装し、自宅サーバーへ反映した。利用者向けアプリ内の予約・取消画面と実機受入は残っており、これらはApp Store公開前に完成させる。API・自動運用の反映だけをアプリ公開可能の根拠にしない。
 
 ## Exact JCS and receipts
 
@@ -97,3 +97,7 @@ git diff --check
 ```
 
 これだけではApple live conformance、JWS／JWKS rotation、JCS byte equality、Keychain、encrypted receipt、rate limit、cross-tenant non-disclosure、server notification、offline editingを証明しない。R0 runnerはfixtureの全step、OpenAPI `$ref`、duplicate `operationId`、closed schema、exact replay side-effect countを検査する。
+
+## 明示削除の追加実装（2026-09-13）
+
+[lifecycle v1](account-deletion.md)の予約・取消APIと30日後の削除workerを実装した。日次backupの1年保持も自宅サーバーで稼働する。以前の未実装記述からの更新と、利用者向け画面・別機器退避の残件は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)を参照する。

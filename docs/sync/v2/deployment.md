@@ -198,3 +198,7 @@ and work data, runtime role attestation, then start the new API and check both
 trusted HTTPS health/auth responses and authenticated upload behavior.
 See [implementation record](../../REVIEW_IMPLEMENTATION_20260913.md) for actual
 results; these instructions alone are not deployment evidence.
+
+## アカウント削除の運用追加（2026-09-14）
+
+明示削除lifecycle v1はmigration 0008を追加し、runtimeへ新tableのDMLを付与する。既知の0007までの構成から、対象server instanceを照合した明示upgradeを行う。0008追加後は旧binaryがinventory照合で拒否するため、単純なimage切戻しをしない。適用・復元・backups・検証証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。

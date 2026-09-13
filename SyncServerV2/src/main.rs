@@ -66,6 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             ticker.tick().await;
+            if fuminiwa_sync_server_v2::account_deletion::sweep(&upload_cleanup.pool)
+                .await
+                .is_err()
+            {
+                tracing::warn!("account deletion worker iteration failed");
+            }
             if upload_cleanup.expire_partial_uploads().await.is_err() {
                 tracing::warn!("expired upload cleanup failed");
             }

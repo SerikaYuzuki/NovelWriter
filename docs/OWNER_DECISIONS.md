@@ -18,7 +18,7 @@
 
 認証はApple-onlyを維持し、別provider、メール回復、運営による本人確認・account付替えの回復導線を作らない。端末内原稿の編集・Export、同じApple identityによる通常の再認証、通信失敗からのsession復旧は独自アカウント回復と区別する。
 
-削除猶予30日とbackup保持1年は製品方針として採択済み。versioned lifecycle、取消、削除ジョブ、Apple token revoke、backup期限管理、remote完了の記録をこれから実装する。期間の起算・暦の扱い・APIでの期限表現はその設計で具体化し、ここで未指定の条件を確定扱いしない。backupを保持することを利用者向けアカウント回復サービスの約束にしない。詳細は[AUTH](AUTH.md)。
+削除予約から720時間の猶予・取消API・期限到来worker・Apple失効retry・毎日の暗号化backupと1暦年の期限整理を、自宅サーバーへ実装・反映した。猶予中は通常利用を維持する。利用者向けアプリ画面、別機器へのbackup／鍵退避は未実装・未設定。backupを利用者向けアカウント回復サービスの約束にしない。詳細と検証証跡は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)。
 
 WindowsはWinUI 3 + C# / .NETの計画を維持し、Windows 11とインストーラー配布を前提に実装する。SDK、editor、installer作成ツールは、既定の日本語IME・Undo・互換要件を満たす範囲で実装側が選ぶ。W0やWindowsアプリが完成したという意味ではない。[CROSS_PLATFORM](CROSS_PLATFORM.md)参照。
 

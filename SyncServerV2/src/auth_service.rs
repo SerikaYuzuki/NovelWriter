@@ -32,6 +32,7 @@ pub struct ProductionAuthService {
     hasher: HmacSecretHasher,
     vault: AesGcmCredentialVault,
     server_instance_id: Arc<str>,
+    lifecycle_pool: PgPool,
 }
 
 impl ProductionAuthService {
@@ -46,12 +47,13 @@ impl ProductionAuthService {
         apple_transport: ProductionAppleTransport,
     ) -> Result<Self, AuthError> {
         let repository = AuthPostgresRepository::new(
-            pool,
+            pool.clone(),
             Arc::new(vault.clone()),
             token_hmac_key,
             server_instance_id.clone(),
         )?;
         Ok(Self {
+            lifecycle_pool: pool,
             application: AuthApplication::new(repository),
             apple: ProductionAppleProvider::new(apple_transport, apple_signer, vault.clone()),
             hasher: HmacSecretHasher::new(subject_hmac_key, token_hmac_key),
@@ -363,6 +365,26 @@ impl AuthHttpService for ProductionAuthService {
             .await
             .map_err(|error| Self::context(&parsed, error))?;
         Ok(AuthResponse::new(receipt.status, receipt.response_bytes))
+    }
+
+    async fn account_deletion(
+        &self,
+        access_token: &str,
+        action: &str,
+        request: Option<uuid::Uuid>,
+    ) -> Result<AuthResponse, AuthApiError> {
+        let principal = self
+            .application
+            .authenticate_access(access_token)
+            .await
+            .map_err(AuthApiError::from)?;
+        let value =
+            crate::account_deletion::change(&self.lifecycle_pool, &principal, action, request)
+                .await
+                .map_err(AuthApiError::from)?;
+        let bytes = crate::domain::canonical_json(&value)
+            .map_err(|_| AuthApiError::from(AuthError::InvalidRequest))?;
+        Ok(AuthResponse::new(200, bytes))
     }
 
     async fn me(&self, access_token: &str) -> Result<AuthResponse, AuthApiError> {

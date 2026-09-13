@@ -4,7 +4,7 @@
 
 ## D-087の製品方針との境界
 
-Appleの通常login以外のアカウント回復は提供しない。通常の再ログイン、refresh、lost-response復旧は維持する。明示account削除の取消猶予30日とbackup保持1年は採択済みだが、期間起算と詳細state machineを含むversioned lifecycleは未設計・未実装である。Appleの`account-deleted`通知を利用者の明示削除要求や取消猶予の開始へ自動的に読み替えず、下記の通知処理からremote原稿をhard-deleteしない。
+Appleの通常login以外のアカウント回復は提供しない。通常の再ログイン、refresh、lost-response復旧は維持する。明示account削除の取消猶予30日とbackup保持1年は採択済みだが、期間起算とstate machineは[明示削除lifecycle v1](account-deletion.md)へ実装した。Appleの`account-deleted`通知を利用者の明示削除要求や取消猶予の開始へ自動的に読み替えず、下記の通知処理からremote原稿をhard-deleteしない。
 
 ## HTTP境界
 

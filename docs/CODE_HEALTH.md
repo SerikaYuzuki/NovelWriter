@@ -31,3 +31,5 @@
 - 実端末のAppleシート、長時間のIME・Undo、offline編集と端末間競合は、該当する実機証拠で受入する。
 - account削除の30日猶予とbackup1年、公開運用、Windows W0は[利用者方針](OWNER_DECISIONS.md)と[互換契約](CROSS_PLATFORM.md)に従う。個別の同期テストをこれらの完成へ読み替えない。
 - 全体チェックの過去の失敗・成功を今回の結果へ流用しない。D-086に従って変更影響に応じた段階を選ぶ。
+
+明示アカウント削除・backup保持の2026-09-13実装と運用状況は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。

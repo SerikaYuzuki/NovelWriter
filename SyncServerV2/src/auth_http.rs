@@ -98,6 +98,14 @@ pub trait AuthHttpService: Send + Sync {
     ) -> Result<AuthResponse, AuthApiError> {
         Err(AuthApiError::from(AuthError::InvalidRequest))
     }
+    async fn account_deletion(
+        &self,
+        _access_token: &str,
+        _action: &str,
+        _request: Option<Uuid>,
+    ) -> Result<AuthResponse, AuthApiError> {
+        Err(AuthError::InvalidRequest.into())
+    }
     async fn me(&self, access_token: &str) -> Result<AuthResponse, AuthApiError>;
 }
 
@@ -138,6 +146,12 @@ pub fn router(state: AuthHttpState) -> Router {
         .route(
             "/v1/auth/session:revoke",
             post(revoke).layer(DefaultBodyLimit::max(MAX_AUTH_BODY_BYTES)),
+        )
+        .route(
+            "/v1/auth/account-deletion",
+            get(deletion_status)
+                .post(deletion_change)
+                .layer(DefaultBodyLimit::max(1024)),
         )
         .route("/v1/auth/me", get(me))
         .with_state(state)
@@ -579,4 +593,61 @@ mod tests {
         assert!(parse_semantic_version("1.0").is_none());
         assert_eq!(parse_semantic_version("0.1.0"), Some((0, 1, 0)));
     }
+}
+
+async fn deletion_status(headers: HeaderMap, State(state): State<AuthHttpState>) -> Response {
+    if let Err(response) = require_client_version(&headers) {
+        return response;
+    }
+    let Some(token) = bearer_token(&headers) else {
+        return error_response(AuthError::AccountNotFound.into(), ErrorScope::Access);
+    };
+    service_response(
+        state.service.account_deletion(token, "status", None).await,
+        ErrorScope::Access,
+    )
+}
+
+async fn deletion_change(
+    headers: HeaderMap,
+    State(state): State<AuthHttpState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match command_body(&headers, body) {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let Some(token) = bearer_token(&headers) else {
+        return error_response(AuthError::AccountNotFound.into(), ErrorScope::Access);
+    };
+    let parsed = (|| {
+        let value: Value = serde_json::from_slice(&body).ok()?;
+        let fields = value.as_object()?;
+        if fields.len() != 3 || fields.get("lifecycleVersion")?.as_u64()? != 1 {
+            return None;
+        }
+        if canonical_json(&value).ok()?.as_slice() != body.as_ref() {
+            return None;
+        }
+        let action = fields.get("action")?.as_str()?;
+        if !matches!(action, "request" | "cancel") {
+            return None;
+        }
+        let raw_id = fields.get("requestId")?.as_str()?;
+        let id = Uuid::parse_str(raw_id).ok()?;
+        if id.to_string() != raw_id {
+            return None;
+        }
+        Some((action.to_owned(), id))
+    })();
+    let Some((action, id)) = parsed else {
+        return error_response(AuthError::InvalidRequest.into(), ErrorScope::Access);
+    };
+    service_response(
+        state
+            .service
+            .account_deletion(token, &action, Some(id))
+            .await,
+        ErrorScope::Access,
+    )
 }

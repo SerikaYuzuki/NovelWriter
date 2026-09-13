@@ -76,6 +76,7 @@ const AUTH_RUNTIME_DML_TABLES: &[&str] = &[
     "access_tokens",
     "session_refresh_receipts",
     "provider_notification_receipts",
+    "account_deletions",
     "auth_events",
     "vault_rewrap_ledger",
 ];
@@ -151,6 +152,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "access_tokens",
                 "session_refresh_receipts",
                 "provider_notification_receipts",
+                "account_deletions",
                 "auth_events",
                 "vault_rewrap_ledger",
             ][..],
@@ -242,6 +244,9 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "access_tokens_token_hmac_key",
                 "session_refresh_receipts_pkey",
                 "provider_notification_receipts_pkey",
+                "account_deletions_pkey",
+                "account_deletions_one_pending",
+                "account_deletions_due",
                 "auth_events_pkey",
                 "auth_sessions_account_idx",
                 "external_identities_account_idx",
@@ -308,6 +313,21 @@ fn classify_database_identity(
                 .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
         });
     let expected_objects = expected_v2_database_objects();
+    let legacy_objects: HashSet<_> = expected_objects
+        .iter()
+        .filter(|name| !name.contains("auth_v1.account_deletions"))
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == legacy_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| legacy_objects.contains(object))
+    {
+        // Recognize the exact previous inventory for the explicit migrator.
+        // Runtime ACL and column attestation still require the current schema.
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
     if marker_matches
         && user_objects.len() == expected_objects.len()
         && user_objects
@@ -459,6 +479,9 @@ impl Repository {
         sqlx::query("SELECT i.last_provider_auth_at,c.validation_event_type FROM auth_v1.external_identities i,auth_v1.provider_credentials c LIMIT 0")
             .execute(&mut *connection).await?;
         sqlx::query("SELECT partial_bytes FROM sync_v2.upload_capabilities LIMIT 0")
+            .execute(&mut *connection)
+            .await?;
+        sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
             .execute(&mut *connection)
             .await?;
         Self::verify_server_meta_read_only(&mut connection, server_instance_id).await

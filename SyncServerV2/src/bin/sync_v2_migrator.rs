@@ -625,14 +625,17 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
             .fetch_all(pool)
             .await?;
     let previous: Vec<_> = (1..=5).map(|version| (version, true)).collect();
-    let current: Vec<_> = (1..=7).map(|version| (version, true)).collect();
+    let current: Vec<_> = (1..=8).map(|version| (version, true)).collect();
     let intermediate: Vec<_> = (1..=6).map(|version| (version, true)).collect();
-    if versions != previous && versions != intermediate && versions != current {
+    let review: Vec<_> = (1..=7).map(|version| (version, true)).collect();
+    if versions != previous && versions != intermediate && versions != review && versions != current
+    {
         return Err("review upgrade requires exactly the known v2 migration history".into());
     }
     // SQLx validates every recorded checksum and applies only the remaining
     // checked-in migration; unknown/changed history fails closed.
     sqlx::migrate!("./migrations").run(pool).await?;
+    Repository::apply_runtime_grants(pool, RUNTIME_ROLE).await?;
     println!("Review 20260913 schema upgrade applied and recorded");
     Ok(())
 }

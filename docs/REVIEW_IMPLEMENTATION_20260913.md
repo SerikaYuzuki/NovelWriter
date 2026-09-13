@@ -38,4 +38,4 @@
 
 Cloudflare管理画面で`serika.work`が無料プラン、最大upload100 MBであることを確認した。設定・契約プランを変更せず、処理・保存を自宅サーバー `192.168.11.5` に置く。
 
-account削除30日・backup1年の公開運用、およびWindows W0はこの表のR2〜R14とは別の中期改善項目。完成を示す証拠はこの記録にまだない。
+続く依頼でaccount削除30日・backup1年のサーバー自動運用を実装した。証跡と残るアプリ画面・別機器退避は[自動運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。Windows W0は未実装。
