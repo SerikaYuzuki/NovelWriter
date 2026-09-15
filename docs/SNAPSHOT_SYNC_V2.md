@@ -1,18 +1,13 @@
 # FUMINIWA Snapshot Sync v2
 
-Status: normative implementation contract, D-080 through D-085; source reviewed
-2026-09-12. The v2
-Swift/Rust runtime is under integration and is not release-complete. The
-latest verified implementation state, known regressions, and next-session
-order are recorded in [SNAPSHOT_SYNC_V2_HANDOFF.md](SNAPSHOT_SYNC_V2_HANDOFF.md).
-This document replaces the v1 live runtime contract; passing fixtures or a
-healthy staging container alone does not declare device synchronization
-complete.
+Normative Snapshot Sync v2 contract. Swift/Rust implementations exist;
+release acceptance remains open. Use [CODE_HEALTH](CODE_HEALTH.md) for current
+implementation gaps and [versioned contracts](sync/v2/README.md) for the
+specific wire, schema, fixture, and database boundary being changed.
 
-## 1. Scope and cutover
+## 1. Scope
 
-v2 is a new, server-readable, local-first synchronization namespace. Its live
-components are physically separated from v1:
+v2 is the current server-readable, local-first synchronization namespace:
 
 - the client opens only the v2 SQLite database; v2 object bytes are SQLite
   BLOBs in the initial implementation;
@@ -60,9 +55,7 @@ creating a network transport:
 | `test(TestDependencies)` | typed temporary test root | typed fake only | test SQLite only |
 | `preview` | none | none | none |
 
-Archive reading is implemented only by the separate offline migration
-executable and is not a `RuntimeMode` case. It cannot construct a v2 worker or
-use a production URL. `test` must fail closed if a production root, URL, or
+There is no current standalone archive reader or archive `RuntimeMode`. `test` must fail closed if a production root, URL, or
 Keychain is injected. macOS and iOS use the same v2 domain, SQLite, command,
 conflict, and restore kernel; only filesystem and UI adapters differ.
 
@@ -172,11 +165,12 @@ The v2 wire has these endpoints under `/v2`:
 | POST | `/v2/works/{work_id}/restore` | new two-parent restore Snapshot |
 | GET | `/v2/works` | account-scoped catalog; no cross-account existence leak |
 
-Every mutating body contains `schemaVersion: 2`, `commandId`, `binding`, and
+Every sealed-command body contains `schemaVersion: 2`, `commandId`, `binding`, and
 the operation-specific payload. The server derives the authenticated account
 from the bearer session and rejects a body or header with a different scope.
 All command responses are receipt-idempotent. A CAS failure is a preserved
-divergence, not an overwrite instruction.
+divergence, not an overwrite instruction. Work deletion is a separate
+[scope-bound deletion API](sync/v2/work-deletion.md), not a sealed-command body.
 
 ## 7. Migration and release gates
 
@@ -254,7 +248,7 @@ The closed RuntimeMode contract is in
 [`docs/sync/v2/runtime-mode.md`](sync/v2/runtime-mode.md). Test dependencies
 use distinct root/transport/keychain types, so a production URL, root, or
 Keychain cannot be constructed by the test composition. Preview has no I/O.
-The archive reader is a separate migration executable and is not a live mode.
+Legacy archive tooling is not shipped; the live import path is the portable bridge.
 
 The concrete local and server schemas are
 [`sqlite.sql`](sync/v2/sqlite.sql) and

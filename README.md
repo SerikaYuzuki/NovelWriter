@@ -25,7 +25,7 @@ open FUMINIWA.xcodeproj
 
 ## AIによる起動・画面確認
 
-任意の開発ツールとしてXcodeBuildMCP 2.7.0を使う（`npm install -g xcodebuildmcp@2.7.0`）。Codex用接続は`.codex/config.toml`、対象と機能は`.xcodebuildmcp/config.yaml`。設定追加後はCodexのMCPを再読み込みする。
+任意の開発ツールとしてXcodeBuildMCP 2.7.0を使う（`npm install -g xcodebuildmcp@2.7.0`）。Codex用接続は`.codex/config.toml`、対象と機能は`.xcodebuildmcp/config.yaml`。設定追加後はCodexのMCPを再読み込みする。接続後に現在のproject・schemeを確認し、必要な実行先を選ぶ。macOS／Simulator／iOS画面操作が有効で、実機操作とdebuggerは必要な作業で設定を追加する。
 
 先に`./Scripts/generate-project.sh`を実行する。既定schemeは`FUMINIWAIOS`。macOSを扱うときは`FUMINIWA`を明示し、iOSの実行先は利用可能なSimulatorから選ぶ。起動・画面確認の補助に使い、検証段階と`check.sh`は従来どおり。
 

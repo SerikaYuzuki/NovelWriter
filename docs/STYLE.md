@@ -1,6 +1,6 @@
 # ふみにわのデザイン言語
 
-**適用: UIを変更する作業 / ソースとの照合: 2026-09-12**
+**適用: 画面の外観・操作を変えるとき。**
 
 本文を主役にした「静かな書斎」を保つ。macOSはSwiftUI + AppKit、iOS / iPadOSはSwiftUI + UIKitの標準操作、semantic color、system materialを優先する。本書は製品要件であり、全画面が達成済みという宣言ではない。現行iOSの不足は [IOS.md](IOS.md)、同期状態の意味は [Snapshot Sync v2](SNAPSHOT_SYNC_V2.md) を参照する。
 
@@ -73,7 +73,7 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 - 復元前の内容を保全する。Snapshot ID、SQLite、journal、fence、commandの説明を通常の判断材料にしない。
 - 変更のない保存／同期は成功。「コピー」「予約」「local保存」「remote反映」「復元」を混同しない。
 
-現行v2の一部画面には診断用ラベルが残る。これは本書の規約変更ではなく、製品UIへ直す差分として扱う。
+通常画面に内部ID等の診断表示を追加しない。診断が必要な場合は通常操作と分ける。
 
 ## 7. インタラクション
 
@@ -81,13 +81,13 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 - 編集一覧はEnterで編集、Deleteは確認付き削除。作品chooserは選択とopenを分け、ListにfocusがあるときのReturnとdouble clickで開く。
 - toolbarを唯一の入口にしない。削除可能なitemにはmenu／context menuの代替を残す。
 - macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fはfocus対象のOutline検索／話内検索を使い分ける。
-- Cmd+Sは同じlocal保存直列化へ接続する。保存後のv2 workerは非同期で再開し、network完了を待たない。D-073の「明示同期だけ送信」は旧実装の規則。
+- Cmd+Sは同じlocal保存直列化へ接続する。保存後のv2 workerは非同期で再開し、network完了を待たない。
 
 ## 8. 文言
 
 短い名詞または動詞を使う。続く入力／選択には「…」、確認buttonは「削除／キャンセル」等の動詞、説明はです・ます体。省スペースの執筆補助labelは「ルビ」「傍点」でよい。
 
-現行同期はFUMINIWA serverである。「iCloudに保存」「iCloudと同期」を使わない。内部path／IDや未実装の処理を見せず、clipboard支援は「校正用／アドバイス用プロンプトをコピー」と表現する。D-089のAPI支援は「本文を確認して送信…」からpreview後に明示送信し、コピーと区別する。
+現行同期はFUMINIWA serverである。「iCloudに保存」「iCloudと同期」を使わない。内部path／IDや未実装の処理を見せず、原稿コピーは「選択範囲をコピー」「この話をコピー」「この章をコピー」と表現する。D-089のAPI支援は「本文を確認して送信…」からpreview後に明示送信し、コピーと区別する。
 
 ## 9. 変更の受け入れ
 
@@ -97,6 +97,6 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 - 狭幅と拡大文字、標準keyboard、VoiceOver、44pt操作面、focusとtoolbar代替入口。
 - 本文所有権、IME、sessionをまたぐ操作の拒否、編集操作のUndo。
 - 状態表示と実処理の一致、失敗時の原稿保持、空状態からの実在する操作。
-- 本書のtoken／余白／階層と [iOSの未接続項目](IOS.md) に対する回帰。
+- 本書のtoken／余白／階層と [iOSの操作契約](IOS.md) に対する回帰。
 
 色・配置の微調整は既存規約内で進める。外観既定、機能階層、保存／同期の意味を変える場合は製品判断として [DECISIONS.md](DECISIONS.md) を更新する。

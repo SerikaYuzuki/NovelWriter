@@ -1,8 +1,8 @@
 # 原稿のコピー
 
-**通常版の契約: 明示した範囲の原稿をplain textでコピーする / 更新: 2026-09-13、D-094**
+D-094: 明示した範囲の原稿をplain textでコピーする。
 
-従来の校正／アドバイス用プロンプトコピーを廃止し、選択範囲・話・章のシンプルなコピーへ置き換えた。AIへの依頼文、JSON、BEGIN/ENDの囲み、用途選択を付けない。[明示送信のAI支援](WRITING_ASSISTANT.md)は独立した機能として維持する。
+選択範囲・話・章をコピーする。AIへの依頼文、JSON、BEGIN/ENDの囲み、用途選択を付けない。[明示送信のAI支援](WRITING_ASSISTANT.md)は独立した機能として維持する。
 
 ## コピーする内容
 
@@ -36,6 +36,3 @@ menu表示時のsessionと対象IDを保持し、activation時に再検査する
 ## 検証
 
 共有builderで選択のexact Unicode、タイトル・章配列順・空話、上限、AI依頼文なしの出力を確認する。Mac AppStateとiOSのclipboard差替えテストでwrite回数、IME、失効session、対象削除、空本文、write失敗を確認する。実端末への反映はbuild / install / 起動と区別して記録する。
-
-
-2026-09-13の検証は中ぐらいの段階。macOSのbuilder / AppState / failure 15件、iOSのbuilder / clipboard / notice 5件が成功。IME中の拒否、失効session、本文不変、失敗時のwrite回数も対象とした。両OSの署名済みRelease build、test-network / AI target境界検査は成功。Macの実画面で話・章のコピー表示を確認した。更新前の両端末DBバックアップはintegrity_check成功。iPhoneの更新installは成功。起動要求はOSからLockedで拒否されており、実機起動は未確認。原稿・clipboard実内容は記録に残していない。全体check.shはこの局所機能変更では実施していない。

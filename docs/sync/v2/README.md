@@ -4,7 +4,7 @@ This directory is the current Snapshot Sync v2 contract. Auth v1 is a
 separate live authentication protocol; retired Sync v1 is not a fallback.
 
 - **Contract**: closed wire/schema/fixture/DDL selected by D-080 through D-085. A contract defect is a design issue; implementation behavior does not silently replace it.
-- **Implementation**: Swift v2 domain/store/application/runtime and the Rust server exist. Production, device acceptance, and all integration Gates are not complete. See the [current handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md) for dated evidence and open work.
+- **Implementation**: Swift v2 domain/store/application/runtime and the Rust server exist. Production, device acceptance, and all integration Gates are not complete. See [CODE_HEALTH](../../CODE_HEALTH.md) for open work and [operations](../../ACCOUNT_RETENTION_OPERATIONS.md) for rollout evidence.
 
 Use this directory when changing the synchronization contract. For a UI-only change, start from the shared UI projection and the app entry points instead of loading every fixture. A wire/schema change needs matching fixtures and independent conformance evidence.
 
@@ -17,7 +17,7 @@ Use this directory when changing the synchronization contract. For a UI-only cha
 - `wire.md`: endpoint, header, receipt, and error rules.
 - `state-machine.md`: local/server transitions and invariants.
 - `runtime-mode.md`: physical production/test/preview composition boundary.
-- `migration.md`: verified-only archive import and crash marker contract.
+- `migration.md`: current portable import, retained storage markers, and explicit database updates.
 - `ui-state.md`: identical macOS/iOS result projection and Japanese labels.
 - `sqlite.sql` / `postgres.sql`: concrete v2 local/server DDL and lock order.
 - `openapi.yaml`: v2 resource, cursor, receipt, and typed-result surface.
@@ -58,7 +58,7 @@ Run commands from the repository root. Select the smallest check that covers the
 
 ```sh
 python3 Scripts/conformance-v2.py       # independent canonical fixture bytes/hashes
-./Scripts/check-sync-v2-boundary.sh     # live/test/archive composition
+./Scripts/check-sync-v2-boundary.sh     # production/test composition
 ./Scripts/conformance-v2.sh            # independent Python/Swift/Rust suite
 ```
 
@@ -66,4 +66,4 @@ The independent suite intentionally disables PostgreSQL integration. Real DB tra
 
 - [作品の完全削除](work-deletion.md): scope付き削除intent、再試行、復活防止、追加DDL [work-deletion.sql](work-deletion.sql)。
 
-現在の実装にない旧移行ツールは[取り込み・更新境界](migration.md)を参照する。
+取り込み・DB更新の制約は[migration](migration.md)を参照する。

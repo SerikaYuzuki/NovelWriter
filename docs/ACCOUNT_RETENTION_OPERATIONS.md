@@ -1,6 +1,6 @@
 # アカウント削除とバックアップの自宅サーバー運用
 
-2026-09-14更新。Cloudflareの有料サービスは使わず、`192.168.11.5`で運用する。通常保存は端末SQLiteのまま。削除対象は明示的に予約されたremote accountだけで、実アカウントの削除予約は今回作成していない。
+運用先は`192.168.11.5`。この処理にCloudflare有料サービスは不要。通常保存は端末SQLite、削除対象は明示予約されたremote accountだけである。以下は構成と復旧手順であり、実行時の稼働状態は`last-success.json`等で確認する。
 
 ## 有効な自動処理
 
@@ -16,7 +16,7 @@
 
 `Scripts/operations/backup.py`が運用実装、`backup-config.json`がサーバー内の非公開設定。`last-success.json`に完了時刻とbackup名、`last-run.log`に直近の実行結果を残す。36時間以上成功がなければ失敗として調べる。バックアップ失敗時に古いbackupを削除しない。所有manifestと既知ファイルだけを期限管理し、不明ファイル・symlinkは触らない。
 
-過去の手動退避・旧releaseにあるbackupは自動整理対象へ勝手に取り込まない。今回の1年保持が自動適用されるのは上記daily配下で作成するbackupである。
+過去の手動退避・旧releaseにあるbackupは自動整理対象へ勝手に取り込まない。1年保持が自動適用されるのは上記daily配下で作成するbackupである。
 
 ## 復旧
 
@@ -27,11 +27,8 @@
 
 暗号鍵も同じ自宅サーバーにあるため、サーバー・ディスク全損にはこれだけで対応できない。別機器／別媒体へのbackupと鍵の退避先は未設定。Cloudflareは必要なく、別NASや外付け媒体も選べる。自動復元やbackupによる利用者アカウント回復は行わない。
 
-## 2026-09-13〜14の確認結果
+## 反映済み構成と証跡
 
-- **重たい検証：成功**。`Scripts/check.sh`全項目、Rust unit、専用PostgreSQLでの30日境界・取消・再送・再起動・同時worker・途中失敗のrollback・他account保持・旧principal拒否・Apple失効待ちと完了後cleanup。
-- backupのround trip、改ざん／誤鍵拒否、暦年／閏日、取得失敗時の保持、管理対象だけの期限整理：成功。
-- 実DBの暗号化backupを隔離DBへ復元：成功。別のrole-split隔離DBでmigration 0007→0008・runtime権限を確認：成功。
-- 自宅サーバーへ反映済み。稼働imageは`sha256:c6e4ed3b3e67eb53880ee1ddf00fb4fb3e37a5b0f7922e1c8cef80cb472b1864`。切替前後の保存データfingerprintは一致、server healthy、公開Auth capabilities 200、未認証の削除API 401。
-- 証跡はサーバー`releases/retention-20260913/`と最終版の`releases/retention-final-20260914/`。旧serverを保持。schema 0008は旧binaryの認識範囲外なので、単純に旧imageへ戻さない。新規予約がない場合に限る制御されたrollbackか、前進修正を行う。
-- 実利用者の削除、30日の実時間経過、1年の実時間経過、Apple実credentialの失効、署名済み実機の予約／取消画面は未実施。期限境界は隔離fixtureで確認した。
+2026-09-14の反映記録はserverの`releases/retention-final-20260914/`（途中記録は`releases/retention-20260913/`）。当時のimageは`sha256:c6e4ed3b3e67eb53880ee1ddf00fb4fb3e37a5b0f7922e1c8cef80cb472b1864`。隔離DBの期限境界・復元・migration、切替前後のデータ保持とhealthを確認した記録であり、現在の稼働image・日次成功は運用時に読み返す。
+
+schema 0008を知らない旧binaryへ単純に戻せない。切り戻しは新規予約の有無とschemaを照合した手順か、前進修正で行う。実利用者の削除、30日／1年の実時間経過、Apple実credential失効、アプリの予約／取消画面の受入はこの記録に含まない。

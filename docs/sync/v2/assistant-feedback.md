@@ -1,6 +1,6 @@
 # 感想・アドバイスの保存形式
 
-2026-09-13、D-089の追加依頼。既存のSnapshot attachmentのbytesとfileNameを利用する。wire schemaやattachmentの競合・削除規則は変更しない。
+D-089の保存契約。既存のSnapshot attachmentのbytesとfileNameを利用する。wire schemaやattachmentの競合・削除規則は変更しない。
 
 - ファイル名: `fuminiwa-feedback-<UUID>.md`。UUIDは回答生成時に一度作り、再保存でも保持する。
 - 先頭行: `<!-- fuminiwa-feedback-v1 <base64のJSON> -->`、空行の後に元の回答Markdownをそのまま置く。

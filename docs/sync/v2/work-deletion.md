@@ -14,15 +14,4 @@ macOS作品一覧の「削除…」で対象のタイトルと不可逆性を確
 
 検証: Store graph共有object保持・再起動、Application offline→再起動retry、macOS最後の作品削除、PostgreSQL/HTTPの競合・復元・clone graph／別account保持／再送／再create拒否。
 
-## 2026-09-12 ローカル検証結果
-
-- Store 72件成功（旧schema移行、削除journalの再起動、共有添付保持を含む）。Application 70件成功（offline削除から再起動retryを含む）。
-- macOS LibraryDeletion/SaveAndSyncの3テスト成功。macOS通常buildとiOS Simulator build成功。
-- 分離したPostgreSQL 18で既存scenarioと削除HTTP検証の2テスト成功。実運用DBや原稿は変更していない。
-- v2 independent conformance、production/test・AI・同期境界、SwiftLintは成功（既存警告あり）。
-- `Scripts/check.sh`は既存の`ExplicitSyncButton.swift`と`ProductionUnboundAttachmentTests.swift`のSwiftFormat違反で停止。全体成功とはしていない。全packageテストで露呈した非同期テストの待機条件を、送信開始から実際の完了状態へ修正し、該当Application全件を再実行して成功した。
-- server deployと利用者の実作品削除は未実施。機能使用にはserver migration/APIの反映が必要。
-
-## 2026-09-12 サーバー反映
-
-利用者の承認後、既存role-splitサーバーへ反映済み。隔離コピーでbackup復元と0005移行を確認し、本体の4作品・15snapshotを保持して更新した。HTTPS capabilities 200、削除routeの未認証401、runtime healthyを確認。実作品の削除は実行していない。詳細と復旧用資料は[deployment記録](deployment.md)を参照。
+serverのmigration/APIは反映記録がある。現在の稼働状態とschemaは操作時に照合する。[DB更新契約](deployment.md)と[運用証跡](../../ACCOUNT_RETENTION_OPERATIONS.md)を参照。アカウント削除とは独立した機能で、文書更新は実作品の削除を伴わない。

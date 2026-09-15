@@ -1,6 +1,6 @@
 # 明示アカウント削除 lifecycle v1
 
-2026-09-13実装・自宅サーバー反映済み。Auth v1への追加APIで、`lifecycleVersion=1`を使う。通常のAppleログイン以外の回復は追加しない。実装・運用証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。
+サーバー実装と自宅サーバーへの反映記録がある。Auth v1への追加APIで、`lifecycleVersion=1`を使う。通常のAppleログイン以外の回復は追加しない。実装・運用証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。
 
 ## 予約と取消
 

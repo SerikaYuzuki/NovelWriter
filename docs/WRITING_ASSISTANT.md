@@ -23,7 +23,7 @@
 
 HTTPはephemeral URLSession、cookie/cacheなし、redirect拒否、timeout付き。他社Chat Completions endpointでは`model/messages/stream:false/store:false`を送り、`choices[0].message.content`を表示する。HTTP errorのbodyを画面やログへ転記しない。`store:false`は他社サービスの保存・学習方針の保証ではない。利用料金と保存方針は送信先サービスに従う。
 
-[OpenAI公式Chat Completions仕様](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)を2026-09-12に確認。OpenAIとResponses endpointは `instructions/input/store:false` を送り、完了したmessageのoutput_textだけを取り込む。旧Experimental target、Codex subprocess、provider SDKは復活させない。clipboard支援は独立して維持する。
+HTTP payloadの実装は`AssistantClient.swift`。OpenAIとResponses endpointは `instructions/input/store:false` を送り、完了したmessageのoutput_textだけを取り込む。旧Experimental target、Codex subprocess、provider SDKは復活させない。clipboard支援は独立して維持する。
 
 ## 検証
 
@@ -35,7 +35,7 @@ APIの実送信には利用者自身の設定が必要。開発検証で私的�
 
 用途設定のTextEditorを用途ごとに分け、切替時に前の文章が別用途の保存先へ書き戻されないようにする。感想・アドバイスに校正の既定文が完全一致で入っていた場合だけ各用途の既定文へ補正し、独自のプロンプトは保持する。送信時にも用途を明記する。
 
-感想・アドバイスの正常応答は、左の「感想・アドバイス」に用途・対象タイトル・回答日時付きで保存する。本文は編集できないMarkdown表示。右クリック／長押しから削除を選び、確認後に削除する。利用者の訂正依頼により、保存・削除とも作品のSnapshot Sync v2に含める。APIキー・接続設定は引き続き端末限定である。
+感想・アドバイスの正常応答は、左の「感想・アドバイス」に用途・対象タイトル・回答日時付きで保存する。本文は編集できないMarkdown表示。右クリック／長押しから削除を選び、確認後に削除する。保存・削除とも作品のSnapshot Sync v2に含める。APIキー・接続設定は引き続き端末限定である。
 
 保存の実装は`NovelApp/Features/AssistantFeedback/`とiOSのstore adapterに置き、HTTP実装から分離する。既存のattachment契約を使い、SQLite checkpoint確定後に通常のremote workerへ渡す。新しい同期entityやserver migrationは追加しない。詳細は[保存形式](sync/v2/assistant-feedback.md)。作品sessionとaccountを応答の保存まで固定し、IME中や保存失敗時は回答をpanelに残して再保存を提示する。保存前にpanelを閉じると未保存回答は失われる。校正を履歴へ保存したり、感想を原稿へ反映したりしない。
 

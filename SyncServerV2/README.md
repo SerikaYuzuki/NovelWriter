@@ -39,61 +39,18 @@ docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
   -f SyncServerV2/docker-compose.yml -p fuminiwa-sync-v2-role-split up --build -d
 ```
 
-The `bootstrap-admin` one-shot, official PostgreSQL initialization role name,
-and its password live only in `docker-compose.provision.yml`; they are not
-part of the normal startup graph. The one-shot validates the exact OID-10
-initialization authority, fixed target database, and empty user catalog in one
-transaction under the deployment advisory lock before creating any role. The
-fresh check covers user roles, every OID-bearing catalog, mutable OID-less
-catalog state, database/public-schema ACLs, and role/database settings.
-Pointing it at an exact-v2, legacy, role-only, catalog-object-only, or otherwise
-non-fresh database aborts with zero catalog changes. If the provision
-file/profile is omitted on a fresh
-volume, PostgreSQL itself and the migrator both fail closed. On an exact-v2
-restart, use only `docker-compose.yml`: the official PostgreSQL initialization
-identifier and secret are absent from the rendered graph and cannot be
-mounted/contacted; the migrator uses only the permanent bootstrap role for
-read-only attestation.
+Fresh provisioning and normal restart have different authorities. The official
+PostgreSQL initialization role is available only to `bootstrap-admin` in the
+provision profile. The migrator owns DDL; the runtime is DML-only and opens an
+already-attested database. Exact-current restart is read-only. Unknown,
+partial, or single-role databases fail closed. Role names, exact ACLs, volume
+identity, bootstrap guards, and explicit upgrades are defined once in the
+[deployment contract](../docs/sync/v2/deployment.md).
 
-The one-shot runs as the same fixed numeric `10001:10001` identity as the v2
-server image. Its admin-password bind mount must therefore be the mode-`0400`
-runtime copy produced by `prepare-runtime-secrets.sh`; making an operator
-source secret world-readable is not an accepted workaround.
-
-The only database volume is `fuminiwa-sync-v2-role-split-data`; Caddy also has two
-edge-state volumes (`fuminiwa-sync-v2-role-split-caddy-data` and
-`fuminiwa-sync-v2-role-split-caddy-config`). The only project, network, containers, and
-volumes are `fuminiwa-sync-v2-role-split-*`. This compose file never names, mounts, or
-connects to the v1 project or its volumes. The Axum listener is internal to
-the compose network; only Caddy's LAN staging TLS port (default `8443`) is
-published. `tls internal` is intentionally staging-only and requires trusting
-the generated Caddy local CA on each test device.
-
-The `migrator` one-shot service is the only service that can run SQLx
-migrations, bootstrap `server_meta`/`deployment_binding`, or grant privileges.
-It first inventories the database under the v2 advisory lock. A fresh database
-is bootstrapped with `fuminiwa_sync_v2_migrator` (DDL/migration owner) and
-`fuminiwa_sync_v2_runtime` (DML-only runtime role), then the exact grants are
-read back before the server is allowed to start. The server itself never runs
-SQLx migrations and starts only after read-only catalog, role/ACL, schema
-marker, and deployment-binding verification. Runtime PostgreSQL sequence
-access is `USAGE` only on the required sequences. The source does not use
-`currval`, `setval`, or `last_value`; PostgreSQL has no separate sequence
-`EXECUTE` privilege, so `USAGE` is the least privilege needed for inserts.
-The official PostgreSQL OID-10 initialization role is isolated to the
-one-shot `bootstrap-admin` service and is never mounted into the migrator or
-server. That service creates the temporary `fuminiwa_sync_v2_bootstrap_admin`
-role under the same advisory lock. The migrator then creates and owns the
-fixed bootstrap role, migration owner, and runtime role; after DDL and grants
-it hardens the temporary admin to `NOLOGIN NOSUPERUSER NOCREATEDB
-NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`. It closes the admin
-authority and reacquires the lock through a new fixed-bootstrap connection,
-including `is_superuser=off` and ACL read-back.
-
-On an already-initialized exact v2 database, a repeated migrator invocation is
-read-only and succeeds only when the role/ACL attestation is already exact. A
-legacy, single-role, partial, mixed, or unrecognized database is rejected
-without `ALTER`, `DROP`, automatic role creation, or automatic grants.
+The database volume is `fuminiwa-sync-v2-role-split-data`. Caddy's `/data` and
+`/config` volumes are edge state, not manuscript storage. Only Caddy's 8443
+port is exposed; Axum 8092 remains inside Compose. The public Tunnel reaches
+this same edge, so a LAN URL does not imply a disposable environment.
 
 The server image runs as the non-root `fuminiwa` user with a read-only root
 filesystem, a small `tmpfs` at `/tmp`, all Linux capabilities dropped, and
@@ -114,8 +71,8 @@ originals:
 
 ```sh
 sudo SyncServerV2/scripts/prepare-runtime-secrets.sh \
-  /DATA/AppData/fuminiwa-sync-v2/secrets \
-  /DATA/AppData/fuminiwa-sync-v2/runtime-secrets
+  /DATA/AppData/fuminiwa-sync-v2-role-split/secrets \
+  /DATA/AppData/fuminiwa-sync-v2-role-split/runtime-secrets
 ```
 
 Set every `*_FILE`/`*_HOST_PATH` entry in the private compose env file to the
@@ -136,7 +93,7 @@ docker compose --env-file /secure/fuminiwa-sync-v2-role-split.env \
   -p fuminiwa-sync-v2-role-split --profile provision config
 ```
 
-On `192.168.11.5`, use a new Compose project exactly as shown above. Do not
+For a fresh environment, use a separately identified Compose project and volume. The configured home-server project is already used by the public endpoint; do not treat it as a new test target. Do not
 run `down -v`, `volume rm`, `docker system prune`, or any command against the
 old project while validating v2. The v2 health chain is PostgreSQL readiness,
 then the Axum listener, then Caddy TLS. The public Auth capabilities probe
@@ -253,10 +210,10 @@ repository.
 
 ## Staging TLS and health read-back
 
-The included Caddy edge uses `tls internal` only for a LAN staging deployment.
-The generated local CA must be explicitly trusted on each test device; it is
-not a production certificate. Production requires a separately managed,
-publicly trusted TLS edge and must not expose the Axum listener directly.
+The included Caddy edge uses `tls internal`. Direct LAN clients must trust
+its public CA. The configured public path uses Cloudflare Tunnel with public
+TLS at `sync.serika.work` and validated TLS from cloudflared to Caddy; public
+clients do not install the internal CA. See the [Tunnel configuration](../docs/SNAPSHOT_SYNC_V2_TUNNEL.md). Never expose Axum directly.
 Before device testing, verify the edge health response and certificate chain
 from the same network path used by the app, then read back the authenticated
 capabilities response and a newly created v2 work. A successful container

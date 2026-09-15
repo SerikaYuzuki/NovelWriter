@@ -1,20 +1,18 @@
 # macOS Workbenchツールバー
 
-**現行ソース確認: 2026-09-13**
-
 一段のnative toolbarから現在の作品操作へ到達でき、本文の面積と標準のカスタマイズを保つ。見た目は [STYLE.md](STYLE.md)、保存・同期の意味は [Snapshot Sync v2](SNAPSHOT_SYNC_V2.md) に従う。
 
 ## 1. 現在の所有者と状態
 
 [`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v8")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの章追加・話追加・話名変更などは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
 
-`AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。旧CloudKitの`workbench.cloud.publish`／`workbench.cloud.sync`は現行項目ではない。ファイルに残る旧Viewや昔の受入記録を現行targetと混同しない。
+`AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。
 
 ## 2. 既定レイアウト
 
 - Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
 - Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
-- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。2026-09-13の利用者提示画像を既定配置にする。
+- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。
 - 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
 - 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
@@ -72,32 +70,14 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 
 変更した項目について、既定配置、削除・再配置・再起動、狭幅overflow、menu代替、keyboard／VoiceOverを確認する。検索変更ではfocus分岐、選択／話切替を、保存・履歴変更ではsessionと失敗時保全を確認する。本文操作を変えた場合はIMEとUndoの回帰も確認する。
 
-過去のToolbar-1／2やUI-POL完了を、現在のv2実機・公開Gate完了へ読み替えない。判断が必要なのは製品上の階層や操作の意味を変える場合であり、既存規約内の修正ごとに確認を要求しない。
+## 9. 作品一覧・名前変更・プロット参照
 
-## 9. 履歴
+作品一覧を起動sceneとする。open・新規・Importが成功したら編集windowを開いて一覧windowを閉じ、失敗したら現在のwindowを保つ。「作品一覧…」はtoolbarと同じ入力確定・保存境界を通る。
 
-作品一覧を先頭の起動sceneとする。一覧で作品を開けた場合、新規作成・取り込みが成功した場合は編集windowを開いて一覧windowを閉じる。失敗した場合は現在のwindowを維持する。メニューの「作品一覧…」もtoolbarと同じ保存境界を通る。
+端末内作品の保存は同じWorkIDへの保存だけ。同期用コピーは右クリックの「同期用のコピーを作成…」で明示し、通常保存やCmd+Sで作品数を増やさない。
 
-追加依頼: macOSのAI支援は右、プロットカードは本文下部へ配置する。プロットカードtoggleは `rectangle.bottomthird.inset.filled` を使用する。
+執筆画面下部は横並びのプロットカードだけを表示し、専用見出し・区切り・閉じるボタンは置かない。開閉は既存toolbarから行う。プロット編集画面の右detailは上段カード／下段伏線とし、執筆下部に伏線を置かない。
 
-ローカル作品の保存ボタンは同じWorkIDのローカル保存だけを行う。同期用の複製はボタンの右クリックメニュー「同期用のコピーを作成…」で明示する。通常保存・Cmd+Sでは作品数を増やさない。プロット編集画面の右側detail列は上下分割し、上段にプロットカード、下段に伏線を配置する。執筆画面下部はプロットカード専用とし、伏線は表示しない（最新の配置訂正）。
+話名はtoolbarと話行のcontext menuから変更でき、既存の一覧内編集も維持する。dialogはpane側で所有し、overflowへ閉じ込めない。作品名は一覧のcontext menuから変更する。両者とも空白だけの名前を拒否し、取得元session/accountと対象の存在を確認してmetadataをSQLiteへ保存する。本文・選択・Editor世代を変えない。remote-only作品名変更は必要な取得後に行い、networkをdocument gate内で待たない。
 
- 話名変更: 執筆ツールバーの「話の名前を変更」と話一覧の右クリックから、名前変更ダイアログを開く。既存の一覧内直接編集も維持する。ダイアログはpane側で所有し、toolbar overflow内へ閉じ込めない。確定時に取得元の作品session・account scope・章内の話の存在を検証し、本文、選択中の話、Editorの内容世代を変えずmetadataを通常保存する。空白だけの名前は確定できない。
-
- 作品一覧の名前変更: 作品行の右クリック「作品名を変更…」で作品名を編集する。一覧の表示名だけを変更するのではなく、同じWorkIDの作品metadataをSQLiteへcheckpointする。本文・資料・履歴を保持し、編集中の作品や話を切り替えない。端末内の作品は通信待ちなし、サーバーのみの作品は明示的な取得後に変更する。確認元session/accountを検証し、取得中はdocument gateを占有しない。
-
-### メモアプリの参考動画に合わせた確認
-
-中ぐらいの検証。macOSの表示・プロット選択11テスト成功。native toolbarにSidebarとOutlineの2本のtracking separatorがあること、中央列の縮小・復帰とAI開閉で同じ本文viewを保つこと、アプリ操作がnativeのカスタマイズ候補でありnavigation固定でないことを確認した。
-
-参考: [Appleのtoolbarとsplit-viewの説明](https://developer.apple.com/videos/play/wwdc2020/10104/)。
-
-更新版macOSで中央列を224ptから約440ptへ広げ、操作列が境界に追従し、作品名が本文上端に留まることを確認。標準カスタマイズ画面で各操作を確認した。同期項目のpalette名を「保存して同期」とし、表示5テストを再実行して成功。macOS通常版build成功。iOS変更・実API送信は対象外。
-
- 執筆画面下部は見出し行・区切り線・専用の閉じるボタンをなくし、横並びのプロットカード一覧だけにする。開閉は既存のツールバーボタンから行う。プロット編集画面のカード／伏線の上下分割は維持する。
-
-同変更は軽い検証を実施。macOS build成功。更新版の執筆画面で、下部にカード一覧のみが表示され、欄内の見出し・区切り・閉じるボタンがなく、開閉ボタンが表示中になることを確認した。
-
- toolbar IDをv8へ一度更新して依頼された既定順へ切り替える。以後のnativeカスタマイズは端末内UserDefaultsにsection別で保持し、SwiftUIのwindow再構築後に復元する。split viewのtracking separatorはOSの管理を維持する。検索を削除した場合は本文側のCmd+Fで再追加してfocusする。検索語や配置は作品へ同期しない。
-
-本文とOutlineの検索先は、scene全体の値ではなく実際にfocusがあるViewの`focusedValue`から決める。Scene内のfocus位置に依存しない`focusedSceneValue`を両方の列へ置くと検索先が競合するため使用しない（[Appleの区別](https://developer.apple.com/documentation/swiftui/view/focusedscenevalue%28_%3A_%3A%29)）。Mac実画面で本文→話内検索、Outline→一覧検索のCmd+F分岐を確認した。
+native toolbarの配置は端末UserDefaultsへsection別に保持し、window再構築後に復元する。検索を削除した場合は本文側Cmd+Fで再追加してfocusする。検索先は実際にfocusがあるViewの`focusedValue`で決め、複数列の`focusedSceneValue`で競合させない。配置・検索語は作品へ同期しない。

@@ -1,6 +1,6 @@
 # クロスプラットフォーム設計契約
 
-**現行: `.novelpkg`読込v3／出力v3、Snapshot Sync v2、Auth wire v1 / 照合: 2026-09-12**
+**現行: `.novelpkg`読込v3／出力v3、Snapshot Sync v2、Auth wire v1**
 
 各OSで同じ原稿を安全に扱うため、portable形式、同期wire、domainの意味、純粋ロジックの入出力を共有する。通常保存は各端末のSQLite v2で、DBファイル自体を端末間へ渡さない。Swift側の共有実装は存在するが、WindowsはW0未完了で、Windowsアプリ／reader／writerの実装完了を示すものではない。
 
@@ -84,7 +84,7 @@ Coreは依存なし、Storage.Novelpkg／Export／Editor rulesはCoreへ、SQLit
 
 ## 4. 互換性fixtureと品質Gate
 
-2026-09-12のcheckoutには`CompatibilityFixtures/`と`Windows/`の実装体系を確認できない。NovelStorage／portable bridgeの個別testsと、sync v2 fixtureは存在するが、それだけでpackage W0や双方向Windows互換が完了したことにはしない。
+Windows実装と共通`CompatibilityFixtures/`体系は未整備。NovelStorage／portable bridgeの個別testsと、sync v2 fixtureは存在するが、それだけでpackage W0や双方向Windows互換が完了したことにはしない。
 
 ### 4.1 W0の完了条件
 
@@ -121,7 +121,7 @@ Windows側のportable取込はfolderとして扱う。書き出し先の親folde
 
 schema／fixture／Swift側とC#／Windows固有実装の担当を分け、同じbranchを両OSで同時編集しない。互換契約変更は本書・schema・fixtureを同時更新する。互換性へ影響する実装変更は、Windows実装前はMac、実装後は両OSの同一commitに対する検証を添える。
 
-作業ごとの検証はD-086の「なし／軽い／中ぐらい／重たい」を変更の影響で選ぶ。今回のような方針記録・説明変更は「なし」、局所文言・表示等は「軽い」限定確認、単一機能は「中ぐらい」の対象testとbuild、保存・認証scope・互換・共有層へ影響する変更は「重たい」の全体`Scripts/check.sh`と関連境界検証を使う。mergeだけを理由に全体検証へ格上げしない。今回の方針追記は検証なしで、W0／W1の完了証拠を追加したものではない。
+検証段階は[AGENTS](../AGENTS.md)で選ぶ。W0／W1の受入条件を通常の説明更新へ一律適用しない。
 
 ## 7. Sync v2の相互運用
 
@@ -135,8 +135,8 @@ Swift／Rustの検証成功を将来C#の互換成功として扱わない。con
 
 読込・書出とも`formatVersion`は文字列`"3"`のみ。`documentID`、`title`、`chapters`、`createdAt`、`updatedAt`は必須。各章は`id`、`title`、`episodes`を持ち、各話は`id`、`title`を持つ。`episodes`は空配列を許可するが欠損・nullを許可しない。本文は`episodes/<id>.md`から読み、旧`chapters/`へfallbackしない。対応外versionと欠損配列は原本を変更せず拒否する。
 
-この表とNovelStorage／NovelCoreの拒否・round-tripテストが今回変更した境界。将来のWindows用完全schema・独立fixtureの未完了状態は変わらない。
+このフィールド契約とNovelStorage／NovelCoreの拒否・round-tripテストは存在する。Windows用の完全schema・独立fixtureの完成とは区別する。
 
-### 感想・アドバイスのMarkdown（2026-09-13）
+### 感想・アドバイスのMarkdown
 
 保存したAI感想・アドバイスは、[予約名付きMarkdown attachment](sync/v2/assistant-feedback.md)として既存Snapshot／明示package round-tripに含める。entity schema・package schemaは変更しない。対応clientは専用の読み取り画面に分類し、未対応clientは通常資料としてbytesを保持する。日時と用途を含む合成fixtureのencode/decode・削除をappテストで検証する。

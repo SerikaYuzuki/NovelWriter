@@ -1,68 +1,37 @@
-# 公開に向けた実装・品質Gate
+# 公開前の技術受入
 
-**現況整理: 2026-09-12 / Release NO-GO**
+一般公開の受入は未完了。ここは公開に必要な条件を扱い、日常の文書編集に全項目の実行を要求しない。変更ごとの検証は[AGENTS](../AGENTS.md)、実装の残件は[CODE_HEALTH](CODE_HEALTH.md)。価格・法務・販促・決済は明示依頼の範囲で扱う。
 
-原稿保全、執筆体験、互換性、検証、配布技術の完了条件を追跡する(D-042)。価格、法務、販促、決済、事業運用は明示依頼がない限りこのbacklogへ加えない。設計は [DESIGN.md](DESIGN.md)、直近の実装課題は [v2 handoff](SNAPSHOT_SYNC_V2_HANDOFF.md) を優先する。
+## 実装と公開の境界
 
-## 1. 現在確認できる範囲
-
-| 項目 | ソース・過去証跡で確認できること | 未完了との境界 |
+| 領域 | 実装されているもの | 残る条件 |
 | --- | --- | --- |
-| 保存と同期 | Mac／iOSのv2 composition、SQLite checkpoint、Outbox／Inbox、conflict／restore実装 | paired実機・staging read-back・全体Gateは別 |
-| macOS UI | 既存Workbench、機能section、v2状態表示、履歴／同期への接続 | 現在の全操作を実機受入済みとはしない |
-| iOS UI | 段階route、複数列、各機能View、v2本文Editor | 執筆補助とprompt入口がlive Viewへ未接続。ホーム等に診断UIが残る |
-| Apple認証 | 2026-08-18に実iPhoneでsigninと再起動後のsession復元を確認した記録 | 公開認証、account lifecycle、全端末受入とは別 |
-| portable形式 | NovelStorageのcodecとv2 portable bridge、関連tests | 完全なPackage Validator、W0、Windows往復は未完了 |
-| AI支援 | 共有prompt builderとmacOS copy、iOS側API | providerなし。iOSの全copy入口は未完了 |
-| 配布設定 | `project.yml`にHardened Runtime、macOS 14／iOS 17、署名設定あり | 設定の存在は署名済み配布物・公証・clean installの証拠ではない |
+| 保存・同期 | 両AppのSQLite、Outbox/Inbox、競合3択、履歴復元 | 現行版の二端末・offline・失敗／再起動受入 |
+| 執筆・画面 | macOS Workbench、iOS段階navigation、補助入力、原稿コピー | IME・Undo・accessibility・各画面の端末受入 |
+| AI | preview後のHTTP送信、macOS校正反映、感想・アドバイスの保存／同期 | iOS校正反映は未実装。実サービス確認は合成原稿で行う |
+| 認証・削除 | Appleログイン、削除予約／取消API、期限到来worker | アプリ内予約／取消画面、Apple通知route差分、実通知・鍵rotation受入 |
+| backup | 自宅サーバーの日次暗号化・1暦年保持 | 別機器へのbackup・鍵退避、削除済みaccountを復活させない復旧運用 |
+| package | v3 reader/writer、portable bridge、部分validation | 共通fixtureとPackage Validator全体、Windows往復 |
+| 配布 | projectの署名・Hardened Runtime・OS下限設定 | 配布物の署名、公証、clean install、更新／rollback |
 
-上表は文書整理時のソース照合と過去証跡の区別を保つための記録。今回のD-086〜088の方針追記は検証なし。過去の「All checks passed」、旧CloudKitのsource freeze、focused test件数を新しい実行結果として再掲しない。
+## 原稿保全と認証
 
-## 2. 直近の優先事項
+- local checkpoint、account/namespace隔離、lost response、process restart、容量不足・保存失敗、復元前保全を対象版で確認する。
+- 二端末の通常往復とoffline分岐、競合3択、履歴復元、remote-only取得、account切替を実機で確認する。
+- Apple再認証・refresh・失効・障害と通知URLを確認し、認証失敗中も端末内編集を維持する。
+- 削除の予約・取消・期限表示をアプリから扱い、サーバー消去とApple失効完了を区別する。仕様は[削除lifecycle](auth/v1/account-deletion.md)。
+- backupを隔離先へ復元し、現在の削除記録と照合してから公開へ戻す。[復旧手順](ACCOUNT_RETENTION_OPERATIONS.md)に従う。
 
-1. 既存のiOS執筆体験をv2へ接続し、作品棚／ホーム／履歴／競合の診断UIを製品UIへ整える。既存の製品要件は [IOS.md](IOS.md) と [STYLE.md](STYLE.md)。
-2. signin済み新規作品がlocal-onlyに留まった実機報告を再現し、local checkpoint後の明示account scope・remote登録・head確認までを検証する。任意の既存unbound作品の自動採用で解決しない。
-3. 保存・認証などへ影響する修復はD-086の「重たい」検証で標準ローカル検証と関連境界を確認する。handoffのD-076大規模認証ファイルによる停止記録は、実際に分割・再実行した時点の結果で更新する。
-4. 認証済みstaging read-back、Mac↔iPhone往復、offline分岐・3択・履歴／復元・restart・account切替を実機で記録する。
+## packageとOS
 
-これは実装の依存順であり、公開判断を先取りしない。今回のmd整理ではコード、server、旧データを変更しない。
+Package Validator / W0・Windows往復の条件は[CROSS_PLATFORM](CROSS_PLATFORM.md)へ集約する。v3の成功fixtureと非対応versionの拒否、参照・Unicode・path・resource保持・書き出し途中失敗を扱う。v1/v2 readerの復活を完了条件にしない。
 
-## 3. Package Validator / W0
+外部packageはImport / Export専用。sourceの変更・移動・削除・lock、途中失敗時の原本と既存destinationの保持を確認する。通常編集へopen-in-placeを追加しない。
 
-packageは通常autosaveの正本ではなくImport／Export境界。以下を [CROSS_PLATFORM.md](CROSS_PLATFORM.md) の共通schema／fixtureへまとめ、既存の部分検証と不足を区別する。
+Mac／iPhone／iPadでは日本語IME、Undo、keyboard、VoiceOver、Dynamic Type、Light/Dark、Reduce Transparency、長文、scene／終了を確認する。Windows 11とMSI等の配布は計画段階で、実装・配布受入は別途必要。
 
-- 全domainのduplicate ID、不正参照、version別必須項目、UUID／ID filename、日時、valid UTF-8。
-- symlink／junction／reparse point、package外参照、Windows禁止名、Unicode衝突、depth／file数／byte／path budget。
-- 参照されない原稿と非hidden未知resourceの保全、元を直接修復しない検証済み修復コピー。
-- Import／Exportの採用前検証とread-back、途中失敗時の元データ・既存destinationの保持。
-- v1〜v3の独立fixtureとMac内round-trip。Windows実装後は双方の往復。
+## 配布物
 
-missing／invalid UTF-8拒否やportable bridgeのtestsだけでこのGate全体を閉じない。
+Developer ID署名、公証、stapling、Gatekeeper、別Mac／新規userでのinstall・起動・Recoveryを対象配布物で確認する。version、更新、rollback、portable互換、原稿救出、AppIcon・Finder/Dock/Aboutの表示を揃える。
 
-## 4. 外部変更と復旧
-
-旧計画の「開いたpackageの外部更新検出」は、現在の通常SQLite編集へそのまま適用しない。外部package取込／書出、資料取込のsource変更・移動・削除・lock、失敗時の再試行と原本保全を検証する。open-in-placeを追加するなら保存所有者と競合UIを別Decisionで設計する。
-
-SQLiteはmigration／integrity失敗時に空DBへfallbackせず、backup、restore、process kill、lost response、容量不足の証拠を揃える。remote conflictはv2の単一競合・3択で扱い、復元前候補を保持する。
-
-## 5. 公開前に残る技術Gate
-
-- v2の独立conformance、shared kernel、account／namespace隔離、restart、staging実DB、backup／restore、運用保護。
-- Authの失効／refresh／account switch／Apple障害、app内account deletion開始とremote削除完了read-backなど、採択済み契約の公開条件。D-087のAppleログインのみの回復・独自回復なし、削除取消猶予30日、backup保存1年をversioned lifecycle契約と実装へ反映する。方針採択だけでこのGateを閉じない。
-- iOS / iPadOSとMacのIME、Undo、keyboard、VoiceOver、Dynamic Type、Light／Dark、Reduce Transparency、長文／大量データ、scene／終了。
-- AppIcon、Finder／Dock／About／配布物のブランド表示と実在する機能だけの説明。
-- Developer ID署名、公証、stapling、Gatekeeper、cleanな別Mac／新規userでのinstall・起動・Recovery。
-- versioning、更新、rollback、旧版とのportable互換、データ保持／救出導線。
-- WindowsはWindows 11のみを対象にMSIなどのインストーラーで配布する(D-088)。具体的な形式・作成ツールは未選定で、W0とWindows実装・配布受入は未完了。
-
-conformance成功、build、preview、signin成功、deploy、remote head確認、実機受入、公開の各段階を別に記録する。満たした証拠がない項目は未完了のまま残す。
-
-## 6. 検証
-
-変更影響に応じた検証段階は[AGENTS](../AGENTS.md)に集約する。公開受入を通常の文書編集へ一律適用しない。
-
-## 7. 採択済みの判断と今後の境界
-
-回復はAppleログインのみで独自回復なし、削除取消猶予30日、backup保存1年(D-087)。WindowsはWindows 11のみを対象にMSIなどのインストーラー配布(D-088)。これらを未決へ戻さず、具体的な仕様・実装へ反映する。
-
-既存UIの復旧や仕様内の修正、既定内のtoolchain選定は実装判断として進める。公開時期／対象platformの優先順変更、既定UIや機能の削減、provider再開など、新しい製品上の選択が必要な場合に利用者へ具体案を示す。既決事項の再承認で現行修復を止めない。
+build、conformance、デプロイ、remote head確認、実機受入、公開は別の結果として記録する。設定や過去の成功だけで公開完了にしない。

@@ -5,8 +5,7 @@ may arrange the controls differently, but it must not invent another state or
 different winner semantics.
 
 This is the shared presentation contract. The current Swift names and labels
-are implemented in `NovelKit/Sources/NovelSyncV2Application/UIState.swift`
-(source reviewed 2026-09-12). The abstract `parked(reason)`/`failed` values below
+are implemented in `NovelKit/Sources/NovelSyncV2Application/UIState.swift`. The abstract `parked(reason)`/`failed` values below
 summarize several concrete cases; they are not a second enum to implement.
 
 The shared kernel emits one immutable value:
@@ -40,7 +39,7 @@ the stale sheet from the same result rather than choosing a branch.
 | `needsChoice` | `競合の確認が必要です` | one active conflict; exactly three choices |
 | `parked(differentAccount)` | `別のアカウントのため保留中` | no object lookup or upload is allowed |
 | `quarantined(fenceChanged)` | `安全確認後に同期を再開します` | fence/bootstrap/replan is required |
-| `failed` | `同期を再試行できます` | local state remains safe; retry is explicit or scheduled |
+| `failed` | `同期できませんでした` | local state remains safe; detail depends on the typed failure |
 
 An explicit production sync reconciles the current checkpoint through the sealed publish and verified receipt path even when no new edit exists. A verified unchanged remote head returns `noChanges` and is success, not failure. An empty local outbox alone is not evidence of current remote equality. A verified remote descendant is projected as `readyForSafeAdoption` until the document gate and local generation allow its installation. The UI never turns a no-op into an error toast. All states expose a
 local-save indicator independently from remote progress.
@@ -60,8 +59,10 @@ instead of copying labels into their own state machines.
 | `quarantined` | `安全確認後に同期を再開します` |
 | `retryable` | `端末に保存済み・同期を再試行します` |
 | `readyForSafeAdoption` | `サーバーの版を適用できます` |
-| `failed` / `receiptMismatch` | `同期を再試行できます` |
+| `failed(remoteDataUnavailable)` | `同期先のデータを利用できません` |
+| `failed(uploadTooLarge)` | `送信上限を超えています` |
+| その他の`failed` / `receiptMismatch` | `同期できませんでした` |
 
 These source mappings do not establish that every app route renders them
-correctly. The known signed-in new-work symptom and iOS acceptance work remain
-in the [handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md).
+correctly. Current implementation gaps and device acceptance remain
+in [CODE_HEALTH](../../CODE_HEALTH.md).

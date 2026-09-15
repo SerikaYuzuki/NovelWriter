@@ -1,13 +1,13 @@
 # 現在の設計決定
 
-現行の制約をまとめる。IDはコードからの参照を保つために残す。置換済みの全文・実験・時系列は整理前commit `ce69434c1`以前のGit履歴にあり、現行の実装指示には使わない。
+現行の制約をまとめる。IDはコードからの参照を保つために残す。置換済みの全文・実験・時系列はGit履歴にあり、現行の実装指示には使わない。
 
 ## 編集・保存・互換
 
 | ID | 現在の決定 |
 | --- | --- |
 | D-001 / D-005 / D-006 | SwiftUI＋platform adapter、EditorKitが本文を所有。TextKit 2、IME中のモデル反映・plugin介入禁止、公開APIへtext viewを出さない |
-| D-002 / D-003 / D-018 / D-036 | `.novelpkg`は明示Import / Exportの互換形式。通常保存の正本ではない。内部配置・format versionはNovelStorageと[互換契約](CROSS_PLATFORM.md) |
+| D-002 / D-003 / D-018 / D-036 / D-090 | `.novelpkg`は明示Import / Exportの互換形式。通常保存の正本ではない。内部配置・format versionはNovelStorageと[互換契約](CROSS_PLATFORM.md) |
 | D-004 / D-028 | Chapter→Episode、順序は配列だけ。本文・話メモはEpisodeへ置く |
 | D-009 / D-010 | portable repositoryはURL＋async。アプリが作品選択を管理し、DocumentGroupを使わない |
 | D-016 / D-017 / D-023 / D-026 | 通常保存・履歴はSQLite。作品を切り替える前に保存し、復元は現在の編集を保全してから行う |
@@ -26,7 +26,7 @@
 
 | ID | 現在の決定 |
 | --- | --- |
-| D-019〜D-021 / D-024 / D-029 / D-032 / D-035 / D-040 / D-044 / D-045 | 実装済み操作だけを表示する。[STYLE](STYLE.md)、[TOOLBAR](TOOLBAR.md)、[IOS](IOS.md)が現在の画面規約 |
+| D-019〜D-021 / D-024 / D-029 / D-032 / D-035 / D-040 / D-044 / D-045 / D-057 | 実装済み操作だけを表示する。[STYLE](STYLE.md)、[TOOLBAR](TOOLBAR.md)、[IOS](IOS.md)が現在の画面規約 |
 | D-025 | 別名保存はCmd+Shift+S、明示snapshotはCmd+Option+S。保存先とscopeを明確にする |
 | D-062 / D-066〜D-068 / D-070 | 作品選択から開始する。macOSはAIが右、プロットカードが本文下。プロット編集の右下に伏線。toolbarのカスタマイズ所有は一箇所 |
 | D-089 | 校正は現在の1話、感想・アドバイスは選択した話を全文preview後に明示送信する。HTTP・キー・設定を本文保存から分離。[AI支援](WRITING_ASSISTANT.md) |
@@ -50,4 +50,6 @@
 | D-096 | 日次暗号化backupを作成から1暦年保持。2/29は翌年2/28。新backup成功後だけ期限切れを整理する |
 | D-097 | 現行のコード・契約・運用に集約。廃止実装と過去資料はGit履歴へ移し、旧同期専用の検証を通常checkから外す。DB migration・現行Auth v1・互換fixture・原稿は保持する |
 
-D-043、D-046〜D-054、D-057、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、D-077、D-079、D-090の旧provider・旧同期・置換作業は完了または廃止済み。必要な編集安全・local-first原則は上表の現行境界へ集約している。
+D-043、D-046〜D-054、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、D-077、D-079の旧provider・旧同期・置換作業は完了または廃止済み。必要な編集安全・local-first原則は上表の現行境界へ集約している。
+
+名称のv2表記とXcodeBuildMCPの利用方針は[OWNER_DECISIONS](OWNER_DECISIONS.md)。新しい番号を付けるためだけに、既決事項や作業記録を増やさない。

@@ -1,6 +1,6 @@
 # ふみにわ 現行設計
 
-現行構成は`project.yml`と`NovelKit/Package.swift`で確認する。設計の決定理由は[DECISIONS](DECISIONS.md)、実装の残件は[CODE_HEALTH](CODE_HEALTH.md)、同期の受入状況は[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)に置く。
+現行構成は`project.yml`と`NovelKit/Package.swift`で確認する。採択済みの方針は[DECISIONS](DECISIONS.md)、実装の残件は[CODE_HEALTH](CODE_HEALTH.md)に置く。
 
 ## 1. 目的
 
@@ -31,7 +31,7 @@
 | 原稿出力 | TXT / Markdown / EPUB 3 |
 | Windows | Windows 11のみ。WinUI 3 + C# / .NET、MSIなどのインストーラー配布を計画。W0未完了 |
 
-現在のv2にGRDBやS3への依存はない。以前の計画に出てくるそれらを導入済みと扱わない。サーバーはserver-readableで、E2EEではない（D-078 / D-080）。macOSはGitHub Releasesによる直接配布・非Sandbox方針（D-011）。配布・公開の受入は別途必要である。
+現在の保存実装はCSQLiteとPostgreSQL BYTEA。サーバーはserver-readableで、E2EEではない（D-078 / D-080）。macOSはGitHub Releasesによる直接配布・非Sandbox方針（D-011）。配布・公開の受入は別途必要である。
 
 ## 3. モジュール構成
 
@@ -51,8 +51,6 @@
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
-
-旧同期・旧Library・旧serverと除外画面はD-090で削除した。履歴はGitで参照する。
 
 ## 4. 各モジュールの責務
 
@@ -121,10 +119,6 @@ IME変換中はモデル反映もプラグイン介入もしない。変換確�
 
 account / fence変更をまたぐACK、catalog、history、worker完了を新scopeへ適用しない。既存unbound workをログイン後のaccountへ自動送信しない。厳密なwire・状態機械・SQL・fixtureは[SNAPSHOT_SYNC_V2](SNAPSHOT_SYNC_V2.md)、[v2契約](sync/v2/README.md)、D-080〜D-085を参照する。
 
-### 4.12 旧CloudKit経路
-
-現行adapter・entitlementでは使わない。比較記録は[DEVICE_SYNC](SNAPSHOT_SYNC_V2.md)に残す。現在の同期修正はv2へ行う。
-
 ## 5. App側の設計
 
 ### 5.1 AppDependencies
@@ -139,7 +133,7 @@ macOSは`NovelApp/AppState.swift`、iOSは`NovelAppIOS/DocumentLifecycle/IOSDocu
 
 macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選択・recovery・既存Workbenchへ分岐する。ready以外で編集可能なWorkbenchを作らない。iOSは作品棚→作品ホーム→機能画面の階層と、iPadの複数列を使う。
 
-現在のiOSには主要routeがあるが、各導線の実機確認が残る。原稿コピーはD-094で選択／話／章のplain textへ更新した。[IOS](IOS.md)が現況と受入条件を整理する。過去のUI完了文書は製品意図を調べる資料であり、v2での完了証拠にはしない。
+現在のiOSには主要routeがあるが、各導線の実機確認が残る。原稿コピーはD-094で選択／話／章のplain textへ更新した。[IOS](IOS.md)が現況と受入条件を整理する。
 
 ## 6. 製品要件
 
@@ -169,56 +163,42 @@ macOSは[ContentView](../NovelApp/Application/ContentView.swift)から作品選�
 
 ### 6.6 認証とアカウントライフサイクル
 
-D-087のaccount lifecycleは方針採択・実装前。Appleログイン以外の独自回復を提供せず、削除の取消猶予は30日、backup保持は1年とする。通常の再認証・session復旧・端末内原稿保全とは区別し、詳細は[AUTH](AUTH.md)へ集約する。
+Appleログイン、削除予約・取消API、720時間後の削除workerは実装済み。自宅サーバーで日次暗号化backupを1暦年保持する。予約・取消のアプリ画面と別機器への退避は未対応。通常の再認証・session復旧と独自のアカウント回復サービスは区別する。[AUTH](AUTH.md)と[運用](ACCOUNT_RETENTION_OPERATIONS.md)を参照。
 
 ## 7. 未実装・将来の機能
 
-作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、provider統合、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
+作品全体検索・置換、人物関係グラフ、時系列ビュー、PDF出力、追加provider SDK、Windows実装は現在の利用可能機能に含めない。追加時に目的と受入条件を定める。UIに未実装placeholderを置いて完成に見せない（D-040）。
 
-## 8. 開発ロードマップ
+## 8. 実装ルール
 
-過去のPhase番号は実装経緯を示す。現在はv2上の製品機能、ローカル保存、account境界、二端末同期を安定させる段階である。順序と証拠は[v2引き継ぎ](SNAPSHOT_SYNC_V2_HANDOFF.md)に集約し、旧R0〜R8計画を新規着手一覧として再実行しない。
-
-## 9. 実装ルール
-
-### 9.1 依存方向
+### 8.1 依存方向
 
 NovelCoreは依存ゼロ。NovelStorage / NovelExport / EditorKit / NovelUI / NovelSyncV2はNovelCoreへ向く。v2 store / application / runtime / portable bridgeは[Package.swift](../NovelKit/Package.swift)の明示依存を使う。全moduleを「Coreだけに依存」と一括表現しない。
 
-### 9.2 プラットフォーム依存
+### 8.2 プラットフォーム依存
 
 EditorKitのAppKit / UIKit処理は`Platform/`内に閉じ込める。公開Editor APIにはネイティブtext viewを出さない。AppのSwiftUI・OS adapterに必要なplatform依存とは区別する。platform UI型やcredentialをcanonical Snapshot・portable schemaへ出さない。
 
-### 9.3 保存形式
+### 8.3 保存形式
 
 packageはNovelStorageの抽象APIを介し、v2はWorkIDベースのapplication APIを介する。OS path、bookmark、handle、UI設定、account / session、provider promptをpackageに足さない。互換変更はCROSS_PLATFORMとschema / golden fixtureを同時更新する。
 
-### 9.4 Editor拡張
+### 8.4 Editor拡張
 
 4.3〜4.5の入力・所有権契約を守る。純粋判定はRules、正規編集とIME通知はplatform adapterに置く。新機能がUndoを壊さないことを受入条件に含める。
 
-### 9.5 クロスプラットフォーム実装
+### 8.5 クロスプラットフォーム実装
 
 Apple間はSwiftの共通moduleを使う。Windowsとはschema、fixture、ドメインの意味、Export仕様を共有する。WinUIをSwiftUIのview階層へ機械的に合わせない。Windows実装後は双方向round-tripを互換変更の完了条件にする（D-036）。
 
-### 9.6 AI統合
+### 8.6 AI統合
 
-現在のscope・コピー・プライバシー境界はCLIPBOARD_AI_ASSISTへ集約する。通常版にprovider/networkを混ぜない。将来の統合でも本文所有権、明示scope、local identityを送らない条件を維持する（D-043 / D-075）。
+AIのHTTP・Keychainは共有WritingAssistant内に置き、本文保存やEditorKitから分離する。明示送信と反映条件は[WRITING_ASSISTANT](WRITING_ASSISTANT.md)、通信しないコピーは[CLIPBOARD_AI_ASSIST](CLIPBOARD_AI_ASSIST.md)に従う。
 
-## 10. AIエージェント向けの作業単位
-
-依頼の成果と制約を先に把握し、必要な境界だけ読む。関連するモデル・実装・テスト・文書を一つの目的のために更新し、無関係な機能やリファクタリングを混ぜない。手順の細分化や毎回の全資料通読は要求しない。
-
-依頼範囲の編集と、D-086で選択した段階の検証まで進める。検証なしも選択肢とし、マージ前の一律全通しを要求しない。設計変更が必要なときはDECISIONSへ追加し、既存の採択理由を消さずに置換範囲を示す。利用者の決定と残る実装事項は[OWNER_DECISIONS](OWNER_DECISIONS.md)へ置く。
-
-## 11. 残件
-
-未完了の実装と受入は[CODE_HEALTH](CODE_HEALTH.md)に集約する。修正済み不具合を時系列で次タスクへ残さない。一般公開は実機・認証・復旧・配布の証拠で判断する。
-
-## 12. 非目標
+## 9. 非目標
 
 - 縦書き（執筆・出力ともD-012で対象外）、高度な組版、独自描画エンジン。
 - リアルタイム共同編集、本文の自動3-way merge、時刻による競合winnerの自動選択。
 - 外部原本のopen-in-place、SQLite DB自体のonline共有、旧CloudKit/v1へのfallback。
 - ログイン後の既存unbound作品の自動adopt、別AccountIDへのWorkIDの付け替え。
-- 通常版からのAI送信・自動本文書換え。価格・法務・販促の追加は明示依頼の範囲のみ（D-042）。
+- 確認なしのAI送信・自動本文書換え。

@@ -1,18 +1,13 @@
 # Auth v1 isolated PostgreSQL gate
 
 Use this gate when changing auth transactions or race/replay behavior. It is
-an integration runner, not a record of a successful run. Source reviewed
-2026-09-12; current release evidence is in the [handoff](../docs/SNAPSHOT_SYNC_V2_HANDOFF.md),
-and wire/implementation differences are listed in [AUTH.md](../docs/AUTH.md).
+an integration runner, not a record of a successful run. Wire/implementation
+differences are listed in [AUTH.md](../docs/AUTH.md).
 Run the command from the repository root.
 
-D-087 adopts no account recovery outside ordinary Apple login, a 30-day
-cancellation grace period for explicit account deletion, and one year of backup
-retention. The versioned lifecycle is implemented in account_deletion.rs; its dedicated
-account_deletion_gate test and docs/ACCOUNT_RETENTION_OPERATIONS.md record validation
-and deployment. This runner alone does not establish completion of that feature. Its refresh, lost-response,
-and process-restart recovery scenarios remain ordinary authentication recovery,
-not an alternate-provider or operator identity-verification recovery service.
+Account deletion has its own [lifecycle](../docs/auth/v1/account-deletion.md)
+and `account_deletion_gate` test. This runner covers ordinary authentication
+recovery, not alternate-provider or operator identity-verification recovery.
 
 The normal `cargo test` suite is network-free and does not open PostgreSQL.
 The transaction/race gate is explicit and fails closed unless it receives a

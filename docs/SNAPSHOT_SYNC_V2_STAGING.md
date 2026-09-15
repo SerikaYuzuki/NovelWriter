@@ -1,6 +1,6 @@
 # Snapshot Sync v2 — LAN stagingのTLS確認
 
-この手順は隔離staging用。checked-in Composeの既定値は次のとおりで、2026-09-12にsourceを照合した。現在の稼働状態は確認していない。
+LAN入口のTLS検証を扱う。Composeの既定値は以下。現在の公開Tunnelも同じLAN入口へ接続するため、LANという理由だけで隔離試験環境と扱わない。DBを使う試験は別の使い捨て環境で行う。
 
 ```text
 URL:     https://192.168.11.5:8443
@@ -12,7 +12,7 @@ edge:    fuminiwa-sync-v2-role-split-edge
 
 ## 現行export scriptの制約
 
-[Scripts/export-sync-v2-staging-ca.sh](../Scripts/export-sync-v2-staging-ca.sh)は公開rootの取得、SAN確認、`curl --cacert`によるAuth capabilities確認を行う。ただし現在はedge名が`fuminiwa-sync-v2-edge`に固定され、role-split Composeと一致しない。container名を指定する引数もない。**role-split環境でそのまま使える手順ではない。** この文書改訂ではscriptを変更・実行していない。
+[Scripts/export-sync-v2-staging-ca.sh](../Scripts/export-sync-v2-staging-ca.sh)は公開rootの取得、SAN確認、`curl --cacert`によるAuth capabilities確認を行う。ただし現在はedge名が`fuminiwa-sync-v2-edge`に固定され、role-split Composeと一致しない。container名を指定する引数もない。**role-split環境でそのまま使える手順ではない。** 修正は[CODE_HEALTH](CODE_HEALTH.md)の残件。
 
 scriptを更新する場合は、確認したexact v2 edgeだけを対象にし、従来の非破壊・公開証明書のみという境界を保つ。更新までは運用者からそのedgeの公開CAファイルとfingerprintを受け取る。旧containerが残っていても、別edgeのrootを対象証明書として採用しない。
 
@@ -32,7 +32,7 @@ HTTPS auth capabilities: HTTP 200 (v2 namespaces verified)
 
 ## Trustの設定
 
-取得したrootのSHA-256 fingerprintを別の信頼できる経路と照合する。過去のfingerprintは[ハンドオフの履歴](SNAPSHOT_SYNC_V2_HANDOFF.md)にあり、現在の正とはしない。
+取得したrootのSHA-256 fingerprintを別の信頼できる経路と照合する。過去のfingerprintや表示名だけで現在の正しいCAと判断しない。
 
 macOSでは確認済み公開CAだけをlogin keychainへ追加する。
 

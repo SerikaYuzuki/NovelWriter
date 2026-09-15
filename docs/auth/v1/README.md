@@ -1,6 +1,6 @@
 # FUMINIWA Auth wire v1 — versioned contract
 
-このdirectoryはD-078で確定した認証wireの規範契約である。2026-09-12時点でSwift／Rust実装があり、live Sync v2から再利用する。契約の存在やfixture合格はProduction受入の完了を意味しない。実装対応と既知の差分は[AUTH.md](../../AUTH.md)、検証履歴は[現行ハンドオフ](../../SNAPSHOT_SYNC_V2_HANDOFF.md)を参照する。HTTPの正は[`openapi.yaml`](openapi.yaml)、状態遷移のcross-language acceptanceは[`fixtures/`](fixtures/)である。
+このdirectoryはD-078で確定した認証wireの規範契約である。Swift／Rust実装があり、live Sync v2から再利用する。契約の存在やfixture合格はProduction受入の完了を意味しない。実装対応と既知の差分は[AUTH.md](../../AUTH.md)、運用記録は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)を参照する。HTTPの正は[`openapi.yaml`](openapi.yaml)、状態遷移のcross-language acceptanceは[`fixtures/`](fixtures/)である。
 
 `authProtocolEpoch=1`／`authProtocolVersion=1.0.0`はAuth protocol v1の値として維持する。現在のlive SyncはD-080の新namespaceでprotocol epoch `2`なので、capabilitiesとすべてのsession bindingの`syncProtocolEpoch`は`2`である。これはAuth epochとは別の値であり、Auth implementationはSync v2の`PROTOCOL_EPOCH`をbindingへ注入する。AccountFenceのbindingもserver instance＋Sync epoch `2`＋AccountID＋AccountAuthEpochで評価する。
 
@@ -79,7 +79,7 @@ exchange／refreshのtoken-bearing responseは`Cache-Control: no-store`と`Pragm
 
 ## Apple primary contract
 
-実装とsecurity reviewは少なくとも次のApple一次資料をliveで再確認する。
+Apple連携の仕様を変更するときは、該当する一次資料を確認する。
 
 - [Authenticating users with Sign in with Apple](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)
 - [Verifying a user](https://developer.apple.com/documentation/signinwithapple/verifying-a-user)
@@ -88,16 +88,8 @@ exchange／refreshのtoken-bearing responseは`Cache-Control: no-store`と`Pragm
 - [Fetch Apple public keys](https://developer.apple.com/documentation/signinwithapplerestapi/fetch-apple%27s-public-key-for-verifying-token-signature)
 - [Processing account changes](https://developer.apple.com/documentation/signinwithapple/processing-changes-for-sign-in-with-apple-accounts)
 
-## Static validation
+## 検証の入口
 
-```sh
-ruby -e 'require "yaml"; YAML.safe_load(File.read("docs/auth/v1/openapi.yaml"), aliases: true); puts "auth openapi yaml ok"'
-find docs/auth/v1 -name '*.json' -print0 | xargs -0 -n1 jq -e .
-git diff --check
-```
+現行fixtureのcanonical bytes/digestとexchange/refreshは`NovelAuthConformanceTests`、clientのsession/HTTP/Keychain境界は`NovelAuthTests`、server transactionは[隔離Auth runner](../../../SyncServerV2/AUTH_INTEGRATION.md)を使う。削除は専用`account_deletion_gate`。必要な段階は[AGENTS](../../../AGENTS.md)で選ぶ。
 
-これだけではApple live conformance、JWS／JWKS rotation、JCS byte equality、Keychain、encrypted receipt、rate limit、cross-tenant non-disclosure、server notification、offline editingを証明しない。R0 runnerはfixtureの全step、OpenAPI `$ref`、duplicate `operationId`、closed schema、exact replay side-effect countを検査する。
-
-## 明示削除の追加実装（2026-09-13）
-
-[lifecycle v1](account-deletion.md)の予約・取消APIと30日後の削除workerを実装した。日次backupの1年保持も自宅サーバーで稼働する。以前の未実装記述からの更新と、利用者向け画面・別機器退避の残件は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)を参照する。
+fixtureには検証目標も含まれる。全vectorが実行済みという意味ではなく、実際に通したrunnerとケースを報告する。Apple実通知・JWKS rotation・実機受入は独立に確認する。廃止済みR0 runnerを手順にしない。

@@ -1,6 +1,6 @@
 # Sign in with Apple server notification contract v1
 
-> **状態**: D-078のprovider ingress規範契約。client向け[`openapi.yaml`](openapi.yaml)とは別のApple→Rust server境界。2026-09-12のsource照合では`SyncServerV2/src/auth_service.rs`と`auth_apple.rs`に処理があるが、HTTP routeは`/v1/auth/apple/notifications`で、下記規範URLと一致しない。差分解消と実通知の検証は未完了。本文のwire契約は変更していない。
+> **状態**: D-078のprovider ingress規範契約。client向け[`openapi.yaml`](openapi.yaml)とは別のApple→Rust server境界。現行sourceでは`SyncServerV2/src/auth_service.rs`と`auth_apple.rs`に処理があるが、HTTP routeは`/v1/auth/apple/notifications`で、下記規範URLと一致しない。差分解消と実通知の検証は未完了。
 
 ## D-087の製品方針との境界
 
@@ -36,8 +36,8 @@ JWS検証後、identity rowをlockし、`provider_notification_receipts`、ident
 
 notification `event_time`と同秒またはそれより後に同じidentityの検証済みsign-inが既にcommit済みなら、古い通知で新credential／sessionを巻き戻さない。receiptを`staleAfterReauthentication`として保存し、remote laneを`providerValidationPending`へparkしてserver-side credential validationを行う。Appleがcredentialをvalidと検証した場合はAccountAuthEpoch／Fenceを変えず再開する。`invalid_grant`または署名付きprovider stateがrevoked／notFoundを示す **authoritative invalid** だけが上記revoke transitionを1回適用できる。timeout、DNS、TLS、rate limit、Apple 5xx、応答decode不能は`transientIndeterminate`としてdurable retryし、新credential、session、AccountAuthEpoch／Fenceを変えない。認証が止まっても端末内open／edit／autosave／history／Exportは止めない。
 
-検証済みの新規loginは、同じidentityの全audienceに残る古い検証待ちを失効させる。古いworker結果はpending状態とattemptの照合で拒否する。provider validationの一時停止は同期remote laneに限定し、logoutを妨げない。Apple revokeはHTTP 200だけを完了とし、その他の応答は永続retryに残す。これらの実装と隔離DB検証は[2026-09-13実装記録](../../CODE_HEALTH.md)を参照する。実通知と上記URL差分の受入は別途残る。
+検証済みの新規loginは、同じidentityの全audienceに残る古い検証待ちを失効させる。古いworker結果はpending状態とattemptの照合で拒否する。provider validationの一時停止は同期remote laneに限定し、logoutを妨げない。Apple revokeはHTTP 200だけを完了とし、その他の応答は永続retryに残す。これらの実装と隔離DB検証は[現行の実装状況](../../CODE_HEALTH.md)を参照する。実通知と上記URL差分の受入は別途残る。
 
 ## Acceptance fixture
 
-[`fixtures/apple-server-notification.json`](fixtures/apple-server-notification.json)をRust adapter／PostgreSQL transactionで共用する。`scenarios[].request.body.payload`を持つcaseはfixture JWKで実compact JWSを検証するwire vector、`layer=postVerificationDomainEvent`はその検証済み出力だけをidentity／ordering state machineへ渡すdomain vectorであり、placeholder JWSをwireへ送らない。署名bytesはfixture専用test keyで生成し、Production Apple keyとして扱わない。R4ではApple live JWKS rotationとProduction configurationも別途確認する。
+[`fixtures/apple-server-notification.json`](fixtures/apple-server-notification.json)をRust adapter／PostgreSQL transactionで共用する。`scenarios[].request.body.payload`を持つcaseはfixture JWKで実compact JWSを検証するwire vector、`layer=postVerificationDomainEvent`はその検証済み出力だけをidentity／ordering state machineへ渡すdomain vectorであり、placeholder JWSをwireへ送らない。署名bytesはfixture専用test keyで生成し、Production Apple keyとして扱わない。Apple live JWKS rotationとProduction configurationは別途受入する。

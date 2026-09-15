@@ -147,41 +147,13 @@ Retain the previous image/container and backup before replacing the API.
 The old runtime cannot attest the added schema and must not be restarted
 against version 5 without an explicitly reviewed rollback.
 
-2026-09-12: deployed server commit `c23da069e` to the existing
-`fuminiwa-sync-v2-role-split-server` at `https://192.168.11.5:8443`.
-Image digest: `sha256:8b3493dea1e1d23927f4c9352f9eb1ec22ff7d5f01f4dd9f91bcc603a97fe5e5`.
-The migration was rehearsed on a restored, network-isolated PostgreSQL 16
-copy. Live readback retained 4 works and 15 snapshots; deletion markers
-remained zero. Runtime health and trusted HTTPS Auth capabilities returned
-success (Auth epoch 1 / Sync epoch 2); an unauthenticated DELETE reached the
-new route and correctly returned 401. No user's work was deleted and an
-authenticated destructive request was not run against live data.
-Backups, previous container metadata, upgrade SQL and the previous image are
-retained on the server under the private release directory
-`/DATA/AppData/fuminiwa-sync-v2-role-split/releases/work-deletion-c23da069e`.
-
-### 2026-09-12 initial offline lineage publish
-
-Revision `02561154a` was built as `fuminiwa-sync-v2-initial-lineage:02561154a`
-and deployed to the same role-split server at `https://192.168.11.5:8443`.
-Image ID: `sha256:dee284acc421336f0daf38fd7d5d9225cd9f25a6499a9a0f21b17954a58cb4d5`.
-No schema migration was needed. The previous container, source, and the
-cutover PostgreSQL custom-format dump are retained under
-`/DATA/AppData/fuminiwa-sync-v2-role-split/releases/initial-lineage-02561154a`.
-The dump passed `pg_restore --list`; the replacement became healthy and the
-trusted HTTPS capabilities endpoint returned Auth 1 / Sync 2. The isolated
-PostgreSQL/HTTP test environment was removed after the 79 Rust tests passed.
-This deployment check does not itself prove an individual client's pending
-publish has completed.
-
-## Exact role-split v2 upgrade: review fixes (0006–0007)
+## Exact role-split v2 upgrade: known migrations (0006–0008)
 
 The explicit `sync_v2_migrator --upgrade-review-20260913` path accepts only an
 attested role-split database with the checked-in migration checksums and a
-complete history through version 5, 6 or 7. Under the existing deployment lock,
+complete history through version 5, 6, 7 or 8. Under the existing deployment lock,
 SQLx applies only the remaining migrations. Ordinary startup does not upgrade.
-The new runtime requires both provider-notification ordering and staged-upload
-columns and refuses an older database. Runtime privileges remain DML-only.
+The current runtime also requires the account-deletion schema (0008) and refuses an older database. Runtime privileges remain DML-only.
 
 0006 adds the verified Apple authentication watermark and durable provider
 validation state. A verified login supersedes pending validation across all
@@ -196,9 +168,8 @@ take a custom-format PostgreSQL backup, restore it into an isolated database,
 and rehearse the upgrade there. Verify recorded versions, preserved account
 and work data, runtime role attestation, then start the new API and check both
 trusted HTTPS health/auth responses and authenticated upload behavior.
-See [implementation record](../../CODE_HEALTH.md) for actual
-results; these instructions alone are not deployment evidence.
+See [operational evidence](../../ACCOUNT_RETENTION_OPERATIONS.md) for the last recorded rollout. Verify live state before the next upgrade; these instructions alone are not deployment evidence.
 
-## アカウント削除の運用追加（2026-09-14）
+## Account deletion (0008)
 
-明示削除lifecycle v1はmigration 0008を追加し、runtimeへ新tableのDMLを付与する。既知の0007までの構成から、対象server instanceを照合した明示upgradeを行う。0008追加後は旧binaryがinventory照合で拒否するため、単純なimage切戻しをしない。適用・復元・backups・検証証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。
+明示削除lifecycle v1はmigration 0008を追加し、runtimeへ新tableのDMLを付与する。明示upgrade flagは上記`--upgrade-review-20260913`を使用し、既知の履歴と対象server instanceを照合する。0008追加後は旧binaryがinventory照合で拒否するため、単純なimage切戻しをしない。適用・復元・backups・検証証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。

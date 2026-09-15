@@ -8,8 +8,8 @@ must agree on fixtures without sharing canonicalization or state-machine code.
 
 A contract/document check, runtime test, opt-in PostgreSQL Gate, and physical
 device acceptance establish different facts. Match the check to the changed
-boundary and report which layer ran. Current implementation evidence is in the
-[handoff](../../SNAPSHOT_SYNC_V2_HANDOFF.md); this file is not a record of a new
+boundary and report which layer ran. Current implementation gaps are in
+[CODE_HEALTH](../../CODE_HEALTH.md); this file is not a record of a new
 successful run.
 
 ## Rust HTTP source-to-test map
@@ -30,4 +30,4 @@ it remains an explicit NO-GO/skip and does not connect anywhere.
 | Foreign/absent 404 non-disclosure and body/path bounds | `src/http.rs` scope, digest/UUID parsing, body limits | opt-in HTTP gate; `tests/domain.rs` canonical/schema bounds |
 
 
-Account deletion uses `tests/account_deletion_gate.rs` with an explicit fresh `FUMINIWA_ACCOUNT_DELETION_TEST_URL`. The normal gate unsets both opt-in database URLs. Backup tests are `Scripts/operations/test_backup.py`.
+Account deletion uses `tests/account_deletion_gate.rs` with an explicit fresh `FUMINIWA_ACCOUNT_DELETION_TEST_URL`. `Scripts/conformance-v2.sh` unsets `FUMINIWA_V2_TEST_DATABASE_URL`, `FUMINIWA_ACCOUNT_DELETION_TEST_URL`, and `AUTH_V2_TEST_DATABASE_URL`. Backup tests are `Scripts/operations/test_backup.py`.
