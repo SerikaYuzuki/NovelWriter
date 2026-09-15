@@ -118,6 +118,32 @@ struct AppStateDocumentLifecycleTests {
         #expect(reopened.document?.selectedEpisodeContentForTest == "Aのdirty本文")
     }
 
+    @Test("作品一覧起動から新規作成でき、編集の許可条件は緩めない", arguments: [false, true])
+    func newWorkFromStartupLibrary(signedIn: Bool) async throws {
+        let state = try makeState(account: signedIn ? TestAccount(accountID: "new-work-account", accountFence: "new-work-fence") : nil)
+        state.userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
+        #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+        await state.bootstrap()
+        guard case .documentSelection = state.startupState else {
+            Issue.record("expected startup library")
+            return
+        }
+        #expect(state.permitsNewDocument)
+        #expect(!state.permitsDocumentInteraction)
+        #expect(!state.permitsDocumentTransitionOperation)
+        let presenter = DocumentPanelPresenter(appState: state)
+        presenter.presentNewDocument()
+        try await eventuallyMac { presenter.completedDocumentOperation != nil || presenter.alertMessage != nil }
+        #expect(presenter.alertMessage == nil)
+        #expect(state.startupState == .ready)
+        let workID = try #require(state.currentSnapshotSyncV2WorkID)
+        let application = try #require(state.snapshotSyncV2Application)
+        let opened = try await application.openLocal(workID: workID)
+        #expect(opened.document == state.document)
+        #expect(state.snapshotSyncV2Session?.workID == workID)
+        #expect(!state.userDefaults.bool(forKey: "fuminiwa.v2.startInLibrary"))
+    }
+
     @Test("新規作品はWorkIDを更新しSQLite checkpointだけをawaitする")
     func newWorkSwitchesSession() async throws {
         let state = try makeState()

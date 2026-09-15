@@ -200,7 +200,7 @@ struct FuminiwaApp: App {
                     documentPanelPresenter.presentNewDocument()
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(!appState.permitsDocumentTransitionOperation)
+                .disabled(!appState.permitsNewDocument)
                 Button("作品を取り込む…") {
                     documentPanelPresenter.presentOpenPanel()
                 }

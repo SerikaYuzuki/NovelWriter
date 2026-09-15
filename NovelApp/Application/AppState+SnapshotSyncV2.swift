@@ -552,10 +552,10 @@ extension AppState {
     @discardableResult
     func createNewV2Document() async -> Bool {
         guard let application = snapshotSyncV2Application,
-              permitsDocumentTransitionOperation else { return false }
+              permitsNewDocument else { return false }
         return await documentOperationGate.perform { [weak self] in
             guard let self,
-                  permitsDocumentTransitionOperation,
+                  permitsNewDocument,
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true

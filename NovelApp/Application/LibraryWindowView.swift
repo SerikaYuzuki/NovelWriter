@@ -15,6 +15,7 @@ struct LibraryWindowView: View {
                 Text("書きたい物語を、ここから。")
                     .foregroundStyle(.secondary)
                 Button("新しい作品…") { presenter.presentNewDocument() }
+                    .disabled(!appState.permitsNewDocument)
                 Button("作品を取り込む…") { presenter.presentOpenPanel() }
                 Spacer()
                 Text("オフラインでも作成・編集できます。")

@@ -32,6 +32,7 @@ struct LibraryPane: View {
                 }
                 .labelStyle(.iconOnly)
                 .help("新しい作品")
+                .disabled(!appState.permitsNewDocument)
                 Button("取り込む", systemImage: "square.and.arrow.down") {
                     documentPanelPresenter.presentOpenPanel()
                 }

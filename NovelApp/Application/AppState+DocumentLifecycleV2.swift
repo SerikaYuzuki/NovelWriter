@@ -251,8 +251,20 @@ extension AppState {
         return await saveNow()
     }
 
+    /// Creating a work is available from the library without opening an editor.
+    /// Editing/exporting the current document still requires a ready workbench.
+    var permitsNewDocument: Bool {
+        guard snapshotSyncV2Application != nil,
+              !isDocumentTransitionInProgress, !isTerminationPending,
+              interactiveAuthOperationCount == 0 else { return false }
+        switch startupState {
+        case .ready, .documentSelection: return true
+        case .loading, .recovery: return false
+        }
+    }
+
     func createNewDocument(expectedSession: DocumentSessionToken? = nil) async -> Bool {
-        guard permitsDocumentTransitionOperation,
+        guard permitsNewDocument,
               expectedSession == nil || expectedSession == documentSessionToken else { return false }
         return await createNewV2Document()
     }
