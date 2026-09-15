@@ -23,6 +23,12 @@ open FUMINIWA.xcodeproj
 
 `FUMINIWA`または`FUMINIWAIOS` schemeを選ぶ。`project.yml`が生成元で、生成物とローカル署名設定はコミットしない。検証は[AGENTS](AGENTS.md)の4段階で選び、重たい検証は`./Scripts/check.sh`を使う。
 
+## AIによる起動・画面確認
+
+任意の開発ツールとしてXcodeBuildMCP 2.7.0を使う（`npm install -g xcodebuildmcp@2.7.0`）。Codex用接続は`.codex/config.toml`、対象と機能は`.xcodebuildmcp/config.yaml`。設定追加後はCodexのMCPを再読み込みする。
+
+先に`./Scripts/generate-project.sh`を実行する。既定schemeは`FUMINIWAIOS`。macOSを扱うときは`FUMINIWA`を明示し、iOSの実行先は利用可能なSimulatorから選ぶ。起動・画面確認の補助に使い、検証段階と`check.sh`は従来どおり。
+
 ## 入口
 
 [作業ルール](AGENTS.md) · [文書一覧](docs/README.md) · [設計](docs/DESIGN.md) · [現在の決定](docs/DECISIONS.md) · [サーバー](SyncServerV2/README.md)
