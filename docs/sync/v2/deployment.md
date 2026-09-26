@@ -147,13 +147,13 @@ Retain the previous image/container and backup before replacing the API.
 The old runtime cannot attest the added schema and must not be restarted
 against version 5 without an explicitly reviewed rollback.
 
-## Exact role-split v2 upgrade: known migrations (0006–0008)
+## Exact role-split v2 upgrade: known migrations (0006–0009)
 
 The explicit `sync_v2_migrator --upgrade-review-20260913` path accepts only an
 attested role-split database with the checked-in migration checksums and a
-complete history through version 5, 6, 7 or 8. Under the existing deployment lock,
+complete history through version 5, 6, 7, 8 or 9. Under the existing deployment lock,
 SQLx applies only the remaining migrations. Ordinary startup does not upgrade.
-The current runtime also requires the account-deletion schema (0008) and refuses an older database. Runtime privileges remain DML-only.
+The current runtime requires the account-deletion schema (0008) and independent AI records/recovery receipts (0009), and refuses an older database. Runtime privileges remain DML-only.
 
 0006 adds the verified Apple authentication watermark and durable provider
 validation state. A verified login supersedes pending validation across all
@@ -173,3 +173,8 @@ See [operational evidence](../../ACCOUNT_RETENTION_OPERATIONS.md) for the last r
 ## Account deletion (0008)
 
 明示削除lifecycle v1はmigration 0008を追加し、runtimeへ新tableのDMLを付与する。明示upgrade flagは上記`--upgrade-review-20260913`を使用し、既知の履歴と対象server instanceを照合する。0008追加後は旧binaryがinventory照合で拒否するため、単純なimage切戻しをしない。適用・復元・backups・検証証跡は[自動運用](../../ACCOUNT_RETENTION_OPERATIONS.md)。
+
+
+## AI records and work recovery (0009)
+
+0009 adds `assistant_records` and `recovery_operations`. Existing snapshot wire data stays unchanged. The runtime receives exact DML grants and USAGE-only access to the AI sequence; account erasure and expired-work purge include these rows. Apply with the same explicit reviewed-upgrade command, after an isolated backup restore and role attestation. A pre-0009 binary must not be restarted against the upgraded inventory. See [AI contract](assistant.md) and [rollout evidence](../../PROTECTION_AI_ACCEPTANCE.md).

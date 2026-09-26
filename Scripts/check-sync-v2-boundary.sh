@@ -40,6 +40,7 @@ fi
 # Other /v1 routes, including anything else in the assistant directory, still fail.
 if rg -n -e '/v1(/|"|\x27)' SyncServerV2/src/http.rs NovelApp NovelAppIOS \
   | rg -v '^NovelApp/WritingAssistant/AssistantClient\.swift:[0-9]+: *(let requestURL = .*https://api\.openai\.com/v1/responses.*|var request = URLRequest\(url: URL\(string: "https://api\.openai\.com/v1/models"\)!\))$' \
+  | rg -v '^NovelApp/WritingAssistant/AssistantChatRequest\.swift:[0-9]+: *url: endpoint\.host == "api\.openai\.com" \? URL\(string: "https://api\.openai\.com/v1/responses"\)! : endpoint,$' \
   | rg -v '^NovelApp/WritingAssistant/AssistantPreferences\.swift:[0-9]+: *defaults\.string\(forKey: "assistant\.endpoint"\) \?\? "https://api\.openai\.com/v1/chat/completions"$'; then
   fail "v1 sync endpoint leaked into v2 production composition"
 fi

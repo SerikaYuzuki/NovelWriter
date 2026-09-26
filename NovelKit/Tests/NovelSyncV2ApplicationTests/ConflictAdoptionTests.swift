@@ -2,10 +2,22 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 @testable import NovelSyncV2Application
+import NovelWritingSupport
 import Testing
 
 @Suite("Snapshot Sync v2 conflict and safe adoption")
 struct ConflictAdoptionTests {
+    @Test func historyCopyFailureCannotFailCommittedKeepBoth() async throws {
+        let store = FailingWritingCopyStore()
+        let fixture = try await ConflictFixture.make(resolutionChoice: .keepBoth, writingStore: store)
+        let result = try await fixture.app.resolveConflict(workID: fixture.workID, action: fixture.action(choice: .keepBoth))
+        let clone = try #require(result.openedWork)
+        #expect(clone.workID != fixture.workID)
+        #expect(try await fixture.app.openLocal(workID: clone.workID).document != nil)
+        #expect(await store.attempts == 1)
+        #expect(await fixture.app.writingCopyRetries[clone.workID] == fixture.workID)
+    }
+
     @Test(
         "three choices durably prepare their closed command kind",
         arguments: [
@@ -269,7 +281,8 @@ private struct ConflictFixture {
         resolutionReply: ApplicationTestRemote.Reply? = nil,
         adoptsServer: Bool = false,
         trailingReply: ApplicationTestRemote.Reply? = nil,
-        gate: InMemorySyncV2DocumentGate = InMemorySyncV2DocumentGate()
+        gate: InMemorySyncV2DocumentGate = InMemorySyncV2DocumentGate(),
+        writingStore: (any WritingLocalPersistence)? = nil
     ) async throws -> ConflictFixture {
         _ = resolutionChoice
         let workID = WorkID(UUID())
@@ -317,7 +330,9 @@ private struct ConflictFixture {
         let state = InMemorySyncV2RuntimeState(
             account: TestAccount(accountID: "account", accountFence: "fence")
         )
-        let app = try applicationTestApp(state: state, remote: remote, gate: gate)
+        let app = try SyncV2Application(mode: .test(TestRuntimeConfiguration()), composition: SyncV2RuntimeComposition(
+            identity: .test, kernel: state, planner: state, remote: remote, gate: gate, library: state, writingStore: writingStore
+        ))
         _ = try await app.checkpoint(
             workID: workID,
             document: localDocument,
@@ -361,5 +376,40 @@ private struct ConflictFixture {
             sourceGeneration: projection.sourceGeneration,
             choice: choice
         )
+    }
+}
+
+private actor FailingWritingCopyStore: WritingLocalPersistence {
+    var attempts = 0
+    func copyHistory(source _: String, destination _: String, newWorkID _: UUID) throws {
+        attempts += 1; throw WritingError.unavailable
+    }
+
+    func retryHistoryCopies() throws {
+        throw WritingError.unavailable
+    }
+
+    func records(namespace _: String) -> [WritingEnvelope] {
+        []
+    }
+
+    func append(_: WritingRecord, namespace _: String) {}
+    func pending(namespace _: String) -> [WritingRecord] {
+        []
+    }
+
+    func accept(_: WritingEnvelope, namespace _: String) {}
+    func cursor(namespace _: String, remote _: String) -> Int64 {
+        0
+    }
+
+    func advance(_: Int64, namespace _: String, remote _: String) {}
+    func claimEdit(id _: UUID, namespace _: String, payload _: String) -> Bool {
+        false
+    }
+
+    func finishEdit(id _: UUID, namespace _: String, state _: String) {}
+    func edit(id _: UUID, namespace _: String) -> WritingEditJournal? {
+        nil
     }
 }

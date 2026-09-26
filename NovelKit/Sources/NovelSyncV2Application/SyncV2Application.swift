@@ -1,6 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
+import NovelWritingSupport
 
 public struct SyncV2OperationResult: Sendable {
     public let state: SyncUIState
@@ -24,6 +25,9 @@ public actor SyncV2Application {
     var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     var automaticChecks: Set<WorkID> = []
     var syncDiagnostics: [WorkID: String] = [:]
+    let writingStore: (any WritingLocalPersistence)?
+    var writingSyncOwners: [String: UUID] = [:]
+    var writingCopyRetries: [WorkID: WorkID] = [:]
     let kernel: any SyncV2LocalKernel
     let planner: any SyncV2CommandPlanner
     let remote: any SyncV2RemoteClient
@@ -70,6 +74,7 @@ public actor SyncV2Application {
             false
         }
         guard valid else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        writingStore = composition.writingStore
         kernel = composition.kernel
         planner = composition.planner
         remote = composition.remote

@@ -12,15 +12,14 @@
 | SQLite・同期 | NovelSyncV2Store / Application / Runtime |
 | Import / Export | NovelSyncV2PortableBridge、NovelStorage、NovelExport |
 | 認証・server | NovelAuth / NovelAuthApple、`SyncServerV2/` |
-| AI送信・回答保存 | `NovelApp/WritingAssistant/`、`Features/AssistantFeedback/`、iOS adapter |
+| AI会話・編集・同期 | `WritingAssistant/`、`AssistantIntegration/`、`ExternalAI/`、NovelWritingSupport / Store、iOS adapter |
 | Apple開発補助 | `.codex/config.toml`、`.xcodebuildmcp/config.yaml`。[使い方](../README.md#aiによる起動画面確認) |
 
-端末SQLiteへの保存後にremote workerを動かす。250 MiB添付は8 MiB単位で送り、全体digestを確認する。長い履歴は非再帰で取得し、128件を理由に打ち切らない。原稿コピー、AIの明示送信、macOS校正反映、感想・アドバイスの保存／同期は実装済み。
+端末SQLiteへの保存後にremote workerを動かす。250 MiB添付は8 MiB単位で送り、全体digestを確認する。長い履歴は非再帰で取得し、128件を理由に打ち切らない。原稿コピー、校正・感想、AIチャット、共通・作品指示の同期、依頼範囲への生成編集と永続Undo、Mac起動中のMCPを実装した。同期作品の削除後1年保管、別作品復元、日単位の復元履歴、再送、小さな5分遅延表示、可読救出も実装済み。
 
 ## 実装が残るもの
 
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
-- 通常の作品削除後の1年保管、別作品としての復元、履歴保持と未同期5分表示。現行との差分は[原稿保全・AI計画](PROTECTION_AI_PLAN.md)。外部backup・鍵退避は2026-09-26に不要と判断済み。
 - iOSの校正本文反映。現在は回答表示まで。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
@@ -31,7 +30,11 @@
 
 いずれも今回の文書更新では実装修正していない。
 
+2026-09-26の実装・全体検証・サーバー反映と端末インストールは[受入記録](PROTECTION_AI_ACCEPTANCE.md)を参照する。
+
 ## 受入が残るもの
+
+AI実APIでの応答・編集、登録済みMCPクライアントとの実利用、Mac／iPhone／iPadでのAI記録と指示の二台同期は別途受入する。
 
 現行版のMac／iPhone／iPadでApple認証、長時間のIME・Undo、offline編集、二端末競合、履歴復元を確認する。署名・配布・clean install等の一般公開条件は[公開受入](COMMERCIALIZATION_IMPLEMENTATION.md)。ローカルテスト・個別画面・過去の実機成功から全項目を完了扱いにしない。
 

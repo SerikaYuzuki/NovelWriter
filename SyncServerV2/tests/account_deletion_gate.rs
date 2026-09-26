@@ -25,6 +25,21 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
         account_auth_epoch: 1,
         account_fence: vec![1u8; 32],
     };
+    for principal in [&ctx.account_a, &ctx.account_b] {
+        let record = fuminiwa_sync_server_v2::assistant_records::AssistantRecord {
+            id: Uuid::new_v4(),
+            work_id: None,
+            kind: "prompt".into(),
+            key: "advice".into(),
+            parent_id: None,
+            created_at: "2026-09-26T06:00:00Z".into(),
+            payload: "{\"text\":\"test\"}".into(),
+        };
+        ctx.repo
+            .append_assistant_record(principal, &record)
+            .await
+            .unwrap();
+    }
     let identity = Uuid::new_v4();
     sqlx::query("INSERT INTO auth_v1.provider_configs(provider_config_id,provider_kind,exact_issuer,allowed_audiences,enabled,config_version) VALUES('retention-test','apple','https://test.invalid',ARRAY['test'],true,1)").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO auth_v1.external_identities(identity_id,account_id,provider_config_id,exact_issuer,lookup_key_version,subject_lookup_hmac,state) VALUES($1,$2,'retention-test','https://test.invalid',1,$3,'active')").bind(identity).bind(account).bind(vec![2u8;32]).execute(pool).await.unwrap();
@@ -80,6 +95,20 @@ async fn explicit_grace_cancel_restart_and_scoped_erasure() {
         .await
         .unwrap();
     assert_eq!(own, 0);
+    let own_ai: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_v2.assistant_records WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let other_ai: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_v2.assistant_records WHERE account_id=$1")
+            .bind(&ctx.account_b.account_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(own_ai, 0);
+    assert_eq!(other_ai, 1);
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_v2.works WHERE account_id=$1")
         .bind(&ctx.account_b.account_id)
         .fetch_one(pool)

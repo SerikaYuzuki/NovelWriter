@@ -70,6 +70,7 @@ struct IOSAdaptiveWritingView: View {
                 IOSWritingOutlineList(store: store, openEpisode: openEpisode)
             }
         }
+        .modifier(WritingSyncPulse(host: store.writingAssistantHost))
         .environment(\.horizontalSizeClass, effectiveHorizontalSizeClass)
         .onAppear {
             if presentedHorizontalSizeClass == nil {
@@ -646,6 +647,7 @@ struct IOSEditorPane: View {
                         return await store.saveAssistantFeedback(feedback, session: session,
                                                                  account: account)
                     },
+                    writingHost: store.writingAssistantHost,
                     chapters: store.document.chapters,
                     captureScope: { scope in
                         guard store.currentEpisodeEditingToken == editingToken,

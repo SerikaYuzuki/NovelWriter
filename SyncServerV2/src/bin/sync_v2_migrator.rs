@@ -625,10 +625,15 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
             .fetch_all(pool)
             .await?;
     let previous: Vec<_> = (1..=5).map(|version| (version, true)).collect();
-    let current: Vec<_> = (1..=8).map(|version| (version, true)).collect();
+    let current: Vec<_> = (1..=9).map(|version| (version, true)).collect();
     let intermediate: Vec<_> = (1..=6).map(|version| (version, true)).collect();
     let review: Vec<_> = (1..=7).map(|version| (version, true)).collect();
-    if versions != previous && versions != intermediate && versions != review && versions != current
+    let retention: Vec<_> = (1..=8).map(|version| (version, true)).collect();
+    if versions != previous
+        && versions != intermediate
+        && versions != review
+        && versions != retention
+        && versions != current
     {
         return Err("review upgrade requires exactly the known v2 migration history".into());
     }

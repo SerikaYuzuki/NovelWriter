@@ -73,6 +73,7 @@ struct NovelWorkbenchView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
+        .modifier(WritingSyncPulse(host: appState.writingAssistantHost))
         .navigationTitle(documentDisplayTitle)
         .modifier(WorkbenchToolbarTitleVisibility())
         .modifier(EpisodeRenameDialog(request: $episodePendingRename))
@@ -146,6 +147,8 @@ struct NovelWorkbenchView: View {
             saveFeedback: { feedback in
                 await appState.saveAssistantFeedback(feedback, session: session, account: account)
             },
+            writingHost: appState.writingAssistantHost,
+            externalSettings: AnyView(WritingMCPSettingsView(controller: appState.writingMCPController)),
             chapters: appState.document.chapters,
             captureScope: { scope in
                 guard appState.documentSessionToken == session,

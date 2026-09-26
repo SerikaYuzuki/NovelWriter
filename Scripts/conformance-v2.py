@@ -231,9 +231,22 @@ def check_protection(repo: Path) -> int:
     return 3
 
 
+def check_assistant(repo: Path) -> int:
+    base = repo / "docs/sync/v2"
+    schema = read_json(base / "assistant-record.schema.json")
+    record = read_json(base / "fixtures/canonical/assistant-record.json")
+    assert_canonical(base / "fixtures/canonical/assistant-record.json")
+    assert set(schema["required"]) <= set(record) <= set(schema["properties"])
+    assert schema["additionalProperties"] is False
+    assert record["kind"] in schema["properties"]["kind"]["enum"]
+    assert isinstance(json.loads(record["payload"]), dict)
+    assert (base / "assistant-records.sql").read_bytes() == (repo / "SyncServerV2/migrations/0009_assistant_records.sql").read_bytes()
+    return 1
+
+
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
-    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo)
+    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo) + check_assistant(repo)
     print(f"v2 independent canonical fixture checks passed ({count} vectors)")
     return 0
 

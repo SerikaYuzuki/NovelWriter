@@ -32,3 +32,6 @@
 2026-09-14の反映記録はserverの`releases/retention-final-20260914/`（途中記録は`releases/retention-20260913/`）。当時のimageは`sha256:c6e4ed3b3e67eb53880ee1ddf00fb4fb3e37a5b0f7922e1c8cef80cb472b1864`。隔離DBの期限境界・復元・migration、切替前後のデータ保持とhealthを確認した記録であり、現在の稼働image・日次成功は運用時に読み返す。
 
 schema 0008を知らない旧binaryへ単純に戻せない。切り戻しは新規予約の有無とschemaを照合した手順か、前進修正で行う。実利用者の削除、30日／1年の実時間経過、Apple実credential失効、アプリの予約／取消画面の受入はこの記録に含まない。
+
+
+2026-09-26に原稿保全とAI記録を反映した。現行imageは`sha256:f07038268fe26a9ff063bb23042448c1d8b8a46c9b62b4bf42a6d91747943901`、schema 0009。証跡は`releases/protection-ai-20260926/`の`rehearsal.json`、`live-migration.log`、`deployed.json`。更新前backupを所有者・ACL付きで別DBへ復元して8→9 migrationを確認し、本番更新後も件数・health・公開TLS・認証必須を確認した。更新後の暗号化backupも成功。詳細と端末受入の区別は[受入記録](PROTECTION_AI_ACCEPTANCE.md)。schema 0009を知らない旧binaryへの単純な切戻しは行わない。

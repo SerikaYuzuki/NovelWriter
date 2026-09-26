@@ -129,6 +129,8 @@ pub async fn sweep(pool: &PgPool) -> Result<u64, sqlx::Error> {
         sqlx::query("DELETE FROM auth_v1.external_identity_secrets WHERE identity_id IN (SELECT identity_id FROM auth_v1.external_identities WHERE account_id=$1)").bind(&account).execute(&mut *tx).await?;
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=NULL,head_generation=NULL WHERE account_id=$1").bind(&account).execute(&mut *tx).await?;
         for table in [
+            "assistant_records",
+            "recovery_operations",
             "conflict_events",
             "quarantine_records",
             "catalog_events",

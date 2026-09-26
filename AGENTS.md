@@ -24,7 +24,7 @@
 - 編集中の本文はEditorKitが所有する。IME中のモデル反映・plugin介入を避け、TextKit 2を使う。公開APIへネイティブtext viewを出さない。
 - 作品切替・復元はIME確定→ローカル保存→install。取得時と完了時のWorkID/session/account、世代、document operation gateを守り、古い完了を別作品へ適用しない。読込失敗では原稿を保持する。
 - `NovelCore`は依存ゼロ。章・話の順序は配列が正。package内部はNovelStorage、通常保存はv2へ閉じ込める。互換変更はDecision・schema・fixture・該当文書を揃える。
-- AIは対象本文のpreview後に明示送信する。キー・HTTP・設定は本文保存から分離し、自動送信・自動本文反映をしない。原稿コピーは指定範囲のplain text。
+- AIは明示送信する。校正・感想は本文preview、チャットは会話開始時の作品参照同意と依頼ごとの編集範囲を守る。指定範囲内の直接編集は共通編集サービスと永続Undoを通す。キー・HTTP・設定は本文保存から分離する。MCPは初回登録した接続を信頼し、申告範囲を機械的に制限する。原稿コピーは指定範囲のplain text。
 
 ## 進め方と完了
 

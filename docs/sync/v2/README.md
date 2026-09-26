@@ -69,3 +69,5 @@ The independent suite intentionally disables PostgreSQL integration. Real DB tra
 取り込み・DB更新の制約は[migration](migration.md)を参照する。
 
 - [保管と別作品復元API](protection.md)、[復旧の操作手順](../../WORK_RECOVERY.md)。
+
+- [AI会話・プロンプト・MCP](assistant.md): 本文snapshotと独立した記録lane、scopeとUndo、保管・復元。

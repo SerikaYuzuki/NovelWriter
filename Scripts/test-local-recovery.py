@@ -35,6 +35,22 @@ class LocalRecoveryTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), before)
             with self.assertRaises(FileExistsError):
                 recovery.export_database(source, root / "recovered")
+    def test_recovers_ai_history_without_changing_original(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            source = root / "writing-assistant.sqlite"
+            output = root / "export"; output.mkdir()
+            with sqlite3.connect(source) as db:
+                db.executescript("CREATE TABLE records(namespace TEXT,bytes TEXT,sequence INTEGER,conflicted INTEGER,local_order INTEGER); CREATE TABLE edits(namespace TEXT,id TEXT,payload TEXT,state TEXT);")
+                record = {"id":"example", "kind":"message", "key":"chat", "createdAt":"2026-09-26T00:00:00Z", "payload":json.dumps({"text":"原稿についての会話"})}
+                db.execute("INSERT INTO records VALUES(?,?,1,0,1)",("work:test",json.dumps(record)))
+                db.execute("INSERT INTO edits VALUES('work:test','request','{}','prepared')")
+            before = source.read_bytes()
+            recovery.export_assistant(source, output)
+            self.assertIn("原稿についての会話",(output / "AI会話とプロンプト.md").read_text())
+            self.assertEqual(json.loads((output / "AI変更履歴.json").read_text())[0]["state"],"prepared")
+            self.assertEqual(source.read_bytes(),before)
+
     def test_rejects_escaping_paths(self):
         for path in [["..", "secret"], ["/tmp/secret"], ["a\\b"]]:
             with self.assertRaises(ValueError):

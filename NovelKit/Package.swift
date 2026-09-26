@@ -8,6 +8,8 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
+        .library(name: "NovelWritingSupport", targets: ["NovelWritingSupport"]),
+        .library(name: "NovelWritingStore", targets: ["NovelWritingStore"]),
         .library(name: "NovelCore", targets: ["NovelCore"]),
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
@@ -23,6 +25,10 @@ let package = Package(
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
     targets: [
+        .target(name: "NovelWritingSupport", dependencies: ["NovelCore"]),
+        .target(name: "NovelWritingStore", dependencies: ["NovelWritingSupport", "CSQLite"]),
+        .testTarget(name: "NovelWritingSupportTests", dependencies: ["NovelWritingSupport", "NovelCore"]),
+        .testTarget(name: "NovelWritingStoreTests", dependencies: ["NovelWritingStore", "NovelWritingSupport"]),
         // NovelCore: 依存なし。他モジュール・UIに依存してはならない(DESIGN.md 9.1)。
         .target(
             name: "NovelCore"
@@ -47,7 +53,7 @@ let package = Package(
         ),
         .target(
             name: "NovelSyncV2Application",
-            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth"]
+            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth", "NovelWritingSupport"]
         ),
         .target(
             name: "NovelSyncV2Runtime",
@@ -56,6 +62,8 @@ let package = Package(
                 "NovelSyncV2",
                 "NovelSyncV2Store",
                 "NovelSyncV2Application",
+                "NovelWritingStore",
+                "NovelWritingSupport",
                 "NovelAuth"
             ]
         ),

@@ -1,4 +1,5 @@
 import NovelCore
+import NovelWritingSupport
 import SwiftUI
 
 /// Requests expire on context change; the host owns guarded native-editor application.
@@ -11,6 +12,9 @@ struct AssistantPanelView: View {
     let close: () -> Void
     var applyProofreading: ((AssistantManuscript, String) -> Bool)?
     var saveFeedback: ((AssistantFeedback) async -> Bool)?
+    var writingHost: WritingAssistantHost?
+    var externalSettings: AnyView?
+    @State private var showingExternalSettings = false
     var chapters: [Chapter] = []
     var captureScope: ((AssistantScope) throws -> AssistantManuscript)?
     @State private var scope = AssistantScope.current
@@ -31,6 +35,9 @@ struct AssistantPanelView: View {
             HStack {
                 Text("AI支援").font(.headline)
                 Spacer()
+                if externalSettings != nil {
+                    Button("外部AI", systemImage: "cable.connector") { showingExternalSettings = true }.labelStyle(.iconOnly)
+                }
                 Button("設定", systemImage: "gearshape") { showingSettings = true }
                     .labelStyle(.iconOnly)
                 Button("閉じる", systemImage: "xmark", action: close).labelStyle(.iconOnly)
@@ -38,43 +45,52 @@ struct AssistantPanelView: View {
             Picker("用途", selection: $purpose) {
                 ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
-            if purpose == .proofreading {
-                Text("校正する範囲：現在の1話（\(episodeTitle)）")
-                    .font(.subheadline)
+            if purpose == .advice, let writingHost {
+                AssistantChatView(host: writingHost, defaults: defaults)
             } else {
-                AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $scope)
-            }
-            HStack {
-                Button("本文を確認して送信…", action: prepare)
-                    .disabled(requestTask != nil || effectiveScope.selectedEpisodeIDs(
-                        chapters: chapters, currentID: currentEpisodeID
-                    ).isEmpty)
-                if requestTask != nil {
-                    ProgressView().controlSize(.small)
-                    Button("中止") { cancel(); notice = "中止しました。" }
+                if purpose == .proofreading {
+                    Text("校正する範囲：現在の1話（\(episodeTitle)）")
+                        .font(.subheadline)
+                } else {
+                    AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $scope)
                 }
+                HStack {
+                    Button("本文を確認して送信…", action: prepare)
+                        .disabled(requestTask != nil || effectiveScope.selectedEpisodeIDs(
+                            chapters: chapters, currentID: currentEpisodeID
+                        ).isEmpty)
+                    if requestTask != nil {
+                        ProgressView().controlSize(.small)
+                        Button("中止") { cancel(); notice = "中止しました。" }
+                    }
+                }
+                if let notice {
+                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                }
+                if unsavedFeedback != nil {
+                    Button(isSavingFeedback ? "保存中…" : "回答を保存し直す") {
+                        Task { await persistFeedback() }
+                    }.disabled(isSavingFeedback)
+                }
+                Divider()
+                ScrollView {
+                    AssistantMarkdownView(source: answer.isEmpty ? "校正・感想・アドバイスがここに表示されます。" : answer)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: .infinity)
             }
-            if let notice {
-                Text(notice).font(.caption).foregroundStyle(.secondary)
-            }
-            if unsavedFeedback != nil {
-                Button(isSavingFeedback ? "保存中…" : "回答を保存し直す") {
-                    Task { await persistFeedback() }
-                }.disabled(isSavingFeedback)
-            }
-            Divider()
-            ScrollView {
-                AssistantMarkdownView(source: answer.isEmpty ? "校正・感想・アドバイスがここに表示されます。" : answer)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: .infinity)
         }
         .padding(16)
         .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showingExternalSettings) {
+            NavigationStack {
+                externalSettings.toolbar { Button("閉じる") { showingExternalSettings = false } }
+            }.frame(minWidth: 480, minHeight: 480)
+        }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
-                AssistantSettingsView(defaults: defaults)
+                AssistantSettingsView(defaults: defaults, writingHost: writingHost)
                     .toolbar { Button("閉じる") { showingSettings = false } }
             }.frame(minWidth: 340, minHeight: 480)
         }
@@ -119,22 +135,42 @@ struct AssistantPanelView: View {
     }
 
     private func prepare() {
-        do {
-            let configuration = try AssistantPreferences(defaults: defaults).configuration(purpose)
-            let manuscript: AssistantManuscript
-            if effectiveScope == .current {
-                manuscript = try capture()
-            } else {
-                guard let captureScope else { throw AssistantError.emptyContent }
-                manuscript = try captureScope(effectiveScope)
+        let id = UUID(); requestID = id
+        let chosenPurpose = purpose
+        requestTask = Task { @MainActor in
+            defer {
+                if requestID == id {
+                    requestTask = nil
+                }
             }
-            // Validate size before showing a preview; do not read credentials until Send.
-            _ = try configuration.request(manuscript: manuscript, apiKey: "validation-only")
-            pendingPurpose = purpose
-            pendingConfiguration = configuration
-            pending = manuscript
-            notice = nil
-        } catch { notice = error.localizedDescription }
+            do {
+                let preferences = AssistantPreferences(defaults: defaults)
+                let configuration: AssistantConfiguration
+                if let writingHost {
+                    try? await writingHost.synchronize()
+                    try await WritingPrompts.migrateIfNeeded(host: writingHost, defaults: defaults)
+                    let prompt = try await WritingPrompts.effective(host: writingHost, defaults: defaults, purpose: chosenPurpose)
+                    configuration = try AssistantConfiguration(endpoint: preferences.endpoint, model: preferences.model(chosenPurpose),
+                                                               prompt: prompt + "\n" + chosenPurpose.requestInstruction)
+                } else {
+                    configuration = try preferences.configuration(chosenPurpose)
+                }
+                guard !Task.isCancelled, requestID == id else { return }
+                let manuscript: AssistantManuscript
+                if effectiveScope == .current {
+                    manuscript = try capture()
+                } else {
+                    guard let captureScope else { throw AssistantError.emptyContent }
+                    manuscript = try captureScope(effectiveScope)
+                }
+                _ = try configuration.request(manuscript: manuscript, apiKey: "validation-only")
+                pendingPurpose = chosenPurpose; pendingConfiguration = configuration; pending = manuscript; notice = nil
+            } catch {
+                if requestID == id {
+                    notice = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func send() {
@@ -161,6 +197,19 @@ struct AssistantPanelView: View {
                     }
                 }
                 do {
+                    if let writingHost {
+                        struct RequestRecord: Encodable { let state: String; let effectivePrompt: String; let purpose: String }
+                        try await writingHost.append(WritingRecord(
+                            workId: writingHost.capture().workId,
+                            kind: "request",
+                            key: id.uuidString.lowercased(),
+                            payload: WritingRecord.payload(RequestRecord(
+                                state: "sent",
+                                effectivePrompt: effectiveConfig.prompt,
+                                purpose: requestPurpose.id
+                            ))
+                        ))
+                    }
                     let result = try await AssistantClient.send(request)
                     guard !Task.isCancelled, requestID == id else { return }
                     if requestPurpose == .proofreading, shouldApply, let applyProofreading {

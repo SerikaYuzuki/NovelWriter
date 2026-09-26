@@ -693,6 +693,7 @@ async fn postgres_and_http_scenarios_are_opt_in() {
         .expect("Snapshot Sync v2 PostgreSQL scenario failed");
     verify_http_contract(&context).await;
     verify_chunk_upload_http(&context).await;
+    verify_assistant_lane(&context).await;
     verify_work_deletion(&context).await;
     context.repo.pool.close().await;
 }
@@ -868,6 +869,29 @@ async fn verify_work_deletion(context: &ScenarioContext) {
     .await
     .unwrap();
     assert_eq!(parent_count, 0);
+    let ai = context
+        .repo
+        .assistant_record_page(&context.account_a, Some(recovery.new_work_id), 0)
+        .await
+        .unwrap();
+    assert!(!ai["items"].as_array().unwrap().is_empty());
+    for item in ai["items"].as_array().unwrap() {
+        let payload: Value =
+            serde_json::from_str(item["record"]["payload"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            payload["recoveryProvenance"]["workId"],
+            context.primary_work.to_string()
+        );
+        assert!(payload["recoveryProvenance"]["capturedAt"].is_string());
+    }
+    let wrong_source = context
+        .repo
+        .recover_work(&context.account_a, context.foreign_work, &recovery)
+        .await;
+    assert!(
+        wrong_source.is_err(),
+        "receipt binds source as well as destination"
+    );
     let mut reused = recovery.clone();
     reused.new_document_id = Uuid::new_v4();
     assert!(context
@@ -882,9 +906,22 @@ async fn verify_work_deletion(context: &ScenarioContext) {
         .unwrap();
     sqlx::query("UPDATE sync_v2.deleted_works SET deleted_at=now()-interval '1 year 1 second' WHERE account_id=$1")
         .bind(account).execute(&context.repo.pool).await.unwrap();
+    assert_eq!(
+        context
+            .repo
+            .recover_work(&context.account_a, context.primary_work, &recovery)
+            .await
+            .unwrap(),
+        recovered
+    );
+    let expired = fuminiwa_sync_server_v2::work_recovery::RecoveryRequest {
+        operation_id: Uuid::new_v4(),
+        new_work_id: Uuid::new_v4(),
+        ..recovery.clone()
+    };
     assert!(context
         .repo
-        .recover_work(&context.account_a, context.primary_work, &recovery)
+        .recover_work(&context.account_a, context.primary_work, &expired)
         .await
         .is_err());
     while context.repo.purge_expired_works().await.unwrap() > 0 {}
@@ -967,4 +1004,107 @@ async fn verify_chunk_upload_http(context: &ScenarioContext) {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert_eq!(response.headers()["cache-control"], "no-store");
     }
+}
+
+async fn verify_assistant_lane(context: &ScenarioContext) {
+    use fuminiwa_sync_server_v2::assistant_records::AssistantRecord;
+    let make = |work, kind: &str, parent| AssistantRecord {
+        id: Uuid::new_v4(),
+        work_id: work,
+        kind: kind.into(),
+        key: "advice".into(),
+        parent_id: parent,
+        created_at: "2026-09-26T06:00:00.123Z".into(),
+        payload: "{\"text\":\"Keep the voice\"}".into(),
+    };
+    let first = make(None, "prompt", None);
+    let ack = context
+        .repo
+        .append_assistant_record(&context.account_a, &first)
+        .await
+        .unwrap();
+    assert_eq!(ack["conflicted"], false);
+    assert_eq!(
+        context
+            .repo
+            .append_assistant_record(&context.account_a, &first)
+            .await
+            .unwrap(),
+        ack
+    );
+    let mut reused = first.clone();
+    reused.payload = "{}".into();
+    assert!(context
+        .repo
+        .append_assistant_record(&context.account_a, &reused)
+        .await
+        .is_err());
+    let second = make(None, "prompt", Some(first.id));
+    let conflict = make(None, "prompt", Some(first.id));
+    assert_eq!(
+        context
+            .repo
+            .append_assistant_record(&context.account_a, &second)
+            .await
+            .unwrap()["conflicted"],
+        false
+    );
+    assert_eq!(
+        context
+            .repo
+            .append_assistant_record(&context.account_a, &conflict)
+            .await
+            .unwrap()["conflicted"],
+        true
+    );
+    let page = context
+        .repo
+        .assistant_record_page(&context.account_b, None, 0)
+        .await
+        .unwrap();
+    assert!(page["items"].as_array().unwrap().is_empty());
+    let bad = make(Some(context.foreign_work), "message", None);
+    assert!(context
+        .repo
+        .append_assistant_record(&context.account_a, &bad)
+        .await
+        .is_err());
+    let message = make(Some(context.primary_work), "message", None);
+    let (status, _, bytes) = request(
+        context,
+        &context.account_a.account_id,
+        "POST",
+        "/v2/assistant/records",
+        Some(serde_json::to_vec(&message).unwrap()),
+        Some("application/json"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let ack: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(ack["record"]["createdAt"], message.created_at);
+    let (status, _, bytes) = get(
+        context,
+        &context.account_a.account_id,
+        &format!("/v2/assistant/records?workId={}", context.primary_work),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let forbidden = make(None, "message", None);
+    assert!(context
+        .repo
+        .append_assistant_record(&context.account_a, &forbidden)
+        .await
+        .is_err());
 }

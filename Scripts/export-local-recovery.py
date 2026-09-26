@@ -93,8 +93,30 @@ def export_database(source: Path, destination: Path) -> int:
                         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                         path.write_bytes(checked(row[0], digest))
                 count += 1
+    assistant = source.with_name("writing-assistant.sqlite")
+    if assistant.exists():
+        export_assistant(assistant, destination)
     (destination / "復旧結果.txt").write_text(f"{count}作品を救出しました。元データは変更していません。\n", encoding="utf-8")
     return count
+
+
+def export_assistant(source: Path, destination: Path) -> None:
+    # Captured separately: the AI lane and the manuscript snapshot may have
+    # different timestamps. Preserve raw records as well as readable messages.
+    with sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True) as original, sqlite3.connect(":memory:") as db:
+        original.backup(db)
+        records = []
+        messages = []
+        for namespace, raw, sequence, conflicted in db.execute("SELECT namespace,bytes,sequence,conflicted FROM records ORDER BY local_order"):
+            record = json.loads(raw)
+            records.append({"namespace": namespace, "record": record, "sequence": sequence, "conflicted": bool(conflicted)})
+            payload = json.loads(record["payload"])
+            if record["kind"] in ("message", "prompt"):
+                messages.append(f"## {record['kind']} / {record['key']} / {record['createdAt']}\n\n{payload.get('text', '')}")
+        (destination / "AI記録.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+        (destination / "AI会話とプロンプト.md").write_text("\n\n".join(messages), encoding="utf-8")
+        journal = [dict(namespace=row[0], id=row[1], payload=json.loads(row[2]), state=row[3]) for row in db.execute("SELECT namespace,id,payload,state FROM edits")]
+        (destination / "AI変更履歴.json").write_text(json.dumps(journal, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

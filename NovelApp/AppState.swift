@@ -115,6 +115,7 @@ final class AppState {
     var snapshotSyncRemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var snapshotSyncCurrentWorkAccountState: SyncV2LibraryAccountState?
     @ObservationIgnored var snapshotSyncAutoAdoptionTask: Task<Void, Never>?
+    @ObservationIgnored var writingMCPControllerStorage: WritingMCPController?
     var manuscriptCopyNotice: ManuscriptCopyNotice?
     var isSnapshotSyncInFlight = false
     var externalDocumentOpenErrorMessage: String?

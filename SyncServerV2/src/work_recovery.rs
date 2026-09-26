@@ -6,6 +6,7 @@ use crate::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::Row;
 use uuid::Uuid;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -62,6 +63,15 @@ impl Repository {
         let selected = decode_digest(&request.snapshot_id).map_err(SyncError::SchemaViolation)?;
         let mut tx = self.pool.begin().await?;
         self.scope(&mut tx, p).await?;
+        let digest = sha256(
+            &canonical_json(&json!({"sourceWorkId":source,"request":request}))
+                .map_err(|_| SyncError::InvalidCanonicalBytes)?,
+        );
+        if let Some(receipt)=sqlx::query("SELECT request_digest,response_bytes FROM sync_v2.recovery_operations WHERE account_id=$1 AND operation_id=$2")
+            .bind(&p.account_id).bind(request.operation_id).fetch_optional(&mut *tx).await? {
+            if receipt.try_get::<Vec<u8>,_>("request_digest")? != digest {return Err(SyncError::CommandIdReused);}
+            return strict_json(&receipt.try_get::<Vec<u8>,_>("response_bytes")?);
+        }
         let source_bytes: Vec<u8> = sqlx::query_scalar("SELECT s.manifest_bytes FROM sync_v2.snapshots s JOIN sync_v2.works w USING(account_id,work_id) WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3 AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=s.account_id AND d.work_id=s.work_id AND (d.deleted_at AT TIME ZONE 'UTC') + interval '1 year' <= (clock_timestamp() AT TIME ZONE 'UTC'))")
             .bind(&p.account_id).bind(source).bind(selected.as_slice()).fetch_optional(&mut *tx).await?.ok_or(SyncError::NotFound)?;
         if sha256(&source_bytes) != selected {
@@ -116,9 +126,21 @@ impl Repository {
             let cmd = parse_command(&bytes)?;
             self.command_in_transaction(&mut tx, p, &cmd).await?;
         }
-        tx.commit().await?;
-        Ok(
-            json!({"result":"applied","operationId":request.operation_id,"newWorkId":request.new_work_id,"newDocumentId":request.new_document_id,"snapshotId":root_id}),
+        Self::copy_assistant_records(
+            &mut tx,
+            &p.account_id,
+            source,
+            request.new_work_id,
+            request.operation_id,
+            &request.snapshot_id,
         )
+        .await?;
+        let response = json!({"result":"applied","operationId":request.operation_id,"newWorkId":request.new_work_id,"newDocumentId":request.new_document_id,"snapshotId":root_id});
+        let response_bytes =
+            canonical_json(&response).map_err(|_| SyncError::InvalidCanonicalBytes)?;
+        sqlx::query("INSERT INTO sync_v2.recovery_operations(account_id,operation_id,request_digest,response_bytes) VALUES($1,$2,$3,$4)")
+            .bind(&p.account_id).bind(request.operation_id).bind(digest.as_slice()).bind(response_bytes).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(response)
     }
 }

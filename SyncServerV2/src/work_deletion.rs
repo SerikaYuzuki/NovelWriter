@@ -69,6 +69,7 @@ impl Repository {
         sqlx::query("DELETE FROM sync_v2.conflict_events WHERE account_id=$1 AND conflict_id IN (SELECT conflict_id FROM sync_v2.active_conflicts WHERE account_id=$1 AND work_id=$2)")
             .bind(account).bind(work).execute(&mut **tx).await?;
         for table in [
+            "assistant_records",
             "quarantine_records",
             "catalog_events",
             "head_events",

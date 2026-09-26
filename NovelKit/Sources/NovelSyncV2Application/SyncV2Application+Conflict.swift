@@ -21,6 +21,7 @@ public extension SyncV2Application {
                 guard opened.workID == preparedWorkID else {
                     throw SyncV2ApplicationError.workNotFound
                 }
+                await copyWritingHistory(source: workID, destination: preparedWorkID)
                 recordOpened(opened)
                 openedWork = opened
             } else {

@@ -48,6 +48,7 @@
 | `NovelSyncV2Runtime` | 実store / HTTP / scope resolverのcomposition |
 | `NovelSyncV2PortableBridge` | 検証済みpackageとv2作品の明示Import / Export変換 |
 | `NovelAuth` / `NovelAuthApple` | session / HTTP認証とApple・Keychain境界 |
+| `NovelWritingSupport` / `NovelWritingStore` | AI記録・範囲付き編集の値型と検証 / 本文と独立したSQLite・outbox・Undo journal |
 | `NovelStorage` / `NovelExport` | package codec / 配布用原稿の生成 |
 | `EditorKit` / `NovelUI` / `PreviewSupport` | 本文エディタ / 共有UI / 固定previewデータ |
 | `SyncServerV2/` | `/v2`同期、`auth_v1`認証、PostgreSQL、運用境界 |
@@ -105,7 +106,7 @@ IME変換中はモデル反映もプラグイン介入もしない。変換確�
 
 ### 4.9 AI支援
 
-原稿コピーはD-094のplain textとし、AI支援はD-089に基づき校正は現在の1話、感想・アドバイスは選択した話をpreview後にOpenAI対応APIへ送信できる。共有の`NovelApp/WritingAssistant/`は文字列payload・設定・Keychain・HTTP・表示を担当し、EditorKitや同期moduleには依存しない。macOSの校正反映は明示操作と本文・sessionの一致検査を通す。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
+原稿コピーはD-094のplain text。校正・感想はD-089のpreview後に明示送信し、アドバイスはD-098の会話と依頼単位の編集を使う。共有`WritingAssistant`はHTTP・設定・Keychain・表示、`NovelWritingSupport`は機械的な範囲検査、`NovelWritingStore`は独立した記録・同期待ち・Undoを担当する。Mac/iOS adapterがEditorKitとローカルcheckpointへ接続し、MCPも同じ編集窓口を通る。[WRITING_ASSISTANT](WRITING_ASSISTANT.md)参照。
 
 ### 4.10 作品棚
 
@@ -201,4 +202,4 @@ AIのHTTP・Keychainは共有WritingAssistant内に置き、本文保存やEdito
 - リアルタイム共同編集、本文の自動3-way merge、時刻による競合winnerの自動選択。
 - 外部原本のopen-in-place、SQLite DB自体のonline共有、旧CloudKit/v1へのfallback。
 - ログイン後の既存unbound作品の自動adopt、別AccountIDへのWorkIDの付け替え。
-- 確認なしのAI送信・自動本文書換え。
+- 明示送信なしのAI送信、依頼で許可した範囲外の書換え。

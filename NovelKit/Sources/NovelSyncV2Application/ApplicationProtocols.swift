@@ -1,5 +1,6 @@
 import Foundation
 import NovelSyncV2
+import NovelWritingSupport
 
 public enum SyncV2CommandPlan: Sendable {
     case idle
@@ -74,6 +75,8 @@ public extension SyncV2CommandPlanner {
 /// capability/upload/register/publish or conflict/restore sequence internally;
 /// the application service never builds URLs or interprets HTTP/SQL details.
 public protocol SyncV2RemoteClient: Sendable {
+    func appendWritingRecord(_ record: WritingRecord, binding: SyncV2AccountScopeBinding) async throws -> WritingEnvelope
+    func writingRecordPage(workID: UUID?, after: Int64, binding: SyncV2AccountScopeBinding) async throws -> WritingRecordPage
     func protectedWorks() async throws -> [SyncV2ProtectedWork]
     func recoveryPoints(workID: WorkID) async throws -> [SyncV2RecoveryPoint]
     func recoverWork(workID: WorkID, request: SyncV2RecoveryRequest) async throws
@@ -119,6 +122,7 @@ public extension SyncV2RemoteClient {
 }
 
 public protocol SyncV2LocalKernel: Sendable {
+    func writingContext(workID: WorkID) async throws -> SyncV2WritingContext
     func localRescuableWorks() async throws -> [SyncV2ProtectedWork]
     func oldestUnreceivedChange(workID: WorkID) async throws -> Date?
     func rescueLocalWork(sourceWorkID: WorkID, newWorkID: WorkID, newDocumentID: DocumentID) async throws -> SyncV2OpenedWork

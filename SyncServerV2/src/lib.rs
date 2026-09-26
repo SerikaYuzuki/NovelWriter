@@ -25,3 +25,6 @@ pub mod upload_chunks;
 
 mod protection_http;
 pub mod work_recovery;
+
+mod assistant_http;
+pub mod assistant_records;

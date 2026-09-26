@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Snapshot Sync v2 assistant record",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "workId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": [
+        "prompt",
+        "conversation",
+        "message",
+        "request",
+        "edit"
+      ]
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "parentId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "string",
+      "description": "JSON object encoded as a string; 1000000 UTF-8 bytes, with a bounded recovery provenance allowance"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "key",
+    "createdAt",
+    "payload"
+  ]
+}

@@ -18,17 +18,21 @@ mkdir -p "$swift_scratch/cache" "$swift_scratch/clang"
 (
   cd NovelKit
   env -u FUMINIWA_V2_TEST_DATABASE_URL \
+    FUMINIWA_ASSISTANT_INTEROP_FIXTURE="$swift_scratch/assistant-record.json" \
     CLANG_MODULE_CACHE_PATH="$swift_scratch/clang" \
     swift test \
       --disable-sandbox \
       --scratch-path "$swift_scratch" \
       --cache-path "$swift_scratch/cache" \
       --manifest-cache local \
-      --filter NovelSyncV2ConformanceTests
+      --filter 'NovelSyncV2ConformanceTests|recordTimestampIsRFC3339AndExportsInteropFixture'
 )
+
+test -s "$swift_scratch/assistant-record.json"
 
 echo "==> v2 canonical fixture integrity (Rust)"
 env -u FUMINIWA_V2_TEST_DATABASE_URL -u FUMINIWA_ACCOUNT_DELETION_TEST_URL -u AUTH_V2_TEST_DATABASE_URL \
+  FUMINIWA_ASSISTANT_INTEROP_FIXTURE="$swift_scratch/assistant-record.json" \
   cargo test --manifest-path SyncServerV2/Cargo.toml --tests
 
 echo "==> v2 PostgreSQL integration (explicitly disabled in local gate)"

@@ -75,6 +75,8 @@ targets:
       - package: NovelKit
         product: NovelCore
       - package: NovelKit
+        product: NovelWritingSupport
+      - package: NovelKit
         product: NovelStorage
       - package: NovelKit
         product: EditorKit
@@ -150,6 +152,8 @@ targets:
     dependencies:
       - package: NovelKit
         product: NovelCore
+      - package: NovelKit
+        product: NovelWritingSupport
       - package: NovelKit
         product: NovelStorage
       - package: NovelKit

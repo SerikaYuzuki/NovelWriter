@@ -8,7 +8,7 @@
 | 利用者判断 | [OWNER_DECISIONS](OWNER_DECISIONS.md)。採択済み設計は[DECISIONS](DECISIONS.md) |
 | 責務・依存・EditorKit | [DESIGN](DESIGN.md) |
 | 見た目・操作 | [STYLE](STYLE.md)、[macOS toolbar](TOOLBAR.md)、[iOS](IOS.md) |
-| コピー・AI | [原稿コピー](CLIPBOARD_AI_ASSIST.md)、[AI支援](WRITING_ASSISTANT.md) |
+| コピー・AI | [原稿コピー](CLIPBOARD_AI_ASSIST.md)、[AI支援](WRITING_ASSISTANT.md)、[原稿保全・AI反映記録](PROTECTION_AI_ACCEPTANCE.md) |
 | package・原稿出力 | [互換契約](CROSS_PLATFORM.md)、[EXPORT](EXPORT.md) |
 | 保存・同期 | [概要](SNAPSHOT_SYNC_V2.md)、変更対象の[wire/schema/fixture](sync/v2/README.md) |
 | 認証 | [AUTH](AUTH.md)、[Auth v1契約](auth/v1/README.md) |

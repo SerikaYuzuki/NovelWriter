@@ -2,6 +2,7 @@ import Foundation
 import NovelAuth
 import NovelSyncV2Application
 import NovelSyncV2Store
+import NovelWritingStore
 import OSLog
 
 private let snapshotSyncV2RuntimeLogger = Logger(
@@ -52,7 +53,8 @@ public enum SnapshotSyncV2Runtime {
                 planner: planner,
                 remote: remote,
                 gate: InMemorySyncV2DocumentGate(),
-                library: kernel
+                library: kernel,
+                writingStore: try? WritingSQLiteStore(root: configuration.localRoot.url)
             )
         case .preview:
             let state = InMemorySyncV2RuntimeState(readOnly: true)
@@ -104,7 +106,8 @@ public enum SnapshotSyncV2Runtime {
                 planner: planner,
                 remote: remote,
                 gate: documentGate,
-                library: kernel
+                library: kernel,
+                writingStore: try? WritingSQLiteStore(root: configuration.localRoot.url)
             )
         }
         let app = try SyncV2Application(mode: mode, composition: composition)

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AssistantSettingsView: View {
     let defaults: UserDefaults
+    var writingHost: WritingAssistantHost?
     @State private var endpoint = ""
     @State private var models: [String: String] = [:]
     @State private var catalog: [String] = []
@@ -39,12 +40,16 @@ struct AssistantSettingsView: View {
                 Text("設定した送信先へ本文を送ります。利用料金・保存方針は各サービスに従います。キーはこの端末のKeychainに保存します。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("プロンプト") {
-                Picker("用途", selection: $purpose) {
-                    ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
+            if let writingHost {
+                NavigationLink("同期するプロンプト") { WritingPromptsView(host: writingHost, defaults: defaults) }
+            } else {
+                Section("プロンプト") {
+                    Picker("用途", selection: $purpose) {
+                        ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    promptEditor(for: purpose)
+                    Button("この用途の初期値に戻す") { prompts[purpose.id] = purpose.defaultPrompt }
                 }
-                promptEditor(for: purpose)
-                Button("この用途の初期値に戻す") { prompts[purpose.id] = purpose.defaultPrompt }
             }
             Section {
                 Button("設定を保存", action: save)

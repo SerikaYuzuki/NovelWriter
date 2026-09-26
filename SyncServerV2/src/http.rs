@@ -400,6 +400,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v2/receipts/{command_id}", get(receipt))
         .merge(crate::protection_http::routes())
+        .merge(crate::assistant_http::routes())
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {

@@ -11,6 +11,7 @@ public extension SyncV2Application {
         }
         let opened = try await kernel.rescueLocalWork(sourceWorkID: sourceWorkID, newWorkID: newWorkID,
                                                       newDocumentID: newDocumentID)
+        await copyWritingHistory(source: sourceWorkID, destination: newWorkID)
         recordOpened(opened)
         return opened
     }
@@ -28,6 +29,7 @@ public extension SyncV2Application {
             newWorkID: newWorkID,
             newDocumentID: newDocumentID
         )
+        await copyWritingHistory(source: sourceWorkID, destination: result.newWorkID)
         scheduleWorker(for: result.newWorkID)
         return result
     }

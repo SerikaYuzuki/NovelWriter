@@ -77,6 +77,7 @@ extension AppState {
         }
         do {
             snapshotSyncV2Application = try await factory()
+            _ = writingMCPController
             await refreshSnapshotSyncV2UIState()
             return true
         } catch {
@@ -354,7 +355,11 @@ extension AppState {
             }
             if userDefaults.bool(forKey: "fuminiwa.v2.startInLibrary") {
                 await refreshSnapshotLibrary()
-                startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks, presentation: .localAndRemote, connection: lastStartupLibraryConnection))
+                startupState = .documentSelection(.init(
+                    works: snapshotSyncLibraryWorks,
+                    presentation: .localAndRemote,
+                    connection: lastStartupLibraryConnection
+                ))
                 return
             }
             let workID = userDefaults.string(forKey: "fuminiwa.v2.activeWorkID")
@@ -386,7 +391,11 @@ extension AppState {
                     userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
                     userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
                     await refreshSnapshotLibrary()
-                    startupState = .documentSelection(.init(works: snapshotSyncLibraryWorks, presentation: .localAndRemote, connection: lastStartupLibraryConnection))
+                    startupState = .documentSelection(.init(
+                        works: snapshotSyncLibraryWorks,
+                        presentation: .localAndRemote,
+                        connection: lastStartupLibraryConnection
+                    ))
                     return
                 } catch SyncV2ApplicationError.workNotFound {
                     // A fresh database may follow quarantine of an old v2

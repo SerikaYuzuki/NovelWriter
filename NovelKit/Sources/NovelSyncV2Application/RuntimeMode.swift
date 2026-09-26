@@ -1,6 +1,7 @@
 import Foundation
 import NovelAuth
 import NovelSyncV2
+import NovelWritingSupport
 
 public struct ProductionLocalRoot: Hashable, Sendable {
     public let url: URL
@@ -190,6 +191,7 @@ package struct SyncV2RuntimeComposition: Sendable {
         case preview
     }
 
+    package let writingStore: (any WritingLocalPersistence)?
     package let identity: Identity
     package let kernel: any SyncV2LocalKernel
     package let planner: any SyncV2CommandPlanner
@@ -203,8 +205,10 @@ package struct SyncV2RuntimeComposition: Sendable {
         planner: any SyncV2CommandPlanner,
         remote: any SyncV2RemoteClient,
         gate: any SyncV2DocumentGate,
-        library: any SyncV2LibraryProvider
+        library: any SyncV2LibraryProvider,
+        writingStore: (any WritingLocalPersistence)? = nil
     ) {
+        self.writingStore = writingStore
         self.identity = identity
         self.kernel = kernel
         self.planner = planner

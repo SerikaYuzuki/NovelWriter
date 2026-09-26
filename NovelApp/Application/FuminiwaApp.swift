@@ -25,7 +25,8 @@ struct FuminiwaApp: App {
         #if FUMINIWA_TEST_COMPOSITION
         let configuration: TestRuntimeConfiguration
         do {
-            configuration = try TestRuntimeConfiguration()
+            configuration = try ProcessInfo.processInfo.arguments.contains("--local-ui-test")
+                ? TestRuntimeConfiguration(account: nil) : TestRuntimeConfiguration()
         } catch {
             preconditionFailure("Unable to create the isolated macOS test runtime: \(error)")
         }

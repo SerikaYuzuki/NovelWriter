@@ -14,6 +14,28 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         self.remote = remote
     }
 
+    func writingContext(workID: WorkID) async throws -> SyncV2WritingContext {
+        let active = try await scope.activeBinding()
+        let local = try await scope.existingScope(workID: workID)
+        let remoteBinding: SyncV2AccountScopeBinding? = if case let .bound(binding) = local, binding == active,
+                                                           try await store.workDeletion(workID: workID) == nil,
+                                                           try await store.workSummary(workID: workID, scope: local)
+                                                           .acknowledgedHeadGeneration != nil {
+            SyncV2AccountScopeBinding(accountID: binding.accountID, accountFence: binding.accountFence,
+                                      serverInstanceID: binding.serverInstanceID, protocolEpoch: binding.protocolEpoch)
+        } else {
+            nil
+        }
+        let common = active.map { "account:\($0.serverInstanceID):\($0.accountID)" } ?? "local:common"
+        return SyncV2WritingContext(workID: workID, commonNamespace: common, binding: remoteBinding,
+                                    commonBinding: active.map { SyncV2AccountScopeBinding(
+                                        accountID: $0.accountID,
+                                        accountFence: $0.accountFence,
+                                        serverInstanceID: $0.serverInstanceID,
+                                        protocolEpoch: $0.protocolEpoch
+                                    ) })
+    }
+
     func localRescuableWorks() async throws -> [SyncV2ProtectedWork] {
         var values: [SyncV2ProtectedWork] = []
         for workID in try await store.workDeletionIDs() {
@@ -55,7 +77,8 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     }
 
     func completeWorkDeletion(_ deletion: SyncV2WorkDeletion) async throws {
-        guard let record = try await store.workDeletion(workID: deletion.workID), record.applicationValue == deletion else { throw SyncV2ApplicationError.safeBoundaryRejected }
+        guard let record = try await store.workDeletion(workID: deletion.workID),
+              record.applicationValue == deletion else { throw SyncV2ApplicationError.safeBoundaryRejected }
         // Recheck the account after the remote await; a different login cannot complete this intent.
         let activeBinding = try await scope.activeBinding()
         guard record.binding == nil || record.binding == activeBinding else { throw SyncV2Failure.accountFenceChanged }
@@ -677,7 +700,12 @@ private extension SyncV2RemoteInbox {
 private extension V2WorkDeletion {
     var applicationValue: SyncV2WorkDeletion {
         SyncV2WorkDeletion(workID: workID, binding: binding.map {
-            SyncV2AccountScopeBinding(accountID: $0.accountID, accountFence: $0.accountFence, serverInstanceID: $0.serverInstanceID, protocolEpoch: $0.protocolEpoch)
+            SyncV2AccountScopeBinding(
+                accountID: $0.accountID,
+                accountFence: $0.accountFence,
+                serverInstanceID: $0.serverInstanceID,
+                protocolEpoch: $0.protocolEpoch
+            )
         }, completed: completed)
     }
 }

@@ -44,6 +44,8 @@ const SYNC_RUNTIME_DML_TABLES: &[&str] = &[
     "account_scopes",
     "works",
     "deleted_works",
+    "assistant_records",
+    "recovery_operations",
     "global_blobs",
     "account_objects",
     "snapshots",
@@ -86,6 +88,7 @@ const SEQUENCE_NAMES: &[(&str, &str)] = &[
     ("sync_v2", "history_event_id_seq"),
     ("sync_v2", "head_events_event_id_seq"),
     ("sync_v2", "catalog_events_event_id_seq"),
+    ("sync_v2", "assistant_records_sequence_seq"),
     ("auth_v1", "auth_events_event_id_seq"),
 ];
 
@@ -115,6 +118,8 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "account_scopes",
                 "works",
                 "deleted_works",
+                "assistant_records",
+                "recovery_operations",
                 "global_blobs",
                 "account_objects",
                 "snapshots",
@@ -179,6 +184,10 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "account_scopes_pkey",
                 "works_pkey",
                 "deleted_works_pkey",
+                "assistant_records_pkey",
+                "assistant_records_cursor",
+                "assistant_prompt_revision",
+                "recovery_operations_pkey",
                 "global_blobs_pkey",
                 "account_objects_pkey",
                 "snapshots_pkey",
@@ -269,6 +278,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "history_event_id_seq",
                 "head_events_event_id_seq",
                 "catalog_events_event_id_seq",
+                "assistant_records_sequence_seq",
             ][..],
         ),
         ("auth_v1", &["auth_events_event_id_seq"]),
@@ -313,7 +323,22 @@ fn classify_database_identity(
                 .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
         });
     let expected_objects = expected_v2_database_objects();
-    let legacy_objects: HashSet<_> = expected_objects
+    let previous_objects: HashSet<_> = expected_objects
+        .iter()
+        .filter(|name| {
+            !name.contains("sync_v2.assistant_") && !name.contains("sync_v2.recovery_operations")
+        })
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == previous_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| previous_objects.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    let legacy_objects: HashSet<_> = previous_objects
         .iter()
         .filter(|name| !name.contains("auth_v1.account_deletions"))
         .cloned()
@@ -481,6 +506,8 @@ impl Repository {
         sqlx::query("SELECT partial_bytes FROM sync_v2.upload_capabilities LIMIT 0")
             .execute(&mut *connection)
             .await?;
+        sqlx::query("SELECT record_id,sequence,request_bytes,conflicted FROM sync_v2.assistant_records LIMIT 0").execute(pool).await?;
+        sqlx::query("SELECT operation_id,request_digest,response_bytes FROM sync_v2.recovery_operations LIMIT 0").execute(pool).await?;
         sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
             .execute(&mut *connection)
             .await?;
