@@ -41,6 +41,16 @@ configFiles:
   Release: Config/Signing.xcconfig
 
 schemes:
+  FUMINIWACaretLab:
+    build:
+      targets:
+        FUMINIWACaretLab: all
+    run:
+      config: Release
+    test:
+      config: Debug-Test
+      targets:
+        - name: FUMINIWACaretLabTests
   FUMINIWA:
     build:
       targets:
@@ -65,6 +75,51 @@ schemes:
         - name: FUMINIWAIOSTests
 
 targets:
+  # Compile the same editor sources with a lab-only native view factory.
+  # No production application, database, authentication, or sync dependency.
+  FUMINIWACaretLab:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Experiments/CaretLab
+      - path: NovelKit/Sources/EditorKit
+    dependencies:
+      - package: NovelKit
+        product: NovelCore
+    settings:
+      base:
+        PRODUCT_NAME: FUMINIWA Caret Lab
+        PRODUCT_MODULE_NAME: FUMINIWACaretLab
+        PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.caret-lab
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_CARET_EXPERIMENT"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ふみにわ カーソル試作
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+      configs:
+        Debug-Test:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_CARET_EXPERIMENT FUMINIWA_CARET_EXPERIMENT_TESTS"
+  FUMINIWACaretLabTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Experiments/CaretLabTests
+    dependencies:
+      - target: FUMINIWACaretLab
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FUMINIWA Caret Lab.app/Contents/MacOS/FUMINIWA Caret Lab"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   NovelApp:
     type: application
     platform: macOS

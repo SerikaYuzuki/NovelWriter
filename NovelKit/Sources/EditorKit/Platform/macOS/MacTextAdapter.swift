@@ -37,7 +37,11 @@ struct MacTextAdapter: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        #if FUMINIWA_CARET_EXPERIMENT
+        let scrollView = AnimatedCaretTextView.scrollableTextView()
+        #else
         let scrollView = NSTextView.scrollableTextView()
+        #endif
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
