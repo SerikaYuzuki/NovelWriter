@@ -3,10 +3,27 @@ import NovelCore
 import NovelWritingSupport
 import SwiftUI
 
-private struct WritingConversation: Codable {
+struct WritingConversation: Codable {
     let title: String
     let documentId: UUID
+    /// Retained for compatibility with existing conversation records.
     let readConsent: Bool
+
+    static func recordForSending(selectedID: UUID?, conversations: [WritingEnvelope], capture: WritingCapture) throws -> WritingRecord {
+        if let selectedID {
+            guard let item = conversations.first(where: { $0.id == selectedID }),
+                  item.record.kind == "conversation", item.record.workId == capture.workId,
+                  let conversation = try? item.record.decoded(Self.self),
+                  conversation.documentId == capture.document.id else { throw WritingError.changedScope }
+            return item.record
+        }
+        return try WritingRecord(workId: capture.workId, kind: "conversation", key: "conversation",
+                                 payload: WritingRecord.payload(Self(
+                                     title: "会話 \(Date().formatted(date: .abbreviated, time: .shortened))",
+                                     documentId: capture.document.id,
+                                     readConsent: true
+                                 )))
+    }
 }
 
 private struct WritingTurnState: Codable {
@@ -54,7 +71,6 @@ struct AssistantChatView: View {
     @State private var requestId: UUID?
     @State private var showingPrompts = false
     @State private var showingEdits = false
-    @State private var creating = false
 
     private var conversations: [WritingEnvelope] {
         entries.filter { $0.record.kind == "conversation" }
@@ -65,17 +81,12 @@ struct AssistantChatView: View {
             .compactMap { try? $0.record.decoded(WritingMessage.self) }
     }
 
-    private var consented: Bool {
-        guard let capture = try? host.capture(), let item = conversations.first(where: { $0.id == conversationId }),
-              let conversation = try? item.record.decoded(WritingConversation.self) else { return false }
-        return conversation.readConsent && conversation.documentId == capture.document.id
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 if !conversations.isEmpty {
                     Picker("会話", selection: $conversationId) {
+                        Text("新しい会話").tag(UUID?.none)
                         ForEach(conversations) { item in
                             Text((try? item.record.decoded(WritingConversation.self).title) ?? "会話の記録").tag(Optional(item.id))
                         }
@@ -84,13 +95,6 @@ struct AssistantChatView: View {
                 Button("新しい会話") { conversationId = nil }.disabled(requestTask != nil)
                 Button("変更履歴", systemImage: "clock.arrow.circlepath") { showingEdits = true }.labelStyle(.iconOnly)
                 Button("指示", systemImage: "slider.horizontal.3") { showingPrompts = true }.labelStyle(.iconOnly)
-            }
-            if !consented {
-                Text("この会話では、現在の作品の本文・人物・プロット・設定をAIが参照します。送信はあなたが依頼したときだけです。")
-                    .font(.callout)
-                Text("送信先：\(AssistantPreferences(defaults: defaults).endpoint)").font(.caption).textSelection(.enabled)
-                Button("この作品の参照を許可して会話を始める") { Task { await createConversation() } }
-                    .disabled(creating)
             }
             AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $referenceScope)
                 .disabled(requestTask != nil)
@@ -129,9 +133,9 @@ struct AssistantChatView: View {
             }
             Picker("今回の編集許可", selection: $scope) {
                 ForEach(ChatEditScope.allCases) { Text($0.rawValue).tag($0) }
-            }.disabled(requestTask != nil || !consented)
+            }.disabled(requestTask != nil)
             TextField("相談・生成・修正を依頼", text: $input, axis: .vertical)
-                .lineLimit(2 ... 6).textFieldStyle(.roundedBorder).disabled(!consented)
+                .lineLimit(2 ... 6).textFieldStyle(.roundedBorder)
             HStack {
                 Text("編集許可はこの依頼だけに使います。").font(.caption2).foregroundStyle(.secondary)
                 Spacer()
@@ -140,7 +144,7 @@ struct AssistantChatView: View {
                     Button("中止") { requestTask?.cancel() }
                 } else {
                     Button("送信", action: send).buttonStyle(.borderedProminent)
-                        .disabled(!consented || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -158,7 +162,7 @@ struct AssistantChatView: View {
         }
         .task(id: host.contextID) {
             await reload()
-            if conversationId == nil {
+            if conversationId == nil, input.isEmpty, requestTask == nil {
                 conversationId = conversations.last?.id
             }
             while !Task.isCancelled {
@@ -187,23 +191,11 @@ struct AssistantChatView: View {
         do { entries = try await host.records(false) } catch { notice = error.localizedDescription }
     }
 
-    private func createConversation() async {
-        creating = true; defer { creating = false }
-        do {
-            let capture = try host.capture()
-            let record = try WritingRecord(workId: capture.workId, kind: "conversation", key: "conversation",
-                                           payload: WritingRecord.payload(WritingConversation(
-                                               title: "会話 \(Date().formatted(date: .abbreviated, time: .shortened))",
-                                               documentId: capture.document.id,
-                                               readConsent: true
-                                           )))
-            try await host.append(record); conversationId = record.id; await reload(); notice = nil
-        } catch { notice = error.localizedDescription }
-    }
-
     private func send() {
-        guard let conversationId, consented else { return }
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard requestTask == nil, !question.isEmpty else { return }
+        let selectedConversationID = conversationId
+        let existingConversations = conversations
         let history = messages
         let requestedScope = scope
         let requestedReference = referenceScope
@@ -215,8 +207,12 @@ struct AssistantChatView: View {
                 }
             }
             var turn: WritingRecord?
+            var turnConversationID = selectedConversationID
             do {
                 let capture = try host.capture()
+                let conversation = try WritingConversation.recordForSending(
+                    selectedID: selectedConversationID, conversations: existingConversations, capture: capture
+                )
                 let grant = try requestedScope.grant(capture)
                 let preferences = AssistantPreferences(defaults: defaults)
                 let config = try preferences.configuration(.advice)
@@ -228,6 +224,12 @@ struct AssistantChatView: View {
                 let request = try config.chatRequest(capture: capture, grant: grant, messages: history + [message],
                                                      apiKey: preferences.key(endpoint: config.endpoint), effectivePrompt: prompt,
                                                      referenceScope: requestedReference)
+                if selectedConversationID == nil {
+                    try await host.append(conversation)
+                    self.conversationId = conversation.id
+                }
+                let conversationId = conversation.id
+                turnConversationID = conversationId
                 let started = try WritingRecord(workId: capture.workId, kind: "request", key: id.uuidString.lowercased(),
                                                 payload: WritingRecord.payload(WritingTurnState(state: "running", effectivePrompt: prompt,
                                                                                                 conversationId: conversationId,
@@ -264,7 +266,7 @@ struct AssistantChatView: View {
                 await reload()
             } catch {
                 notice = Task.isCancelled ? WritingError.interrupted.localizedDescription : error.localizedDescription
-                if let turn {
+                if let turn, let conversationId = turnConversationID {
                     let message = notice ?? "中断しました。"
                     // A fresh task can save cancellation status; it still uses the captured account/work guard.
                     await Task { @MainActor in

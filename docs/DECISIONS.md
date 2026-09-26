@@ -58,4 +58,4 @@ D-043、D-046〜D-054、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、
 
 ## D-098: AI会話・指示の独立同期と依頼単位の編集（2026-09-26）
 
-[原稿保全・AI計画](PROTECTION_AI_PLAN.md)の採択事項を実装する。本文snapshotとAI記録の同期を分離し、共通・作品プロンプトはrevision比較で競合を残す。端末AI SQLiteは本文保存を成立させる条件にしない。会話参照同意と依頼ごとの編集範囲を分け、EditorKitのIME/Undoとwork/session/accountを保持する。MCPは初回登録した外部clientを信頼するMac上のloopback接続とし、同じ編集サービスを使う。[契約](sync/v2/assistant.md)にwire・機械的範囲制限・中断・復元・削除を定義した。ローカル検証・稼働反映・実端末受入の結果は作業の証跡へ別記する。
+[原稿保全・AI計画](PROTECTION_AI_PLAN.md)の採択事項を実装する。本文snapshotとAI記録の同期を分離し、共通・作品プロンプトはrevision比較で競合を残す。端末AI SQLiteは本文保存を成立させる条件にしない。チャットの明示送信と依頼ごとの編集範囲を守り、EditorKitのIME/Undoとwork/session/accountを保持する。MCPは初回登録した外部clientを信頼するMac上のloopback接続とし、同じ編集サービスを使う。[契約](sync/v2/assistant.md)にwire・機械的範囲制限・中断・復元・削除を定義した。ローカル検証・稼働反映・実端末受入の結果は作業の証跡へ別記する。
