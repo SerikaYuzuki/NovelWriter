@@ -105,6 +105,39 @@ struct MacTextAdapterCommittedTextCaptureTests {
 #endif
 #if canImport(AppKit)
 extension MacTextAdapterCommittedTextCaptureTests {
+    @Test("長い校正を反映しても修正箇所だけ着色し、Undo・Redo・色の解除を保つ")
+    func distantProofreadingHighlights() throws {
+        let unchanged = String(repeating: "変わらない本文。\n", count: 300)
+        let original = "前誤\n" + unchanged + "字後"
+        let revised = "前正\n" + unchanged + "文後"
+        let harness = makeHarness(initialText: original)
+        let session = EditorCommandSession()
+        harness.coordinator.registerCommandSurface(with: session)
+        let storage = try #require(harness.textView.textStorage)
+        func highlights() -> [NSRange] {
+            var ranges: [NSRange] = []
+            storage.enumerateAttribute(.backgroundColor, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+                if value != nil {
+                    ranges.append(range)
+                }
+            }
+            return ranges
+        }
+        let expected = [NSRange(location: 1, length: 1), NSRange(location: 3 + unchanged.utf16.count, length: 1)]
+        #expect(session.applyProofreading(expectedText: original, replacement: revised))
+        #expect(highlights() == expected)
+        #expect(harness.textView.string == revised)
+        #expect(harness.textView.typingAttributes[.backgroundColor] == nil)
+        harness.coordinator.undoManager.undo()
+        #expect(harness.textView.string == original)
+        #expect(highlights().isEmpty)
+        harness.coordinator.undoManager.redo()
+        #expect(highlights() == expected)
+        session.clearProofreadingHighlights()
+        #expect(highlights().isEmpty)
+        #expect(harness.textView.string == revised)
+    }
+
     @Test("色付けがない保存では本文属性を変更せず、再レイアウトを発生させない", arguments: [false, true])
     func clearingAbsentHighlightsDoesNotEditStorage(afterProofreading: Bool) {
         let harness = makeHarness(initialText: "猫が歩く。")

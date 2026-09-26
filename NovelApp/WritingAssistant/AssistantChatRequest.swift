@@ -22,21 +22,12 @@ struct AssistantChatAnswer: Decodable {
 
 extension AssistantConfiguration {
     func chatRequest(capture: WritingCapture, grant: WritingGrant, messages: [WritingMessage], apiKey: String,
-                     effectivePrompt: String) throws -> URLRequest {
+                     effectivePrompt: String, referenceScope: AssistantScope) throws -> URLRequest {
         guard !apiKey.isEmpty else { throw AssistantError.missingKey }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        // Expose the full work only within the consented work; large works use the selected
-        // episode plus all structural/material data. Nothing is fetched from another work.
-        var context = capture.document
-        if try encoder.encode(context).count > 400_000 {
-            for ci in context.chapters.indices {
-                for ei in context.chapters[ci].episodes.indices where context.chapters[ci].episodes[ei].id != capture.episodeId {
-                    context.chapters[ci].episodes[ei].content = "（長いため今回の送信では省略）"
-                }
-            }
-        }
+        let context = try referenceScope.chatContext(capture: capture)
         let document = try String(decoding: encoder.encode(context), as: UTF8.self)
-        guard document.utf8.count <= 600_000 else { throw AssistantError.tooLarge }
+        guard document.utf8.count <= 600_000 else { throw AssistantError.chatContextTooLarge }
         let templates = NovelDocument(title: "例", chapters: [Chapter(title: "章", episodes: [Episode(title: "話")])],
                                       characters: [Character(name: "人物")], plotCards: [PlotCard(title: "プロット")], flags: [Flag(title: "伏線")],
                                       worldNotes: [WorldNote(title: "設定")])
@@ -54,6 +45,7 @@ extension AssistantConfiguration {
         同じ/重複するパスの変更を複数返さないでください。beforeJsonは送信した値に厳密に一致させます。
         appendOnly:trueの場合は指定content末尾への追記だけで、既存の文字は一切変えられません。
         編集不要の場合や情報不足ならchanges:[]で相談に答えてください。省略された本文を編集してはいけません。
+        今回の相談対象は、本文が送られている話です。選択範囲外の本文は省略しており、推測で補わないでください。
         """
         let exampleInstruction = "\n新しい項目は以下の例の全キー・型を保持して作成し、UUIDは新しく生成してください。:\n" + examples
         var input: [[String: Any]] = try [[
@@ -89,5 +81,25 @@ extension AssistantConfiguration {
         guard data.count <= 2_000_000 else { throw AssistantError.tooLarge }
         request.httpBody = data
         return request
+    }
+}
+
+extension AssistantScope {
+    /// Keep work structure and materials, but send manuscript text only for the selected episodes.
+    /// A large selection is rejected rather than silently dropping selected text.
+    func chatContext(capture: WritingCapture) throws -> NovelDocument {
+        var document = capture.document
+        let selected = selectedEpisodeIDs(chapters: document.chapters, currentID: capture.episodeId)
+        let existing = Set(document.chapters.flatMap(\.episodes).map(\.id))
+        guard selected.isSubset(of: existing) else { throw AssistantError.emptyContent }
+        if case let .chapter(id) = self, !document.chapters.contains(where: { $0.id == id }) {
+            throw AssistantError.emptyContent
+        }
+        for ci in document.chapters.indices {
+            for ei in document.chapters[ci].episodes.indices where !selected.contains(document.chapters[ci].episodes[ei].id) {
+                document.chapters[ci].episodes[ei].content = "（今回の選択範囲外のため本文を省略）"
+            }
+        }
+        return document
     }
 }

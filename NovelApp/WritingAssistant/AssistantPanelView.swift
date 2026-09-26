@@ -46,7 +46,8 @@ struct AssistantPanelView: View {
                 ForEach(AssistantPurpose.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
             if purpose == .advice, let writingHost {
-                AssistantChatView(host: writingHost, defaults: defaults)
+                AssistantChatView(host: writingHost, defaults: defaults, chapters: chapters,
+                                  currentEpisodeID: currentEpisodeID, referenceScope: $scope)
             } else {
                 if purpose == .proofreading {
                     Text("校正する範囲：現在の1話（\(episodeTitle)）")

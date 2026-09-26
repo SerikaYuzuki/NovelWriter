@@ -32,12 +32,13 @@ struct AssistantManuscript: Encodable, Equatable {
 
 enum AssistantError: LocalizedError {
     case incompleteOutput, filteredOutput, unfinishedOutput
-    case invalidConfiguration, emptyContent, tooLarge, missingKey, credentialFailure, invalidResponse, http(Int), composing
+    case invalidConfiguration, emptyContent, tooLarge, chatContextTooLarge, missingKey, credentialFailure, invalidResponse, http(Int), composing
     var errorDescription: String? {
         switch self {
         case .invalidConfiguration: "設定でHTTPSのAPI URLとモデル名を入力してください。"
         case .emptyContent: "送信する本文がありません。"
         case .tooLarge: "本文が長すぎます。1話25万文字・1MB以内で利用してください。"
+        case .chatContextTooLarge: "送る範囲が大きすぎます。話や章の選択を減らして、もう一度送信してください。"
         case .missingKey: "設定でこのAPI URLのAPIキーを保存してください。"
         case .credentialFailure: "APIキーをKeychainから読み書きできませんでした。"
         case .incompleteOutput: "AIの回答が出力上限に達し、途中で止まりました。対象の本文を短くして再試行してください。"

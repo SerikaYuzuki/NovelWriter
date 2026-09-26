@@ -40,6 +40,9 @@ private enum ChatEditScope: String, CaseIterable, Identifiable {
 struct AssistantChatView: View {
     let host: WritingAssistantHost
     let defaults: UserDefaults
+    let chapters: [Chapter]
+    let currentEpisodeID: EpisodeID?
+    @Binding var referenceScope: AssistantScope
     @Environment(\.scenePhase) private var scenePhase
     @State private var entries: [WritingEnvelope] = []
     @State private var conversationId: UUID?
@@ -89,6 +92,10 @@ struct AssistantChatView: View {
                 Button("この作品の参照を許可して会話を始める") { Task { await createConversation() } }
                     .disabled(creating)
             }
+            AssistantScopeSelector(chapters: chapters, currentID: currentEpisodeID, scope: $referenceScope)
+                .disabled(requestTask != nil)
+            Text("人物・プロット・設定と、この会話の履歴も参照します。")
+                .font(.caption2).foregroundStyle(.secondary)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
@@ -199,6 +206,7 @@ struct AssistantChatView: View {
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let history = messages
         let requestedScope = scope
+        let requestedReference = referenceScope
         let id = UUID(); requestId = id
         requestTask = Task { @MainActor in
             defer {
@@ -218,7 +226,8 @@ struct AssistantChatView: View {
                 try Task.checkCancellation()
                 let message = WritingMessage(role: "user", text: question, requestId: id)
                 let request = try config.chatRequest(capture: capture, grant: grant, messages: history + [message],
-                                                     apiKey: preferences.key(endpoint: config.endpoint), effectivePrompt: prompt)
+                                                     apiKey: preferences.key(endpoint: config.endpoint), effectivePrompt: prompt,
+                                                     referenceScope: requestedReference)
                 let started = try WritingRecord(workId: capture.workId, kind: "request", key: id.uuidString.lowercased(),
                                                 payload: WritingRecord.payload(WritingTurnState(state: "running", effectivePrompt: prompt,
                                                                                                 conversationId: conversationId,
