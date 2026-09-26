@@ -2,6 +2,7 @@ import Foundation
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2PortableBridge
 
 /// Immutable values captured when the conflict sheet is presented.  A choice
 /// must never silently apply to a later WorkID/session/account or a newer CAS
@@ -427,8 +428,17 @@ extension AppState {
             workID: workID,
             documentSession: expectedDocumentSession,
             snapshotSession: expectedSnapshotSession
-        ), matchesSnapshotSyncV2AccountScope(expectedAccountScope),
-        installV2Document(
+        ), matchesSnapshotSyncV2AccountScope(expectedAccountScope), opened.workID == workID else {
+            return false
+        }
+        // A publish receipt can advance the snapshot lineage without changing
+        // the work. Reinstalling that echo resets the editor key, selection and
+        // Undo history even though there is no new content to display.
+        if matchesInstalledSnapshotSyncV2Content(opened) {
+            snapshotSyncV2Session = newSession
+            return true
+        }
+        guard installV2Document(
             adopted,
             workID: opened.workID,
             createdAt: opened.documentCreatedAt,
@@ -443,6 +453,15 @@ extension AppState {
         selectedEpisodeID = retainedEpisode?.episode.id ?? retainedChapter?.episodes.first?.id ?? adopted.chapters.first?.episodes.first?.id
         snapshotSyncV2Session = newSession
         return true
+    }
+
+    private func matchesInstalledSnapshotSyncV2Content(_ opened: SyncV2OpenedWork) -> Bool {
+        guard let mirror = try? SyncV2PortableMetadata.splitLocalMirrorResources(opened.resources) else { return false }
+        return opened.document == document
+            && opened.attachments == snapshotSyncV2Attachments
+            && mirror.resources == snapshotSyncV2Resources
+            && mirror.portableCreatedAt == snapshotSyncV2PortableCreatedAt
+            && Self.normalizedSnapshotSyncV2Date(opened.documentCreatedAt) == snapshotSyncV2DocumentCreatedAt
     }
 
     /// A captured editor value is only a safe proof when it belongs to the

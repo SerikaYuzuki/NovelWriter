@@ -73,6 +73,8 @@ manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは
 
 編集中の本文はネイティブtext viewが所有する。SwiftUIから素朴な`Binding<String>`で往復させない。通常のモデル→本文installは話・作品の切替境界に限定し、remote結果や古いselectionを編集中の本文へ注入しない。
 
+明示保存・同期で受領した作品・添付・portable metadataが表示中と同一なら、検証済みの同期sessionだけを更新し、本文を再installしない。カーソル、選択範囲、手動スクロール位置、Undo履歴を維持する。
+
 IME変換中はモデル反映もプラグイン介入もしない。変換確定を旧作品へ反映してから保存・遷移する。TextKit 2を使い、`layoutManager`へのアクセスによるTextKit 1へのfallbackを避ける。
 
 ### 4.4 Editor Plugin System
