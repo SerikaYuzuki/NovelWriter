@@ -6,14 +6,11 @@ import Testing
 @MainActor
 @Suite("IME caret experiment", .serialized)
 struct CaretMotionTests {
-    @Test("行内の短い移動だけを補間し、折返し・大移動・初回配置は即時にする")
+    @Test("行内の短い移動を補間し、大移動・初回配置は即時にする")
     func movementPolicy() {
         let initial = NSRect(x: 20, y: 40, width: 2, height: 20)
         #expect(CaretMotionPolicy.shouldAnimate(
             from: initial, to: initial.offsetBy(dx: 20, dy: 0), requested: true
-        ))
-        #expect(!CaretMotionPolicy.shouldAnimate(
-            from: initial, to: initial.offsetBy(dx: 20, dy: 24), requested: true
         ))
         #expect(!CaretMotionPolicy.shouldAnimate(
             from: initial, to: initial.offsetBy(dx: 200, dy: 0), requested: true
@@ -22,29 +19,28 @@ struct CaretMotionTests {
         #expect(!CaretMotionPolicy.shouldAnimate(from: initial, to: initial, requested: false))
     }
 
-    @Test("改行は離れた行末から次の行頭まで補間し、逆方向・複数行・高さ変更は即時にする")
-    func newlineMovementPolicy() {
+    @Test("上下どちらも隣の行まで補間し、複数行・高さ変更は即時にする")
+    func adjacentLineMovementPolicy() {
         let endOfLine = NSRect(x: 500, y: 40, width: 2, height: 24)
         let nextLine = NSRect(x: 20, y: 70, width: 2, height: 24)
         #expect(CaretMotionPolicy.shouldAnimate(
-            from: endOfLine, to: nextLine, requested: true, afterNewline: true
+            from: endOfLine, to: nextLine, requested: true
         ))
-        #expect(!CaretMotionPolicy.shouldAnimate(from: endOfLine, to: nextLine, requested: true))
-        #expect(!CaretMotionPolicy.shouldAnimate(
-            from: nextLine, to: endOfLine, requested: true, afterNewline: true
+        #expect(CaretMotionPolicy.shouldAnimate(
+            from: nextLine, to: endOfLine, requested: true
         ))
         #expect(!CaretMotionPolicy.shouldAnimate(
-            from: endOfLine, to: nextLine.offsetBy(dx: 0, dy: 40), requested: true, afterNewline: true
+            from: endOfLine, to: nextLine.offsetBy(dx: 0, dy: 40), requested: true
         ))
         #expect(!CaretMotionPolicy.shouldAnimate(
             from: endOfLine, to: NSRect(x: 20, y: 70, width: 2, height: 36),
-            requested: true, afterNewline: true
+            requested: true
         ))
         #expect(!CaretMotionPolicy.shouldAnimate(
-            from: endOfLine, to: nextLine, requested: false, afterNewline: true
+            from: endOfLine, to: nextLine, requested: false
         ))
         #expect(!CaretMotionPolicy.shouldAnimate(
-            from: nil, to: nextLine, requested: true, afterNewline: true
+            from: nil, to: nextLine, requested: true
         ))
     }
 
@@ -110,6 +106,12 @@ struct CaretMotionTests {
         #expect(editor.hasMarkedText())
         #expect(fixture.changes.values.isEmpty)
         #expect(editor.markedAnimationCount > 0)
+        let previousMarkedCount = editor.markedAnimationCount
+        editor.setMarkedText("かき", selectedRange: NSRange(location: 2, length: 0),
+                             replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(editor.markedAnimationCount == previousMarkedCount + 1)
+        #expect(editor.hasMarkedText())
+        #expect(fixture.changes.values.isEmpty)
         let selection = editor.selectedRange()
         let marked = editor.markedRange()
         let candidateRect = editor.firstRect(forCharacterRange: selection, actualRange: nil)
@@ -261,5 +263,123 @@ struct CaretMotionTests {
 
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
+    }
+}
+
+extension CaretMotionTests {
+    @Test("上下キーは短い行を挟んでも標準と同じ位置へ移り、本文とUndoを変えない")
+    func verticalArrowMovement() async throws {
+        let body = "あいうえおかきくけこ\n短い\nあいうえおかきくけこ"
+        let fixture = try await makeFixture(body: body)
+        defer { fixture.window.close() }
+        let editor = fixture.editor
+        let directions = [true, true, false, false]
+        editor.motionEnabled = false
+        editor.setSelectedRange(NSRange(location: 8, length: 0))
+        let standardSelections = directions.map { movesDown in
+            if movesDown {
+                editor.moveDown(nil)
+            } else {
+                editor.moveUp(nil)
+            }
+            return editor.selectedRange()
+        }
+        editor.setSelectedRange(NSRange(location: 8, length: 0))
+        editor.motionEnabled = true
+        let couldUndo = editor.undoManager?.canUndo
+        for (movesDown, expectedSelection) in zip(directions, standardSelections) {
+            let previousFrame = try #require(editor.displayedCaretFrame)
+            let previousCount = editor.animationCount
+            if movesDown {
+                editor.moveDown(nil)
+            } else {
+                editor.moveUp(nil)
+            }
+            #expect(editor.selectedRange() == expectedSelection)
+            let nextFrame = try #require(editor.displayedCaretFrame)
+            #expect(movesDown ? nextFrame.minY > previousFrame.minY : nextFrame.minY < previousFrame.minY)
+            #expect(editor.animationCount == previousCount + 1)
+            #expect(editor.isMovementAnimating)
+        }
+        #expect(editor.string == body)
+        #expect(fixture.changes.values.isEmpty)
+        #expect(editor.undoManager?.canUndo == couldUndo)
+    }
+
+    @Test("折返しによる表示上の行も上下キーで滑らかに移動する")
+    func wrappedLineMovement() async throws {
+        let body = String(repeating: "あ", count: 100)
+        let fixture = try await makeFixture(body: body)
+        defer { fixture.window.close() }
+        let editor = fixture.editor
+        let selection = NSRange(location: 10, length: 0)
+        editor.setSelectedRange(selection)
+        editor.motionEnabled = true
+        let initialFrame = try #require(editor.displayedCaretFrame)
+        let previousCount = editor.animationCount
+        editor.moveDown(nil)
+        #expect(try #require(editor.displayedCaretFrame).minY > initialFrame.minY)
+        #expect(editor.animationCount == previousCount + 1)
+        editor.moveUp(nil)
+        #expect(editor.selectedRange() == selection)
+        #expect(editor.displayedCaretFrame == initialFrame)
+        #expect(editor.animationCount == previousCount + 2)
+        #expect(editor.string == body)
+        #expect(fixture.changes.values.isEmpty)
+    }
+
+    @Test("空行の字下げと改行をBackspaceで消すと前の行末へ戻り、Undo/Redoを保つ")
+    func deletingEmptyLine() async throws {
+        let previousLine = "前の長い行の末尾です👩‍👩‍👧‍👦"
+        let original = previousLine + "\n　"
+        let fixture = try await makeFixture(body: original)
+        defer { fixture.window.close() }
+        let editor = fixture.editor
+        editor.setSelectedRange(NSRange(location: original.utf16.count, length: 0))
+        editor.motionEnabled = true
+        let undo = try #require(editor.undoManager)
+        undo.groupsByEvent = false
+        for expected in [previousLine + "\n", previousLine] {
+            let previousCount = editor.animationCount
+            undo.beginUndoGrouping()
+            editor.deleteBackward(nil)
+            undo.endUndoGrouping()
+            #expect(editor.string == expected)
+            #expect(fixture.changes.values.last == expected)
+            #expect(editor.selectedRange() == NSRange(location: expected.utf16.count, length: 0))
+            #expect(editor.animationCount == previousCount + 1)
+            #expect(editor.isMovementAnimating)
+        }
+        undo.undo()
+        #expect(editor.string == previousLine + "\n")
+        undo.undo()
+        #expect(editor.string == original)
+        undo.redo()
+        undo.redo()
+        #expect(editor.string == previousLine)
+        #expect(editor.textLayoutManager != nil)
+    }
+
+    @Test("Shiftと上下キーの範囲選択や選択行の削除で余分な縦線を出さない")
+    func selectingAndDeletingLine() async throws {
+        let body = "最初の行です。\n次の行です。\n最後の行です。"
+        let fixture = try await makeFixture(body: body)
+        defer { fixture.window.close() }
+        let editor = fixture.editor
+        editor.setSelectedRange(NSRange(location: 2, length: 0))
+        editor.motionEnabled = true
+        let previousCount = editor.animationCount
+        editor.moveDownAndModifySelection(nil)
+        let selection = editor.selectedRange()
+        #expect(selection.length > 0)
+        #expect(editor.displayedCaretFrame == nil)
+        #expect(editor.animationCount == previousCount)
+        let expected = (body as NSString).replacingCharacters(in: selection, with: "")
+        editor.deleteBackward(nil)
+        #expect(editor.string == expected)
+        #expect(fixture.changes.values.last == expected)
+        #expect(editor.selectedRange().length == 0)
+        #expect(editor.displayedCaretFrame != nil)
+        #expect(editor.animationCount == previousCount)
     }
 }

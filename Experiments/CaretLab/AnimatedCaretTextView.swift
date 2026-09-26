@@ -7,7 +7,7 @@ final class AnimatedCaretTextView: NSTextView {
     private var lastTarget: NSRect?
     private var isRefreshingCaret = false
     private var isTrackingMouse = false
-    private var isInsertingNewline = false
+    private var inputActionDepth = 0
     private var hasConfiguredIndicator = false
     private var eventObservers: [CaretEventObserver] = []
     private(set) var animationCount = 0
@@ -80,8 +80,7 @@ final class AnimatedCaretTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        super.keyDown(with: event)
-        refreshCaret(animate: true)
+        performInputAction { super.keyDown(with: event) }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -92,26 +91,47 @@ final class AnimatedCaretTextView: NSTextView {
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
-        super.insertText(string, replacementRange: replacementRange)
-        refreshCaret(animate: true)
+        performInputAction { super.insertText(string, replacementRange: replacementRange) }
     }
 
     override func insertNewline(_ sender: Any?) {
-        // 字下げpluginの中間選択では描画せず、標準編集が完了した位置へ一度だけ動かす。
-        isInsertingNewline = true
-        super.insertNewline(sender)
-        isInsertingNewline = false
-        refreshCaret(animate: true, afterNewline: true)
+        performInputAction { super.insertNewline(sender) }
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        performInputAction { super.deleteBackward(sender) }
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        performInputAction { super.deleteForward(sender) }
+    }
+
+    override func moveUp(_ sender: Any?) {
+        performInputAction { super.moveUp(sender) }
+    }
+
+    override func moveDown(_ sender: Any?) {
+        performInputAction { super.moveDown(sender) }
     }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        refreshCaret(animate: true)
+        performInputAction {
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        }
     }
 
     override func unmarkText() {
-        super.unmarkText()
-        refreshCaret(animate: true)
+        performInputAction { super.unmarkText() }
+    }
+
+    private func performInputAction(_ action: () -> Void) {
+        // 入れ子の入力やpluginの中間選択では描画せず、標準処理の完了位置へ一度だけ動かす。
+        inputActionDepth += 1
+        defer {
+            inputActionDepth -= 1
+            refreshCaret(animate: true)
+        }
+        action()
     }
 
     private func configureIndicator() {
@@ -180,8 +200,8 @@ final class AnimatedCaretTextView: NSTextView {
     }
 
     /// 候補ウインドウに返すfirstRectはoverrideしない。標準座標を読むだけにする。
-    func refreshCaret(animate: Bool, afterNewline: Bool = false) {
-        guard !isRefreshingCaret, !isInsertingNewline else { return }
+    func refreshCaret(animate: Bool) {
+        guard !isRefreshingCaret, inputActionDepth == 0 else { return }
         isRefreshingCaret = true
         defer { isRefreshingCaret = false }
         guard usesAnimatedIndicator, let window, selectedRange().location != NSNotFound else {
@@ -210,7 +230,7 @@ final class AnimatedCaretTextView: NSTextView {
             return
         }
         let shouldAnimate = CaretMotionPolicy.shouldAnimate(
-            from: lastTarget, to: target, requested: animate && !isTrackingMouse, afterNewline: afterNewline
+            from: lastTarget, to: target, requested: animate && !isTrackingMouse
         )
         let displayedPosition = indicator.layer?.presentation()?.position ?? indicator.layer?.position
         indicator.layer?.removeAnimation(forKey: "caretPosition")
