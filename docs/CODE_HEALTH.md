@@ -20,7 +20,7 @@
 ## 実装が残るもの
 
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
-- 別機器へのbackup・鍵退避。日次暗号化と1暦年保持の運用実装は存在する。退避先は[利用者判断](OWNER_DECISIONS.md)。
+- 通常の作品削除後の1年保管、別作品としての復元、履歴保持と未同期5分表示。現行との差分は[原稿保全・AI計画](PROTECTION_AI_PLAN.md)。外部backup・鍵退避は2026-09-26に不要と判断済み。
 - iOSの校正本文反映。現在は回答表示まで。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
