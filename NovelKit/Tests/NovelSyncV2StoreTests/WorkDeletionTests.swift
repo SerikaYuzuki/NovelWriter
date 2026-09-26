@@ -19,16 +19,12 @@ import Testing
                 expectedGeneration: 0,
                 attachments: [shared]
             ),
-            scope: scopeA
+            scope: .unbound
         )
     }
-    let wrong = V2AccountBinding(accountID: "other", accountFence: "other", serverInstanceID: "other")
-    await #expect(throws: SyncV2StoreError.accountMismatch) {
-        try await store.prepareWorkDeletion(workID: target, activeBinding: wrong)
-    }
-    let deletion = try await store.prepareWorkDeletion(workID: target, activeBinding: bindingA)
+    let deletion = try await store.prepareWorkDeletion(workID: target, activeBinding: nil)
     #expect(!deletion.completed)
-    #expect(try await store.open(workID: target, scope: scopeA).attachments == [shared])
+    #expect(try await store.open(workID: target, scope: .unbound).attachments == [shared])
     await #expect(throws: SyncV2StoreError.workDeletionPending) {
         try await store.checkpoint(
             V2CheckpointRequest(
@@ -37,19 +33,19 @@ import Testing
                 documentCreatedAt: testDate,
                 expectedGeneration: 1
             ),
-            scope: scopeA
+            scope: .unbound
         )
     }
     await store.close()
     let reopened = try LocalSyncV2Store(root: root, policy: .openExisting)
-    #expect(try await reopened.prepareWorkDeletion(workID: target, activeBinding: bindingA) == deletion)
+    #expect(try await reopened.prepareWorkDeletion(workID: target, activeBinding: nil) == deletion)
     try await reopened.completeWorkDeletion(deletion)
     let complete = try #require(await reopened.workDeletion(workID: target))
     #expect(complete.completed)
     try await reopened.completeWorkDeletion(complete)
-    await #expect(throws: SyncV2StoreError.workNotFound) { try await reopened.open(workID: target, scope: scopeA) }
-    #expect(try await reopened.open(workID: retained, scope: scopeA).attachments == [shared])
-    let second = try await reopened.prepareWorkDeletion(workID: retained, activeBinding: bindingA)
+    await #expect(throws: SyncV2StoreError.workNotFound) { try await reopened.open(workID: target, scope: .unbound) }
+    #expect(try await reopened.open(workID: retained, scope: .unbound).attachments == [shared])
+    let second = try await reopened.prepareWorkDeletion(workID: retained, activeBinding: nil)
     try await reopened.completeWorkDeletion(second)
     let url = await reopened.databaseURL
     #expect(try sqliteScalarInt(databaseURL: url, sql: "SELECT COUNT(*) FROM objects") == 0)
@@ -123,15 +119,44 @@ import Testing
         _ = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: makeDocument(title: "resources"), documentCreatedAt: testDate,
             expectedGeneration: 0, resources: workID == first ? [shared, owned] : [shared]
-        ), scope: scopeA)
+        ), scope: .unbound)
     }
-    let deletion = try await store.prepareWorkDeletion(workID: first, activeBinding: bindingA)
+    let deletion = try await store.prepareWorkDeletion(workID: first, activeBinding: nil)
     try await store.completeWorkDeletion(deletion)
-    #expect(try await store.open(workID: second, scope: scopeA).resources == [shared])
+    #expect(try await store.open(workID: second, scope: .unbound).resources == [shared])
     let url = await store.databaseURL
     #expect(try sqliteScalarInt(databaseURL: url, sql: "SELECT COUNT(*) FROM resources") == 1)
-    let last = try await store.prepareWorkDeletion(workID: second, activeBinding: bindingA)
+    let last = try await store.prepareWorkDeletion(workID: second, activeBinding: nil)
     try await store.completeWorkDeletion(last)
     #expect(try sqliteScalarInt(databaseURL: url, sql: "SELECT COUNT(*) FROM resources") == 0)
+    await store.close()
+}
+
+@Test func synchronizedDeletionKeepsUnsentCheckpointForLocalRescue() async throws {
+    let root = temporaryStoreRoot("deletion-rescue")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let work = WorkID(UUID()), rescued = WorkID(UUID())
+    let original = makeDocument(title: "unsent original")
+    let file = SyncAttachment(attachmentId: UUID(), fileName: "material.txt", bytes: Data("private note".utf8))
+    _ = try await store.checkpoint(V2CheckpointRequest(workID: work, document: original,
+                                                       documentCreatedAt: testDate, expectedGeneration: 0, attachments: [file]), scope: scopeA)
+    let pendingDate = try #require(await store.oldestUnreceivedChange(workID: work, scope: scopeA))
+    var updated = original
+    updated.title = "last unsent title"
+    _ = try await store.checkpoint(V2CheckpointRequest(workID: work, document: updated,
+                                                       documentCreatedAt: testDate, expectedGeneration: 1, attachments: [file]), scope: scopeA)
+    #expect(try await store.oldestUnreceivedChange(workID: work, scope: scopeA) == pendingDate)
+    #expect(try await store.oldestUnreceivedChange(workID: work, scope: .unbound) == nil)
+    let deletion = try await store.prepareWorkDeletion(workID: work, activeBinding: bindingA)
+    try await store.completeWorkDeletion(deletion)
+    let rescue = try await store.rescueLocalWork(sourceWorkID: work, sourceScope: scopeA,
+                                                 newWorkID: rescued, newDocumentID: DocumentID(UUID()))
+    #expect(rescue.document?.title == updated.title)
+    #expect(rescue.document?.id != original.id)
+    #expect(rescue.attachments == [file])
+    #expect(try await store.open(workID: work, scope: scopeA).document == updated)
+    #expect(try await store.pendingIntents(scope: scopeA, workID: rescued).isEmpty)
+    #expect(try await store.open(workID: rescued, scope: .unbound).document == rescue.document)
     await store.close()
 }

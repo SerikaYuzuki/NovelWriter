@@ -1,7 +1,9 @@
+import NovelSyncV2Application
 import SwiftUI
 
 struct IOSExplicitSyncButton: View {
     let store: IOSDocumentStore
+    @State private var delayClock = SyncV2DelayClock()
     @State private var showingSetup = false
     @State private var session: IOSDocumentSessionToken?
     @State private var account: IOSSnapshotSyncV2AccountScope?
@@ -30,6 +32,21 @@ struct IOSExplicitSyncButton: View {
         }
         .disabled(store.isSnapshotSyncInFlight || store.isDocumentTransitionInProgress || store.isSyncV2RemoteAccountTransitionActive || store.syncV2AccountCloneInFlight)
         .accessibilityIdentifier("ios.editor.sync")
+        .contextMenu {
+            if store.snapshotSyncState?.remoteProgress == .failed(.remoteWorkDeleted) {
+                Button("新しい作品としてこの端末に残す") {
+                    Task { _ = await store.cloneActiveWorkIntoSignedInAccount(rescueLocally: true) }
+                }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            TimelineView(.periodic(from: .now, by: 15)) { _ in
+                if SyncV2DelayNotice.isDelayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: delayClock.now) {
+                    Circle().fill(.orange).frame(width: 6, height: 6)
+                        .accessibilityLabel("未同期の変更があります")
+                }
+            }
+        }
         .confirmationDialog("作品を同期する", isPresented: $showingSetup, titleVisibility: .visible) {
             if canAdd {
                 Button("アカウントへ追加して同期") {

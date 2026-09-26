@@ -24,7 +24,7 @@ pub struct AppState {
     pub repo: Arc<Repository>,
     pub access_authenticator: Arc<dyn AccessAuthenticator>,
 }
-fn error_response(error: SyncError) -> Response {
+pub(crate) fn error_response(error: SyncError) -> Response {
     let status = match error {
         SyncError::Unauthorized => StatusCode::UNAUTHORIZED,
         SyncError::AccountFenceMismatch | SyncError::UploadCapabilityMismatch => {
@@ -75,7 +75,7 @@ fn error_response(error: SyncError) -> Response {
         .body(axum::body::Body::from(bytes))
         .unwrap()
 }
-fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response {
+pub(crate) fn canonical_response(status: StatusCode, value: serde_json::Value) -> Response {
     let bytes = crate::domain::canonical_json(&value).unwrap_or_else(|_| {
         br#"{"error":"retryable","result":"retryable","retryable":true}"#.to_vec()
     });
@@ -201,7 +201,7 @@ fn required_header<'a>(
 }
 
 #[allow(clippy::result_large_err)]
-async fn principal(
+pub(crate) async fn principal(
     headers: &HeaderMap,
     state: &AppState,
 ) -> Result<AuthenticatedPrincipal, Response> {
@@ -399,6 +399,7 @@ pub fn router(state: AppState) -> Router {
             post(routed_command).layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES)),
         )
         .route("/v2/receipts/{command_id}", get(receipt))
+        .merge(crate::protection_http::routes())
         .with_state(state)
 }
 async fn capabilities(headers: HeaderMap, state: State<AppState>) -> Response {
@@ -459,7 +460,7 @@ async fn list_works(
     }
     let (high_water, last, page) = if let Some((high_water, last, page)) = cursor_page {
         let current_high = match sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(c.event_id) FROM sync_v2.catalog_events c JOIN sync_v2.works w ON w.account_id=c.account_id AND w.work_id=c.work_id AND w.state='bound' WHERE c.account_id=$1",
+            "SELECT MAX(c.event_id) FROM sync_v2.catalog_events c JOIN sync_v2.works w ON w.account_id=c.account_id AND w.work_id=c.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE c.account_id=$1",
         )
         .bind(&p.account_id)
         .fetch_one(&mut *tx)
@@ -474,7 +475,7 @@ async fn list_works(
         (high_water, last, page)
     } else {
         let high_water = match sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(c.event_id) FROM sync_v2.catalog_events c JOIN sync_v2.works w ON w.account_id=c.account_id AND w.work_id=c.work_id AND w.state='bound' WHERE c.account_id=$1",
+            "SELECT MAX(c.event_id) FROM sync_v2.catalog_events c JOIN sync_v2.works w ON w.account_id=c.account_id AND w.work_id=c.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE c.account_id=$1",
         )
         .bind(&p.account_id)
         .fetch_one(&mut *tx)
@@ -496,7 +497,7 @@ async fn list_works(
          SELECT latest.work_id,latest.head_generation,latest.head_snapshot_id,latest.title
          FROM latest
          JOIN sync_v2.works w
-           ON w.account_id=$1 AND w.work_id=latest.work_id AND w.state='bound'
+           ON w.account_id=$1 AND w.work_id=latest.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id)
          WHERE latest.work_id::text > $3 AND latest.tombstoned=false
          ORDER BY work_id
          LIMIT $4",
@@ -591,7 +592,7 @@ async fn head(Path(work): Path<String>, headers: HeaderMap, state: State<AppStat
         Ok(v) => v,
         Err(e) => return e,
     };
-    let row=sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
+    let row=sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works w WHERE account_id=$1 AND work_id=$2 AND state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id)").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
             let generation = match r.try_get::<Option<i64>, _>("head_generation") {
@@ -633,7 +634,7 @@ async fn history(
         Err(e) => return e,
     };
     let exists = match sqlx::query(
-        "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound'",
+        "SELECT 1 FROM sync_v2.works w WHERE account_id=$1 AND work_id=$2 AND state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id)",
     )
     .bind(&p.account_id)
     .bind(work)
@@ -672,7 +673,7 @@ async fn history(
         }
     } else {
         let high = match sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(h.event_id) FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' WHERE h.account_id=$1 AND h.work_id=$2",
+            "SELECT MAX(h.event_id) FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE h.account_id=$1 AND h.work_id=$2",
         )
         .bind(&p.account_id)
         .bind(work)
@@ -686,7 +687,7 @@ async fn history(
     };
     if params.contains_key("cursor") {
         let current_high = match sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(h.event_id) FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' WHERE h.account_id=$1 AND h.work_id=$2",
+            "SELECT MAX(h.event_id) FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE h.account_id=$1 AND h.work_id=$2",
         )
         .bind(&p.account_id)
         .bind(work)
@@ -700,7 +701,7 @@ async fn history(
             return error_response(SyncError::SchemaViolation("cursor.highWater".into()));
         }
     }
-    let rows=sqlx::query("SELECT h.occurrence_id,h.snapshot_id,h.reason,h.pinned,h.created_at,h.event_id FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' WHERE h.account_id=$1 AND h.work_id=$2 AND h.event_id <= $3 AND h.event_id > $4 ORDER BY h.event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page + 1).fetch_all(&state.repo.pool).await;
+    let rows=sqlx::query("SELECT h.occurrence_id,h.snapshot_id,h.reason,h.pinned,h.created_at,h.event_id FROM sync_v2.history h JOIN sync_v2.works w ON w.account_id=h.account_id AND w.work_id=h.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE h.account_id=$1 AND h.work_id=$2 AND h.event_id <= $3 AND h.event_id > $4 ORDER BY h.event_id LIMIT $5").bind(&p.account_id).bind(work).bind(high_water).bind(last).bind(page + 1).fetch_all(&state.repo.pool).await;
     match rows {
         Ok(mut rows) => {
             let has_more = rows.len() as i64 > page;
@@ -772,7 +773,7 @@ async fn manifest(
         Ok(v) => v,
         Err(_) => return error_response(SyncError::NotFound),
     };
-    let row=sqlx::query("SELECT s.manifest_bytes,s.manifest_digest FROM sync_v2.snapshots s JOIN sync_v2.works w ON w.account_id=s.account_id AND w.work_id=s.work_id AND w.state='bound' WHERE s.account_id=$1 AND s.snapshot_id=$2").bind(&p.account_id).bind(id.as_slice()).fetch_optional(&state.repo.pool).await;
+    let row=sqlx::query("SELECT s.manifest_bytes,s.manifest_digest FROM sync_v2.snapshots s JOIN sync_v2.works w ON w.account_id=s.account_id AND w.work_id=s.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE s.account_id=$1 AND s.snapshot_id=$2").bind(&p.account_id).bind(id.as_slice()).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
             let bytes: Vec<u8> = match r.try_get("manifest_bytes") {
@@ -877,7 +878,7 @@ async fn missing_objects(
         return error_response(SyncError::SchemaViolation("workId".into()));
     }
     let work_exists = match sqlx::query(
-        "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound'",
+        "SELECT 1 FROM sync_v2.works w WHERE account_id=$1 AND work_id=$2 AND state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id)",
     )
     .bind(&p.account_id)
     .bind(work)
@@ -1028,7 +1029,7 @@ async fn conflict(
         Err(e) => return e,
     };
     let exists = match sqlx::query(
-        "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound'",
+        "SELECT 1 FROM sync_v2.works w WHERE account_id=$1 AND work_id=$2 AND state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id)",
     )
     .bind(&p.account_id)
     .bind(work)
@@ -1041,7 +1042,7 @@ async fn conflict(
     if !exists {
         return error_response(SyncError::NotFound);
     }
-    let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision JOIN sync_v2.works w ON w.account_id=a.account_id AND w.work_id=a.work_id AND w.state='bound' WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
+    let row=sqlx::query("SELECT a.conflict_id,a.current_revision,a.source_generation,c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision JOIN sync_v2.works w ON w.account_id=a.account_id AND w.work_id=a.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'").bind(&p.account_id).bind(work).fetch_optional(&state.repo.pool).await;
     match row {
         Ok(Some(r)) => {
             let base = match r.try_get::<Option<Vec<u8>>, _>("base_snapshot_id") {

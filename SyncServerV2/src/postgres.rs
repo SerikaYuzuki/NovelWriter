@@ -2102,11 +2102,22 @@ impl Repository {
         }
         let mut tx = self.pool.begin().await?;
         self.scope(&mut tx, p).await?;
+        let result = self.command_in_transaction(&mut tx, p, cmd).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn command_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
         if cmd.kind == CommandKind::CreateWork {
             let lock_key = create_work_lock_key(&p.account_id, cmd.work_id);
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
                 .bind(lock_key)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
         // A quarantined Work is not an addressable remote resource.  Check
@@ -2118,42 +2129,39 @@ impl Repository {
         )
         .bind(&p.account_id)
         .bind(cmd.work_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if deleted {
             return Err(SyncError::NotFound);
         }
         if cmd.kind != CommandKind::CreateWork {
-            self.require_work(&mut tx, p, cmd.work_id).await?;
+            self.require_work(tx, p, cmd.work_id).await?;
         }
-        if let Some(r) = self.receipt_lookup(&mut tx, p, cmd).await? {
-            tx.commit().await?;
+        if let Some(r) = self.receipt_lookup(tx, p, cmd).await? {
             return Ok(r);
         }
         if cmd.kind == CommandKind::CreateWork {
             // sealed_commands has an immediate Work FK. Bootstrap the null-head
             // Work before sealing, in the same transaction, after scope/receipt
             // lookup. A failed command rolls this row back atomically.
-            self.create_work_row(&mut tx, p, cmd).await?;
+            self.create_work_row(tx, p, cmd).await?;
         }
-        self.seal(&mut tx, p, cmd).await?;
+        self.seal(tx, p, cmd).await?;
         let (status, response) = match cmd.kind {
-            CommandKind::CreateWork => self.create_work(&mut tx, p, cmd).await?,
-            CommandKind::PrepareObject => self.prepare_object(&mut tx, p, cmd).await?,
-            CommandKind::FinalizeObject => self.finalize_object(&mut tx, p, cmd).await?,
-            CommandKind::RegisterSnapshot => self.register_snapshot(&mut tx, p, cmd).await?,
-            CommandKind::Publish => self.publish(&mut tx, p, cmd).await?,
+            CommandKind::CreateWork => self.create_work(tx, p, cmd).await?,
+            CommandKind::PrepareObject => self.prepare_object(tx, p, cmd).await?,
+            CommandKind::FinalizeObject => self.finalize_object(tx, p, cmd).await?,
+            CommandKind::RegisterSnapshot => self.register_snapshot(tx, p, cmd).await?,
+            CommandKind::Publish => self.publish(tx, p, cmd).await?,
             CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
-                self.resolve(&mut tx, p, cmd).await?
+                self.resolve(tx, p, cmd).await?
             }
-            CommandKind::Restore => self.restore(&mut tx, p, cmd).await?,
+            CommandKind::Restore => self.restore(tx, p, cmd).await?,
         };
-        self.verify_read_back(&mut tx, p, cmd, status, &response)
+        self.verify_read_back(tx, p, cmd, status, &response).await?;
+        self.complete(tx, p, cmd, status, &response).await?;
+        self.verify_completed_receipt(tx, p, cmd, status, &response)
             .await?;
-        self.complete(&mut tx, p, cmd, status, &response).await?;
-        self.verify_completed_receipt(&mut tx, p, cmd, status, &response)
-            .await?;
-        tx.commit().await?;
         Ok((status, response))
     }
     async fn require_work<'a>(
@@ -3568,7 +3576,7 @@ impl Repository {
         p: &AuthenticatedPrincipal,
         id: Uuid,
     ) -> SyncResult<(String, Uuid, Vec<u8>, Vec<u8>, i32)> {
-        let row=sqlx::query("SELECT r.command_kind,r.work_id,r.request_digest,r.canonical_response,r.response_status FROM sync_v2.receipts r JOIN sync_v2.works w ON w.account_id=r.account_id AND w.work_id=r.work_id AND w.state='bound' WHERE r.account_id=$1 AND r.command_id=$2 AND r.state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
+        let row=sqlx::query("SELECT r.command_kind,r.work_id,r.request_digest,r.canonical_response,r.response_status FROM sync_v2.receipts r JOIN sync_v2.works w ON w.account_id=r.account_id AND w.work_id=r.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE r.account_id=$1 AND r.command_id=$2 AND r.state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
         Ok((
             row.try_get("command_kind")?,
             row.try_get("work_id")?,

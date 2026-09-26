@@ -7,6 +7,7 @@ struct IOSLibraryView: View {
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
 
+    @State private var delayClock = SyncV2DelayClock()
     @State private var searchText = ""
     @State private var pendingRename: SyncV2LibraryItem?
     @State private var renameSession: IOSDocumentSessionToken?
@@ -14,6 +15,8 @@ struct IOSLibraryView: View {
     @State private var renameTitle = ""
     @State private var renamingIDs: Set<WorkID> = []
     @State private var renameFailed = false
+
+    @State private var showingProtection = false
 
     var body: some View {
         List {
@@ -51,7 +54,10 @@ struct IOSLibraryView: View {
                             }
                             HStack(spacing: 6) {
                                 Text(item.availability.japaneseLabel)
-                                Text(item.remoteProgress.japaneseLabel)
+                                TimelineView(.periodic(from: .now, by: 15)) { _ in
+                                    Text(SyncV2DelayNotice.label(progress: item.remoteProgress,
+                                                                 since: item.oldestUnreceivedAt, now: delayClock.now))
+                                }
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -105,6 +111,15 @@ struct IOSLibraryView: View {
                 Button(".novelpkg を取り込む") { store.isImporterPresented = true }
             }
         }
+        .sheet(isPresented: $showingProtection) {
+            if let application = store.snapshotSyncV2Application {
+                ProtectedWorksView(application: application,
+                                   contextID: String(describing: store.snapshotSyncV2AccountScope)) {
+                    _ = await store.refreshLibrary()
+                }
+            }
+        }
+        .toolbar { Button("復元", systemImage: "archivebox") { showingProtection = true } }
         .navigationTitle("作品一覧")
         .alert("作品名を変更", isPresented: Binding(
             get: { pendingRename != nil },

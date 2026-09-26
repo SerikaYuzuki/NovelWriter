@@ -4,6 +4,7 @@ import SwiftUI
 struct ExplicitSyncButton: View {
     @Environment(AppState.self) private var appState
     let requestSync: () -> Void
+    @State private var delayClock = SyncV2DelayClock()
     @State private var setup = ExplicitSyncPresentation()
 
     private var status: WorkbenchSyncStatus {
@@ -17,15 +18,28 @@ struct ExplicitSyncButton: View {
     }
 
     var body: some View {
-        Button(action: requestSync) {
+        TimelineView(.periodic(from: .now, by: 15)) { _ in
+            button(now: delayClock.now)
+        }
+    }
+
+    private func button(now: Date) -> some View {
+        let pending = appState.snapshotSyncV2UIState?.oldestUnreceivedAt
+        let delayed = SyncV2DelayNotice.isDelayed(since: pending, now: now)
+        return Button(action: requestSync) {
             Label("保存して同期", systemImage: status.systemImage)
                 .labelStyle(.iconOnly)
-                .foregroundStyle(status.isWarning ? Color.orange : Color.primary)
+                .foregroundStyle(status.isWarning || delayed ? Color.orange : Color.primary)
         }
-        .help(status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
+        .help((delayed ? "未同期の変更があります・" : "") + status.title + " — " + (appState.snapshotSyncCurrentWorkAccountState == .unbound
                 ? "この端末の同じ作品に保存します。同期用コピーは右クリックから作成できます。"
                 : "使用中は自動で更新を確認します。クリックまたは⌘Sで今すぐ同期します。"))
         .contextMenu {
+            if appState.snapshotSyncV2UIState?.remoteProgress == .failed(.remoteWorkDeleted) {
+                Button("新しい作品としてこの端末に残す") {
+                    Task { _ = await appState.cloneCurrentWorkIntoActiveAccount(rescueLocally: true) }
+                }
+            }
             if appState.canCloneCurrentWorkIntoActiveAccount {
                 Button("同期用のコピーを作成…") { setup.requestSetup(appState: appState) }
             } else if !appState.isSignedInToFuminiwa {

@@ -44,6 +44,9 @@ extension ProductionSyncV2RemoteClient {
         request.httpBody = command.canonicalBytes
         addHeaders(&request, session: session, binding: command.binding)
         let (data, response) = try await requestData(request, session: session)
+        if (response as? HTTPURLResponse)?.statusCode == 404 {
+            try await rejectKnownRemoteDeletion(workID: remoteClientWorkID(for: command))
+        }
         let receipt = try decode(data: data, response: response, command: command)
         return try await readBack(receipt, command: command, session: session)
     }

@@ -58,8 +58,12 @@ public extension SyncV2Application {
         return opened
     }
 
-    func uiState(workID: WorkID) -> SyncUIState? {
-        states[workID]
+    func uiState(workID: WorkID) async -> SyncUIState? {
+        let scopeGeneration = historyScopeGeneration
+        let pendingDate = try? await kernel.oldestUnreceivedChange(workID: workID)
+        guard scopeGeneration == historyScopeGeneration, var state = states[workID] else { return nil }
+        state.oldestUnreceivedAt = pendingDate
+        return state
     }
 
     func pendingAdoption(

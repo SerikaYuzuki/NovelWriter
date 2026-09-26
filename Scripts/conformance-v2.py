@@ -214,9 +214,26 @@ def check_canonical(root: Path) -> int:
     return checked
 
 
+def check_protection(repo: Path) -> int:
+    base = repo / "docs/sync/v2"
+    definitions = read_json(base / "protection.schema.json")["$defs"]
+    fixture = read_json(base / "fixtures/canonical/protection.json")
+    assert_canonical(base / "fixtures/canonical/protection.json")
+    for name, definition in [("request", "recoveryRequest"), ("response", "recoveryResponse"), ("status", "status")]:
+        value, schema = fixture[name], definitions[definition]
+        assert set(value) == set(schema["required"]) == set(schema["properties"])
+        assert schema["additionalProperties"] is False
+        for key, rule in schema["properties"].items():
+            if "const" in rule:
+                assert value[key] == rule["const"]
+            if "pattern" in rule:
+                assert re.fullmatch(rule["pattern"], value[key])
+    return 3
+
+
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
-    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical")
+    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo)
     print(f"v2 independent canonical fixture checks passed ({count} vectors)")
     return 0
 

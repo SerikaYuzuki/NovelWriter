@@ -14,6 +14,32 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         self.remote = remote
     }
 
+    func localRescuableWorks() async throws -> [SyncV2ProtectedWork] {
+        var values: [SyncV2ProtectedWork] = []
+        for workID in try await store.workDeletionIDs() {
+            guard let localScope = try? await scope.existingScope(workID: workID),
+                  let source = try? await store.open(workID: workID, scope: localScope),
+                  let document = source.document else { continue }
+            values.append(SyncV2ProtectedWork(workID: workID, title: document.title, deletedAt: nil, localRescue: true))
+        }
+        return values
+    }
+
+    func rescueLocalWork(sourceWorkID: WorkID, newWorkID: WorkID, newDocumentID: DocumentID) async throws -> SyncV2OpenedWork {
+        let localScope = try await scope.existingScope(workID: sourceWorkID)
+        let result = try await store.rescueLocalWork(sourceWorkID: sourceWorkID, sourceScope: localScope,
+                                                     newWorkID: newWorkID, newDocumentID: newDocumentID)
+        return SyncV2OpenedWork(workID: newWorkID, document: result.document,
+                                documentCreatedAt: result.documentCreatedAt,
+                                attachments: result.attachments, resources: result.resources,
+                                generation: result.summary.localGeneration, snapshotID: result.summary.currentSnapshotID)
+    }
+
+    func oldestUnreceivedChange(workID: WorkID) async throws -> Date? {
+        let localScope = try await scope.existingScope(workID: workID)
+        return try await store.oldestUnreceivedChange(workID: workID, scope: localScope)
+    }
+
     func workDeletions() async throws -> [SyncV2WorkDeletion] {
         var result: [SyncV2WorkDeletion] = []
         for id in try await store.workDeletionIDs() {
@@ -526,6 +552,7 @@ private extension ProductionSyncV2Kernel {
     func parkedItems() async throws -> [SyncV2LibraryItem] {
         try await withThrowingTaskGroup(of: SyncV2LibraryItem.self) { group in
             for summary in try await store.listParkedWorks() {
+                guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
                     let opened = try await store.open(
                         workID: summary.workID,
@@ -558,6 +585,7 @@ private extension ProductionSyncV2Kernel {
             of: SyncV2LibraryItem.self
         ) { group in
             for summary in summaries {
+                guard try await store.workDeletion(workID: summary.workID) == nil else { continue }
                 group.addTask { [store] in
                     let opened = try await store.open(
                         workID: summary.workID,
@@ -594,14 +622,15 @@ private extension ProductionSyncV2Kernel {
                     } else {
                         .idle
                     }
-                    return SyncV2LibraryItem(
+                    return try await SyncV2LibraryItem(
                         workID: summary.workID,
                         title: opened.document?.title ?? "名称未設定の作品",
                         availability: .localOnly,
                         accountState: accountState,
                         localGeneration: summary.localGeneration,
                         conflict: adoption == nil ? conflict : nil,
-                        remoteProgress: progress
+                        remoteProgress: progress,
+                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope)
                     )
                 }
             }

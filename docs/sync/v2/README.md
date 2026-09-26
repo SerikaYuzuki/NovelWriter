@@ -64,6 +64,8 @@ python3 Scripts/conformance-v2.py       # independent canonical fixture bytes/ha
 
 The independent suite intentionally disables PostgreSQL integration. Real DB transaction/role tests require separately provisioned disposable databases; see [CONFORMANCE.md](CONFORMANCE.md) and the [server README](../../../SyncServerV2/README.md). A suite pass is not staging or device acceptance.
 
-- [作品の完全削除](work-deletion.md): scope付き削除intent、再試行、復活防止、追加DDL [work-deletion.sql](work-deletion.sql)。
+- [作品の削除と保管](work-deletion.md): scope付き削除intent、再試行、復活防止、追加DDL [work-deletion.sql](work-deletion.sql)。
 
 取り込み・DB更新の制約は[migration](migration.md)を参照する。
+
+- [保管と別作品復元API](protection.md)、[復旧の操作手順](../../WORK_RECOVERY.md)。

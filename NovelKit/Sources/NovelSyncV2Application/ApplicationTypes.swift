@@ -74,10 +74,13 @@ public enum SyncV2FatalReason: String, Equatable, Sendable {
     case invalidLocalState
     case unexpected
     case remoteDataUnavailable
+    case remoteWorkDeleted
     case uploadTooLarge
 
     public var japaneseDescription: String {
         switch self {
+        case .remoteWorkDeleted:
+            "別端末で削除された作品です。この端末の変更は新しい作品として残せます。"
         case .remoteDataUnavailable:
             "同期先の作品またはデータを利用できません。原稿はこの端末に残っています。作品を書き出して保管し、取り込み直すと別の作品として同期できます。"
         case .uploadTooLarge:

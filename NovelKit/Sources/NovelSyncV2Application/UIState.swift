@@ -37,6 +37,7 @@ public enum SyncV2RemoteProgress: Equatable, Sendable {
         case .retryable: "端末に保存済み・同期を再試行します"
         case .needsChoice: "競合の確認が必要です"
         case .readyForSafeAdoption: "サーバーの版を適用できます"
+        case .failed(.remoteWorkDeleted): "別端末で削除済み・端末の変更は保持中"
         case .failed(.remoteDataUnavailable): "同期先のデータを利用できません"
         case .failed(.uploadTooLarge): "送信上限を超えています"
         case .failed, .receiptMismatch: "同期できませんでした"
@@ -60,6 +61,7 @@ public enum SyncV2TypedResult: Equatable, Sendable {
 public struct SyncUIState: Equatable, Sendable {
     public let workID: WorkID
     public let localDurability: SyncV2LocalDurability
+    public var oldestUnreceivedAt: Date?
     public let remoteProgress: SyncV2RemoteProgress
     public let conflict: SyncV2ConflictProjection?
     public let lastTypedResult: SyncV2TypedResult
@@ -71,10 +73,12 @@ public struct SyncUIState: Equatable, Sendable {
         remoteProgress: SyncV2RemoteProgress,
         conflict: SyncV2ConflictProjection? = nil,
         lastTypedResult: SyncV2TypedResult,
-        lastFailure: SyncV2Failure? = nil
+        lastFailure: SyncV2Failure? = nil,
+        oldestUnreceivedAt: Date? = nil
     ) {
         self.workID = workID
         self.localDurability = localDurability
+        self.oldestUnreceivedAt = oldestUnreceivedAt
         self.remoteProgress = remoteProgress
         self.conflict = conflict
         self.lastTypedResult = lastTypedResult
@@ -82,7 +86,7 @@ public struct SyncUIState: Equatable, Sendable {
     }
 
     public var japaneseLabel: String {
-        remoteProgress.japaneseLabel
+        SyncV2DelayNotice.label(progress: remoteProgress, since: oldestUnreceivedAt)
     }
 }
 

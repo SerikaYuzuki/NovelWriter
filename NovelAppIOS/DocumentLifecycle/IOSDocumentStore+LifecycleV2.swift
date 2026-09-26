@@ -248,7 +248,7 @@ extension IOSDocumentStore {
         return await saveCoordinator.saveNow()
     }
 
-    func requestExport() async {
+    func requestExport(readable: Bool = false) async {
         guard !isSyncV2AccountTransitionActive,
               let expectedSession = currentDocumentSessionToken,
               let expectedWorkID = syncV2ActiveWorkID else { return }
@@ -280,19 +280,23 @@ extension IOSDocumentStore {
                     }
                 }
                 let destination = root.appendingPathComponent(
-                    Self.portableExportFilename(for: document.title),
-                    isDirectory: true
+                    readable ? "本文と資料.zip" : Self.portableExportFilename(for: document.title),
+                    isDirectory: !readable
                 )
                 let exportResources = try SyncV2PortableMetadata.resourcesForExport(
                     syncV2PortableResources
                 )
-                try await portableBridge.exportExplicitPackage(
-                    document: document,
-                    attachments: attachments,
-                    documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
-                    resources: exportResources,
-                    to: destination
-                )
+                if readable {
+                    try await ReadableExport.write(document, attachments: attachments, resources: exportResources, to: destination)
+                } else {
+                    try await portableBridge.exportExplicitPackage(
+                        document: document,
+                        attachments: attachments,
+                        documentCreatedAt: syncV2PortableCreatedAt ?? documentCreatedAt,
+                        resources: exportResources,
+                        to: destination
+                    )
+                }
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,

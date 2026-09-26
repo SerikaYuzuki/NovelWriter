@@ -30,6 +30,7 @@ struct StartupLibraryWork: Identifiable, Equatable {
     let availability: StartupLibraryWorkAvailability
     let workID: WorkID
     let remoteProgress: SyncV2RemoteProgress
+    var oldestUnreceivedAt: Date?
 
     var isOpenable: Bool {
         // Parked works remain local-first and editable.  They are projected

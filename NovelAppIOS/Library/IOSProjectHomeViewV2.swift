@@ -83,7 +83,11 @@ struct IOSProjectHomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section { Button("設定", action: openSettings); Button("書き出す") { Task { await store.requestExport() } } }
+            Section {
+                Button("設定", action: openSettings)
+                Button("作品パッケージを書き出す") { Task { await store.requestExport() } }
+                Button("本文と資料を書き出す（ZIP）") { Task { await store.requestExport(readable: true) } }
+            }
         }
         .navigationTitle("作品ホーム")
         .sheet(isPresented: $showsSnapshotHistory) {

@@ -789,6 +789,105 @@ async fn verify_work_deletion(context: &ScenarioContext) {
             .await
             .is_err());
     }
+    // Deletion hides the catalog but retains the exact graph for recovery.
+    let retained: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_v2.snapshots WHERE account_id=$1")
+            .bind(account)
+            .fetch_one(&context.repo.pool)
+            .await
+            .unwrap();
+    assert!(retained > 0);
+    assert_eq!(context.repo.purge_expired_works().await.unwrap(), 0);
+    let (status, _, _) = request(
+        context,
+        account,
+        "GET",
+        &format!("/v2/works/{}/head", context.primary_work),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    for path in [
+        "/v2/protection".to_string(),
+        format!("/v2/protection/{}/history", context.primary_work),
+        format!("/v2/protection/{}/status", context.primary_work),
+    ] {
+        let (status, headers, body) = request(context, account, "GET", &path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        assert_eq!(headers["cache-control"], "no-store");
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        if path.ends_with("/status") {
+            assert_eq!(value["deleted"], true);
+        } else {
+            assert!(!value["items"].as_array().unwrap().is_empty());
+        }
+    }
+    let (status, _, _) = request(
+        context,
+        &context.account_b.account_id,
+        "GET",
+        &format!("/v2/protection/{}/history", context.primary_work),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let leap:String=sqlx::query_scalar("SELECT to_char(timestamp '2024-02-29 12:34:56' + interval '1 year','YYYY-MM-DD HH24:MI:SS')").fetch_one(&context.repo.pool).await.unwrap();
+    assert_eq!(leap, "2025-02-28 12:34:56");
+    let recovery = fuminiwa_sync_server_v2::work_recovery::RecoveryRequest {
+        operation_id: Uuid::new_v4(),
+        snapshot_id: hex::encode(context.root_snapshot),
+        new_work_id: Uuid::new_v4(),
+        new_document_id: Uuid::new_v4(),
+    };
+    assert!(context
+        .repo
+        .recover_work(&context.account_b, context.primary_work, &recovery)
+        .await
+        .is_err());
+    let recovered = context
+        .repo
+        .recover_work(&context.account_a, context.primary_work, &recovery)
+        .await
+        .unwrap();
+    assert_eq!(
+        context
+            .repo
+            .recover_work(&context.account_a, context.primary_work, &recovery)
+            .await
+            .unwrap(),
+        recovered
+    );
+    let parent_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sync_v2.snapshot_parents WHERE account_id=$1 AND work_id=$2",
+    )
+    .bind(account)
+    .bind(recovery.new_work_id)
+    .fetch_one(&context.repo.pool)
+    .await
+    .unwrap();
+    assert_eq!(parent_count, 0);
+    let mut reused = recovery.clone();
+    reused.new_document_id = Uuid::new_v4();
+    assert!(context
+        .repo
+        .recover_work(&context.account_a, context.primary_work, &reused)
+        .await
+        .is_err());
+    context
+        .repo
+        .delete_work(&context.account_a, recovery.new_work_id)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sync_v2.deleted_works SET deleted_at=now()-interval '1 year 1 second' WHERE account_id=$1")
+        .bind(account).execute(&context.repo.pool).await.unwrap();
+    assert!(context
+        .repo
+        .recover_work(&context.account_a, context.primary_work, &recovery)
+        .await
+        .is_err());
+    while context.repo.purge_expired_works().await.unwrap() > 0 {}
     for table in [
         "works",
         "snapshots",

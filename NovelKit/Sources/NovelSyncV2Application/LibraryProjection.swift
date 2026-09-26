@@ -22,6 +22,7 @@ public struct SyncV2LibraryItem: Sendable {
     public let localGeneration: Int64?
     public let remoteHead: SyncV2RemoteHead?
     public let conflict: SyncV2ConflictProjection?
+    public var oldestUnreceivedAt: Date?
     public let remoteProgress: SyncV2RemoteProgress
 
     public init(
@@ -32,7 +33,8 @@ public struct SyncV2LibraryItem: Sendable {
         localGeneration: Int64? = nil,
         remoteHead: SyncV2RemoteHead? = nil,
         conflict: SyncV2ConflictProjection? = nil,
-        remoteProgress: SyncV2RemoteProgress = .idle
+        remoteProgress: SyncV2RemoteProgress = .idle,
+        oldestUnreceivedAt: Date? = nil
     ) {
         self.workID = workID
         self.title = title
@@ -41,6 +43,7 @@ public struct SyncV2LibraryItem: Sendable {
         self.localGeneration = localGeneration
         self.remoteHead = remoteHead
         self.conflict = conflict
+        self.oldestUnreceivedAt = oldestUnreceivedAt
         self.remoteProgress = remoteProgress
     }
 }

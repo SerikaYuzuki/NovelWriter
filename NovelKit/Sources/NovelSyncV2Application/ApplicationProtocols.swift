@@ -74,6 +74,10 @@ public extension SyncV2CommandPlanner {
 /// capability/upload/register/publish or conflict/restore sequence internally;
 /// the application service never builds URLs or interprets HTTP/SQL details.
 public protocol SyncV2RemoteClient: Sendable {
+    func protectedWorks() async throws -> [SyncV2ProtectedWork]
+    func recoveryPoints(workID: WorkID) async throws -> [SyncV2RecoveryPoint]
+    func recoverWork(workID: WorkID, request: SyncV2RecoveryRequest) async throws
+
     func deleteWork(workID: WorkID, binding: SyncV2AccountScopeBinding) async throws
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution
     func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
@@ -115,6 +119,9 @@ public extension SyncV2RemoteClient {
 }
 
 public protocol SyncV2LocalKernel: Sendable {
+    func localRescuableWorks() async throws -> [SyncV2ProtectedWork]
+    func oldestUnreceivedChange(workID: WorkID) async throws -> Date?
+    func rescueLocalWork(sourceWorkID: WorkID, newWorkID: WorkID, newDocumentID: DocumentID) async throws -> SyncV2OpenedWork
     func prepareWorkDeletion(workID: WorkID) async throws -> SyncV2WorkDeletion
     func completeWorkDeletion(_ deletion: SyncV2WorkDeletion) async throws
     func workDeletions() async throws -> [SyncV2WorkDeletion]
@@ -193,5 +200,17 @@ public extension SyncV2LocalKernel {
 
     func workDeletions() async throws -> [SyncV2WorkDeletion] {
         []
+    }
+}
+
+public extension SyncV2LocalKernel {
+    func oldestUnreceivedChange(workID _: WorkID) async throws -> Date? {
+        nil
+    }
+}
+
+public extension SyncV2LocalKernel {
+    func rescueLocalWork(sourceWorkID _: WorkID, newWorkID _: WorkID, newDocumentID _: DocumentID) async throws -> SyncV2OpenedWork {
+        throw SyncV2ApplicationError.safeBoundaryRejected
     }
 }

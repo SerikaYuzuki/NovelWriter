@@ -19,6 +19,8 @@ extension SyncV2Application {
     /// is advisory for a remote implementation, so owner invalidation is the
     /// actual late-completion boundary.
     func cancelWorker(for workID: WorkID) {
+        cancelRetry(for: workID)
+        retryAttempts[workID] = nil
         workerOwners[workID] = nil
         workerTasks[workID]?.cancel()
         workerTasks[workID] = nil
@@ -26,6 +28,7 @@ extension SyncV2Application {
     }
 
     func scheduleWorker(for workID: WorkID) {
+        cancelRetry(for: workID)
         wakeEpochs[workID, default: 0] &+= 1
         guard !deletingWorkIDs.contains(workID), workerTasks[workID] == nil,
               runtimeIdentity != .preview,
@@ -359,6 +362,8 @@ extension SyncV2Application {
 
     /// A receipt completes one operation. Only a stable idle read completes the lane.
     private func projectCompletedWorker(workID: WorkID) {
+        cancelRetry(for: workID)
+        retryAttempts[workID] = nil
         guard let state = states[workID], case .syncing = state.remoteProgress else { return }
         setState(workID: workID, localDurability: state.localDurability,
                  remoteProgress: .noChanges, result: .noChanges)
@@ -388,6 +393,7 @@ extension SyncV2Application {
         guard workerOwners[workID] == owner else { return false }
         workerOwners[workID] = nil
         workerTasks[workID] = nil
+        scheduleRetryIfNeeded(for: workID)
         return true
     }
 

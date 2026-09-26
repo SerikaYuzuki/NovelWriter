@@ -22,3 +22,6 @@ pub use postgres::Repository;
 mod work_deletion;
 
 pub mod upload_chunks;
+
+mod protection_http;
+pub mod work_recovery;

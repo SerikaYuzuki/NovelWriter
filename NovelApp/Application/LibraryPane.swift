@@ -6,6 +6,7 @@ import SwiftUI
 struct LibraryPane: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
+    @State private var delayClock = SyncV2DelayClock()
     @State private var pendingRename: StartupLibraryWork?
     @State private var renameSession: DocumentSessionToken?
     @State private var renameAccountScope: SnapshotSyncV2AccountScopeToken?
@@ -16,6 +17,7 @@ struct LibraryPane: View {
     @State private var deletionAccountScope: SnapshotSyncV2AccountScopeToken?
     @State private var deletingIDs: Set<UUID> = []
     @State private var showingHistory = false
+    @State private var showingProtection = false
     @State private var selection: UUID?
     @State private var searchText = ""
     @Environment(\.openWindow) private var openWindow
@@ -43,6 +45,8 @@ struct LibraryPane: View {
                 }
                 .labelStyle(.iconOnly)
                 .help("作品一覧を更新")
+                Button("復元", systemImage: "archivebox") { showingProtection = true }
+                    .labelStyle(.iconOnly).help("別作品として復元")
                 Button("履歴", systemImage: "clock.arrow.circlepath") {
                     Task {
                         await appState.refreshSnapshotHistory()
@@ -64,8 +68,12 @@ struct LibraryPane: View {
                                 .foregroundStyle(color(for: work))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(work.title).lineLimit(1)
-                                Text(label(for: work))
-                                    .font(.caption).foregroundStyle(.secondary)
+                                TimelineView(.periodic(from: .now, by: 15)) { _ in
+                                    Text(SyncV2DelayNotice.isDelayed(since: work.oldestUnreceivedAt, now: delayClock.now)
+                                        ? SyncV2DelayNotice.label(progress: work.remoteProgress, since: work.oldestUnreceivedAt, now: delayClock.now)
+                                        : label(for: work))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             if renamingIDs.contains(work.id) {
@@ -172,7 +180,15 @@ struct LibraryPane: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("「\(pendingDeletion?.title ?? "")」の本文・履歴・添付ファイルを、この端末と同期先サーバーから削除します。元に戻せません。別の作品として作ったコピーは残ります。")
+            Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+        }
+        .sheet(isPresented: $showingProtection) {
+            if let application = appState.snapshotSyncV2Application {
+                ProtectedWorksView(application: application,
+                                   contextID: String(describing: appState.snapshotSyncV2AccountScopeToken)) {
+                    await appState.refreshSnapshotLibrary()
+                }
+            }
         }
         .frame(minWidth: 220)
         .sheet(isPresented: $showingHistory) {
@@ -250,6 +266,8 @@ struct LibraryPane: View {
             return "arrow.triangle.2.circlepath"
         case .offline:
             return "wifi.slash"
+        case .failed(.remoteWorkDeleted):
+            return "別端末で削除済み・端末の変更は保持中"
         case .failed, .receiptMismatch:
             return "exclamationmark.circle"
         default:
@@ -294,6 +312,8 @@ struct LibraryPane: View {
             return "サーバーの版を適用できます"
         case .parkedDifferentAccount, .fenceChanged, .quarantined:
             return "別のアカウントのため保留中"
+        case .failed(.remoteWorkDeleted):
+            return "別端末で削除済み・端末の変更は保持中"
         case .failed, .receiptMismatch:
             return "同期できませんでした"
         case .idle, .noChanges:

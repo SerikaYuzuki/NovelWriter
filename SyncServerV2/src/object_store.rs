@@ -48,7 +48,7 @@ impl ObjectStore for PostgresObjectStore {
         Ok(())
     }
     async fn get(&self, account_id: &str, object_id: &[u8; 32]) -> SyncResult<Vec<u8>> {
-        let row = sqlx::query("SELECT b.raw_bytes FROM sync_v2.global_blobs b JOIN sync_v2.account_objects a ON a.object_id=b.object_id AND a.account_id=$1 WHERE b.object_id=$2 AND a.state='available'")
+        let row = sqlx::query("SELECT b.raw_bytes FROM sync_v2.global_blobs b JOIN sync_v2.account_objects a ON a.object_id=b.object_id AND a.account_id=$1 WHERE b.object_id=$2 AND a.state='available' AND (NOT EXISTS(SELECT 1 FROM sync_v2.snapshot_entries e JOIN sync_v2.snapshots s ON s.account_id=e.account_id AND s.snapshot_id=e.snapshot_id JOIN sync_v2.deleted_works d ON d.account_id=s.account_id AND d.work_id=s.work_id WHERE e.account_id=$1 AND e.object_id=$2) OR EXISTS(SELECT 1 FROM sync_v2.snapshot_entries e JOIN sync_v2.snapshots s ON s.account_id=e.account_id AND s.snapshot_id=e.snapshot_id WHERE e.account_id=$1 AND e.object_id=$2 AND NOT EXISTS(SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=s.account_id AND d.work_id=s.work_id)))")
             .bind(account_id).bind(object_id.as_slice()).fetch_optional(&self.pool).await?;
         row.ok_or(SyncError::NotFound)?
             .try_get("raw_bytes")

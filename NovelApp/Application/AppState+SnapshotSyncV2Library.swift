@@ -85,7 +85,8 @@ extension AppState {
                 title: item.title,
                 availability: withConflict ? .conflict : availability,
                 workID: item.workID,
-                remoteProgress: remoteProgress
+                remoteProgress: remoteProgress,
+                oldestUnreceivedAt: item.oldestUnreceivedAt
             )
             return (item.workID, work)
         })
@@ -102,7 +103,8 @@ extension AppState {
                     title: local.title.isEmpty ? remote.title : local.title,
                     availability: availability,
                     workID: remote.workID,
-                    remoteProgress: local.remoteProgress
+                    remoteProgress: local.remoteProgress,
+                    oldestUnreceivedAt: local.oldestUnreceivedAt
                 )
             } else {
                 worksByID[remote.workID] = StartupLibraryWork(

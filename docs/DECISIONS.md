@@ -19,7 +19,7 @@
 | D-064 / D-080 | 前景編集・local durability・remote workerを分離。端末SQLiteを唯一の正本とし、Snapshot Sync v2だけを通常同期へ使う |
 | D-084 | account transitionをowner付きで停止・保存・再計画する。古い非同期完了を別accountへ適用しない |
 | D-091 | 明示同期は最新checkpointの送受信確認まで要求する。保存だけを同期完了と表示しない |
-| D-092 | 明示的な作品削除は端末とremoteのデータを消去する。削除前の未保存編集を先に保存し、失敗時は保持する |
+| D-092 | 同期作品の削除は一覧から隠しserver graphを1暦年保管する。端末の未送信checkpointは救出用に保持し、新IDのローカル作品へ取り出せる。未同期作品は従来の削除。削除前のIME確定と保存を守る |
 | D-093 | 初回同期は検証済み履歴の最新checkpointを公開し、古い履歴の途中をheadにしない |
 
 ## 画面・AI

@@ -72,6 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 tracing::warn!("account deletion worker iteration failed");
             }
+            if upload_cleanup.purge_expired_works().await.is_err() {
+                tracing::warn!("expired work cleanup failed");
+            }
             if upload_cleanup.expire_partial_uploads().await.is_err() {
                 tracing::warn!("expired upload cleanup failed");
             }

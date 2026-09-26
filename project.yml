@@ -141,6 +141,7 @@ targets:
         excludes:
           - Info.plist
       - path: NovelApp/ConnectivityRecovery.swift
+      - path: NovelApp/SyncPresentation
       - path: NovelApp/WritingAssistant
       - path: NovelApp/Features/AssistantFeedback
       - path: NovelApp/ManuscriptCopy.swift

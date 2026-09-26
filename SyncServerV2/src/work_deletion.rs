@@ -1,8 +1,9 @@
 use crate::{domain::*, postgres::Repository};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 impl Repository {
-    /// A single account-locked transaction erases every revision and body reference.
+    /// A single account-locked transaction hides a work and retains its graph for one year.
     /// Shared objects stay alive for other works/accounts. Unknown IDs are tombstoned
     /// as well, so retrying deletion after a lost response is harmless and never
     /// permits an in-flight createWork request to recreate the erased identity.
@@ -15,20 +16,58 @@ impl Repository {
             .bind(work)
             .fetch_optional(&mut *tx)
             .await?;
+        sqlx::query("INSERT INTO sync_v2.deleted_works(account_id,work_id,deleted_at) VALUES($1,$2,now()) ON CONFLICT(account_id,work_id) DO NOTHING")
+            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+        // Retain the exact graph and its object references. Tombstones fence all
+        // writers immediately; read routes hide it until explicit recovery.
+        sqlx::query("DELETE FROM sync_v2.upload_capabilities WHERE account_id=$1 AND work_id=$2")
+            .bind(&p.account_id)
+            .bind(work)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn purge_expired_works(&self) -> SyncResult<u64> {
+        let candidates: Vec<(String, Uuid)> = sqlx::query_as(
+            "SELECT d.account_id,d.work_id FROM sync_v2.deleted_works d JOIN sync_v2.works w USING(account_id,work_id) WHERE (d.deleted_at AT TIME ZONE 'UTC') + interval '1 year' <= (clock_timestamp() AT TIME ZONE 'UTC') ORDER BY d.deleted_at LIMIT 16")
+            .fetch_all(&self.pool).await?;
+        let mut purged = 0;
+        for (account, work) in candidates {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("SELECT 1 FROM sync_v2.account_scopes WHERE account_id=$1 FOR UPDATE")
+                .bind(&account)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let due: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.deleted_works d JOIN sync_v2.works w USING(account_id,work_id) WHERE d.account_id=$1 AND d.work_id=$2 AND (d.deleted_at AT TIME ZONE 'UTC') + interval '1 year' <= (clock_timestamp() AT TIME ZONE 'UTC'))")
+                .bind(&account).bind(work).fetch_one(&mut *tx).await?;
+            if due {
+                Self::purge_work_graph(&mut tx, &account, work).await?;
+                purged += 1;
+            }
+            tx.commit().await?;
+        }
+        Ok(purged)
+    }
+
+    async fn purge_work_graph(
+        tx: &mut Transaction<'_, Postgres>,
+        account: &str,
+        work: Uuid,
+    ) -> SyncResult<()> {
         let objects: Vec<Vec<u8>> = sqlx::query_scalar(
             "SELECT DISTINCT e.object_id FROM sync_v2.snapshot_entries e JOIN sync_v2.snapshots s ON s.account_id=e.account_id AND s.snapshot_id=e.snapshot_id WHERE s.account_id=$1 AND s.work_id=$2
              UNION SELECT object_id FROM sync_v2.upload_capabilities WHERE account_id=$1 AND work_id=$2")
-            .bind(&p.account_id).bind(work).fetch_all(&mut *tx).await?;
-        sqlx::query("INSERT INTO sync_v2.deleted_works(account_id,work_id,deleted_at) VALUES($1,$2,now()) ON CONFLICT(account_id,work_id) DO NOTHING")
-            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+            .bind(account).bind(work).fetch_all(&mut **tx).await?;
         // Clear cyclic pointers before removing their targets. All remaining
         // deletes follow the FK graph; constraints remain enabled throughout.
         sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=NULL,head_generation=NULL WHERE account_id=$1 AND work_id=$2")
-            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+            .bind(account).bind(work).execute(&mut **tx).await?;
         sqlx::query("UPDATE sync_v2.head_events SET command_work_id=NULL,command_scope='deletedOrigin' WHERE account_id=$1 AND command_work_id=$2 AND work_id<>$2 AND command_scope='cloneNewWork'")
-            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+            .bind(account).bind(work).execute(&mut **tx).await?;
         sqlx::query("DELETE FROM sync_v2.conflict_events WHERE account_id=$1 AND conflict_id IN (SELECT conflict_id FROM sync_v2.active_conflicts WHERE account_id=$1 AND work_id=$2)")
-            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+            .bind(account).bind(work).execute(&mut **tx).await?;
         for table in [
             "quarantine_records",
             "catalog_events",
@@ -45,30 +84,29 @@ impl Repository {
             let statement =
                 format!("DELETE FROM sync_v2.{table} WHERE account_id=$1 AND work_id=$2");
             sqlx::query(&statement)
-                .bind(&p.account_id)
+                .bind(account)
                 .bind(work)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
         sqlx::query("DELETE FROM sync_v2.snapshot_entries WHERE account_id=$1 AND snapshot_id IN (SELECT snapshot_id FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2)")
-            .bind(&p.account_id).bind(work).execute(&mut *tx).await?;
+            .bind(account).bind(work).execute(&mut **tx).await?;
         sqlx::query("DELETE FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2")
-            .bind(&p.account_id)
+            .bind(account)
             .bind(work)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query("DELETE FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
-            .bind(&p.account_id)
+            .bind(account)
             .bind(work)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         for object in objects {
             sqlx::query("DELETE FROM sync_v2.account_objects a WHERE account_id=$1 AND object_id=$2 AND NOT EXISTS(SELECT 1 FROM sync_v2.snapshot_entries e WHERE e.account_id=a.account_id AND e.object_id=a.object_id) AND NOT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities u WHERE u.account_id=a.account_id AND u.object_id=a.object_id)")
-                .bind(&p.account_id).bind(&object).execute(&mut *tx).await?;
+                .bind(account).bind(&object).execute(&mut **tx).await?;
             sqlx::query("DELETE FROM sync_v2.global_blobs b WHERE object_id=$1 AND NOT EXISTS(SELECT 1 FROM sync_v2.account_objects a WHERE a.object_id=b.object_id)")
-                .bind(&object).execute(&mut *tx).await?;
+                .bind(&object).execute(&mut **tx).await?;
         }
-        tx.commit().await?;
         Ok(())
     }
 }

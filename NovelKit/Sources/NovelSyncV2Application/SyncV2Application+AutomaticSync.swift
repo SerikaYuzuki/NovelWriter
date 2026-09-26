@@ -51,7 +51,7 @@ public extension SyncV2Application {
         let scopeGeneration = historyScopeGeneration
         guard let candidate = try await planner.automaticSyncCandidate(workID: workID),
               workerTasks[workID] == nil else { return false }
-        let state = uiState(workID: workID)
+        let state = states[workID]
         switch state?.remoteProgress ?? .idle {
         case .idle, .noChanges, .offline, .retryable:
             break

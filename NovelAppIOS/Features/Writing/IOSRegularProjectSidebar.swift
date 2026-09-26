@@ -65,6 +65,9 @@ struct IOSRegularProjectSidebar: View {
                     Label("作品を書き出す…", systemImage: "square.and.arrow.up")
                 }
                 .accessibilityHint("現在の作業コピーから、共有用のnovelpkgファイルを作ります。")
+                Button("本文と資料を書き出す（ZIP）") {
+                    editorIdentityBoundary.perform { Task { await store.requestExport(readable: true) } }
+                }
             }
         }
         .listStyle(.sidebar)

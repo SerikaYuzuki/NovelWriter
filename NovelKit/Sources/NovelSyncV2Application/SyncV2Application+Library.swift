@@ -67,7 +67,8 @@ public extension SyncV2Application {
                     localGeneration: item.localGeneration,
                     remoteHead: item.remoteHead,
                     conflict: nil,
-                    remoteProgress: .parkedDifferentAccount
+                    remoteProgress: .parkedDifferentAccount,
+                    oldestUnreceivedAt: item.oldestUnreceivedAt
                 )
             }
             let conflict: SyncV2ConflictProjection? = switch state.remoteProgress {
@@ -84,7 +85,8 @@ public extension SyncV2Application {
                 localGeneration: item.localGeneration,
                 remoteHead: item.remoteHead,
                 conflict: conflict,
-                remoteProgress: state.remoteProgress
+                remoteProgress: state.remoteProgress,
+                oldestUnreceivedAt: item.oldestUnreceivedAt
             )
         })
     }

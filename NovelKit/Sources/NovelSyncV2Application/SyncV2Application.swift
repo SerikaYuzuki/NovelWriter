@@ -32,6 +32,9 @@ public actor SyncV2Application {
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
     var deletionTasks: [WorkID: Task<Void, Error>] = [:]
     var deletingWorkIDs: Set<WorkID> = []
+    var retryTasks: [WorkID: Task<Void, Never>] = [:]
+    var retryOwners: [WorkID: UUID] = [:]
+    var retryAttempts: [WorkID: Int] = [:]
     var workerTasks: [WorkID: Task<Void, Never>] = [:]
     /// Identity of the currently installed worker for each Work.  A cancelled
     /// task can still resume after a non-cooperative remote await, so a task
@@ -186,7 +189,7 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.remoteSchedulingSuspensionRequired
         }
         historyScopeGeneration &+= 1
-        let affectedWorkIDs = Set(workerTasks.keys)
+        let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys)
             .union(workerOwners.keys)
             .union(states.keys)
             .union(sessions.keys)
@@ -209,7 +212,7 @@ public actor SyncV2Application {
     public func beginAccountTransitionRemoteSuspension() -> SyncV2AccountTransitionRemoteSuspensionToken {
         let token = SyncV2AccountTransitionRemoteSuspensionToken()
         remoteSchedulingSuspensions.insert(token.rawValue)
-        let affectedWorkIDs = Set(workerTasks.keys).union(workerOwners.keys)
+        let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys).union(workerOwners.keys)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)
         }

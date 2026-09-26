@@ -608,8 +608,8 @@ extension AppState {
     /// the editor session so later checkpoints cannot silently rebind the
     /// original unbound work.
     @discardableResult
-    func cloneCurrentWorkIntoActiveAccount() async -> Bool {
-        guard canCloneCurrentWorkIntoActiveAccount,
+    func cloneCurrentWorkIntoActiveAccount(rescueLocally: Bool = false) async -> Bool {
+        guard rescueLocally || canCloneCurrentWorkIntoActiveAccount,
               permitsDocumentTransitionOperation,
               let application = snapshotSyncV2Application,
               let sourceWorkID = currentSnapshotSyncV2WorkID else { return false }
@@ -623,12 +623,15 @@ extension AppState {
             cancelSnapshotSyncV2BackgroundOperations()
             guard await saveNow() else { return false }
             do {
-                let result = try await application.cloneWorkIntoActiveAccount(
-                    sourceWorkID: sourceWorkID,
-                    newWorkID: WorkID(UUID()),
-                    newDocumentID: DocumentID(UUID())
-                )
-                let opened = try await application.openLocal(workID: result.newWorkID)
+                let newWorkID = WorkID(UUID()), newDocumentID = DocumentID(UUID())
+                if rescueLocally {
+                    _ = try await application.rescueLocalWork(sourceWorkID: sourceWorkID,
+                                                              newWorkID: newWorkID, newDocumentID: newDocumentID)
+                } else {
+                    _ = try await application.cloneWorkIntoActiveAccount(sourceWorkID: sourceWorkID,
+                                                                         newWorkID: newWorkID, newDocumentID: newDocumentID)
+                }
+                let opened = try await application.openLocal(workID: newWorkID)
                 guard let cloned = opened.document else { return false }
                 guard installV2Document(
                     cloned,
@@ -636,11 +639,11 @@ extension AppState {
                     createdAt: opened.documentCreatedAt,
                     attachments: opened.attachments,
                     resources: opened.resources,
-                    expectedWorkID: result.newWorkID,
-                    expectedDocumentID: result.newDocumentID.rawValue
+                    expectedWorkID: newWorkID,
+                    expectedDocumentID: newDocumentID.rawValue
                 ) else { return false }
                 snapshotSyncV2Session = await application.beginSession(workID: opened.workID)
-                snapshotSyncCurrentWorkAccountState = .active
+                snapshotSyncCurrentWorkAccountState = rescueLocally ? .unbound : .active
                 startupState = .ready
                 await refreshSnapshotSyncV2UIState()
                 await refreshSnapshotLibrary()

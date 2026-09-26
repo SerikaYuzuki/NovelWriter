@@ -281,7 +281,8 @@ extension AppState {
 
     func exportDocumentPackage(
         to destination: URL,
-        expectedSession: DocumentSessionToken? = nil
+        expectedSession: DocumentSessionToken? = nil,
+        readable: Bool = false
     ) async throws {
         let result: Result<Void, Error> = await documentOperationGate.perform { [weak self] in
             guard let self,
@@ -302,14 +303,19 @@ extension AppState {
                 return .failure(CancellationError())
             }
             do {
-                try await portableBridge.exportExplicitPackage(
-                    document: document,
-                    attachments: snapshotSyncV2Attachments,
-                    documentCreatedAt: snapshotSyncV2PortableCreatedAt
-                        ?? snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),
-                    resources: snapshotSyncV2Resources,
-                    to: destination
-                )
+                if readable {
+                    try await ReadableExport.write(document, attachments: snapshotSyncV2Attachments,
+                                                   resources: snapshotSyncV2Resources, to: destination)
+                } else {
+                    try await portableBridge.exportExplicitPackage(
+                        document: document,
+                        attachments: snapshotSyncV2Attachments,
+                        documentCreatedAt: snapshotSyncV2PortableCreatedAt
+                            ?? snapshotSyncV2DocumentCreatedAt.map(Self.normalizedSnapshotSyncV2Date),
+                        resources: snapshotSyncV2Resources,
+                        to: destination
+                    )
+                }
                 return .success(())
             } catch {
                 return .failure(error)

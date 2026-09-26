@@ -23,6 +23,7 @@ protocol ExportPanelPresenting {
 enum AppExportFormat: Hashable, Sendable {
     case rendered(ExportFormat)
     case novelPackage
+    case readableArchive
 
     static let plainText = Self.rendered(.plainText)
     static let markdown = Self.rendered(.markdown)
@@ -32,6 +33,7 @@ enum AppExportFormat: Hashable, Sendable {
         switch self {
         case let .rendered(format):
             format.filenameExtension
+        case .readableArchive: "zip"
         case .novelPackage:
             "novelpkg"
         }
@@ -41,6 +43,7 @@ enum AppExportFormat: Hashable, Sendable {
         switch self {
         case let .rendered(format):
             format.displayName
+        case .readableArchive: "本文と資料（ZIP）"
         case .novelPackage:
             "作品パッケージ"
         }
@@ -136,6 +139,7 @@ final class ExportPresenter {
         URL,
         DocumentSessionToken?
     ) async throws -> Void
+    @ObservationIgnored private var readableExporter: (@MainActor @Sendable (URL, DocumentSessionToken?) async throws -> Void)?
     @ObservationIgnored private var exportTask: Task<Void, Never>?
 
     private(set) var state: ExportPresentationState = .idle
@@ -154,6 +158,9 @@ final class ExportPresenter {
                 )
             }
         )
+        readableExporter = { destination, expectedSession in
+            try await appState.exportDocumentPackage(to: destination, expectedSession: expectedSession, readable: true)
+        }
     }
 
     init(
@@ -210,7 +217,7 @@ final class ExportPresenter {
         }
         state = .exporting(format)
 
-        exportTask = Task { [weak self, executor, packageExporter] in
+        exportTask = Task { [weak self, executor, packageExporter, readableExporter] in
             do {
                 switch format {
                 case let .rendered(renderedFormat):
@@ -221,6 +228,9 @@ final class ExportPresenter {
                         to: destination,
                         format: renderedFormat
                     )
+                case .readableArchive:
+                    guard let readableExporter else { throw PackageExportError.unavailable }
+                    try await readableExporter(destination, expectedSession)
                 case .novelPackage:
                     // packageは現在Editorの確定と資料等の複製をAppStateのgate内で行う。
                     try await packageExporter(destination, expectedSession)
@@ -281,6 +291,7 @@ private final class MacExportPanelPresenter: ExportPanelPresenting {
         (.plainText, "テキスト（.txt）"),
         (.markdown, "Markdown（.md）"),
         (.epub, "EPUB（.epub）"),
+        (.readableArchive, "本文と資料をまとめる（.zip）"),
         (.novelPackage, "ふみにわ作品パッケージ（.novelpkg）")
     ]
 

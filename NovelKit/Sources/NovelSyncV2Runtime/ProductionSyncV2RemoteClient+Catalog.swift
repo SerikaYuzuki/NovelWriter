@@ -100,10 +100,13 @@ extension ProductionSyncV2RemoteClient {
     }
 
     func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
-        let object = try await getJSON(
-            path: "v2/works/\(workID.description)/head",
-            query: []
-        )
+        let object: [String: Any]
+        do {
+            object = try await getJSON(path: "v2/works/\(workID.description)/head", query: [])
+        } catch SyncV2Failure.fatal(.remoteDataUnavailable) {
+            try await rejectKnownRemoteDeletion(workID: workID)
+            throw SyncV2Failure.fatal(.remoteDataUnavailable)
+        }
         let response = try checkedObject(object, keys: ["head", "result"])
         guard response["result"] as? String == "noChanges" else {
             throw SyncV2Failure.receiptMismatch

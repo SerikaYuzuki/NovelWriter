@@ -347,7 +347,8 @@ extension IOSDocumentStore {
                     localGeneration: local.localGeneration,
                     remoteHead: remote.head ?? local.remoteHead,
                     conflict: local.conflict,
-                    remoteProgress: local.remoteProgress
+                    remoteProgress: local.remoteProgress,
+                    oldestUnreceivedAt: local.oldestUnreceivedAt
                 )
             } else {
                 rows[remote.workID] = SyncV2LibraryItem(
@@ -387,13 +388,12 @@ extension IOSDocumentStore {
     /// new WorkID, opens it under the same document gate, and leaves the
     /// original unbound Work intact.
     @discardableResult
-    func cloneActiveWorkIntoSignedInAccount() async -> Bool {
+    func cloneActiveWorkIntoSignedInAccount(rescueLocally: Bool = false) async -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application,
               let sourceWorkID = syncV2ActiveWorkID,
               let expectedSession = currentDocumentSessionToken,
               syncV2ParkedAccountID == nil,
-              case .signedIn = authUIState,
               !syncV2AccountCloneInFlight else { return false }
         let expectedAccountScope = snapshotSyncV2AccountScope
         syncV2AccountCloneInFlight = true
@@ -429,25 +429,28 @@ extension IOSDocumentStore {
                         operationErrorMessage = "端末へ保存できないため、アカウントへの追加を中止しました。"
                         return
                     }
-                    let clone = try await application.cloneWorkIntoActiveAccount(
-                        sourceWorkID: sourceWorkID,
-                        newWorkID: WorkID(UUID()),
-                        newDocumentID: DocumentID(UUID())
-                    )
+                    let newWorkID = WorkID(UUID()), newDocumentID = DocumentID(UUID())
+                    if rescueLocally {
+                        _ = try await application.rescueLocalWork(sourceWorkID: sourceWorkID,
+                                                                  newWorkID: newWorkID, newDocumentID: newDocumentID)
+                    } else {
+                        _ = try await application.cloneWorkIntoActiveAccount(sourceWorkID: sourceWorkID,
+                                                                             newWorkID: newWorkID, newDocumentID: newDocumentID)
+                    }
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           snapshotSyncV2AccountScope == expectedAccountScope else { return }
-                    let opened = try await application.openLocal(workID: clone.newWorkID)
+                    let opened = try await application.openLocal(workID: newWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
                           snapshotSyncV2AccountScope == expectedAccountScope,
-                          opened.workID == clone.newWorkID,
+                          opened.workID == newWorkID,
                           let value = opened.document,
                           installSnapshotSyncV2Opened(opened, value: value) else { return }
-                    let state = await application.uiState(workID: clone.newWorkID)
+                    let state = await application.uiState(workID: newWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           snapshotSyncV2AccountScope == expectedAccountScope,
-                          syncV2ActiveWorkID == clone.newWorkID else { return }
+                          syncV2ActiveWorkID == newWorkID else { return }
                     applySnapshotSyncV2State(state)
                     Task { @MainActor [weak self] in
                         guard let self else { return }

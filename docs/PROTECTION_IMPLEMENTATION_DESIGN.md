@@ -1,6 +1,6 @@
 # 原稿保全の実装設計
 
-状態: Opus 5.5による方針の再レビューPASSを受けて開始した設計。未実装。新APIの正確なschema・fixture・migration番号は実装時に現行inventoryを確認して追加する。既存migrationを編集しない。
+状態: Opus 5.5による方針の再レビューPASSを受け、server/client保管・復元・retry・表示・可読出力を実装中。運用反映とApple実機受入は別途記録する。既存migrationは変更しない。
 
 ## 1. 今回の境界
 
@@ -59,4 +59,4 @@ AIは本文snapshotと別の同期経路を使うため、この設計でAI enti
 4. retryと小さな表示。fake clock、serverだけ停止→回復、受領喪失、世代の追越し、時計逆行、複数作品を確認。
 5. 保存・互換・共有基盤の変更なので`./Scripts/check.sh`と対象buildを実施。Mac/iPhone/iPadの実機で正常時遅延と復元操作を確認。必要なserver反映はbackup・migration・反映後確認を伴う別の実施段階として記録。
 
-現在は設計文書まで。runtime変更、migration追加、テスト、デプロイ、実機受入は行っていない。
+2026-09-26: graph保管、期限後purge、専用復元APIとApple共通復元画面、端末の削除時救出、定期retry、5分表示、可読ZIPと起動不能時の読み取り専用救出ツールを実装。対象テスト・PostgreSQL gate・Mac/iOS buildは成功。全checkは書き出しコードの構文修正後に再実施する。デプロイ・実機受入はまだ行っていない。

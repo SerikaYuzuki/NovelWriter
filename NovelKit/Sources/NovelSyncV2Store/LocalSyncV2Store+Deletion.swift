@@ -91,6 +91,14 @@ public extension LocalSyncV2Store {
                 return
             }
             try exec("PRAGMA defer_foreign_keys=ON")
+            // A synchronized work may contain the last unsent checkpoint. Keep its
+            // local graph available for explicit rescue; the marker hides it and
+            // blocks all ordinary writers and remote planning.
+            if deletion.binding != nil {
+                try exec("UPDATE work_deletions SET phase='completed' WHERE work_id=?",
+                         [.text(deletion.workID.description)])
+                return
+            }
             // Only this atomic purge may remove immutable graph rows. Restore
             // every trigger before commit; rollback also restores their DDL.
             let triggers = try query("""
