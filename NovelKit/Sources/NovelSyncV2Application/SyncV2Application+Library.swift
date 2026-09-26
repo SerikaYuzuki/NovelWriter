@@ -30,7 +30,12 @@ public extension SyncV2Application {
                 conflict: .set(conflict)
             )
         }
-        scheduleWorker(for: workID)
+        // A verified incoming version must cross the editor gate before a
+        // planner can publish another local command. Reopening this work is
+        // not a reason to overwrite the adoption projection with worker state.
+        if adoption == nil {
+            scheduleWorker(for: workID)
+        }
         return opened
     }
 
