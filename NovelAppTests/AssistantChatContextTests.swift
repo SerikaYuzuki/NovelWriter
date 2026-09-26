@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(FUMINIWA)
 @testable import FUMINIWA
+#else
+@testable import FUMINIWAIOS
+#endif
 import NovelCore
 import NovelWritingSupport
 import Testing

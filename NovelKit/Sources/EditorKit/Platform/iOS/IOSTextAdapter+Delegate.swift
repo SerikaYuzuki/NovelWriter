@@ -185,6 +185,7 @@ extension IOSTextAdapter.Coordinator {
         guard textView.markedTextRange == nil, !isApplyingPluginReplacement else { return }
         let committedText = textView.text ?? ""
         guard lastNotifiedCommittedText != committedText else { return }
+        refreshProofreadingHighlights(textView)
         lastNotifiedCommittedText = committedText
         onTextChange(committedText)
     }

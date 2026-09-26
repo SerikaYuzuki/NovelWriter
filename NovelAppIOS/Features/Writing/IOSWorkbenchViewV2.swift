@@ -640,6 +640,10 @@ struct IOSEditorPane: View {
                         case .notActive: return AssistantManuscript(title: episode.title, content: store.selectedEpisode?.content ?? "")
                         }
                     }, close: { showingAssistant = false },
+                    applyProofreading: { manuscript, replacement in
+                        store.applyAssistantProofreading(manuscript, replacement: replacement,
+                                                         editingToken: editingToken, account: account)
+                    },
                     saveFeedback: { feedback in
                         guard store.currentEpisodeEditingToken == editingToken,
                               store.snapshotSyncV2AccountScope == account,

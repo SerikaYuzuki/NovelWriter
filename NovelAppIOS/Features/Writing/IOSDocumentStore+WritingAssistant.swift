@@ -10,6 +10,14 @@ extension IOSDocumentStore {
         startupState == .ready && !isDocumentTransitionInProgress && !syncV2AccountTransitionInProgress && syncV2KeepBothPendingWorkID == nil
     }
 
+    func applyAssistantProofreading(_ manuscript: AssistantManuscript, replacement: String,
+                                     editingToken: IOSEpisodeEditingToken,
+                                     account: IOSSnapshotSyncV2AccountScope) -> Bool {
+        guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
+              snapshotSyncV2AccountScope == account else { return false }
+        return editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+    }
+
     var writingAssistantHost: WritingAssistantHost? {
         guard let application = snapshotSyncV2Application, let work = syncV2ActiveWorkID,
               let workUUID = UUID(uuidString: work.description) else { return nil }

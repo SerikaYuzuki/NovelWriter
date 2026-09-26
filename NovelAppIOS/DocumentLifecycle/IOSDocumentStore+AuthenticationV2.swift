@@ -765,9 +765,16 @@ extension IOSDocumentStore {
         return await saveNow()
     }
 
-    func prepareForEditorSurfaceDeparture() async -> Bool {
+    func prepareForEditorSurfaceDeparture(clearProofreadingHighlights: Bool = false) async -> Bool {
+        let editingToken = currentEpisodeEditingToken
+        let account = snapshotSyncV2AccountScope
         guard editorCommandSession.prepareForDocumentTransition() else { return false }
         defer { editorCommandSession.resumeAfterDocumentTransition() }
-        return await saveNow()
+        let saved = await saveNow()
+        if saved, clearProofreadingHighlights, currentEpisodeEditingToken == editingToken,
+           snapshotSyncV2AccountScope == account {
+            editorCommandSession.clearProofreadingHighlights()
+        }
+        return saved
     }
 }

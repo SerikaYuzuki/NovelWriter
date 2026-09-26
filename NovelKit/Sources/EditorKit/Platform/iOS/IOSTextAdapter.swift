@@ -146,7 +146,10 @@ struct IOSTextAdapter: UIViewRepresentable {
             context.coordinator.advanceCommandSurface()
             context.coordinator.advanceAISelectionSurface()
             context.coordinator.currentChapterKey = chapterKey
+            context.coordinator.proofreadingOriginal = nil
             textView.text = initialText
+            textView.textStorage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: textView.textStorage.length))
+            textView.typingAttributes.removeValue(forKey: .backgroundColor)
             context.coordinator.lastNotifiedCommittedText = initialText
             textView.selectedRange = NSRange(location: 0, length: 0)
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
@@ -231,6 +234,7 @@ struct IOSTextAdapter: UIViewRepresentable {
         var isPendingUndoFlushScheduled = false
         var observedInternalTextChange = false
         var lastNotifiedCommittedText: String?
+        var proofreadingOriginal: String?
 
         let pipeline = EditorPluginPipeline(plugins: [IMEGuardPlugin(), IndentPlugin()])
 

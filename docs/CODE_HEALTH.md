@@ -22,7 +22,6 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 ## 実装が残るもの
 
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
-- iOSの校正本文反映。現在は回答表示まで。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
 ## 仕様と実装の差

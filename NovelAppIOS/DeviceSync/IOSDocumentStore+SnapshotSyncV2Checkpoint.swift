@@ -138,7 +138,7 @@ extension IOSDocumentStore {
         let saved = await documentOperationGate.perform { [weak self] in
             guard let self, currentDocumentSessionToken == expectedSession,
                   snapshotSyncV2AccountScope == expectedAccountScope else { return false }
-            return await prepareForEditorSurfaceDeparture()
+            return await prepareForEditorSurfaceDeparture(clearProofreadingHighlights: true)
         }
         guard saved,
               !isSyncV2RemoteAccountTransitionActive,

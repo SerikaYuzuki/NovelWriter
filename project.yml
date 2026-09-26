@@ -250,6 +250,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: NovelAppTests/AssistantClientTests.swift
+      - path: NovelAppTests/AssistantChatContextTests.swift
+      - path: NovelAppTests/AssistantConversationTests.swift
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
       - path: NovelAppIOSTests
     dependencies:
