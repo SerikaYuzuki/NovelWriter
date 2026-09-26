@@ -27,7 +27,11 @@
 
 新containerのhealthと公開HTTPSのAuth capabilitiesは成功（Auth epoch 1／Sync epoch 2）。新AI endpointは認証なしで401。更新後backup `20260926T065800Z-b22171d9`の暗号化・認証検証が2026-09-26 06:58:02 UTCに成功した。旧imageはschema 0009を知らないため、そのまま戻さず前進修正または検証済み復旧手順を使う。
 
-iPhone 15 Pro Maxへの更新インストールと起動は成功。Mac版は署名済み成果物と旧版backupを準備済みだが、画面ロックにより旧版の通常終了・差替え・新版起動確認は未完了。
+iPhone 15 Pro Maxへの更新インストールと起動は成功。Mac版も2026-09-26に旧版を通常終了し、旧版と端末のSnapshotSyncV2保存領域を退避して、署名済みReleaseへ差し替えた。署名検証とbuild成果物との実行ファイル一致を確認し、XcodeBuildMCPから新版を起動した。
+
+Macの通常利用環境で、既存作品の再表示、アドバイスの会話開始画面、共通／作品別指示の画面を確認した。実行ファイルのSHA256は`cc27fc4e41137cabd02bffb8b7af86ba074d46836d670ec8a65927224d609878`。退避先は`~/Library/Application Support/FUMINIWA/DeploymentBackups/20260926-protection-ai/`。実原稿のAI送信・外部AIクライアント登録は行っていない。
+
+通常の「保存して同期」も操作した。端末DBの未受領候補に`pending`／`sealed`はなく、2026-09-13から残る`parked`と`quarantined`が各1件ある。古い保留変更による小さい通知は残り、この更新では保留データを削除・強制採用していない。
 
 ## 残る実利用上の確認
 
