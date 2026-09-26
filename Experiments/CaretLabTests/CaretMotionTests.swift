@@ -22,6 +22,79 @@ struct CaretMotionTests {
         #expect(!CaretMotionPolicy.shouldAnimate(from: initial, to: initial, requested: false))
     }
 
+    @Test("改行は離れた行末から次の行頭まで補間し、逆方向・複数行・高さ変更は即時にする")
+    func newlineMovementPolicy() {
+        let endOfLine = NSRect(x: 500, y: 40, width: 2, height: 24)
+        let nextLine = NSRect(x: 20, y: 70, width: 2, height: 24)
+        #expect(CaretMotionPolicy.shouldAnimate(
+            from: endOfLine, to: nextLine, requested: true, afterNewline: true
+        ))
+        #expect(!CaretMotionPolicy.shouldAnimate(from: endOfLine, to: nextLine, requested: true))
+        #expect(!CaretMotionPolicy.shouldAnimate(
+            from: nextLine, to: endOfLine, requested: true, afterNewline: true
+        ))
+        #expect(!CaretMotionPolicy.shouldAnimate(
+            from: endOfLine, to: nextLine.offsetBy(dx: 0, dy: 40), requested: true, afterNewline: true
+        ))
+        #expect(!CaretMotionPolicy.shouldAnimate(
+            from: endOfLine, to: NSRect(x: 20, y: 70, width: 2, height: 36),
+            requested: true, afterNewline: true
+        ))
+        #expect(!CaretMotionPolicy.shouldAnimate(
+            from: endOfLine, to: nextLine, requested: false, afterNewline: true
+        ))
+        #expect(!CaretMotionPolicy.shouldAnimate(
+            from: nil, to: nextLine, requested: true, afterNewline: true
+        ))
+    }
+
+    @Test("通常入力とIME確定後の改行は字下げ位置へ動き、連続改行とUndo/Redoを保つ", arguments: [false, true])
+    func newlineAfterTyping(afterComposition: Bool) async throws {
+        let body = "少し長い文章の末尾から改行を試します。"
+        let fixture = try await makeFixture(body: body)
+        defer { fixture.window.close() }
+        let editor = fixture.editor
+        editor.setSelectedRange(NSRange(location: body.utf16.count, length: 0))
+        editor.motionEnabled = true
+        if afterComposition {
+            editor.setMarkedText("へんかん", selectedRange: NSRange(location: 4, length: 0),
+                                 replacementRange: NSRange(location: NSNotFound, length: 0))
+            editor.insertText("変換", replacementRange: NSRange(location: NSNotFound, length: 0))
+            #expect(!editor.hasMarkedText())
+        }
+        let original = editor.string
+        let undo = try #require(editor.undoManager)
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        for index in 1 ... 2 {
+            let previousFrame = try #require(editor.displayedCaretFrame)
+            let previousAnimationCount = editor.animationCount
+            undo.beginUndoGrouping()
+            editor.insertNewline(nil)
+            undo.endUndoGrouping()
+            #expect(editor.string == original + String(repeating: "\n　", count: index))
+            #expect(fixture.changes.values.last == editor.string)
+            #expect(editor.selectedRange() == NSRange(location: editor.string.utf16.count, length: 0))
+            #expect(editor.animationCount == previousAnimationCount + 1)
+            #expect(editor.isMovementAnimating)
+            let nextFrame = try #require(editor.displayedCaretFrame)
+            #expect(nextFrame.minY > previousFrame.minY)
+            let candidateRect = editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil)
+            editor.motionEnabled = false
+            #expect(editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil) == candidateRect)
+            editor.motionEnabled = true
+        }
+        undo.undo()
+        #expect(editor.string == original + "\n　")
+        undo.undo()
+        #expect(editor.string == original)
+        undo.redo()
+        #expect(editor.string == original + "\n　")
+        undo.redo()
+        #expect(editor.string == original + "\n　\n　")
+        #expect(editor.textLayoutManager != nil)
+    }
+
     @Test("同じEditorKitを使い、IME未確定本文をモデルへ流さず縦線だけ動かす")
     func compositionAndCandidateCoordinates() async throws {
         let fixture = try await makeFixture()
