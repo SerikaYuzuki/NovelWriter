@@ -5,6 +5,7 @@ import Testing
 
 @MainActor
 struct MacTextAdapterCommittedTextCaptureTests {
+    @MainActor
     private final class Changes {
         var received: [String] = []
     }
@@ -104,6 +105,29 @@ struct MacTextAdapterCommittedTextCaptureTests {
 #endif
 #if canImport(AppKit)
 extension MacTextAdapterCommittedTextCaptureTests {
+    @Test("色付けがない保存では本文属性を変更せず、再レイアウトを発生させない", arguments: [false, true])
+    func clearingAbsentHighlightsDoesNotEditStorage(afterProofreading: Bool) {
+        let harness = makeHarness(initialText: "猫が歩く。")
+        let session = EditorCommandSession()
+        harness.coordinator.registerCommandSurface(with: session)
+        if afterProofreading {
+            #expect(session.applyProofreading(expectedText: "猫が歩く。", replacement: "猫が走る。"))
+            session.clearProofreadingHighlights()
+        }
+        let edits = Changes()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification,
+            object: harness.textView.textStorage,
+            queue: nil
+        ) { _ in
+            MainActor.assumeIsolated { edits.received.append("storage edited") }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        session.clearProofreadingHighlights()
+        session.clearProofreadingHighlights()
+        #expect(edits.received.isEmpty)
+    }
+
     @Test("proofreading preserves native Undo, rejects stale text and IME, and clears only presentation")
     func proofreadingBoundary() {
         let harness = makeHarness(initialText: "猫が歩く。")
@@ -123,7 +147,11 @@ extension MacTextAdapterCommittedTextCaptureTests {
         session.clearProofreadingHighlights()
         #expect(textView.string == "猫が走る。")
         #expect(textView.textStorage?.attribute(.backgroundColor, at: 2, effectiveRange: nil) == nil)
-        textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        textView.setMarkedText(
+            "か",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 0, length: 0)
+        )
         #expect(!session.applyProofreading(expectedText: textView.string, replacement: "変更"))
     }
 }

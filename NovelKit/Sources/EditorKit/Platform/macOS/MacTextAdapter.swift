@@ -623,7 +623,10 @@ extension MacTextAdapter.Coordinator {
             notifyCommittedText(from: textView)
             return true
         }, clear: { [weak self] in
-            guard let self, let textView, !textView.hasMarkedText() else { return }
+            guard let self, proofreadingOriginal != nil,
+                  let textView, !textView.hasMarkedText() else { return }
+            // 属性がない場合のremoveAttributeもTextKit 2の再レイアウトを起こす。
+            // 通常保存では本文に触れず、手動スクロールした表示位置を保つ。
             proofreadingOriginal = nil
             refreshProofreadingHighlights(textView, clearing: true)
         })
