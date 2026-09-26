@@ -1,7 +1,8 @@
+#if canImport(AppKit)
 import AppKit
 import QuartzCore
 
-/// 検証版だけが生成するTextKit 2ビュー。入力・marked text・候補座標はsuperが所有する。
+/// TextKit 2の入力・marked text・候補座標を維持し、表示用カーソルだけを補間する。
 final class AnimatedCaretTextView: NSTextView {
     private let indicator = PassiveInsertionIndicator(frame: .zero)
     private var lastTarget: NSRect?
@@ -21,7 +22,7 @@ final class AnimatedCaretTextView: NSTextView {
         indicator.layer?.animation(forKey: "caretPosition") != nil
     }
 
-    var motionEnabled = CaretExperimentPreferences.isEnabled {
+    var motionEnabled = false {
         didSet {
             guard oldValue != motionEnabled else { return }
             refreshCaret(animate: false)
@@ -47,7 +48,7 @@ final class AnimatedCaretTextView: NSTextView {
     private var usesAnimatedIndicator: Bool {
         motionEnabled && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion &&
             isEditable && window?.isKeyWindow == true && window?.firstResponder === self &&
-            selectedRange().length == 0
+            selectedRanges.count == 1 && selectedRange().length == 0
     }
 
     override var shouldDrawInsertionPoint: Bool {
@@ -151,7 +152,6 @@ final class AnimatedCaretTextView: NSTextView {
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             observe(name) { [weak self] notification in self?.windowFocusChanged(notification) }
         }
-        observe(CaretExperimentPreferences.didChange) { [weak self] _ in self?.preferencesChanged() }
         observe(NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                 center: NSWorkspace.shared.notificationCenter) { [weak self] _ in
             self?.accessibilityChanged()
@@ -161,7 +161,7 @@ final class AnimatedCaretTextView: NSTextView {
     private func observe(_ name: Notification.Name, object: AnyObject? = nil,
                          center: NotificationCenter = .default, handler: @escaping (Notification) -> Void) {
         // NSTextView manages its own registrations when reparented.
-        // A separate observer keeps this experiment independent of that lifecycle.
+        // A separate observer keeps caret notifications independent of that lifecycle.
         let observer = CaretEventObserver(handler: handler)
         eventObservers.append(observer)
         center.addObserver(observer, selector: #selector(CaretEventObserver.receive), name: name, object: object)
@@ -181,10 +181,6 @@ final class AnimatedCaretTextView: NSTextView {
     private func windowFocusChanged(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
         refreshCaret(animate: false)
-    }
-
-    private func preferencesChanged() {
-        motionEnabled = CaretExperimentPreferences.isEnabled
     }
 
     private func accessibilityChanged() {
@@ -259,3 +255,4 @@ private final class PassiveInsertionIndicator: NSTextInsertionIndicator {
         nil
     }
 }
+#endif

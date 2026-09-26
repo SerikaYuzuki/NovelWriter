@@ -78,6 +78,7 @@ UIへ任意のフォントサイズを直書きしない。本文は利用者が
 ## 7. インタラクション
 
 - フォーカスと選択はOS標準。アニメーションは既存`.snappy`（目安0.2秒）へ揃え、0.5秒超やバウンスを増やさない。
+- macOS本文の「滑らかなカーソル」は既定ON。設定からOFFにでき、OSの「視差効果を減らす」では標準表示に戻す。縦線だけを90msで追従させ、IME候補の位置や実際の入力位置は遅らせない。
 - 編集一覧はEnterで編集、Deleteは確認付き削除。作品chooserは選択とopenを分け、ListにfocusがあるときのReturnとdouble clickで開く。
 - toolbarを唯一の入口にしない。削除可能なitemにはmenu／context menuの代替を残す。
 - macOSはCmd+1〜7でsection、Cmd+Nで新規、Cmd+OでImport、Cmd+Shift+SでExport。Cmd+Fはfocus対象のOutline検索／話内検索を使い分ける。

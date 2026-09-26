@@ -78,6 +78,8 @@ manifestが参照する本文・世界観payloadは必須valid UTF-8。メモは
 
 IME変換中はモデル反映もプラグイン介入もしない。変換確定を旧作品へ反映してから保存・遷移する。TextKit 2を使い、`layoutManager`へのアクセスによるTextKit 1へのfallbackを避ける。
 
+macOSのカーソル補間はEditorKit内部の`AnimatedCaretTextView`が表示だけを担当する。`EditorConfiguration.animatesCaret`で切り替え、本文属性・選択・marked text・Undo・IME候補座標は変更しない。設定切替だけで本文属性を再適用しない。詳細と受入境界は[カーソル表示](CARET_ANIMATION_INVESTIGATION.md)。
+
 ### 4.4 Editor Plugin System
 
 入力機能は純粋な`Rules/`と薄い`EditorPlugin`へ分ける。既定pipelineは`IMEGuardPlugin`→`IndentPlugin`。追加pluginはIME guardの後ろに置き、EditorViewやadapterに判定を積み増さない。

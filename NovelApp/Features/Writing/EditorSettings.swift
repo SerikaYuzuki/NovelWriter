@@ -50,6 +50,10 @@ final class EditorSettings {
         didSet { userDefaults.set(backgroundColorHex, forKey: Self.backgroundColorKey) }
     }
 
+    var animatesCaret: Bool {
+        didSet { userDefaults.set(animatesCaret, forKey: AppPreferenceKey.editorAnimatesCaret) }
+    }
+
     let userDefaults: UserDefaults
     private let appearanceApplier: @MainActor (AppAppearance) -> Void
 
@@ -92,6 +96,7 @@ final class EditorSettings {
             ?? EditorConfiguration.defaultTextColorHex
         backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey)
             ?? EditorConfiguration.defaultBackgroundColorHex
+        animatesCaret = userDefaults.object(forKey: AppPreferenceKey.editorAnimatesCaret) as? Bool ?? true
 
         self.appearanceApplier(appearance)
     }
@@ -102,7 +107,8 @@ final class EditorSettings {
             fontSize: fontSize,
             lineHeightMultiple: lineHeightMultiple,
             textColorHex: textColorHex,
-            backgroundColorHex: backgroundColorHex
+            backgroundColorHex: backgroundColorHex,
+            animatesCaret: animatesCaret
         )
     }
 
@@ -289,6 +295,8 @@ struct EditorSettingsView: View {
             .pickerStyle(.segmented)
 
             #if canImport(AppKit)
+            Toggle("滑らかなカーソル", isOn: $settings.animatesCaret)
+                .accessibilityIdentifier("editor.animates-caret")
             ColorPicker("本文色", selection: textColorBinding, supportsOpacity: false)
             ColorPicker("背景色", selection: backgroundColorBinding, supportsOpacity: false)
             #endif

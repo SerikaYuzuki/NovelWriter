@@ -37,11 +37,7 @@ struct MacTextAdapter: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        #if FUMINIWA_CARET_EXPERIMENT
         let scrollView = AnimatedCaretTextView.scrollableTextView()
-        #else
-        let scrollView = NSTextView.scrollableTextView()
-        #endif
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -372,6 +368,9 @@ struct MacTextAdapter: NSViewRepresentable {
             to textView: NSTextView,
             force: Bool = false
         ) {
+            // カーソル表示の切替はIME中も安全で、本文属性の再適用を必要としない。
+            (textView as? AnimatedCaretTextView)?.motionEnabled = configuration.animatesCaret
+            lastAppliedConfiguration?.animatesCaret = configuration.animatesCaret
             let needsApply = force || lastAppliedConfiguration != configuration
 
             if textView.hasMarkedText() {
@@ -484,6 +483,8 @@ struct MacTextAdapter: NSViewRepresentable {
                 range: NSRange(location: 0, length: (textView.string as NSString).length)
             )
             textStorageAttributeApplicationCount += 1
+            // フォント変更や話のinstallを、入力による移動として補間しない。
+            (textView as? AnimatedCaretTextView)?.refreshCaret(animate: false)
         }
     }
 }
@@ -514,7 +515,11 @@ extension MacTextAdapter.Coordinator {
     }
 
     private func applyEffectiveEditability(to textView: NSTextView) {
-        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        let isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        if textView.isEditable != isEditable {
+            textView.isEditable = isEditable
+            (textView as? AnimatedCaretTextView)?.refreshCaret(animate: false)
+        }
         textView.isSelectable = true
     }
 

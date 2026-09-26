@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import Foundation
 
 @MainActor
@@ -12,3 +13,4 @@ final class CaretEventObserver: NSObject {
         handler(notification)
     }
 }
+#endif

@@ -1,3 +1,4 @@
+import EditorKit
 import SwiftUI
 
 @main
@@ -15,7 +16,7 @@ struct CaretLabApp: App {
 }
 
 private struct CaretLabView: View {
-    @AppStorage(CaretExperimentPreferences.enabledKey) private var animateCaret = false
+    @AppStorage("animateCaret") private var animateCaret = false
     @AppStorage("draft") private var draft = """
     ここで、日本語の変換や英字の入力を試してみてください。
 
@@ -41,7 +42,8 @@ private struct CaretLabView: View {
             }
             .padding(20)
             Divider()
-            EditorView(chapterKey: "caret-lab-draft", initialText: draft, commandSession: session) { text in
+            EditorView(chapterKey: "caret-lab-draft", initialText: draft, commandSession: session,
+                       configuration: EditorConfiguration(animatesCaret: animateCaret)) { text in
                 draft = text
                 saveNotice = "試し書きは自動保存されます"
             }
@@ -54,9 +56,6 @@ private struct CaretLabView: View {
             .font(.caption).foregroundStyle(.secondary).padding(12)
         }
         .frame(minWidth: 720, minHeight: 420)
-        .onChange(of: animateCaret) {
-            NotificationCenter.default.post(name: CaretExperimentPreferences.didChange, object: nil)
-        }
         .background {
             Button("試し書きを保存") {
                 guard session.prepareForDocumentTransition() else { return }

@@ -1,48 +1,39 @@
-# IMEを含むカーソル移動のアニメーション調査（2026-09-26）
+# macOSの滑らかなカーソル（2026-09-26）
 
-## 現時点の判断
+## 採用した仕様
 
-2026-09-26に、候補ウインドウとの短い位置差を説明したうえで、所有者から「試してみたい」と検証版の作成依頼を受けた。独立したmacOSアプリ「ふみにわ カーソル試作」で、IME変換中も表示だけを追従させる。試用後の依頼により、改行・行の削除・上下キーによる行移動も補間対象に含める。通常版への採用は未決定。
+所有者が独立した試作版で入力・改行・行削除・上下移動を試し、通常版への組み込みを依頼した。macOSの執筆設定「滑らかなカーソル」は既定ONで、端末のUserDefaultsへ保存する。OFFにするとその場で標準表示へ戻る。iOSへのアニメーション追加は行わない。
 
-## 検証版
+`NSTextInsertionIndicator`の標準の点滅と入力言語表示を使い、同じ行内の短い移動と隣の表示行への上下移動を90msで補間する。改行、行頭のBackspace、上下キー、折返し、IME中の未確定文字の増減に共通の判定を使う。入力操作が入れ子になっても、字下げpluginを含む標準処理の完了位置へ一度だけ動かす。追加入力では現在の表示位置から追従し直し、移動をキューに積まない。
 
-- `project.yml`の`FUMINIWACaretLab`でビルドする。普段のアプリとbundle IDを分け、作品DB・認証・同期のモジュールをリンクしない。試し書きは検証版専用のUserDefaultsへ保存する。
-- 既存EditorKitのソースをそのまま使用し、`FUMINIWA_CARET_EXPERIMENT`が定義されたtargetだけが専用の`NSTextView`を生成する。通常のEditorKit productには試作クラスを含めない。
-- 右上の「滑らかなカーソル」で切り替える。初期値はOFF。本文・選択・marked text・Undoを入れ直さず、その場で標準表示と比較できる。
-- `NSTextInsertionIndicator`で標準の点滅と入力言語表示を使い、同じ行内の短い移動と隣の表示行への上下移動を90msで補間する。改行、行頭でのBackspace、上下キー、折返しにも同じ判定を使う。入力操作が入れ子になっても、字下げpluginを含む標準処理の完了位置へ一度だけ動かす。移動中の追加入力では現在の表示位置から追従し直す。
-- `firstRect`の返す候補座標は変更しない。マウス操作・スクロール・複数行のジャンプでは瞬時に配置し、範囲選択・フォーカス喪失・「視差効果を減らす」では標準動作に戻す。
+マウス操作・スクロール・複数行のジャンプ・話のinstallでは瞬時に配置する。範囲選択、複数カーソル、フォーカス喪失、読み取り専用、macOSの「視差効果を減らす」では標準表示に戻す。
 
-ソース：[検証アプリ](../Experiments/CaretLab/CaretLabApp.swift)、[表示処理](../Experiments/CaretLab/AnimatedCaretTextView.swift)、[入力・Undo・候補座標のテスト](../Experiments/CaretLabTests/CaretMotionTests.swift)。
+## 本文・IME・保存の境界
 
-## 検証状況（2026-09-26）
+本文・選択範囲・marked text・Undo・IME候補ウインドウは標準のTextKit 2に任せる。実際の入力位置は即座に更新し、表示用の縦線だけを短時間で追従させる。非公開のsubview探索、method swizzling、TextKit 1へのfallback、公開APIへのネイティブtext viewの露出は行わない。
 
-検証段階は中ぐらい。検証版の11テストと署名付きReleaseビルドが成功し、別アプリとして更新した。検証版のテストは実際のTextKit 2・marked text・`insertText`・Undoを使う。バックグラウンドで動くテストではウインドウのkey状態だけを固定し、OSによる実際のフォーカス取得は実画面で別に確認した。通常EditorKitの136テストは初回の試作時に成功した。今回の変更は検証版に閉じ、通常EditorKitの再検証は行っていない。
+`EditorConfiguration.animatesCaret`は表示用カーソルの設定であり、フォントや本文属性の変更とは別に適用する。IME中も切り替え可能で、marked textを確定させない。切り替えだけではtextStorage属性を再適用せず、選択・スクロール・Undoを保持する。フォント等の設定変更は従来どおりIME確定後まで保留する。
 
-自動テストでは、通常入力とIME確定後の連続改行、空行の削除とUndo/Redo、短い行を挟む上下移動、折返し行の上下移動、Shiftによる範囲選択と削除、IME未確定文字の増減を確認した。上下移動の着地点は標準表示時と比較し、本文・モデル通知・候補座標も維持する。実画面ではReturn・上下キー・空行のBackspace削除・⌘Sを確認し、確認用の編集を元に戻して既存の試し書きと設定を維持した。
+候補へ返す`firstRect`は変更しない。候補は実際の入力位置に出るため、表示用カーソルが追従する90msの間は短い位置差が生じ得る。
 
-初回の検証版では、このMacの実キーボード操作で、日本語のライブ変換、候補送り、確定、Undo、⌘S、標準表示への切り替えを確認した。全IME・かな入力・音声入力・VoiceOver・画面間移動の受入は未実施。候補一覧はエディターと別のシステムウインドウなので、アプリ単体の画面取得では候補一覧全体の位置を確認できていない。候補へ返す座標が表示切り替えで変わらないことは自動テストで確認した。
+## 実装の入口
 
-## 確認したこと
+- [表示用text view](../NovelKit/Sources/EditorKit/Platform/macOS/AnimatedCaretTextView.swift)
+- [移動範囲の判定](../NovelKit/Sources/EditorKit/Rules/CaretMotionPolicy.swift)
+- [macOS adapter](../NovelKit/Sources/EditorKit/Platform/macOS/MacTextAdapter.swift)と[値型の設定](../NovelKit/Sources/EditorKit/Core/EditorConfiguration.swift)
+- [端末設定と画面](../NovelApp/Features/Writing/EditorSettings.swift)
+- [入力・Undo・候補座標のテスト](../Experiments/CaretLabTests/CaretMotionTests.swift)と[設定の回帰テスト](../NovelKit/Tests/EditorKitTests/MacCaretConfigurationTests.swift)
 
-- 現行EditorKitはTextKit 2の標準`NSTextView`を使い、独自カーソルを持たない。
-- Appleの`NSTextInsertionIndicator`は点滅・音声入力の効果などを提供する。公開APIと使用中のSDKヘッダには、既存`NSTextView`のカーソル移動を補間する設定は見当たらない。
-- `NSTextView`の標準カーソル描画を抑え、公開APIの`NSTextInsertionIndicator`を配置する方法を試作した。入力位置と候補座標を遅らせる処理は加えていない。
+独立アプリ「ふみにわ カーソル試作」は通常版と同じEditorKit productをリンクする検証用画面として残す。専用のnative view factoryや設定通知は持たず、通常版と同じ設定APIで切り替える。試し書きの保存先は検証版専用のUserDefaultsで、作品DB・認証・同期へ接続しない。
+
+## 検証と稼働反映
+
+検証段階は中ぐらい。通常EditorKitの138テスト、同じEditorKit productを使う検証アプリの11テスト、通常アプリの設定・保存位置に関する16テストが成功した。保存位置テストではアニメーションが有効になるkey状態を与え、同期あり／なし、範囲選択、IME中／確定後、繰り返し保存で選択・スクロール・Undoを確認した。iOS向けNovelKitのコンパイルと、署名付きmacOS Releaseビルドも成功した。
+
+入力テストは実際のTextKit 2・marked text・`insertText`・Undoを使う。バックグラウンドのテストではウインドウのkey状態だけを固定し、実際のフォーカスは実画面で別に確認した。通常版で執筆設定のON/OFF、既存作品の表示、上下キー、⌘S後の本文保持と本文へのフォーカスを確認した。実原稿への試験用文字の挿入はしていない。
+
+現在のアプリとSQLiteを退避し、コピーしたDBの整合性と同じ署名Teamを確認して通常版を更新した。退避先は`~/Library/Application Support/FUMINIWA/DeploymentBackups/20260926-173137-smooth-caret/`。稼働中の実行ファイルSHA256は`37ce5f02c243541622155537cbf77a0908ee8d3040e6f533f18c1184c43ba38e`。
+
+全IME・かな入力・音声入力・VoiceOver・画面間移動・長時間利用の受入は未実施。初回の試作では、このMacの日本語ライブ変換・候補送り・確定・取消を実キーボードで確認した。候補へ返す座標が変わらないことは自動テストで確認しているが、別のシステムウインドウに出る候補一覧全体の位置はアプリ単体の画面取得では確認できていない。
 
 参照：[NSTextInsertionIndicator](https://developer.apple.com/documentation/appkit/nstextinsertionindicator)、[標準カーソルの独自ビューへの組込み](https://developer.apple.com/documentation/appkit/adopting-the-system-text-cursor-in-custom-text-views)、[NSTextView](https://developer.apple.com/documentation/appkit/nstextview)。
-
-## 試作の方針
-
-本文・選択範囲・marked text・Undo・候補ウインドウは標準の処理を維持する。実際の入力位置は即座に更新し、描画する縦線だけを短時間で新しい位置へ追従させる。IMEの`setMarkedText`／確定処理で、アニメーションのために本文や選択を変更しない。
-
-1. EditorKit内部の専用ビューに、公開APIだけで表示用カーソルを置く。標準のカーソルと二重にならず、入力言語表示なども保てることを先に確認する。非公開のsubview探索やmethod swizzlingは使わない。
-2. 通常入力だけでなくIME中の更新でも、レイアウト確定後の実カーソル位置へ追従させる。次の入力が来たら現在の表示位置から追従し直し、移動をキューに積まない。検証版は90msで試す。通常版での採用値ではない。
-3. 改行・削除・上下キー・折返しによる隣の行への移動は、横方向の距離にかかわらず補間する。複数行のジャンプ・マウス操作・スクロール・話や作品の切替では瞬時に配置する。範囲選択、フォーカス喪失、macOSの「視差効果を減らす」では標準表示へ戻す。
-4. まずmacOSの実験設定として既定OFFにし、いつでも標準表示へ戻せる形で検証する。iOSへの追加は別の判断とする。
-
-## IME特有の制約と検証
-
-候補ウインドウは実際の入力位置に出るため、カーソルの絵を遅れて動かす間は両者に短い位置差が生じ得る。この差までなくそうとしてIMEへ返す位置を遅らせる方法は採らない。位置差が気になる場合は、変換中だけ瞬時に追従する方針へ戻す必要がある。
-
-実機ではローマ字／かな入力、ライブ変換、候補送り・確定・取消、変換中の削除、文節移動、折返しを確認する。通常入力・選択・Undo／Redo、⌘S、スクロール、絵文字などのUTF-16境界、拡大・画面移動、アクセシビリティ設定も確認対象。標準カーソルを隠すだけで候補や入力言語の表示が壊れる場合は、その方式を採用しない。
-
-「IME中も常に滑らか」と「候補ウインドウと見た目の縦線が常に同じ位置」は同時には保証しない。今回はこの制約を説明して試作を依頼された段階であり、普段の原稿に使う版への採用は、使用感を確認した後に判断する。

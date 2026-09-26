@@ -1,5 +1,5 @@
 import AppKit
-import EditorKit
+@testable import EditorKit
 @testable import FUMINIWA
 import NovelCore
 import NovelSyncV2
@@ -174,10 +174,10 @@ private extension SaveEditorPositionTests {
     private func makeEditorWindow(state: AppState, body: String) async throws -> (NSWindow, NSTextView) {
         let host = NSHostingView(rootView: EditorPaneView()
             .environment(state)
-            .environment(EditorSettings())
+            .environment(EditorSettings(userDefaults: makeIsolatedTestUserDefaults(), appearanceApplier: { _ in }))
             .environment(EditorSearchSession())
             .environment(state.editorCommandSession))
-        let window = NSWindow(
+        let window = InputTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
             styleMask: [.titled],
             backing: .buffered,
@@ -190,7 +190,15 @@ private extension SaveEditorPositionTests {
         host.layoutSubtreeIfNeeded()
         let editor = try #require(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string == body })
         window.makeFirstResponder(editor)
+        #expect((editor as? AnimatedCaretTextView)?.motionEnabled == true)
         return (window, editor)
+    }
+
+    /// 入力と保存は実経路を使い、バックグラウンドのテストでもカーソル表示を有効にする。
+    private final class InputTestWindow: NSWindow {
+        override var isKeyWindow: Bool {
+            true
+        }
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

@@ -75,7 +75,7 @@ schemes:
         - name: FUMINIWAIOSTests
 
 targets:
-  # Compile the same editor sources with a lab-only native view factory.
+  # Use the production editor product for isolated input checks.
   # No production application, database, authentication, or sync dependency.
   FUMINIWACaretLab:
     type: application
@@ -83,10 +83,9 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Experiments/CaretLab
-      - path: NovelKit/Sources/EditorKit
     dependencies:
       - package: NovelKit
-        product: NovelCore
+        product: EditorKit
     settings:
       base:
         PRODUCT_NAME: FUMINIWA Caret Lab
@@ -94,7 +93,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.serikayuzuki.fuminiwa.caret-lab
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_CARET_EXPERIMENT"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: ふみにわ カーソル試作
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
@@ -104,7 +102,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
       configs:
         Debug-Test:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_CARET_EXPERIMENT FUMINIWA_CARET_EXPERIMENT_TESTS"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FUMINIWA_CARET_EXPERIMENT_TESTS"
   FUMINIWACaretLabTests:
     type: bundle.unit-test
     platform: macOS
@@ -113,6 +111,8 @@ targets:
       - path: Experiments/CaretLabTests
     dependencies:
       - target: FUMINIWACaretLab
+      - package: NovelKit
+        product: EditorKit
     settings:
       base:
         SWIFT_VERSION: "6.0"

@@ -1,5 +1,5 @@
 import AppKit
-@testable import FUMINIWACaretLab
+@testable import EditorKit
 import SwiftUI
 import Testing
 
