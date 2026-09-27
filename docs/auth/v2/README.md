@@ -21,6 +21,6 @@
 
 ## 外部設定と受入
 
-- Apple Developer の Services ID は `dev.serikayuzuki.fuminiwa.web`。所有者は primary Mac App ID への関連付け、`sync.serika.work`、上記 return URL の保存完了を報告した。保存後の read-back、既存 Apple subject との一致と実認証は未確認。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`、14:08 作成の OAuth client ID は `560354700432-aq87npqhidi1m4n671m8pb9bugml609d.apps.googleusercontent.com`。Google callback は設定画面で入力済みと所有者が報告したが、保存後の read-back と実認証は未確認。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。
+- Apple Developer の Services ID は `dev.serikayuzuki.fuminiwa.web`。所有者は primary Mac App ID への関連付け、`sync.serika.work`、上記 return URL の保存完了を報告した。保存後の read-back、既存 Apple subject との一致と実認証は未確認。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`、14:08 作成の OAuth client ID は `560354700432-aq87npqhidi1m4n671m8pb9bugml609d.apps.googleusercontent.com`。ダウンロード済み Web client JSON で client ID、callback、secret の存在を照合し、ファイル権限を所有者読み書きだけにした。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。Google の実認証は未確認。
 - callback は provider ごとに固定し、認可 URL・token request と登録値の完全一致を確認する。`state` / `nonce` 不一致、期限切れ、code 再使用、cross-attempt、provider 取り違え、重複 callback、サーバー再起動を合成データと実 DB で確認する。
 - 既存 Apple native client の認証・更新・削除操作が回帰しないことを確認する。Apple Web で既存 AccountID に戻ること、Google で独立 AccountID になること、同期 scope と端末ローカル作品の保全を実アカウントで確認する。
