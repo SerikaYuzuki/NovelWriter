@@ -8,6 +8,8 @@
 
 Mac アプリは `com.apple.developer.applesignin` を要求し、AuthenticationServices の native flow だけを実装している。Apple の Developer ID provisioning profile は Sign in with Apple capability を許可しないため、現行 Archive を Direct Distribution で書き出せない。DMG への梱包では解消しない。
 
+2026-09-27 のローカル Keychain 確認では有効な Apple Development 署名証明書だけがあり、Developer ID Application 証明書は見つからなかった。Web 認証の実装後、署名・公証より前に配布用証明書を用意する。
+
 ## 配布版の認証境界
 
 - Mac 配布版は Apple の Web 認証を既定ブラウザで開始する。iOS/iPadOS の native flow は維持する。

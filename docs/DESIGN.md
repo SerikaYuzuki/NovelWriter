@@ -31,7 +31,7 @@
 | 原稿出力 | TXT / Markdown / EPUB 3 |
 | Windows | Windows 11のみ。WinUI 3 + C# / .NET、MSIなどのインストーラー配布を計画。W0未完了 |
 
-現在の保存実装はCSQLiteとPostgreSQL BYTEA。サーバーはserver-readableで、E2EEではない（D-078 / D-080）。macOSはGitHub Releasesによる直接配布・非Sandbox方針（D-011）。配布・公開の受入は別途必要である。
+現在の保存実装はCSQLiteとPostgreSQL BYTEA。サーバーはserver-readableで、E2EEではない（D-078 / D-080）。macOSは非Sandboxの直接配布方針（D-011）で、今回の協力者向け受け渡しは公証済みDMGとする（D-099）。配布・公開の受入は別途必要である。
 
 ## 3. モジュール構成
 
