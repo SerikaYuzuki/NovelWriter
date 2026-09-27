@@ -2,11 +2,11 @@
 
 ## 状態と範囲
 
-これは実装前の契約である。既存の Auth v1 native Apple 認証、iOS / iPadOS、発行済み session、Snapshot Sync v2 の wire と AccountID は変更しない。Mac の Developer ID 配布版で Apple Web と Google OpenID Connect を使うための新しい認証入口を設ける。Auth epoch と endpoint の変更は、実装・fixture・OpenAPI をそろえてから有効にする。
+これは実装前の契約である。既存の Auth v1 native Apple 認証、発行済み session、Snapshot Sync v2 の wire と AccountID は変更しない。Mac の Developer ID 配布版で Apple Web と Google OpenID Connect、iOS / iPadOS で現行 native Apple と Google OpenID Connect を使うための新しい認証入口を設ける。Auth epoch と endpoint の変更は、実装・fixture・OpenAPI をそろえてから有効にする。
 
 ## 開始から session 取得まで
 
-1. Mac アプリが provider (`apple` または `google`) と、端末内で生成した 256-bit の引換秘密のハッシュを HTTPS でサーバーに送る。サーバーは短命の attempt、推測不能な `state` と `nonce`、認可 URL を作り、attempt ID と URL だけをアプリに返す。
+1. Mac アプリが provider (`apple` または `google`)、iOS / iPadOS アプリが `google` と、端末内で生成した 256-bit の引換秘密のハッシュを HTTPS でサーバーに送る。サーバーは短命の attempt、推測不能な `state` と `nonce`、認可 URL を作り、attempt ID と URL だけをアプリに返す。
 2. アプリが URL をシステムの既定ブラウザで開く。認可 URL の `redirect_uri` は provider に登録した固定 HTTPS callback と完全一致させる。Apple は `https://sync.serika.work/v2/auth/browser/apple/callback` を登録した Services ID、Google は `https://sync.serika.work/v2/auth/browser/google/callback` を登録した Web application OAuth client を使用する。
 3. callback は `state`、有効期限、単回使用を先に検査する。サーバーが provider の code を token endpoint で引き換え、ID token の署名、issuer、audience、期限、nonce、subject を検証する。provider の code、ID token、FUMINIWA token をブラウザからアプリへ URL で渡さない。callback の HTML には認証情報を埋め込まない。
 4. アプリだけが attempt ID と引換秘密で完了を問い合わせる。成功時にサーバーが短命の引換を一度だけ消費し、FUMINIWA session を TLS のレスポンス本文でアプリへ返す。未完了、取消、期限切れ、別 attempt の秘密、再使用、サーバー再起動を区別して扱う。引換秘密、provider credential、FUMINIWA token はログや通常保存 DB に残さない。

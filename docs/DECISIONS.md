@@ -63,3 +63,7 @@ D-043、D-046〜D-054、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、
 ## D-099: Mac DMG配布と認証方法（2026-09-27）
 
 協力者に直接渡すMac版はDeveloper ID署名・公証済みDMGとし、同期を維持する。Developer IDで使えないnative Sign in with Appleに代えて、Mac配布版はブラウザ経由のApple認証を使い、Google認証も追加する。1つのFUMINIWA AccountIDはAppleかGoogleの片方だけで認証し、メール一致による統合とprovider連携は行わない。現行Auth v1のnative clientは実装が置き換わるまで維持する。詳細と未完了の受入は[Mac DMG配布](MAC_DMG_DISTRIBUTION.md)に記す。
+
+## D-100: iOSのGoogleログイン（2026-09-27）
+
+iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサーバー上のブラウザ認証をシステムブラウザで使い、同じGoogle identityを同じFUMINIWA AccountIDへ対応させる。iOSのAppleログインは現行native flowを維持する。両provider間の連携・自動統合は行わず、account切替時は既存の端末作品保全を通す。[Auth v2](auth/v2/README.md)に共通契約を記す。
