@@ -1,5 +1,7 @@
 # 認証の現在の境界
 
+Mac の Developer ID 配布版で追加する Apple Web / Google ブラウザ認証は[Auth v2 契約](auth/v2/README.md)に分けて記す。下記は稼働中の Auth v1 の境界である。
+
 Auth v1でAppleログインからFUMINIWA sessionを発行し、Snapshot Sync v2で使用する。wireの正本は[Auth v1](auth/v1/README.md)と[OpenAPI](auth/v1/openapi.yaml)。Auth epochは1、Sync epochは2で、両者を混同しない。
 
 ## 実装
