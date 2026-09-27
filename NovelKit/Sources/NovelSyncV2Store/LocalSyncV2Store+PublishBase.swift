@@ -6,7 +6,7 @@ extension LocalSyncV2Store {
     /// Use a verified head on this candidate's actual ancestry, without moving
     /// the monotonically acknowledged server head backwards.
     func publishBaseHead(workID: WorkID, snapshotID: SnapshotID) throws -> V2RemoteHead? {
-        guard let acknowledged = try acknowledgedHead(workID: workID) else { return nil }
+        let acknowledged = try acknowledgedHead(workID: workID)
         let ancestry = """
         WITH RECURSIVE ancestry(snapshot_id) AS (
           SELECT ? UNION
@@ -15,7 +15,8 @@ extension LocalSyncV2Store {
         )
         """
         let prefix: [SQLiteValue] = [.blob(snapshotID.bytes), .text(workID.description)]
-        if try !query(ancestry + "SELECT 1 FROM ancestry WHERE snapshot_id=?",
+        if let acknowledged,
+           try !query(ancestry + "SELECT 1 FROM ancestry WHERE snapshot_id=?",
                       prefix + [.blob(acknowledged.snapshotID.bytes)]).isEmpty {
             return acknowledged
         }
@@ -37,6 +38,9 @@ extension LocalSyncV2Store {
                 [.text(workID.description)] + binding.values)
         guard let row = rows.first,
               let head = try Self.head(snapshot: row[0].blob, generation: row[1].int64) else {
+            if acknowledged == nil {
+                return nil
+            }
             throw SyncV2StoreError.invalidSnapshot
         }
         return head

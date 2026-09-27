@@ -131,3 +131,30 @@ func remoteConflictPreservesVerifiedGraphBaseAndServerIdentity() async throws {
     #expect(try await store.open(workID: workID, scope: scopeA).document == edited)
     await store.close()
 }
+
+@Test
+func signingBackIntoSameAccountRecoversVerifiedPublishBase() async throws {
+    let root = temporaryStoreRoot("publish-base-sign-in")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let workID = WorkID(UUID())
+    var document = makeDocument(title: "before sign-out")
+    let base = try await store.checkpoint(V2CheckpointRequest(
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+    ), scope: scopeA)
+    let head = try V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
+    let published = try publishCommand(workID: workID, checkpoint: base)
+    try await store.seal(published, intentID: base.intentID, scope: scopeA)
+    try await store.acknowledge(commandAcknowledgement(published, head: head), scope: scopeA)
+    document.title = "local edit retained"
+    _ = try await store.checkpoint(V2CheckpointRequest(
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: base.generation
+    ), scope: scopeA)
+    guard case let .bound(binding) = scopeA else { throw SyncV2StoreError.accountMismatch }
+    try await store.transitionAccountScopes(from: binding, to: nil)
+    try await store.transitionAccountScopes(from: nil, to: binding)
+    #expect(try await store.acknowledgedHead(workID: workID) == nil)
+    #expect(try await store.immutableTransferView(workID: workID, scope: scopeA)?.expectedRemoteHead == head)
+    #expect(try await store.open(workID: workID, scope: scopeA).document == document)
+    await store.close()
+}
