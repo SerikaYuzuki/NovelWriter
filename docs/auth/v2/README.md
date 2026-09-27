@@ -7,7 +7,7 @@
 ## 開始から session 取得まで
 
 1. Mac アプリが provider (`apple` または `google`) と、端末内で生成した 256-bit の引換秘密のハッシュを HTTPS でサーバーに送る。サーバーは短命の attempt、推測不能な `state` と `nonce`、認可 URL を作り、attempt ID と URL だけをアプリに返す。
-2. アプリが URL をシステムの既定ブラウザで開く。認可 URL の `redirect_uri` は provider に登録した `https://sync.serika.work` 上の固定 HTTPS callback と完全一致させる。Apple は Services ID、Google は Web application OAuth client を使用する。
+2. アプリが URL をシステムの既定ブラウザで開く。認可 URL の `redirect_uri` は provider に登録した固定 HTTPS callback と完全一致させる。Apple は `https://sync.serika.work/v2/auth/browser/apple/callback` を登録した Services ID、Google は `https://sync.serika.work/v2/auth/browser/google/callback` を登録した Web application OAuth client を使用する。
 3. callback は `state`、有効期限、単回使用を先に検査する。サーバーが provider の code を token endpoint で引き換え、ID token の署名、issuer、audience、期限、nonce、subject を検証する。provider の code、ID token、FUMINIWA token をブラウザからアプリへ URL で渡さない。callback の HTML には認証情報を埋め込まない。
 4. アプリだけが attempt ID と引換秘密で完了を問い合わせる。成功時にサーバーが短命の引換を一度だけ消費し、FUMINIWA session を TLS のレスポンス本文でアプリへ返す。未完了、取消、期限切れ、別 attempt の秘密、再使用、サーバー再起動を区別して扱う。引換秘密、provider credential、FUMINIWA token はログや通常保存 DB に残さない。
 5. アプリは既存の Keychain と account transition gate を通して session を導入する。別 AccountID のローカル作品は自動採用しない。認証待ちの間も SQLite 保存と編集を続けられる。
@@ -21,6 +21,6 @@
 
 ## 外部設定と受入
 
-- Apple Developer の Services ID、primary App ID の関連付け、return URL、秘密鍵を管理画面で確認する。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`。管理画面で存在と権限を確認した後、OAuth client ID、同じ HTTPS origin の callback、必要な consent 設定を確認する。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。
+- Apple Developer の Services ID、primary App ID の関連付け、return URL、秘密鍵を管理画面で確認する。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`。管理画面で存在と権限を確認した後、OAuth client ID、上記 callback、必要な consent 設定を確認する。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。
 - callback は provider ごとに固定し、認可 URL・token request と登録値の完全一致を確認する。`state` / `nonce` 不一致、期限切れ、code 再使用、cross-attempt、provider 取り違え、重複 callback、サーバー再起動を合成データと実 DB で確認する。
 - 既存 Apple native client の認証・更新・削除操作が回帰しないことを確認する。Apple Web で既存 AccountID に戻ること、Google で独立 AccountID になること、同期 scope と端末ローカル作品の保全を実アカウントで確認する。
