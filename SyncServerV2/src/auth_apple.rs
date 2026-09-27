@@ -23,6 +23,7 @@ const APPLE_TOKEN_ENDPOINT: &str = "https://appleid.apple.com/auth/token";
 const APPLE_TOKEN_AUDIENCE: &str = "https://appleid.apple.com";
 const MAC_AUDIENCE: &str = "dev.serikayuzuki.fuminiwa";
 const IOS_AUDIENCE: &str = "dev.serikayuzuki.fuminiwa.ios";
+const WEB_AUDIENCE: &str = "dev.serikayuzuki.fuminiwa.web";
 const MAX_PROVIDER_BODY_BYTES: usize = 128 * 1024;
 const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
 
@@ -42,6 +43,7 @@ pub struct AppleClientSecretSigner {
     key_id: Arc<str>,
     mac_client_id: Arc<str>,
     ios_client_id: Arc<str>,
+    web_client_id: Option<Arc<str>>,
     encoding_key: Arc<EncodingKey>,
 }
 
@@ -67,25 +69,43 @@ impl AppleClientSecretSigner {
             key_id: key_id.into(),
             mac_client_id: mac_client_id.into(),
             ios_client_id: ios_client_id.into(),
+            web_client_id: None,
             encoding_key: Arc::new(encoding_key),
         })
     }
 
+    pub fn with_web_client_id(mut self, web_client_id: String) -> Result<Self, AuthError> {
+        if web_client_id != WEB_AUDIENCE {
+            return Err(AuthError::ProviderNotAllowed);
+        }
+        self.web_client_id = Some(web_client_id.into());
+        Ok(self)
+    }
+
     pub fn from_environment() -> Result<Self, AuthError> {
         let private_key = secret_text_from_environment("FUMINIWA_APPLE_PRIVATE_KEY")?;
-        Self::new(
+        let signer = Self::new(
             required_environment("FUMINIWA_APPLE_TEAM_ID")?,
             required_environment("FUMINIWA_APPLE_KEY_ID")?,
             required_environment("FUMINIWA_APPLE_MAC_CLIENT_ID")?,
             required_environment("FUMINIWA_APPLE_IOS_CLIENT_ID")?,
             private_key.as_bytes(),
-        )
+        )?;
+        match std::env::var("FUMINIWA_APPLE_WEB_CLIENT_ID") {
+            Ok(value) if !value.is_empty() => signer.with_web_client_id(value),
+            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(signer),
+            Err(_) => Err(AuthError::ProviderNotAllowed),
+        }
     }
 
     fn client_id(&self, audience: &str) -> Result<&str, AuthError> {
         match audience {
             MAC_AUDIENCE => Ok(&self.mac_client_id),
             IOS_AUDIENCE => Ok(&self.ios_client_id),
+            WEB_AUDIENCE => self
+                .web_client_id
+                .as_deref()
+                .ok_or(AuthError::ProviderNotAllowed),
             _ => Err(AuthError::ProviderNotAllowed),
         }
     }
@@ -776,8 +796,22 @@ mod tests {
             key_id: "TESTKEY".into(),
             mac_client_id: MAC_AUDIENCE.into(),
             ios_client_id: IOS_AUDIENCE.into(),
+            web_client_id: None,
             encoding_key: Arc::new(EncodingKey::from_secret(b"test-only-not-apple")),
         }
+    }
+
+    #[test]
+    fn web_audience_requires_exact_explicit_configuration() {
+        let signer = dummy_signer();
+        assert!(signer.client_id(WEB_AUDIENCE).is_err());
+        assert!(signer
+            .clone()
+            .with_web_client_id("attacker.example".into())
+            .is_err());
+        let enabled = signer.with_web_client_id(WEB_AUDIENCE.into()).unwrap();
+        assert_eq!(enabled.client_id(WEB_AUDIENCE).unwrap(), WEB_AUDIENCE);
+        assert_eq!(enabled.client_id(MAC_AUDIENCE).unwrap(), MAC_AUDIENCE);
     }
 
     #[test]

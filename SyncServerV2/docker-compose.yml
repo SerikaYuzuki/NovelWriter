@@ -90,6 +90,7 @@ services:
       FUMINIWA_APPLE_KEY_ID: ${FUMINIWA_APPLE_KEY_ID:?set the Apple key ID}
       FUMINIWA_APPLE_MAC_CLIENT_ID: ${FUMINIWA_APPLE_MAC_CLIENT_ID:?set the macOS App ID}
       FUMINIWA_APPLE_IOS_CLIENT_ID: ${FUMINIWA_APPLE_IOS_CLIENT_ID:?set the iOS App ID}
+      FUMINIWA_APPLE_WEB_CLIENT_ID: ${FUMINIWA_APPLE_WEB_CLIENT_ID:-}
       FUMINIWA_APPLE_PRIVATE_KEY_FILE: /run/secrets/apple-sign-in-key.p8
     secrets:
       - runtime-password
