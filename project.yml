@@ -200,6 +200,8 @@ targets:
       - path: NovelApp/ConnectivityRecovery.swift
       - path: NovelApp/SyncPresentation
       - path: NovelApp/WritingAssistant
+        excludes:
+          - ResizableAssistantLayout.swift
       - path: NovelApp/Features/AssistantFeedback
       - path: NovelApp/ManuscriptCopy.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
