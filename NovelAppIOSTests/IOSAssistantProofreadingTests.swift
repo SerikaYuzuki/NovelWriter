@@ -43,7 +43,11 @@ struct IOSAssistantProofreadingTests {
             store.saveCoordinator = V2DocumentSaveCoordinator(
                 debounceNanoseconds: 60_000_000_000,
                 currentDocument: { store.document },
-                saveOperation: { _ in if fails { throw CocoaError(.fileWriteUnknown) } }
+                saveOperation: {
+                    _ in if fails {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                }
             )
             store.saveCoordinator.markDirty()
             #expect(await store.saveNow() == !fails)

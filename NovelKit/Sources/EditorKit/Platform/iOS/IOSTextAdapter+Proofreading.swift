@@ -36,8 +36,12 @@ extension IOSTextAdapter.Coordinator {
         }
         storage.endEditing()
         textView.typingAttributes.removeValue(forKey: .backgroundColor)
-        if textView.selectedRange != selection { textView.selectedRange = selection }
-        if textView.contentOffset != offset { textView.setContentOffset(offset, animated: false) }
+        if textView.selectedRange != selection {
+            textView.selectedRange = selection
+        }
+        if textView.contentOffset != offset {
+            textView.setContentOffset(offset, animated: false)
+        }
     }
 }
 #endif

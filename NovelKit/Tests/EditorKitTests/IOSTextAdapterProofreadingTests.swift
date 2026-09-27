@@ -5,7 +5,7 @@ import UIKit
 
 extension IOSTextAdapterIntegrationTests {
     @Test("iOS校正は離れた修正だけを色付けし、native UndoとRedoで一括して戻せる")
-    func proofreadingHighlightsOnlyChangesAndUsesNativeUndo() async throws {
+    func proofreadingHighlightsOnlyChangesAndUsesNativeUndo() async {
         let unchanged = String(repeating: "変えない文章。", count: 300)
         let original = "空は赤い。\n\(unchanged)\n猫は眠る。"
         let revised = "空は青い。\n\(unchanged)\n猫は走る。👩‍👩‍👧‍👦"
@@ -16,7 +16,9 @@ extension IOSTextAdapterIntegrationTests {
         #expect(harness.textView.textLayoutManager != nil)
         #expect(harness.changes.received == [revised])
         #expect(highlightedText(harness.textView) == ["青", "走", "👩‍👩‍👧‍👦"])
-        for _ in 0 ..< 3 { await advanceMainRunLoop() }
+        for _ in 0 ..< 3 {
+            await advanceMainRunLoop()
+        }
         #expect(harness.undoManager.canUndo)
         harness.undoManager.undo()
         #expect(harness.textView.text == original)
@@ -54,7 +56,9 @@ extension IOSTextAdapterIntegrationTests {
         let session = EditorCommandSession()
         harness.coordinator.registerCommandSurface(with: session)
         #expect(session.applyProofreading(expectedText: original, replacement: revised))
-        for _ in 0 ..< 3 { await advanceMainRunLoop() }
+        for _ in 0 ..< 3 {
+            await advanceMainRunLoop()
+        }
         harness.textView.selectedRange = NSRange(location: 4, length: 2)
         harness.textView.layoutIfNeeded()
         harness.textView.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
@@ -90,7 +94,9 @@ extension IOSTextAdapterIntegrationTests {
         session.clearProofreadingHighlights()
         #expect(harness.coordinator.proofreadingOriginal == "本文")
         harness.textView.unmarkText()
-        for _ in 0 ..< 3 { await advanceMainRunLoop() }
+        for _ in 0 ..< 3 {
+            await advanceMainRunLoop()
+        }
         #expect(harness.changes.received.last == "校正本文へんかん")
         #expect(highlightedText(harness.textView) == ["校正", "へんかん"])
     }
@@ -114,7 +120,9 @@ extension IOSTextAdapterIntegrationTests {
         var result: [String] = []
         let storage = textView.textStorage
         storage.enumerateAttribute(.backgroundColor, in: NSRange(location: 0, length: storage.length)) { color, range, _ in
-            if color != nil { result.append((storage.string as NSString).substring(with: range)) }
+            if color != nil {
+                result.append((storage.string as NSString).substring(with: range))
+            }
         }
         return result
     }

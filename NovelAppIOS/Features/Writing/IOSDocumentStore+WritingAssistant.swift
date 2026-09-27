@@ -11,8 +11,8 @@ extension IOSDocumentStore {
     }
 
     func applyAssistantProofreading(_ manuscript: AssistantManuscript, replacement: String,
-                                     editingToken: IOSEpisodeEditingToken,
-                                     account: IOSSnapshotSyncV2AccountScope) -> Bool {
+                                    editingToken: IOSEpisodeEditingToken,
+                                    account: IOSSnapshotSyncV2AccountScope) -> Bool {
         guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
               snapshotSyncV2AccountScope == account else { return false }
         return editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
