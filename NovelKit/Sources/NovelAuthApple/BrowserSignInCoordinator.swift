@@ -22,18 +22,17 @@ public final class BrowserSignInCoordinator: NSObject, ASWebAuthenticationPresen
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
-                let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "fuminiwa-auth") { [weak self] url, error in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        if let error {
-                            self.finish(.failure(error))
-                        } else if url?.scheme == "fuminiwa-auth", url?.host == "complete" {
-                            self.finish(.success(()))
-                        } else {
-                            self.finish(.failure(AuthError.providerRejected))
-                        }
+                let completion = Self.makeCompletionHandler { [weak self] url, error in
+                    guard let self else { return }
+                    if let error {
+                        finish(.failure(error))
+                    } else if url?.scheme == "fuminiwa-auth", url?.host == "complete" {
+                        finish(.success(()))
+                    } else {
+                        finish(.failure(AuthError.providerRejected))
                     }
                 }
+                let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "fuminiwa-auth", completionHandler: completion)
                 session.presentationContextProvider = self
                 session.prefersEphemeralWebBrowserSession = true
                 self.session = session
@@ -45,6 +44,18 @@ public final class BrowserSignInCoordinator: NSObject, ASWebAuthenticationPresen
             Task { @MainActor [weak self] in
                 self?.session?.cancel()
                 self?.finish(.failure(CancellationError()))
+            }
+        }
+    }
+
+    /// AuthenticationServices can call back on SafariLaunchAgent's XPC queue.
+    /// The entry closure must be nonisolated, before it hops to the main actor.
+    nonisolated static func makeCompletionHandler(
+        deliver: @escaping @MainActor @Sendable (URL?, Error?) -> Void
+    ) -> @Sendable (URL?, Error?) -> Void {
+        { url, error in
+            Task { @MainActor in
+                deliver(url, error)
             }
         }
     }
