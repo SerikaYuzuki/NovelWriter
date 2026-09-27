@@ -54,7 +54,7 @@ struct NovelWorkbenchView: View {
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
+        ResizableAssistantLayout(isPresented: isAssistantPresented && showsWritingActions, defaults: appState.userDefaults) {
             VStack(spacing: 0) {
                 workbenchSplitView
                     .id(workbenchColumnLayout)
@@ -63,14 +63,8 @@ struct NovelWorkbenchView: View {
                 }
             }
             .frame(minHeight: 240)
-            if isAssistantPresented, showsWritingActions {
-                Divider()
-                assistantPanel
-                    .frame(width: 360)
-                    .background(.thinMaterial)
-                    .accessibilityIdentifier("workbench.assistant.right")
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
+        } panel: {
+            assistantPanel
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
         .modifier(WritingSyncPulse(host: appState.writingAssistantHost))

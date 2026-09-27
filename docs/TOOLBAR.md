@@ -81,3 +81,7 @@ toolbar非表示・項目削除後も、章・人物・世界観・プロット�
 話名はtoolbarと話行のcontext menuから変更でき、既存の一覧内編集も維持する。dialogはpane側で所有し、overflowへ閉じ込めない。作品名は一覧のcontext menuから変更する。両者とも空白だけの名前を拒否し、取得元session/accountと対象の存在を確認してmetadataをSQLiteへ保存する。本文・選択・Editor世代を変えない。remote-only作品名変更は必要な取得後に行い、networkをdocument gate内で待たない。
 
 native toolbarの配置は端末UserDefaultsへsection別に保持し、window再構築後に復元する。検索を削除した場合は本文側Cmd+Fで再追加してfocusする。検索先は実際にfocusがあるViewの`focusedValue`で決め、複数列の`focusedSceneValue`で競合させない。配置・検索語は作品へ同期しない。
+
+## AI支援の幅
+
+右側のAI支援パネルは左端の境界を左右へドラッグして幅を変更できる。既定360pt、最小300pt、最大720ptかつウインドウ幅の45%を目安に制限し、本文側の表示領域を残す。幅は端末設定に保存し、パネルを閉じて開き直した場合やアプリ再起動後も引き継ぐ。VoiceOverの調整操作にも対応する。
