@@ -42,10 +42,10 @@
 | D-012 | 縦書きは未対応 |
 | D-042 | 通常の開発依頼は実装・品質改善。価格・法務・販促は明示依頼の範囲。必要なデプロイは対象・backup・反映後を確認して進める |
 | D-076 | 責務別の構造、Swift 6境界、swift-testing。Swift sourceは400行で確認、600行で警告、800行超は分割する |
-| D-078 | Auth v1はApple-only、opaque AccountID/session/Fence。内容保護はserverReadableV1、E2EEではない。[AUTH](AUTH.md) |
+| D-078 | 現行Auth v1はApple-only、opaque AccountID/session/Fence。内容保護はserverReadableV1、E2EEではない。[AUTH](AUTH.md) |
 | D-081〜D-083 / D-085 | PostgreSQLの初期化・bootstrap・migration owner・runtimeを分離。runtimeにDDLを与えず、sequenceはUSAGEのみ。既存migrationと対象識別を保つ |
 | D-086 | 検証なし／軽い／中ぐらい／重たいを影響で選ぶ。利用者の明示指定を優先し、マージだけでは段階を上げない |
-| D-087 / D-096 | Apple以外の回復なし。明示削除予約から720時間、期限前の取消、猶予中の通常利用。remote消去のmarkerはatomic、削除完了はApple失効成功後。[自動運用](ACCOUNT_RETENTION_OPERATIONS.md) |
+| D-087 / D-096 | 現行Auth v1はApple以外の回復なし。明示削除予約から720時間、期限前の取消、猶予中の通常利用。remote消去のmarkerはatomic、削除完了はApple失効成功後。[自動運用](ACCOUNT_RETENTION_OPERATIONS.md) |
 | D-088 | Windows 11、WinUI 3＋C#/.NET、MSI等のinstallerを計画。Windows実装は未完了 |
 | D-095 | 添付250 MiB、8 MiB分割。自宅サーバーで再構成・digest確認。Cloudflare有料サービスを暗黙に追加しない |
 | D-096 | 日次暗号化backupを作成から1暦年保持。2/29は翌年2/28。新backup成功後だけ期限切れを整理する |
@@ -59,3 +59,7 @@ D-043、D-046〜D-054、D-059〜D-061、D-063、D-065、D-069、D-071〜D-075、
 ## D-098: AI会話・指示の独立同期と依頼単位の編集（2026-09-26）
 
 [原稿保全・AI計画](PROTECTION_AI_PLAN.md)の採択事項を実装する。本文snapshotとAI記録の同期を分離し、共通・作品プロンプトはrevision比較で競合を残す。端末AI SQLiteは本文保存を成立させる条件にしない。チャットの明示送信と依頼ごとの編集範囲を守り、EditorKitのIME/Undoとwork/session/accountを保持する。MCPは初回登録した外部clientを信頼するMac上のloopback接続とし、同じ編集サービスを使う。[契約](sync/v2/assistant.md)にwire・機械的範囲制限・中断・復元・削除を定義した。ローカル検証・稼働反映・実端末受入の結果は作業の証跡へ別記する。
+
+## D-099: Mac DMG配布と認証方法（2026-09-27）
+
+協力者に直接渡すMac版はDeveloper ID署名・公証済みDMGとし、同期を維持する。Developer IDで使えないnative Sign in with Appleに代えて、Mac配布版はブラウザ経由のApple認証を使い、Google認証も追加する。1つのFUMINIWA AccountIDはAppleかGoogleの片方だけで認証し、メール一致による統合とprovider連携は行わない。現行Auth v1のnative clientは実装が置き換わるまで維持する。詳細と未完了の受入は[Mac DMG配布](MAC_DMG_DISTRIBUTION.md)に記す。
