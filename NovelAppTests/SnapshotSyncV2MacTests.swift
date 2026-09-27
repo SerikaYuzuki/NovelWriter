@@ -163,6 +163,15 @@ struct SnapshotSyncV2MacTests {
     @MainActor
     func remoteOnlyOpenReturnsWithoutBlockingCurrentWork() async throws {
         let configuration = try TestRuntimeConfiguration()
+        // This test controls a pending download. Keep unrelated outbound workers
+        // pending too, so their default offline diagnostic cannot race the UI assertion.
+        await configuration.remote.setBehaviors([.suspended])
+        defer {
+            Task {
+                await configuration.remote.setBehaviors([.failure(.offline)])
+                await configuration.remote.resumeSuspended()
+            }
+        }
         let suspendedOpen = SuspendedRemoteOnlyOpen()
         let defaults = try #require(UserDefaults(suiteName: "FUMINIWA.SnapshotSyncV2MacTests.remoteOnly.\(UUID().uuidString)"))
         var dependencies = AppDependencies(
