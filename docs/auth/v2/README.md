@@ -21,6 +21,6 @@
 
 ## 外部設定と受入
 
-- Apple Developer の Services ID、primary App ID の関連付け、return URL、秘密鍵を管理画面で確認する。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`。管理画面で存在と権限を確認した後、OAuth client ID、上記 callback、必要な consent 設定を確認する。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。
+- Apple Developer の Services ID、primary App ID の関連付け、return URL、秘密鍵を管理画面で確認する。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`、14:08 作成の OAuth client ID は `560354700432-aq87npqhidi1m4n671m8pb9bugml609d.apps.googleusercontent.com`。Google callback は設定画面で入力済みと所有者が報告したが、保存後の read-back と実認証は未確認。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。
 - callback は provider ごとに固定し、認可 URL・token request と登録値の完全一致を確認する。`state` / `nonce` 不一致、期限切れ、code 再使用、cross-attempt、provider 取り違え、重複 callback、サーバー再起動を合成データと実 DB で確認する。
 - 既存 Apple native client の認証・更新・削除操作が回帰しないことを確認する。Apple Web で既存 AccountID に戻ること、Google で独立 AccountID になること、同期 scope と端末ローカル作品の保全を実アカウントで確認する。
