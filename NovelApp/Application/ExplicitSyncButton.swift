@@ -96,6 +96,7 @@ struct ExplicitSyncSetupModifier: ViewModifier {
                     }
                 } else if !appState.isSignedInToFuminiwa {
                     Button("Appleでサインイン") { Task { await appState.signInWithApple() } }
+                    Button("Googleでサインイン") { Task { await appState.signInWithGoogle() } }
                 }
                 Button("キャンセル", role: .cancel) {}
             } message: {

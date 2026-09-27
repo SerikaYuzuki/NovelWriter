@@ -79,6 +79,7 @@ const AUTH_RUNTIME_DML_TABLES: &[&str] = &[
     "session_refresh_receipts",
     "provider_notification_receipts",
     "account_deletions",
+    "browser_attempts",
     "auth_events",
     "vault_rewrap_ledger",
 ];
@@ -158,6 +159,7 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "session_refresh_receipts",
                 "provider_notification_receipts",
                 "account_deletions",
+                "browser_attempts",
                 "auth_events",
                 "vault_rewrap_ledger",
             ][..],
@@ -231,6 +233,10 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "accounts_tenant_id_key",
                 "provider_configs_pkey",
                 "provider_configs_provider_kind_exact_issuer_key",
+                "browser_attempts_pkey",
+                "browser_attempts_state_hash_key",
+                "browser_attempts_expiry",
+                "external_identities_one_active_account",
                 "external_identities_pkey",
                 "external_identities_lookup_key_version_subject_lookup_hmac_key",
                 "external_identities_account_provider_issuer_key",
@@ -323,7 +329,23 @@ fn classify_database_identity(
                 .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
         });
     let expected_objects = expected_v2_database_objects();
-    let previous_objects: HashSet<_> = expected_objects
+    let before_browser: HashSet<_> = expected_objects
+        .iter()
+        .filter(|name| {
+            !name.contains("auth_v1.browser_attempts")
+                && !name.contains("auth_v1.external_identities_one_active_account")
+        })
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == before_browser.len()
+        && user_objects
+            .iter()
+            .all(|object| before_browser.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    let previous_objects: HashSet<_> = before_browser
         .iter()
         .filter(|name| {
             !name.contains("sync_v2.assistant_") && !name.contains("sync_v2.recovery_operations")
@@ -508,6 +530,9 @@ impl Repository {
             .await?;
         sqlx::query("SELECT record_id,sequence,request_bytes,conflicted FROM sync_v2.assistant_records LIMIT 0").execute(pool).await?;
         sqlx::query("SELECT operation_id,request_digest,response_bytes FROM sync_v2.recovery_operations LIMIT 0").execute(pool).await?;
+        sqlx::query("SELECT attempt_id,phase,claim_hash FROM auth_v1.browser_attempts LIMIT 0")
+            .execute(pool)
+            .await?;
         sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
             .execute(&mut *connection)
             .await?;

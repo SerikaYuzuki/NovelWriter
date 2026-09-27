@@ -3,6 +3,7 @@ pub mod application;
 pub mod auth;
 pub mod auth_apple;
 pub mod auth_application;
+pub mod auth_browser;
 pub mod auth_domain;
 pub mod auth_google;
 pub mod auth_http;

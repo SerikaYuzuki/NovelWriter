@@ -1,6 +1,6 @@
 # 認証の現在の境界
 
-Mac の Developer ID 配布版で追加する Apple Web / Google ブラウザ認証は[Auth v2 契約](auth/v2/README.md)に分けて記す。下記は稼働中の Auth v1 の境界である。
+Mac の Developer ID 配布版とiOSで使う Apple Web / Google ブラウザ認証は[Auth v2 契約](auth/v2/README.md)に分けて記す。下記は既存 Auth v1 の境界であり、ブラウザ入口も同じアカウント・セッション基盤を使う。
 
 Auth v1でAppleログインからFUMINIWA sessionを発行し、Snapshot Sync v2で使用する。wireの正本は[Auth v1](auth/v1/README.md)と[OpenAPI](auth/v1/openapi.yaml)。Auth epochは1、Sync epochは2で、両者を混同しない。
 
@@ -23,7 +23,7 @@ Auth v1でAppleログインからFUMINIWA sessionを発行し、Snapshot Sync v2
 - Apple署名・claim・nonce・audienceを検証し、通知はreceiptとidentity lockで順序を扱う。再ログインと同秒以前の破壊通知はprovider確認を待ち、timeout等で新sessionを失効させない。
 - 新loginは同じidentityの古い確認待ちを全audienceで失効させる。Apple revokeは200だけ成功、他は永続retry。詳細は[通知契約](auth/v1/apple-notification.md)。
 - serverReadableV1でE2EEではない。TLSとserver管理の保存時保護を使い、権限を持つ運用者・復旧backupは内容を読める。
-- Appleログイン以外の独自回復、identityのlink/unlink・account merge・別providerは提供しない。
+- 独自回復、identityのlink/unlink・account mergeは提供しない。GoogleはAuth v2ブラウザ入口で別アカウントとして扱う。
 
 ## 運用と残件
 

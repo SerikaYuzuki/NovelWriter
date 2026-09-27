@@ -48,6 +48,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ProductionAuthService::ensure_apple_provider_config(&repository.pool)
         .await
         .map_err(|error| startup_error("Apple provider configuration", error))?;
+    let browser_service = if std::env::var("FUMINIWA_BROWSER_AUTH_ENABLED").as_deref() == Ok("1") {
+        Some(
+            fuminiwa_sync_server_v2::auth_browser::BrowserAuthService::new(
+                repository.pool.clone(),
+                vault.clone(),
+                subject_hmac_key,
+                token_hmac_key,
+                server_instance_id.clone(),
+                apple_signer.clone(),
+                apple_transport.clone(),
+                fuminiwa_sync_server_v2::auth_google::GoogleOAuthProvider::from_environment()?,
+            )?,
+        )
+    } else {
+        None
+    };
     let auth_service = Arc::new(
         ProductionAuthService::new(
             repository.pool.clone(),
@@ -96,6 +112,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_http_service,
         server_instance_id,
     )));
+    let app = if let Some(service) = browser_service {
+        app.merge(fuminiwa_sync_server_v2::auth_browser::router(service))
+    } else {
+        app
+    };
     let bind = std::env::var("FUMINIWA_SYNC_V2_BIND").unwrap_or_else(|_| "127.0.0.1:8092".into());
     let listener = tokio::net::TcpListener::bind(&bind)
         .await

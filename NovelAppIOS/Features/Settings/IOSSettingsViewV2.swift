@@ -24,10 +24,11 @@ struct IOSSettingsView: View {
                 switch store.authUIState {
                 case .signedOut, .failed:
                     Button("Appleでサインイン") { Task { await store.signInWithApple() } }
+                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
                 case .signedIn:
                     Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
                 case .signingIn:
-                    ProgressView("Appleでサインイン中…")
+                    ProgressView("サインイン中…")
                 case .unavailable:
                     Text("同期サーバーが未設定です。端末内で利用できます。")
                 }

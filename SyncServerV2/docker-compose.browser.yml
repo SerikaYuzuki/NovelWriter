@@ -1,0 +1,12 @@
+# Add with -f docker-compose.yml -f docker-compose.browser.yml after provisioning OAuth.
+services:
+  server:
+    environment:
+      FUMINIWA_BROWSER_AUTH_ENABLED: "1"
+      FUMINIWA_APPLE_WEB_CLIENT_ID: dev.serikayuzuki.fuminiwa.web
+      FUMINIWA_GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google-client-secret
+    secrets:
+      - google-client-secret
+secrets:
+  google-client-secret:
+    file: ${FUMINIWA_GOOGLE_CLIENT_SECRET_HOST_PATH:?set the server-only Google secret file path}

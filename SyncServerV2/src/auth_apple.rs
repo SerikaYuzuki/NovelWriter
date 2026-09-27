@@ -48,6 +48,18 @@ pub struct AppleClientSecretSigner {
 }
 
 impl AppleClientSecretSigner {
+    #[cfg(test)]
+    pub(crate) fn browser_test_signer() -> Self {
+        Self {
+            team_id: "TESTTEAM".into(),
+            key_id: "TESTKEY".into(),
+            mac_client_id: MAC_AUDIENCE.into(),
+            ios_client_id: IOS_AUDIENCE.into(),
+            web_client_id: Some(WEB_AUDIENCE.into()),
+            encoding_key: Arc::new(EncodingKey::from_secret(b"test-only-not-apple")),
+        }
+    }
+
     pub fn new(
         team_id: String,
         key_id: String,
@@ -405,7 +417,11 @@ impl<T, V> ProductionAppleProvider<T, V> {
         let key = self.decoding_key(&kid).await?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[APPLE_ISSUER]);
-        validation.set_audience(&[MAC_AUDIENCE, IOS_AUDIENCE]);
+        let mut audiences = vec![MAC_AUDIENCE, IOS_AUDIENCE];
+        if self.signer.web_client_id.is_some() {
+            audiences.push(WEB_AUDIENCE);
+        }
+        validation.set_audience(&audiences);
         validation.leeway = MAX_CLOCK_SKEW_SECONDS as u64;
         validation.set_required_spec_claims(&["iss", "aud", "iat", "jti", "events"]);
         let claims = decode::<AppleS2SNotificationClaims>(token, &key, &validation)
@@ -589,6 +605,75 @@ impl<T: AppleTransport, V: CredentialVault + Clone> AppleProvider
 }
 
 impl<T: AppleTransport, V> ProductionAppleProvider<T, V> {
+    pub(crate) async fn exchange_browser(
+        &self,
+        code: &str,
+        nonce: &str,
+        now: i64,
+    ) -> Result<crate::auth_browser::BrowserIdentity, AuthError>
+    where
+        V: CredentialVault,
+    {
+        if code.is_empty() || code.len() > 4096 {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let response = self
+            .transport
+            .exchange_code(&AppleTokenRequest {
+                client_id: self.signer.client_id(WEB_AUDIENCE)?.into(),
+                client_secret: self.signer.sign(WEB_AUDIENCE, now)?,
+                authorization_code: code.into(),
+                redirect_uri: Some(
+                    "https://sync.serika.work/v2/auth/browser/apple/callback".into(),
+                ),
+            })
+            .await?;
+        let header = decode_header(&response.identity_token)
+            .map_err(|_| AuthError::InvalidExternalIdentity)?;
+        if header.alg != Algorithm::RS256 {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let key = self
+            .decoding_key(&header.kid.ok_or(AuthError::InvalidExternalIdentity)?)
+            .await?;
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&[APPLE_ISSUER]);
+        validation.set_audience(&[WEB_AUDIENCE]);
+        validation.set_required_spec_claims(&["iss", "aud", "sub", "exp", "iat"]);
+        validation.leeway = 60;
+        let claims = decode::<AppleIdentityClaims>(&response.identity_token, &key, &validation)
+            .map_err(|_| AuthError::InvalidExternalIdentity)?
+            .claims;
+        if claims.iss != APPLE_ISSUER
+            || claims.aud != WEB_AUDIENCE
+            || claims.sub.is_empty()
+            || claims.sub.len() > 512
+            || claims.nonce.as_deref() != Some(nonce)
+            || claims.iat > now + 60
+            || claims.exp <= now - 60
+        {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let context = random_context(WEB_AUDIENCE)?;
+        let secret = self
+            .vault
+            .seal(
+                "apple_provider_refresh_v1",
+                &context,
+                response.refresh_token.as_bytes(),
+            )
+            .await?;
+        Ok(crate::auth_browser::BrowserIdentity {
+            subject: claims.sub,
+            authenticated_at: claims.iat,
+            credential: Some(VerifiedProviderCredential {
+                audience: WEB_AUDIENCE.into(),
+                vault_context: context,
+                encrypted_refresh_token: secret,
+            }),
+        })
+    }
+
     async fn verify_identity_token(
         &self,
         token: &str,
@@ -723,7 +808,7 @@ async fn bounded_body(response: reqwest::Response) -> Result<Vec<u8>, AuthError>
 }
 
 fn random_context(audience: &str) -> Result<String, AuthError> {
-    if !matches!(audience, MAC_AUDIENCE | IOS_AUDIENCE) {
+    if !matches!(audience, MAC_AUDIENCE | IOS_AUDIENCE | WEB_AUDIENCE) {
         return Err(AuthError::ProviderNotAllowed);
     }
     let mut bytes = [0_u8; 32];
@@ -782,6 +867,7 @@ mod tests {
     struct FakeTransport {
         calls: Arc<AtomicUsize>,
         jwks: Vec<u8>,
+        response: Option<AppleTokenResponse>,
     }
 
     #[async_trait]
@@ -793,9 +879,17 @@ mod tests {
 
         async fn exchange_code(
             &self,
-            _request: &AppleTokenRequest,
+            request: &AppleTokenRequest,
         ) -> Result<AppleTokenResponse, AuthError> {
-            panic!("token endpoint must not be called by a JWKS test")
+            assert_eq!(request.client_id, WEB_AUDIENCE);
+            assert_eq!(
+                request.redirect_uri.as_deref(),
+                Some("https://sync.serika.work/v2/auth/browser/apple/callback")
+            );
+            Ok(self
+                .response
+                .clone()
+                .expect("token endpoint must not be called by a JWKS test"))
         }
 
         async fn revoke_credential(&self, _request: &AppleRevokeRequest) -> Result<(), AuthError> {
@@ -856,6 +950,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let modulus = "v1Svd_SM577TRGCQQgUxfLriUNXmHgLL_2FyXMmooFneWzRSTTx2Sfb0UOti5fuwhIvEH8CkOyiwynVfyceHil1221PyxiHI9Tc51F8GEbW5ZnfwPhzREoHnHlHhmSbSglbug136v_Uf0UFUyOPAyatxNz8Cm9U5oLaEGoJ-nlAhbHjKsnlF7m5noZJVU4M6xBKwvqdHdSS18Ng76GvpseeItXsNzdzI8LyXhncTzAxgfKX2Ladk8Cs5HsOO8nU8w2zVvVnRDsjSHCLSlHUMCCAsr_PE1-WYlnZkcsF8uPagDYJ56DzEFx39iLE9C7Dn4WL4dlQ6c5aMJHycdK1tmw";
         let transport = FakeTransport {
+            response: None,
             calls: calls.clone(),
             jwks: serde_json::to_vec(&serde_json::json!({"keys":[{
                 "kty":"RSA","kid":"fixture-kid","use":"sig","alg":"RS256",
@@ -876,37 +971,9 @@ mod tests {
     #[tokio::test]
     async fn verifies_official_nested_apple_notification_shape_and_signature() {
         let now = 1_700_000_000_i64;
-        let private_key = EncodingKey::from_rsa_pem(
-            br"-----BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEAmqpAlQaF3VYqHO2V2TAERubuvrWVGGWMxuE97pfwyVzwQRBa
-fi0NJ9aVKqqoMnsvP7zS6wI+ZmuBtnS4WX8kq3ARveILBRWcczWbPEr6FEy12lqb
-SOonUtfvEcz0URUDQ/7GgR1H+XXngQA3u/95Zn1R0oefg+Xx4seSadSCZzWBgkTM
-wBqBh0gDATO7/nmyabHgh6DpajHhufFM3mUGv3eFTpfzhWWq6hvSZqRZx6PHzop7
-eEw2ahxjy9jaisMeFohrWur7Ts6MwNKdvyQ88sgi2m+1vlUeDSnUvVWbdmsyInhX
-fdq7ALwVRNJFPwlDvUMrGr3X2bf0FHGihVsO1QIDAQABAoIBAC3ul+VqHYFBIJqc
-uF7a0rpXxNlgRdoL9oXtyJ2+A+VZM4SvHaDRMlH9eSlFq1Pqn3qXUjA25181WD1e
-Zo01pCdBzhMNOWaWJ3NTnTmHrsMukOc691jtKSaCOF6Z9ojJ68FavYsEriZYrJrz
-/JlZYq1cVFtoqafbNz25NTM2yE9r70ysgzreiezPLySTFHoZlUQ7eWhv+xU2G3I/
-U/D4hf2wsbcCFvXMw3wozOOHGwJq3euxrnfQJqShYvn/Dd8BNLDmrgTICqJ8h1o0
-PJP4W4+TF9HklukhsOtSKqL09PqNF2PvQCDqqlQ8perCGFgxq6Foi0+bRXzbF4FT
-F+7da3UCgYEAx9+JkErZ6EqcMR7XS0yqC0GmGgkZvvohT2XWYYDSxxCj0UdllkeL
-wRNMbB2oLRj2T/9umcR56RKhJeL18Hvarz1KTix+DtHklQjE7G2eS7mGgX4JaWqg
-twb39cXpLPO/lKmrfcUqz+6OlcdOHMsnzQv5tjFo0vp7KUBjpJODodsCgYEAxhjL
-8SNTB2PhGpx5tJABuOOqho7R1FWp8SUgAdcgb1jgDHlQ7r5LpSQiQ4sUbAIH5Dx+
-75yp7dboqwyzuPTqkVxwx/FaxFZpmEvZCxzESAJVVBzTMh3LjSRT2/qmxE1Eghzq
-u88W+FSnc7064WHftBPJ5qhz+vdM1ZvDr7XRqQ8CgYAiqSQs7p4NR2sApa2GNFxE
-qXTJjQx27t956lob/IAQ31TZRP1b6zpUGCmnkhkJAQwt4Ujnx4ewoHdrn4kw0/mf
-bAyHs/WEUmfGZIfpzDSoQxsNN7MgIcqPEtlLOK/wCLEPccD4hYmgF2mIldB4884K
-I+qA6t6Xv7I9/BmLf71TAwKBgQCtUrLV6D9UPvqMqw39guZO27uvAbTroIwRdpcb
-pRs28T8PCvJaAVv0QLpN+JlEqz42Xwv9IEi51Yg7aOCy2m+GAaiX+D+fe6/mVa6w
-f1npW0lHT/Ula1ZWxssstJFHPgfMA/sJmfcSDhd5N78VxenSCGJmE0tu8QNj/mZo
-DaBE1wKBgCDwK0X00kYOgEnoYx2dAEofLVNvAYUGrzvrNS2OTBivm1g5JXnQ7nHf
-3tXa3o+7AhBVlbPuo4t5sV8Y0qWWd/w2vvnWlt0FT6hOqG/9ApoFmjCtxS43nEYI
-gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
------END RSA PRIVATE KEY-----
-",
-        )
-        .unwrap();
+        let private_key =
+            EncodingKey::from_rsa_pem(include_bytes!("../tests/support/oidc-test-key.pem"))
+                .unwrap();
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("fixture-notification-kid".into());
         let claims = serde_json::json!({
@@ -918,6 +985,7 @@ gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
         });
         let token = encode(&header, &claims, &private_key).unwrap();
         let transport = FakeTransport {
+            response: None,
             calls: Arc::new(AtomicUsize::new(0)),
             jwks: serde_json::to_vec(&serde_json::json!({"keys":[{
                 "kty":"RSA","kid":"fixture-notification-kid","use":"sig","alg":"RS256",
@@ -974,6 +1042,56 @@ gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
         assert_eq!(
             provider.verify_s2s_notification(&invalid, now).await,
             Err(AuthError::InvalidExternalIdentity)
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_exchange_preserves_refresh_credential_and_requires_nonce() {
+        let now = Utc::now().timestamp();
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("browser-test".into());
+        let token=encode(&header,&serde_json::json!({"iss":APPLE_ISSUER,"aud":WEB_AUDIENCE,"sub":"browser-fixture-subject","iat":now,"exp":now+300,"nonce":"browser-fixture-nonce"}),&EncodingKey::from_rsa_pem(include_bytes!("../tests/support/oidc-test-key.pem")).unwrap()).unwrap();
+        let transport=FakeTransport {
+            calls:Arc::new(AtomicUsize::new(0)),
+            jwks:serde_json::to_vec(&serde_json::json!({"keys":[{"kty":"RSA","kid":"browser-test","use":"sig","alg":"RS256","n":"mqpAlQaF3VYqHO2V2TAERubuvrWVGGWMxuE97pfwyVzwQRBafi0NJ9aVKqqoMnsvP7zS6wI-ZmuBtnS4WX8kq3ARveILBRWcczWbPEr6FEy12lqbSOonUtfvEcz0URUDQ_7GgR1H-XXngQA3u_95Zn1R0oefg-Xx4seSadSCZzWBgkTMwBqBh0gDATO7_nmyabHgh6DpajHhufFM3mUGv3eFTpfzhWWq6hvSZqRZx6PHzop7eEw2ahxjy9jaisMeFohrWur7Ts6MwNKdvyQ88sgi2m-1vlUeDSnUvVWbdmsyInhXfdq7ALwVRNJFPwlDvUMrGr3X2bf0FHGihVsO1Q","e":"AQAB"}]})).unwrap(),
+            response:Some(AppleTokenResponse { identity_token:token,refresh_token:"fixture-refresh-secret".into() }),
+        };
+        let signer = AppleClientSecretSigner::new(
+            "TESTTEAM".into(),
+            "TESTKEY".into(),
+            MAC_AUDIENCE.into(),
+            IOS_AUDIENCE.into(),
+            include_bytes!("../tests/support/oidc-test-ec-key.pem"),
+        )
+        .unwrap()
+        .with_web_client_id(WEB_AUDIENCE.into())
+        .unwrap();
+        signer
+            .sign(WEB_AUDIENCE, now)
+            .expect("web client secret signing");
+        let vault = AesGcmCredentialVault::new(1, [7; 32]).unwrap();
+        let provider = ProductionAppleProvider::new(transport, signer, vault.clone());
+        assert!(provider
+            .exchange_browser("fixture-code", "wrong-nonce", now)
+            .await
+            .is_err());
+        let identity = provider
+            .exchange_browser("fixture-code", "browser-fixture-nonce", now)
+            .await
+            .unwrap();
+        assert_eq!(identity.subject, "browser-fixture-subject");
+        let credential = identity.credential.unwrap();
+        assert_eq!(credential.audience, WEB_AUDIENCE);
+        assert_eq!(
+            vault
+                .open(
+                    "apple_provider_refresh_v1",
+                    &credential.vault_context,
+                    &credential.encrypted_refresh_token
+                )
+                .await
+                .unwrap(),
+            b"fixture-refresh-secret"
         );
     }
 

@@ -128,20 +128,7 @@ struct FuminiwaApp: App {
         }
 
         let appleSignInCoordinator = AppleSignInCoordinator()
-        #if canImport(AuthenticationServices)
-        let orchestrator: AppleAuthenticationOrchestrator? = if let authCoordinator {
-            AppleAuthenticationOrchestrator(
-                authSessionCoordinator: authCoordinator,
-                authorizationProvider: appleSignInCoordinator,
-                credentialStateHandleVault: KeychainAppleCredentialStateHandleVault(),
-                credentialStateProvider: SystemAppleCredentialStateProvider()
-            )
-        } else {
-            nil
-        }
-        #else
         let orchestrator: AppleAuthenticationOrchestrator? = nil
-        #endif
 
         let factory: (@Sendable () async throws -> SyncV2Application)? = {
             // The production configuration is typed and always receives the
@@ -251,10 +238,11 @@ struct FuminiwaApp: App {
                 case .signedIn:
                     Button("サインアウト") { Task { await appState.signOutFromFuminiwa() } }
                 case .signingIn:
-                    Button("Appleでサインイン中…") {}
+                    Button("サインイン中…") {}
                         .disabled(true)
                 case .signedOut, .unavailable, .failed:
                     Button("Appleでサインイン") { Task { await appState.signInWithApple() } }
+                    Button("Googleでサインイン") { Task { await appState.signInWithGoogle() } }
                 }
             }
             CommandMenu("章") {

@@ -13,34 +13,6 @@ private struct IOSAccountTransitionLease {
     let ownsRequest: Bool
 }
 
-private func appleSignInFailureMessage(_ error: any Error) -> String {
-    guard let authError = error as? AuthError else {
-        return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
-    }
-    switch authError {
-    case let .remote(remote):
-        switch remote.code {
-        case "temporarilyUnavailable", "rateLimited":
-            return "サーバーに接続できません。接続を確認して再試行してください。"
-        case "providerExchangeIndeterminate":
-            return "Apple認証の結果を確認できませんでした。時間をおいて再試行してください。"
-        case "providerIdentityInvalid", "providerAudienceMismatch", "providerIssuerMismatch", "nonceMismatch", "stateMismatch":
-            return "Apple認証を確認できませんでした。もう一度お試しください。"
-        default:
-            return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
-        }
-    case .invalidProductionOrigin, .invalidMediaType, .missingNoStore, .invalidWireResponse,
-         .invalidCanonicalResponse, .invalidResponseSemantics:
-        return "サーバー設定を確認できませんでした。時間をおいて再試行してください。"
-    case .operationJournalConflict:
-        return "前回のApple認証処理が残っています。時間をおいて再試行してください。"
-    case .restartAuthentication:
-        return "Appleでのサインインをもう一度お試しください。"
-    default:
-        return "Appleでのサインインを完了できませんでした。もう一度お試しください。"
-    }
-}
-
 extension IOSDocumentStore {
     /// Opens the short auth-request window and invalidates every iOS-owned
     /// account-scoped task before an exchange can suspend.  The shared
@@ -179,6 +151,16 @@ extension IOSDocumentStore {
         }
         try await authSessionCoordinator.beginFreshAppleAuthentication()
         return try await appleAuthenticationOrchestrator.signIn()
+    }
+
+    private func exchangeSession(provider: AuthProvider) async throws -> FuminiwaSession {
+        if provider == .apple {
+            return try await exchangeAppleSession()
+        }
+        guard let coordinator = authSessionCoordinator else { throw IOSDocumentStoreAuthenticationError.unavailable }
+        return try await coordinator.signInBrowser(provider: provider) { url in
+            try await BrowserSignInCoordinator().authorize(url: url)
+        }
     }
 
     private func snapshotSyncV2Binding(
@@ -563,15 +545,23 @@ extension IOSDocumentStore {
     }
 
     func signInWithApple() async {
+        await signIn(provider: .apple)
+    }
+
+    func signInWithGoogle() async {
+        await signIn(provider: .google)
+    }
+
+    private func signIn(provider: AuthProvider) async {
         logIOSAppleAuthenticationBoundary(.entry)
         #if !FUMINIWA_TEST_COMPOSITION
-        guard appleAuthenticationOrchestrator != nil else {
+        guard provider == .google ? authSessionCoordinator != nil : appleAuthenticationOrchestrator != nil else {
             logIOSAppleAuthenticationBoundary(.unavailable)
             authUIState = .unavailable
             return
         }
         #else
-        guard appleAuthenticationOrchestrator != nil || testAppleSignInHandler != nil else {
+        guard provider == .google ? authSessionCoordinator != nil : (appleAuthenticationOrchestrator != nil || testAppleSignInHandler != nil) else {
             logIOSAppleAuthenticationBoundary(.unavailable)
             authUIState = .unavailable
             return
@@ -620,14 +610,14 @@ extension IOSDocumentStore {
             oldScopeParked = true
             authPhase = "apple-exchange"
             logIOSAppleAuthenticationBoundary(.challengeRequestStart)
-            let session = try await exchangeAppleSession()
+            let session = try await exchangeSession(provider: provider)
             authPhase = "apply-new-scope"
             guard await transitionFuminiwaSession(
                 to: session,
                 authState: .signedIn(accountID: session.accountID),
                 requestOwner: owner
             ) else {
-                authUIState = .failed("新しいAppleセッションを適用できませんでした")
+                authUIState = .failed("新しいログインセッションを適用できませんでした")
                 // The exchange may already have atomically committed its new
                 // vault session. Re-read it and perform the exact durable
                 // transition; if it did not commit, the old session remains

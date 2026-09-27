@@ -2032,3 +2032,6 @@ impl AuthPostgresRepository {
         tx.commit().await.map_err(Self::map_db)
     }
 }
+
+#[path = "auth_postgres_browser.rs"]
+mod browser;

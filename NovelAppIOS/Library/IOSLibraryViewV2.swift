@@ -25,6 +25,7 @@ struct IOSLibraryView: View {
                     Button("Appleでサインイン") {
                         Task { await store.signInWithApple() }
                     }
+                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
                 } else if store.authUIState == .unavailable {
                     Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
                         .foregroundStyle(.secondary)
@@ -32,6 +33,7 @@ struct IOSLibraryView: View {
                     Button("Appleで再試行") {
                         Task { await store.signInWithApple() }
                     }
+                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
                 }
                 if store.syncV2LibraryItems.isEmpty {
                     Text(store.authUIState == .signedOut

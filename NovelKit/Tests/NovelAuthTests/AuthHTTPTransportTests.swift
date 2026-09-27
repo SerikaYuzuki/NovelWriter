@@ -412,7 +412,7 @@ struct AuthHTTPTransportTests {
         let receipt = if command == "rotateRefreshToken" {
             "{\"commandKind\":\"rotateRefreshToken\",\"replayUntil\":\"2026-05-05T16:53:20Z\",\"rotationId\":\"\(operationID.uuidString.lowercased())\"}"
         } else {
-            "{\"commandKind\":\"exchangeAppleNativeCredential\",\"operationId\":\"\(operationID.uuidString.lowercased())\",\"replayUntil\":\"2026-05-05T16:53:20Z\"}"
+            "{\"commandKind\":\"\(command)\",\"operationId\":\"\(operationID.uuidString.lowercased())\",\"replayUntil\":\"2026-05-05T16:53:20Z\"}"
         }
         let json = "{\"binding\":{\"accountAuthEpoch\":1,\"accountFence\":\"fence_AAAAAAAAAAAAAAAAAAAA\","
             + "\"accountId\":\"acct_AAAAAAAAAAAAAAAA\",\"serverInstanceId\":\"00000000-0000-4000-8000-000000000001\","
@@ -556,5 +556,36 @@ private func expectRemoteCode(_ expected: String, operation: () async throws -> 
         #expect(remote.recoveryAction == .retrySameRequestAfterBackoff)
     } catch {
         Issue.record("unexpected error: \(error)")
+    }
+}
+
+extension AuthHTTPTransportTests {
+    @Test("browser claim binds the response to the exact attempt")
+    func browserClaimBinding() async throws {
+        let attempt = UUID()
+        let valid = try makeTransport { _ in
+            .init(status: 200, headers: ["Content-Type": "application/json", "Cache-Control": "no-store"],
+                  body: Self.sessionBody(command: "exchangeBrowserCredential", operationID: attempt, epoch: 2))
+        }
+        let result = try await valid.transport.claimBrowserAuthentication(attemptID: attempt, secret: "fixture-proof")
+        #expect(result?.receipt.operationID == attempt)
+        let invalid = try makeTransport { _ in
+            .init(status: 200, headers: ["Content-Type": "application/json", "Cache-Control": "no-store"],
+                  body: Self.sessionBody(command: "exchangeBrowserCredential", operationID: UUID(), epoch: 2))
+        }
+        await expectAuthError(.invalidResponseSemantics) {
+            _ = try await invalid.transport.claimBrowserAuthentication(attemptID: attempt, secret: "fixture-proof")
+        }
+    }
+
+    @Test("browser start refuses an authorization URL on another host")
+    func browserRejectsUntrustedAuthorizationURL() async throws {
+        let state = try makeTransport { _ in
+            .init(status: 201, headers: ["Content-Type": "application/json", "Cache-Control": "no-store"],
+                  body: Data("{\"attemptId\":\"10000000-0000-4000-8000-000000000001\",\"authorizationURL\":\"https://attacker.example/\",\"expiresIn\":300}".utf8))
+        }
+        await expectAuthError(.invalidResponseSemantics) {
+            _ = try await state.transport.startBrowserAuthentication(provider: .google, claimHash: String(repeating: "a", count: 64))
+        }
     }
 }

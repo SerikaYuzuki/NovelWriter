@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 public actor AuthSessionCoordinator {
     private let transport: any FuminiwaAuthTransport
@@ -15,6 +17,38 @@ public actor AuthSessionCoordinator {
     ) {
         self.transport = transport; self.vault = vault; self.platform = platform
         self.authLimits = authLimits; self.clock = clock
+    }
+
+    public func signInBrowser(
+        provider: AuthProvider,
+        open: @MainActor @Sendable (URL) async throws -> Void
+    ) async throws -> FuminiwaSession {
+        guard let browser = transport as? any BrowserAuthTransport else { throw AuthError.invalidProvider }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw AuthError.providerRejected
+        }
+        let secretData = Data(bytes)
+        let claimHash = SHA256.hash(data: secretData).map { String(format: "%02x", $0) }.joined()
+        let secret = secretData.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let attempt = try await browser.startBrowserAuthentication(provider: provider, claimHash: claimHash)
+        let deadline = clock().addingTimeInterval(TimeInterval(attempt.expiresIn))
+        try await open(attempt.authorizationURL)
+        while clock() < deadline {
+            try Task.checkCancellation()
+            do {
+                if let session = try await browser.claimBrowserAuthentication(attemptID: attempt.attemptId, secret: secret) {
+                    try Task.checkCancellation()
+                    try await vault.save(session)
+                    return session
+                }
+            } catch is URLError {
+                // A lost claim response retries the same short-lived receipt.
+            }
+            try await Task.sleep(for: .seconds(1))
+        }
+        throw AuthError.challengeExpired
     }
 
     public func currentSession() async throws -> FuminiwaSession? {

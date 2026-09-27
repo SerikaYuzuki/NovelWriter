@@ -56,6 +56,7 @@ struct IOSExplicitSyncButton: View {
                 }
             } else if !isSignedIn {
                 Button("Appleでサインイン") { Task { await store.signInWithApple() } }
+                Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
             }
             Button("キャンセル", role: .cancel) {}
         } message: {

@@ -78,9 +78,10 @@ struct AccountAccessView: View {
                     Button("サインアウト") { Task { await appState.signOutFromFuminiwa() } }
                 } label: { Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark") }
             case .signingIn:
-                ProgressView("Appleでサインイン中…").controlSize(.small)
+                ProgressView("サインイン中…").controlSize(.small)
             case .signedOut, .failed, .unavailable:
                 Button("Appleでサインイン") { Task { await appState.signInWithApple() } }
+                Button("Googleでサインイン") { Task { await appState.signInWithGoogle() } }
                     .disabled(appState.authUIState == .unavailable)
                 if case .failed = appState.authUIState {
                     Text("サインインできませんでした。再試行できます。")

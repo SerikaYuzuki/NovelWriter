@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AuthProvider: String, Codable, Hashable, Sendable { case apple }
+public enum AuthProvider: String, Codable, Hashable, Sendable { case apple, google }
 
 public enum AuthClientPlatform: String, Codable, Hashable, Sendable { case ios, ipados, macos }
 

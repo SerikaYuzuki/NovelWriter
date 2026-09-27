@@ -125,11 +125,6 @@ impl GoogleOAuthProvider {
         expected_nonce: &str,
         now_unix: i64,
     ) -> Result<VerifiedGoogleIdentity, AuthError> {
-        let header = decode_header(token).map_err(|_| AuthError::InvalidExternalIdentity)?;
-        if header.alg != Algorithm::RS256 {
-            return Err(AuthError::InvalidExternalIdentity);
-        }
-        let kid = header.kid.ok_or(AuthError::InvalidExternalIdentity)?;
         let jwks_body = bounded_body(
             self.client
                 .get(GOOGLE_JWKS_ENDPOINT)
@@ -140,6 +135,20 @@ impl GoogleOAuthProvider {
         .await?;
         let jwks: Jwks =
             serde_json::from_slice(&jwks_body).map_err(|_| AuthError::InvalidExternalIdentity)?;
+        Self::verify_with_keys(token, expected_nonce, now_unix, jwks)
+    }
+
+    fn verify_with_keys(
+        token: &str,
+        expected_nonce: &str,
+        now_unix: i64,
+        jwks: Jwks,
+    ) -> Result<VerifiedGoogleIdentity, AuthError> {
+        let header = decode_header(token).map_err(|_| AuthError::InvalidExternalIdentity)?;
+        if header.alg != Algorithm::RS256 {
+            return Err(AuthError::InvalidExternalIdentity);
+        }
+        let kid = header.kid.ok_or(AuthError::InvalidExternalIdentity)?;
         let jwk = jwks
             .keys
             .iter()
@@ -236,6 +245,36 @@ mod tests {
             nonce: Some("expected-nonce".into()),
             azp: None,
         }
+    }
+
+    #[test]
+    fn signed_token_rejects_tampering_and_wrong_nonce() {
+        let now = chrono::Utc::now().timestamp();
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
+            "../tests/support/oidc-test-key.pem"
+        ))
+        .unwrap();
+        let mut header = jsonwebtoken::Header::new(Algorithm::RS256);
+        header.kid = Some("fixture-key".into());
+        let claims = serde_json::json!({"iss":"https://accounts.google.com","aud":GOOGLE_CLIENT_ID,"sub":"fixture-subject","iat":now,"exp":now+300,"nonce":"fixture-nonce"});
+        let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
+        let keys = || {
+            serde_json::from_value::<Jwks>(serde_json::json!({"keys":[{"kid":"fixture-key","kty":"RSA","alg":"RS256","use":"sig","e":"AQAB","n":"mqpAlQaF3VYqHO2V2TAERubuvrWVGGWMxuE97pfwyVzwQRBafi0NJ9aVKqqoMnsvP7zS6wI-ZmuBtnS4WX8kq3ARveILBRWcczWbPEr6FEy12lqbSOonUtfvEcz0URUDQ_7GgR1H-XXngQA3u_95Zn1R0oefg-Xx4seSadSCZzWBgkTMwBqBh0gDATO7_nmyabHgh6DpajHhufFM3mUGv3eFTpfzhWWq6hvSZqRZx6PHzop7eEw2ahxjy9jaisMeFohrWur7Ts6MwNKdvyQ88sgi2m-1vlUeDSnUvVWbdmsyInhXfdq7ALwVRNJFPwlDvUMrGr3X2bf0FHGihVsO1Q"}]})).unwrap()
+        };
+        assert!(
+            GoogleOAuthProvider::verify_with_keys(&token, "fixture-nonce", now, keys()).is_ok()
+        );
+        assert!(GoogleOAuthProvider::verify_with_keys(&token, "other-nonce", now, keys()).is_err());
+        let mut parts = token.split('.').map(str::to_owned).collect::<Vec<_>>();
+        use base64::Engine;
+        parts[1]=base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&serde_json::json!({"iss":"https://accounts.google.com","aud":GOOGLE_CLIENT_ID,"sub":"attacker","iat":now,"exp":now+300,"nonce":"fixture-nonce"})).unwrap());
+        assert!(GoogleOAuthProvider::verify_with_keys(
+            &parts.join("."),
+            "fixture-nonce",
+            now,
+            keys()
+        )
+        .is_err());
     }
 
     #[test]

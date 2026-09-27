@@ -475,7 +475,14 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
         }
     }
 
-    private func validateSessionResult(_ result: some AuthSessionResult, raw: AuthCanonicalJSONValue, operationID: UUID? = nil, rotationID: UUID? = nil, current: FuminiwaSession?) throws {
+    private func validateSessionResult(
+        _ result: some AuthSessionResult,
+        raw: AuthCanonicalJSONValue,
+        operationID: UUID? = nil,
+        rotationID: UUID? = nil,
+        current: FuminiwaSession?,
+        exchangeCommand: String = "exchangeAppleNativeCredential"
+    ) throws {
         let binding = result.binding
         guard binding.syncProtocolEpoch == Self.syncProtocolEpoch,
               binding.accountAuthEpoch > 0,
@@ -496,7 +503,7 @@ public struct FuminiwaHTTPAuthTransport: FuminiwaAuthTransport, Sendable {
                   result.tokens.refreshGeneration == current.refreshGeneration + 1 else { throw AuthError.invalidResponseSemantics }
         }
         if let operationID {
-            guard result.receiptCommandKind == "exchangeAppleNativeCredential",
+            guard result.receiptCommandKind == exchangeCommand,
                   result.receiptOperationID == operationID,
                   rawString(raw.objectValue(for: "receipt"), "operationId").map(Self.isLowercaseUUID) == true else { throw AuthError.invalidResponseSemantics }
         }
@@ -616,4 +623,65 @@ private struct AuthRevokeResult: Decodable {
     let receipt: AuthReceipt
     let revokedAt: Date
     let scope: String
+}
+
+public struct BrowserAuthAttempt: Codable, Sendable {
+    public let attemptId: UUID
+    public let authorizationURL: URL
+    public let expiresIn: Int
+}
+
+public protocol BrowserAuthTransport: Sendable {
+    func startBrowserAuthentication(provider: AuthProvider, claimHash: String) async throws -> BrowserAuthAttempt
+    func claimBrowserAuthentication(attemptID: UUID, secret: String) async throws -> FuminiwaSession?
+}
+
+extension FuminiwaHTTPAuthTransport: BrowserAuthTransport {
+    public func startBrowserAuthentication(provider: AuthProvider, claimHash: String) async throws -> BrowserAuthAttempt {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "provider": provider.rawValue, "clientPlatform": configuration.clientPlatform.rawValue, "claimHash": claimHash
+        ])
+        let data = try await browserRequest(path: "v2/auth/browser/start", body: body, status: 201)
+        let attempt = try JSONDecoder().decode(BrowserAuthAttempt.self, from: data)
+        let url = attempt.authorizationURL
+        let expectedHost = provider == .apple ? "appleid.apple.com" : "accounts.google.com"
+        guard url.scheme == "https", url.host == expectedHost, url.user == nil, url.password == nil,
+              url.port == nil, url.fragment == nil, attempt.expiresIn > 0, attempt.expiresIn <= 300 else {
+            throw AuthError.invalidResponseSemantics
+        }
+        return attempt
+    }
+
+    public func claimBrowserAuthentication(attemptID: UUID, secret: String) async throws -> FuminiwaSession? {
+        let body = try JSONSerialization.data(withJSONObject: ["secret": secret])
+        let data = try await browserRequest(path: "v2/auth/browser/\(attemptID.uuidString.lowercased())/claim", body: body, status: 200, allowPending: true)
+        if data.isEmpty {
+            return nil
+        }
+        let raw = try validateCanonicalResponse(data)
+        try validateClosedResponse(raw, root: ["binding", "receipt", "tokens"], nested: [
+            ("binding", ["accountAuthEpoch", "accountFence", "accountId", "serverInstanceId", "sessionId", "syncProtocolEpoch"]),
+            ("receipt", ["commandKind", "operationId", "replayUntil"]),
+            ("tokens", ["accessToken", "accessTokenExpiresAt", "refreshGeneration", "refreshToken", "refreshTokenExpiresAt", "tokenType"])
+        ])
+        let result = try decode(AuthExchangeResult.self, data: data)
+        try validateSessionResult(result, raw: raw, operationID: attemptID, current: nil, exchangeCommand: "exchangeBrowserCredential")
+        return FuminiwaSession(binding: result.binding, tokens: result.tokens, receipt: result.receipt)
+    }
+
+    private func browserRequest(path: String, body: Data, status: Int, allowPending: Bool = false) async throws -> Data {
+        var request = makeRequest(path: path, method: "POST", body: body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.url == request.url,
+              http.value(forHTTPHeaderField: "Cache-Control")?.lowercased().contains("no-store") == true,
+              http.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("application/json") == true,
+              data.count <= 65536 else { throw AuthError.invalidWireResponse }
+        if allowPending, http.statusCode == 202 {
+            return Data()
+        }
+        guard http.statusCode == status else { throw AuthError.providerRejected }
+        return data
+    }
 }

@@ -368,6 +368,9 @@ extension AppState {
     ) async -> Bool {
         guard let orchestrator = appleAuthenticationOrchestrator else { return false }
         do {
+            if try await authSessionCoordinator?.currentSession()?.receipt.commandKind == "exchangeBrowserCredential" {
+                return false
+            }
             let credentialState = try await orchestrator.checkCredentialState()
             guard ownsAuthOperation(owner) else {
                 _ = await endRemoteSuspension(
@@ -414,9 +417,27 @@ extension AppState {
     }
 
     func signInWithApple() async {
-        guard let orchestrator = appleAuthenticationOrchestrator else {
+        await signIn(provider: .apple)
+    }
+
+    func signInWithGoogle() async {
+        await signIn(provider: .google)
+    }
+
+    private func signIn(provider: AuthProvider) async {
+        guard let coordinator = authSessionCoordinator else {
             authUIState = .unavailable
             return
+        }
+        let authenticate: @MainActor () async throws -> FuminiwaSession = {
+            #if FUMINIWA_TEST_COMPOSITION
+            if provider == .apple, let orchestrator = self.appleAuthenticationOrchestrator {
+                return try await orchestrator.signIn()
+            }
+            #endif
+            return try await coordinator.signInBrowser(provider: provider) { url in
+                try await BrowserSignInCoordinator().authorize(url: url)
+            }
         }
         // A sign-in requested while sign-out is waiting for remote revoke is
         // queued by the auth gate without blocking local work. Keep one
@@ -433,7 +454,7 @@ extension AppState {
             let transitionBlocker = beginInteractiveAuthOperation()
             defer { releaseInteractiveAuthOperation(transitionBlocker) }
             await signInWithAppleOwned(
-                orchestrator: orchestrator,
+                authenticate: authenticate,
                 owner: owner,
                 transitionBlocker: transitionBlocker
             )
@@ -441,7 +462,7 @@ extension AppState {
     }
 
     private func signInWithAppleOwned(
-        orchestrator: AppleAuthenticationOrchestrator,
+        authenticate: @MainActor () async throws -> FuminiwaSession,
         owner: UUID,
         transitionBlocker: UUID
     ) async {
@@ -479,7 +500,7 @@ extension AppState {
         do {
             // The orchestrator exchanges the one-use Apple credential with the
             // auth server. The Apple token is never passed to Snapshot Sync.
-            let session = try await orchestrator.signIn()
+            let session = try await authenticate()
             guard ownsAuthOperation(owner) else {
                 await endRemoteSuspension(
                     application: transitionApplication,
@@ -529,7 +550,7 @@ extension AppState {
                 suspensionToken: suspensionToken
             )
             if ownsAuthOperation(owner) {
-                operationMessage = "Appleでサインインできませんでした。接続を確認して、もう一度お試しください。"
+                operationMessage = "サインインできませんでした。接続を確認して、もう一度お試しください。"
             }
         }
     }

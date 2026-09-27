@@ -1,0 +1,82 @@
+openapi: 3.1.0
+info:
+  title: FUMINIWA browser authentication
+  version: 2.0.0
+servers:
+  - url: https://sync.serika.work
+paths:
+  /v2/auth/browser/start:
+    post:
+      summary: Create a five-minute browser attempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [provider, clientPlatform, claimHash]
+              properties:
+                provider: {type: string, enum: [apple, google]}
+                clientPlatform: {type: string, enum: [macos, ios, ipados]}
+                claimHash: {type: string, pattern: '^[0-9a-f]{64}$'}
+      responses:
+        '201':
+          description: No-store attempt; Apple browser is macOS only
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attemptId, authorizationURL, expiresIn]
+                properties:
+                  attemptId: {type: string, format: uuid}
+                  authorizationURL: {type: string, format: uri}
+                  expiresIn: {type: integer, const: 300}
+        '400': {description: Invalid request or capacity unavailable}
+  /v2/auth/browser/{attempt}/claim:
+    post:
+      summary: Read the same encrypted session receipt using the app-only proof
+      parameters:
+        - in: path
+          name: attempt
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [secret]
+              properties:
+                secret: {type: string, pattern: '^[A-Za-z0-9_-]{43}$'}
+      responses:
+        '200': {description: 'Auth v1 binding/tokens/receipt envelope with commandKind exchangeBrowserCredential and operationId equal to attempt. No-store; exact retry returns the same session until attempt expiry.'}
+        '202': {description: Authentication pending; no-store}
+        '400': {description: Failed, expired, or proof does not match; no-store}
+  /v2/auth/browser/google/callback:
+    get:
+      summary: Google authorization-code callback
+      parameters:
+        - {in: query, name: state, required: true, schema: {type: string}}
+        - {in: query, name: code, schema: {type: string}}
+        - {in: query, name: error, schema: {type: string}}
+      responses:
+        '303': {description: 'No-store redirect to fuminiwa-auth://complete; contains no credentials'}
+  /v2/auth/browser/apple/callback:
+    post:
+      summary: Apple form_post authorization-code callback
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: {type: string}
+                code: {type: string}
+                error: {type: string}
+      responses:
+        '303': {description: 'No-store redirect to fuminiwa-auth://complete; contains no credentials'}
