@@ -21,7 +21,7 @@
 
 ## 外部設定と受入
 
-- Apple Developer の Services ID は `dev.serikayuzuki.fuminiwa.web`。所有者は primary Mac App ID への関連付け、`sync.serika.work`、上記 return URL の保存完了を報告した。保存後の read-back、既存 Apple subject との一致と実認証は未確認。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`、14:08 作成の OAuth client ID は `560354700432-aq87npqhidi1m4n671m8pb9bugml609d.apps.googleusercontent.com`。ダウンロード済み Web client JSON で client ID、callback、secret の存在を照合し、ファイル権限を所有者読み書きだけにした。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。Google の実認証は未確認。
+- Apple Developer の Services ID は `dev.serikayuzuki.fuminiwa.web`。所有者は primary Mac App ID への関連付け、`sync.serika.work`、上記 return URL の保存完了を報告した。設定画面のread-backは未実施だが、修正版build 2でApple Webの実認証が完了し、既存AccountIDに戻ることを確認した。Google Cloud project ID は所有者申告で `eco-shift-452410-t2`、14:08 作成の OAuth client ID は `560354700432-aq87npqhidi1m4n671m8pb9bugml609d.apps.googleusercontent.com`。ダウンロード済み Web client JSON で client ID、callback、secret の存在を照合し、ファイル権限を所有者読み書きだけにした。秘密鍵と client secret はサーバーの secret 管理に置き、repo と DMG に含めない。Google の実認証は未確認。
 - callback は provider ごとに固定し、認可 URL・token request と登録値の完全一致を確認する。`state` / `nonce` 不一致、期限切れ、code 再使用、cross-attempt、provider 取り違え、重複 callback、サーバー再起動を合成データと実 DB で確認する。
 - 既存 Apple native client の認証・更新・削除操作が回帰しないことを確認する。Apple Web で既存 AccountID に戻ること、Google で独立 AccountID になること、同期 scope と端末ローカル作品の保全を実アカウントで確認する。
 
@@ -33,4 +33,4 @@
 - ローカルの`Scripts/check.sh`（Mac / iOSテストを含む）は成功。隔離DBで既存Auth v1 scenario、GoogleのMac / iOS AccountID共有、Appleとの分離、引換秘密不一致、provider取り違え、取消、期限切れ、receipt再送、active identity制約を確認した。Google署名改ざん、nonce不一致、clientのattempt不一致も対象テストで確認した。
 - 暗号化backupの隔離復元でschema 9→10、migration / runtime role検証と作品件数の保持を確認し、本番へ反映済み。公開HTTPSで両providerのstart / pending / 不正claim / 取消を確認した。稼働イメージは`sha256:bd88d1f42108961bdf738971e3ca3cdcfef2b390b3295e1ebc22bc6a81032067`。
 - Apple Webの署名検証、nonce拒否、provider refresh credentialの暗号化保存も対象テストで確認した。Rust libは34成功、隔離DBの明示実行用1件は別途成功。
-- 公証とDMG検証は[配布記録](../../MAC_DMG_DISTRIBUTION.md)を参照。実アカウントのApple subject連続性、Googleログイン完了、実機同期は未確認。
+- 公証とDMG検証は[配布記録](../../MAC_DMG_DISTRIBUTION.md)を参照。Apple Webの実認証と既存AccountIDへの復帰はbuild 2で確認済み。Googleログイン完了と実機同期は未確認。
