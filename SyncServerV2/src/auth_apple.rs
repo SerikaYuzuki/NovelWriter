@@ -139,6 +139,22 @@ pub struct AppleTokenRequest {
     client_id: String,
     client_secret: String,
     authorization_code: String,
+    redirect_uri: Option<String>,
+}
+
+impl AppleTokenRequest {
+    fn form_fields(&self) -> Vec<(&str, &str)> {
+        let mut fields = vec![
+            ("client_id", self.client_id.as_str()),
+            ("client_secret", self.client_secret.as_str()),
+            ("code", self.authorization_code.as_str()),
+            ("grant_type", "authorization_code"),
+        ];
+        if let Some(uri) = self.redirect_uri.as_deref() {
+            fields.push(("redirect_uri", uri));
+        }
+        fields
+    }
 }
 
 impl std::fmt::Debug for AppleTokenRequest {
@@ -148,6 +164,7 @@ impl std::fmt::Debug for AppleTokenRequest {
             .field("client_id", &self.client_id)
             .field("client_secret", &"<redacted>")
             .field("authorization_code", &"<redacted>")
+            .field("redirect_uri", &self.redirect_uri)
             .finish()
     }
 }
@@ -230,12 +247,7 @@ impl AppleTransport for ProductionAppleTransport {
         let response = self
             .client
             .post(APPLE_TOKEN_ENDPOINT)
-            .form(&[
-                ("client_id", request.client_id.as_str()),
-                ("client_secret", request.client_secret.as_str()),
-                ("code", request.authorization_code.as_str()),
-                ("grant_type", "authorization_code"),
-            ])
+            .form(&request.form_fields())
             .send()
             .await
             .map_err(|_| AuthError::ProviderExchangeIndeterminate)?;
@@ -482,6 +494,7 @@ impl<T: AppleTransport, V: CredentialVault + Clone> AppleProvider
                 client_id: self.signer.client_id(&challenge.audience)?.into(),
                 client_secret: self.signer.sign(&challenge.audience, now)?,
                 authorization_code: authorization_code.into(),
+                redirect_uri: None,
             })
             .await?;
         let second = self
@@ -970,9 +983,31 @@ gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
             client_id: MAC_AUDIENCE.into(),
             client_secret: "secret-value".into(),
             authorization_code: "code-value".into(),
+            redirect_uri: None,
         };
         let debug = format!("{request:?}");
         assert!(!debug.contains("secret-value"));
         assert!(!debug.contains("code-value"));
+    }
+
+    #[test]
+    fn web_exchange_includes_exact_redirect_uri_but_native_does_not() {
+        let mut request = AppleTokenRequest {
+            client_id: WEB_AUDIENCE.into(),
+            client_secret: "secret-value".into(),
+            authorization_code: "code-value".into(),
+            redirect_uri: None,
+        };
+        assert!(!request.form_fields().iter().any(|(key, _)| *key == "redirect_uri"));
+        request.redirect_uri = Some(
+            "https://sync.serika.work/v2/auth/browser/apple/callback".into(),
+        );
+        assert_eq!(
+            request.form_fields().last().copied(),
+            Some((
+                "redirect_uri",
+                "https://sync.serika.work/v2/auth/browser/apple/callback"
+            ))
+        );
     }
 }
