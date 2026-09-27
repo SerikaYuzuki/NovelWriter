@@ -7,6 +7,7 @@ struct ResizableAssistantLayout<Content: View, Panel: View>: View {
     @ViewBuilder let content: () -> Content
     @ViewBuilder let panel: () -> Panel
     @AppStorage private var preferredWidth: Double
+    @State private var availableWidth: CGFloat = 1200
     @State private var dragStartWidth: CGFloat?
     @State private var isHoveringDivider = false
 
@@ -19,21 +20,24 @@ struct ResizableAssistantLayout<Content: View, Panel: View>: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let maximum = max(300, min(720, geometry.size.width * 0.45))
-            let width = min(max(300, preferredWidth), maximum)
-            HStack(spacing: 0) {
-                content()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if isPresented {
-                    resizeDivider(width: width, maximum: maximum)
-                    panel()
-                        .frame(width: width)
-                        .background(.thinMaterial)
-                        .accessibilityIdentifier("workbench.assistant.right")
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+        let maximum = max(300, min(720, availableWidth * 0.45))
+        let width = min(max(300, preferredWidth), maximum)
+        HStack(spacing: 0) {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if isPresented {
+                resizeDivider(width: width, maximum: maximum)
+                panel()
+                    .frame(width: width)
+                    .background(.thinMaterial)
+                    .accessibilityIdentifier("workbench.assistant.right")
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { width in
+            availableWidth = width
         }
     }
 
