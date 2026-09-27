@@ -42,7 +42,6 @@ struct IOSPlotDetailView: View {
         } message: { request in
             Text(request.message)
         }
-        .iosWorkChrome(store: store, accessibilityPrefix: "ios.plot.detail")
     }
 
     private func plotCardForm(_ card: PlotCard) -> some View {

@@ -28,8 +28,8 @@ build/
 *.dSYM.zip
 *.dSYM
 
-# Experimental Codex sidecar dependencies (lockfile is tracked)
-/Sidecars/Codex/node_modules/
+# Retired sidecar artifacts, if present locally, are not source.
+/Sidecars/
 
 # macOS
 .DS_Store
@@ -55,3 +55,7 @@ fastlane/test_output
 .idea/
 *.swp
 .claude/settings.local.json
+
+# Retired server local settings/builds remain private after source removal.
+/SyncServer/.env
+/SyncServer/target/

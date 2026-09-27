@@ -39,3 +39,15 @@ import Testing
 
     #expect(doc.manuscriptCharacterCount == 5)
 }
+
+@Test func chapterRejectsMissingEpisodesInsteadOfInventingContent() throws {
+    let chapter = Chapter(title: "章", episodes: [])
+    let bytes = try JSONEncoder().encode(chapter)
+    var object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    object.removeValue(forKey: "episodes")
+    object["content"] = "旧形式の本文"
+    let legacy = try JSONSerialization.data(withJSONObject: object)
+    #expect(throws: DecodingError.self) {
+        _ = try JSONDecoder().decode(Chapter.self, from: legacy)
+    }
+}

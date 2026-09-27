@@ -119,7 +119,7 @@ struct IOSAppearanceSettingsSections: View {
     @AppStorage(IOSEditorFontPreference.preferenceKey)
     private var editorFontFamilyRawValue = IOSEditorFontPreference.initialRawValue
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults) {
         _appearanceRawValue = AppStorage(
             wrappedValue: IOSAppearance.initialRawValue,
             IOSAppearance.preferenceKey,
@@ -192,7 +192,7 @@ struct IOSAppearanceSettingsSections: View {
 struct IOSAppearanceSettingsView: View {
     private let sections: IOSAppearanceSettingsSections
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults) {
         sections = IOSAppearanceSettingsSections(userDefaults: userDefaults)
     }
 

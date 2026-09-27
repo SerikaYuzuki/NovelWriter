@@ -63,6 +63,7 @@ extension IOSTextAdapter.Coordinator {
     }
 
     private func registerCommittedTextCaptureHandler(with session: EditorCommandSession) {
+        registerProofreadingHandler(with: session)
         session.registerCommittedTextCaptureHandler(for: commandSurfaceToken) { [weak self] in
             guard let textView = self?.textView else { return .notActive }
             guard textView.markedTextRange == nil else { return .compositionInProgress }

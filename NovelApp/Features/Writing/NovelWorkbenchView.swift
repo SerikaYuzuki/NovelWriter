@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Outlineを持つセクションは Project Sidebar / Outline(content) / Detail、作品情報と設定は
 /// Project Sidebar / Detail で構成する。標準の Sidebar 開閉と列追従 chrome を得る。
 /// 執筆画面の保存・同期状態はEditor上端の小さな記号へ集約する。上部 chrome は
-/// `WorkbenchToolbarContent` が一箇所で所有する。
+/// detailがカスタマイズを所有し、Outlineの追加操作は列scopeを保って提供する。
 private struct WorkbenchColumnWidths {
     var min: CGFloat
     var ideal: CGFloat
@@ -23,7 +23,7 @@ enum WorkbenchColumnLayout: Hashable {
         switch section {
         case .projectInfo, .settings:
             self = .twoColumn
-        case .structure, .plot, .characters, .worldbuilding, .references:
+        case .structure, .plot, .characters, .worldbuilding, .references, .feedback:
             self = .threeColumn
         }
     }
@@ -37,81 +37,54 @@ struct NovelWorkbenchView: View {
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
-    @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
 
+    @State private var episodePendingRename: EpisodeRenameRequest?
+    @State private var explicitSyncPresentation = ExplicitSyncPresentation()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var selectedAttachmentFileName: String?
+    @State private var selectedFeedbackID: UUID?
     @State private var overlayState = WorkbenchOverlayState()
     @State private var isImportingAttachment = false
     @State private var attachmentImportSession: DocumentSessionToken?
     @State private var attachmentImportMessage: OperationMessage?
     @State private var sidebarFocusHandoffID: UUID?
     @State private var isPlotCardRailPresented = false
-    @State private var isDeviceSyncConflictPresented = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isAssistantPresented = false
     @FocusState private var projectSidebarIsFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            workbenchSplitView
-                .id(workbenchColumnLayout)
-
-            if !showsWritingActions {
-                WorkbenchStatusBarView()
-            }
-        }
-        .toolbar(id: "novelwriter.workbench.v7") {
-            WorkbenchToolbarContent(
-                overlayState: overlayState,
-                showsWritingActions: showsWritingActions,
-                isPlotCardRailPresented: $isPlotCardRailPresented,
-                reviewDeviceSyncChanges: {
-                    // ContentView owns the legacy Work startup recovery sheet.
-                    // Do not create a second sheet owner for that same review.
-                    if appState.workSyncLocalRecoveryReview == nil {
-                        isDeviceSyncConflictPresented = true
-                    }
+        ResizableAssistantLayout(isPresented: isAssistantPresented && showsWritingActions, defaults: appState.userDefaults) {
+            VStack(spacing: 0) {
+                workbenchSplitView
+                    .id(workbenchColumnLayout)
+                if !showsWritingActions {
+                    WorkbenchStatusBarView()
                 }
-            )
+            }
+            .frame(minHeight: 240)
+        } panel: {
+            assistantPanel
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
+        .modifier(WritingSyncPulse(host: appState.writingAssistantHost))
+        .navigationTitle(documentDisplayTitle)
+        .modifier(WorkbenchToolbarTitleVisibility())
+        .modifier(EpisodeRenameDialog(request: $episodePendingRename))
+        .modifier(ExplicitSyncSetupModifier(presentation: explicitSyncPresentation))
+        .modifier(SnapshotSyncObservationModifier())
+        .onReceive(NotificationCenter.default.publisher(for: .toggleWritingAssistant)) { _ in
+            if showsWritingActions {
+                isAssistantPresented.toggle()
+            }
         }
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarBackground(Color(nsColor: .underPageBackgroundColor), for: .windowToolbar)
-        .deviceSyncReviewSheet(isPresented: $isDeviceSyncConflictPresented)
-        // AppKitのNSSearchToolbarItemは、レイアウト中に`isPresented`が切り替わると
-        // 検索項目自身の制約更新から再レイアウトへ入ることがある。作品画面全体で
-        // 同じ検索欄を保持し、セクション切り替えではツールバー項目を再構成しない。
-        .searchable(
-            text: Bindable(editorSearchSession).query,
-            isPresented: searchableIsPresented,
-            placement: .toolbar,
-            prompt: "話内を検索"
-        )
-        .onSubmit(of: .search) {
-            editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
-        }
         .onChange(of: showsWritingActions) { _, isWriting in
             if !isWriting {
                 isPlotCardRailPresented = false
+                isAssistantPresented = false
             }
-        }
-        .confirmationDialog(
-            "このスナップショットに戻しますか？",
-            isPresented: snapshotRestoreDialogIsPresented,
-            presenting: snapshotMenuPresenter.snapshotPendingRestore
-        ) { request in
-            Button("戻す", role: .destructive) {
-                Task { await snapshotMenuPresenter.restore(request) }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: { request in
-            Text("「\(request.snapshot.displayName)」の状態に戻します。いまの内容は先にスナップショットへ退避します。")
-        }
-        .alert(
-            "復元できませんでした",
-            isPresented: snapshotRestoreErrorIsPresented
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(snapshotMenuPresenter.restoreErrorMessage ?? "")
         }
         .alert(item: $attachmentImportMessage) { message in
             Alert(title: Text(message.title), message: Text(message.body), dismissButton: .default(Text("閉じる")))
@@ -125,9 +98,6 @@ struct NovelWorkbenchView: View {
                 await importAttachment(from: result)
             }
         }
-        .task(id: appState.documentURL) {
-            await snapshotMenuPresenter.refresh()
-        }
         .onReceive(NotificationCenter.default.publisher(for: .presentChapterMemo)) { _ in
             guard appState.selectedEpisode != nil else { return }
             overlayState.presented = .memo
@@ -135,18 +105,57 @@ struct NovelWorkbenchView: View {
         .onReceive(NotificationCenter.default.publisher(for: .presentAttachmentImporter)) { _ in
             guard appState.supportsAttachments else { return }
             Task {
-                guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.references) else { return }
+                guard await appState.selectProjectSectionAfterTransition(.references) else { return }
                 attachmentImportSession = appState.documentSessionToken
                 isImportingAttachment = true
             }
         }
     }
 
-    private var searchableIsPresented: Binding<Bool> {
-        Binding(
-            get: { editorSearchSession.isSearchPresented },
-            set: { newValue in
-                editorSearchSession.isSearchPresented = newValue
+    private var assistantPanel: some View {
+        let session = appState.documentSessionToken
+        let episodeID = appState.selectedEpisodeID
+        let account = appState.snapshotSyncV2AccountScopeToken
+        return AssistantPanelView(
+            defaults: appState.userDefaults,
+            contextID: "\(appState.documentSessionToken)-\(String(describing: appState.selectedEpisodeID))-\(appState.snapshotSyncV2AccountScopeToken)",
+            episodeTitle: appState.selectedEpisode?.title ?? "未選択",
+            currentEpisodeID: episodeID,
+            capture: {
+                guard appState.permitsDocumentInteraction, let episode = appState.selectedEpisode else {
+                    throw AssistantError.emptyContent
+                }
+                switch appState.activeCommittedTextCapture() {
+                case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                case .compositionInProgress: throw AssistantError.composing
+                case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
+                }
+            }, close: { isAssistantPresented = false },
+            applyProofreading: { manuscript, replacement in
+                guard appState.documentSessionToken == session,
+                      appState.selectedEpisodeID == episodeID,
+                      appState.snapshotSyncV2AccountScopeToken == account,
+                      appState.permitsDocumentInteraction else { return false }
+                return appState.editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
+            },
+            saveFeedback: { feedback in
+                await appState.saveAssistantFeedback(feedback, session: session, account: account)
+            },
+            writingHost: appState.writingAssistantHost,
+            externalSettings: AnyView(WritingMCPSettingsView(controller: appState.writingMCPController)),
+            chapters: appState.document.chapters,
+            captureScope: { scope in
+                guard appState.documentSessionToken == session,
+                      appState.snapshotSyncV2AccountScopeToken == account,
+                      appState.permitsDocumentInteraction else { throw AssistantError.emptyContent }
+                return try scope.capture(chapters: appState.document.chapters, currentID: appState.selectedEpisodeID) {
+                    guard let episode = appState.selectedEpisode else { throw AssistantError.emptyContent }
+                    switch appState.activeCommittedTextCapture() {
+                    case let .captured(text): return AssistantManuscript(title: episode.title, content: text)
+                    case .compositionInProgress: throw AssistantError.composing
+                    case .notActive: return AssistantManuscript(title: episode.title, content: episode.content)
+                    }
+                }
             }
         )
     }
@@ -165,6 +174,7 @@ struct NovelWorkbenchView: View {
                 projectSidebar
             } content: {
                 workbenchContent
+                    .toolbar { WorkbenchOutlineToolbarContent(requestEpisodeRename: requestEpisodeRename) }
                     .navigationSplitViewColumnWidth(
                         min: contentColumnWidths.min,
                         ideal: contentColumnWidths.ideal,
@@ -188,7 +198,7 @@ struct NovelWorkbenchView: View {
     private func selectProjectSectionFromSidebar(_ section: ProjectSection) {
         Task { @MainActor in
             let previous = appState.workspaceSelection.section
-            guard await appState.selectProjectSectionAfterDeviceSyncDeparture(section),
+            guard await appState.selectProjectSectionAfterTransition(section),
                   WorkbenchColumnLayout.requiresSidebarFocusHandoff(from: previous, to: section) else { return }
 
             // 2列と3列の切替ではNavigationSplitView自体が再生成される。クリック元の
@@ -202,28 +212,6 @@ struct NovelWorkbenchView: View {
             projectSidebarIsFocused = true
             sidebarFocusHandoffID = nil
         }
-    }
-
-    private var snapshotRestoreDialogIsPresented: Binding<Bool> {
-        Binding(
-            get: { snapshotMenuPresenter.snapshotPendingRestore != nil },
-            set: { isPresented in
-                if !isPresented {
-                    snapshotMenuPresenter.snapshotPendingRestore = nil
-                }
-            }
-        )
-    }
-
-    private var snapshotRestoreErrorIsPresented: Binding<Bool> {
-        Binding(
-            get: { snapshotMenuPresenter.restoreErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    snapshotMenuPresenter.restoreErrorMessage = nil
-                }
-            }
-        )
     }
 
     @MainActor
@@ -275,14 +263,14 @@ struct NovelWorkbenchView: View {
         switch appState.workspaceSelection.section {
         case .structure:
             OutlineContainerView()
-                .navigationTitle(documentDisplayTitle)
-                .navigationSubtitle("\(appState.document.chapters.count)章")
         case .characters:
             CharacterListView()
                 .navigationTitle("登場人物")
         case .plot:
             PlotChapterOutlineView()
                 .navigationTitle("プロット")
+        case .feedback:
+            MacAssistantFeedbackOutline(selection: $selectedFeedbackID)
         case .references:
             AttachmentListView(selection: $selectedAttachmentFileName)
                 .navigationTitle("資料")
@@ -294,18 +282,54 @@ struct NovelWorkbenchView: View {
         }
     }
 
-    @ViewBuilder
     private var workbenchDetail: some View {
+        workbenchDetailContent
+            .background {
+                WorkbenchToolbarPersistence(profile: appState.workspaceSelection.section.rawValue)
+                    .id(appState.workspaceSelection.section)
+                    .frame(width: 0, height: 0)
+            }
+            .toolbar(id: WorkbenchToolbarIdentity.current) {
+                WorkbenchToolbarContent(
+                    overlayState: overlayState,
+                    requestSync: { explicitSyncPresentation.requestSync(appState: appState) },
+                    showsWritingActions: showsWritingActions,
+                    isPlotCardRailPresented: $isPlotCardRailPresented,
+                    requestEpisodeRename: requestEpisodeRename
+                )
+            }
+    }
+
+    private func requestEpisodeRename() {
+        guard let episode = appState.selectedEpisode, let chapterID = appState.selectedChapterID else { return }
+        episodePendingRename = EpisodeRenameRequest(episode: episode, chapterID: chapterID, appState: appState)
+    }
+
+    @ViewBuilder
+    private var workbenchDetailContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
             EditorPaneView(
                 isPlotCardRailPresented: $isPlotCardRailPresented
             )
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text(documentDisplayTitle)
+                        .accessibilityIdentifier("workbench.editor.workTitle")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .help(documentDisplayTitle)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.thinMaterial)
+            }
         case .characters:
             CharacterDetailView { appearance in
                 Task {
-                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
-                    guard await appState.selectEpisodeAfterDeviceSyncDeparture(
+                    guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
+                    guard await appState.selectEpisodeAfterTransition(
                         appearance.episodeID,
                         in: appearance.chapterID
                     ) else { return }
@@ -315,10 +339,12 @@ struct NovelWorkbenchView: View {
         case .plot:
             PlotAndFlagSplitView { chapterID in
                 Task {
-                    guard await appState.selectProjectSectionAfterDeviceSyncDeparture(.structure) else { return }
-                    await appState.selectChapterAfterDeviceSyncDeparture(chapterID)
+                    guard await appState.selectProjectSectionAfterTransition(.structure) else { return }
+                    await appState.selectChapterAfterTransition(chapterID)
                 }
             }
+        case .feedback:
+            AssistantFeedbackDetail(record: appState.assistantFeedback.first { $0.id == selectedFeedbackID })
         case .references:
             AttachmentDetailView(fileName: selectedAttachmentFileName)
         case .projectInfo:
@@ -329,9 +355,6 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
-                    .frame(maxWidth: 560, alignment: .leading)
-                Divider()
-                DeviceSyncSettingsView()
                     .frame(maxWidth: 560, alignment: .leading)
             }
         }
@@ -360,7 +383,7 @@ struct NovelWorkbenchView: View {
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
         case .plot:
             WorkbenchColumnWidths(min: 224, ideal: 360, max: 440)
-        case .characters, .references:
+        case .characters, .references, .feedback:
             WorkbenchColumnWidths(min: 240, ideal: 280, max: 340)
         case .worldbuilding:
             WorkbenchColumnWidths(min: 200, ideal: 240, max: 280)
@@ -702,5 +725,15 @@ private struct SectionSurface<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .workbenchGlassChromeStyle()
+    }
+}
+
+private struct WorkbenchToolbarTitleVisibility: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content.navigationTitle("")
+        }
     }
 }

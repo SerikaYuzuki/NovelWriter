@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "name": "lost-ack-replays-exact-response",
+  "initial": {"commandId":"00000000-0000-4000-8000-000000000010","requestDigest":"cecb450d9fac4a41b5929fe2d1ecaedbd2bf2a37cf7217b9de1d48991cc0621a"},
+  "events": [
+    {"type":"sendExactCommand"},
+    {"type":"dropResponseAfterCommit"},
+    {"type":"restart"},
+    {"type":"sendExactCommand"},
+    {"type":"getReceipt"}
+  ],
+  "expect": {"headAdvanceCount":1,"receiptCount":1,"canonicalResponseBytesEqual":true,"readBackPredicatesAllTrue":true}
+}

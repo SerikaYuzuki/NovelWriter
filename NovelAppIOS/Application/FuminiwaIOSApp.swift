@@ -1,90 +1,87 @@
 import Foundation
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import SwiftUI
 
 @main
 struct FuminiwaIOSApp: App {
+    @State private var connectivityRecovery = ConnectivityRecovery()
     @State private var store: IOSDocumentStore
-    #if canImport(NovelSyncCloudKit)
-    @State private var deviceSyncComposition: IOSDeviceSyncProductionComposition?
-    @State private var deviceSyncPreparationFailed: Bool
-    #endif
-    @AppStorage(IOSAppearance.preferenceKey)
-    private var appearanceRawValue = IOSAppearance.initialRawValue
+    @AppStorage private var appearanceRawValue: String
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
-        #if canImport(NovelSyncCloudKit)
-        // iOS SDKはSecTaskによるentitlement読出しを公開していない。
-        // unsigned XCTest hostではCloudKit containerを生成せず、安全停止したStoreだけを使う。
-        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        let composition: IOSDeviceSyncProductionComposition? = if isRunningTests {
-            nil
-        } else if let privateWorkingCopyLocation {
-            try? IOSDeviceSyncProductionComposition(
-                privateWorkingCopyLocation: privateWorkingCopyLocation
-            )
-        } else {
-            nil
+        #if FUMINIWA_TEST_COMPOSITION
+        let configuration: TestRuntimeConfiguration
+        do {
+            configuration = try ProcessInfo.processInfo.arguments.contains("--local-ui-test")
+                ? TestRuntimeConfiguration(account: nil) : TestRuntimeConfiguration()
+        } catch {
+            preconditionFailure("Unable to create the isolated iOS test runtime: \(error)")
+        }
+        guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
+            preconditionFailure("Unable to create the isolated iOS test defaults")
         }
         let store = IOSDocumentStore(
-            deviceSyncRuntime: composition?.runtime,
+            userDefaults: defaults,
+            libraryRoot: configuration.localRoot.url,
+            runtimeComposition: .test(configuration)
+        )
+        #else
+        let privateWorkingCopyLocation = try? IOSPrivateWorkingCopyLocation.prepareDefault()
+        let defaults = UserDefaults.standard
+        let store = IOSDocumentStore(
+            userDefaults: defaults,
             privateWorkingCopyLocation: privateWorkingCopyLocation
         )
-        if privateWorkingCopyLocation == nil || composition == nil {
-            store.failStartupForDeviceSyncSafety()
-        }
-        _deviceSyncComposition = State(initialValue: composition)
-        _deviceSyncPreparationFailed = State(initialValue: composition == nil)
-        _store = State(initialValue: store)
-        #else
-        let store = IOSDocumentStore(privateWorkingCopyLocation: privateWorkingCopyLocation)
         if privateWorkingCopyLocation == nil {
             store.failStartupForDeviceSyncSafety()
         }
-        _store = State(initialValue: store)
         #endif
+        _appearanceRawValue = AppStorage(
+            wrappedValue: IOSAppearance.initialRawValue,
+            IOSAppearance.preferenceKey,
+            store: defaults
+        )
+        _store = State(initialValue: store)
     }
 
     var body: some Scene {
         WindowGroup {
             IOSRootView(store: store)
+                .defaultAppStorage(store.userDefaults)
                 .tint(IOSPalette.accent)
                 .preferredColorScheme(
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )
                 .task {
-                    #if canImport(NovelSyncCloudKit)
-                    guard !deviceSyncPreparationFailed, let deviceSyncComposition else {
-                        store.failStartupForDeviceSyncSafety()
-                        return
-                    }
-                    let deviceSyncBootstrap = Task {
-                        await deviceSyncComposition.bootstrap()
-                    }
-                    #endif
+                    _ = await store.configureSnapshotSyncV2()
                     await store.bootstrap(localFirst: true)
-                    #if canImport(NovelSyncCloudKit)
-                    // local shelfはすでに表示済み。CloudKit bootstrap、remote catalog、
-                    // active workの同期はUI taskの完了境界に含めない。
+                    connectivityRecovery.start { await store.resumeSnapshotSyncV2() }
+                    // The local shelf/editor is the launch boundary. Auth
+                    // vault reconciliation and remote wakeups continue in
+                    // background and never delay offline editing.
                     Task { @MainActor in
-                        await deviceSyncBootstrap.value
-                        _ = await store.refreshCloudLibrary()
-                        await store.refreshOrPrepareSelectedEpisodeDeviceSync()
+                        await store.restoreFuminiwaSession()
                     }
-                    #endif
+                    store.resumePendingAuthRevoke()
+                    Task { @MainActor in
+                        await store.resumeSnapshotSyncV2()
+                    }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     Task {
-                        if newPhase == .active {
-                            await store.retryPendingCloudPublicationsInBackground()
-                            await store.refreshActiveDeviceSyncWithoutPreparing()
-                        } else if newPhase == .background {
+                        if newPhase == .background {
                             // `.inactive` はアプリスイッチャーや一時的な割り込みでも
                             // 発生する。ここで保存境界を開始すると、スイッチャーの
                             // プレビューをロード表示で覆い、復帰直後の入力も止めてしまう。
                             // 実際に中断される `.background` でだけ端末保存を行う。
                             await store.flushDeviceSyncWithBackgroundTime()
+                        } else if newPhase == .active {
+                            // Foreground resume is a non-blocking wake of the
+                            // durable v2 outbox; no network result gates UI.
+                            Task { await store.resumeSnapshotSyncV2() }
+                            store.resumePendingAuthRevoke()
                         }
                     }
                 }

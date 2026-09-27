@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "same-logical-ids-are-account-scoped",
+  "initial": {"accountA":{"workId":"00000000-0000-4000-8000-000000000002"},"accountB":{"workId":"00000000-0000-4000-8000-000000000002"}},
+  "events": [
+    {"type":"publish","account":"account-a","commandId":"00000000-0000-4000-8000-000000000010"},
+    {"type":"publish","account":"account-b","commandId":"00000000-0000-4000-8000-000000000010"},
+    {"type":"foreignRead","principal":"account-a","resourceAccount":"account-b"}
+  ],
+  "expect": {"bothRowsExist":true,"receiptsIndependent":true,"foreignReadStatus":404,"foreignAndAbsentBodyEqual":true}
+}

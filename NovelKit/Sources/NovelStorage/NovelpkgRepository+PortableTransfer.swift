@@ -11,6 +11,10 @@ public enum NovelpkgPortableTransferError: Error, Equatable, Sendable {
     case fileTooLarge(relativePath: String)
     case packageTooLarge
     case documentMismatch
+    case invalidAttachmentName(String)
+    case attachmentNameCollision(String)
+    case attachmentUnreadable(String)
+    case attachmentByteCountMismatch(String)
 }
 
 extension NovelpkgPortableTransferError: CustomStringConvertible {
@@ -32,6 +36,14 @@ extension NovelpkgPortableTransferError: CustomStringConvertible {
             "作品パッケージ全体の容量が上限を超えています。"
         case .documentMismatch:
             "検証中に作品内容が変わりました。"
+        case let .invalidAttachmentName(name):
+            "添付資料名がportable形式ではありません: \(name)"
+        case let .attachmentNameCollision(name):
+            "添付資料名が衝突しています: \(name)"
+        case let .attachmentUnreadable(name):
+            "添付資料を読み込めません: \(name)"
+        case let .attachmentByteCountMismatch(name):
+            "添付資料のサイズが変わりました: \(name)"
         }
     }
 }
@@ -42,6 +54,21 @@ extension NovelpkgRepository: PortableDocumentPackageRepository {
     public func validatePortablePackage(at url: URL) async throws -> NovelDocument {
         try await Task.detached(priority: .utility) {
             try Self.validatePortablePackageSynchronously(at: url, requiresPackageExtension: true)
+        }.value
+    }
+
+    /// Reads the validated attachment closure without exposing package paths
+    /// to callers. This is deliberately separate from `listAttachments`,
+    /// whose historical UI behavior omits non-regular and hidden entries.
+    public func readValidatedAttachments(in url: URL) async throws -> [PortableAttachmentPayload] {
+        try await Task.detached(priority: .utility) {
+            try Self.performReadValidatedAttachments(at: url)
+        }.value
+    }
+
+    public func readValidatedPortableMetadata(in url: URL) async throws -> PortablePackageMetadata {
+        try await Task.detached(priority: .utility) {
+            try Self.performReadValidatedPortableMetadata(at: url)
         }.value
     }
 
@@ -58,6 +85,24 @@ extension NovelpkgRepository: PortableDocumentPackageRepository {
                 doc,
                 from: sourceURL,
                 to: destinationURL
+            )
+        }.value
+    }
+
+    public func saveValidatedCopy(
+        _ doc: NovelDocument,
+        from sourceURL: URL,
+        to destinationURL: URL,
+        createdAt: Date,
+        resources: [PortableResource]
+    ) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.performValidatedPortableCopy(
+                doc,
+                from: sourceURL,
+                to: destinationURL,
+                createdAt: createdAt,
+                resources: resources
             )
         }.value
     }
@@ -82,7 +127,9 @@ extension NovelpkgRepository {
         _ doc: NovelDocument,
         from sourceURL: URL,
         to destinationURL: URL,
-        limits: PortablePackageLimits = .production
+        limits: PortablePackageLimits = .production,
+        createdAt: Date? = nil,
+        resources: [PortableResource] = []
     ) throws {
         let fileManager = FileManager.default
         let source = sourceURL.standardizedFileURL
@@ -107,7 +154,9 @@ extension NovelpkgRepository {
                 source: source,
                 workingURL: workingURL,
                 limits: limits,
-                fileManager: fileManager
+                fileManager: fileManager,
+                createdAt: createdAt,
+                resources: resources
             )
             try adoptValidatedPortableCopy(
                 workingURL,
@@ -131,6 +180,119 @@ extension NovelpkgRepository {
         }
         try validatePortableTree(at: root, limits: limits)
         return try performLoad(from: root)
+    }
+
+    static func performReadValidatedAttachments(
+        at url: URL,
+        limits: PortablePackageLimits = .production
+    ) throws -> [PortableAttachmentPayload] {
+        _ = try validatePortablePackageSynchronously(
+            at: url,
+            requiresPackageExtension: true,
+            limits: limits
+        )
+
+        let fileManager = FileManager.default
+        let attachmentsURL = url.standardizedFileURL
+            .appendingPathComponent(attachmentsDirectoryName, isDirectory: true)
+        guard fileManager.fileExists(atPath: attachmentsURL.path) else { return [] }
+        let directoryValues = try attachmentsURL.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )
+        guard directoryValues.isSymbolicLink != true,
+              directoryValues.isDirectory == true else {
+            throw NovelpkgPortableTransferError.unsupportedItem(relativePath: attachmentsDirectoryName)
+        }
+
+        let children = try fileManager.contentsOfDirectory(
+            at: attachmentsURL,
+            includingPropertiesForKeys: [
+                .isRegularFileKey,
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey
+            ],
+            options: []
+        ).sorted {
+            $0.lastPathComponent.utf8.lexicographicallyPrecedes($1.lastPathComponent.utf8)
+        }
+
+        var names: Set<String> = []
+        var payloads: [PortableAttachmentPayload] = []
+        for child in children {
+            let name = child.lastPathComponent
+            let relativePath = "\(attachmentsDirectoryName)/\(name)"
+            let values = try child.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey
+            ])
+            if values.isSymbolicLink == true {
+                throw NovelpkgPortableTransferError.symbolicLink(relativePath: relativePath)
+            }
+            guard values.isRegularFile == true, values.isDirectory != true else {
+                throw NovelpkgPortableTransferError.unsupportedItem(relativePath: relativePath)
+            }
+            guard !name.isEmpty,
+                  !name.contains("\0"),
+                  !name.contains("/"),
+                  !name.contains("\\"),
+                  name != ".",
+                  name != "..",
+                  URL(fileURLWithPath: name).lastPathComponent == name else {
+                throw NovelpkgPortableTransferError.invalidAttachmentName(name)
+            }
+            let key = name.precomposedStringWithCanonicalMapping.lowercased()
+            guard names.insert(key).inserted else {
+                throw NovelpkgPortableTransferError.attachmentNameCollision(name)
+            }
+
+            let bytes: Data
+            do {
+                bytes = try Data(contentsOf: child, options: .mappedIfSafe)
+            } catch {
+                throw NovelpkgPortableTransferError.attachmentUnreadable(name)
+            }
+            guard let fileSize = values.fileSize,
+                  Int64(bytes.count) == Int64(fileSize) else {
+                throw NovelpkgPortableTransferError.attachmentByteCountMismatch(name)
+            }
+            let afterRead = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .fileSizeKey])
+            guard afterRead.isSymbolicLink != true,
+                  afterRead.fileSize == values.fileSize else {
+                throw NovelpkgPortableTransferError.attachmentByteCountMismatch(name)
+            }
+            payloads.append(PortableAttachmentPayload(fileName: name, bytes: bytes))
+        }
+        return payloads
+    }
+
+    static func performReadValidatedPortableMetadata(
+        at url: URL,
+        limits: PortablePackageLimits = .production
+    ) throws -> PortablePackageMetadata {
+        let root = url.standardizedFileURL
+        let document = try validatePortablePackageSynchronously(
+            at: root,
+            requiresPackageExtension: true,
+            limits: limits
+        )
+        let manifest = try readManifest(at: root, fileManager: .default)
+        guard let createdAt = Self.parsePortableDate(manifest.createdAt) else {
+            throw NovelpkgPortableTransferError.invalidPackage
+        }
+        let consumed = try consumedPortablePaths(
+            manifest: manifest,
+            document: document,
+            root: root
+        )
+        let resources = try readOpaquePortableResources(
+            at: root,
+            consumedPaths: consumed,
+            limits: limits
+        )
+        return PortablePackageMetadata(createdAt: createdAt, resources: resources)
     }
 
     static func validatePortableTree(
@@ -205,14 +367,18 @@ extension NovelpkgRepository {
         source: URL,
         workingURL: URL,
         limits: PortablePackageLimits,
-        fileManager: FileManager
+        fileManager: FileManager,
+        createdAt: Date?,
+        resources: [PortableResource]
     ) throws {
         try writePackageContents(
             of: document,
             into: workingURL,
             contentSourceURL: source,
             snapshotsSourceURL: source,
-            fileManager: fileManager
+            fileManager: fileManager,
+            createdAtOverride: createdAt.map(parsePortableDateString),
+            resources: resources
         )
         let readBack = try validatePortablePackageSynchronously(
             at: workingURL,
@@ -221,6 +387,123 @@ extension NovelpkgRepository {
         )
         guard readBack == document else {
             throw NovelpkgPortableTransferError.documentMismatch
+        }
+    }
+
+    private static func parsePortableDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
+    private static func parsePortableDateString(_ value: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: value)
+    }
+
+    private static func consumedPortablePaths(
+        manifest: NovelpkgManifest,
+        document: NovelDocument,
+        root: URL
+    ) throws -> Set<String> {
+        let fileManager = FileManager.default
+        var paths: Set<String> = [
+            manifestFileName,
+            episodesDirectoryName,
+            episodeNotesDirectoryName,
+            chaptersDirectoryName,
+            notesDirectoryName,
+            worldNotesDirectoryName
+        ]
+        for chapter in manifest.chapters {
+            for entry in chapter.episodes {
+                let fileName = "\(entry.id.uuidString).md"
+                paths.insert("\(episodesDirectoryName)/\(fileName)")
+                if let episode = document.chapters
+                    .flatMap(\.episodes)
+                    .first(where: { $0.id.rawValue == entry.id }),
+                    !episode.memo.isEmpty {
+                    paths.insert("\(episodeNotesDirectoryName)/\(fileName)")
+                }
+            }
+        }
+        let optionalFiles = [
+            charactersFileName, plotFileName, flagsFileName, projectFileName, worldFileName
+        ]
+        for name in optionalFiles where fileManager.fileExists(
+            atPath: root.appendingPathComponent(name).path
+        ) {
+            paths.insert(name)
+        }
+        for note in document.worldNotes {
+            paths.insert("\(worldNotesDirectoryName)/\(note.id.rawValue.uuidString).md")
+        }
+        if fileManager.fileExists(atPath: root.appendingPathComponent(attachmentsDirectoryName).path) {
+            paths.insert(attachmentsDirectoryName)
+        }
+        return paths
+    }
+
+    private static func readOpaquePortableResources(
+        at root: URL,
+        consumedPaths: Set<String>,
+        limits: PortablePackageLimits
+    ) throws -> [PortableResource] {
+        let fileManager = FileManager.default
+        var output: [PortableResource] = []
+        var pending: [URL] = [root]
+        while let directory = pending.popLast() {
+            let children = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: Array(portableResourceKeys),
+                options: []
+            )
+            for child in children {
+                let relative = portableRelativePath(of: child, root: root)
+                if consumedPaths.contains(relative) || consumedPaths.contains(where: {
+                    relative.hasPrefix($0 + "/") && $0 == attachmentsDirectoryName
+                }) {
+                    let values = try child.resourceValues(forKeys: portableResourceKeys)
+                    if values.isDirectory == true, relative != attachmentsDirectoryName {
+                        pending.append(child)
+                    }
+                    continue
+                }
+                let values = try child.resourceValues(forKeys: portableResourceKeys)
+                let components = relative.split(separator: "/").map(String.init)
+                guard !components.isEmpty else { continue }
+                if values.isDirectory == true {
+                    if relative == snapshotsDirectoryName,
+                       try (fileManager.contentsOfDirectory(atPath: child.path)).isEmpty {
+                        continue
+                    }
+                    output.append(PortableResource(pathComponents: components, kind: .directory))
+                    pending.append(child)
+                } else if values.isRegularFile == true {
+                    let bytes = try Data(contentsOf: child, options: .mappedIfSafe)
+                    guard Int64(bytes.count) <= limits.maximumFileBytes else {
+                        throw NovelpkgPortableTransferError.fileTooLarge(relativePath: relative)
+                    }
+                    output.append(PortableResource(
+                        pathComponents: components,
+                        kind: .regularFile,
+                        bytes: bytes
+                    ))
+                }
+            }
+        }
+        return output.sorted { lhs, rhs in
+            let left = lhs.pathComponents.joined(separator: "\u{0}")
+            let right = rhs.pathComponents.joined(separator: "\u{0}")
+            if left != right {
+                return left.utf8.lexicographicallyPrecedes(right.utf8)
+            }
+            return lhs.kind.rawValue < rhs.kind.rawValue
         }
     }
 

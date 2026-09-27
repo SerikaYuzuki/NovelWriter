@@ -2,7 +2,6 @@ import AppKit
 import EditorKit
 import Foundation
 import NovelCore
-import NovelSync
 
 extension AppState {
     // MARK: - 選択中章
@@ -10,32 +9,19 @@ extension AppState {
     /// Project Sidebar のセクションを選択する。UI2 では画面の主導線として使う。
     func selectProjectSection(_ section: ProjectSection) {
         guard workspaceSelection.section != section else { return }
-        guard deviceSyncRuntime == nil || permitsDeviceSyncProjectSectionMutationAfterFlush else { return }
+        guard permitsDocumentInteraction else { return }
         workspaceSelection = WorkspaceSelection(section: section)
         if section == .worldbuilding {
             ensureWorldNoteSelection()
         }
     }
 
-    /// 選択中の章(存在しなければ `nil`)。
-    var selectedChapter: Chapter? {
-        guard let selectedChapterID else { return nil }
-        return document.chapters.first { $0.id == selectedChapterID }
-    }
-
-    /// 選択中の話(存在しなければ `nil`)。
-    var selectedEpisode: Episode? {
-        guard let selectedEpisodeID else { return nil }
-        return selectedChapter?.episodes.first { $0.id == selectedEpisodeID }
-    }
-
-    /// 本文右クリックで取得したexact selectionから、AIチャット用promptをコピーする。
+    /// 本文右クリックで取得したexact selectionから、原稿をコピーする。
     ///
     /// context menu表示後に作品や話が変わっていた場合は、同じ文字列が存在しても
-    /// 現在選択へ読み替えない。IME変換中も未確定文字を欠いたpromptを作らない。
+    /// 現在選択へ読み替えない。IME変換中も未確定文字を欠いたコピー文字列を作らない。
     @discardableResult
-    func copySelectionAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copySelectionManuscript(
         selectedText: String,
         episodeID: EpisodeID,
         in chapterID: ChapterID,
@@ -43,44 +29,42 @@ extension AppState {
     ) -> Bool {
         let episodeStillExists = document.chapters.first(where: { $0.id == chapterID })?
             .episodes.contains(where: { $0.id == episodeID }) == true
-        let isCurrentSelection = isCurrentAIClipboardPromptContext(expectedSession) &&
+        let isCurrentSelection = isCurrentManuscriptCopyContext(expectedSession) &&
             workspaceSelection.section == .structure &&
             selectedChapterID == chapterID &&
             selectedEpisodeID == episodeID &&
             episodeStillExists
         guard isCurrentSelection else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         switch activeCommittedTextCapture() {
         case .captured:
-            return copyAIClipboardPrompt(
-                purpose: purpose,
+            return copyManuscript(
                 source: .selection(text: selectedText)
             )
         case .compositionInProgress:
-            return failAIClipboardPromptCopy(.compositionInProgress)
+            return failManuscriptCopy(.compositionInProgress)
         case .notActive:
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
     }
 
-    /// 指定話のタイトルと本文だけを含むAIチャット用promptをコピーする。
+    /// 指定話のタイトルと本文だけを含む原稿をコピーする。
     @discardableResult
-    func copyEpisodeAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copyEpisodeManuscript(
         episodeID: EpisodeID,
         in chapterID: ChapterID,
         expectedSession: DocumentSessionToken
     ) -> Bool {
-        guard isCurrentAIClipboardPromptContext(expectedSession) else {
-            return failAIClipboardPromptCopy(.staleContext)
+        guard isCurrentManuscriptCopyContext(expectedSession) else {
+            return failManuscriptCopy(.staleContext)
         }
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
         guard let episode = chapter.episodes.first(where: { $0.id == episodeID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         let content: String
@@ -91,7 +75,7 @@ extension AppState {
             case let .captured(committedText):
                 content = committedText
             case .compositionInProgress:
-                return failAIClipboardPromptCopy(.compositionInProgress)
+                return failManuscriptCopy(.compositionInProgress)
             case .notActive:
                 content = episode.content
             }
@@ -99,24 +83,22 @@ extension AppState {
             content = episode.content
         }
 
-        return copyAIClipboardPrompt(
-            purpose: purpose,
+        return copyManuscript(
             source: .episode(title: episode.title, content: content)
         )
     }
 
-    /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むpromptをコピーする。
+    /// 指定章のタイトルと、配列順の全話タイトル／本文だけを含むコピー文字列をコピーする。
     @discardableResult
-    func copyChapterAIChatPrompt(
-        purpose: AIClipboardPromptPurpose,
+    func copyChapterManuscript(
         chapterID: ChapterID,
         expectedSession: DocumentSessionToken
     ) -> Bool {
-        guard isCurrentAIClipboardPromptContext(expectedSession) else {
-            return failAIClipboardPromptCopy(.staleContext)
+        guard isCurrentManuscriptCopyContext(expectedSession) else {
+            return failManuscriptCopy(.staleContext)
         }
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }) else {
-            return failAIClipboardPromptCopy(.staleContext)
+            return failManuscriptCopy(.staleContext)
         }
 
         var activeEpisodeContent: (id: EpisodeID, text: String)?
@@ -132,85 +114,81 @@ extension AppState {
             case let .captured(committedText):
                 activeEpisodeContent = (activeEpisodeID, committedText)
             case .compositionInProgress:
-                return failAIClipboardPromptCopy(.compositionInProgress)
+                return failManuscriptCopy(.compositionInProgress)
             case .notActive:
                 break
             }
         }
 
         let episodes = chapter.episodes.map { episode in
-            AIClipboardPromptEpisode(
+            ManuscriptCopyEpisode(
                 title: episode.title,
                 content: activeEpisodeContent?.id == episode.id
                     ? activeEpisodeContent?.text ?? episode.content
                     : episode.content
             )
         }
-        return copyAIClipboardPrompt(
-            purpose: purpose,
+        return copyManuscript(
             source: .chapter(title: chapter.title, episodes: episodes)
         )
     }
 
-    func dismissAIClipboardPromptCopyNotice() {
-        aiClipboardPromptNoticeDismissTask?.cancel()
-        aiClipboardPromptNoticeDismissTask = nil
-        aiClipboardPromptCopyNotice = nil
+    func dismissManuscriptCopyNotice() {
+        manuscriptCopyNoticeDismissTask?.cancel()
+        manuscriptCopyNoticeDismissTask = nil
+        manuscriptCopyNotice = nil
     }
 
-    private func isCurrentAIClipboardPromptContext(_ expectedSession: DocumentSessionToken) -> Bool {
-        permitsLongRunningDocumentOperation && documentSessionToken == expectedSession
+    private func isCurrentManuscriptCopyContext(_ expectedSession: DocumentSessionToken) -> Bool {
+        permitsDocumentInteraction && documentSessionToken == expectedSession
     }
 
     @discardableResult
-    private func copyAIClipboardPrompt(
-        purpose: AIClipboardPromptPurpose,
-        source: AIClipboardPromptSource
+    private func copyManuscript(
+        source: ManuscriptCopySource
     ) -> Bool {
         do {
-            let prompt = try AIClipboardPromptBuilder.make(purpose: purpose, source: source)
+            let prompt = try ManuscriptCopyBuilder.make(source: source)
             guard clipboardWriter.writePlainText(prompt.text) else {
-                return failAIClipboardPromptCopy(.clipboardWriteFailed)
+                return failManuscriptCopy(.clipboardWriteFailed)
             }
-            presentAIClipboardPromptCopyNotice(.success)
+            presentManuscriptCopyNotice(.success)
             return true
-        } catch let error as AIClipboardPromptError {
-            return failAIClipboardPromptCopy(copyFailure(for: error))
+        } catch let error as ManuscriptCopyError {
+            return failManuscriptCopy(copyFailure(for: error))
         } catch {
-            return failAIClipboardPromptCopy(.promptEncodingFailed)
+            return failManuscriptCopy(.copyPreparationFailed)
         }
     }
 
-    private func copyFailure(for error: AIClipboardPromptError) -> AIClipboardPromptCopyFailure {
+    private func copyFailure(for error: ManuscriptCopyError) -> ManuscriptCopyFailure {
         switch error {
         case .emptyContent:
             .emptyContent
-        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .promptUTF8ByteLimitExceeded:
+        case .sourceCharacterLimitExceeded, .sourceUTF8ByteLimitExceeded, .outputUTF8ByteLimitExceeded:
             .contentTooLarge
-        case .encodingFailed:
-            .promptEncodingFailed
         }
     }
 
     @discardableResult
-    private func failAIClipboardPromptCopy(_ failure: AIClipboardPromptCopyFailure) -> Bool {
-        presentAIClipboardPromptCopyNotice(.failure(failure))
+    private func failManuscriptCopy(_ failure: ManuscriptCopyFailure) -> Bool {
+        presentManuscriptCopyNotice(.failure(failure))
         return false
     }
 
-    private func presentAIClipboardPromptCopyNotice(_ outcome: AIClipboardPromptCopyOutcome) {
-        aiClipboardPromptNoticeDismissTask?.cancel()
-        let notice = AIClipboardPromptCopyNotice(outcome: outcome)
-        aiClipboardPromptCopyNotice = notice
-        aiClipboardPromptNoticeDismissTask = Task { @MainActor [weak self] in
+    private func presentManuscriptCopyNotice(_ outcome: ManuscriptCopyOutcome) {
+        manuscriptCopyNoticeDismissTask?.cancel()
+        let notice = ManuscriptCopyNotice(outcome: outcome)
+        manuscriptCopyNotice = notice
+        manuscriptCopyNoticeDismissTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .seconds(5))
             } catch {
                 return
             }
-            guard let self, aiClipboardPromptCopyNotice?.id == notice.id else { return }
-            aiClipboardPromptCopyNotice = nil
-            aiClipboardPromptNoticeDismissTask = nil
+            guard let self, manuscriptCopyNotice?.id == notice.id else { return }
+            manuscriptCopyNotice = nil
+            manuscriptCopyNoticeDismissTask = nil
         }
     }
 
@@ -308,7 +286,7 @@ extension AppState {
         flushSaveImmediately()
     }
 
-    private func ensureWorldNoteSelection() {
+    func ensureWorldNoteSelection() {
         if let selectedWorldNoteID,
            document.worldNotes.contains(where: { $0.id == selectedWorldNoteID }) {
             return
@@ -321,7 +299,7 @@ extension AppState {
     func selectChapter(_ id: ChapterID?) {
         guard permitsDocumentInteraction else { return }
         guard id != selectedChapterID else { return }
-        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+        guard permitsDocumentInteraction else { return }
         setSelection(chapterID: id, episodeID: id.flatMap(preferredEpisodeID(in:)))
         flushSaveImmediately()
     }
@@ -331,7 +309,7 @@ extension AppState {
         guard permitsDocumentInteraction else { return }
         guard selection != plotOutlineSelection else { return }
         if case let .chapter(chapterID) = selection, chapterID != selectedChapterID {
-            guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+            guard permitsDocumentInteraction else { return }
         }
         plotOutlineSelection = selection
         if case let .chapter(chapterID) = selection {
@@ -346,7 +324,7 @@ extension AppState {
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID else { return }
         guard targetChapterID == selectedChapterID && id == selectedEpisodeID ||
-            permitsSynchronousDeviceSyncSelectionMutation else { return }
+            permitsDocumentInteraction else { return }
         guard let id else {
             guard document.chapters.first(where: { $0.id == targetChapterID })?.episodes.isEmpty == true else { return }
             setSelection(chapterID: targetChapterID, episodeID: nil)
@@ -365,7 +343,7 @@ extension AppState {
     /// 章を末尾に追加し、追加した章を選択状態にする。
     func addChapter() {
         guard permitsDocumentInteraction else { return }
-        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+        guard permitsDocumentInteraction else { return }
         let title = "第\(document.chapters.count + 1)章"
         let newID = document.addChapter(title: title)
         setSelection(chapterID: newID, episodeID: nil)
@@ -378,7 +356,7 @@ extension AppState {
     /// `title` を省略したときは、その章内の通し番号で「第N話」を付ける(UIFIX 2.1)。
     func addEpisode(to chapterID: ChapterID? = nil, title: String? = nil) {
         guard permitsDocumentInteraction else { return }
-        guard permitsSynchronousDeviceSyncSelectionMutation else { return }
+        guard permitsDocumentInteraction else { return }
         let targetChapterID = chapterID ?? selectedChapterID
         guard let targetChapterID,
               let chapter = document.chapters.first(where: { $0.id == targetChapterID }) else { return }
@@ -402,7 +380,8 @@ extension AppState {
     /// 話のタイトルを更新する。
     func updateEpisodeTitle(_ title: String, for episodeID: EpisodeID, in chapterID: ChapterID) {
         guard permitsDocumentInteraction else { return }
-        guard document.episode(episodeID)?.episode.title != title else { return }
+        guard let episode = document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID }),
+              episode.title != title else { return }
         document.updateEpisodeTitle(title, for: episodeID, in: chapterID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
@@ -468,7 +447,7 @@ extension AppState {
     func deleteChapter(id: ChapterID, expectedSession: DocumentSessionToken? = nil) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedChapterID == id {
-            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+            guard permitsDocumentInteraction else { return false }
         }
         guard document.chapters.count > 1 else { return false }
         guard let originalIndex = document.chapters.firstIndex(where: { $0.id == id }) else { return false }
@@ -509,7 +488,7 @@ extension AppState {
     ) -> Bool {
         guard permitsMutation(expectedSession: expectedSession) else { return false }
         if selectedEpisodeID == episodeID {
-            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+            guard permitsDocumentInteraction else { return false }
         }
         let sourceChapterID = chapterID ?? selectedChapterID
         guard let sourceChapterID,
@@ -547,7 +526,7 @@ extension AppState {
     ) -> Bool {
         guard permitsDocumentInteraction else { return false }
         if selectedEpisodeID == episodeID, selectedChapterID != destinationChapterID {
-            guard permitsSynchronousDeviceSyncSelectionMutation else { return false }
+            guard permitsDocumentInteraction else { return false }
         }
         guard document.moveEpisode(
             id: episodeID,
@@ -589,53 +568,9 @@ extension AppState {
         guard let chapter = document.chapters.first(where: { $0.id == chapterID }),
               let episode = chapter.episodes.first(where: { $0.id == episodeID }),
               episode.content != content else { return }
-        let baseContentDigest = deviceSyncDurablePackageDigest(
-            for: episodeID,
-            fallbackContent: episode.content
-        )
         document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        registerDeviceSyncContentMutation(content, episodeID: episodeID)
         saveCoordinator.markDirty()
         saveCoordinator.scheduleDebouncedSave()
-        if let expectedSession,
-           let expectedEditorContentGeneration,
-           let expectedLookup = currentDeviceSyncLookupIdentity,
-           expectedLookup.documentSession == expectedSession,
-           expectedLookup.chapterID == chapterID,
-           expectedLookup.episodeID == episodeID,
-           expectedLookup.editorContentGeneration == expectedEditorContentGeneration {
-            scheduleDeviceSyncForEditedEpisode(
-                content: content,
-                expectedLookup: expectedLookup,
-                baseContentDigest: baseContentDigest,
-                previousContentDigest: SyncContentDigest(content: episode.content)
-            )
-        }
-    }
-
-    func captureCommittedTextForDeviceSync() -> EditorCommittedTextCaptureResult {
-        activeCommittedTextCapture()
-    }
-
-    func installDeviceSyncEpisodeContent(
-        _ content: String,
-        chapterID: ChapterID,
-        episodeID: EpisodeID,
-        advancesEditorGeneration: Bool
-    ) {
-        let previousContent = document.episode(episodeID)?.episode.content
-        document.updateEpisodeContent(content, for: episodeID, in: chapterID)
-        if previousContent != content {
-            registerDeviceSyncContentMutation(
-                content,
-                episodeID: episodeID,
-                containsLocalEditIntent: false
-            )
-        }
-        saveCoordinator.markDirty()
-        if advancesEditorGeneration {
-            editorContentGeneration &+= 1
-        }
     }
 
     func advanceEditorContentGenerationForSurfaceTransition() {

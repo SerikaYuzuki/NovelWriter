@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "name": "verified-only-migration-marker",
+  "events": [
+    {"type": "exportBackup", "exportBackupMarker": "verified-backup-1"},
+    {"type": "stage", "adoptionMarker": null},
+    {"type": "processKill"},
+    {"type": "restart"}
+  ],
+  "expect": {"state": "staged", "exportBackupMarkerRequired": true, "adoptionMarker": null, "exportBackupStillVerified": true, "adoptionSucceeded": false, "sourceModified": false, "v2WorkCreated": false, "emptyDatabaseFallback": false},
+  "commitRequires": ["sourceDigest", "exportBackupMarker", "objectReadBack", "schemaVerified", "accountScopeVerified", "transactionCommitted", "adoptionMarkerFsync"]
+}

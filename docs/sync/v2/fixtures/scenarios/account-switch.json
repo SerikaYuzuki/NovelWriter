@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "name": "different-account-does-not-adopt",
+  "initial": {"work": "00000000-0000-4000-8000-000000000002", "account": "account-a", "state": "bound", "pendingCommands": 1},
+  "events": [
+    {"type": "accountSwitch", "account": "account-b"},
+    {"type": "workerWake"},
+    {"type": "localEdit", "generation": 2}
+  ],
+  "expect": {"networkBytes": 0, "state": "parked", "pendingCommands": 1, "localGeneration": 2, "workIdUnchanged": true}
+}

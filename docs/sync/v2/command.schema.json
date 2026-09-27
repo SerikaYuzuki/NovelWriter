@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:command",
+  "title": "FUMINIWA sealed command v2",
+  "oneOf": [
+    { "$ref": "#/$defs/createWork" },
+    { "$ref": "#/$defs/prepareObject" },
+    { "$ref": "#/$defs/finalizeObject" },
+    { "$ref": "#/$defs/registerSnapshot" },
+    { "$ref": "#/$defs/publish" },
+    { "$ref": "#/$defs/resolveDevice" },
+    { "$ref": "#/$defs/resolveServer" },
+    { "$ref": "#/$defs/cloneWork" },
+    { "$ref": "#/$defs/restore" }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base64URL": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$"
+    },
+    "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "head": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["generation", "snapshotId"],
+      "properties": { "generation": { "$ref": "#/$defs/generation" }, "snapshotId": { "$ref": "#/$defs/digest" } }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountFence", "accountId", "protocolEpoch", "serverInstanceId"],
+      "properties": {
+        "accountFence": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "protocolEpoch": { "$ref": "#/$defs/generation" },
+        "serverInstanceId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "commandId", "commandKind", "payload", "schemaVersion", "sourceGeneration", "sourceSnapshotId"],
+      "properties": {
+        "binding": { "$ref": "#/$defs/binding" },
+        "commandId": { "$ref": "#/$defs/uuid" },
+        "commandKind": { "type": "string" },
+        "payload": { "type": "object" },
+        "schemaVersion": { "type": "integer", "const": 2 },
+        "sourceGeneration": { "$ref": "#/$defs/generation" },
+        "sourceSnapshotId": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "createWork": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "createWork" }, "payload": { "$ref": "#/$defs/createWorkPayload" } } }
+      ]
+    },
+    "createWorkPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["documentId", "workId"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/uuid" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "prepareObject": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "prepareObject" }, "payload": { "$ref": "#/$defs/prepareObjectPayload" } } }
+      ]
+    },
+    "prepareObjectPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["byteCount", "objectId", "workId"],
+      "properties": {
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
+        "objectId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "finalizeObject": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "finalizeObject" }, "payload": { "$ref": "#/$defs/finalizeObjectPayload" } } }
+      ]
+    },
+    "finalizeObjectPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["byteCount", "objectId", "uploadId", "workId"],
+      "properties": {
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
+        "objectId": { "$ref": "#/$defs/digest" }, "uploadId": { "$ref": "#/$defs/uuid" },
+        "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "registerSnapshot": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "registerSnapshot" }, "payload": { "$ref": "#/$defs/registerSnapshotPayload" } } }
+      ]
+    },
+    "registerSnapshotPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifestBase64URL", "manifestBytesDigest", "snapshotId", "workId"],
+      "properties": {
+        "manifestBase64URL": { "$ref": "#/$defs/base64URL", "maxLength": 22369624 },
+        "manifestBytesDigest": { "$ref": "#/$defs/digest" },
+        "snapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "publish": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "publish" }, "payload": { "$ref": "#/$defs/publishPayload" } } }
+      ]
+    },
+    "publishPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateSnapshotId", "expectedRemoteHead", "workId"],
+      "properties": {
+        "candidateSnapshotId": { "$ref": "#/$defs/digest" }, "expectedRemoteHead": { "$ref": "#/$defs/head" },
+        "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "resolveDevice": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "resolveDevice" }, "payload": { "$ref": "#/$defs/resolveDevicePayload" } } }
+      ]
+    },
+    "resolveDevicePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "conflictRevision", "decisionSnapshotId", "expectedRemoteHead", "localCandidateSnapshotId", "workId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "decisionSnapshotId": { "$ref": "#/$defs/digest" }, "expectedRemoteHead": { "$ref": "#/$defs/head" },
+        "localCandidateSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "resolveServer": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "resolveServer" }, "payload": { "$ref": "#/$defs/resolveServerPayload" } } }
+      ]
+    },
+    "resolveServerPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "conflictRevision", "expectedCurrentSnapshotId", "expectedLocalGeneration", "preAdoptionSnapshotId", "remoteSnapshotId", "workId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "expectedCurrentSnapshotId": { "$ref": "#/$defs/digest" }, "expectedLocalGeneration": { "$ref": "#/$defs/generation" },
+        "preAdoptionSnapshotId": { "$ref": "#/$defs/digest" }, "remoteSnapshotId": { "$ref": "#/$defs/digest" },
+        "workId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "cloneWork": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "cloneWork" }, "payload": { "$ref": "#/$defs/cloneWorkPayload" } } }
+      ]
+    },
+    "cloneWorkPayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conflictId", "conflictRevision", "expectedOriginalHead", "localCandidateSnapshotId", "newDocumentId", "newRootSnapshotId", "newWorkId", "sourceWorkId"],
+      "properties": {
+        "conflictId": { "$ref": "#/$defs/uuid" }, "conflictRevision": { "$ref": "#/$defs/generation" },
+        "expectedOriginalHead": { "$ref": "#/$defs/head" }, "localCandidateSnapshotId": { "$ref": "#/$defs/digest" },
+        "newDocumentId": { "$ref": "#/$defs/uuid" }, "newRootSnapshotId": { "$ref": "#/$defs/digest" },
+        "newWorkId": { "$ref": "#/$defs/uuid" }, "sourceWorkId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "restore": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "properties": { "commandKind": { "const": "restore" }, "payload": { "$ref": "#/$defs/restorePayload" } } }
+      ]
+    },
+    "restorePayload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expectedCurrentSnapshotId", "expectedLocalGeneration", "expectedRemoteHead", "newSnapshotId", "selectedSnapshotId", "workId"],
+      "properties": {
+        "expectedCurrentSnapshotId": { "$ref": "#/$defs/digest" }, "expectedLocalGeneration": { "$ref": "#/$defs/generation" },
+        "expectedRemoteHead": { "$ref": "#/$defs/head" }, "newSnapshotId": { "$ref": "#/$defs/digest" },
+        "selectedSnapshotId": { "$ref": "#/$defs/digest" }, "workId": { "$ref": "#/$defs/uuid" }
+      }
+    }
+  }
+}

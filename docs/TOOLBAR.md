@@ -1,244 +1,87 @@
-# Workbench 上部ツールバー設計
+# macOS Workbenchツールバー
 
-> **UI-POL-4反映済み:** section固有の追加操作はOutline上へ固定し、執筆Outlineの章追加とEditorの話追加を分離した(D-035)。
+一段のnative toolbarから現在の作品操作へ到達でき、本文の面積と標準のカスタマイズを保つ。見た目は [STYLE.md](STYLE.md)、保存・同期の意味は [Snapshot Sync v2](SNAPSHOT_SYNC_V2.md) に従う。
 
-> **実装済み**: toolbar item 起点のpopover、スナップショット一覧、プロットカード内容表示、Chapter / Episode 階層後の「話メモ」への移行、セクション別追加操作は UI-FIX-4 / UI-FIX-5 で実装した。列方針はUI-REF-3で更新済みで、今後は [PHASE5.md](PHASE5.md) を正とする。
+## 1. 現在の所有者と状態
 
-**状態: Toolbar-1 / Toolbar-2 / UI-FIX-4 / UI-FIX-5 / UI-REF-1〜6 / UI-POL-4 / Phase 5書き出し入口まで完了。** 上部 chrome、Toolbar起点のpopover、セクション別の追加操作は実装済み。未実装AIの入口はD-040で撤去し、次はPackage Validator Gateへ進む。
+[`NovelWorkbenchView`](../NovelApp/Features/Writing/NovelWorkbenchView.swift)のdetailが`.toolbar(id: "novelwriter.workbench.v8")`を所有し、[`WorkbenchToolbarContent`](../NovelApp/Features/Writing/WorkbenchToolbarContent.swift)が項目を作る。Outlineの章追加・話追加・話名変更などは同ファイルの`WorkbenchOutlineToolbarContent`からcontent列へ提供する。各列のscopeを保つことでOSがSidebar／Outline両方のtracking separatorを作る。独立した二本目のtoolbarや保存・同期処理を作らない。`EditorSearchSession`やpopoverの表示はwindow内の一時状態とし、作品へ保存しない。
 
-本書は、Project Sidebar / Outline / Editor の上部を、macOS の「メモ」に近い一体型ツールバーへ再構成する設計書である。全体方針は [DESIGN.md](DESIGN.md)、決定は [DECISIONS.md](DECISIONS.md) D-024、見た目は [STYLE.md](STYLE.md) を正とする。
-
-## 1. 目的
-
-- ウィンドウ最上部を一段にまとめ、本文領域の縦幅を増やす
-- Project Sidebar / Outline / Editor の役割を、上部の情報と操作から直感的に把握できるようにする
-- 章／話追加、話メモ、スナップショット、話内検索など、執筆中に頻繁に使う操作を近くへ置く
-- macOS 標準のツールバーカスタマイズを使い、編集操作をユーザーごとに並べ替え・追加・削除できるようにする
-
-この刷新で、現在の `EditorTopBarView` と、その下へ展開する2段目の `SearchBar` は廃止する。Editor の local 保存／同期状態は上部 native toolbar の小さな記号を正とし、下部 status bar と重複表示しない(D-060 / D-068 / D-073)。選択中の章名は Outline の選択行を正とし、上部で重複表示しない。結線済み作品では「iCloudと同期」を toolbar に出し、自動保存では iCloud へ送らない。
+`AppState+SnapshotSyncV2`、`ExplicitSyncButton`、`WorkbenchSyncStatus`へ接続している。
 
 ## 2. 既定レイアウト
 
-```text
-┌ Project Sidebar ┬ Outline ┬ Editor / Detail ──────────────────────────────┐
-│ [Sidebar切替]    │ 作品名   │ [話を追加] [話メモ][履歴][カード] [話内を検索     ] │
-│                  │ 12章     │                                                   │
-└──────────────────┴──────────┴───────────────────────────────────────────────────┘
-```
+- Sidebar上: 標準開閉。作品一覧へ戻る入口は移動可能な通常項目としてdetail側へ置く。IME確定・端末保存に成功してから一覧を開き、編集windowを閉じる。
+- Outline上: そのsection固有の章／人物／ノート／資料追加。作品名はOutline上に置かず、本文領域上端の見出しとして表示する。
+- 執筆のOutline上: 章追加、話追加、話名変更の順。Editor上: 作品一覧、可変余白、話メモ、履歴、保存して同期、書き出し、プロットカード、話内検索、右端にAI支援。
+- 同期操作と状態を一つのボタンへまとめ、「同期中」「同期済み」「通信待ち」「同期失敗」等を文字で示す。端末内作品や未確認の状態を同期済みと表示しない。
+- 保存・同期状態を下部へ重複させず、選択章名はOutlineで示す。
 
-図は**初期配置**を示す。ユーザーが編集操作を並べ替えた後も、Sidebar 切替、Outline の作品情報、右端の検索は構造上のアンカーとして残す。
+幅不足は標準overflowと列幅調整で扱い、独自の二段目toolbarやoverflowを作らない。同期前の確認表示は`NovelWorkbenchView`側で所有し、overflow内のボタンを表示元にしない。
 
-macOS が toolbar item の厳密な座標を決めるため、「各ペインの意味的な領域に載ること」を要件とし、参照画像とのピクセル単位の一致は求めない。特に macOS 14 では作品名 + 章数が Outline の上へ収まることを実機確認し、ずれた場合も AppKit bridge ではなく `navigationTitle` / `navigationSubtitle` の標準配置を優先する。
+作品一覧とWorkbenchは標準unified toolbar styleを使う。SidebarとOutlineの区切りはnativeの追従に任せ、項目に必要な幅を下回ると独立した区切りになり、余裕が戻ると再び列境界へ追従する。本文背景のドラッグ判定は変更しない。
 
-### Project Sidebar 上部
+## 3. 現行項目とstable ID
 
-- macOS 標準の Sidebar 表示／非表示ボタンを置く
-- ボタンは Project Sidebar の復帰手段なので削除不可とする
-- メニューバーの「表示」からも同じ操作へ到達できるようにする
-- 独自の開閉アニメーションや独自アイコンは作らず、`NavigationSplitView` の標準挙動を使う
+| ID | 操作 | 配置・カスタマイズ |
+| --- | --- | --- |
+| `workbench.library` | 保存して作品一覧へ戻り、編集windowを閉じる | 移動・削除可 |
+| `workbench.episode.add` | 選択章へ話を追加 | 執筆時、移動・削除可 |
+| `workbench.snapshot.sync` | 状態を文字表示し、クリックで保存・同期。競合時は確認画面 | 全section、移動・削除可。macOS 26.1以降は表示優先度high |
+| `workbench.episode.rename` | 選択中の話の名前を変更 | 執筆時、移動・削除可 |
+| `workbench.writing.assistant` | AI支援右パネル開閉 | 執筆時、移動・削除可 |
+| `workbench.chapter.memo` | 話メモpopover | 移動・削除可 |
+| `workbench.snapshot.save` | スナップショット保存・履歴 | 移動・削除可 |
+| `workbench.export` | 書き出す… | 移動・削除可 |
+| `workbench.plot.card.rail` | 選択章のプロットカード参照pane | 移動・削除可 |
+| `workbench.chapter.add` | 章追加 | 執筆／プロット時、移動・削除可 |
+| `workbench.character.add` | 人物追加 | 人物section、移動・削除可 |
+| `workbench.world.note.add` | 世界観ノート追加 | 世界観section、移動・削除可 |
+| `workbench.plot.card.add` | プロットカード追加 | プロットsection、移動・削除可 |
+| `workbench.attachment.add` | 資料取込 | 資料section、移動・削除可 |
 
-### Outline 上部
-
-- 1行目: 現在の作品名。長い場合は1行で末尾省略する
-- 2行目: `12章` の形式で章数を表示する。数値は `.monospacedDigit()` を使う
-- 作品名と章数は現在地を示す固定情報であり、カスタマイズ対象にしない
-- 作品タイトルが空の場合は、モデルを変更せず表示だけ `無題の作品` とする
-
-### Editor 上部
-
-- 一段だけの操作列とし、本文の上に独自バーや展開式検索行を追加しない
-- 既定ではEditor左端に「話を追加」、中央にクラウド同期・話メモ・スナップショット・書き出し・プロットカード参照、右端に話内検索を置く。プロットカード参照は右側から開くスライド式ペインで、選択中の章のカードを表示する。プロットカード参照を含む編集操作はツールバーのカスタマイズで並べ替え・削除できる。Outline固有の追加操作はOutline上の固定項目として表示する
-- 操作はアイコン中心とし、アクセシビリティラベルと `.help` を必ず付ける
-- ボタンの背景、角丸、影は独自に作らず、ネイティブ toolbar の外観へ委ねる
-
-## 3. ツールバー項目
-
-| ID | 表示名 | 既定 | カスタマイズ | 動作 |
-| --- | --- | --- | --- | --- |
-| System sidebar toggle | Sidebarを表示／非表示 | 表示 | 固定 | Project Sidebar を開閉 |
-| Outline identity | 作品名 + `N章` | 表示 | 固定 | 情報表示のみ |
-| `workbench.chapter.add` | 章を追加 | 執筆・プロット時のみ表示 | 固定 | `AppState.addChapter()` |
-| `workbench.episode.add` | 話を追加 | 執筆時のみ表示 | 固定・Editor左端 | `AppState.addEpisode()` |
-| `workbench.plot.card.rail` | プロットカード | 執筆時のみ表示 | 移動・削除可 | 選択中の章のカードを右側のスライド式ペインに表示 |
-| `workbench.device.sync.status` | クラウド同期 | 執筆時のみ表示 | 固定・話メモの左 | 保存・iCloud同期・オフライン・統合必要の状態を表示 |
-| `workbench.cloud.publish` | iCloudに保存 | 未公開のlocal-only／localPendingかつsigned-inのときだけ表示 | 固定・同期状態の右 | 検証済みlocal packageを現在のiCloud accountへ明示保存する。Fileメニューにも同じ項目がある |
-| `workbench.cloud.sync` | iCloudと同期 | iCloudへ結んだ執筆中だけ表示 | 固定・「iCloudに保存」の右 | 端末へ保存済みの変更をiCloudへ送り、他端末の更新を取り込む。Fileメニューの`Cmd+S`と同じ。自動保存では送らない |
-| `workbench.chapter.memo` | 話メモ | 表示 | 移動・削除可 | 選択話のメモを popover で編集 |
-| `workbench.snapshot.save` | スナップショット | 表示 | 移動・削除可 | 保存・一覧・Finder表示・確認付き復元のpopover |
-| `workbench.export` | 書き出す… | 執筆時のみ表示 | 移動・削除可 | TXT / Markdown / EPUBの形式選択と保存パネルを開く |
-| `workbench.character.add` | 登場人物を追加 | 登場人物セクション時のみ表示 | 固定・Outline上 | `AppState.addCharacter()` |
-| `workbench.world.note.add` | ノートを追加 | 世界観セクション時のみ表示 | 固定・Outline上 | `AppState.addWorldNote()` |
-| `workbench.plot.card.add` | プロットカードを追加 | プロットセクション時のみ表示 | 移動・削除可 | 選択中の章または未割り当てへ追加 |
-| `workbench.attachment.add` | 資料を取り込む | 資料セクション時のみ表示 | 固定・Outline上 | 資料のfileImporterを開く |
-| `workbench.preview` | プレビュー | 未実装中は非表示 | 実装後に移動・削除可 | 将来のプレビュー |
-| Editor search | 話内を検索 | 表示 | 右端固定 | 選択話の本文検索 |
-
-`ToolbarItem` の ID はリリースをまたいで不変にする。作品名、章ID、配列位置などの動的な値を ID に使わない。クラウド同期を編集操作列へ追加し、プロットカード参照を編集操作としてカスタマイズ可能にした現在の toolbar ID は `novelwriter.workbench.v7` とする。既存のv6カスタマイズは新しい既定配置へ移行する。
-
-旧設計の`workbench.ai.toggle`と`Cmd+J`はD-040で撤去済みであり、別機能へIDやショートカットを再利用しない。AIを実装する場合は、プライバシーと送信同意を含む新しい製品契約を先に定義する。
+話内検索は`workbench.search`の通常項目内にnative NSSearchFieldを置き、移動・削除できる。system sidebar toggleは標準項目。IDへ作品名・entity ID・配列位置を埋め込まず、単なる改名で変更しない。D-089のAI支援toggleは`workbench.writing.assistant`とCmd+Jを使用する。
 
 ## 4. カスタマイズ方針
 
-macOS 14 で利用できる SwiftUI の `.toolbar(id:)` と個別の `ToolbarItem(id:)` を使う。
+個別`ToolbarItem(id:)`で独立した移動／削除を許し、複数操作を一つのgroupへまとめない。OSの`ToolbarCommands()`と標準context menuを使用し、順序を`NovelDocument`、package、同期データへ保存しない。
 
-- 編集操作は既定の customization behavior とし、ユーザーが追加・削除・並べ替えできるようにする
-- Sidebar 切替と Outline identity は構造を保つため固定する
-- 検索は `.searchable(..., placement: .toolbar)` による標準の右端配置・フォーカス挙動を優先し、v1 では固定する
-- 「自由な並べ替え」は、macOS 標準のカスタマイズ領域内での移動を意味する。任意座標への配置ではない
-- 全項目の自由移動と、各項目を常に特定ペインの真上へ固定することは両立しない。固定アンカーと編集操作を分けることで解決する
-- 各操作を独立して消せるよう、複数操作を1つの `ToolbarItemGroup` や1つの `ControlGroup` にまとめない
-- SwiftUI / macOS がカスタマイズ結果を管理する。`NovelDocument`、`.novelpkg`、`AppState` にツールバー順序を保存しない
+アプリ固有の操作は全て通常項目として移動・削除を許す。Sidebar開閉、列区切りなどOSが管理する構造は標準の制約に従う。選択不足は必要な操作をdisabledにし、stable IDを作り直さない。未実装機能はdisabled placeholderで出さない。
 
-Scene には `ToolbarCommands()` を追加し、メニューの「ツールバーをカスタマイズ…」と Control-click の標準導線を有効にする。SwiftUI に公開された任意の reset API はないため、独自の「初期配置に戻す」は v1 の非目標とする。
+## 5. ツールバー外の入口
 
-## 5. ツールバーを唯一の入口にしない
-
-macOS ではツールバー自体を非表示にでき、項目も削除できる。すべての操作にメニューバーまたは既存の文脈メニューから到達できるようにする。
-
-| 操作 | ツールバー外の入口 |
-| --- | --- |
-| Sidebar 表示／非表示 | 表示メニュー / `SidebarCommands()` |
-| 章を追加 | 章メニュー + キーボードショートカット |
-| 話メモ | 章メニュー / Outline 話行の文脈メニュー |
-| スナップショットを保存 | File メニューの既存コマンド |
-| 書き出す… | File メニュー |
-| 登場人物を追加 | 登場人物メニュー |
-| プロットカードを追加 | プロットメニュー |
-| 資料を取り込む | 資料メニュー（どのセクションからでも資料へ切り替えて importer を開く） |
-| ノートを追加 | 世界観メニュー |
-| 話内検索 | 編集 > 検索 / Cmd+F |
-
-ツールバーから項目を削除しても機能そのものは無効にならない。
+toolbar非表示・項目削除後も、章・人物・世界観・プロット・資料の各menu、Fileの保存／履歴／書き出し、話行context menu、編集menuの検索から同じ操作へ到達できること。追加する操作は既存のcommand境界へ接続し、同じ機能の保存やsession検査を二重実装しない。
 
 ## 6. 検索
 
-### 話内検索
+話内検索は現在の話本文だけが対象。標準toolbar検索欄を使い、Cmd+Fでfocus、Return／Cmd+Gで次、Shift+Cmd+Gで前へ進む。話切替で結果カーソルをresetする。Outlineにfocusがある場合はCmd+FをOutline絞り込みへ送り、queryを共有しない。
 
-- 右端に `話内を検索` の prompt を持つ、幅広い標準検索欄を常設する
-- 既定幅は 320pt を目安とし、最小 240pt、余裕がある場合は 440pt 程度まで広げる
-- Cmd+F で検索欄へフォーカスする
-- Return で次を検索、Cmd+G で次、Shift+Cmd+G で前を検索する
-- Esc はまず検索フォーカスを外す。空欄時は本文へフォーカスを戻す
-- 検索対象は現在選択中の話本文。話切り替え時は結果カーソルをリセットする
-- 該当なしは検索欄に隣接する一時表示またはアクセシビリティ通知で伝え、上部を2段に増やさない
+検索欄は最小160pt、目安260pt、最大320pt。該当なしは一時表示やaccessibility通知で示し、toolbarを二段にしない。
 
-### Outline 検索との競合回避
+## 7. 操作の安全境界
 
-現在は Outline と Editor の両方が Cmd+F を持つ。実装時は focused scene value / focused command を使い、次の優先順位へ統一する。
+- ⌘Sは「保存して同期」。入力確定→local checkpoint→明示同期要求と進み、変更がない場合もremote確認を要求する。端末内だけの作品は保存に留め、アカウント追加やログインを自動で始めない。認証操作中でもlocal保存は維持する。
+- 同期結果はapplicationの状態変更通知をWorkbenchが購読して反映する。購読は作品session／account切替やwindow終了時に取り直し／解除し、overflow内ボタンへ所有させない。remote workerをUI待機にしない。
+- 競合確認・履歴・メモの対象は表示時のWorkID／sessionを固定する。操作中の作品切替後に対象を読み替えない。
+- remote内容をtoolbar callbackからEditorへ直接書かない。IME、本文所有権、世代検査を既存application境界へ委ねる。
+- package内snapshotやFinder表示へfallbackしない。履歴・restoreはv2で扱い、restore前に現在版を保全する。
+- exportはcommitted内容から生成し、active WorkIDや保存の正本を変更しない。
 
-1. Outline にフォーカスがある場合: Outline 絞り込み
-2. Editor またはその他にフォーカスがある場合: 話内検索
+## 8. 変更時の完了条件
 
-Outline の上方向スクロールによる検索表示は維持できるが、話内検索欄とは別状態・別 query とする。
+変更した項目について、既定配置、削除・再配置・再起動、狭幅overflow、menu代替、keyboard／VoiceOverを確認する。検索変更ではfocus分岐、選択／話切替を、保存・履歴変更ではsessionと失敗時保全を確認する。本文操作を変えた場合はIMEとUndoの回帰も確認する。
 
-## 7. 幅が狭い場合
+## 9. 作品一覧・名前変更・プロット参照
 
-- toolbar の高さはシステムに任せ、独自の固定高さを設定しない
-- Editor の最小可読幅を最優先する
-- 幅不足時は、低頻度の編集操作を macOS 標準の overflow へ送る。独自の `…` overflow は作らない
-- 検索欄は最小幅まで縮み、その後も Sidebar 切替と検索を優先する
-- Outline は STYLE.md の最小 224pt まで縮める
-- さらに狭い場合は Project Sidebar を閉じ、Outline + Editor の2列を維持する
-- 作品名は省略しても章数は読めるようにする
+作品一覧を起動sceneとする。open・新規・Importが成功したら編集windowを開いて一覧windowを閉じ、失敗したら現在のwindowを保つ。「作品一覧…」はtoolbarと同じ入力確定・保存境界を通る。
 
-## 8. View と状態の境界
+端末内作品の保存は同じWorkIDへの保存だけ。同期用コピーは右クリックの「同期用のコピーを作成…」で明示し、通常保存やCmd+Sで作品数を増やさない。
 
-目標の View 階層は次のとおり。
+執筆画面下部は横並びのプロットカードだけを表示し、専用見出し・区切り・閉じるボタンは置かない。開閉は既存toolbarから行う。プロット編集画面の右detailは上段カード／下段伏線とし、執筆下部に伏線を置かない。
 
-```text
-WindowGroup
-└── ContentView
-    └── NovelWorkbenchView
-        ├── NavigationSplitView
-        │   ├── ProjectSidebarView
-        │   ├── OutlineContainerView / Section Outline
-        │   └── EditorPaneView / Section Detail
-        └── WorkbenchToolbarContent
-            ├── fixed navigation / identity
-            ├── customizable editor commands
-            └── editor search
-```
+話名はtoolbarと話行のcontext menuから変更でき、既存の一覧内編集も維持する。dialogはpane側で所有し、overflowへ閉じ込めない。作品名は一覧のcontext menuから変更する。両者とも空白だけの名前を拒否し、取得元session/accountと対象の存在を確認してmetadataをSQLiteへ保存する。本文・選択・Editor世代を変えない。remote-only作品名変更は必要な取得後に行い、networkをdocument gate内で待たない。
 
-- Outlineを持つセクションは二重の `HSplitView` を3列の `NavigationSplitView` へ寄せ、作品情報・設定はSidebar + Detailの2列 `NavigationSplitView` とする。いずれも標準 Sidebar toggle と列に追従する上部 chrome を得る
-- toolbar の所有者は `NovelWorkbenchView` の一箇所だけにする。各ペインから `.toolbar` を追加してマージさせない
-- `WorkbenchToolbarContent` は NovelApp 内に置き、AppState の既存操作へ接続する。EditorKit を toolbar 都合で変更しない
-- 現在 `EditorPaneView` が持つ query、検索位置、該当なし状態、`EditorSelectionRequest` を、ウィンドウ単位の `EditorSearchSession` へ抽出する
-- `EditorSearchSession` は表示用の一時状態であり、`NovelDocument` や保存形式へ追加しない
-- 話メモ popover と「この章」メニューは小さい独立 View とし、toolbar content を肥大化させない
-- 選択中の章／話がない場合、依存操作は表示したまま disabled にする。選択欠如だけで stable ID を消したり作り直したりしない
-- 章・登場人物・ノート・資料の追加ボタンは対象セクション表示中だけOutline上へ固定表示し、カード・話追加など本文側の操作はEditor上へ置く。メニューバー fallback は常時維持する
+native toolbarの配置は端末UserDefaultsへsection別に保持し、window再構築後に復元する。検索を削除した場合は本文側Cmd+Fで再追加してfocusする。検索先は実際にfocusがあるViewの`focusedValue`で決め、複数列の`focusedSceneValue`で競合させない。配置・検索語は作品へ同期しない。
 
-`NavigationSplitView` 化は toolbar の見た目だけでなく、人物・プロット・単一 detail セクションの列方針にも影響する。実装前に各 `ProjectSection` の content/detail 対応を固定し、`NavigationSplitView` を入れ子にしない。
+## AI支援の幅
 
-| ProjectSection | Content / Outline 列 | Detail 列 |
-| --- | --- | --- |
-| 執筆 | 章・将来のシーン | 本文 Editor |
-| 登場人物 | 人物一覧 | 人物シート |
-| プロット | カード／伏線のナビゲータ | ボードまたは選択項目の詳細 |
-| 資料 | 添付一覧 | 選択資料の情報／Preview |
-| 世界観 | ノート一覧 | タイトル + 本文 Editor |
-| 作品情報・設定 | なし（Sidebar + Detailの2列） | 現在の section surface |
-
-世界観は Outline 上の固定「ノートを追加」で追加する。作品情報・設定は Outline を持たない。Toolbar-1 で新しい保存モデルや機能を追加しない。
-
-## 9. 非目標
-
-- ツールバー順序を作品ごとに保存する
-- 任意座標へのドラッグ配置
-- Sidebar toggle、Outline identity、検索欄の削除
-- 独自 toolbar カスタマイズ画面
-- AppKit の `NSToolbar` / `NSTrackingSeparatorToolbarItem` を直接操作するブリッジ
-- macOS 26 以降だけで使える `ToolbarSpacer` 等への最低対応引き上げ
-- プレビュー、スナップショット復元、AI通信など、入口の先にある未実装機能の同時実装
-
-## 10. 実装順
-
-実装は次の2サブフェーズに分け、**1サブフェーズ = 1ブランチ = 1PR**、スタックPR禁止とする。Toolbar-1 / Toolbar-2 は完了。
-
-### Toolbar-1: 3列ワークベンチ基盤【完了】
-
-- [x] root を3列 `NavigationSplitView` へ移行する
-- [x] Project Sidebar の標準開閉と、Outline の作品名 + 章数を成立させる
-- [x] 各 `ProjectSection` の content/detail 方針を整理し、既存の人物・プロット View の split view 入れ子を解消する
-- [x] 既存の `EditorTopBarView` はこの段階では残し、機能導線を失わない
-
-**完了条件:** 全セクションへ到達でき、列幅・Sidebar 開閉・章選択・本文編集が維持される。狭いウィンドウでも Editor の最小幅を守る。
-
-**実装メモ**: `NovelWorkbenchView` を `NavigationSplitView`へ再構成。執筆は Outline / Editor、登場人物は一覧 / シート、プロットは伏線ナビゲータ / ボード、資料は一覧 / 詳細、その他は概要 / section surface。`SidebarCommands()` を追加し、人物・プロットの入れ子 split を撤去した。当初の下部AI PanelはD-040で非展開型status barへ置き換えた。
-
-### Toolbar-2: 一段ツールバー + カスタマイズ【完了】
-
-- [x] `WorkbenchToolbarContent` と stable ID を追加する
-- [x] 章追加、メモ、スナップショット、この章、検索を native toolbar へ移す
-- [x] `EditorTopBarView` と展開式の2段目検索を撤去する
-- [x] `ToolbarCommands()` と全操作のメニューバー fallback を追加する
-- [x] カスタマイズ配置の再起動保持、overflow、Cmd+F のフォーカス分岐を確認する
-
-**完了条件:** 初期配置が本書の図と一致し、編集操作を個別に移動・削除・再追加できる。toolbar を非表示にしても全機能へ到達できる。
-
-**実装メモ**: `EditorSearchSession` をウィンドウ単位で抽出し、`.searchable(placement: .toolbar)` で右端検索。章メニュー / File のスナップショット復元 / Outline 文脈メニューを fallback に。`ToolbarCommands()` でカスタマイズ導線を有効化。
-
-Toolbar-1 を main にマージしてから Toolbar-2 のブランチを切る、という順序は守った。
-
-## 11. 手動確認
-
-- Project Sidebar toggle が Sidebar の上にあり、表示／非表示／再表示できる
-- Outline 上に作品名と正しい章数が表示され、追加・削除で即更新される
-- Editor 上部が一段だけで、検索欄が右端に十分な幅で表示される
-- 章／話追加、話メモ、スナップショット、「この章」が既存どおり動く
-- ツールバーのカスタマイズ画面で、各編集操作を独立して移動・削除・再追加できる
-- カスタマイズ後にアプリを再起動して配置が維持される
-- toolbar を非表示にしてもメニューとショートカットから全操作へ到達できる
-- Outline / Editor の Cmd+F がフォーカスに応じて正しく分岐する
-- ウィンドウを狭めた時にシステム overflow が働き、本文が不必要に潰れない
-- ダーク外観でセマンティック素材、標準 focus ring、VoiceOver ラベルが壊れていない
-- 日本語IME、自動字下げ、Undo、話切り替え時だけの本文反映(D-005 / D-028)に回帰がない
-
-## 参考
-
-- [Apple: Toolbars — Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/toolbars)
-- [Apple: `toolbar(id:content:)`](https://developer.apple.com/documentation/swiftui/view/toolbar%28id%3Acontent%3A%29)
-- [Apple: `ToolbarCustomizationBehavior`](https://developer.apple.com/documentation/swiftui/toolbarcustomizationbehavior)
-- [Apple: `defaultCustomization(_:options:)`](https://developer.apple.com/documentation/swiftui/customizabletoolbarcontent/defaultcustomization%28_%3Aoptions%3A%29)
-- [Apple: Adding a search interface](https://developer.apple.com/documentation/swiftui/adding-a-search-interface-to-your-app)
-- [Apple: WWDC22 Compose custom layouts with SwiftUI](https://developer.apple.com/videos/play/wwdc2022/110343/)
+右側のAI支援パネルは左端の境界を左右へドラッグして幅を変更できる。既定360pt、最小300pt、最大720ptかつウインドウ幅の45%を目安に制限し、本文側の表示領域を残す。幅は端末設定に保存し、パネルを閉じて開き直した場合やアプリ再起動後も引き継ぐ。VoiceOverの調整操作にも対応する。

@@ -9,26 +9,15 @@ extension NovelpkgRepository {
     ) throws -> [Chapter] {
         let episodesURL = packageURL.appendingPathComponent(episodesDirectoryName, isDirectory: true)
         let episodeNotesURL = packageURL.appendingPathComponent(episodeNotesDirectoryName, isDirectory: true)
-        let chaptersURL = packageURL.appendingPathComponent(chaptersDirectoryName, isDirectory: true)
-        let notesURL = packageURL.appendingPathComponent(notesDirectoryName, isDirectory: true)
-
         return try manifest.chapters.map { entry in
-            let episodeEntries = entry.episodes ?? [
-                NovelpkgManifest.EpisodeEntry(id: entry.id, title: Episode.defaultTitle)
-            ]
-            let isLegacyChapter = entry.episodes == nil
-            let contentDirectoryURL = isLegacyChapter ? chaptersURL : episodesURL
-            let memoDirectoryURL = isLegacyChapter ? notesURL : episodeNotesURL
-            let contentDirectoryName = isLegacyChapter ? chaptersDirectoryName : episodesDirectoryName
-            let memoDirectoryName = isLegacyChapter ? notesDirectoryName : episodeNotesDirectoryName
             let payloadDirectories = EpisodePayloadDirectories(
-                contentURL: contentDirectoryURL,
-                memoURL: memoDirectoryURL,
-                contentName: contentDirectoryName,
-                memoName: memoDirectoryName
+                contentURL: episodesURL,
+                memoURL: episodeNotesURL,
+                contentName: episodesDirectoryName,
+                memoName: episodeNotesDirectoryName
             )
 
-            let episodes = try episodeEntries.map { episodeEntry in
+            let episodes = try entry.episodes.map { episodeEntry in
                 try readEpisode(
                     entry: episodeEntry,
                     packageURL: packageURL,

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:entity:plot-card",
+  "type": "object", "additionalProperties": false,
+  "required": ["chapterId", "id", "memo", "title"],
+  "properties": {
+    "chapterId": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "id": { "$ref": "#/$defs/uuid" }, "memo": { "type": "string", "maxLength": 1048576 },
+    "title": { "type": "string", "maxLength": 1048576 }
+  },
+  "$defs": { "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" } }
+}

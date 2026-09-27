@@ -13,11 +13,12 @@ struct FlagSectionView: View {
     var body: some View {
         HSplitView {
             FlagListView(flagPendingDeletion: $flagPendingDeletion)
-                .frame(minWidth: 240, idealWidth: 280)
+                .frame(minWidth: 240, idealWidth: 280, maxHeight: .infinity)
 
             FlagDetailView(onChapterJump: onChapterJump)
-                .frame(minWidth: 280, idealWidth: 360)
+                .frame(minWidth: 280, idealWidth: 360, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog(
             "伏線を削除しますか？",
             isPresented: flagDeletionDialogIsPresented,
@@ -260,7 +261,15 @@ private struct FlagEditor: View {
     let onCommit: () -> Void
 
     var body: some View {
-        Form {
+        ViewThatFits(in: .vertical) {
+            editorContent
+            ScrollView { editorContent }
+        }
+        .onDisappear(perform: onCommit)
+    }
+
+    private var editorContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
             TextField("タイトル", text: $title)
                 .onSubmit(onCommit)
 
@@ -307,12 +316,11 @@ private struct FlagEditor: View {
                 Text("メモ")
                     .foregroundStyle(.secondary)
                 TextEditor(text: $note)
-                    .frame(minHeight: 160)
+                    .frame(minHeight: 100, maxHeight: .infinity)
             }
         }
-        .formStyle(.grouped)
-        .padding(8)
-        .onDisappear(perform: onCommit)
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder

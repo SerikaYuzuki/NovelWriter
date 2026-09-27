@@ -8,6 +8,7 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
     case characters
     case worldbuilding
     case references
+    case feedback
     case settings
 
     var id: String {
@@ -28,6 +29,8 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
             "世界観"
         case .references:
             "資料"
+        case .feedback:
+            "感想・アドバイス"
         case .settings:
             "設定"
         }
@@ -47,6 +50,8 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
             "globe.asia.australia"
         case .references:
             "paperclip"
+        case .feedback:
+            "text.bubble"
         case .settings:
             "gearshape"
         }
@@ -66,6 +71,8 @@ enum ProjectSection: String, CaseIterable, Codable, Identifiable {
             "5"
         case .references:
             "6"
+        case .feedback:
+            "8"
         case .settings:
             "7"
         }

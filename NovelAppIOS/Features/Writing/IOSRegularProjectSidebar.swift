@@ -8,6 +8,7 @@ enum IOSRegularProjectSection: Hashable {
     case characters
     case worldbuilding
     case references
+    case feedback
     case settings
 }
 
@@ -38,6 +39,10 @@ struct IOSRegularProjectSidebar: View {
                     .tag(IOSRegularProjectSection.worldbuilding)
                     .accessibilityIdentifier("ios.ipad.project.worldbuilding")
 
+                Label("感想・アドバイス", systemImage: "text.bubble")
+                    .tag(IOSRegularProjectSection.feedback)
+                    .accessibilityIdentifier("ios.ipad.project.feedback")
+
                 Label("資料", systemImage: "paperclip")
                     .tag(IOSRegularProjectSection.references)
                     .accessibilityIdentifier("ios.ipad.project.references")
@@ -60,6 +65,9 @@ struct IOSRegularProjectSidebar: View {
                     Label("作品を書き出す…", systemImage: "square.and.arrow.up")
                 }
                 .accessibilityHint("現在の作業コピーから、共有用のnovelpkgファイルを作ります。")
+                Button("本文と資料を書き出す（ZIP）") {
+                    editorIdentityBoundary.perform { Task { await store.requestExport(readable: true) } }
+                }
             }
         }
         .listStyle(.sidebar)

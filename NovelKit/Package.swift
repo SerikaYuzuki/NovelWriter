@@ -8,19 +8,27 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
+        .library(name: "NovelWritingSupport", targets: ["NovelWritingSupport"]),
+        .library(name: "NovelWritingStore", targets: ["NovelWritingStore"]),
         .library(name: "NovelCore", targets: ["NovelCore"]),
         .library(name: "NovelStorage", targets: ["NovelStorage"]),
         .library(name: "NovelExport", targets: ["NovelExport"]),
-        .library(name: "NovelSync", targets: ["NovelSync"]),
-        .library(name: "NovelSyncLegacy", targets: ["NovelSyncLegacy"]),
-        .library(name: "NovelLibrary", targets: ["NovelLibrary"]),
-        .library(name: "NovelSyncTesting", targets: ["NovelSyncTesting"]),
-        .library(name: "NovelSyncCloudKit", targets: ["NovelSyncCloudKit"]),
+        .library(name: "NovelSyncV2", targets: ["NovelSyncV2"]),
+        .library(name: "NovelSyncV2Store", targets: ["NovelSyncV2Store"]),
+        .library(name: "NovelSyncV2Application", targets: ["NovelSyncV2Application"]),
+        .library(name: "NovelSyncV2Runtime", targets: ["NovelSyncV2Runtime"]),
+        .library(name: "NovelSyncV2PortableBridge", targets: ["NovelSyncV2PortableBridge"]),
+        .library(name: "NovelAuth", targets: ["NovelAuth"]),
+        .library(name: "NovelAuthApple", targets: ["NovelAuthApple"]),
         .library(name: "EditorKit", targets: ["EditorKit"]),
         .library(name: "NovelUI", targets: ["NovelUI"]),
         .library(name: "PreviewSupport", targets: ["PreviewSupport"])
     ],
     targets: [
+        .target(name: "NovelWritingSupport", dependencies: ["NovelCore"]),
+        .target(name: "NovelWritingStore", dependencies: ["NovelWritingSupport", "CSQLite"]),
+        .testTarget(name: "NovelWritingSupportTests", dependencies: ["NovelWritingSupport", "NovelCore"]),
+        .testTarget(name: "NovelWritingStoreTests", dependencies: ["NovelWritingStore", "NovelWritingSupport"]),
         // NovelCore: 依存なし。他モジュール・UIに依存してはならない(DESIGN.md 9.1)。
         .target(
             name: "NovelCore"
@@ -33,35 +41,51 @@ let package = Package(
             name: "NovelExport",
             dependencies: ["NovelCore"]
         ),
-        // NovelSync: OS / transport 非依存のentity同期domain。
-        // CloudKitやUI、NovelStorageを依存へ追加しない。
-        // D-059／D-061の旧revision経路は履歴として残し、D-071のNoteSyncがlive domain。
+        // OS / transport independent snapshot contracts.
         .target(
-            name: "NovelSync",
+            name: "NovelSyncV2",
             dependencies: ["NovelCore"]
         ),
-        // D-076 R5: filesystem journals for the retired Episode/Work
-        // protocols are kept in a compatibility target. The target depends
-        // on the live domain only for its public journal contracts and IDs.
         .target(
-            name: "NovelSyncLegacy",
-            dependencies: ["NovelSync", "NovelCore"]
+            name: "NovelSyncV2Store",
+            dependencies: ["NovelCore", "NovelSyncV2", "CSQLite"],
+            resources: [.process("Resources")]
         ),
-        // Shared local-library state and attestation models. Filesystem roots,
-        // CloudKit, and platform UI remain in the app adapters.
         .target(
-            name: "NovelLibrary",
-            dependencies: ["NovelCore", "NovelSync"]
+            name: "NovelSyncV2Application",
+            dependencies: ["NovelCore", "NovelSyncV2", "NovelAuth", "NovelWritingSupport"]
         ),
-        // 決定論的fake transport。製品targetからはlinkせず、同期契約testで使う。
         .target(
-            name: "NovelSyncTesting",
-            dependencies: ["NovelSync", "NovelCore"]
+            name: "NovelSyncV2Runtime",
+            dependencies: [
+                "NovelCore",
+                "NovelSyncV2",
+                "NovelSyncV2Store",
+                "NovelSyncV2Application",
+                "NovelWritingStore",
+                "NovelWritingSupport",
+                "NovelAuth"
+            ]
         ),
-        // Apple private CloudKit adapter。CloudKit型とchange tagをNovelSyncへ漏らさない。
+        // Explicit-only bridge between validated `.novelpkg` transfer and
+        // the v2 snapshot projection. The live v2 application/runtime never
+        // depends on NovelStorage, preserving SQLite as sole authority.
         .target(
-            name: "NovelSyncCloudKit",
-            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelCore"]
+            name: "NovelSyncV2PortableBridge",
+            dependencies: ["NovelCore", "NovelStorage", "NovelSyncV2"]
+        ),
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite"
+        ),
+        // Provider-neutral auth/session domain. Apple is the only v1 adapter;
+        // adding another provider must not change sync's AccountID contract.
+        .target(
+            name: "NovelAuth"
+        ),
+        .target(
+            name: "NovelAuthApple",
+            dependencies: ["NovelAuth"]
         ),
         .target(
             name: "EditorKit",
@@ -88,17 +112,31 @@ let package = Package(
             dependencies: ["NovelExport", "NovelCore"]
         ),
         .testTarget(
-            name: "NovelSyncTests",
-            dependencies: ["NovelSync", "NovelSyncLegacy", "NovelSyncTesting", "NovelCore"],
-            resources: [.process("Fixtures")]
+            name: "NovelSyncV2Tests",
+            dependencies: ["NovelSyncV2", "NovelCore"]
         ),
         .testTarget(
-            name: "NovelLibraryTests",
-            dependencies: ["NovelLibrary", "NovelCore", "NovelSync"]
+            name: "NovelSyncV2StoreTests",
+            dependencies: ["NovelSyncV2Store", "NovelSyncV2", "NovelCore", "CSQLite"]
         ),
         .testTarget(
-            name: "NovelSyncCloudKitTests",
-            dependencies: ["NovelSyncCloudKit", "NovelSync", "NovelCore"]
+            name: "NovelSyncV2ApplicationTests",
+            dependencies: [
+                "NovelSyncV2Application",
+                "NovelSyncV2Runtime",
+                "NovelSyncV2Store",
+                "NovelSyncV2",
+                "NovelCore",
+                "NovelAuth"
+            ]
+        ),
+        .testTarget(
+            name: "NovelSyncV2PortableBridgeTests",
+            dependencies: ["NovelSyncV2PortableBridge", "NovelStorage", "NovelSyncV2", "NovelCore"]
+        ),
+        .testTarget(
+            name: "NovelAuthTests",
+            dependencies: ["NovelAuth", "NovelAuthApple"]
         ),
         .testTarget(
             name: "EditorKitTests",
@@ -107,6 +145,9 @@ let package = Package(
         .testTarget(
             name: "NovelUITests",
             dependencies: ["NovelUI"]
+        ),
+        .testTarget(
+            name: "NovelAuthConformanceTests"
         )
     ]
 )

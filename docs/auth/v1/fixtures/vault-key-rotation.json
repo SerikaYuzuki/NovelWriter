@@ -1,0 +1,105 @@
+{
+  "fixtureVersion": 1,
+  "name": "auth-vault-envelope-key-rotation-and-backup-fence",
+  "envelopeV1": {
+    "algorithm": "AES-256-GCM",
+    "authenticationTagBytes": 16,
+    "dataEncryptionKeyBits": 256,
+    "nonceBytes": 12,
+    "wrappedBy": "versioned-kms-kek",
+    "aadEncoding": "domain-and-fields-as-u32be-length-prefixed-utf8"
+  },
+  "initialState": {
+    "accountAuthEpoch": 7,
+    "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+    "currentKekVersion": 1,
+    "externalIdentitySecretRows": 2,
+    "providerCredentialRows": 3,
+    "rowsReferencingKekVersion": {
+      "1": 5,
+      "2": 0
+    }
+  },
+  "steps": [
+    {
+      "action": "beginKekRewrap",
+      "id": "new-kek-is-readable-before-write",
+      "expect": {
+        "acceptedDecryptKekVersions": [
+          1,
+          2
+        ],
+        "currentWriteKekVersion": 2,
+        "oldKekDestroyable": false
+      }
+    },
+    {
+      "action": "concurrentIdentityCreateAndCredentialRefresh",
+      "id": "new-writes-use-v2-during-backfill",
+      "expect": {
+        "newExternalIdentitySecretKekVersion": 2,
+        "newProviderCredentialKekVersion": 2,
+        "rowsReferencingKekVersion": {
+          "1": 5,
+          "2": 2
+        },
+        "v1ReferenceReintroducedAfterSwitch": false
+      }
+    },
+    {
+      "action": "rewrapRowsThenProcessKill",
+      "id": "row-ledger-resumes-with-one-current-envelope",
+      "input": {
+        "rowsCommittedBeforeKill": 2
+      },
+      "expectAfterRestart": {
+        "duplicateCurrentEnvelopes": 0,
+        "plaintextWrittenToLogOrLedger": false,
+        "rowsReferencingKekVersion": {
+          "1": 0,
+          "2": 7
+        },
+        "allRowsDecryptReadBack": true
+      }
+    },
+    {
+      "action": "rotateOneCompromisedDek",
+      "id": "reencrypt-with-new-dek-nonce-and-aad",
+      "expect": {
+        "aadPurposeAndRowBindingVerified": true,
+        "newCiphertextDecryptReadBack": true,
+        "oldEnvelopeCurrent": false,
+        "rowLogicalValueUnchanged": true
+      }
+    },
+    {
+      "action": "restoreBackupWithOldKekReference",
+      "id": "old-key-retained-for-backup-window",
+      "expect": {
+        "backupDecryptReadBack": true,
+        "oldKekDestroyable": false,
+        "productionFenceChanged": false
+      }
+    },
+    {
+      "action": "finishBackupRewrapRetentionAndRestoreDrill",
+      "id": "destroy-old-key-last",
+      "expect": {
+        "accountAuthEpoch": 7,
+        "accountFence": "fence_AAAAAAAAAAAAAAAAAAAA",
+        "allCurrentAndRetainedBackupReferencesToOldKek": 0,
+        "currentRowsReferencingKekVersion2": 7,
+        "credentialGenerationStatesChanged": false,
+        "oldKekDestroyable": true,
+        "sessionsChanged": false
+      }
+    }
+  ],
+  "forbiddenOutcomes": [
+    "destroy a KEK while a current or retained backup envelope references it",
+    "reuse an AES-GCM nonce with the same DEK",
+    "move ciphertext between row or purpose AAD domains",
+    "rotate AccountAuthEpoch or AccountFence because an encryption key changed",
+    "write decrypted subject or provider token to the rotation ledger"
+  ]
+}

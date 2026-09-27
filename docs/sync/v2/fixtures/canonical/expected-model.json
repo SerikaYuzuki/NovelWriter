@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 2,
+  "workId": "00000000-0000-4000-8000-000000000002",
+  "document": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "documentCreatedAt": "2026-08-16T00:00:00Z",
+    "title": "三国志もの",
+    "synopsis": "漢末を舞台にした小説",
+    "chapters": [
+      {"id":"00000000-0000-4000-8000-000000000101","title":"第一章","episodes":[{"id":"00000000-0000-4000-8000-000000000102","title":"桃園の誓い","content":"本文です。","memo":"冒頭"}]}
+    ],
+    "characters": [
+      {"id":"00000000-0000-4000-8000-000000000103","name":"劉備","kana":"りゅうび","memo":"主人公","colorHex":"#C0392B","role":"主役","age":null,"gender":null,"firstPerson":"俺","secondPerson":null,"speechStyle":null,"appearance":null,"personality":null,"background":null}
+    ],
+    "plotCards": [
+      {"id":"00000000-0000-4000-8000-000000000104","title":"桃園","memo":"出会い","chapterId":"00000000-0000-4000-8000-000000000101"}
+    ],
+    "flags": [
+      {"id":"00000000-0000-4000-8000-000000000105","title":"伏線","note":"後で回収","isResolved":false,"plantedChapterId":"00000000-0000-4000-8000-000000000101","resolvedChapterId":null}
+    ],
+    "worldNotes": [
+      {"id":"00000000-0000-4000-8000-000000000106","title":"時代","content":"漢末の世界"}
+    ]
+  },
+  "attachments": [
+    {"attachmentId":"00000000-0000-4000-8000-000000000107","fileName":"map.txt","byteCount":3,"objectId":"60be9861750facbfad8758254a2f76c0cfe78d54459a3bc187d49b1401fcd8e8"}
+  ]
+}

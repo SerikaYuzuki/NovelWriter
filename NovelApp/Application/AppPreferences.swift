@@ -14,6 +14,7 @@ enum AppPreferenceKey {
     static let editorWidthMode = "dev.serikayuzuki.fuminiwa.editor.widthMode"
     static let editorTextColor = "dev.serikayuzuki.fuminiwa.editor.textColor"
     static let editorBackgroundColor = "dev.serikayuzuki.fuminiwa.editor.backgroundColor"
+    static let editorAnimatesCaret = "dev.serikayuzuki.fuminiwa.editor.animatesCaret"
     static let preferenceMigrationVersion = "dev.serikayuzuki.fuminiwa.preferenceMigrationVersion"
 }
 

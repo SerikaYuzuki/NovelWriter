@@ -115,7 +115,7 @@ struct OutlineChapterRow: View {
                     .monospacedDigit()
                 Text("\(presentation.characterCount)字")
                     .monospacedDigit()
-                AIClipboardPromptMenu(
+                ManuscriptCopyMenu(
                     target: .chapter(
                         chapterID: chapter.id,
                         session: expectedSession
@@ -167,7 +167,7 @@ struct OutlineEpisodeRow: View {
                 .foregroundStyle(.secondary)
             }
 
-            AIClipboardPromptMenu(
+            ManuscriptCopyMenu(
                 target: .episode(
                     episodeID: episode.id,
                     chapterID: chapterID,
@@ -193,7 +193,7 @@ struct EpisodeOutlineContextMenu: View {
         Button {
             guard isCurrentSession else { return }
             Task {
-                guard await appState.selectEpisodeAfterDeviceSyncDeparture(
+                guard await appState.selectEpisodeAfterTransition(
                     request.episode.id,
                     in: request.chapterID
                 ) else { return }
@@ -204,7 +204,7 @@ struct EpisodeOutlineContextMenu: View {
         }
         .disabled(!isCurrentSession)
 
-        AIClipboardPromptContextMenu(
+        ManuscriptCopyContextMenu(
             target: .episode(
                 episodeID: request.episode.id,
                 chapterID: request.chapterID,
@@ -220,7 +220,7 @@ struct EpisodeOutlineContextMenu: View {
                     Button(destination.title) {
                         guard isCurrentSession else { return }
                         Task {
-                            await appState.moveEpisodeAfterDeviceSyncDeparture(
+                            await appState.moveEpisodeAfterTransition(
                                 id: request.episode.id,
                                 from: request.chapterID,
                                 to: destination.id
@@ -266,7 +266,7 @@ struct ChapterOutlineContextMenu: View {
             guard isCurrentSession else { return }
             onReveal()
             Task {
-                await appState.addEpisodeAfterDeviceSyncDeparture(to: chapter.id)
+                await appState.addEpisodeAfterTransition(to: chapter.id)
             }
         } label: {
             Label("この章に話を追加", systemImage: "square.and.pencil")
@@ -276,7 +276,7 @@ struct ChapterOutlineContextMenu: View {
         Button {
             guard isCurrentSession else { return }
             Task {
-                guard await appState.selectChapterAfterDeviceSyncDeparture(chapter.id) else { return }
+                guard await appState.selectChapterAfterTransition(chapter.id) else { return }
                 NotificationCenter.default.post(name: .presentChapterMemo, object: nil)
             }
         } label: {
@@ -284,7 +284,7 @@ struct ChapterOutlineContextMenu: View {
         }
         .disabled(!isCurrentSession || chapter.episodes.isEmpty)
 
-        AIClipboardPromptContextMenu(
+        ManuscriptCopyContextMenu(
             target: .chapter(
                 chapterID: chapter.id,
                 session: chapterItem.session
@@ -298,12 +298,12 @@ struct ChapterOutlineContextMenu: View {
                 onOpenCharacter: { characterID in
                     guard isCurrentSession else { return }
                     appState.selectCharacter(characterID)
-                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.characters) }
+                    Task { await appState.selectProjectSectionAfterTransition(.characters) }
                 },
                 onOpenPlotCard: { cardID in
                     guard isCurrentSession else { return }
                     appState.selectPlotCard(cardID)
-                    Task { await appState.selectProjectSectionAfterDeviceSyncDeparture(.plot) }
+                    Task { await appState.selectProjectSectionAfterTransition(.plot) }
                 }
             )
         } label: {

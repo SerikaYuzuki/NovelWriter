@@ -2,33 +2,6 @@ import Foundation
 import NovelCore
 
 extension IOSDocumentStore {
-    var currentPrivateDocumentID: IOSPrivateDocumentID? {
-        guard startupState == .ready,
-              let privateWorkingCopyLocation,
-              let attestation = try? privateWorkingCopyLocation.attestPackage(at: documentURL) else { return nil }
-        return attestation.id
-    }
-
-    var currentDocumentSessionToken: IOSDocumentSessionToken? {
-        guard let workingCopyID = currentPrivateDocumentID else { return nil }
-        return IOSDocumentSessionToken(
-            workingCopyID: workingCopyID,
-            generation: documentSessionGeneration
-        )
-    }
-
-    var currentEpisodeEditingToken: IOSEpisodeEditingToken? {
-        guard let documentSession = currentDocumentSessionToken,
-              let selectedChapterID,
-              let selectedEpisodeID else { return nil }
-        return IOSEpisodeEditingToken(
-            documentSession: documentSession,
-            chapterID: selectedChapterID,
-            episodeID: selectedEpisodeID,
-            editorContentGeneration: editorContentGeneration
-        )
-    }
-
     // MARK: - Characters
 
     @discardableResult
@@ -278,7 +251,10 @@ extension IOSDocumentStore {
     }
 
     private var permitsProjectFeatureMutation: Bool {
-        startupState == .ready && !isDocumentTransitionInProgress
+        startupState == .ready
+            && syncV2ActiveWorkID != nil
+            && !isDocumentTransitionInProgress
+            && !syncV2AccountTransitionInProgress
     }
 
     private func isCurrentChapterID(_ id: ChapterID?) -> Bool {

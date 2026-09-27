@@ -73,7 +73,7 @@ struct IOSWorldNoteOutlineView: View {
                 EditButton()
             }
         }
-        .iosWorkChrome(store: store, accessibilityPrefix: "ios.worldbuilding.outline")
+
         .confirmationDialog(
             "世界観ノートを削除しますか？",
             isPresented: deletionRequestIsPresented,
@@ -184,7 +184,6 @@ struct IOSWorldNoteDetailView: View {
         } message: { request in
             Text(request.message)
         }
-        .iosWorkChrome(store: store, accessibilityPrefix: "ios.worldbuilding.detail")
     }
 
     private var selectedNote: WorldNote? {

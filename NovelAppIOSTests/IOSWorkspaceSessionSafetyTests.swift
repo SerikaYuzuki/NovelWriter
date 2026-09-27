@@ -109,8 +109,42 @@ struct IOSWorkspaceSessionSafetyTests {
         #expect(store.currentEpisodeEditingToken != oldToken)
     }
 
+    @Test("話名変更は本文と編集tokenを維持し、古い作品sessionを拒否する")
+    func episodeRenamePreservesEditorAndRejectsStaleSession() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let session = try #require(store.currentDocumentSessionToken)
+        let chapterID = try #require(store.selectedChapterID)
+        let episodeID = try #require(store.selectedEpisodeID)
+        let scope = store.snapshotSyncV2AccountScope
+        store.updateEpisodeContent("本文を保持", chapterID: chapterID, episodeID: episodeID)
+        let token = store.currentEpisodeEditingToken
+        store.updateEpisodeTitle("新しい話名", chapterID: chapterID, episodeID: episodeID,
+                                 expectedSession: session, expectedAccountScope: scope)
+        #expect(store.selectedEpisode?.title == "新しい話名")
+        #expect(store.selectedEpisode?.content == "本文を保持")
+        #expect(store.currentEpisodeEditingToken == token)
+        store.testServerInstanceIDOverride = "different-account-scope"
+        store.updateEpisodeTitle("古いアカウント", chapterID: chapterID, episodeID: episodeID,
+                                 expectedSession: session, expectedAccountScope: scope)
+        #expect(store.selectedEpisode?.title == "新しい話名")
+        store.testServerInstanceIDOverride = nil
+        #expect(await store.saveNow())
+        #expect(await store.makeNewDocument())
+        #expect(await store.openPrivateDocument(id: session.workingCopyID))
+        #expect(store.selectedEpisode?.title == "新しい話名")
+        store.updateEpisodeTitle("古いダイアログ", chapterID: chapterID, episodeID: episodeID,
+                                 expectedSession: session, expectedAccountScope: scope)
+        #expect(store.selectedEpisode?.title == "新しい話名")
+        store.updateEpisodeTitle("別の章", chapterID: ChapterID(), episodeID: episodeID)
+        #expect(store.selectedEpisode?.title == "新しい話名")
+    }
+
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> SessionEditorHarness {
-        let host = UIHostingController(rootView: IOSEditorPane(store: store))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds

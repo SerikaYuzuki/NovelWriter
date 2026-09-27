@@ -27,13 +27,13 @@ import NovelCore
 ///   (削除はしない)
 public struct NovelpkgRepository: AutomaticSnapshottingDocumentRepository, DocumentCopyingRepository {
     /// この実装が保存時に書き出す `manifest.json` の `formatVersion`。
-    /// 読み込みは v1 / v2 / v3 を受理する。
+    /// 読み込み・書き出しともv3のみを扱う（D-090）。
     public static let currentFormatVersion = "3"
 
-    private static let manifestFileName = "manifest.json"
+    static let manifestFileName = "manifest.json"
     static let episodesDirectoryName = "episodes"
     static let episodeNotesDirectoryName = "episode-notes"
-    // v1 / v2 の読み込みと、v3保存時に既知項目として除外するために残す。
+    // 旧形式の予約名。v3書出時に本文として再利用せず除外する。
     static let chaptersDirectoryName = "chapters"
     static let notesDirectoryName = "notes"
     /// `NovelpkgRepository+Attachments.swift` からも参照するため internal(F-D)。
@@ -114,7 +114,7 @@ extension NovelpkgRepository {
     }
 
     private static func isSupportedFormatVersion(_ formatVersion: String) -> Bool {
-        formatVersion == "1" || formatVersion == "2" || formatVersion == currentFormatVersion
+        formatVersion == currentFormatVersion
     }
 
     static func readManifest(at url: URL, fileManager: FileManager) throws -> NovelpkgManifest {
@@ -130,6 +130,11 @@ extension NovelpkgRepository {
             throw NovelpkgError.manifestCorrupted(url: url, reason: String(describing: error))
         }
 
+        struct VersionHeader: Decodable { let formatVersion: String }
+        if let header = try? JSONDecoder().decode(VersionHeader.self, from: data),
+           header.formatVersion != currentFormatVersion {
+            throw NovelpkgError.unsupportedFormatVersion(header.formatVersion)
+        }
         do {
             return try JSONDecoder().decode(NovelpkgManifest.self, from: data)
         } catch {
@@ -208,7 +213,9 @@ extension NovelpkgRepository {
         into workingURL: URL,
         contentSourceURL: URL,
         snapshotsSourceURL: URL?,
-        fileManager: FileManager
+        fileManager: FileManager,
+        createdAtOverride: String? = nil,
+        resources: [PortableResource] = []
     ) throws {
         try fileManager.createDirectory(at: workingURL, withIntermediateDirectories: true)
 
@@ -230,11 +237,13 @@ extension NovelpkgRepository {
         try writeFlags(doc.flags, into: workingURL)
         try writeSynopsis(doc.synopsis, into: workingURL)
         try writeWorldNotes(doc.worldNotes, into: workingURL, fileManager: fileManager)
+        try writePortableResources(resources, into: workingURL, fileManager: fileManager)
         try writeManifest(
             for: doc,
             into: workingURL,
             existingPackageURL: contentSourceURL,
-            fileManager: fileManager
+            fileManager: fileManager,
+            createdAtOverride: createdAtOverride
         )
     }
 
@@ -297,10 +306,12 @@ extension NovelpkgRepository {
         for doc: NovelDocument,
         into workingURL: URL,
         existingPackageURL packageURL: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        createdAtOverride: String? = nil
     ) throws {
         let now = ISO8601DateFormatter().string(from: Date())
-        let createdAt = (try? readManifest(at: packageURL, fileManager: fileManager))?.createdAt ?? now
+        let createdAt = createdAtOverride ??
+            (try? readManifest(at: packageURL, fileManager: fileManager))?.createdAt ?? now
 
         let manifest = NovelpkgManifest(
             formatVersion: currentFormatVersion,
@@ -330,6 +341,45 @@ extension NovelpkgRepository {
 
         let manifestURL = workingURL.appendingPathComponent(manifestFileName)
         try manifestData.write(to: manifestURL)
+    }
+
+    private static func writePortableResources(
+        _ resources: [PortableResource],
+        into root: URL,
+        fileManager: FileManager
+    ) throws {
+        var occupied: Set<String> = []
+        for resource in resources {
+            guard !resource.pathComponents.isEmpty,
+                  resource.pathComponents.allSatisfy({
+                      !$0.isEmpty && !$0.contains("/") && !$0.contains("\\") &&
+                          !$0.contains("\0") && $0 != "." && $0 != ".."
+                  }) else {
+                throw NovelpkgError.saveFailed(reason: "invalid portable resource path")
+            }
+            let relative = resource.pathComponents.joined(separator: "/")
+            guard occupied.insert(relative).inserted else {
+                throw NovelpkgError.saveFailed(reason: "duplicate portable resource path")
+            }
+            let destination = resource.pathComponents.reduce(root) { partial, component in
+                partial.appendingPathComponent(component, isDirectory: resource.kind == .directory)
+            }
+            if resource.kind == .directory {
+                try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+            } else {
+                guard let bytes = resource.bytes else {
+                    throw NovelpkgError.saveFailed(reason: "missing portable resource bytes")
+                }
+                try fileManager.createDirectory(
+                    at: destination.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                guard !fileManager.fileExists(atPath: destination.path) else {
+                    throw NovelpkgError.saveFailed(reason: "portable resource collides with known payload")
+                }
+                try bytes.write(to: destination, options: .atomic)
+            }
+        }
     }
 
     private static func copyUnknownRootItems(

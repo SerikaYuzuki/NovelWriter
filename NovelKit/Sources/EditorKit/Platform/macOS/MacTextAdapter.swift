@@ -37,7 +37,7 @@ struct MacTextAdapter: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+        let scrollView = AnimatedCaretTextView.scrollableTextView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
@@ -59,6 +59,7 @@ struct MacTextAdapter: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.currentChapterKey = chapterKey
 
+        context.coordinator.proofreadingOriginal = nil
         textView.string = initialText
         context.coordinator.registerCommandSurface(with: commandSession)
         // 初回mountだけは、同じsessionに残っている旧surface leaseを意図的に
@@ -104,6 +105,7 @@ struct MacTextAdapter: NSViewRepresentable {
             context.coordinator.advanceCommandSurface()
             context.coordinator.advanceAISelectionSurface()
             context.coordinator.currentChapterKey = chapterKey
+            context.coordinator.proofreadingOriginal = nil
             textView.string = initialText
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             context.coordinator.applyConfigurationIfNeeded(configuration, to: textView, force: true)
@@ -183,6 +185,7 @@ struct MacTextAdapter: NSViewRepresentable {
         var onSelectionChange: ((NSRange, EditorSurfaceToken) -> Void)?
         var selectionContextMenuCommands: [EditorSelectionContextMenuCommand] = []
         weak var textView: NSTextView?
+        var proofreadingOriginal: String?
         var currentChapterKey: AnyHashable?
         private var lastAppliedSelectionRequestID: UUID?
         private(set) var lastAppliedConfiguration: EditorConfiguration?
@@ -346,13 +349,6 @@ struct MacTextAdapter: NSViewRepresentable {
             }
         }
 
-        /// plugin / command / Undoが確定した最終本文だけをモデルへ渡す。
-        /// 通常入力向けのpipelineやR5後処理は再実行しない。
-        func notifyCommittedText(from textView: NSTextView) {
-            guard !textView.hasMarkedText(), !isApplyingPluginReplacement else { return }
-            onTextChange(textView.string)
-        }
-
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             advanceAISelectionRevision()
@@ -372,6 +368,9 @@ struct MacTextAdapter: NSViewRepresentable {
             to textView: NSTextView,
             force: Bool = false
         ) {
+            // カーソル表示の切替はIME中も安全で、本文属性の再適用を必要としない。
+            (textView as? AnimatedCaretTextView)?.motionEnabled = configuration.animatesCaret
+            lastAppliedConfiguration?.animatesCaret = configuration.animatesCaret
             let needsApply = force || lastAppliedConfiguration != configuration
 
             if textView.hasMarkedText() {
@@ -484,6 +483,8 @@ struct MacTextAdapter: NSViewRepresentable {
                 range: NSRange(location: 0, length: (textView.string as NSString).length)
             )
             textStorageAttributeApplicationCount += 1
+            // フォント変更や話のinstallを、入力による移動として補間しない。
+            (textView as? AnimatedCaretTextView)?.refreshCaret(animate: false)
         }
     }
 }
@@ -514,7 +515,11 @@ extension MacTextAdapter.Coordinator {
     }
 
     private func applyEffectiveEditability(to textView: NSTextView) {
-        textView.isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        let isEditable = desiredIsEditable && !isEditingSuspendedForDocumentTransition
+        if textView.isEditable != isEditable {
+            textView.isEditable = isEditable
+            (textView as? AnimatedCaretTextView)?.refreshCaret(animate: false)
+        }
         textView.isSelectable = true
     }
 
@@ -616,6 +621,24 @@ extension MacTextAdapter.Coordinator {
     }
 
     private func registerCommittedTextCaptureHandler(with session: EditorCommandSession) {
+        session.registerProofreadingHandler(for: commandSurfaceToken, apply: { [weak self] expected, replacement in
+            guard let self, let textView, !textView.hasMarkedText(), textView.isEditable,
+                  textView.string == expected else { return false }
+            guard expected != replacement else { return true }
+            let original = proofreadingOriginal ?? expected
+            guard applyInternalReplacement(range: NSRange(location: 0, length: (expected as NSString).length),
+                                           text: replacement, caretOffset: 0, textView: textView) else { return false }
+            proofreadingOriginal = original
+            notifyCommittedText(from: textView)
+            return true
+        }, clear: { [weak self] in
+            guard let self, proofreadingOriginal != nil,
+                  let textView, !textView.hasMarkedText() else { return }
+            // 属性がない場合のremoveAttributeもTextKit 2の再レイアウトを起こす。
+            // 通常保存では本文に触れず、手動スクロールした表示位置を保つ。
+            proofreadingOriginal = nil
+            refreshProofreadingHighlights(textView, clearing: true)
+        })
         session.registerCommittedTextCaptureHandler(for: commandSurfaceToken) { [weak self] in
             guard let textView = self?.textView else { return .notActive }
             guard !textView.hasMarkedText() else { return .compositionInProgress }

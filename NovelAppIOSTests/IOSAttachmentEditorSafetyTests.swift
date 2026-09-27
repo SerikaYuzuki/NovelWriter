@@ -115,8 +115,54 @@ struct IOSAttachmentEditorSafetyTests {
         #expect(store.operationErrorMessage == "日本語入力を確定してから、もう一度お試しください。")
     }
 
+    @Test("資料checkpointはautosave排他を待ち、途中の原稿変更も再flushする")
+    func attachmentCheckpointSerializesWithAutosave() async throws {
+        let environment = makeEnvironment(prefix: "attachment-save-owner")
+        defer { environment.cleanup() }
+        let sourceURL = try makeSourceFile(in: environment.root, contents: "reference")
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let store = IOSDocumentStore(
+            userDefaults: environment.defaults,
+            libraryRoot: environment.root
+        )
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let session = try #require(store.currentDocumentSessionToken)
+        let workID = try #require(store.syncV2ActiveWorkID)
+        let application = try #require(store.snapshotSyncV2Application)
+        let gate = AttachmentSaveOwnershipGate()
+        let blocker = Task { @MainActor in
+            await store.saveCoordinator.performExclusive {
+                await gate.signalStarted()
+                await gate.waitForRelease()
+            }
+        }
+        await gate.waitForStart()
+        let probe = AttachmentCompletionProbe()
+        let attachmentTask = Task { @MainActor in
+            let attachment = await store.importAttachment(
+                from: sourceURL,
+                expectedSession: session
+            )
+            await probe.finish()
+            return attachment
+        }
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(await probe.isFinished == false)
+        store.updateDocumentTitle("資料保存中に届いた作品名")
+        await gate.release()
+        await blocker.value
+        let attachment = try #require(await attachmentTask.value)
+
+        let opened = try await application.openLocal(workID: workID)
+        #expect(opened.document?.title == "資料保存中に届いた作品名")
+        #expect(opened.attachments.map(\.fileName) == [attachment.fileName])
+        #expect(store.saveState == .saved)
+    }
+
     private func makeEditorHarness(store: IOSDocumentStore) async throws -> EditorHarness {
-        let host = UIHostingController(rootView: IOSEditorPane(store: store))
+        let host = UIHostingController(rootView: IOSEditorPane(store: store, userDefaults: store.userDefaults))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 430, height: 932))
         window.rootViewController = host
         host.view.frame = window.bounds
@@ -186,6 +232,49 @@ struct IOSAttachmentEditorSafetyTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return AttachmentEditorTestEnvironment(root: root, defaults: defaults, suiteName: suiteName)
+    }
+}
+
+private actor AttachmentSaveOwnershipGate {
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func signalStarted() {
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitForStart() async {
+        guard !started else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+private actor AttachmentCompletionProbe {
+    private(set) var isFinished = false
+
+    func finish() {
+        isFinished = true
     }
 }
 

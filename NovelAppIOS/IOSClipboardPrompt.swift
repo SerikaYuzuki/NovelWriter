@@ -16,29 +16,29 @@ struct IOSSystemPlainTextClipboardWriter: IOSPlainTextClipboardWriting {
     }
 }
 
-enum IOSPromptCopyFailure: Sendable, Equatable {
+enum IOSManuscriptCopyFailure: Sendable, Equatable {
     case staleContext
     case compositionInProgress
     case emptyContent
     case contentTooLarge
-    case promptEncodingFailed
+    case copyPreparationFailed
     case clipboardWriteFailed
 }
 
-struct IOSPromptCopyNotice: Identifiable, Sendable, Equatable {
+struct IOSManuscriptCopyNotice: Identifiable, Sendable, Equatable {
     let id = UUID()
-    let failure: IOSPromptCopyFailure?
+    let failure: IOSManuscriptCopyFailure?
 
-    static let success = IOSPromptCopyNotice(failure: nil)
+    static let success = IOSManuscriptCopyNotice(failure: nil)
 
     var title: String {
-        failure == nil ? "プロンプトをコピーしました" : "プロンプトをコピーできませんでした"
+        failure == nil ? "コピーしました" : "コピーできませんでした"
     }
 
     var message: String {
         switch failure {
         case nil:
-            "システムクリップボードへコピーしました。AIチャットには送信していません。"
+            "クリップボードへコピーしました。"
         case .staleContext:
             "対象の作品、章、または話が変わりました。対象を確認して、もう一度コピーしてください。"
         case .compositionInProgress:
@@ -47,8 +47,8 @@ struct IOSPromptCopyNotice: Identifiable, Sendable, Equatable {
             "対象本文が空です。本文を入力するか、空でない範囲を選択してください。"
         case .contentTooLarge:
             "対象が大きすぎるため、内容を切り詰めずコピーを中止しました。"
-        case .promptEncodingFailed:
-            "プロンプトを安全な文字列へ変換できませんでした。"
+        case .copyPreparationFailed:
+            "コピーする文字列を準備できませんでした。"
         case .clipboardWriteFailed:
             "システムクリップボードへ書き込めませんでした。"
         }

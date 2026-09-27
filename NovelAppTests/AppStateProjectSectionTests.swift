@@ -25,12 +25,12 @@ struct AppStateProjectSectionTests {
         #expect(defaults.string(forKey: AppPreferenceKey.projectSection) == "projectInfo")
     }
 
-    @Test("表示ショートカットは企画なしの7項目へ再割当する")
+    @Test("既存ショートカットを保ち感想・アドバイスを追加する")
     func projectSectionShortcutsMatchRevisedOrder() {
         #expect(ProjectSection.allCases.map(\.rawValue) == [
-            "projectInfo", "structure", "plot", "characters", "worldbuilding", "references", "settings"
+            "projectInfo", "structure", "plot", "characters", "worldbuilding", "references", "feedback", "settings"
         ])
-        #expect(ProjectSection.allCases.map(\.keyboardShortcut.character) == ["1", "2", "3", "4", "5", "6", "7"])
+        #expect(ProjectSection.allCases.map(\.keyboardShortcut.character) == ["1", "2", "3", "4", "5", "6", "8", "7"])
     }
 }
 

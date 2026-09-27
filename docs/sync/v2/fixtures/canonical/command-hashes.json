@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "commands": [
+    {
+      "commandKind": "createWork",
+      "file": "commands/create-work.json",
+      "byteCount": 426,
+      "requestDigest": "cae9af31ef8c5fddc551cefafb2df0861a3bd6d2ce89f0cf4fc05a1f4659ecd5"
+    },
+    {
+      "commandKind": "cloneWork",
+      "file": "commands/clone-work.json",
+      "byteCount": 859,
+      "requestDigest": "1735b06801259bd31a7d8d785f3e74eb3dbe956fb51be848e7f046772cee6790"
+    },
+    {
+      "commandKind": "finalizeObject",
+      "file": "commands/finalize-object.json",
+      "byteCount": 520,
+      "requestDigest": "5743f7bba4483e59cbb6ac7e68435d36478fb66e5d7e3f8e9d8dd1bc4284aeb7"
+    },
+    {
+      "commandKind": "prepareObject",
+      "file": "commands/prepare-object.json",
+      "byteCount": 469,
+      "requestDigest": "4852f8fe2776749bc970c27e810d94dacd92c6443e5539638a2db377423b3e7b"
+    },
+    {
+      "commandKind": "publish",
+      "file": "publish-command.json",
+      "byteCount": 486,
+      "requestDigest": "cecb450d9fac4a41b5929fe2d1ecaedbd2bf2a37cf7217b9de1d48991cc0621a"
+    },
+    {
+      "commandKind": "registerSnapshot",
+      "file": "commands/register-snapshot.json",
+      "byteCount": 6223,
+      "requestDigest": "2562c1bfcc4c2934b5043b069168cfba331876484347af4190f3f50f97e01152"
+    },
+    {
+      "commandKind": "resolveDevice",
+      "file": "commands/resolve-device.json",
+      "byteCount": 750,
+      "requestDigest": "7cc50d83d10315c53c688b9e3bb6a0f7fcd7cc8083d1a3e882e96980c2333334"
+    },
+    {
+      "commandKind": "resolveServer",
+      "file": "commands/resolve-server.json",
+      "byteCount": 750,
+      "requestDigest": "b783cbbcb8fd5d81daceed58442f848ae0d7b167c6f33330024547ecd0317e54"
+    },
+    {
+      "commandKind": "restore",
+      "file": "commands/restore.json",
+      "byteCount": 783,
+      "requestDigest": "2ccee8e7d705756107f04bc6432600707a1d141988faeeea6b63d7e9f5087f16"
+    }
+  ]
+}

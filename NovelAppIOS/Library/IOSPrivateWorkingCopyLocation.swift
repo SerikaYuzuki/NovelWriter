@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import NovelSync
+import NovelSyncV2
 
 enum IOSPrivateWorkingCopyLocationError: Error, Equatable {
     case unsafeRoot
@@ -23,6 +23,13 @@ final class IOSPrivateWorkingCopyLocation: @unchecked Sendable {
     struct StagingAttestation: Equatable, Sendable {
         let url: URL
         fileprivate let identity: Identity
+        let treeDigest: String
+    }
+
+    struct ExplicitPackageAttestation: Equatable, Sendable {
+        let url: URL
+        fileprivate let identity: Identity
+        let treeDigest: String
     }
 
     fileprivate struct Identity: Equatable, Sendable {
@@ -60,11 +67,11 @@ extension IOSPrivateWorkingCopyLocation {
         let reportedHome = URL(
             fileURLWithPath: NSHomeDirectory(),
             isDirectory: true
-        ).standardizedFileURL
+        ).standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
         guard let reportedApplicationSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        ).first?.standardizedFileURL else {
+        ).first?.standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         let expectedApplicationSupport = reportedHome
@@ -161,6 +168,44 @@ extension IOSPrivateWorkingCopyLocation {
         guard !name.isEmpty, !name.hasPrefix("."), name.hasSuffix(".novelpkg") else { return false }
         return URL(fileURLWithPath: name).lastPathComponent == name
     }
+
+    /// Validate a user-selected package before the explicit portable bridge is
+    /// given a URL.  Import sources are outside the fixed private root, so the
+    /// root/inode attestation used for installed works cannot protect them.
+    /// Rejecting symlink components here keeps `copyItem` and the bridge from
+    /// ever following an attacker-controlled package alias.
+    static func attestExplicitPackageSource(
+        _ packageURL: URL
+    ) throws -> ExplicitPackageAttestation {
+        let requested = packageURL.standardizedFileURL
+        guard requested.isFileURL,
+              isValidPortablePackageName(requested.lastPathComponent),
+              let status = try pathStatus(requested),
+              status.st_mode & S_IFMT == S_IFDIR else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        try validateExternalPathComponents(for: requested)
+        let (identity, treeDigest) = try Self.attestTree(at: requested)
+        return ExplicitPackageAttestation(
+            url: requested,
+            identity: identity,
+            treeDigest: treeDigest
+        )
+    }
+
+    static func validateExplicitPackageSource(_ packageURL: URL) throws {
+        _ = try attestExplicitPackageSource(packageURL)
+    }
+
+    static func revalidate(
+        _ attestation: ExplicitPackageAttestation
+    ) throws {
+        let current = try attestExplicitPackageSource(attestation.url)
+        guard current.identity == attestation.identity,
+              current.treeDigest == attestation.treeDigest else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+    }
 }
 
 extension IOSPrivateWorkingCopyLocation {
@@ -190,7 +235,7 @@ extension IOSPrivateWorkingCopyLocation {
 
     /// Cloud libraryの作品はURLをmetadataへ保存せず、WorkIDから常に同じ
     /// app-private packageを導出する。既存packageがあってもURLを返す。
-    func packageURL(for workID: SyncWorkID) throws -> URL {
+    func packageURL(for workID: WorkID) throws -> URL {
         try validateFixedRoot()
         return try directChildURL(
             forPackageName: "\(workID.rawValue.uuidString).novelpkg",
@@ -198,18 +243,18 @@ extension IOSPrivateWorkingCopyLocation {
         )
     }
 
-    func documentID(for workID: SyncWorkID) -> IOSPrivateDocumentID {
+    func documentID(for workID: WorkID) -> IOSPrivateDocumentID {
         IOSPrivateDocumentID(packageName: "\(workID.rawValue.uuidString).novelpkg")
     }
 
-    func workID(for packageURL: URL) throws -> SyncWorkID? {
+    func workID(for packageURL: URL) throws -> WorkID? {
         try validateFixedRoot()
         let requested = packageURL.standardizedFileURL
         guard requested.deletingLastPathComponent() == rootURL,
               requested.pathExtension == "novelpkg",
               let uuid = UUID(uuidString: requested.deletingPathExtension().lastPathComponent),
               requested.lastPathComponent == "\(uuid.uuidString).novelpkg" else { return nil }
-        return SyncWorkID(rawValue: uuid)
+        return WorkID(uuid)
     }
 
     func stagingDestination() throws -> URL {
@@ -223,7 +268,7 @@ extension IOSPrivateWorkingCopyLocation {
         return candidate
     }
 
-    func stagingPackageURL(for workID: SyncWorkID) throws -> URL {
+    func stagingPackageURL(for workID: WorkID) throws -> URL {
         try validateFixedRoot()
         return try directChildURL(
             forPackageName: ".\(workID.rawValue.uuidString).staging.novelpkg",
@@ -231,7 +276,7 @@ extension IOSPrivateWorkingCopyLocation {
         )
     }
 
-    func validateStagingPackage(at url: URL, for workID: SyncWorkID) throws {
+    func validateStagingPackage(at url: URL, for workID: WorkID) throws {
         let requested = url.standardizedFileURL
         let expected = rootURL.appendingPathComponent(
             ".\(workID.rawValue.uuidString).staging.novelpkg",
@@ -243,7 +288,7 @@ extension IOSPrivateWorkingCopyLocation {
         _ = try attestStagingPackage(at: requested)
     }
 
-    func installStagingPackage(_ url: URL, for workID: SyncWorkID) throws -> URL {
+    func installStagingPackage(_ url: URL, for workID: WorkID) throws -> URL {
         try validateStagingPackage(at: url, for: workID)
         let staging = try attestStagingPackage(at: url)
         let finalURL = try packageURL(for: workID)
@@ -261,7 +306,7 @@ extension IOSPrivateWorkingCopyLocation {
     }
 
     /// D-072: this-device copy only. Does not delete CloudKit records.
-    func removePackages(for workID: SyncWorkID) throws {
+    func removePackages(for workID: WorkID) throws {
         try validateFixedRoot()
         let staging = try stagingPackageURL(for: workID)
         if try Self.pathStatus(staging) != nil {
@@ -277,7 +322,7 @@ extension IOSPrivateWorkingCopyLocation {
         }
     }
 
-    func validateInstalledPackage(for workID: SyncWorkID) throws {
+    func validateInstalledPackage(for workID: WorkID) throws {
         let expected = try packageURL(for: workID)
         let attestation = try attestPackage(at: expected)
         guard attestation.id == documentID(for: workID) else {
@@ -299,9 +344,9 @@ extension IOSPrivateWorkingCopyLocation {
         guard requested.path == expected.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        let packageIdentity = try attestDirectory(at: requested)
+        let packageIdentity = try Self.attestDirectory(at: requested)
         try validateFixedRoot()
-        guard try attestDirectory(at: requested) == packageIdentity else {
+        guard try Self.attestDirectory(at: requested) == packageIdentity else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         return PackageAttestation(id: id, url: requested, identity: packageIdentity)
@@ -317,12 +362,18 @@ extension IOSPrivateWorkingCopyLocation {
         guard requested.path == expected.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        let packageIdentity = try attestDirectory(at: requested)
+        let (packageIdentity, treeDigest) = try Self.attestTree(at: requested)
         try validateFixedRoot()
-        guard try attestDirectory(at: requested) == packageIdentity else {
+        let current = try Self.attestTree(at: requested)
+        guard current.0 == packageIdentity,
+              current.1 == treeDigest else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
-        return StagingAttestation(url: requested, identity: packageIdentity)
+        return StagingAttestation(
+            url: requested,
+            identity: packageIdentity,
+            treeDigest: treeDigest
+        )
     }
 
     func attestMovedPackage(
@@ -346,7 +397,8 @@ extension IOSPrivateWorkingCopyLocation {
 
     func revalidate(_ attestation: StagingAttestation) throws {
         let current = try attestStagingPackage(at: attestation.url)
-        guard current.identity == attestation.identity else {
+        guard current.identity == attestation.identity,
+              current.treeDigest == attestation.treeDigest else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
     }
@@ -401,8 +453,8 @@ private extension IOSPrivateWorkingCopyLocation {
         return candidate
     }
 
-    private func attestDirectory(at url: URL) throws -> Identity {
-        guard let initial = try Self.pathStatus(url),
+    private static func attestDirectory(at url: URL) throws -> Identity {
+        guard let initial = try pathStatus(url),
               initial.st_mode & S_IFMT == S_IFDIR,
               url.resolvingSymlinksInPath().standardizedFileURL.path == url.path else {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
@@ -414,6 +466,53 @@ private extension IOSPrivateWorkingCopyLocation {
             throw IOSPrivateWorkingCopyLocationError.unsafeRoot
         }
         return initialIdentity
+    }
+
+    private static func attestTree(at url: URL) throws -> (Identity, String) {
+        let initial = try attestDirectory(at: url)
+        let digest = try computeTreeDigest(at: url)
+        guard let final = try pathStatus(url),
+              final.st_mode & S_IFMT == S_IFDIR,
+              identity(final) == initial else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        return (initial, digest)
+    }
+
+    private static func computeTreeDigest(at root: URL) throws -> String {
+        let fileManager = FileManager.default
+        var records = [String](arrayLiteral: "D\u{0}")
+
+        func visit(_ directory: URL, relativePath: String) throws {
+            let children = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: []
+            ).sorted { $0.lastPathComponent.utf8.lexicographicallyPrecedes($1.lastPathComponent.utf8) }
+            for child in children {
+                let relative = relativePath.isEmpty
+                    ? child.lastPathComponent
+                    : "\(relativePath)/\(child.lastPathComponent)"
+                guard let status = try pathStatus(child) else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+                switch status.st_mode & S_IFMT {
+                case S_IFDIR:
+                    records.append("D\u{0}\(relative)\n")
+                    try visit(child, relativePath: relative)
+                case S_IFREG:
+                    let bytes = try Data(contentsOf: child, options: .mappedIfSafe)
+                    records.append(
+                        "F\u{0}\(relative)\u{0}\(bytes.count)\u{0}\(SHA256Digest.hex(bytes))\n"
+                    )
+                default:
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+            }
+        }
+
+        try visit(root, relativePath: "")
+        return SHA256Digest.hex(Data(records.joined().utf8))
     }
 
     private static func validateRelativeComponents(
@@ -442,6 +541,38 @@ private extension IOSPrivateWorkingCopyLocation {
             && component != "."
             && component != ".."
             && URL(fileURLWithPath: component).lastPathComponent == component
+    }
+
+    private static func isValidPortablePackageName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name.hasSuffix(".novelpkg")
+            && isSafePathComponent(name)
+    }
+
+    private static func validateExternalPathComponents(for url: URL) throws {
+        let components = url.standardizedFileURL.pathComponents
+        guard let first = components.first else {
+            throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+        }
+        var current = URL(fileURLWithPath: first, isDirectory: true)
+        for component in components.dropFirst() {
+            current.appendPathComponent(component, isDirectory: true)
+            guard let status = try pathStatus(current) else {
+                throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+            }
+            if status.st_mode & S_IFMT == S_IFLNK {
+                // `/var` (and the equivalent `/tmp` alias) are OS-managed
+                // aliases on macOS.  They are canonicalized by the sandbox,
+                // not user-controlled package paths, so allow only these
+                // known aliases and reject every package/ancestor symlink.
+                let resolved = current.resolvingSymlinksInPath().standardizedFileURL.path
+                let isSystemAlias = (current.path == "/var" && resolved == "/private/var")
+                    || (current.path == "/tmp" && resolved == "/private/tmp")
+                guard isSystemAlias else {
+                    throw IOSPrivateWorkingCopyLocationError.unsafeRoot
+                }
+            }
+        }
     }
 
     private static func identity(_ status: stat) -> Identity {

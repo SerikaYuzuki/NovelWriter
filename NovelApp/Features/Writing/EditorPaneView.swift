@@ -20,14 +20,13 @@ struct EditorPaneView: View {
     var body: some View {
         Group {
             if let episode = appState.selectedEpisode,
-               let chapterID = appState.selectedChapterID,
-               let syncLookup = appState.currentDeviceSyncLookupIdentity {
+               let chapterID = appState.selectedChapterID {
                 let session = appState.documentSessionToken
-                let isEditable = appState.deviceSyncAllowsEditing(for: syncLookup)
+                let isEditable = appState.permitsDocumentInteraction
                 let editorCanvas = Color(hex: editorSettings.backgroundColorHex)
                     ?? Color(nsColor: .textBackgroundColor)
                 VStack(spacing: 0) {
-                    HStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ZStack {
                             editorCanvas
                             EditorView(
@@ -39,7 +38,7 @@ struct EditorPaneView: View {
                                 selectionRequest: editorSearchSession.selectionRequest,
                                 commandSession: editorCommandSession,
                                 aiSelectionSession: aiSelectionSession,
-                                selectionContextMenuCommands: selectionPromptCommands(
+                                selectionContextMenuCommands: selectionCopyCommands(
                                     episodeID: episode.id,
                                     chapterID: chapterID,
                                     session: session
@@ -52,7 +51,7 @@ struct EditorPaneView: View {
                                         for: episode.id,
                                         in: chapterID,
                                         expectedSession: session,
-                                        expectedEditorContentGeneration: syncLookup.editorContentGeneration
+                                        expectedEditorContentGeneration: appState.editorContentGeneration
                                     )
                                 }
                             )
@@ -60,11 +59,9 @@ struct EditorPaneView: View {
                         }
 
                         if isPlotCardRailPresented {
-                            WritingPlotCardRail(
-                                chapterID: chapterID,
-                                onClose: { isPlotCardRailPresented = false }
-                            )
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                            WritingPlotCardRail(chapterID: chapterID)
+                                .frame(height: 240)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .animation(.snappy(duration: 0.2), value: isPlotCardRailPresented)
@@ -74,9 +71,6 @@ struct EditorPaneView: View {
                         backgroundColor: editorCanvas
                     )
                 }
-                .task(id: syncLookup) {
-                    await appState.prepareDeviceSync(for: syncLookup)
-                }
             } else {
                 ContentUnavailableView(
                     "話が選択されていません",
@@ -85,7 +79,7 @@ struct EditorPaneView: View {
                 )
             }
         }
-        .focusedSceneValue(\.workbenchSearchSurface, .editor)
+        .focusedValue(\.workbenchSearchSurface, .editor)
         .onChange(of: appState.selectedEpisodeID) { _, newSelection in
             editorSearchSession.handleEpisodeChange(newSelection)
         }
@@ -95,30 +89,17 @@ struct EditorPaneView: View {
         editorSettings.widthMode.maximumContentWidth.map { CGFloat($0) }
     }
 
-    private func selectionPromptCommands(
+    private func selectionCopyCommands(
         episodeID: EpisodeID,
         chapterID: ChapterID,
         session: DocumentSessionToken
     ) -> [EditorSelectionContextMenuCommand] {
         [
             EditorSelectionContextMenuCommand(
-                title: "選択範囲の校正用プロンプトをコピー",
-                systemImageName: "checkmark.bubble"
+                title: "選択範囲をコピー",
+                systemImageName: "doc.on.doc"
             ) { snapshot in
-                appState.copySelectionAIChatPrompt(
-                    purpose: .proofreading,
-                    selectedText: snapshot.text,
-                    episodeID: episodeID,
-                    in: chapterID,
-                    expectedSession: session
-                )
-            },
-            EditorSelectionContextMenuCommand(
-                title: "選択範囲のアドバイス用プロンプトをコピー",
-                systemImageName: "lightbulb"
-            ) { snapshot in
-                appState.copySelectionAIChatPrompt(
-                    purpose: .advice,
+                appState.copySelectionManuscript(
                     selectedText: snapshot.text,
                     episodeID: episodeID,
                     in: chapterID,
@@ -137,25 +118,9 @@ private struct WritingPlotCardRail: View {
     @Environment(AppState.self) private var appState
 
     let chapterID: ChapterID
-    let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Label("プロットカード", systemImage: "rectangle.stack")
-                    .font(.headline)
-                Spacer()
-                Button(action: onClose) {
-                    Label("閉じる", systemImage: "xmark")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("プロットカードを閉じる")
-            }
-            .padding(12)
-
-            Divider()
-
+        Group {
             if cards.isEmpty {
                 ContentUnavailableView(
                     "プロットカードがありません",
@@ -165,26 +130,24 @@ private struct WritingPlotCardRail: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(12)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 12) {
                         ForEach(cards) { card in
                             WritingPlotCardReference(
                                 card: card,
                                 isSelected: appState.selectedPlotCardID == card.id,
                                 onSelect: { appState.selectPlotCard(card.id) }
-                            )
+                            ).frame(width: 260)
                         }
                     }
                     .padding(12)
                 }
             }
         }
-        .frame(width: 280)
+        .frame(maxWidth: .infinity)
         .frame(maxHeight: .infinity)
         .workbenchGlassChromeStyle()
-        .overlay(alignment: .leading) {
-            Divider()
-        }
+        .accessibilityLabel("プロットカード一覧")
     }
 
     private var cards: [PlotCard] {

@@ -206,38 +206,24 @@ struct ExportPresenterTests {
         await presenter.waitForCurrentExport()
     }
 
-    @Test("書き出しはrepository保存とnovelpkg URLを変更しない")
-    func exportDoesNotSaveRepositoryOrChangeDocumentURL() async throws {
+    @Test("通常の書き出しはrepository保存とv2 session identityを変更しない")
+    func exportDoesNotSaveRepositoryOrChangeSessionIdentity() async {
         let repository = ExportIsolationRepository()
         let defaultsFixture = makeUserDefaults()
         let defaults = defaultsFixture.defaults
         defer { defaults.removePersistentDomain(forName: defaultsFixture.suiteName) }
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ExportPresenterTests-\(UUID().uuidString)", isDirectory: true)
-        let packageURL = directory.appendingPathComponent("Original.novelpkg", isDirectory: true)
-        let attachmentsURL = packageURL.appendingPathComponent("attachments", isDirectory: true)
-        try FileManager.default.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-
-        let sentinelURL = packageURL.appendingPathComponent("sentinel.bin")
-        let attachmentURL = attachmentsURL.appendingPathComponent("reference.dat")
-        let sentinelData = Data([0x00, 0x7F, 0xFF, 0x42])
-        let attachmentData = Data("添付資料は変更しない".utf8)
-        try sentinelData.write(to: sentinelURL)
-        try attachmentData.write(to: attachmentURL)
-        let sourceDocument = NovelDocument.newDocument(title: "分離テスト")
-        await repository.seed(sourceDocument, at: packageURL)
 
         let appState = AppState(
             dependencies: AppDependencies(
                 repository: repository,
                 userDefaults: defaults
-            )
+            ),
+            initialStartupState: .ready
         )
-        #expect(await appState.openDocument(at: packageURL))
-        await repository.resetSaveCount()
-        let originalDocumentURL = appState.documentURL
-        let originalPackagePaths = try relativePaths(in: packageURL)
+        let originalSession = appState.documentSessionToken
         let panel = StubExportPanel(
             format: .plainText,
             destination: directory.appendingPathComponent("原稿.txt")
@@ -253,11 +239,8 @@ struct ExportPresenterTests {
         await presenter.waitForCurrentExport()
 
         #expect(await repository.saveCount() == 0)
-        #expect(appState.documentURL == originalDocumentURL)
-        #expect(appState.documentURL.pathExtension == "novelpkg")
-        #expect(try relativePaths(in: packageURL) == originalPackagePaths)
-        #expect(try Data(contentsOf: sentinelURL) == sentinelData)
-        #expect(try Data(contentsOf: attachmentURL) == attachmentData)
+        #expect(appState.documentSessionToken == originalSession)
+        #expect(defaults.string(forKey: "fuminiwa.v2.activeWorkID") == nil)
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("原稿.txt").path))
     }
 
@@ -280,20 +263,6 @@ struct ExportPresenterTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return (defaults, suiteName)
-    }
-
-    private func relativePaths(in directory: URL) throws -> [String] {
-        let keys: [URLResourceKey] = [.isDirectoryKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory,
-            includingPropertiesForKeys: keys
-        ) else {
-            return []
-        }
-        return enumerator.compactMap { item in
-            guard let url = item as? URL else { return nil }
-            return String(url.path.dropFirst(directory.path.count + 1))
-        }.sorted()
     }
 }
 

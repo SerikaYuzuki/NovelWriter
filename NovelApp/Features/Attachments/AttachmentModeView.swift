@@ -42,7 +42,7 @@ struct AttachmentListView: View {
                     }
                 }
                 .overlay {
-                    if appState.attachments.isEmpty {
+                    if appState.referenceAttachments.isEmpty {
                         ContentUnavailableView(
                             "資料がありません",
                             systemImage: "paperclip",
@@ -82,12 +82,12 @@ struct AttachmentListView: View {
 
     private var selectedAttachment: Attachment? {
         guard let selection else { return nil }
-        return appState.attachments.first { $0.fileName == selection }
+        return appState.referenceAttachments.first { $0.fileName == selection }
     }
 
     private var sessionBoundAttachments: [SessionBoundAttachment] {
         let session = appState.documentSessionToken
-        return appState.attachments.map {
+        return appState.referenceAttachments.map {
             SessionBoundAttachment(attachment: $0, session: session)
         }
     }
@@ -152,6 +152,6 @@ struct AttachmentDetailView: View {
 
     private var selectedAttachment: Attachment? {
         guard let fileName else { return nil }
-        return appState.attachments.first { $0.fileName == fileName }
+        return appState.referenceAttachments.first { $0.fileName == fileName }
     }
 }

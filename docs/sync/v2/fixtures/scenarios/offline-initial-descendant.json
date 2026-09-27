@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "name": "offline-initial-descendant-publish",
+  "initial": {"localGenerations": 3, "serverHead": null},
+  "events": [
+    {"type": "createWork"},
+    {"type": "registerParentClosureInOrder"},
+    {"type": "restartBetweenTransferSteps"},
+    {"type": "publishLatestWithNullExpectedHead"},
+    {"type": "replayExactPublish"},
+    {"type": "rejectDifferentNonRootNullBaseCommandAfterInitialization"}
+  ],
+  "expect": {"registeredSnapshots": 3, "headAdvanceCount": 1, "publicHeadLocalGeneration": 3, "canonicalResponseBytesEqual": true, "localHistoryPreserved": true}
+}

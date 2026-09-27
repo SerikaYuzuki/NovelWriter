@@ -1,0 +1,8 @@
+[mcp_servers.xcodebuildmcp]
+command = "xcodebuildmcp"
+args = ["mcp"]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+
+[mcp_servers.xcodebuildmcp.env]
+XCODEBUILDMCP_SENTRY_DISABLED = "true"

@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelSyncV2
 import Observation
 
 struct IOSWorkspaceEditorDeparture: Equatable {
@@ -15,6 +16,7 @@ enum IOSWorkspaceRoute: Hashable {
     case plot(session: IOSDocumentSessionToken)
     case characters(session: IOSDocumentSessionToken)
     case worldbuilding(session: IOSDocumentSessionToken)
+    case feedback(session: IOSDocumentSessionToken)
     case references(session: IOSDocumentSessionToken)
     case settings(session: IOSDocumentSessionToken)
     case editor(
@@ -31,6 +33,7 @@ enum IOSWorkspaceRoute: Hashable {
              let .plot(session),
              let .characters(session),
              let .worldbuilding(session),
+             let .feedback(session),
              let .references(session),
              let .settings(session),
              let .editor(session, _, _):
@@ -55,6 +58,46 @@ final class IOSWorkspaceNavigationCoordinator {
 
     var activeEditorDeparture: IOSWorkspaceEditorDeparture? {
         Self.editorDeparture(in: path)
+    }
+
+    @discardableResult
+    func openLibraryWork(_ workID: WorkID, using store: IOSDocumentStore) async -> Bool {
+        // The shelf contains both local and remote-only works. The store owns
+        // that routing; local opens must never enter the remote-only guard.
+        guard await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)),
+              store.syncV2ActiveWorkID == workID,
+              let session = store.currentDocumentSessionToken else { return false }
+        showProjectHome(for: session)
+        return true
+    }
+
+    @discardableResult
+    func returnToLibrary(using store: IOSDocumentStore) async -> Bool {
+        guard !path.isEmpty, let session = store.currentDocumentSessionToken else { return false }
+        let expectedPath = path
+        let accountScope = store.snapshotSyncV2AccountScope
+        return await store.documentOperationGate.perform {
+            guard store.currentDocumentSessionToken == session,
+                  store.snapshotSyncV2AccountScope == accountScope,
+                  self.path == expectedPath,
+                  !store.isDocumentTransitionInProgress else { return false }
+            store.isDocumentTransitionInProgress = true
+            store.isNavigationDepartureInProgress = true
+            defer {
+                store.isNavigationDepartureInProgress = false
+                store.isDocumentTransitionInProgress = false
+            }
+            let departure = IOSWorkspaceEditorDeparture(
+                session: session,
+                chapterID: store.selectedChapterID,
+                episodeID: store.selectedEpisodeID
+            )
+            guard await store.flushDeviceSyncBeforeNavigationDeparture(departure),
+                  store.currentDocumentSessionToken == session,
+                  store.snapshotSyncV2AccountScope == accountScope,
+                  self.path == expectedPath else { return false }
+            return self.updatePath([]) { _ in true }
+        }
     }
 
     func showProjectHome(for session: IOSDocumentSessionToken) {
@@ -85,6 +128,11 @@ final class IOSWorkspaceNavigationCoordinator {
     func showWorldbuilding(for session: IOSDocumentSessionToken) {
         prepareProjectPath(for: session)
         path.append(.worldbuilding(session: session))
+    }
+
+    func showFeedback(for session: IOSDocumentSessionToken) {
+        prepareProjectPath(for: session)
+        path.append(.feedback(session: session))
     }
 
     func showReferences(for session: IOSDocumentSessionToken) {
@@ -123,6 +171,11 @@ final class IOSWorkspaceNavigationCoordinator {
         if !path.isEmpty {
             path = [.projectHome(session: session)]
         }
+    }
+
+    func documentDidBecomeUnavailable() {
+        activeSession = nil
+        path = []
     }
 
     @discardableResult

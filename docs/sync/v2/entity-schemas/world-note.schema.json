@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:entity:world-note",
+  "type": "object", "additionalProperties": false,
+  "required": ["content", "id", "title"],
+  "properties": {
+    "content": { "type": "string", "maxLength": 1048576 },
+    "id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "title": { "type": "string", "maxLength": 1048576 }
+  }
+}

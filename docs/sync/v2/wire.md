@@ -1,0 +1,231 @@
+# v2 wire rules
+
+## Headers and media
+
+All JSON requests and responses use
+`application/vnd.fuminiwa.sync.v2+jcs`. Auth uses the short-lived FUMINIWA
+Bearer token from Auth v1; Apple credentials never cross this boundary. Except
+for `GET /v2/capabilities`, requests include `X-Fuminiwa-Server-Instance`,
+`X-Fuminiwa-Protocol-Epoch`, and `X-Fuminiwa-Account-Fence`. The server checks
+these before resource lookup. JSON request `Content-Type` is an exact media
+type match; upload requests use an exact `application/octet-stream` media type.
+Every v2 response, including typed errors and raw object/upload responses,
+sets `Cache-Control: no-store` (and `Pragma: no-cache`).
+
+## Receipt and digest
+
+The server computes SHA-256 over the exact accepted canonical command bytes and
+stores `(account_id, work_id, command_id, command_kind, digest,
+response_status, response)` in the v2 receipt table. Receipt identity remains
+`(AccountID, commandId)`, while the stored WorkID must equal the sealed
+payload/route scope. Exact retries return the same HTTP status and canonical
+response bytes. Reusing a command ID with another kind or bytes returns
+`commandIdReused`; a different request gets a new ID. Transport errors,
+401/403, and fence/version errors do not create a success receipt.
+
+## Errors
+
+The closed HTTP error set is `invalidCanonicalBytes`, `schemaViolation`,
+`unauthorized`, `accountFenceMismatch`, `protocolEpochMismatch`,
+`commandIdReused`, `uploadExpired`, `uploadCapabilityMismatch`,
+`objectDigestMismatch`, `snapshotDigestMismatch`, `lineageViolation`,
+`staleHead`, `staleConflictRevision`, `notFoundInAccount`,
+`sizeLimitExceeded`, `rateLimited`, and `retryable`. The shared local UI kernel
+additionally returns `staleConflictAction` before sealing a command.
+`notFoundInAccount` is deliberately indistinguishable for a foreign account
+and an absent resource.
+
+A publish candidate already present in the current remote lineage returns a
+receipted `noChanges` result with the current remote `head`/`generation` and
+the exact candidate `snapshotId`; it is a successful fast-forward acknowledgement,
+not a conflict. A publish divergence returns a receipted `conflictPending` result, preserves
+the candidate, appends an immutable conflict revision, and advances the
+work's single active-conflict projection. It never mutates a prior revision
+and never means “overwrite the server”. Every candidate persists its sealed
+`sourceGeneration > 0`; the active Conflict record persists the generation of
+its current revision. The OpenAPI response and shared Mac/iOS projection carry
+that exact value, so a revision cannot be shown or resolved with another
+generation.
+
+## Resource and cursor contract
+
+`GET /v2/works?cursor=` returns `{items,nextCursor}` sorted by lowercase
+WorkID. Its opaque cursor seals protocol epoch, AccountID, AccountFence,
+the first page's catalog-event high-water mark, last emitted lowercase WorkID,
+page size (default 100, maximum 500), and query digest. `highWater` is the
+greatest event ID visible at the first page's repeatable-read, read-only
+transaction snapshot; the page query uses that same snapshot. Catalog writers
+are serialized per AccountID before allocating identity values, so an event
+that commits later cannot have an ID at or below an already issued high-water
+mark. Every continuation projects the latest non-tombstoned `catalog_events`
+row per WorkID with `event_id <= highWater` and `work_id > last`, never the
+mutable current row. `last` is a position in this WorkID-sorted projection,
+not an event ID. A continuation request omits `pageSize` or repeats the sealed
+value. A cursor from another account,
+fence, endpoint, or query returns `accountFenceMismatch`/`schemaViolation`
+before lookup. `GET /v2/works/{workId}/history?cursor=` seals the same scope
+plus WorkID, first-page history-event high-water mark, and last event ID.
+Pages are stable and never infer a winner from timestamps. `GET
+/v2/snapshots/{snapshotId}/manifest`
+returns the exact manifest bytes and its digest; `GET
+/v2/objects/{objectId}` returns raw bytes and `X-Fuminiwa-Object-Digest`.
+Every successful command JCS response is a closed, command-kind-specific
+response. Its `result` is `noChanges`, `applied`, or `conflictPending`; these
+are the only terminal results that may contain a `CommandReceipt`. The HTTP
+status is part of the contract: `createWork` is 201, `prepareObject` is 200 for
+`noChanges` and 201 for `applied`, `publish` is 200 for `applied` and 409 for
+`conflictPending`, and the remaining terminal command responses are 200.
+Raw object download/upload uses the equivalent `X-Fuminiwa-Result` response
+header. A no-op is a successful `noChanges`, not an error.
+
+`parked` and `retryable` are typed nonterminal/local/error outcomes. They never
+carry a `CommandReceipt`, never advance a remote head, and never clear a local
+intent. A worker preserves the sealed command and retries or parks it according
+to the error and account-fence state.
+
+The terminal response union is closed as follows. Every row also contains the
+common `commandId`, `commandKind`, and exact `receipt` fields; no other fields
+are allowed.
+
+| command / HTTP status / result | additional fields |
+| --- | --- |
+| `createWork` / 201 / `applied` | `documentId`, `head` (`null`), `workId` |
+| `prepareObject` / 200 / `noChanges` | none |
+| `prepareObject` / 201 / `applied` | `expiresAt`, `objectId`, `uploadCapability`, `uploadId` |
+| `finalizeObject` / 200 / `applied` | `byteCount`, `head`, `objectId` |
+| `registerSnapshot` / 200 / `noChanges` or `applied` | `head`, `snapshotId` |
+| `publish` / 200 / `noChanges` | `generation`, `head`, `snapshotId` (candidate) |
+| `publish` / 200 / `applied` | `generation`, `head`, `snapshotId` |
+| `publish` / 409 / `conflictPending` | `conflictId`, `conflictRevision`, `head`, `sourceGeneration` |
+| `resolveDevice` / 200 / `applied` | `conflictId`, `conflictRevision`, `generation`, `head`, `snapshotId` |
+| `resolveServer` / 200 / `applied` | `conflictId`, `conflictRevision`, `head`, `remoteGeneration`, `remoteSnapshotId` |
+| `cloneWork` / 200 / `applied` | `conflictId`, `conflictRevision`, `head`, `newRootSnapshotId`, `newWorkId` |
+| `restore` / 200 / `applied` | `generation`, `head`, `protectedRestoreBeforeSnapshotId`, `snapshotId` |
+
+`404 notFoundInAccount` is returned for both an absent resource and a resource
+owned by another account. The server performs account and fence checks before
+object, snapshot, work, history, or conflict lookup. Object prepare/finalize
+also binds `uploadId`, object digest, account fence, and command ID; an upload
+cannot be resumed under another account or fence.
+
+`prepareObject` returns `noChanges` only when the principal's own
+`account_objects` row is available. A digest present only in `global_blobs` for
+another account follows the same `applied` upload-capability flow as an absent
+blob. Global deduplication may occur only after the caller's exact bytes pass
+digest/length verification; response shape and authorization never disclose
+foreign possession.
+
+`POST /v2/snapshots/register` carries exact manifest bytes as unpadded
+base64url in the closed command. The server decodes them, rejects any non-JCS
+or digest mismatch, and stores the decoded bytes in `BYTEA`; it never hashes
+the base64 text or a parsed/JSONB reserialization. `GET /v2/receipts/{id}`
+returns the exact canonical response bytes, the original HTTP status
+(`originalResponseStatus`), and predicates proving account, command digest,
+resource, and resulting head read-back. `originalResult` is limited to
+`noChanges`, `applied`, or `conflictPending`; the base64url value is the exact
+stored response body, not a reserialization. A command is complete locally
+only when every required predicate, including `headMatched`, is true.
+For `publish`/`noChanges`, the client must additionally identify the verified
+Inbox batch containing the remote graph. The batch must be account/fence
+bound, its head and generation must equal the response, and its closed parent
+graph must prove that the sealed candidate is equal to or an ancestor of that
+head. Receipt JSON alone is not sufficient. A valid acknowledgement records
+the receipt and exact remote head, clears only the sealed source Intent, and
+never injects the remote graph into the active editor; newer local edits remain
+pending for the normal safe-boundary Inbox path.
+For a command that must not advance a head, `headMatched` proves the observed
+head remained at the command's expected value; it is never omitted.
+
+A mutating response carries a finite `CommandReceipt` summary, not a base64
+copy of the response containing itself. The server stores those exact response
+bytes beside the summary. `GET /v2/receipts/{id}` alone wraps the previously
+stored bytes as `canonicalResponseBase64URL`, so receipt replay has no
+self-referential encoding.
+
+Every mutating route derives scope from AuthenticatedPrincipal, requires the
+body binding to equal that scope, and rejects a route WorkID different from the
+closed payload WorkID. Receipt identity is `(AccountID, commandId)`; reusing a
+command ID with a different kind, WorkID, or bytes is always
+`commandIdReused`.
+
+The authenticated scope also carries the Auth v1 `accountAuthEpoch` (not as a
+client-selectable body field). A strictly newer epoch for the same AccountID
+and a new fence is accepted as a transactional scope rebind: old sealed
+commands are quarantined before capabilities/bootstrap/replan work proceeds.
+An equal or older epoch, same-epoch fence change, or different AccountID is
+rejected before resource lookup.
+
+A Work's first remote publication starts with the sealed `createWork` command
+at `POST /v2/works`. It atomically creates only an account-scoped, null-head
+Work after proving `WorkID` absent for that principal. An exact
+retry replays its receipt; an occupied WorkID (including the same WorkID with a
+different DocumentID) is a closed conflict and never an adopt/rebind.
+DocumentID is portable content identity and is not a server uniqueness or
+deduplication key, so multiple WorkIDs may carry the same DocumentID. Only
+after this receipt may the
+client prepare/upload/finalize objects, register the first Snapshot, and
+publish from expected remote head `null`. Before publishing, every required parent Snapshot must be
+registered in parent-first order. If the Work's current head is still `null`,
+the first candidate may be a registered descendant (the latest local
+checkpoint), not only a parentless root. The full object/parent closure is
+validated by registration. Once a current head exists, a null expected head
+still requires a root candidate; the existing lineage and conflict checks
+remain in force (D-093). No object or snapshot route creates
+a missing Work implicitly.
+
+`POST /v2/works/{workId}/conflict/resolve` is atomic with the following exact
+semantics:
+
+- `useDevice` stores a decision Snapshot with both the current remote parent
+  and the local parent, then publishes it by expected head CAS;
+- `useServer` requires the conflict revision and remote Snapshot ID, pins a
+  pre-adoption local Snapshot, performs server resolution, then stages and
+  installs the verified remote Snapshot with expected current Snapshot and
+  local-generation CAS. It creates no new local Intent for the selected remote
+  bytes;
+- `keepBoth` creates the new WorkID root, both heads, resolved conflict, and
+receipt in one PostgreSQL transaction. The original Work remains unchanged.
+
+The `cloneWork` sealed command and receipt remain scoped to `sourceWorkId`.
+The new Work's head event stores `commandWorkId = sourceWorkId` and the closed
+`cloneNewWork` scope; this is the only head-event WorkID mismatch and is valid
+only when the referenced receipt kind is `cloneWork`. `createWork` reserves a
+receipt before its Work row exists using deferred Work/command constraints,
+then inserts the null-head Work before completion; it emits no head event.
+
+For `keepBoth`, `localCandidateSnapshotId` is an already registered Snapshot
+of `sourceWorkId`. The server deterministically constructs the clone root by
+copying its ordered entries, setting manifest `workId = newWorkId`, setting
+parents to `[]`, and replacing only `work/document` with canonical bytes that
+retain `documentCreatedAt` and set `documentId = newDocumentId`. It computes
+the replacement ObjectID and exact JCS manifest, and requires its digest to
+equal `newRootSnapshotId` before writing anything. The transaction then keeps
+the source Work/head unchanged, inserts the new document object, Work, root
+Snapshot/head and both history occurrences, resolves the exact conflict
+revision, and completes the receipt. Any mismatch or insert failure rolls back
+all of it.
+
+## Bounded uploads (D-095)
+
+`PUT /v2/uploads/{uploadId}` retains the small-object full-body form. A large
+object may instead use exactly one `Content-Range: bytes start-end/total`
+header per request. `end` is inclusive; each body contains at most 8 MiB and
+exactly `end-start+1` bytes. `total` must match the prepared object size and
+remain at most 250 MiB. The same authenticated account/fence, upload ID and
+capability apply to every request. Authentication/scope checks precede body
+buffering; concurrent upload readers are bounded to two.
+
+The server accepts the next contiguous range or an exact-byte replay of an
+already received range. It rejects gaps, conflicting replays, malformed or
+repeated range headers, wrong totals and expired capabilities. Partial bytes
+remain in the capability row, never an available object. The final range
+must pass full-object SHA-256 validation before the server marks it uploaded.
+`finalizeObject` is still required for account availability. Completed uploads
+release partial bytes; the background worker releases expired partial bytes.
+Work deletion removes their capability rows in the same deletion transaction.
+
+Each accepted range returns the existing empty 204/no-store/applied response.
+The client acknowledges the upload locally only after all ranges succeed.
+A lost response/restart may replay from offset zero with the same bytes and
+capability; it never fabricates an acknowledgement from a partial response.
+Deploy the range-capable server before clients that use this extension.

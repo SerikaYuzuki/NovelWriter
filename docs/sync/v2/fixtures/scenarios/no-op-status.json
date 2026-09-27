@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 2,
+  "name": "explicit-sync-no-op-is-success",
+  "initial": {"localDurability":"saved","pendingIntentCount":0,"headMatches":true},
+  "event": {"type":"explicitSync"},
+  "expect": {"result":"noChanges","success":true,"label":"同期済み","errorUI":false,"newCommand":false}
+}

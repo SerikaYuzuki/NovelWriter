@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct IOSRootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Bindable var store: IOSDocumentStore
     @State private var workspaceNavigation = IOSWorkspaceNavigationCoordinator()
 
@@ -24,10 +25,18 @@ struct IOSRootView: View {
                 )
             }
         }
+        .task(id: AutomaticSyncObservationID(
+            session: store.currentDocumentSessionToken,
+            account: store.snapshotSyncV2AccountScope,
+            isActive: scenePhase == .active && store.startupState == .ready
+        )) {
+            if scenePhase == .active {
+                await store.runAutomaticSnapshotSyncV2()
+            }
+        }
         .disabled(store.isDocumentTransitionInProgress)
         .overlay {
-            if store.isDocumentTransitionInProgress,
-               !store.isNavigationDepartureInProgress {
+            if store.showsDocumentTransitionOverlay {
                 ZStack {
                     Rectangle()
                         .fill(.ultraThinMaterial)
@@ -64,7 +73,7 @@ struct IOSRootView: View {
                 showCurrentProjectHome()
             }
         }
-        .alert(item: $store.promptCopyNotice) { notice in
+        .alert(item: $store.manuscriptCopyNotice) { notice in
             Alert(
                 title: Text(notice.title),
                 message: Text(notice.message),
@@ -165,4 +174,10 @@ private struct IOSShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_: UIActivityViewController, context _: Context) {}
+}
+
+private struct AutomaticSyncObservationID: Equatable {
+    let session: IOSDocumentSessionToken?
+    let account: IOSSnapshotSyncV2AccountScope
+    let isActive: Bool
 }

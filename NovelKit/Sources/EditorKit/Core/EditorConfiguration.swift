@@ -17,18 +17,22 @@ public struct EditorConfiguration: Hashable, Sendable {
     public var textColorHex: String
     /// 本文背景色。`#RRGGBB` 形式。プラットフォーム側で解釈できない場合は既定色へフォールバックする。
     public var backgroundColorHex: String
+    /// macOSのカーソル表示を短時間で補間する。本文・入力位置・IME候補座標は変えない。
+    public var animatesCaret: Bool
 
     public init(
         fontName: String = "Hiragino Mincho ProN",
         fontSize: Double = 16,
         lineHeightMultiple: Double = 1.5,
         textColorHex: String = Self.defaultTextColorHex,
-        backgroundColorHex: String = Self.defaultBackgroundColorHex
+        backgroundColorHex: String = Self.defaultBackgroundColorHex,
+        animatesCaret: Bool = false
     ) {
         self.fontName = fontName
         self.fontSize = fontSize
         self.lineHeightMultiple = lineHeightMultiple
         self.textColorHex = textColorHex
         self.backgroundColorHex = backgroundColorHex
+        self.animatesCaret = animatesCaret
     }
 }

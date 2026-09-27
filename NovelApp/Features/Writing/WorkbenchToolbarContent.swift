@@ -1,114 +1,70 @@
 import AppKit
 import NovelCore
+import NovelSyncV2Application
 import Observation
 import SwiftUI
 
 /// Workbench 上部の一段 native toolbar(docs/TOOLBAR.md Toolbar-2 / D-024)。
 ///
-/// `NovelWorkbenchView` だけが `.toolbar(id:)` を所有する。編集操作は個別の
-/// `ToolbarItem(id:)` とし、Sidebar 開閉・Outline identity・右端検索は
-/// システムの固定アンカーに委ねる。
+/// `NovelWorkbenchView` のdetailがカスタマイズを所有する。Outlineの追加操作は
+/// `WorkbenchOutlineToolbarContent`へ分け、各列のnative tracking separatorを保つ。
+/// アプリ操作は個別に移動・削除でき、Sidebar開閉と検索はOS標準項目を使う。
 struct WorkbenchToolbarContent: CustomizableToolbarContent {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
+    @Environment(EditorSearchSession.self) private var editorSearchSession
     @Environment(SnapshotMenuPresenter.self) private var snapshotMenuPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
 
     let overlayState: WorkbenchOverlayState
+    let requestSync: () -> Void
     let showsWritingActions: Bool
     @Binding var isPlotCardRailPresented: Bool
-    let reviewDeviceSyncChanges: () -> Void
+    var requestEpisodeRename: () -> Void = {}
+
+    @ToolbarContentBuilder
+    private var synchronizationItem: some CustomizableToolbarContent {
+        if #available(macOS 26.1, *) {
+            synchronizationButton.visibilityPriority(.high)
+        } else {
+            synchronizationButton
+        }
+    }
+
+    private var synchronizationButton: some CustomizableToolbarContent {
+        ToolbarItem(id: WorkbenchToolbarItemID.snapshotSync) {
+            ExplicitSyncButton(requestSync: requestSync)
+        }
+        .customizationBehavior(.default)
+        .defaultCustomization(.visible)
+    }
 
     var body: some CustomizableToolbarContent {
-        if appState.deviceSyncRuntime?.library != nil {
-            ToolbarItem(id: WorkbenchToolbarItemID.library, placement: .navigation) {
+        if appState.startupState.isReady {
+            ToolbarItem(id: WorkbenchToolbarItemID.library) {
                 Button {
-                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.returnToStartupLibrary(
-                            expectedSession: session,
-                            localFirst: true
-                        )
+                        guard await appState.returnToSnapshotLibrary() else { return }
+                        openWindow(id: "library")
+                        dismissWindow(id: "workbench")
                     }
                 } label: {
-                    Label("作品を選ぶ", systemImage: "books.vertical")
+                    Label("作品一覧", systemImage: "books.vertical")
                 }
-                .help("iCloudの作品一覧へ戻る")
-                .disabled(!appState.permitsReturnToCloudLibrary)
+                .help("保存して作品一覧に戻る")
+                .disabled(!appState.permitsDocumentTransitionOperation)
+                .accessibilityIdentifier("workbench.library")
             }
-            .customizationBehavior(.disabled)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
+        }
+
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.flexible)
         }
 
         if showsWritingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd, placement: .navigation) {
-                Button {
-                    Task {
-                        await appState.addEpisodeAfterDeviceSyncDeparture()
-                    }
-                } label: {
-                    Label("話を追加", systemImage: "square.and.pencil")
-                }
-                .help("選択中の章に話を追加")
-                .disabled(appState.selectedChapter == nil)
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsWritingActions || appState.hasPendingDeviceSyncReview {
-            ToolbarItem(id: WorkbenchToolbarItemID.deviceSyncStatus) {
-                DeviceSyncStatusControl(
-                    saveState: appState.saveState,
-                    state: appState.deviceSyncState,
-                    transferState: appState.deviceSyncTransferState,
-                    localDurabilityState: appState.deviceSyncLocalDurabilityState,
-                    hasLocalRecoveryReview: appState.hasPendingDeviceSyncReview,
-                    isLocalRecoveryReviewReady: appState.workSyncLocalRecoveryReview != nil
-                        || !appState.deviceSyncLocalRecoveryPending,
-                    reviewChanges: reviewDeviceSyncChanges
-                )
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsWritingActions {
-            if appState.canPublishCurrentWorkToCloud {
-                ToolbarItem(id: WorkbenchToolbarItemID.cloudPublish) {
-                    Button {
-                        let session = appState.documentSessionToken
-                        Task {
-                            _ = await appState.publishCurrentLibraryWork(
-                                expectedSession: session
-                            )
-                        }
-                    } label: {
-                        Label("iCloudに保存", systemImage: "icloud.and.arrow.up")
-                    }
-                    .help("この作品をiCloudに保存します")
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("workbench.cloud.publish")
-                }
-                .customizationBehavior(.disabled)
-                .defaultCustomization(.visible)
-            }
-
-            if appState.canExplicitlySyncCurrentWork {
-                ToolbarItem(id: WorkbenchToolbarItemID.cloudSync) {
-                    Button {
-                        Task { await appState.saveAndSyncNow() }
-                    } label: {
-                        Label("iCloudと同期", systemImage: "arrow.clockwise.icloud")
-                    }
-                    .help("この端末の保存内容をiCloudと同期します")
-                    .disabled(appState.isExplicitNoteSyncInFlight)
-                    .accessibilityIdentifier("workbench.cloud.sync")
-                }
-                .customizationBehavior(.disabled)
-                .defaultCustomization(.visible)
-            }
-
             ToolbarItem(id: WorkbenchToolbarItemID.chapterMemo) {
                 Button {
                     overlayState.toggle(.memo)
@@ -122,7 +78,7 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                         .frame(width: 320, height: 260)
                 }
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.snapshotSave) {
@@ -137,8 +93,10 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                         .frame(width: 360, height: 320)
                 }
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
+
+            synchronizationItem
 
             ToolbarItem(id: WorkbenchToolbarItemID.export) {
                 Button {
@@ -149,14 +107,14 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .help("原稿を書き出す…")
                 .disabled(exportPresenter.state.isExporting)
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
 
             ToolbarItem(id: WorkbenchToolbarItemID.plotCardRail) {
                 Button {
                     isPlotCardRailPresented.toggle()
                 } label: {
-                    Label("プロットカード", systemImage: "sidebar.trailing")
+                    Label("プロットカード", systemImage: "rectangle.bottomthird.inset.filled")
                         .labelStyle(.iconOnly)
                 }
                 .help("執筆中の章のプロットカードを表示")
@@ -164,7 +122,37 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 .controlSize(.large)
                 .accessibilityValue(isPlotCardRailPresented ? "表示中" : "非表示")
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed)
+        }
+        ToolbarItem(id: "workbench.search") {
+            WorkbenchSearchField(query: Bindable(editorSearchSession).query,
+                                 focusRequest: editorSearchSession.focusRequest) {
+                editorSearchSession.jump(direction: .forward, in: appState.selectedEpisode)
+            }
+            .frame(minWidth: 160, idealWidth: 260, maxWidth: 320)
+        }
+        .customizationBehavior(.default)
+        .defaultCustomization(.visible)
+
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed)
+        }
+        if !showsWritingActions {
+            synchronizationItem
+        }
+        if showsWritingActions {
+            ToolbarItem(id: "workbench.writing.assistant") {
+                Button("AI支援", systemImage: "sidebar.right") {
+                    NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
+                }
+                .help("AI支援パネルを開閉")
+            }
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
 
@@ -177,80 +165,13 @@ struct WorkbenchToolbarContent: CustomizableToolbarContent {
                 }
                 .help("プロットカードを追加")
             }
-            .customizationBehavior(.reorderable)
+            .customizationBehavior(.default)
             .defaultCustomization(.visible)
         }
-
-        if showsWritingActions || showsPlotActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd, placement: .navigation) {
-                Button {
-                    Task {
-                        await appState.addChapterAfterDeviceSyncDeparture()
-                    }
-                } label: {
-                    Label("章を追加", systemImage: "plus")
-                }
-                .help("章を追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsCharacterActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd, placement: .navigation) {
-                Button {
-                    appState.addCharacter()
-                } label: {
-                    Label("登場人物を追加", systemImage: "person.badge.plus")
-                }
-                .help("登場人物を追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsWorldbuildingActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.worldNoteAdd, placement: .navigation) {
-                Button {
-                    appState.addWorldNote()
-                } label: {
-                    Label("ノートを追加", systemImage: "note.text.badge.plus")
-                }
-                .help("ノートを追加")
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-
-        if showsReferenceActions {
-            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd, placement: .navigation) {
-                Button {
-                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
-                } label: {
-                    Label("資料を取り込む", systemImage: "paperclip")
-                }
-                .help("資料を取り込む")
-                .disabled(!appState.supportsAttachments)
-            }
-            .customizationBehavior(.disabled)
-            .defaultCustomization(.visible)
-        }
-    }
-
-    private var showsCharacterActions: Bool {
-        appState.workspaceSelection.section == .characters
     }
 
     private var showsPlotActions: Bool {
         appState.workspaceSelection.section == .plot
-    }
-
-    private var showsWorldbuildingActions: Bool {
-        appState.workspaceSelection.section == .worldbuilding
-    }
-
-    private var showsReferenceActions: Bool {
-        appState.workspaceSelection.section == .references
     }
 
     private var selectedPlotChapterID: ChapterID? {
@@ -276,9 +197,8 @@ enum WorkbenchToolbarItemID {
     static let library = "workbench.library"
     static let episodeAdd = "workbench.episode.add"
     static let plotCardRail = "workbench.plot.card.rail"
-    static let deviceSyncStatus = "workbench.device.sync.status"
-    static let cloudPublish = "workbench.cloud.publish"
-    static let cloudSync = "workbench.cloud.sync"
+    static let syncStatus = "workbench.snapshot.sync.status"
+    static let snapshotSync = "workbench.snapshot.sync"
     static let chapterAdd = "workbench.chapter.add"
     static let chapterMemo = "workbench.chapter.memo"
     static let snapshotSave = "workbench.snapshot.save"
@@ -337,9 +257,8 @@ struct SnapshotPopover: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    let session = appState.documentSessionToken
                     Task {
-                        _ = await appState.createSnapshot(expectedSession: session)
+                        _ = await appState.saveExplicitSnapshot()
                         await presenter.refresh()
                     }
                 } label: {
@@ -355,12 +274,12 @@ struct SnapshotPopover: View {
                 ContentUnavailableView(
                     "スナップショットがありません",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("保存ボタンから、または編集のあと約5分で現在の状態を記録できます。")
+                    description: Text("保存ボタンから、この作品の履歴を記録できます。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(presenter.snapshots) { item in
-                    Button(item.snapshot.displayName) {
+                    Button(item.entry.reason) {
                         presenter.requestRestore(item)
                         overlayState.presented = nil
                     }
@@ -445,11 +364,11 @@ struct ChapterContextMenuContent: View {
 
 /// File メニューからスナップショット一覧・復元へ到達するための薄い状態。
 struct SnapshotRestoreRequest: Identifiable, Equatable {
-    var snapshot: DocumentSnapshotInfo
+    var entry: SyncV2HistoryItem
     var session: DocumentSessionToken
 
-    var id: URL {
-        snapshot.id
+    var id: UUID {
+        entry.occurrenceID
     }
 }
 
@@ -468,11 +387,11 @@ final class SnapshotMenuPresenter {
 
     func refresh() async {
         let session = appState.documentSessionToken
-        let loadedSnapshots = await appState.listSnapshots(expectedSession: session)
+        await appState.refreshSnapshotHistory()
         guard appState.documentSessionToken == session else { return }
 
-        snapshots = loadedSnapshots.map {
-            SnapshotRestoreRequest(snapshot: $0, session: session)
+        snapshots = appState.snapshotSyncHistory.map {
+            SnapshotRestoreRequest(entry: $0, session: session)
         }
         if snapshotPendingRestore?.session != session {
             snapshotPendingRestore = nil
@@ -490,13 +409,119 @@ final class SnapshotMenuPresenter {
 
     func restore(_ request: SnapshotRestoreRequest) async {
         snapshotPendingRestore = nil
-        let success = await appState.restoreSnapshot(
-            at: request.snapshot.url,
-            expectedSession: request.session
-        )
+        let success = await appState.restoreSnapshotV2(snapshotID: request.entry.snapshotID)
         await refresh()
         if !success {
-            restoreErrorMessage = "スナップショットを復元できませんでした。保存に失敗したか、ファイルにアクセスできない可能性があります。"
+            restoreErrorMessage = "スナップショットを復元できませんでした。現在の作品はこの端末に保持されています。"
         }
+    }
+}
+
+/// Items scoped to the outline create its native tracking separator.
+struct WorkbenchOutlineToolbarContent: CustomizableToolbarContent {
+    @Environment(AppState.self) private var appState
+    var requestEpisodeRename: () -> Void = {}
+    var body: some CustomizableToolbarContent {
+        if showsWritingActions || showsPlotActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.chapterAdd) {
+                Button {
+                    Task {
+                        _ = await appState.addChapterAfterTransition()
+                    }
+                } label: {
+                    Label("章を追加", systemImage: "plus")
+                }
+                .help("章を追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWritingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.episodeAdd) {
+                Button {
+                    Task {
+                        _ = await appState.addEpisodeAfterTransition()
+                    }
+                } label: {
+                    Label("話を追加", systemImage: "square.and.pencil")
+                }
+                .help("選択中の章に話を追加")
+                .disabled(appState.selectedChapter == nil)
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+            ToolbarItem(id: "workbench.episode.rename") {
+                Button("話の名前を変更", systemImage: "pencil") {
+                    requestEpisodeRename()
+                }
+                .help("選択中の話の名前を変更")
+                .disabled(appState.selectedEpisode == nil || !appState.permitsDocumentInteraction)
+                .accessibilityIdentifier("workbench.episode.rename")
+            }
+
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsCharacterActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.characterAdd) {
+                Button {
+                    appState.addCharacter()
+                } label: {
+                    Label("登場人物を追加", systemImage: "person.badge.plus")
+                }
+                .help("登場人物を追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsWorldbuildingActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.worldNoteAdd) {
+                Button {
+                    appState.addWorldNote()
+                } label: {
+                    Label("ノートを追加", systemImage: "note.text.badge.plus")
+                }
+                .help("ノートを追加")
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+
+        if showsReferenceActions {
+            ToolbarItem(id: WorkbenchToolbarItemID.attachmentAdd) {
+                Button {
+                    NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil)
+                } label: {
+                    Label("資料を取り込む", systemImage: "paperclip")
+                }
+                .help("資料を取り込む")
+                .disabled(!appState.supportsAttachments)
+            }
+            .customizationBehavior(.default)
+            .defaultCustomization(.visible)
+        }
+    }
+
+    private var showsWritingActions: Bool {
+        appState.workspaceSelection.section == .structure
+    }
+
+    private var showsPlotActions: Bool {
+        appState.workspaceSelection.section == .plot
+    }
+
+    private var showsCharacterActions: Bool {
+        appState.workspaceSelection.section == .characters
+    }
+
+    private var showsWorldbuildingActions: Bool {
+        appState.workspaceSelection.section == .worldbuilding
+    }
+
+    private var showsReferenceActions: Bool {
+        appState.workspaceSelection.section == .references
     }
 }

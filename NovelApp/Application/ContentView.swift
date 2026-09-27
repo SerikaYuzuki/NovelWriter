@@ -1,177 +1,160 @@
 import EditorKit
+import NovelCore
+import NovelSyncV2
+import NovelSyncV2Application
 import SwiftUI
 
 struct ContentView: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
     @Environment(ExportPresenter.self) private var exportPresenter
-    @State private var isStartupWorkRecoveryPresented = false
+    @State private var showingConflict = false
 
     var body: some View {
-        Group {
-            switch appState.startupState {
-            case .loading:
-                StartupLoadingView()
-            case let .documentSelection(context):
-                StartupDocumentSelectionView(context: context)
-            case .ready:
-                NovelWorkbenchView()
-                    .disabled(!appState.permitsDocumentInteraction)
-            case let .recovery(context):
-                StartupRecoveryView(context: context)
-            }
-        }
-        .alert(
-            "操作を完了できませんでした",
-            isPresented: Binding(
-                get: { documentPanelPresenter.alertMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        documentPanelPresenter.alertMessage = nil
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(documentPanelPresenter.alertMessage ?? "")
-        }
-        .alert(
-            "作品を開けませんでした",
-            isPresented: Binding(
-                get: { appState.externalDocumentOpenErrorMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        appState.externalDocumentOpenErrorMessage = nil
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(appState.externalDocumentOpenErrorMessage ?? "")
-        }
-        .alert(
-            "作品の操作",
-            isPresented: Binding(
-                get: { appState.cloudLibraryActionMessage != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        appState.dismissCloudLibraryActionMessage()
-                    }
-                }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(appState.cloudLibraryActionMessage ?? "")
-        }
-        .overlay {
-            if appState.startupState.isReady,
-               appState.usesWholeWorkSyncRuntime,
-               !appState.usesNoteSyncRuntime,
-               appState.deviceSyncLocalRecoveryPending {
-                StartupWorkSyncGateView(
-                    requiresReview: appState.workSyncLocalRecoveryReview != nil,
-                    review: { isStartupWorkRecoveryPresented = true }
-                )
-            }
-        }
-        .sheet(isPresented: $isStartupWorkRecoveryPresented) {
-            if let review = appState.workSyncLocalRecoveryReview {
-                let session = appState.documentSessionToken
-                WorkConflictResolutionView(
-                    presentation: WorkConflictPresentationAdapter.make(localRecovery: review),
-                    isApplying: appState.isApplyingWorkSyncConflict,
-                    choose: { choice in
+        rootContent
+            .sheet(isPresented: $showingConflict) {
+                if let selection = appState.snapshotSyncV2ConflictSelection {
+                    ConflictSheet(selection: selection) { choice in
                         Task {
-                            await appState.resolveWorkSyncLocalRecovery(
-                                using: choice,
-                                expectedReview: review,
-                                expectedSession: session
-                            )
+                            if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
+                                showingConflict = false
+                            }
                         }
-                    },
-                    reviewLater: { isStartupWorkRecoveryPresented = false }
+                    } cancel: {
+                        showingConflict = false
+                    }
+                }
+            }
+            .alert(
+                "作品の操作",
+                isPresented: Binding(
+                    get: { appState.operationMessage != nil || documentPanelPresenter.alertMessage != nil },
+                    set: {
+                        if !$0 {
+                            appState.dismissOperationMessage()
+                            documentPanelPresenter.alertMessage = nil
+                        }
+                    }
                 )
-                .id("startup-local-recovery:\(review.materializedRevision.revisionID)")
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(documentPanelPresenter.alertMessage ?? appState.operationMessage ?? "")
             }
-        }
-        .onChange(of: appState.workSyncLocalRecoveryReview, initial: true) { _, review in
-            isStartupWorkRecoveryPresented = review != nil
-        }
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: 8) {
-                if appState.startupState.isReady,
-                   let notice = appState.aiClipboardPromptCopyNotice {
-                    AIClipboardPromptCopyNoticeView(
-                        notice: notice,
-                        onDismiss: appState.dismissAIClipboardPromptCopyNotice
-                    )
-                }
+            .onChange(of: appState.snapshotSyncConflict, initial: true) { _, conflict in
+                showingConflict = conflict != nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .presentSnapshotSyncConflict)) { _ in
+                showingConflict = appState.snapshotSyncConflict != nil
+            }
+            .alert(
+                "作品を開けませんでした",
+                isPresented: Binding(
+                    get: { appState.externalDocumentOpenErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            appState.externalDocumentOpenErrorMessage = nil
+                        }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(appState.externalDocumentOpenErrorMessage ?? "")
+            }
+    }
 
-                if appState.startupState.isReady, exportPresenter.state != .idle {
-                    ExportStatusView(presenter: exportPresenter)
+    @ViewBuilder
+    private var rootContent: some View {
+        switch appState.startupState {
+        case .ready:
+            // NovelWorkbenchView owns the product NavigationSplitView and its
+            // toolbar. Keeping it as the root avoids nesting a second split
+            // view around the editor and losing the existing workbench chrome.
+            NovelWorkbenchView()
+                .disabled(!appState.permitsDocumentInteraction)
+        case .recovery:
+            RecoveryPane()
+        case .loading, .documentSelection:
+            NavigationSplitView {
+                LibraryPane()
+            } detail: {
+                switch appState.startupState {
+                case .loading:
+                    ProgressView("端末の作品を開いています…")
+                case .documentSelection:
+                    ContentUnavailableView(
+                        "作品を選択してください",
+                        systemImage: "books.vertical",
+                        description: Text("左の作品一覧から作品を開くか、新しい作品を作成してください。")
+                    )
+                default:
+                    EmptyView()
                 }
             }
-            .padding(16)
         }
     }
 }
 
-private struct StartupWorkSyncGateView: View {
-    let requiresReview: Bool
-    let review: () -> Void
+private struct RecoveryPane: View {
+    @Environment(AppState.self) private var appState
 
     var body: some View {
-        Group {
-            if requiresReview {
-                ContentUnavailableView {
-                    Label("変更の確認が必要です", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text("端末に残っている作品の版を確認してから、執筆を再開できます。")
-                } actions: {
-                    Button("変更を確認", action: review)
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("startup.workSyncRecovery.review")
-                }
-            } else {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("作品の保存状態を確認中")
-                    Text("作品の保存状態を確認しています…")
-                        .font(.headline)
-                    Text("端末に保存された内容を確認してから、執筆画面を開きます。")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
+        ContentUnavailableView(
+            "復旧が必要です",
+            systemImage: "exclamationmark.triangle",
+            description: Text(recoveryMessage)
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
-        .accessibilityIdentifier("startup.workSyncRecovery")
+    }
+
+    private var recoveryMessage: String {
+        if case let .recovery(context) = appState.startupState {
+            return context.message
+        }
+        return "端末の保存領域を確認できませんでした。"
     }
 }
 
-extension Notification.Name {
-    static let toggleWritingInspector = Notification.Name("dev.serikayuzuki.fuminiwa.toggleWritingInspector")
-    static let presentChapterTitleEditor = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterTitleEditor")
-    static let presentChapterMemo = Notification.Name("dev.serikayuzuki.fuminiwa.presentChapterMemo")
-    static let presentAttachmentImporter = Notification.Name("dev.serikayuzuki.fuminiwa.presentAttachmentImporter")
+private struct ConflictSheet: View {
+    let selection: SnapshotSyncV2ConflictSelection
+    let choose: (SyncV2ConflictChoice) -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("競合", systemImage: "exclamationmark.triangle")
+                .font(.title2.weight(.semibold))
+            Text("この端末の版とサーバーの版が分かれています。選択中の入力は先に端末へ保存されます。")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Button("この端末の版を残す") { choose(.useDevice) }
+                Button("サーバーの版を採用") { choose(.useServer) }
+                Button("両方を残す") { choose(.keepBoth) }
+            }
+            .buttonStyle(.borderedProminent)
+            Button("後で確認", action: cancel)
+                .buttonStyle(.borderless)
+        }
+        .padding(24)
+        .frame(width: 420)
+        .accessibilityIdentifier("snapshotSyncV2.conflictSheet")
+    }
 }
 
 #Preview {
-    let editorCommandSession = EditorCommandSession()
-    let appState = AppState(
-        dependencies: AppDependencies(editorCommandSession: editorCommandSession),
+    let session = EditorCommandSession()
+    guard let defaults = UserDefaults(suiteName: "jp.fuminiwa.preview") else {
+        preconditionFailure("Unable to create preview defaults")
+    }
+    let state = AppState(
+        dependencies: AppDependencies(
+            userDefaults: defaults,
+            editorCommandSession: session
+        ),
         initialStartupState: .ready
     )
     return ContentView()
-        .environment(appState)
-        .environment(EditorSettings())
-        .environment(DocumentPanelPresenter(appState: appState))
-        .environment(SnapshotMenuPresenter(appState: appState))
-        .environment(ExportPresenter(appState: appState))
-        .environment(EditorSearchSession())
-        .environment(editorCommandSession)
+        .environment(state)
+        .environment(session)
 }

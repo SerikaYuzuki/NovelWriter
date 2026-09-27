@@ -1,0 +1,10 @@
+schemaVersion: 1
+enabledWorkflows:
+  - project-discovery
+  - simulator
+  - ui-automation
+  - macos
+sentryDisabled: true
+sessionDefaults:
+  projectPath: ./FUMINIWA.xcodeproj
+  scheme: FUMINIWAIOS

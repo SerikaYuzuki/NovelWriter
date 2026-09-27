@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:entity:attachment-metadata",
+  "type": "object", "additionalProperties": false,
+  "required": ["attachmentId", "byteCount", "fileName"],
+  "properties": {
+    "attachmentId": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "byteCount": { "type": "integer", "minimum": 0, "maximum": 262144000 },
+    "fileName": { "type": "string", "minLength": 1, "maxLength": 255 }
+  }
+}

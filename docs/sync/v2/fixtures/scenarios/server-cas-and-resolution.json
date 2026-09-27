@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "name": "server-resolution-cas-preserves-new-edit",
+  "events": [
+    {"type": "seal", "commandKind": "resolveServer", "currentSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "localGeneration": 8},
+    {"type": "localEdit", "currentSnapshotId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "localGeneration": 9},
+    {"type": "installRemote", "expectedCurrentSnapshotId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "expectedLocalGeneration": 8}
+  ],
+  "expect": {"install": false, "newEditPreserved": true, "newIntentCreated": false, "remoteResolutionReceipt": true}
+}

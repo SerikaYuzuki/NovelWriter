@@ -50,7 +50,11 @@ final class EditorSettings {
         didSet { userDefaults.set(backgroundColorHex, forKey: Self.backgroundColorKey) }
     }
 
-    private let userDefaults: UserDefaults
+    var animatesCaret: Bool {
+        didSet { userDefaults.set(animatesCaret, forKey: AppPreferenceKey.editorAnimatesCaret) }
+    }
+
+    let userDefaults: UserDefaults
     private let appearanceApplier: @MainActor (AppAppearance) -> Void
 
     private static let fontNameKey = AppPreferenceKey.editorFontName
@@ -92,6 +96,7 @@ final class EditorSettings {
             ?? EditorConfiguration.defaultTextColorHex
         backgroundColorHex = userDefaults.string(forKey: Self.backgroundColorKey)
             ?? EditorConfiguration.defaultBackgroundColorHex
+        animatesCaret = userDefaults.object(forKey: AppPreferenceKey.editorAnimatesCaret) as? Bool ?? true
 
         self.appearanceApplier(appearance)
     }
@@ -102,7 +107,8 @@ final class EditorSettings {
             fontSize: fontSize,
             lineHeightMultiple: lineHeightMultiple,
             textColorHex: textColorHex,
-            backgroundColorHex: backgroundColorHex
+            backgroundColorHex: backgroundColorHex,
+            animatesCaret: animatesCaret
         )
     }
 
@@ -228,11 +234,15 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 struct EditorSettingsView: View {
     @Environment(EditorSettings.self) private var settings
+    @State private var showingAssistantSettings = false
 
     var body: some View {
         @Bindable var settings = settings
 
         Form {
+            Section("AI支援") {
+                Button("AI支援の設定…") { showingAssistantSettings = true }
+            }
             Picker("外観", selection: $settings.appearance) {
                 ForEach(AppAppearance.allCases) { appearance in
                     Text(appearance.title)
@@ -285,6 +295,8 @@ struct EditorSettingsView: View {
             .pickerStyle(.segmented)
 
             #if canImport(AppKit)
+            Toggle("滑らかなカーソル", isOn: $settings.animatesCaret)
+                .accessibilityIdentifier("editor.animates-caret")
             ColorPicker("本文色", selection: textColorBinding, supportsOpacity: false)
             ColorPicker("背景色", selection: backgroundColorBinding, supportsOpacity: false)
             #endif
@@ -292,6 +304,12 @@ struct EditorSettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 420)
+        .sheet(isPresented: $showingAssistantSettings) {
+            VStack {
+                AssistantSettingsView(defaults: settings.userDefaults)
+                Button("閉じる") { showingAssistantSettings = false }.padding()
+            }.frame(width: 520, height: 620)
+        }
     }
 
     private var fontFamilyBinding: Binding<EditorFontFamily> {

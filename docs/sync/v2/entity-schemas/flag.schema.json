@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fuminiwa:sync:v2:entity:flag",
+  "type": "object", "additionalProperties": false,
+  "required": ["id", "isResolved", "note", "plantedChapterId", "resolvedChapterId", "title"],
+  "properties": {
+    "id": { "$ref": "#/$defs/uuid" }, "isResolved": { "type": "boolean" },
+    "note": { "type": "string", "maxLength": 1048576 },
+    "plantedChapterId": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "resolvedChapterId": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "title": { "type": "string", "maxLength": 1048576 }
+  },
+  "$defs": { "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" } }
+}

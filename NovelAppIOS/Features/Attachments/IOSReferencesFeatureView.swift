@@ -38,13 +38,13 @@ struct IOSReferencesOutlineView: View {
         Group {
             if store.supportsAttachments {
                 List {
-                    ForEach(store.attachments) { attachment in
+                    ForEach(store.referenceAttachments) { attachment in
                         attachmentRow(attachment)
                     }
                     .onDelete(perform: requestDeletion)
                 }
                 .overlay {
-                    if store.attachments.isEmpty {
+                    if store.referenceAttachments.isEmpty {
                         ContentUnavailableView {
                             Label("資料がありません", systemImage: "paperclip")
                         } description: {
@@ -135,7 +135,7 @@ struct IOSReferencesOutlineView: View {
     private func requestDeletion(at offsets: IndexSet) {
         guard let expectedSession else { return }
         let attachments = offsets.compactMap { index in
-            store.attachments.indices.contains(index) ? store.attachments[index] : nil
+            store.referenceAttachments.indices.contains(index) ? store.referenceAttachments[index] : nil
         }
         guard let attachment = attachments.first else { return }
         deletionRequest = IOSAttachmentDeletionRequest(
@@ -279,7 +279,7 @@ struct IOSReferenceDetailView: View {
 
     private var selectedAttachment: Attachment? {
         guard let fileName else { return nil }
-        return store.attachments.first(where: { $0.fileName == fileName })
+        return store.referenceAttachments.first(where: { $0.fileName == fileName })
     }
 
     private var deletionRequestIsPresented: Binding<Bool> {

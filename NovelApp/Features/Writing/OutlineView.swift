@@ -31,7 +31,7 @@ struct OutlineContainerView: View {
         }
         .animation(.snappy(duration: 0.18), value: appState.outlinePresentation.isSearchVisible)
         .workbenchGlassChromeStyle()
-        .focusedSceneValue(\.workbenchSearchSurface, .outline)
+        .focusedValue(\.workbenchSearchSurface, .outline)
         .focusable()
         .onKeyPress(.escape) {
             guard appState.outlinePresentation.isSearchVisible else { return .ignored }
@@ -47,7 +47,7 @@ struct OutlineContainerView: View {
         ) { request in
             Button("削除", role: .destructive) {
                 Task {
-                    await appState.deleteChapterAfterDeviceSyncDeparture(
+                    await appState.deleteChapterAfterTransition(
                         id: request.value.id,
                         expectedSession: request.session
                     )
@@ -64,7 +64,7 @@ struct OutlineContainerView: View {
         ) { request in
             Button("削除", role: .destructive) {
                 Task {
-                    await appState.deleteEpisodeAfterDeviceSyncDeparture(
+                    await appState.deleteEpisodeAfterTransition(
                         id: request.episode.id,
                         from: request.chapterID,
                         expectedSession: request.session
@@ -116,6 +116,7 @@ struct OutlineView: View {
     @State private var disclosureState = OutlineDisclosureState()
     @State private var chapterPendingRename: SessionBoundValue<Chapter>?
     @State private var chapterTitleDraft = ""
+    @State private var episodePendingRename: EpisodeRenameRequest?
 
     var body: some View {
         List(selection: selectionBinding) {
@@ -135,6 +136,13 @@ struct OutlineView: View {
                                 )
                             )
                             .contextMenu {
+                                Button("話の名前を変更", systemImage: "pencil") {
+                                    guard appState.documentSessionToken == episodeRequest.session else { return }
+                                    episodePendingRename = EpisodeRenameRequest(
+                                        episode: episode, chapterID: chapter.id, appState: appState
+                                    )
+                                }
+                                .disabled(!appState.permitsDocumentInteraction)
                                 EpisodeOutlineContextMenu(request: episodeRequest) {
                                     episodePendingDeletion = episodeRequest
                                 }
@@ -144,7 +152,7 @@ struct OutlineView: View {
                         .onMove { offsets, destination in
                             guard appState.outlinePresentation.searchText.isEmpty else { return }
                             Task {
-                                await appState.moveEpisodesAfterDeviceSyncDeparture(
+                                await appState.moveEpisodesAfterTransition(
                                     in: chapter.id,
                                     fromOffsets: offsets,
                                     toOffset: destination
@@ -186,7 +194,7 @@ struct OutlineView: View {
                 .onMove { offsets, destination in
                     guard appState.outlinePresentation.searchText.isEmpty else { return }
                     Task {
-                        await appState.moveChaptersAfterDeviceSyncDeparture(
+                        await appState.moveChaptersAfterTransition(
                             fromOffsets: offsets,
                             toOffset: destination
                         )
@@ -195,6 +203,7 @@ struct OutlineView: View {
             }
         }
         .workbenchOutlineListStyle()
+        .modifier(EpisodeRenameDialog(request: $episodePendingRename))
         .overlay {
             if filteredChapters.isEmpty {
                 ContentUnavailableView(
@@ -322,7 +331,7 @@ struct OutlineView: View {
                           $0.episodes.contains(where: { $0.id == episodeID })
                       }) else { return }
                 Task {
-                    await appState.selectEpisodeAfterDeviceSyncDeparture(
+                    await appState.selectEpisodeAfterTransition(
                         episodeID,
                         in: chapter.id
                     )

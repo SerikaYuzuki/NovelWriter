@@ -1,0 +1,3767 @@
+use crate::{
+    application::{strict_json, validate_entity_payload, validate_manifest_bytes},
+    domain::*,
+    object_store::{ObjectStore, PostgresObjectStore},
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use chrono::Utc;
+use serde_json::Value;
+use sqlx::{
+    postgres::{PgAdvisoryLock, PgAdvisoryLockKey, PgConnectOptions, PgPoolOptions},
+    PgConnection, PgPool, Postgres, Row, Transaction,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use uuid::Uuid;
+
+const SERVER_NAMESPACE: &str = "fuminiwa-snapshot-sync-v2";
+const SCHEMA_VERSION: &str = "2";
+const DDL_CONTRACT_MARKER: &str = "snapshot-sync-v2-postgres-r3";
+// All v2 server processes use the same two-key advisory lock.  Keep this
+// outside either schema: the lock must exist before the identity inventory
+// can safely be read and while SQLx is applying DDL.
+pub const DATABASE_IDENTITY_LOCK_KEY_1: i32 = 0x4655_4D49; // "FUMI"
+pub const DATABASE_IDENTITY_LOCK_KEY_2: i32 = 0x4E49_5741; // "NIWA"
+
+fn is_temporary_namespace(name: &str) -> bool {
+    name.starts_with("pg_temp_") || name.starts_with("pg_toast_temp_")
+}
+/// The server never follows an unbounded user-controlled snapshot graph.
+/// This is deliberately a graph-node budget (not a wall-clock timeout): a
+/// malformed cycle or an unexpectedly huge closure is rejected before any
+/// head/conflict/receipt mutation can be committed.
+const MAX_LINEAGE_NODES: i64 = 4096;
+
+pub const MIGRATION_OWNER_ROLE: &str = "fuminiwa_sync_v2_migrator";
+pub const RUNTIME_ROLE: &str = "fuminiwa_sync_v2_runtime";
+pub const BOOTSTRAP_ROLE: &str = "fuminiwa_sync_v2_bootstrap";
+pub const BOOTSTRAP_ADMIN_ROLE: &str = "fuminiwa_sync_v2_bootstrap_admin";
+pub const POSTGRES_INIT_ROLE: &str = "fuminiwa_sync_v2_postgres_init";
+
+const SYNC_RUNTIME_DML_TABLES: &[&str] = &[
+    "account_scopes",
+    "works",
+    "deleted_works",
+    "assistant_records",
+    "recovery_operations",
+    "global_blobs",
+    "account_objects",
+    "snapshots",
+    "snapshot_parents",
+    "snapshot_entries",
+    "upload_capabilities",
+    "receipts",
+    "sealed_commands",
+    "active_conflicts",
+    "conflict_candidates",
+    "conflict_events",
+    "history",
+    "restore_receipts",
+    "head_events",
+    "catalog_events",
+    "quarantine_records",
+];
+
+const AUTH_RUNTIME_DML_TABLES: &[&str] = &[
+    "accounts",
+    "provider_configs",
+    "external_identities",
+    "external_identity_secrets",
+    "provider_credentials",
+    "auth_operations",
+    "auth_challenges",
+    "auth_sessions",
+    "refresh_families",
+    "refresh_tokens",
+    "access_tokens",
+    "session_refresh_receipts",
+    "provider_notification_receipts",
+    "account_deletions",
+    "browser_attempts",
+    "auth_events",
+    "vault_rewrap_ledger",
+];
+
+const SEQUENCE_NAMES: &[(&str, &str)] = &[
+    ("sync_v2", "conflict_events_event_id_seq"),
+    ("sync_v2", "history_event_id_seq"),
+    ("sync_v2", "head_events_event_id_seq"),
+    ("sync_v2", "catalog_events_event_id_seq"),
+    ("sync_v2", "assistant_records_sequence_seq"),
+    ("auth_v1", "auth_events_event_id_seq"),
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DatabaseIdentity {
+    Fresh,
+    SnapshotSyncV2,
+}
+
+/// The identity guard runs before SQLx has a chance to apply a migration.  A
+/// marker alone is not sufficient: an operator can restore a v2 marker into a
+/// database that also contains an unrelated schema, extension, routine, or
+/// relation.  Keep this inventory in lockstep with the checked-in migrations
+/// and the audited PostgreSQL contract instead of treating the marker as an
+/// authority on its own.
+fn expected_v2_database_objects() -> HashSet<String> {
+    let mut objects = HashSet::new();
+    for schema in ["auth_v1", "sync_v2"] {
+        objects.insert(format!("schema:{schema}"));
+    }
+    for (schema, tables) in [
+        (
+            "sync_v2",
+            &[
+                "server_meta",
+                "deployment_binding",
+                "account_scopes",
+                "works",
+                "deleted_works",
+                "assistant_records",
+                "recovery_operations",
+                "global_blobs",
+                "account_objects",
+                "snapshots",
+                "snapshot_parents",
+                "snapshot_entries",
+                "upload_capabilities",
+                "receipts",
+                "sealed_commands",
+                "active_conflicts",
+                "conflict_candidates",
+                "conflict_events",
+                "history",
+                "restore_receipts",
+                "head_events",
+                "catalog_events",
+                "quarantine_records",
+                "migration_ledger",
+                "migration_staging_batches",
+                "migration_staging_objects",
+            ][..],
+        ),
+        (
+            "auth_v1",
+            &[
+                "accounts",
+                "provider_configs",
+                "external_identities",
+                "external_identity_secrets",
+                "provider_credentials",
+                "auth_operations",
+                "auth_challenges",
+                "auth_sessions",
+                "refresh_families",
+                "refresh_tokens",
+                "access_tokens",
+                "session_refresh_receipts",
+                "provider_notification_receipts",
+                "account_deletions",
+                "browser_attempts",
+                "auth_events",
+                "vault_rewrap_ledger",
+            ][..],
+        ),
+    ] {
+        for table in tables {
+            objects.insert(format!("relation:r:{schema}.{table}"));
+            objects.insert(format!("type:c:{schema}.{table}"));
+        }
+    }
+
+    // SQLx creates this relation during the first migration run.  Its row
+    // type is a normal PostgreSQL composite type, so it is listed as well.
+    objects.insert("relation:r:public._sqlx_migrations".into());
+    objects.insert("relation:i:public._sqlx_migrations_pkey".into());
+    objects.insert("type:c:public._sqlx_migrations".into());
+
+    for (schema, indexes) in [
+        (
+            "sync_v2",
+            &[
+                "server_meta_pkey",
+                "deployment_binding_pkey",
+                "account_scopes_pkey",
+                "works_pkey",
+                "deleted_works_pkey",
+                "assistant_records_pkey",
+                "assistant_records_cursor",
+                "assistant_prompt_revision",
+                "recovery_operations_pkey",
+                "global_blobs_pkey",
+                "account_objects_pkey",
+                "snapshots_pkey",
+                "snapshots_account_id_work_id_snapshot_id_key",
+                "snapshots_account_id_manifest_digest_key",
+                "snapshot_parents_pkey",
+                "snapshot_entries_pkey",
+                "upload_capabilities_pkey",
+                "upload_capabilities_account_id_command_id_key",
+                "receipts_pkey",
+                "receipts_account_id_work_id_command_id_key",
+                "receipts_account_id_work_id_command_id_command_kind_key",
+                "sealed_commands_pkey",
+                "sealed_commands_account_id_work_id_command_id_key",
+                "sealed_commands_account_id_work_id_command_id_command_kind_key",
+                "active_conflicts_pkey",
+                "active_conflicts_account_id_work_id_conflict_id_key",
+                "one_active_conflict_per_account_work",
+                "conflict_candidates_pkey",
+                "conflict_candidates_conflict_revision_generation_key",
+                "conflict_events_pkey",
+                "history_pkey",
+                "history_account_id_event_id_key",
+                "restore_receipts_pkey",
+                "head_events_pkey",
+                "head_events_account_id_work_id_generation_key",
+                "catalog_events_pkey",
+                "quarantine_records_pkey",
+                "migration_ledger_pkey",
+                "migration_ledger_source_kind_source_digest_key",
+                "migration_staging_batches_pkey",
+                "migration_staging_objects_pkey",
+                "work_catalog_cursor",
+                "snapshot_history_cursor",
+            ][..],
+        ),
+        (
+            "auth_v1",
+            &[
+                "accounts_pkey",
+                "accounts_tenant_id_key",
+                "provider_configs_pkey",
+                "provider_configs_provider_kind_exact_issuer_key",
+                "browser_attempts_pkey",
+                "browser_attempts_state_hash_key",
+                "browser_attempts_expiry",
+                "external_identities_one_active_account",
+                "external_identities_pkey",
+                "external_identities_lookup_key_version_subject_lookup_hmac_key",
+                "external_identities_account_provider_issuer_key",
+                "external_identity_secrets_pkey",
+                "provider_credentials_pkey",
+                "provider_credentials_vault_context_key",
+                "provider_credentials_identity_audience_generation_key",
+                "provider_credentials_one_active_audience",
+                "provider_credentials_identity_audience_idx",
+                "auth_operations_pkey",
+                "auth_operations_operation_id_command_kind_request_digest_key",
+                "auth_challenges_pkey",
+                "auth_sessions_pkey",
+                "auth_sessions_family_id_key",
+                "refresh_families_pkey",
+                "refresh_tokens_pkey",
+                "refresh_tokens_family_id_token_hmac_key",
+                "refresh_tokens_token_hmac_key_version_token_hmac_key",
+                "access_tokens_pkey",
+                "access_tokens_token_hmac_key",
+                "session_refresh_receipts_pkey",
+                "provider_notification_receipts_pkey",
+                "account_deletions_pkey",
+                "account_deletions_one_pending",
+                "account_deletions_due",
+                "auth_events_pkey",
+                "auth_sessions_account_idx",
+                "external_identities_account_idx",
+                "vault_rewrap_ledger_pkey",
+                "external_identity_secrets_vault_context_idx",
+            ][..],
+        ),
+    ] {
+        for index in indexes {
+            objects.insert(format!("relation:i:{schema}.{index}"));
+        }
+    }
+
+    // BIGSERIAL/IDENTITY columns in the migrations create these sequences.
+    for (schema, sequences) in [
+        (
+            "sync_v2",
+            &[
+                "conflict_events_event_id_seq",
+                "history_event_id_seq",
+                "head_events_event_id_seq",
+                "catalog_events_event_id_seq",
+                "assistant_records_sequence_seq",
+            ][..],
+        ),
+        ("auth_v1", &["auth_events_event_id_seq"]),
+    ] {
+        for sequence in sequences {
+            objects.insert(format!("relation:S:{schema}.{sequence}"));
+        }
+    }
+
+    objects.insert("extension:plpgsql".into());
+    objects
+}
+
+fn sqlx_only_database_objects() -> HashSet<String> {
+    [
+        "relation:r:public._sqlx_migrations",
+        "relation:i:public._sqlx_migrations_pkey",
+        "type:c:public._sqlx_migrations",
+        "extension:plpgsql",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn classify_database_identity(
+    server_meta_exists: bool,
+    server_meta: &[(String, String)],
+    user_objects: &[String],
+) -> Result<DatabaseIdentity, &'static str> {
+    let exact_marker = [
+        ("namespace", SERVER_NAMESPACE),
+        ("protocol_epoch", "2"),
+        ("schema_version", SCHEMA_VERSION),
+        ("ddl_contract_marker", DDL_CONTRACT_MARKER),
+    ];
+    let marker_matches = server_meta_exists
+        && server_meta.len() == exact_marker.len()
+        && exact_marker.iter().all(|(key, value)| {
+            server_meta
+                .iter()
+                .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
+        });
+    let expected_objects = expected_v2_database_objects();
+    let before_browser: HashSet<_> = expected_objects
+        .iter()
+        .filter(|name| {
+            !name.contains("auth_v1.browser_attempts")
+                && !name.contains("auth_v1.external_identities_one_active_account")
+        })
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == before_browser.len()
+        && user_objects
+            .iter()
+            .all(|object| before_browser.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    let previous_objects: HashSet<_> = before_browser
+        .iter()
+        .filter(|name| {
+            !name.contains("sync_v2.assistant_") && !name.contains("sync_v2.recovery_operations")
+        })
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == previous_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| previous_objects.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    let legacy_objects: HashSet<_> = previous_objects
+        .iter()
+        .filter(|name| !name.contains("auth_v1.account_deletions"))
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == legacy_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| legacy_objects.contains(object))
+    {
+        // Recognize the exact previous inventory for the explicit migrator.
+        // Runtime ACL and column attestation still require the current schema.
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    if marker_matches
+        && user_objects.len() == expected_objects.len()
+        && user_objects
+            .iter()
+            .all(|object| expected_objects.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    if server_meta_exists {
+        if marker_matches {
+            return Err("database contains an unknown object beside the v2 contract");
+        }
+        return Err("database has a non-v2 or incomplete sync_v2.server_meta marker");
+    }
+    let sqlx_objects = sqlx_only_database_objects();
+    if user_objects
+        .iter()
+        .all(|object| sqlx_objects.contains(object))
+    {
+        return Ok(DatabaseIdentity::Fresh);
+    }
+    Err("database has unrecognized user schema or data")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotRelation {
+    Ancestor,
+    NotAncestor,
+}
+
+#[derive(Clone)]
+pub struct Repository {
+    pub pool: PgPool,
+    pub object_store: Arc<dyn ObjectStore>,
+    pub server_instance_id: String,
+    pub protocol_epoch: i64,
+}
+impl Repository {
+    pub async fn connect_from_environment(server_instance_id: String) -> Result<Self, sqlx::Error> {
+        let host = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_HOST")
+            .unwrap_or_else(|_| "postgres".to_string());
+        let port = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PORT")
+            .unwrap_or_else(|_| "5432".to_string())
+            .parse::<u16>()
+            .map_err(|_| sqlx::Error::Configuration("invalid PostgreSQL port".into()))?;
+        let database = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_DB")
+            .unwrap_or_else(|_| "fuminiwa_sync_v2".to_string());
+        let username = std::env::var("FUMINIWA_SYNC_V2_POSTGRES_USER")
+            .unwrap_or_else(|_| RUNTIME_ROLE.to_string());
+        if username != RUNTIME_ROLE {
+            return Err(sqlx::Error::Configuration(
+                "Snapshot Sync v2 runtime must use the dedicated runtime role".into(),
+            ));
+        }
+        let password_file =
+            std::env::var("FUMINIWA_SYNC_V2_POSTGRES_PASSWORD_FILE").map_err(|_| {
+                sqlx::Error::Configuration("PostgreSQL password file is required".into())
+            })?;
+        let password = std::fs::read_to_string(password_file)
+            .map_err(|error| sqlx::Error::Configuration(error.to_string().into()))?
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if password.is_empty() {
+            return Err(sqlx::Error::Configuration(
+                "PostgreSQL password file is empty".into(),
+            ));
+        }
+        let options = PgConnectOptions::new()
+            .host(&host)
+            .port(port)
+            .database(&database)
+            .username(&username)
+            .password(&password);
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect_with(options)
+            .await?;
+        // Runtime startup is intentionally read-only.  The one-shot v2
+        // migrator owns SQLx DDL, server_meta bootstrap, and grants.  Keeping
+        // this path free of migrate!/INSERT makes the database role boundary
+        // enforceable instead of relying on cooperative advisory locks.
+        Self::verify_runtime_pool(&pool, &server_instance_id, RUNTIME_ROLE).await?;
+        let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
+        Ok(Self {
+            pool,
+            object_store,
+            server_instance_id,
+            protocol_epoch: PROTOCOL_EPOCH,
+        })
+    }
+
+    pub async fn connect(url: &str, server_instance_id: String) -> Result<Self, sqlx::Error> {
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect(url)
+            .await?;
+        // Lock ordering is database identity advisory lock, then the
+        // identity inventory, SQLx migration, and server_meta/deployment
+        // binding transaction.  The PoolConnection is deliberately kept
+        // alive through all phases; dropping the advisory guard on any error
+        // queues its unlock before the connection returns to the pool.
+        let mut identity_connection = pool.acquire().await?;
+        let identity_lock = PgAdvisoryLock::with_key(PgAdvisoryLockKey::IntPair(
+            DATABASE_IDENTITY_LOCK_KEY_1,
+            DATABASE_IDENTITY_LOCK_KEY_2,
+        ));
+        let mut identity_guard = identity_lock.acquire(&mut identity_connection).await?;
+        Self::verify_database_identity(&mut identity_guard).await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        // Re-read the complete catalog after migrations while the same
+        // deployment-wide lock is still held.  Advisory locks are
+        // cooperative, so this second check is the fail-closed boundary for
+        // a non-cooperative DDL session that raced the pre-migration check.
+        Self::verify_database_identity(&mut identity_guard).await?;
+        Self::verify_server_meta(&pool, &server_instance_id).await?;
+        // Re-read once more after the binding transaction. The binding is
+        // never considered a successful startup if an external DDL session
+        // inserted an unknown object during metadata verification.
+        Self::verify_database_identity(&mut identity_guard).await?;
+        drop(identity_guard);
+        drop(identity_connection);
+        let object_store = Arc::new(PostgresObjectStore { pool: pool.clone() });
+        Ok(Self {
+            pool,
+            object_store,
+            server_instance_id,
+            protocol_epoch: PROTOCOL_EPOCH,
+        })
+    }
+
+    /// Verify the exact startup contract used by the runtime role.  This is
+    /// deliberately separate from `connect`, which remains a disposable
+    /// integration-test helper that may apply migrations to a test database.
+    pub async fn verify_runtime_pool(
+        pool: &PgPool,
+        server_instance_id: &str,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if expected_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut connection = pool.acquire().await?;
+        Self::verify_runtime_role(&mut connection, expected_role).await?;
+        Self::verify_database_identity(&mut connection).await?;
+        // Older deployments require the explicit notification-order migration.
+        // Never serve a new binary against a partially upgraded auth contract.
+        sqlx::query("SELECT i.last_provider_auth_at,c.validation_event_type FROM auth_v1.external_identities i,auth_v1.provider_credentials c LIMIT 0")
+            .execute(&mut *connection).await?;
+        sqlx::query("SELECT partial_bytes FROM sync_v2.upload_capabilities LIMIT 0")
+            .execute(&mut *connection)
+            .await?;
+        sqlx::query("SELECT record_id,sequence,request_bytes,conflicted FROM sync_v2.assistant_records LIMIT 0").execute(pool).await?;
+        sqlx::query("SELECT operation_id,request_digest,response_bytes FROM sync_v2.recovery_operations LIMIT 0").execute(pool).await?;
+        sqlx::query("SELECT attempt_id,phase,claim_hash FROM auth_v1.browser_attempts LIMIT 0")
+            .execute(pool)
+            .await?;
+        sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
+            .execute(&mut *connection)
+            .await?;
+        Self::verify_server_meta_read_only(&mut connection, server_instance_id).await
+    }
+
+    /// Read back the runtime role's PostgreSQL flags and ACLs.  The checks
+    /// intentionally reject database/schema DDL, migration-table access,
+    /// memberships, ownership, and non-DML table privileges.
+    pub async fn verify_runtime_role_attestation(
+        pool: &PgPool,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if expected_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut connection = pool.acquire().await?;
+        Self::verify_runtime_role(&mut connection, expected_role).await
+    }
+
+    async fn verify_runtime_role(
+        connection: &mut PgConnection,
+        expected_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        let role = sqlx::query(
+            "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                    r.rolcanlogin, r.rolreplication, r.rolbypassrls
+             FROM pg_roles r WHERE r.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let current_user: String = role.try_get("current_user")?;
+        if current_user != expected_role
+            || role.try_get::<bool, _>("rolsuper")?
+            || role.try_get::<bool, _>("rolcreaterole")?
+            || role.try_get::<bool, _>("rolcreatedb")?
+            || !role.try_get::<bool, _>("rolcanlogin")?
+            || role.try_get::<bool, _>("rolreplication")?
+            || role.try_get::<bool, _>("rolbypassrls")?
+        {
+            return Err(sqlx::Error::Protocol(
+                "runtime role flags are broader than the v2 contract".into(),
+            ));
+        }
+        let memberships: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_auth_members m
+             JOIN pg_roles member ON member.oid=m.member
+             JOIN pg_roles granted ON granted.oid=m.roleid
+             WHERE member.rolname=current_user OR granted.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if memberships != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not inherit a role membership".into(),
+            ));
+        }
+        let can_connect: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CONNECT')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if !can_connect {
+            return Err(sqlx::Error::Protocol(
+                "runtime role lacks database CONNECT authority".into(),
+            ));
+        }
+        for privilege in ["CREATE", "TEMPORARY"] {
+            let allowed: bool = sqlx::query_scalar(
+                "SELECT has_database_privilege(current_user,current_database(),$1)",
+            )
+            .bind(privilege)
+            .fetch_one(&mut *connection)
+            .await?;
+            if allowed {
+                return Err(sqlx::Error::Protocol(
+                    "runtime role has a prohibited database privilege".into(),
+                ));
+            }
+        }
+        let runtime_is_database_owner: bool = sqlx::query_scalar(
+            "SELECT d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+             FROM pg_database d WHERE d.datname=current_database()",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if runtime_is_database_owner {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own the v2 database".into(),
+            ));
+        }
+        for schema in ["auth_v1", "sync_v2"] {
+            let usage: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'USAGE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let create: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'CREATE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if !usage || create {
+                return Err(sqlx::Error::Protocol(
+                    "runtime schema privileges do not match the v2 contract".into(),
+                ));
+            }
+        }
+        let public_schema_create: bool =
+            sqlx::query_scalar("SELECT has_schema_privilege(current_user,'public','CREATE')")
+                .fetch_one(&mut *connection)
+                .await?;
+        if public_schema_create {
+            return Err(sqlx::Error::Protocol(
+                "runtime role has CREATE on the public schema".into(),
+            ));
+        }
+        let owned_objects: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_class c
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+               AND n.nspname IN ('auth_v1','sync_v2','public')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if owned_objects != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own database objects".into(),
+            ));
+        }
+        let owned_namespaces: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_namespace n
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
+               AND n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let owned_types: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
+               AND t.typowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let owned_routines: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname IN ('auth_v1','sync_v2','public')
+               AND p.proowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if owned_namespaces != 0 || owned_types != 0 || owned_routines != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime role must not own schemas, types, or routines".into(),
+            ));
+        }
+        let column_acl_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_attribute a
+             JOIN pg_class c ON c.oid=a.attrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE a.attnum > 0 AND NOT a.attisdropped
+               AND (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND COALESCE(cardinality(a.attacl),0) <> 0",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if column_acl_count != 0 {
+            return Err(sqlx::Error::Protocol(
+                "runtime v2 tables contain column-level ACLs".into(),
+            ));
+        }
+
+        for (schema, table) in [
+            ("sync_v2", "server_meta"),
+            ("sync_v2", "deployment_binding"),
+        ] {
+            Self::verify_table_privileges(connection, schema, table, &["SELECT"]).await?;
+        }
+        for table in SYNC_RUNTIME_DML_TABLES {
+            Self::verify_table_privileges(
+                connection,
+                "sync_v2",
+                table,
+                &["SELECT", "INSERT", "UPDATE", "DELETE"],
+            )
+            .await?;
+        }
+        for table in AUTH_RUNTIME_DML_TABLES {
+            Self::verify_table_privileges(
+                connection,
+                "auth_v1",
+                table,
+                &["SELECT", "INSERT", "UPDATE", "DELETE"],
+            )
+            .await?;
+        }
+        for table in [
+            "migration_ledger",
+            "migration_staging_batches",
+            "migration_staging_objects",
+        ] {
+            for privilege in [
+                "SELECT",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "TRUNCATE",
+                "REFERENCES",
+                "TRIGGER",
+            ] {
+                let allowed: bool =
+                    sqlx::query_scalar("SELECT has_table_privilege(current_user,$1,$2)")
+                        .bind(format!("sync_v2.{table}"))
+                        .bind(privilege)
+                        .fetch_one(&mut *connection)
+                        .await?;
+                if allowed {
+                    return Err(sqlx::Error::Protocol(
+                        "runtime role can access migration staging data".into(),
+                    ));
+                }
+            }
+        }
+        for privilege in [
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        ] {
+            let allowed: bool = sqlx::query_scalar(
+                "SELECT has_table_privilege(current_user,'public._sqlx_migrations',$1)",
+            )
+            .bind(privilege)
+            .fetch_one(&mut *connection)
+            .await?;
+            if allowed {
+                return Err(sqlx::Error::Protocol(
+                    "runtime role can access SQLx migration bookkeeping".into(),
+                ));
+            }
+        }
+        for (schema, sequence) in SEQUENCE_NAMES {
+            let usage: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'USAGE')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let select: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'SELECT')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            let update: bool =
+                sqlx::query_scalar("SELECT has_sequence_privilege(current_user,$1,'UPDATE')")
+                    .bind(format!("{schema}.{sequence}"))
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if !usage || select || update {
+                return Err(sqlx::Error::Protocol(
+                    "runtime sequence privileges are not USAGE-only".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Verify that the migration owner still owns every v2 schema/object and
+    /// retains only the DDL authority needed by the one-shot migrator. This
+    /// read-back is also required on an idempotent existing-v2 invocation;
+    /// ownership drift is never repaired implicitly.
+    pub async fn verify_migration_owner_attestation(pool: &PgPool) -> Result<(), sqlx::Error> {
+        let mut connection = pool.acquire().await?;
+        let role = sqlx::query(
+            "SELECT current_user, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                    r.rolcanlogin, r.rolreplication, r.rolbypassrls
+             FROM pg_roles r WHERE r.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let current_user: String = role.try_get("current_user")?;
+        if current_user != MIGRATION_OWNER_ROLE
+            || role.try_get::<bool, _>("rolsuper")?
+            || role.try_get::<bool, _>("rolcreaterole")?
+            || role.try_get::<bool, _>("rolcreatedb")?
+            || !role.try_get::<bool, _>("rolcanlogin")?
+            || role.try_get::<bool, _>("rolreplication")?
+            || role.try_get::<bool, _>("rolbypassrls")?
+        {
+            return Err(sqlx::Error::Protocol(
+                "migration owner role flags are not exact".into(),
+            ));
+        }
+        let memberships: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_auth_members m
+             JOIN pg_roles member ON member.oid=m.member
+             JOIN pg_roles granted ON granted.oid=m.roleid
+             WHERE member.rolname=current_user OR granted.rolname=current_user",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if memberships != 0 {
+            return Err(sqlx::Error::Protocol(
+                "migration owner must not inherit a role membership".into(),
+            ));
+        }
+        let has_database_connect: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CONNECT')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let can_create_database_objects: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'CREATE')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let has_database_temp: bool = sqlx::query_scalar(
+            "SELECT has_database_privilege(current_user,current_database(),'TEMPORARY')",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let migration_is_database_owner: bool = sqlx::query_scalar(
+            "SELECT d.datdba=(SELECT oid FROM pg_roles WHERE rolname=current_user)
+             FROM pg_database d WHERE d.datname=current_database()",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if !has_database_connect
+            || !can_create_database_objects
+            || has_database_temp
+            || migration_is_database_owner
+        {
+            return Err(sqlx::Error::Protocol(
+                "migration owner database privileges are not exact".into(),
+            ));
+        }
+        for schema in ["auth_v1", "sync_v2"] {
+            let owner_mismatch: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM pg_namespace
+                 WHERE nspname=$1
+                   AND nspowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+            )
+            .bind(schema)
+            .fetch_one(&mut *connection)
+            .await?;
+            let can_create: bool =
+                sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'CREATE')")
+                    .bind(schema)
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if owner_mismatch != 0 || !can_create {
+                return Err(sqlx::Error::Protocol(
+                    "migration owner schema ownership/privilege mismatch".into(),
+                ));
+            }
+        }
+        let public_create: bool =
+            sqlx::query_scalar("SELECT has_schema_privilege(current_user,'public','CREATE')")
+                .fetch_one(&mut *connection)
+                .await?;
+        if !public_create {
+            return Err(sqlx::Error::Protocol(
+                "migration owner lacks public schema CREATE authority".into(),
+            ));
+        }
+        let class_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND c.relowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let type_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND t.typname='_sqlx_migrations'))
+               AND t.typowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        let routine_owner_mismatch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE (n.nspname IN ('auth_v1','sync_v2') OR n.nspname='public')
+               AND p.proowner<>(SELECT oid FROM pg_roles WHERE rolname=current_user)",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if class_owner_mismatch != 0 || type_owner_mismatch != 0 || routine_owner_mismatch != 0 {
+            return Err(sqlx::Error::Protocol(
+                "migration owner does not own the exact v2 objects".into(),
+            ));
+        }
+        let column_acl_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_attribute a
+             JOIN pg_class c ON c.oid=a.attrelid
+             JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE a.attnum > 0 AND NOT a.attisdropped
+               AND (n.nspname IN ('auth_v1','sync_v2')
+                    OR (n.nspname='public' AND c.relname='_sqlx_migrations'))
+               AND COALESCE(cardinality(a.attacl),0) <> 0",
+        )
+        .fetch_one(&mut *connection)
+        .await?;
+        if column_acl_count != 0 {
+            return Err(sqlx::Error::Protocol(
+                "v2 tables contain column-level ACLs".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn verify_table_privileges(
+        connection: &mut PgConnection,
+        schema: &str,
+        table: &str,
+        expected: &[&str],
+    ) -> Result<(), sqlx::Error> {
+        for privilege in [
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        ] {
+            let actual: bool = sqlx::query_scalar("SELECT has_table_privilege(current_user,$1,$2)")
+                .bind(format!("{schema}.{table}"))
+                .bind(privilege)
+                .fetch_one(&mut *connection)
+                .await?;
+            if actual != expected.contains(&privilege) {
+                return Err(sqlx::Error::Protocol(
+                    "runtime table privileges are broader than the v2 contract".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse to let SQLx migrations inspect or mutate an existing authority.
+    /// A database is accepted only when it is genuinely empty (apart from
+    /// SQLx's own migration bookkeeping) or already carries the exact v2
+    /// marker.  In particular, a legacy-looking `sync_v2` table is not a
+    /// migration starting point: it is rejected before any migration runs.
+    async fn verify_database_identity(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+        let server_meta_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('sync_v2.server_meta') IS NOT NULL")
+                .fetch_one(&mut *connection)
+                .await?;
+        let server_meta = if server_meta_exists {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT key,value FROM sync_v2.server_meta ORDER BY key",
+            )
+            .fetch_all(&mut *connection)
+            .await?
+        } else {
+            Vec::new()
+        };
+
+        // `public` and PostgreSQL's system schemas are present in every
+        // normal database.  Inspect every other schema/object kind, including
+        // indexes, sequences, routines, types, and extensions: a marker must
+        // never bless a mixed authority.  SQLx's bookkeeping relation is
+        // explicitly included in the contract inventory.
+        let mut user_objects = Vec::new();
+        let schemas: Vec<String> = sqlx::query_scalar(
+            "SELECT nspname FROM pg_namespace
+             WHERE nspname NOT IN ('pg_catalog','information_schema','public')
+               AND nspname NOT LIKE 'pg_toast%'
+               AND nspname NOT LIKE 'pg_temp_%'
+               AND nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY nspname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            schemas
+                .into_iter()
+                .filter(|schema| !is_temporary_namespace(schema))
+                .map(|schema| format!("schema:{schema}")),
+        );
+
+        let relations: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT c.relkind::TEXT, n.nspname, c.relname
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND c.relpersistence <> 't'
+             ORDER BY n.nspname, c.relkind, c.relname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            relations
+                .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
+                .map(|(kind, schema, name)| format!("relation:{kind}:{schema}.{name}")),
+        );
+
+        let types: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT t.typtype::TEXT, n.nspname, t.typname
+             FROM pg_type t
+             JOIN pg_namespace n ON n.oid = t.typnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND t.typelem = 0
+               AND t.typtype IN ('c','d','e','r')
+             ORDER BY n.nspname, t.typtype, t.typname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            types
+                .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
+                .map(|(kind, schema, name)| format!("type:{kind}:{schema}.{name}")),
+        );
+
+        let routines: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT 'routine', n.nspname,
+                    p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY n.nspname, p.proname, p.oid",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            routines
+                .into_iter()
+                .filter(|(_, schema, _)| !is_temporary_namespace(schema))
+                .map(|(kind, schema, name)| format!("{kind}:{schema}.{name}")),
+        );
+
+        let extensions: Vec<String> =
+            sqlx::query_scalar("SELECT extname FROM pg_extension ORDER BY extname")
+                .fetch_all(&mut *connection)
+                .await?;
+        user_objects.extend(
+            extensions
+                .into_iter()
+                .map(|name| format!("extension:{name}")),
+        );
+        classify_database_identity(server_meta_exists, &server_meta, &user_objects)
+            .map_err(|message| sqlx::Error::Protocol(message.into()))?;
+        Ok(())
+    }
+
+    pub async fn inspect_database_identity(pool: &PgPool) -> Result<DatabaseIdentity, sqlx::Error> {
+        let mut connection = pool.acquire().await?;
+        Self::inspect_database_identity_connection(&mut connection).await
+    }
+
+    pub async fn inspect_database_identity_on_connection(
+        connection: &mut PgConnection,
+    ) -> Result<DatabaseIdentity, sqlx::Error> {
+        Self::inspect_database_identity_connection(connection).await
+    }
+
+    async fn inspect_database_identity_connection(
+        connection: &mut PgConnection,
+    ) -> Result<DatabaseIdentity, sqlx::Error> {
+        let server_meta_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('sync_v2.server_meta') IS NOT NULL")
+                .fetch_one(&mut *connection)
+                .await?;
+        let server_meta = if server_meta_exists {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT key,value FROM sync_v2.server_meta ORDER BY key",
+            )
+            .fetch_all(&mut *connection)
+            .await?
+        } else {
+            Vec::new()
+        };
+        // The same complete catalog inventory used by runtime startup is
+        // required before the migrator can change roles or run any DDL.
+        let mut user_objects = Vec::new();
+        let schemas: Vec<String> = sqlx::query_scalar(
+            "SELECT nspname FROM pg_namespace
+             WHERE nspname NOT IN ('pg_catalog','information_schema','public')
+               AND nspname NOT LIKE 'pg_toast%'
+               AND nspname NOT LIKE 'pg_temp_%'
+               AND nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY nspname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(schemas.into_iter().map(|schema| format!("schema:{schema}")));
+        let relations: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT c.relkind::TEXT, n.nspname, c.relname
+             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND c.relpersistence <> 't'
+             ORDER BY n.nspname, c.relkind, c.relname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            relations
+                .into_iter()
+                .map(|(kind, schema, name)| format!("relation:{kind}:{schema}.{name}")),
+        );
+        let types: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT t.typtype::TEXT, n.nspname, t.typname
+             FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+               AND t.typelem=0 AND t.typtype IN ('c','d','e','r')
+             ORDER BY n.nspname, t.typtype, t.typname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            types
+                .into_iter()
+                .map(|(kind, schema, name)| format!("type:{kind}:{schema}.{name}")),
+        );
+        let routines: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT 'routine', n.nspname,
+                    p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+             FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp_%'
+               AND n.nspname NOT LIKE 'pg_toast_temp_%'
+             ORDER BY n.nspname, p.proname, p.oid",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        user_objects.extend(
+            routines
+                .into_iter()
+                .map(|(_, schema, name)| format!("routine:{schema}.{name}")),
+        );
+        let extensions: Vec<String> =
+            sqlx::query_scalar("SELECT extname FROM pg_extension ORDER BY extname")
+                .fetch_all(&mut *connection)
+                .await?;
+        user_objects.extend(
+            extensions
+                .into_iter()
+                .map(|name| format!("extension:{name}")),
+        );
+        classify_database_identity(server_meta_exists, &server_meta, &user_objects)
+            .map_err(|message| sqlx::Error::Protocol(message.into()))
+    }
+
+    /// Apply the fresh-v2 runtime ACL contract.  This method is callable only
+    /// by the one-shot migrator, after SQLx has created every object.  It is
+    /// never called from the server runtime path.
+    pub async fn apply_runtime_grants(
+        pool: &PgPool,
+        runtime_role: &str,
+    ) -> Result<(), sqlx::Error> {
+        if runtime_role != RUNTIME_ROLE {
+            return Err(sqlx::Error::Protocol(
+                "unexpected Snapshot Sync v2 runtime role".into(),
+            ));
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query("REVOKE ALL ON SCHEMA auth_v1, sync_v2 FROM PUBLIC")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("GRANT USAGE ON SCHEMA auth_v1, sync_v2 TO fuminiwa_sync_v2_runtime")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "REVOKE ALL ON TABLE sync_v2.server_meta, sync_v2.deployment_binding,
+             sync_v2.migration_ledger, sync_v2.migration_staging_batches,
+             sync_v2.migration_staging_objects, public._sqlx_migrations
+             FROM fuminiwa_sync_v2_runtime",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "GRANT SELECT ON TABLE sync_v2.server_meta, sync_v2.deployment_binding
+             TO fuminiwa_sync_v2_runtime",
+        )
+        .execute(&mut *tx)
+        .await?;
+        for schema in ["sync_v2", "auth_v1"] {
+            let tables = if schema == "sync_v2" {
+                SYNC_RUNTIME_DML_TABLES
+            } else {
+                AUTH_RUNTIME_DML_TABLES
+            };
+            for table in tables {
+                let statement = format!(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {schema}.{table} TO {runtime_role}"
+                );
+                sqlx::query(&statement).execute(&mut *tx).await?;
+            }
+        }
+        for (schema, sequence) in SEQUENCE_NAMES {
+            let statement = format!(
+                "REVOKE SELECT, UPDATE ON SEQUENCE {schema}.{sequence} FROM {runtime_role}"
+            );
+            sqlx::query(&statement).execute(&mut *tx).await?;
+            let statement =
+                format!("GRANT USAGE ON SEQUENCE {schema}.{sequence} TO {runtime_role}");
+            sqlx::query(&statement).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn verify_server_meta_read_only(
+        connection: &mut PgConnection,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        if server_instance_id.is_empty()
+            || server_instance_id.len() > 128
+            || server_instance_id == "unbound"
+        {
+            return Err(sqlx::Error::Protocol(
+                "invalid Snapshot Sync v2 server instance id".into(),
+            ));
+        }
+        let rows = sqlx::query("SELECT key,value FROM sync_v2.server_meta ORDER BY key")
+            .fetch_all(&mut *connection)
+            .await?;
+        let metadata: HashMap<String, String> = rows
+            .into_iter()
+            .map(|row| Ok((row.try_get("key")?, row.try_get("value")?)))
+            .collect::<Result<_, sqlx::Error>>()?;
+        for (key, expected) in [
+            ("namespace", SERVER_NAMESPACE),
+            ("protocol_epoch", "2"),
+            ("schema_version", SCHEMA_VERSION),
+            ("ddl_contract_marker", DDL_CONTRACT_MARKER),
+        ] {
+            if metadata.get(key).map(String::as_str) != Some(expected) {
+                return Err(sqlx::Error::Protocol(format!(
+                    "Snapshot Sync v2 server_meta mismatch: {key}"
+                )));
+            }
+        }
+        if metadata.len() != 4 {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 server_meta contains an unknown marker".into(),
+            ));
+        }
+        let binding: Option<String> = sqlx::query_scalar(
+            "SELECT server_instance_id FROM sync_v2.deployment_binding WHERE singleton=true",
+        )
+        .fetch_optional(&mut *connection)
+        .await?;
+        if binding.as_deref() != Some(server_instance_id) {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 deployment binding is missing or mismatched".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn verify_server_meta(
+        pool: &PgPool,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        if server_instance_id.is_empty()
+            || server_instance_id.len() > 128
+            || server_instance_id == "unbound"
+        {
+            return Err(sqlx::Error::Protocol(
+                "invalid Snapshot Sync v2 server instance id".into(),
+            ));
+        }
+        let mut tx = pool.begin().await?;
+        let rows = sqlx::query("SELECT key,value FROM sync_v2.server_meta ORDER BY key FOR UPDATE")
+            .fetch_all(&mut *tx)
+            .await?;
+        let metadata: HashMap<String, String> = rows
+            .into_iter()
+            .map(|row| Ok((row.try_get("key")?, row.try_get("value")?)))
+            .collect::<Result<_, sqlx::Error>>()?;
+        for (key, expected) in [
+            ("namespace", SERVER_NAMESPACE),
+            ("protocol_epoch", "2"),
+            ("schema_version", SCHEMA_VERSION),
+            ("ddl_contract_marker", DDL_CONTRACT_MARKER),
+        ] {
+            if metadata.get(key).map(String::as_str) != Some(expected) {
+                return Err(sqlx::Error::Protocol(format!(
+                    "Snapshot Sync v2 server_meta mismatch: {key}"
+                )));
+            }
+        }
+        if metadata.len() != 4 {
+            return Err(sqlx::Error::Protocol(
+                "Snapshot Sync v2 server_meta contains an unknown marker".into(),
+            ));
+        }
+        let binding = sqlx::query(
+            "SELECT server_instance_id FROM sync_v2.deployment_binding
+             WHERE singleton=true FOR UPDATE",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(binding) = binding {
+            if binding.try_get::<String, _>("server_instance_id")? != server_instance_id {
+                return Err(sqlx::Error::Protocol(
+                    "Snapshot Sync v2 server instance id mismatch".into(),
+                ));
+            }
+        } else {
+            sqlx::query(
+                "INSERT INTO sync_v2.deployment_binding(singleton,server_instance_id,bound_at)
+                 VALUES(true,$1,now())",
+            )
+            .bind(server_instance_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Bootstrap the singleton deployment binding from the migration-owner
+    /// process. Runtime startup uses the read-only counterpart above and
+    /// therefore cannot create or mutate this binding.
+    pub async fn bootstrap_server_meta(
+        pool: &PgPool,
+        server_instance_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        Self::verify_server_meta(pool, server_instance_id).await
+    }
+    pub(crate) async fn scope<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+    ) -> SyncResult<()> {
+        sqlx::query(
+            "INSERT INTO sync_v2.account_scopes(
+                 account_id,server_instance_id,protocol_epoch,account_auth_epoch,account_fence
+             ) VALUES($1,$2,$3,$4,$5)
+             ON CONFLICT(account_id) DO NOTHING",
+        )
+        .bind(&p.account_id)
+        .bind(&p.server_instance_id)
+        .bind(p.protocol_epoch)
+        .bind(p.account_auth_epoch)
+        .bind(&p.account_fence)
+        .execute(&mut **tx)
+        .await?;
+        let row = sqlx::query(
+            "SELECT server_instance_id,protocol_epoch,account_auth_epoch,account_fence
+             FROM sync_v2.account_scopes WHERE account_id=$1 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let instance: String = row.try_get("server_instance_id")?;
+        let epoch: i64 = row.try_get("protocol_epoch")?;
+        let auth_epoch: i64 = row.try_get("account_auth_epoch")?;
+        let fence: String = row.try_get("account_fence")?;
+        if instance != p.server_instance_id || epoch != p.protocol_epoch {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if auth_epoch > p.account_auth_epoch
+            || (auth_epoch == p.account_auth_epoch && fence != p.account_fence)
+        {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if auth_epoch < p.account_auth_epoch {
+            // A rotated Auth v1 fence is a same-account, monotonic scope
+            // transition. Quarantine old sealed commands before making the
+            // new scope usable, then rebind parked works in this transaction.
+            sqlx::query(
+                "UPDATE sync_v2.sealed_commands
+                 SET state='quarantined'
+                 WHERE account_id=$1 AND account_fence <> $2
+                   AND state IN ('sealed','sending','conflictPending','parked')",
+            )
+            .bind(&p.account_id)
+            .bind(&p.account_fence)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.works SET state='bound'
+                 WHERE account_id=$1 AND state='quarantined'",
+            )
+            .bind(&p.account_id)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.account_scopes
+                 SET server_instance_id=$2,protocol_epoch=$3,
+                     account_auth_epoch=$4,account_fence=$5
+                 WHERE account_id=$1 AND account_auth_epoch=$6",
+            )
+            .bind(&p.account_id)
+            .bind(&p.server_instance_id)
+            .bind(p.protocol_epoch)
+            .bind(p.account_auth_epoch)
+            .bind(&p.account_fence)
+            .bind(auth_epoch)
+            .execute(&mut **tx)
+            .await?;
+            return Ok(());
+        }
+        if fence != p.account_fence {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        Ok(())
+    }
+
+    /// Check the persisted account binding without creating it.  Mutating
+    /// commands call `scope` inside their transaction; read-only endpoints
+    /// must perform this check before looking up any Work/object/receipt so a
+    /// rotated fence cannot continue to expose the old account projection.
+    pub async fn check_scope(&self, p: &AuthenticatedPrincipal) -> SyncResult<()> {
+        let Some(row) = sqlx::query(
+            "SELECT server_instance_id,protocol_epoch,account_auth_epoch,account_fence
+             FROM sync_v2.account_scopes WHERE account_id=$1",
+        )
+        .bind(&p.account_id)
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(());
+        };
+        let instance: String = row.try_get("server_instance_id")?;
+        let epoch: i64 = row.try_get("account_auth_epoch")?;
+        let protocol_epoch: i64 = row.try_get("protocol_epoch")?;
+        let fence: String = row.try_get("account_fence")?;
+        if instance != p.server_instance_id || protocol_epoch != p.protocol_epoch {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if epoch > p.account_auth_epoch
+            || (epoch == p.account_auth_epoch && fence != p.account_fence)
+        {
+            return Err(SyncError::AccountFenceMismatch);
+        }
+        if epoch < p.account_auth_epoch {
+            // Read-only HTTP endpoints call check_scope before resource
+            // lookup. Rebind here so quarantine happens before a newer-auth
+            // request can read through the old fence.
+            let mut tx = self.pool.begin().await?;
+            self.scope(&mut tx, p).await?;
+            tx.commit().await?;
+        }
+        Ok(())
+    }
+    async fn receipt_lookup<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<Option<(i32, Vec<u8>)>> {
+        if let Some(row) = sqlx::query("SELECT work_id,command_kind,canonical_request,request_digest,state,response_status,canonical_response FROM sync_v2.receipts WHERE account_id=$1 AND command_id=$2 FOR UPDATE")
+            .bind(&p.account_id).bind(cmd.command_id).fetch_optional(&mut **tx).await? {
+            let work_id: Uuid = row.try_get("work_id")?;
+            let kind: String = row.try_get("command_kind")?;
+            let canonical_request: Vec<u8> = row.try_get("canonical_request")?;
+            let digest: Vec<u8> = row.try_get("request_digest")?;
+            let state: String = row.try_get("state")?;
+            let status: Option<i32> = row.try_get("response_status")?;
+            let response: Option<Vec<u8>> = row.try_get("canonical_response")?;
+            // An operation ID is a nonce for one immutable command envelope,
+            // not merely for a digest.  Check every identity-bearing field
+            // before replaying a response so a digest collision, malformed
+            // receipt, or accidental command reuse cannot cross a Work.
+            if work_id != cmd.work_id
+                || kind != cmd.kind.as_str()
+                || canonical_request != cmd.canonical_bytes
+                || digest.as_slice() != cmd.request_digest
+            {
+                return Err(SyncError::CommandIdReused);
+            }
+            return replay_receipt(
+                &kind,
+                &digest,
+                cmd.kind.as_str(),
+                &cmd.request_digest,
+                state == "completed",
+                status,
+                response.as_deref(),
+            );
+        }
+        Ok(None)
+    }
+    async fn seal<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<()> {
+        sqlx::query("INSERT INTO sync_v2.sealed_commands(account_id,command_id,work_id,account_fence,command_kind,canonical_request,request_digest,source_snapshot_id,source_generation,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'sending')")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(&p.account_fence).bind(cmd.kind.as_str()).bind(&cmd.canonical_bytes).bind(cmd.request_digest.as_slice()).bind(cmd.source_snapshot_id.as_slice()).bind(cmd.source_generation).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.receipts(account_id,command_id,work_id,command_kind,request_digest,canonical_request,state) VALUES($1,$2,$3,$4,$5,$6,'reserved')")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        Ok(())
+    }
+    async fn verify_read_back<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        status: i32,
+        response_bytes: &[u8],
+    ) -> SyncResult<()> {
+        let response = strict_json(response_bytes)?;
+        if canonical_json(&response).map_err(|_| SyncError::Retryable)? != response_bytes {
+            return Err(SyncError::Retryable);
+        }
+        Self::validate_response_contract(cmd, status, &response)?;
+        let receipt = response
+            .get("receipt")
+            .and_then(Value::as_object)
+            .ok_or(SyncError::Retryable)?;
+        let read_back = receipt
+            .get("readBack")
+            .and_then(Value::as_object)
+            .ok_or(SyncError::Retryable)?;
+        if receipt.len() != 5
+            || read_back.len() != 5
+            || receipt.get("commandId").and_then(Value::as_str)
+                != Some(cmd.command_id.to_string().as_str())
+            || receipt.get("commandKind").and_then(Value::as_str) != Some(cmd.kind.as_str())
+            || receipt.get("workId").and_then(Value::as_str)
+                != Some(cmd.work_id.to_string().as_str())
+            || receipt.get("requestDigest").and_then(Value::as_str)
+                != Some(hex::encode(cmd.request_digest).as_str())
+            || [
+                "accountMatched",
+                "commandDigestMatched",
+                "headMatched",
+                "resourceMatched",
+                "stateMatched",
+            ]
+            .iter()
+            .any(|key| read_back.get(*key).and_then(Value::as_bool) != Some(true))
+        {
+            return Err(SyncError::Retryable);
+        }
+        let envelope_matches: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.account_scopes a JOIN sync_v2.sealed_commands s ON s.account_id=a.account_id JOIN sync_v2.receipts r ON r.account_id=s.account_id AND r.command_id=s.command_id WHERE a.account_id=$1 AND a.server_instance_id=$2 AND a.protocol_epoch=$3 AND a.account_fence=$4 AND s.command_id=$5 AND s.work_id=$6 AND s.account_fence=$4 AND s.command_kind=$7 AND s.request_digest=$8 AND s.canonical_request=$9 AND s.state='sending' AND r.work_id=$6 AND r.command_kind=$7 AND r.request_digest=$8 AND r.canonical_request=$9 AND r.state='reserved')",
+        )
+        .bind(&p.account_id)
+        .bind(&p.server_instance_id)
+        .bind(p.protocol_epoch)
+        .bind(&p.account_fence)
+        .bind(cmd.command_id)
+        .bind(cmd.work_id)
+        .bind(cmd.kind.as_str())
+        .bind(cmd.request_digest.as_slice())
+        .bind(&cmd.canonical_bytes)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !envelope_matches {
+            return Err(SyncError::Retryable);
+        }
+        self.verify_response_head(tx, p, cmd, &response).await?;
+        self.verify_command_resource(tx, p, cmd, &response).await
+    }
+
+    fn validate_response_contract(
+        cmd: &SealedCommand,
+        status: i32,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let result = response
+            .get("result")
+            .and_then(Value::as_str)
+            .ok_or(SyncError::Retryable)?;
+        if !matches!(result, "noChanges" | "applied" | "conflictPending") {
+            return Err(SyncError::Retryable);
+        }
+        let expected_status = match (cmd.kind, result) {
+            (CommandKind::CreateWork, "applied") => Some(201),
+            (CommandKind::PrepareObject, "noChanges") => Some(200),
+            (CommandKind::PrepareObject, "applied") => Some(201),
+            (CommandKind::FinalizeObject, "applied")
+            | (CommandKind::RegisterSnapshot, "noChanges" | "applied")
+            | (CommandKind::ResolveDevice, "applied")
+            | (CommandKind::ResolveServer, "applied")
+            | (CommandKind::CloneWork, "applied")
+            | (CommandKind::Restore, "applied") => Some(200),
+            (CommandKind::Publish, "noChanges" | "applied") => Some(200),
+            (CommandKind::Publish, "conflictPending") => Some(409),
+            _ => None,
+        };
+        if expected_status != Some(status) {
+            return Err(SyncError::Retryable);
+        }
+        let allowed = match (cmd.kind, result) {
+            (CommandKind::CreateWork, "applied") => [
+                "commandId",
+                "commandKind",
+                "documentId",
+                "head",
+                "receipt",
+                "result",
+                "workId",
+            ]
+            .as_slice(),
+            (CommandKind::PrepareObject, "noChanges") => {
+                ["commandId", "commandKind", "receipt", "result"].as_slice()
+            }
+            (CommandKind::PrepareObject, "applied") => [
+                "commandId",
+                "commandKind",
+                "expiresAt",
+                "objectId",
+                "receipt",
+                "result",
+                "uploadCapability",
+                "uploadId",
+            ]
+            .as_slice(),
+            (CommandKind::FinalizeObject, "applied") => [
+                "byteCount",
+                "commandId",
+                "commandKind",
+                "head",
+                "objectId",
+                "receipt",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::RegisterSnapshot, "noChanges" | "applied") => [
+                "commandId",
+                "commandKind",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::Publish, "noChanges" | "applied") => [
+                "commandId",
+                "commandKind",
+                "generation",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::Publish, "conflictPending") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "receipt",
+                "result",
+                "sourceGeneration",
+            ]
+            .as_slice(),
+            (CommandKind::ResolveDevice, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "generation",
+                "head",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            (CommandKind::ResolveServer, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "receipt",
+                "remoteGeneration",
+                "remoteSnapshotId",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::CloneWork, "applied") => [
+                "commandId",
+                "commandKind",
+                "conflictId",
+                "conflictRevision",
+                "head",
+                "newRootSnapshotId",
+                "newWorkId",
+                "receipt",
+                "result",
+            ]
+            .as_slice(),
+            (CommandKind::Restore, "applied") => [
+                "commandId",
+                "commandKind",
+                "generation",
+                "head",
+                "protectedRestoreBeforeSnapshotId",
+                "receipt",
+                "result",
+                "snapshotId",
+            ]
+            .as_slice(),
+            _ => return Err(SyncError::Retryable),
+        };
+        let object = response.as_object().ok_or(SyncError::Retryable)?;
+        if object.keys().any(|key| !allowed.contains(&key.as_str()))
+            || allowed.iter().any(|key| !object.contains_key(*key))
+        {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn verify_response_head<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let Some(expected) = response.get("head") else {
+            return Ok(());
+        };
+        let work_id = if cmd.kind == CommandKind::CloneWork {
+            response
+                .get("newWorkId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or(SyncError::Retryable)?
+        } else {
+            cmd.work_id
+        };
+        let row = sqlx::query(
+            "SELECT head_snapshot_id,head_generation FROM sync_v2.works WHERE account_id=$1 AND work_id=$2",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(SyncError::Retryable)?;
+        let snapshot: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
+        let generation: Option<i64> = row.try_get("head_generation")?;
+        if expected.is_null() {
+            // finalizeObject and registerSnapshot deliberately use a null head
+            // sentinel: neither command can advance the Work head. Their
+            // no-op proof is the absence of a head event for this command, not
+            // an assertion that the Work itself still has a null head.
+            if matches!(
+                cmd.kind,
+                CommandKind::FinalizeObject | CommandKind::RegisterSnapshot
+            ) {
+                let advanced: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM sync_v2.head_events WHERE account_id=$1 AND command_id=$2)",
+                )
+                .bind(&p.account_id)
+                .bind(cmd.command_id)
+                .fetch_one(&mut **tx)
+                .await?;
+                if advanced {
+                    return Err(SyncError::Retryable);
+                }
+                return Ok(());
+            }
+            if snapshot.is_some() || generation.is_some() {
+                return Err(SyncError::Retryable);
+            }
+            return Ok(());
+        }
+        let expected_snapshot =
+            digest_field(expected, "snapshotId").map_err(|_| SyncError::Retryable)?;
+        let expected_generation = expected
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        if snapshot.as_deref() != Some(expected_snapshot.as_slice())
+            || generation != Some(expected_generation)
+        {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn verify_command_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<()> {
+        let payload = &cmd.value["payload"];
+        let result = response
+            .get("result")
+            .and_then(Value::as_str)
+            .ok_or(SyncError::Retryable)?;
+        let matches = match cmd.kind {
+            CommandKind::CreateWork => {
+                let document = uuid(payload, "documentId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND document_id=$3 AND state='bound')")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(document).fetch_one(&mut **tx).await?
+            }
+            CommandKind::PrepareObject => {
+                let object = digest_field(payload, "objectId").map_err(|_| SyncError::Retryable)?;
+                if result == "noChanges" {
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available')")
+                        .bind(&p.account_id).bind(object.as_slice()).fetch_one(&mut **tx).await?
+                } else {
+                    let upload = response
+                        .get("uploadId")
+                        .and_then(Value::as_str)
+                        .and_then(|value| Uuid::parse_str(value).ok())
+                        .ok_or(SyncError::Retryable)?;
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 AND command_id=$3 AND work_id=$4 AND account_fence=$5 AND object_id=$6 AND byte_count=$7 AND state='prepared' AND expires_at>now())")
+                        .bind(&p.account_id).bind(upload).bind(cmd.command_id).bind(cmd.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(payload.get("byteCount").and_then(Value::as_i64).ok_or(SyncError::Retryable)?).fetch_one(&mut **tx).await?
+                }
+            }
+            CommandKind::FinalizeObject => {
+                let object = digest_field(payload, "objectId").map_err(|_| SyncError::Retryable)?;
+                let upload = uuid(payload, "uploadId").map_err(|_| SyncError::Retryable)?;
+                let count = payload
+                    .get("byteCount")
+                    .and_then(Value::as_i64)
+                    .ok_or(SyncError::Retryable)?;
+                let row = sqlx::query("SELECT b.byte_count,b.raw_bytes FROM sync_v2.upload_capabilities u JOIN sync_v2.account_objects a ON a.account_id=u.account_id AND a.object_id=u.object_id JOIN sync_v2.global_blobs b ON b.object_id=u.object_id WHERE u.account_id=$1 AND u.upload_id=$2 AND u.work_id=$3 AND u.object_id=$4 AND u.byte_count=$5 AND u.state='finalized' AND a.state='available'")
+                    .bind(&p.account_id).bind(upload).bind(cmd.work_id).bind(object.as_slice()).bind(count).fetch_optional(&mut **tx).await?;
+                if let Some(row) = row {
+                    let raw: Vec<u8> = row.try_get("raw_bytes")?;
+                    row.try_get::<i64, _>("byte_count")? == count
+                        && raw.len() as i64 == count
+                        && sha256(&raw) == object
+                } else {
+                    false
+                }
+            }
+            CommandKind::RegisterSnapshot => {
+                let snapshot =
+                    digest_field(payload, "snapshotId").map_err(|_| SyncError::Retryable)?;
+                let manifest = URL_SAFE_NO_PAD
+                    .decode(
+                        payload
+                            .get("manifestBase64URL")
+                            .and_then(Value::as_str)
+                            .ok_or(SyncError::Retryable)?,
+                    )
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3 AND manifest_digest=$3 AND manifest_bytes=$4)")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(snapshot.as_slice()).bind(manifest).fetch_one(&mut **tx).await?
+            }
+            CommandKind::Publish => self.verify_publish_resource(tx, p, cmd, response).await?,
+            CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
+                self.verify_resolution_resource(tx, p, cmd).await?
+            }
+            CommandKind::Restore => {
+                let selected = digest_field(payload, "selectedSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                let before = digest_field(&payload["expectedRemoteHead"], "snapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                let result_snapshot =
+                    digest_field(payload, "newSnapshotId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.restore_receipts rr JOIN sync_v2.head_events h ON h.account_id=rr.account_id AND h.command_id=rr.command_id AND h.work_id=rr.work_id WHERE rr.account_id=$1 AND rr.command_id=$2 AND rr.work_id=$3 AND rr.selected_snapshot_id=$4 AND rr.pre_restore_snapshot_id=$5 AND rr.result_snapshot_id=$6 AND h.snapshot_id=$6)")
+                    .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(selected.as_slice()).bind(before.as_slice()).bind(result_snapshot.as_slice()).fetch_one(&mut **tx).await?
+            }
+        };
+        if !matches {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn verify_publish_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        response: &Value,
+    ) -> SyncResult<bool> {
+        if response.get("result").and_then(Value::as_str) == Some("conflictPending") {
+            let conflict = response
+                .get("conflictId")
+                .and_then(Value::as_str)
+                .and_then(|value| Uuid::parse_str(value).ok())
+                .ok_or(SyncError::Retryable)?;
+            let revision = response
+                .get("conflictRevision")
+                .and_then(Value::as_i64)
+                .ok_or(SyncError::Retryable)?;
+            let candidate = digest_field(&cmd.value["payload"], "candidateSnapshotId")
+                .map_err(|_| SyncError::Retryable)?;
+            return sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_candidates c ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id AND c.revision=a.current_revision WHERE a.account_id=$1 AND a.work_id=$2 AND a.conflict_id=$3 AND a.current_revision=$4 AND a.source_generation=$5 AND a.state='active' AND c.local_snapshot_id=$6 AND c.source_generation=$5)")
+                .bind(&p.account_id).bind(cmd.work_id).bind(conflict).bind(revision).bind(cmd.source_generation).bind(candidate.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database);
+        }
+        let head = response.get("head").ok_or(SyncError::Retryable)?;
+        let snapshot = digest_field(head, "snapshotId").map_err(|_| SyncError::Retryable)?;
+        let generation = head
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        if response.get("result").and_then(Value::as_str) == Some("noChanges") {
+            let candidate = digest_field(&cmd.value["payload"], "candidateSnapshotId")
+                .map_err(|_| SyncError::Retryable)?;
+            let reported_candidate =
+                digest_field(response, "snapshotId").map_err(|_| SyncError::Retryable)?;
+            return sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sync_v2.works w
+                     JOIN sync_v2.snapshots s
+                       ON s.account_id=w.account_id AND s.work_id=w.work_id
+                      AND s.snapshot_id=$3
+                     WHERE w.account_id=$1 AND w.work_id=$2
+                       AND w.head_snapshot_id=$3 AND w.head_generation=$4
+                       AND NOT EXISTS(
+                           SELECT 1 FROM sync_v2.head_events h
+                           WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$5
+                       )
+                 )",
+            )
+            .bind(&p.account_id)
+            .bind(cmd.work_id)
+            .bind(snapshot.as_slice())
+            .bind(generation)
+            .bind(cmd.command_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(SyncError::Database)
+            .map(|head_matches| head_matches && candidate == reported_candidate);
+        }
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.head_events h JOIN sync_v2.history hi ON hi.account_id=h.account_id AND hi.work_id=h.work_id AND hi.snapshot_id=h.snapshot_id JOIN sync_v2.catalog_events c ON c.account_id=h.account_id AND c.work_id=h.work_id AND c.head_generation=h.generation AND c.head_snapshot_id=h.snapshot_id WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$3 AND h.generation=$4 AND h.snapshot_id=$5 AND h.command_kind='publish' AND hi.reason='publish' AND c.event_kind='upsert' AND c.tombstoned=false)")
+            .bind(&p.account_id).bind(cmd.work_id).bind(cmd.command_id).bind(generation).bind(snapshot.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+    }
+    async fn verify_resolution_resource<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<bool> {
+        let payload = &cmd.value["payload"];
+        let conflict = uuid(payload, "conflictId").map_err(|_| SyncError::Retryable)?;
+        let revision = payload
+            .get("conflictRevision")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::Retryable)?;
+        let resolved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.active_conflicts a JOIN sync_v2.conflict_events e ON e.account_id=a.account_id AND e.conflict_id=a.conflict_id AND e.revision=$4 AND e.event_kind='resolved' WHERE a.account_id=$1 AND a.work_id=$2 AND a.conflict_id=$3 AND a.current_revision=$4 AND a.state='resolved')")
+            .bind(&p.account_id).bind(cmd.work_id).bind(conflict).bind(revision).fetch_one(&mut **tx).await?;
+        if !resolved {
+            return Ok(false);
+        }
+        match cmd.kind {
+            CommandKind::ResolveDevice => {
+                let chosen = digest_field(payload, "decisionSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.head_events h JOIN sync_v2.history hi ON hi.account_id=h.account_id AND hi.work_id=h.work_id AND hi.snapshot_id=h.snapshot_id WHERE h.account_id=$1 AND h.work_id=$2 AND h.command_id=$3 AND h.snapshot_id=$4 AND h.command_kind='resolveDevice' AND hi.reason='conflictResolution')")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(cmd.command_id).bind(chosen.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            CommandKind::ResolveServer => {
+                let local = digest_field(payload, "preAdoptionSnapshotId")
+                    .map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.history WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3 AND reason='preAdoptionLocal' AND pinned=true)")
+                    .bind(&p.account_id).bind(cmd.work_id).bind(local.as_slice()).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            CommandKind::CloneWork => {
+                let new_work = uuid(payload, "newWorkId").map_err(|_| SyncError::Retryable)?;
+                let root =
+                    digest_field(payload, "newRootSnapshotId").map_err(|_| SyncError::Retryable)?;
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.works w JOIN sync_v2.head_events h ON h.account_id=w.account_id AND h.work_id=w.work_id AND h.snapshot_id=w.head_snapshot_id JOIN sync_v2.history hi ON hi.account_id=w.account_id AND hi.work_id=w.work_id AND hi.snapshot_id=w.head_snapshot_id WHERE w.account_id=$1 AND w.work_id=$2 AND w.head_snapshot_id=$3 AND w.head_generation=1 AND h.command_id=$4 AND h.command_scope='cloneNewWork' AND hi.reason='keepBothCloneRoot')")
+                    .bind(&p.account_id).bind(new_work).bind(root.as_slice()).bind(cmd.command_id).fetch_one(&mut **tx).await.map_err(SyncError::Database)
+            }
+            _ => Ok(false),
+        }
+    }
+    async fn verify_completed_receipt<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        status: i32,
+        response: &[u8],
+    ) -> SyncResult<()> {
+        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.sealed_commands s JOIN sync_v2.receipts r ON r.account_id=s.account_id AND r.command_id=s.command_id WHERE s.account_id=$1 AND s.command_id=$2 AND s.work_id=$3 AND s.command_kind=$4 AND s.request_digest=$5 AND s.canonical_request=$6 AND s.state='completed' AND r.work_id=$3 AND r.command_kind=$4 AND r.request_digest=$5 AND r.canonical_request=$6 AND r.response_status=$7 AND r.canonical_response=$8 AND r.completed_at IS NOT NULL AND r.state='completed')")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).bind(status).bind(response).fetch_one(&mut **tx).await?;
+        if !matches {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    async fn complete<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+        status: i32,
+        bytes: &[u8],
+    ) -> SyncResult<()> {
+        let receipt = sqlx::query("UPDATE sync_v2.receipts SET response_status=$3,canonical_response=$4,completed_at=$5,state='completed' WHERE account_id=$1 AND command_id=$2 AND work_id=$6 AND command_kind=$7 AND request_digest=$8 AND canonical_request=$9 AND state='reserved'")
+            .bind(&p.account_id).bind(cmd.command_id).bind(status).bind(bytes).bind(Utc::now()).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        let sealed = sqlx::query("UPDATE sync_v2.sealed_commands SET state='completed' WHERE account_id=$1 AND command_id=$2 AND work_id=$3 AND command_kind=$4 AND request_digest=$5 AND canonical_request=$6 AND state='sending'")
+            .bind(&p.account_id).bind(cmd.command_id).bind(cmd.work_id).bind(cmd.kind.as_str()).bind(cmd.request_digest.as_slice()).bind(&cmd.canonical_bytes).execute(&mut **tx).await?;
+        if receipt.rows_affected() != 1 || sealed.rows_affected() != 1 {
+            return Err(SyncError::Retryable);
+        }
+        Ok(())
+    }
+    fn response(cmd: &SealedCommand, result: &str, extra: Vec<(String, Value)>) -> Vec<u8> {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "commandId".into(),
+            Value::String(cmd.command_id.to_string()),
+        );
+        map.insert(
+            "commandKind".into(),
+            Value::String(cmd.kind.as_str().into()),
+        );
+        map.insert("result".into(), Value::String(result.into()));
+        map.insert(
+            "receipt".into(),
+            object([
+                (
+                    "commandId".into(),
+                    Value::String(cmd.command_id.to_string()),
+                ),
+                (
+                    "commandKind".into(),
+                    Value::String(cmd.kind.as_str().into()),
+                ),
+                (
+                    "requestDigest".into(),
+                    Value::String(hex::encode(cmd.request_digest)),
+                ),
+                ("workId".into(), Value::String(cmd.work_id.to_string())),
+                (
+                    "readBack".into(),
+                    object([
+                        ("accountMatched".into(), Value::Bool(true)),
+                        ("commandDigestMatched".into(), Value::Bool(true)),
+                        ("headMatched".into(), Value::Bool(true)),
+                        ("resourceMatched".into(), Value::Bool(true)),
+                        ("stateMatched".into(), Value::Bool(true)),
+                    ]),
+                ),
+            ]),
+        );
+        for (k, v) in extra {
+            map.insert(k, v);
+        }
+        canonical_json(&Value::Object(map)).expect("response is canonical")
+    }
+    fn head_value(snapshot_id: &[u8], generation: i64) -> Value {
+        object([
+            ("generation".into(), Value::from(generation)),
+            ("snapshotId".into(), Value::String(hex::encode(snapshot_id))),
+        ])
+    }
+    async fn append_catalog_event<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        generation: i64,
+        snapshot_id: &[u8],
+    ) -> SyncResult<()> {
+        // Identity values are allocated before commit. Serialize catalog
+        // writers per account so an older uncommitted event cannot appear
+        // after a cursor has captured a later high-water value.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(
+                 hashtextextended('sync_v2_catalog:' || $1, 0)
+             )",
+        )
+        .bind(&p.account_id)
+        .execute(&mut **tx)
+        .await?;
+        let row = sqlx::query("SELECT b.raw_bytes FROM sync_v2.snapshot_entries e JOIN sync_v2.account_objects a ON a.account_id=e.account_id AND a.object_id=e.object_id JOIN sync_v2.global_blobs b ON b.object_id=e.object_id WHERE e.account_id=$1 AND e.snapshot_id=$2 AND e.entity_key='work/title' AND a.state='available'")
+            .bind(&p.account_id)
+            .bind(snapshot_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let title_bytes: Vec<u8> = row.try_get("raw_bytes")?;
+        let title_value = strict_json(&title_bytes)?;
+        if canonical_json(&title_value).map_err(|_| SyncError::InvalidCanonicalBytes)?
+            != title_bytes
+        {
+            return Err(SyncError::InvalidCanonicalBytes);
+        }
+        let title = title_value
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SyncError::SchemaViolation("work/title".into()))?;
+        sqlx::query("INSERT INTO sync_v2.catalog_events(account_id,work_id,event_kind,head_generation,head_snapshot_id,title,tombstoned,created_at) VALUES($1,$2,'upsert',$3,$4,$5,false,now())")
+            .bind(&p.account_id)
+            .bind(work_id)
+            .bind(generation)
+            .bind(snapshot_id)
+            .bind(title)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+    pub async fn command(
+        &self,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        if p.protocol_epoch != self.protocol_epoch
+            || p.server_instance_id != self.server_instance_id
+        {
+            return Err(SyncError::ProtocolEpochMismatch);
+        }
+        let mut tx = self.pool.begin().await?;
+        self.scope(&mut tx, p).await?;
+        let result = self.command_in_transaction(&mut tx, p, cmd).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn command_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        p: &AuthenticatedPrincipal,
+        cmd: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        if cmd.kind == CommandKind::CreateWork {
+            let lock_key = create_work_lock_key(&p.account_id, cmd.work_id);
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(lock_key)
+                .execute(&mut **tx)
+                .await?;
+        }
+        // A quarantined Work is not an addressable remote resource.  Check
+        // its bound state before receipt replay for every non-bootstrap
+        // command, otherwise a lost-ACK retry could still read a completed
+        // response from a parked Work.
+        let deleted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.deleted_works WHERE account_id=$1 AND work_id=$2)",
+        )
+        .bind(&p.account_id)
+        .bind(cmd.work_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if deleted {
+            return Err(SyncError::NotFound);
+        }
+        if cmd.kind != CommandKind::CreateWork {
+            self.require_work(tx, p, cmd.work_id).await?;
+        }
+        if let Some(r) = self.receipt_lookup(tx, p, cmd).await? {
+            return Ok(r);
+        }
+        if cmd.kind == CommandKind::CreateWork {
+            // sealed_commands has an immediate Work FK. Bootstrap the null-head
+            // Work before sealing, in the same transaction, after scope/receipt
+            // lookup. A failed command rolls this row back atomically.
+            self.create_work_row(tx, p, cmd).await?;
+        }
+        self.seal(tx, p, cmd).await?;
+        let (status, response) = match cmd.kind {
+            CommandKind::CreateWork => self.create_work(tx, p, cmd).await?,
+            CommandKind::PrepareObject => self.prepare_object(tx, p, cmd).await?,
+            CommandKind::FinalizeObject => self.finalize_object(tx, p, cmd).await?,
+            CommandKind::RegisterSnapshot => self.register_snapshot(tx, p, cmd).await?,
+            CommandKind::Publish => self.publish(tx, p, cmd).await?,
+            CommandKind::ResolveDevice | CommandKind::ResolveServer | CommandKind::CloneWork => {
+                self.resolve(tx, p, cmd).await?
+            }
+            CommandKind::Restore => self.restore(tx, p, cmd).await?,
+        };
+        self.verify_read_back(tx, p, cmd, status, &response).await?;
+        self.complete(tx, p, cmd, status, &response).await?;
+        self.verify_completed_receipt(tx, p, cmd, status, &response)
+            .await?;
+        Ok((status, response))
+    }
+    async fn require_work<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        id: Uuid,
+    ) -> SyncResult<()> {
+        let exists = sqlx::query(
+            // Quarantined works are parked local state, not an addressable
+            // remote resource.  Treat them exactly like an absent Work so a
+            // stale/fenced command cannot continue through a previously
+            // sealed capability.
+            "SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 AND state='bound' FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        exists.map(|_| ()).ok_or(SyncError::NotFound)
+    }
+    async fn create_work<'a>(
+        &self,
+        _tx: &mut Transaction<'a, Postgres>,
+        _p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let document =
+            uuid(&c.value["payload"], "documentId").map_err(SyncError::SchemaViolation)?;
+        Ok((
+            201,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("workId".into(), Value::String(c.work_id.to_string())),
+                    ("documentId".into(), Value::String(document.to_string())),
+                    ("head".into(), Value::Null),
+                ],
+            ),
+        ))
+    }
+    async fn create_work_row<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<()> {
+        let document =
+            uuid(&c.value["payload"], "documentId").map_err(SyncError::SchemaViolation)?;
+        let existing = sqlx::query(
+            "SELECT document_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if existing.is_some() {
+            return Err(SyncError::CommandIdReused);
+        }
+        sqlx::query("INSERT INTO sync_v2.works(account_id,work_id,document_id,state) VALUES($1,$2,$3,'bound')")
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .bind(document)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+    async fn prepare_object<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let object = digest_field(payload, "objectId").map_err(SyncError::SchemaViolation)?;
+        let count = payload
+            .get("byteCount")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("byteCount".into()))?;
+        if sqlx::query("SELECT 1 FROM sync_v2.account_objects WHERE account_id=$1 AND object_id=$2 AND state='available'").bind(&p.account_id).bind(object.as_slice()).fetch_optional(&mut **tx).await?.is_some() { return Ok((200,Self::response(c,"noChanges",vec![]))); }
+        let upload = Uuid::new_v4();
+        let upload_row = sqlx::query("INSERT INTO sync_v2.upload_capabilities(account_id,upload_id,command_id,work_id,account_fence,object_id,byte_count,state,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'prepared',now()+interval '15 minutes') RETURNING expires_at")
+            .bind(&p.account_id).bind(upload).bind(c.command_id).bind(c.work_id).bind(&p.account_fence).bind(object.as_slice()).bind(count).fetch_one(&mut **tx).await?;
+        let expires: chrono::DateTime<Utc> = upload_row.try_get("expires_at")?;
+        let capability = upload_capability(&p.account_id, &p.account_fence, upload, c.command_id);
+        Ok((
+            201,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("uploadId".into(), Value::String(upload.to_string())),
+                    ("uploadCapability".into(), Value::String(capability)),
+                    ("objectId".into(), Value::String(hex::encode(object))),
+                    ("expiresAt".into(), Value::String(expires.to_rfc3339())),
+                ],
+            ),
+        ))
+    }
+    async fn finalize_object<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let object = digest_field(payload, "objectId").map_err(SyncError::SchemaViolation)?;
+        let upload = uuid(payload, "uploadId").map_err(SyncError::SchemaViolation)?;
+        let row=sqlx::query("SELECT object_id,byte_count,state,expires_at,account_fence,work_id,command_id FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 FOR UPDATE").bind(&p.account_id).bind(upload).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<String, _>("account_fence")? != p.account_fence
+            || row.try_get::<Uuid, _>("work_id")? != c.work_id
+        {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        let state: String = row.try_get("state")?;
+        if state == "expired"
+            || row.try_get::<chrono::DateTime<Utc>, _>("expires_at")? <= Utc::now()
+        {
+            return Err(SyncError::UploadExpired);
+        }
+        let expected: Vec<u8> = row.try_get("object_id")?;
+        if expected != object {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        let count: i64 = row.try_get("byte_count")?;
+        let blob =
+            sqlx::query("SELECT byte_count,raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1")
+                .bind(object.as_slice())
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or(SyncError::NotFound)?;
+        let actual: i64 = blob.try_get("byte_count")?;
+        let bytes: Vec<u8> = blob.try_get("raw_bytes")?;
+        if actual != count || sha256(&bytes) != object {
+            return Err(SyncError::ObjectDigestMismatch);
+        }
+        if state != "uploaded" && state != "finalized" {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT(account_id,object_id) DO UPDATE SET state='available'").bind(&p.account_id).bind(object.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sync_v2.upload_capabilities SET state='finalized' WHERE account_id=$1 AND upload_id=$2").bind(&p.account_id).bind(upload).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("objectId".into(), Value::String(hex::encode(object))),
+                    ("byteCount".into(), Value::from(count)),
+                    // Null is the closed response sentinel for this command;
+                    // finalizing an object never advances a Work head.
+                    ("head".into(), Value::Null),
+                ],
+            ),
+        ))
+    }
+    async fn register_snapshot<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let id = digest_field(payload, "snapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected =
+            digest_field(payload, "manifestBytesDigest").map_err(SyncError::SchemaViolation)?;
+        let text = payload
+            .get("manifestBase64URL")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SyncError::SchemaViolation("manifestBase64URL".into()))?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(text)
+            .map_err(|_| SyncError::InvalidCanonicalBytes)?;
+        if bytes.len() > MAX_MANIFEST_BYTES || sha256(&bytes) != expected || expected != id {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        let entries = validate_manifest_bytes(&bytes, c.work_id)?;
+        let manifest = strict_json(&bytes)?;
+        let mut entity_values = HashMap::<String, Value>::new();
+        for entry in &entries {
+            let blob = sqlx::query("SELECT b.byte_count,b.raw_bytes FROM sync_v2.account_objects a JOIN sync_v2.global_blobs b ON b.object_id=a.object_id WHERE a.account_id=$1 AND a.object_id=$2 AND a.state='available'")
+                .bind(&p.account_id).bind(entry.object_id.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+            let count: i64 = blob.try_get("byte_count")?;
+            let raw: Vec<u8> = blob.try_get("raw_bytes")?;
+            if count != entry.byte_count
+                || raw.len() as i64 != entry.byte_count
+                || sha256(&raw) != entry.object_id
+            {
+                return Err(SyncError::ObjectDigestMismatch);
+            }
+            if entry.content_type != "application/octet-stream" {
+                let parsed = strict_json(&raw)?;
+                if canonical_json(&parsed).map_err(|_| SyncError::InvalidCanonicalBytes)? != raw {
+                    return Err(SyncError::InvalidCanonicalBytes);
+                }
+                validate_entity_payload(&entry.entity_key, &parsed)?;
+                entity_values.insert(entry.entity_key.clone(), parsed);
+            }
+        }
+        for (key, value) in &entity_values {
+            let parts: Vec<_> = key.split('/').collect();
+            let expected_id = match parts.as_slice() {
+                [kind, id]
+                    if matches!(*kind, "character" | "plot-card" | "flag" | "world-note") =>
+                {
+                    Some((id, "id"))
+                }
+                ["attachment", id, "metadata"] => Some((id, "attachmentId")),
+                _ => None,
+            };
+            if let Some((expected, field)) = expected_id {
+                if value.get(field).and_then(Value::as_str) != Some(expected) {
+                    return Err(SyncError::LineageViolation);
+                }
+            }
+        }
+        let mut expected_keys: HashSet<String> = [
+            "work/document",
+            "work/title",
+            "work/synopsis",
+            "work/chapter-order",
+            "work/character-order",
+            "work/plot-card-order",
+            "work/flag-order",
+            "work/world-note-order",
+            "work/attachment-order",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let ids_for = |key: &str, values: &HashMap<String, Value>| -> SyncResult<Vec<String>> {
+            values
+                .get(key)
+                .and_then(|value| value.get("ids"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| SyncError::SchemaViolation(key.into()))
+                .and_then(|ids| {
+                    ids.iter()
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| SyncError::SchemaViolation(key.into()))
+                        })
+                        .collect()
+                })
+        };
+        let chapter_ids = ids_for("work/chapter-order", &entity_values)?;
+        let chapter_set: HashSet<_> = chapter_ids.iter().cloned().collect();
+        let mut episode_owners = HashSet::new();
+        for chapter in chapter_ids {
+            let prefix = format!("chapter/{chapter}");
+            expected_keys.insert(format!("{prefix}/title"));
+            expected_keys.insert(format!("{prefix}/episode-order"));
+            for episode in ids_for(&format!("{prefix}/episode-order"), &entity_values)? {
+                if !episode_owners.insert(episode.clone()) {
+                    return Err(SyncError::LineageViolation);
+                }
+                let ep = format!("episode/{episode}");
+                expected_keys.insert(format!("{ep}/title"));
+                expected_keys.insert(format!("{ep}/body"));
+                expected_keys.insert(format!("{ep}/memo"));
+            }
+        }
+        for (order, prefix) in [
+            ("work/character-order", "character"),
+            ("work/plot-card-order", "plot-card"),
+            ("work/flag-order", "flag"),
+            ("work/world-note-order", "world-note"),
+        ] {
+            for id in ids_for(order, &entity_values)? {
+                expected_keys.insert(format!("{prefix}/{id}"));
+            }
+        }
+        for id in ids_for("work/attachment-order", &entity_values)? {
+            expected_keys.insert(format!("attachment/{id}/metadata"));
+            expected_keys.insert(format!("attachment/{id}/bytes"));
+        }
+        if entries
+            .iter()
+            .any(|entry| !expected_keys.contains(&entry.entity_key))
+            || expected_keys.len() != entries.len()
+        {
+            return Err(SyncError::LineageViolation);
+        }
+        for (key, value) in &entity_values {
+            if (key.starts_with("plot-card/") || key.starts_with("flag/"))
+                && value
+                    .get("plantedChapterId")
+                    .or_else(|| value.get("chapterId"))
+                    .or_else(|| value.get("resolvedChapterId"))
+                    .is_some()
+            {
+                for field in ["chapterId", "plantedChapterId", "resolvedChapterId"] {
+                    if let Some(chapter) = value.get(field).and_then(Value::as_str) {
+                        if !chapter_set.contains(chapter) {
+                            return Err(SyncError::LineageViolation);
+                        }
+                    }
+                }
+            }
+        }
+        for id in ids_for("work/attachment-order", &entity_values)? {
+            let metadata = entity_values
+                .get(&format!("attachment/{id}/metadata"))
+                .ok_or(SyncError::LineageViolation)?;
+            let meta_count = metadata
+                .get("byteCount")
+                .and_then(Value::as_i64)
+                .ok_or(SyncError::LineageViolation)?;
+            let bytes_entry = entries
+                .iter()
+                .find(|entry| entry.entity_key == format!("attachment/{id}/bytes"))
+                .ok_or(SyncError::LineageViolation)?;
+            if meta_count != bytes_entry.byte_count {
+                return Err(SyncError::LineageViolation);
+            }
+        }
+        let document_entry = entries
+            .iter()
+            .find(|entry| entry.entity_key == "work/document")
+            .ok_or_else(|| SyncError::SchemaViolation("manifest.work/document".into()))?;
+        let document_blob = sqlx::query("SELECT b.raw_bytes FROM sync_v2.account_objects a JOIN sync_v2.global_blobs b ON b.object_id=a.object_id WHERE a.account_id=$1 AND a.object_id=$2 AND a.state='available'")
+            .bind(&p.account_id).bind(document_entry.object_id.as_slice()).fetch_one(&mut **tx).await?;
+        let document_value = strict_json(&document_blob.try_get::<Vec<u8>, _>("raw_bytes")?)?;
+        let document_id = Uuid::parse_str(
+            document_value
+                .get("documentId")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        )
+        .map_err(|_| SyncError::LineageViolation)?;
+        let work_document =
+            sqlx::query("SELECT document_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+                .bind(&p.account_id)
+                .bind(c.work_id)
+                .fetch_one(&mut **tx)
+                .await?
+                .try_get::<Uuid, _>("document_id")?;
+        if document_id != work_document {
+            return Err(SyncError::LineageViolation);
+        }
+        if let Some(existing) = sqlx::query("SELECT work_id,manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND snapshot_id=$2 FOR UPDATE")
+            .bind(&p.account_id).bind(id.as_slice()).fetch_optional(&mut **tx).await? {
+            let work: Uuid = existing.try_get("work_id")?;
+            let old: Vec<u8> = existing.try_get("manifest_bytes")?;
+            if work != c.work_id || old != bytes { return Err(SyncError::SnapshotDigestMismatch); }
+            return Ok((200, Self::response(c, "noChanges", vec![("snapshotId".into(), Value::String(hex::encode(id))), ("head".into(), Value::Null)])));
+        }
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())")
+            .bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
+        let parents = manifest
+            .get("parentSnapshotIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| SyncError::SchemaViolation("parentSnapshotIds".into()))?;
+        for parent in parents {
+            let parent_id = decode_digest(
+                parent
+                    .as_str()
+                    .ok_or_else(|| SyncError::SchemaViolation("parentSnapshotIds".into()))?,
+            )
+            .map_err(SyncError::SchemaViolation)?;
+            let parent_exists = sqlx::query("SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3")
+                .bind(&p.account_id).bind(c.work_id).bind(parent_id.as_slice()).fetch_optional(&mut **tx).await?.is_some();
+            if !parent_exists {
+                return Err(SyncError::LineageViolation);
+            }
+            sqlx::query("INSERT INTO sync_v2.snapshot_parents(account_id,work_id,snapshot_id,parent_snapshot_id) VALUES($1,$2,$3,$4)")
+                .bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(parent_id.as_slice()).execute(&mut **tx).await?;
+        }
+        for entry in &entries {
+            sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(&p.account_id).bind(id.as_slice()).bind(&entry.entity_key).bind(entry.object_id.as_slice()).bind(entry.byte_count).bind(&entry.content_type).execute(&mut **tx).await?;
+        }
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("snapshotId".into(), Value::String(hex::encode(id))),
+                    // Null is the closed response sentinel for this command;
+                    // registering a Snapshot never advances a Work head.
+                    ("head".into(), Value::Null),
+                ],
+            ),
+        ))
+    }
+    /// Verify a snapshot graph edge without trusting a client-provided base.
+    ///
+    /// The recursive walk starts at `descendant` and follows immutable parent
+    /// edges. The query also emits a row for a cycle edge and detects a
+    /// continuation past the node budget, so both cases fail closed as
+    /// `lineageViolation` instead of being treated as a normal conflict.
+    async fn snapshot_is_ancestor<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        ancestor: &[u8; 32],
+        descendant: &[u8; 32],
+    ) -> SyncResult<SnapshotRelation> {
+        let row = sqlx::query(
+            "WITH RECURSIVE walk(snapshot_id, depth, path, cycle) AS (
+                 SELECT s.snapshot_id, 0::bigint, ARRAY[s.snapshot_id]::bytea[], false
+                 FROM sync_v2.snapshots s
+                 WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3
+                 UNION ALL
+                 SELECT p.parent_snapshot_id,
+                        w.depth + 1,
+                        w.path || p.parent_snapshot_id,
+                        p.parent_snapshot_id = ANY(w.path)
+                 FROM walk w
+                 JOIN sync_v2.snapshot_parents p
+                   ON p.account_id=$1 AND p.work_id=$2 AND p.snapshot_id=w.snapshot_id
+                 WHERE NOT w.cycle AND w.depth < $5
+             ), bounded AS (
+                 SELECT * FROM walk LIMIT $6
+             ), checked AS (
+                 SELECT w.*,
+                        EXISTS(
+                            SELECT 1
+                            FROM sync_v2.snapshot_parents next_parent
+                            WHERE next_parent.account_id=$1
+                              AND next_parent.work_id=$2
+                              AND next_parent.snapshot_id=w.snapshot_id
+                        ) AS has_next
+                 FROM bounded w
+             )
+             SELECT
+                 EXISTS(SELECT 1 FROM checked WHERE snapshot_id=$4) AS ancestor,
+                 EXISTS(SELECT 1 FROM checked WHERE cycle) AS cycle,
+                 EXISTS(SELECT 1 FROM checked WHERE depth >= $5 AND has_next) AS over_budget,
+                 COUNT(*) AS visited
+             FROM checked",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .bind(descendant)
+        .bind(ancestor)
+        .bind(MAX_LINEAGE_NODES)
+        .bind(MAX_LINEAGE_NODES + 1)
+        .fetch_one(&mut **tx)
+        .await?;
+        let cycle: bool = row.try_get("cycle")?;
+        let over_budget: bool = row.try_get("over_budget")?;
+        let visited: i64 = row.try_get("visited")?;
+        if cycle || over_budget || visited > MAX_LINEAGE_NODES {
+            return Err(SyncError::LineageViolation);
+        }
+        let is_ancestor: bool = row.try_get("ancestor")?;
+        Ok(if is_ancestor {
+            SnapshotRelation::Ancestor
+        } else {
+            SnapshotRelation::NotAncestor
+        })
+    }
+
+    async fn snapshot_is_root<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        work_id: Uuid,
+        snapshot_id: &[u8; 32],
+    ) -> SyncResult<bool> {
+        let row = sqlx::query(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sync_v2.snapshots s
+                 WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3
+             ) AS exists,
+             EXISTS(
+                 SELECT 1 FROM sync_v2.snapshot_parents p
+                 WHERE p.account_id=$1 AND p.work_id=$2 AND p.snapshot_id=$3
+             ) AS has_parent",
+        )
+        .bind(&p.account_id)
+        .bind(work_id)
+        .bind(snapshot_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !row.try_get::<bool, _>("exists")? {
+            return Err(SyncError::LineageViolation);
+        }
+        Ok(!row.try_get::<bool, _>("has_parent")?)
+    }
+
+    async fn publish<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let candidate =
+            digest_field(payload, "candidateSnapshotId").map_err(SyncError::SchemaViolation)?;
+        // Validate the candidate closure before touching the Work head or
+        // active-conflict state. An absent snapshot is deliberately reported
+        // as lineageViolation: it must not disclose a cross-account object or
+        // leave a reserved receipt behind.
+        let candidate_exists = sqlx::query(
+            "SELECT 1 FROM sync_v2.snapshots
+             WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .bind(candidate.as_slice())
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
+        if !candidate_exists {
+            return Err(SyncError::LineageViolation);
+        }
+        let row = sqlx::query(
+            "SELECT head_generation,head_snapshot_id FROM sync_v2.works
+             WHERE account_id=$1 AND work_id=$2 FOR UPDATE",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        let generation: Option<i64> = row.try_get("head_generation")?;
+        let current: Option<Vec<u8>> = row.try_get("head_snapshot_id")?;
+        let expected = &payload["expectedRemoteHead"];
+        let (expected_id, expected_generation) = if expected.is_null() {
+            (None, None)
+        } else {
+            let id = digest_field(expected, "snapshotId")
+                .map_err(SyncError::SchemaViolation)?
+                .to_vec();
+            let gen = expected
+                .get("generation")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    SyncError::SchemaViolation("expectedRemoteHead.generation".into())
+                })?;
+            (Some(id), Some(gen))
+        };
+        if let (Some(expected_id), Some(expected_generation)) =
+            (expected_id.as_deref(), expected_generation)
+        {
+            // A snapshot digest alone is not a head version.  Require the
+            // exact generation/snapshot pair to have been emitted as a
+            // scoped head event before accepting ancestry.  Otherwise a
+            // caller could replay an old generation with a newer (or
+            // unrelated) snapshot and still pass the ID-only lineage test.
+            let pair_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1 FROM sync_v2.head_events
+                     WHERE account_id=$1 AND work_id=$2
+                       AND generation=$3 AND snapshot_id=$4
+                 )",
+            )
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .bind(expected_generation)
+            .bind(expected_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if !pair_exists {
+                return Err(SyncError::LineageViolation);
+            }
+        }
+        // A non-null expected head must be an actual ancestor of the
+        // candidate. This prevents a stale client from inventing a common
+        // base merely because its expected generation happens to differ.
+        if let Some(expected_id) = expected_id.as_deref() {
+            if sqlx::query(
+                "SELECT 1 FROM sync_v2.snapshots
+                 WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+            )
+            .bind(&p.account_id)
+            .bind(c.work_id)
+            .bind(expected_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_none()
+            {
+                return Err(SyncError::LineageViolation);
+            }
+            let expected_array: [u8; 32] = expected_id
+                .try_into()
+                .map_err(|_| SyncError::LineageViolation)?;
+            if self
+                .snapshot_is_ancestor(tx, p, c.work_id, &expected_array, &candidate)
+                .await?
+                != SnapshotRelation::Ancestor
+            {
+                return Err(SyncError::LineageViolation);
+            }
+        // An empty Work has no public base to protect. Its first publish may
+        // select any registered descendant whose parent closure is already
+        // verified by register_snapshot. Once a head exists, retain the root
+        // rule for a null expected head so it cannot invent a common base.
+        } else if current.is_some() && !self.snapshot_is_root(tx, p, c.work_id, &candidate).await? {
+            return Err(SyncError::LineageViolation);
+        }
+
+        // There is one active conflict lane per Work. Lock it after the Work
+        // row (the repository-wide lock order), and lock its current
+        // candidate in the same statement. This preserves semantic retries:
+        // a different operation ID must not create a new revision for equal
+        // candidate bytes.
+        let active = sqlx::query(
+            "SELECT a.conflict_id,a.current_revision,a.source_generation,
+                    c.base_snapshot_id,c.local_snapshot_id,c.remote_snapshot_id,
+                    c.source_generation AS candidate_source_generation
+             FROM sync_v2.active_conflicts a
+             JOIN sync_v2.conflict_candidates c
+               ON c.account_id=a.account_id AND c.conflict_id=a.conflict_id
+              AND c.work_id=a.work_id AND c.revision=a.current_revision
+             WHERE a.account_id=$1 AND a.work_id=$2 AND a.state='active'
+             FOR UPDATE OF a,c",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        if let Some(active) = active {
+            let conflict_id: Uuid = active.try_get("conflict_id")?;
+            let current_revision: i64 = active.try_get("current_revision")?;
+            let active_source_generation: i64 = active.try_get("source_generation")?;
+            let candidate_source_generation: i64 = active.try_get("candidate_source_generation")?;
+            if active_source_generation != candidate_source_generation {
+                return Err(SyncError::LineageViolation);
+            }
+            let active_base: Option<Vec<u8>> = active.try_get("base_snapshot_id")?;
+            let active_local: Vec<u8> = active.try_get("local_snapshot_id")?;
+            let active_remote: Vec<u8> = active.try_get("remote_snapshot_id")?;
+            let same_base = expected_id.as_deref() == active_base.as_deref();
+            let same_remote = current.as_deref() == Some(active_remote.as_slice());
+            if c.source_generation == active_source_generation
+                && candidate.as_slice() == active_local.as_slice()
+                && same_base
+                && same_remote
+            {
+                // A lost ACK retried with another operation ID is the same
+                // conflict revision. The outer command still receives its
+                // own receipt, but this lane gets no row or event.
+                return Ok((
+                    409,
+                    Self::response(
+                        c,
+                        "conflictPending",
+                        vec![
+                            ("conflictId".into(), Value::String(conflict_id.to_string())),
+                            ("conflictRevision".into(), Value::from(current_revision)),
+                            (
+                                "sourceGeneration".into(),
+                                Value::from(active_source_generation),
+                            ),
+                            (
+                                "head".into(),
+                                Self::head_value(active_remote.as_slice(), generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            if c.source_generation <= active_source_generation {
+                // Never move the active projection backwards. A same/older
+                // branch with a different candidate is stale; a different
+                // remote head is a forged lineage.
+                return Err(if same_remote {
+                    SyncError::StaleConflictRevision
+                } else {
+                    SyncError::LineageViolation
+                });
+            }
+            if !same_base || !same_remote {
+                // A newer candidate is appendable only to this exact lane.
+                return Err(SyncError::LineageViolation);
+            }
+            let revision = current_revision
+                .checked_add(1)
+                .ok_or(SyncError::SizeLimitExceeded)?;
+            let remote = current.as_deref().ok_or(SyncError::LineageViolation)?;
+            sqlx::query(
+                "INSERT INTO sync_v2.conflict_candidates(
+                    account_id,conflict_id,work_id,revision,base_snapshot_id,
+                    local_snapshot_id,remote_snapshot_id,source_generation,created_at
+                 ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(c.work_id)
+            .bind(revision)
+            .bind(expected_id.as_deref())
+            .bind(candidate.as_slice())
+            .bind(remote)
+            .bind(c.source_generation)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "UPDATE sync_v2.active_conflicts
+                 SET current_revision=$4,source_generation=$5
+                 WHERE account_id=$1 AND conflict_id=$2 AND state='active'
+                   AND current_revision=$3",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(current_revision)
+            .bind(revision)
+            .bind(c.source_generation)
+            .execute(&mut **tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO sync_v2.conflict_events(
+                    account_id,conflict_id,revision,event_kind,canonical_event,created_at
+                 ) VALUES($1,$2,$3,'appended',$4,now())",
+            )
+            .bind(&p.account_id)
+            .bind(conflict_id)
+            .bind(revision)
+            .bind(&c.canonical_bytes)
+            .execute(&mut **tx)
+            .await?;
+            return Ok((
+                409,
+                Self::response(
+                    c,
+                    "conflictPending",
+                    vec![
+                        ("conflictId".into(), Value::String(conflict_id.to_string())),
+                        ("conflictRevision".into(), Value::from(revision)),
+                        ("sourceGeneration".into(), Value::from(c.source_generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(remote, generation.unwrap_or(1)),
+                        ),
+                    ],
+                ),
+            ));
+        }
+
+        let remote = current.clone();
+        if let Some(remote_id) = remote.as_deref() {
+            let remote_array: [u8; 32] = remote_id
+                .try_into()
+                .map_err(|_| SyncError::LineageViolation)?;
+            if candidate.as_slice() == remote_id {
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "noChanges",
+                        vec![
+                            ("generation".into(), Value::from(generation.unwrap_or(1))),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            (
+                                "head".into(),
+                                Self::head_value(remote_id, generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            let candidate_is_ancestor = self
+                .snapshot_is_ancestor(tx, p, c.work_id, &candidate, &remote_array)
+                .await?
+                == SnapshotRelation::Ancestor;
+            if candidate_is_ancestor {
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "noChanges",
+                        vec![
+                            ("generation".into(), Value::from(generation.unwrap_or(1))),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            (
+                                "head".into(),
+                                Self::head_value(remote_id, generation.unwrap_or(1)),
+                            ),
+                        ],
+                    ),
+                ));
+            }
+            let current_is_ancestor = self
+                .snapshot_is_ancestor(tx, p, c.work_id, &remote_array, &candidate)
+                .await?
+                == SnapshotRelation::Ancestor;
+            if current_is_ancestor {
+                let next = generation.unwrap_or(0) + 1;
+                sqlx::query(
+                    "UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4
+                     WHERE account_id=$1 AND work_id=$2",
+                )
+                .bind(&p.account_id)
+                .bind(c.work_id)
+                .bind(candidate.as_slice())
+                .bind(next)
+                .execute(&mut **tx)
+                .await?;
+                let occurrence = Uuid::new_v4();
+                sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
+                    .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
+                self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
+                    .await?;
+                sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())")
+                    .bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+                return Ok((
+                    200,
+                    Self::response(
+                        c,
+                        "applied",
+                        vec![
+                            ("generation".into(), Value::from(next)),
+                            ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                            ("head".into(), Self::head_value(candidate.as_slice(), next)),
+                        ],
+                    ),
+                ));
+            }
+        }
+
+        // A true divergence must have a verified common base. For an
+        // expected-null command, both branches must be independent roots;
+        // otherwise the server would be manufacturing a base it cannot prove.
+        if remote.is_none() && expected_id.is_some() {
+            return Err(SyncError::LineageViolation);
+        }
+        if let Some(remote_id) = remote.as_deref() {
+            if let Some(expected_id) = expected_id.as_deref() {
+                let expected_array: [u8; 32] = expected_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                let remote_array: [u8; 32] = remote_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                if self
+                    .snapshot_is_ancestor(tx, p, c.work_id, &expected_array, &remote_array)
+                    .await?
+                    != SnapshotRelation::Ancestor
+                {
+                    return Err(SyncError::LineageViolation);
+                }
+            } else {
+                let remote_array: [u8; 32] = remote_id
+                    .try_into()
+                    .map_err(|_| SyncError::LineageViolation)?;
+                if !self
+                    .snapshot_is_root(tx, p, c.work_id, &remote_array)
+                    .await?
+                {
+                    return Err(SyncError::LineageViolation);
+                }
+            }
+        }
+
+        if let Some(remote) = remote.as_deref() {
+            let conflict = Uuid::new_v4();
+            sqlx::query("INSERT INTO sync_v2.active_conflicts(account_id,conflict_id,work_id,current_revision,source_generation,state) VALUES($1,$2,$3,1,$4,'active')")
+                .bind(&p.account_id).bind(conflict).bind(c.work_id).bind(c.source_generation).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.conflict_candidates(account_id,conflict_id,work_id,revision,base_snapshot_id,local_snapshot_id,remote_snapshot_id,source_generation,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())")
+                .bind(&p.account_id).bind(conflict).bind(c.work_id).bind(1_i64).bind(expected_id.as_deref()).bind(candidate.as_slice()).bind(remote).bind(c.source_generation).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,$4,$5,now())")
+                .bind(&p.account_id).bind(conflict).bind(1_i64).bind("created").bind(&c.canonical_bytes).execute(&mut **tx).await?;
+            return Ok((
+                409,
+                Self::response(
+                    c,
+                    "conflictPending",
+                    vec![
+                        ("conflictId".into(), Value::String(conflict.to_string())),
+                        ("conflictRevision".into(), Value::from(1_i64)),
+                        ("sourceGeneration".into(), Value::from(c.source_generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(remote, generation.unwrap_or(1)),
+                        ),
+                    ],
+                ),
+            ));
+        }
+        let next = generation.unwrap_or(0) + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(candidate.as_slice()).bind(next).execute(&mut **tx).await?;
+        let occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'publish',true,now())")
+            .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(candidate.as_slice()).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, candidate.as_slice())
+            .await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(candidate.as_slice()).bind(c.command_id).bind(c.work_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("generation".into(), Value::from(next)),
+                    ("snapshotId".into(), Value::String(hex::encode(candidate))),
+                    ("head".into(), Self::head_value(candidate.as_slice(), next)),
+                ],
+            ),
+        ))
+    }
+    async fn resolve<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let conflict = uuid(payload, "conflictId").map_err(SyncError::SchemaViolation)?;
+        let revision = payload
+            .get("conflictRevision")
+            .and_then(Value::as_i64)
+            .ok_or(SyncError::SchemaViolation("conflictRevision".into()))?;
+        let row = sqlx::query("SELECT work_id,current_revision,source_generation,state FROM sync_v2.active_conflicts WHERE account_id=$1 AND conflict_id=$2 FOR UPDATE")
+            .bind(&p.account_id).bind(conflict).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<Uuid, _>("work_id")? != c.work_id {
+            return Err(SyncError::NotFound);
+        }
+        let active_source_generation = row.try_get::<i64, _>("source_generation")?;
+        if row.try_get::<String, _>("state")? != "active"
+            || row.try_get::<i64, _>("current_revision")? != revision
+            || active_source_generation != c.source_generation
+        {
+            return Err(SyncError::StaleConflictRevision);
+        }
+        if c.kind == CommandKind::CloneWork {
+            return self.clone_work(tx, p, c, conflict, revision).await;
+        }
+        let candidate_row = sqlx::query("SELECT base_snapshot_id,local_snapshot_id,remote_snapshot_id FROM sync_v2.conflict_candidates WHERE account_id=$1 AND conflict_id=$2 AND revision=$3")
+            .bind(&p.account_id).bind(conflict).bind(revision).fetch_one(&mut **tx).await?;
+        let conflict_local: Vec<u8> = candidate_row.try_get("local_snapshot_id")?;
+        let conflict_remote: Vec<u8> = candidate_row.try_get("remote_snapshot_id")?;
+        let chosen = if c.kind == CommandKind::ResolveDevice {
+            let chosen =
+                digest_field(payload, "decisionSnapshotId").map_err(SyncError::SchemaViolation)?;
+            let local = digest_field(payload, "localCandidateSnapshotId")
+                .map_err(SyncError::SchemaViolation)?;
+            if local.as_slice() != conflict_local.as_slice() {
+                return Err(SyncError::StaleConflictRevision);
+            }
+            chosen
+        } else {
+            let chosen =
+                digest_field(payload, "remoteSnapshotId").map_err(SyncError::SchemaViolation)?;
+            if chosen.as_slice() != conflict_remote.as_slice() {
+                return Err(SyncError::StaleConflictRevision);
+            }
+            chosen
+        };
+        let expected = if c.kind == CommandKind::ResolveDevice {
+            &payload["expectedRemoteHead"]
+        } else {
+            &Value::Null
+        };
+        let current = sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let generation: i64 = current
+            .try_get::<Option<i64>, _>("head_generation")?
+            .unwrap_or(0);
+        let current_id: Option<Vec<u8>> = current.try_get("head_snapshot_id")?;
+        let (expected_id, expected_remote_generation) = if expected.is_null() {
+            (None, None)
+        } else {
+            let expected_generation = expected
+                .get("generation")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    SyncError::SchemaViolation("expectedRemoteHead.generation".into())
+                })?;
+            (
+                Some(
+                    digest_field(expected, "snapshotId")
+                        .map_err(SyncError::SchemaViolation)?
+                        .to_vec(),
+                ),
+                Some(expected_generation),
+            )
+        };
+        if c.kind == CommandKind::ResolveServer {
+            let expected_current = digest_field(payload, "expectedCurrentSnapshotId")
+                .map_err(SyncError::SchemaViolation)?;
+            let pre_adoption = digest_field(payload, "preAdoptionSnapshotId")
+                .map_err(SyncError::SchemaViolation)?;
+            let expected_generation = payload
+                .get("expectedLocalGeneration")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| SyncError::SchemaViolation("expectedLocalGeneration".into()))?;
+            if expected_generation != c.source_generation
+                || expected_generation != active_source_generation
+                || expected_current != c.source_snapshot_id
+                || expected_current != pre_adoption
+                || pre_adoption.as_slice() != conflict_local.as_slice()
+                || chosen.as_slice() != conflict_remote.as_slice()
+            {
+                return Err(SyncError::StaleConflictRevision);
+            }
+            // The server head remains the selected remote branch. We only pin
+            // the local candidate and resolve the active conflict; the client
+            // installs remote bytes after its local-generation CAS boundary.
+            if current_id.as_deref() != Some(conflict_remote.as_slice())
+                || chosen.as_slice() != conflict_remote.as_slice()
+            {
+                return Err(SyncError::StaleHead);
+            }
+            let occurrence = Uuid::new_v4();
+            sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'preAdoptionLocal',true,now())")
+                .bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(expected_current.as_slice()).execute(&mut **tx).await?;
+            sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2")
+                .bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())")
+                .bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+            return Ok((
+                200,
+                Self::response(
+                    c,
+                    "applied",
+                    vec![
+                        ("conflictId".into(), Value::String(conflict.to_string())),
+                        ("conflictRevision".into(), Value::from(revision)),
+                        (
+                            "remoteSnapshotId".into(),
+                            Value::String(hex::encode(&conflict_remote)),
+                        ),
+                        ("remoteGeneration".into(), Value::from(generation)),
+                        (
+                            "head".into(),
+                            Self::head_value(&conflict_remote, generation),
+                        ),
+                    ],
+                ),
+            ));
+        }
+        if c.kind == CommandKind::ResolveDevice
+            && (current_id != expected_id || Some(generation) != expected_remote_generation)
+        {
+            return Err(SyncError::StaleHead);
+        }
+        if sqlx::query(
+            "SELECT 1 FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3",
+        )
+        .bind(&p.account_id)
+        .bind(c.work_id)
+        .bind(chosen.as_slice())
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_none()
+        {
+            return Err(SyncError::NotFound);
+        }
+        if c.kind == CommandKind::ResolveDevice {
+            let decision = sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3")
+                .bind(&p.account_id).bind(c.work_id).bind(chosen.as_slice()).fetch_one(&mut **tx).await?;
+            let decision_bytes: Vec<u8> = decision.try_get("manifest_bytes")?;
+            let decision_manifest = strict_json(&decision_bytes)?;
+            let parents = decision_manifest
+                .get("parentSnapshotIds")
+                .and_then(Value::as_array)
+                .ok_or(SyncError::LineageViolation)?;
+            let mut parent_ids: Vec<[u8; 32]> = parents
+                .iter()
+                .map(|parent| {
+                    decode_digest(parent.as_str().ok_or(SyncError::LineageViolation)?)
+                        .map_err(|_| SyncError::LineageViolation)
+                })
+                .collect::<Result<_, _>>()?;
+            parent_ids.sort();
+            let mut expected_parents = [conflict_remote.as_slice(), conflict_local.as_slice()];
+            expected_parents.sort();
+            if parent_ids.len() != 2
+                || parent_ids[0].as_slice() != expected_parents[0]
+                || parent_ids[1].as_slice() != expected_parents[1]
+            {
+                return Err(SyncError::LineageViolation);
+            }
+        }
+        let next = generation + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(chosen.as_slice()).bind(next).execute(&mut **tx).await?;
+        let occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(chosen.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,$6,'sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(chosen.as_slice()).bind(c.command_id).bind(c.kind.as_str()).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, chosen.as_slice())
+            .await?;
+        sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("conflictId".into(), Value::String(conflict.to_string())),
+                    ("conflictRevision".into(), Value::from(revision)),
+                    ("generation".into(), Value::from(next)),
+                    ("snapshotId".into(), Value::String(hex::encode(chosen))),
+                    ("head".into(), Self::head_value(chosen.as_slice(), next)),
+                ],
+            ),
+        ))
+    }
+
+    async fn clone_work<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+        conflict: Uuid,
+        revision: i64,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let new_work = uuid(payload, "newWorkId").map_err(SyncError::SchemaViolation)?;
+        let deleted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sync_v2.deleted_works WHERE account_id=$1 AND work_id=$2)",
+        )
+        .bind(&p.account_id)
+        .bind(new_work)
+        .fetch_one(&mut **tx)
+        .await?;
+        if deleted {
+            return Err(SyncError::NotFound);
+        }
+
+        let new_document = uuid(payload, "newDocumentId").map_err(SyncError::SchemaViolation)?;
+        let source_snapshot = digest_field(payload, "localCandidateSnapshotId")
+            .map_err(SyncError::SchemaViolation)?;
+        // keepBoth is bound to the exact candidate shown by the active
+        // conflict projection. An arbitrary same-work Snapshot is not a
+        // valid clone source, even when it is otherwise registered.
+        let active_candidate: Vec<u8> = sqlx::query(
+            "SELECT local_snapshot_id
+             FROM sync_v2.conflict_candidates
+             WHERE account_id=$1 AND conflict_id=$2 AND work_id=$3 AND revision=$4",
+        )
+        .bind(&p.account_id)
+        .bind(conflict)
+        .bind(c.work_id)
+        .bind(revision)
+        .fetch_one(&mut **tx)
+        .await?
+        .try_get("local_snapshot_id")?;
+        if source_snapshot.as_slice() != active_candidate.as_slice() {
+            return Err(SyncError::StaleConflictRevision);
+        }
+        let expected_head = &payload["expectedOriginalHead"];
+        let original = sqlx::query("SELECT head_generation,head_snapshot_id,document_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let original_generation: Option<i64> = original.try_get("head_generation")?;
+        let current: Option<Vec<u8>> = original.try_get("head_snapshot_id")?;
+        let expected = if expected_head.is_null() {
+            if original_generation.is_some() {
+                return Err(SyncError::StaleHead);
+            }
+            None
+        } else {
+            let expected_generation = expected_head
+                .get("generation")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    SyncError::SchemaViolation("expectedOriginalHead.generation".into())
+                })?;
+            if Some(expected_generation) != original_generation {
+                return Err(SyncError::StaleHead);
+            }
+            Some(
+                digest_field(expected_head, "snapshotId")
+                    .map_err(SyncError::SchemaViolation)?
+                    .to_vec(),
+            )
+        };
+        if current != expected {
+            return Err(SyncError::StaleHead);
+        }
+        if sqlx::query("SELECT 1 FROM sync_v2.works WHERE account_id=$1 AND work_id=$2")
+            .bind(&p.account_id)
+            .bind(new_work)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_some()
+        {
+            return Err(SyncError::CommandIdReused);
+        }
+        let source = sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3").bind(&p.account_id).bind(c.work_id).bind(source_snapshot.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        let source_bytes: Vec<u8> = source.try_get("manifest_bytes")?;
+        let mut manifest: Value =
+            serde_json::from_slice(&source_bytes).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        manifest["workId"] = Value::String(new_work.to_string());
+        manifest["parentSnapshotIds"] = Value::Array(Vec::new());
+        if let Some(entries) = manifest.get_mut("entries").and_then(Value::as_array_mut) {
+            for entry in entries {
+                if entry.get("entityKey").and_then(Value::as_str) == Some("work/document") {
+                    let object_id =
+                        digest_field(entry, "objectId").map_err(SyncError::SchemaViolation)?;
+                    let blob = sqlx::query(
+                        "SELECT raw_bytes FROM sync_v2.global_blobs WHERE object_id=$1",
+                    )
+                    .bind(object_id.as_slice())
+                    .fetch_optional(&mut **tx)
+                    .await?
+                    .ok_or(SyncError::NotFound)?;
+                    let mut doc: Value =
+                        serde_json::from_slice(&blob.try_get::<Vec<u8>, _>("raw_bytes")?)
+                            .map_err(|_| SyncError::SnapshotDigestMismatch)?;
+                    doc["documentId"] = Value::String(new_document.to_string());
+                    let doc_bytes =
+                        canonical_json(&doc).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+                    let new_object = sha256(&doc_bytes);
+                    // Keep transformed clone bytes behind the ObjectStore
+                    // transaction boundary as well.  Direct writes here
+                    // would bypass an S3/object-store adapter's caller-tx
+                    // contract and could leave bytes committed if a later
+                    // clone step rolls back.
+                    self.object_store.put(tx, &new_object, &doc_bytes).await?;
+                    sqlx::query("INSERT INTO sync_v2.account_objects(account_id,object_id,state) VALUES($1,$2,'available') ON CONFLICT DO NOTHING").bind(&p.account_id).bind(new_object.as_slice()).execute(&mut **tx).await?;
+                    entry["objectId"] = Value::String(hex::encode(new_object));
+                    entry["byteCount"] = Value::from(doc_bytes.len() as i64);
+                }
+            }
+        }
+        let root_bytes =
+            canonical_json(&manifest).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        let root_id = sha256(&root_bytes);
+        let requested_root =
+            digest_field(payload, "newRootSnapshotId").map_err(SyncError::SchemaViolation)?;
+        if root_id != requested_root {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.works(account_id,work_id,document_id,state,head_snapshot_id,head_generation) VALUES($1,$2,$3,'bound',$4,1)").bind(&p.account_id).bind(new_work).bind(new_document).bind(root_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(&root_bytes).execute(&mut **tx).await?;
+        let root_entries = validate_manifest_bytes(&root_bytes, new_work)?;
+        let source_entries = sqlx::query("SELECT entity_key,object_id,byte_count,content_type FROM sync_v2.snapshot_entries WHERE account_id=$1 AND snapshot_id=$2 ORDER BY entity_key")
+            .bind(&p.account_id).bind(source_snapshot.as_slice()).fetch_all(&mut **tx).await?;
+        if source_entries.len() != root_entries.len() {
+            return Err(SyncError::LineageViolation);
+        }
+        for row in source_entries {
+            let key: String = row.try_get("entity_key")?;
+            let root_entry = root_entries
+                .iter()
+                .find(|entry| entry.entity_key == key)
+                .ok_or(SyncError::LineageViolation)?;
+            sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(&p.account_id).bind(root_id.as_slice()).bind(&key).bind(root_entry.object_id.as_slice()).bind(root_entry.byte_count).bind(&root_entry.content_type).execute(&mut **tx).await?;
+        }
+        let original_occurrence = Uuid::new_v4();
+        let clone_occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'conflictResolution',true,now()),($1,$5,$6,$7,'keepBothCloneRoot',true,now())").bind(&p.account_id).bind(original_occurrence).bind(c.work_id).bind(source_snapshot.as_slice()).bind(clone_occurrence).bind(new_work).bind(root_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,1,$3,$4,$5,'cloneWork','cloneNewWork',now())").bind(&p.account_id).bind(new_work).bind(root_id.as_slice()).bind(c.command_id).bind(c.work_id).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, new_work, 1, root_id.as_slice())
+            .await?;
+        sqlx::query("UPDATE sync_v2.active_conflicts SET state='resolved' WHERE account_id=$1 AND conflict_id=$2").bind(&p.account_id).bind(conflict).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.conflict_events(account_id,conflict_id,revision,event_kind,canonical_event,created_at) VALUES($1,$2,$3,'resolved',$4,now())").bind(&p.account_id).bind(conflict).bind(revision).bind(&c.canonical_bytes).execute(&mut **tx).await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("conflictId".into(), Value::String(conflict.to_string())),
+                    ("conflictRevision".into(), Value::from(revision)),
+                    ("newWorkId".into(), Value::String(new_work.to_string())),
+                    (
+                        "newRootSnapshotId".into(),
+                        Value::String(hex::encode(root_id)),
+                    ),
+                    ("head".into(), Self::head_value(root_id.as_slice(), 1)),
+                ],
+            ),
+        ))
+    }
+    async fn restore<'a>(
+        &self,
+        tx: &mut Transaction<'a, Postgres>,
+        p: &AuthenticatedPrincipal,
+        c: &SealedCommand,
+    ) -> SyncResult<(i32, Vec<u8>)> {
+        let payload = &c.value["payload"];
+        let selected =
+            digest_field(payload, "selectedSnapshotId").map_err(SyncError::SchemaViolation)?;
+        let new_id = digest_field(payload, "newSnapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected_current = digest_field(payload, "expectedCurrentSnapshotId")
+            .map_err(SyncError::SchemaViolation)?;
+        let row = sqlx::query("SELECT head_generation,head_snapshot_id FROM sync_v2.works WHERE account_id=$1 AND work_id=$2 FOR UPDATE").bind(&p.account_id).bind(c.work_id).fetch_one(&mut **tx).await?;
+        let generation = row
+            .try_get::<Option<i64>, _>("head_generation")?
+            .ok_or(SyncError::StaleHead)?;
+        let current = row
+            .try_get::<Option<Vec<u8>>, _>("head_snapshot_id")?
+            .ok_or(SyncError::StaleHead)?;
+        if expected_current != c.source_snapshot_id {
+            return Err(SyncError::StaleHead);
+        }
+        let expected_local_generation = payload
+            .get("expectedLocalGeneration")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("expectedLocalGeneration".into()))?;
+        if expected_local_generation != c.source_generation {
+            return Err(SyncError::StaleHead);
+        }
+        let expected_remote = payload
+            .get("expectedRemoteHead")
+            .filter(|value| value.is_object())
+            .ok_or(SyncError::StaleHead)?;
+        let expected_remote_snapshot =
+            digest_field(expected_remote, "snapshotId").map_err(SyncError::SchemaViolation)?;
+        let expected_remote_generation = expected_remote
+            .get("generation")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SyncError::SchemaViolation("expectedRemoteHead.generation".into()))?;
+        if current.as_slice() != expected_remote_snapshot.as_slice()
+            || generation != expected_remote_generation
+        {
+            return Err(SyncError::StaleHead);
+        }
+        let selected_row=sqlx::query("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3").bind(&p.account_id).bind(c.work_id).bind(selected.as_slice()).fetch_optional(&mut **tx).await?.ok_or(SyncError::NotFound)?;
+        let selected_bytes: Vec<u8> = selected_row.try_get("manifest_bytes")?;
+        let mut manifest: Value = serde_json::from_slice(&selected_bytes)
+            .map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        manifest["workId"] = Value::String(c.work_id.to_string());
+        let mut parent_ids = [hex::encode(current.as_slice()), hex::encode(selected)];
+        parent_ids.sort();
+        manifest["parentSnapshotIds"] =
+            Value::Array(parent_ids.into_iter().map(Value::String).collect());
+        let bytes = canonical_json(&manifest).map_err(|_| SyncError::SnapshotDigestMismatch)?;
+        if sha256(&bytes) != new_id {
+            return Err(SyncError::SnapshotDigestMismatch);
+        };
+        sqlx::query("INSERT INTO sync_v2.snapshots(account_id,work_id,snapshot_id,manifest_bytes,manifest_digest,created_at) VALUES($1,$2,$3,$4,$3,now())").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(&bytes).execute(&mut **tx).await?;
+        let selected_entries = sqlx::query("SELECT entity_key,object_id,byte_count,content_type FROM sync_v2.snapshot_entries WHERE account_id=$1 AND snapshot_id=$2 ORDER BY entity_key")
+            .bind(&p.account_id).bind(selected.as_slice()).fetch_all(&mut **tx).await?;
+        let result_entries = validate_manifest_bytes(&bytes, c.work_id)?;
+        if selected_entries.len() != result_entries.len() {
+            return Err(SyncError::LineageViolation);
+        }
+        let selected_keys = selected_entries
+            .iter()
+            .map(|row| row.try_get::<String, _>("entity_key"))
+            .collect::<Result<Vec<_>, _>>()?;
+        for entry in result_entries {
+            if !selected_keys.contains(&entry.entity_key) {
+                return Err(SyncError::LineageViolation);
+            }
+            sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6)")
+                .bind(&p.account_id).bind(new_id.as_slice()).bind(&entry.entity_key).bind(entry.object_id.as_slice()).bind(entry.byte_count).bind(&entry.content_type).execute(&mut **tx).await?;
+        }
+        sqlx::query("INSERT INTO sync_v2.snapshot_parents(account_id,work_id,snapshot_id,parent_snapshot_id) VALUES($1,$2,$3,$4),($1,$2,$3,$5)").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(current.as_slice()).bind(selected.as_slice()).execute(&mut **tx).await?;
+        let next = generation + 1;
+        sqlx::query("UPDATE sync_v2.works SET head_snapshot_id=$3,head_generation=$4 WHERE account_id=$1 AND work_id=$2").bind(&p.account_id).bind(c.work_id).bind(new_id.as_slice()).bind(next).execute(&mut **tx).await?;
+        let occurrence = Uuid::new_v4();
+        sqlx::query("INSERT INTO sync_v2.history(account_id,occurrence_id,work_id,snapshot_id,reason,pinned,created_at) VALUES($1,$2,$3,$4,'restoreBefore',true,now())").bind(&p.account_id).bind(occurrence).bind(c.work_id).bind(current.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.restore_receipts(account_id,command_id,work_id,selected_snapshot_id,pre_restore_snapshot_id,result_snapshot_id) VALUES($1,$2,$3,$4,$5,$6)").bind(&p.account_id).bind(c.command_id).bind(c.work_id).bind(selected.as_slice()).bind(current.as_slice()).bind(new_id.as_slice()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO sync_v2.head_events(account_id,work_id,generation,snapshot_id,command_id,command_work_id,command_kind,command_scope,created_at) VALUES($1,$2,$3,$4,$5,$2,'restore','sameWork',now())").bind(&p.account_id).bind(c.work_id).bind(next).bind(new_id.as_slice()).bind(c.command_id).execute(&mut **tx).await?;
+        self.append_catalog_event(tx, p, c.work_id, next, new_id.as_slice())
+            .await?;
+        Ok((
+            200,
+            Self::response(
+                c,
+                "applied",
+                vec![
+                    ("snapshotId".into(), Value::String(hex::encode(new_id))),
+                    ("generation".into(), Value::from(next)),
+                    (
+                        "protectedRestoreBeforeSnapshotId".into(),
+                        Value::String(hex::encode(current)),
+                    ),
+                    ("head".into(), Self::head_value(new_id.as_slice(), next)),
+                ],
+            ),
+        ))
+    }
+    pub async fn upload(
+        &self,
+        p: &AuthenticatedPrincipal,
+        upload_id: Uuid,
+        capability: &str,
+        bytes: &[u8],
+    ) -> SyncResult<()> {
+        if bytes.len() > MAX_OBJECT_BYTES {
+            return Err(SyncError::SizeLimitExceeded);
+        };
+        let mut tx = self.pool.begin().await?;
+        self.scope(&mut tx, p).await?;
+        let row=sqlx::query("SELECT object_id,byte_count,account_fence,state,expires_at,command_id,work_id FROM sync_v2.upload_capabilities WHERE account_id=$1 AND upload_id=$2 FOR UPDATE").bind(&p.account_id).bind(upload_id).fetch_optional(&mut *tx).await?.ok_or(SyncError::NotFound)?;
+        if row.try_get::<String, _>("account_fence")? != p.account_fence {
+            return Err(SyncError::UploadCapabilityMismatch);
+        };
+        let command_id: Uuid = row.try_get("command_id")?;
+        if capability != upload_capability(&p.account_id, &p.account_fence, upload_id, command_id) {
+            return Err(SyncError::UploadCapabilityMismatch);
+        }
+        if row.try_get::<chrono::DateTime<Utc>, _>("expires_at")? <= Utc::now() {
+            sqlx::query("UPDATE sync_v2.upload_capabilities SET state='expired' WHERE account_id=$1 AND upload_id=$2")
+                .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
+            tx.commit().await?;
+            return Err(SyncError::UploadExpired);
+        }
+        let state: String = row.try_get("state")?;
+        if !matches!(state.as_str(), "prepared" | "uploaded" | "finalized") {
+            return Err(SyncError::UploadExpired);
+        };
+        let object: Vec<u8> = row.try_get("object_id")?;
+        let count: i64 = row.try_get("byte_count")?;
+        if count != bytes.len() as i64 || sha256(bytes).as_slice() != object.as_slice() {
+            return Err(SyncError::ObjectDigestMismatch);
+        };
+        let object_id: [u8; 32] = object
+            .as_slice()
+            .try_into()
+            .map_err(|_| SyncError::ObjectDigestMismatch)?;
+        self.object_store.put(&mut tx, &object_id, bytes).await?;
+        if state == "prepared" {
+            sqlx::query("UPDATE sync_v2.upload_capabilities SET state='uploaded',partial_bytes='\\x'::bytea WHERE account_id=$1 AND upload_id=$2 AND state='prepared'")
+                .bind(&p.account_id).bind(upload_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+    pub async fn receipt(
+        &self,
+        p: &AuthenticatedPrincipal,
+        id: Uuid,
+    ) -> SyncResult<(String, Uuid, Vec<u8>, Vec<u8>, i32)> {
+        let row=sqlx::query("SELECT r.command_kind,r.work_id,r.request_digest,r.canonical_response,r.response_status FROM sync_v2.receipts r JOIN sync_v2.works w ON w.account_id=r.account_id AND w.work_id=r.work_id AND w.state='bound' AND NOT EXISTS (SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id) WHERE r.account_id=$1 AND r.command_id=$2 AND r.state='completed'").bind(&p.account_id).bind(id).fetch_optional(&self.pool).await?.ok_or(SyncError::NotFound)?;
+        Ok((
+            row.try_get("command_kind")?,
+            row.try_get("work_id")?,
+            row.try_get("request_digest")?,
+            row.try_get("canonical_response")?,
+            row.try_get("response_status")?,
+        ))
+    }
+}
+
+fn create_work_lock_key(account_id: &str, work_id: Uuid) -> String {
+    // PostgreSQL `text` rejects NUL bytes. A byte-length prefix keeps the
+    // account/work tuple unambiguous even when an opaque AccountID contains
+    // punctuation that could otherwise be mistaken for a separator.
+    format!("{}:{account_id}:{work_id}", account_id.len())
+}
+
+#[cfg(test)]
+mod create_work_lock_key_tests {
+    use super::create_work_lock_key;
+    use uuid::Uuid;
+
+    #[test]
+    fn account_and_work_lock_key_is_postgres_text_safe_and_unambiguous() {
+        let work_id = Uuid::parse_str("6e2081b1-a097-4fa6-89f8-27621b658509").unwrap();
+        let first = create_work_lock_key("a:b", work_id);
+        let second = create_work_lock_key("a", work_id);
+
+        assert!(!first.as_bytes().contains(&0));
+        assert_ne!(first, second);
+        assert_eq!(first, "3:a:b:6e2081b1-a097-4fa6-89f8-27621b658509");
+    }
+}
+
+#[cfg(test)]
+mod database_identity_tests {
+    use super::{
+        classify_database_identity, expected_v2_database_objects, is_temporary_namespace,
+        sqlx_only_database_objects, DatabaseIdentity, DDL_CONTRACT_MARKER, SCHEMA_VERSION,
+        SERVER_NAMESPACE,
+    };
+
+    fn exact_marker() -> Vec<(String, String)> {
+        vec![
+            ("namespace".into(), SERVER_NAMESPACE.into()),
+            ("protocol_epoch".into(), "2".into()),
+            ("schema_version".into(), SCHEMA_VERSION.into()),
+            ("ddl_contract_marker".into(), DDL_CONTRACT_MARKER.into()),
+        ]
+    }
+
+    #[test]
+    fn accepts_genuinely_fresh_database() {
+        assert_eq!(
+            classify_database_identity(false, &[], &[]),
+            Ok(DatabaseIdentity::Fresh)
+        );
+    }
+
+    #[test]
+    fn accepts_exact_v2_marker_with_the_complete_contract_inventory() {
+        let objects = expected_v2_database_objects()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            classify_database_identity(true, &exact_marker(), &objects),
+            Ok(DatabaseIdentity::SnapshotSyncV2)
+        );
+    }
+
+    #[test]
+    fn accepts_sqlx_bookkeeping_without_user_schema_as_fresh() {
+        let objects = sqlx_only_database_objects().into_iter().collect::<Vec<_>>();
+        assert_eq!(
+            classify_database_identity(false, &[], &objects),
+            Ok(DatabaseIdentity::Fresh)
+        );
+    }
+
+    #[test]
+    fn postgres_temporary_namespaces_are_ignored_by_identity_inventory() {
+        for name in ["pg_temp_3", "pg_toast_temp_3"] {
+            assert!(
+                is_temporary_namespace(name),
+                "temporary PostgreSQL namespace was not recognized: {name}"
+            );
+        }
+        assert!(!is_temporary_namespace("sync_v2"));
+    }
+
+    #[test]
+    fn rejects_legacy_lookalike_marker() {
+        let mut marker = exact_marker();
+        marker[0].1 = "legacy-sync".into();
+        assert!(classify_database_identity(true, &marker, &[]).is_err());
+    }
+
+    #[test]
+    fn rejects_nonempty_unrecognized_database() {
+        assert!(classify_database_identity(false, &[], &["public.legacy_rows".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_object_even_when_the_marker_is_exact() {
+        let mut objects = expected_v2_database_objects()
+            .into_iter()
+            .collect::<Vec<_>>();
+        objects.push("relation:r:sync_v2.legacy_rows".into());
+        assert!(classify_database_identity(true, &exact_marker(), &objects).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_object_kinds_even_when_the_marker_is_exact() {
+        for unknown in [
+            "extension:postgis",
+            "routine:sync_v2.legacy_function()",
+            "type:d:sync_v2.legacy_domain",
+            "relation:S:sync_v2.legacy_sequence",
+        ] {
+            let mut objects = expected_v2_database_objects()
+                .into_iter()
+                .collect::<Vec<_>>();
+            objects.push(unknown.into());
+            assert!(
+                classify_database_identity(true, &exact_marker(), &objects).is_err(),
+                "unknown database object kind was accepted: {unknown}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_partial_v2_inventory_even_when_the_marker_is_exact() {
+        let objects = ["schema:sync_v2".to_owned()];
+        assert!(classify_database_identity(true, &exact_marker(), &objects).is_err());
+    }
+}

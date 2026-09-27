@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "name": "full-novel-document-and-package-roundtrip",
+  "expectedModelFixture": "../canonical/expected-model.json",
+  "events": [
+    {"type":"materializeSnapshot","snapshot":"../canonical/snapshot.json"},
+    {"type":"swiftExportNovelpkgV3"},
+    {"type":"packageReadBack"},
+    {"type":"rustMaterializeSnapshot"},
+    {"type":"importAsNewWork"}
+  ],
+  "expect": {"swiftModelEqualsExpected":true,"rustModelEqualsExpected":true,"packageLogicalRoundtrip":true,"attachmentIdentityFreshOnImport":true,"attachmentIdentityExcludedFromPackageEquality":true,"attachmentBytesEqual":true,"newWorkIdDifferent":true}
+}

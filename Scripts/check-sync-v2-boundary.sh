@@ -1,0 +1,98 @@
+#!/bin/bash
+# D-080: Snapshot Sync v2 is a new live namespace.  This static gate audits
+# all production composition; no retired transport is accepted.
+set -euo pipefail
+
+repo_root="${FUMINIWA_V2_BOUNDARY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$repo_root"
+
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+required=(
+  "NovelKit/Sources/NovelSyncV2Runtime/SnapshotSyncV2Runtime.swift"
+  "NovelKit/Sources/NovelSyncV2PortableBridge/SyncV2PortableBridge.swift"
+  "NovelKit/Sources/NovelSyncV2Application/RuntimeMode.swift"
+  "NovelKit/Sources/NovelSyncV2Store/LocalSyncV2Store.swift"
+  "SyncServerV2/src/http.rs"
+  "SyncServerV2/src/domain.rs"
+  "docs/sync/v2/fixtures/canonical/snapshot.json"
+)
+for file in "${required[@]}"; do
+  [[ -f "$file" ]] || fail "required v2 composition file is missing: $file"
+done
+
+# Keep old CloudKit/Note/Work/Episode transports out of production app code.
+if rg -n \
+  -e 'NovelSyncCloudKit|CKSyncEngine|(^|[^A-Za-z])import[[:space:]]+CloudKit' \
+  -e 'NoteSync(Client|Coordinator|Transport)?' \
+  -e 'WorkSync(Client|Coordinator|Transport)?' \
+  -e 'EpisodeSync(Client|Coordinator|Transport)?' \
+  NovelApp NovelAppIOS; then
+  fail "retired CloudKit/Note/Work/Episode live runtime leaked into app composition"
+fi
+
+# Sync v2 routes are /v2 only.  Auth v1 is a separately owned auth wire and is
+# intentionally not included in this sync-router scan.
+# D-089: explicit OpenAI generation/catalog URLs belong to the assistant API.
+# Other /v1 routes, including anything else in the assistant directory, still fail.
+if rg -n -e '/v1(/|"|\x27)' SyncServerV2/src/http.rs NovelApp NovelAppIOS \
+  | rg -v '^NovelApp/WritingAssistant/AssistantClient\.swift:[0-9]+: *(let requestURL = .*https://api\.openai\.com/v1/responses.*|var request = URLRequest\(url: URL\(string: "https://api\.openai\.com/v1/models"\)!\))$' \
+  | rg -v '^NovelApp/WritingAssistant/AssistantChatRequest\.swift:[0-9]+: *url: endpoint\.host == "api\.openai\.com" \? URL\(string: "https://api\.openai\.com/v1/responses"\)! : endpoint,$' \
+  | rg -v '^NovelApp/WritingAssistant/AssistantPreferences\.swift:[0-9]+: *defaults\.string\(forKey: "assistant\.endpoint"\) \?\? "https://api\.openai\.com/v1/chat/completions"$'; then
+  fail "v1 sync endpoint leaked into v2 production composition"
+fi
+
+# App targets must compose the v2 runtime directly and must not link a retired
+# sync product.  The block extraction avoids matching package/test targets.
+for target in NovelApp FUMINIWAIOS; do
+  block="$(awk -v target="$target" '
+    $0 == "targets:" { in_targets=1; next }
+    !in_targets { next }
+    $0 ~ "^  " target ":" { in_target=1; next }
+    in_target && $0 ~ /^  [A-Za-z0-9_-]+:/ { exit }
+    in_target { print }
+  ' project.yml)"
+  [[ -n "$block" ]] || fail "project.yml target is missing: $target"
+  grep -Fq 'product: NovelSyncV2Runtime' <<<"$block" \
+    || fail "$target does not link NovelSyncV2Runtime"
+  grep -Fq 'product: NovelSyncV2PortableBridge' <<<"$block" \
+    || fail "$target does not link NovelSyncV2PortableBridge"
+  if grep -Eq 'product: (NovelSync|NovelSyncLegacy|NovelSyncV2Store|NovelSyncV2Application)[[:space:]]*$' <<<"$block"; then
+    fail "$target links a non-composed sync product directly"
+  fi
+done
+
+# Production URL/root construction is typed and v2-only.  Tests must use the
+# injected TestRuntimeConfiguration/FakeTransport path instead of production
+# roots, URLs, or the LAN development server.
+runtime_mode="NovelKit/Sources/NovelSyncV2Application/RuntimeMode.swift"
+rg -Fq 'case test(TestRuntimeConfiguration)' "$runtime_mode" \
+  || fail "v2 runtime has no typed test composition"
+rg -Fq 'case production(ProductionRuntimeConfiguration)' "$runtime_mode" \
+  || fail "v2 runtime has no typed production composition"
+# Tests may name the production-root initializer explicitly, but must not
+# discover the real Application Support location themselves.  Match the
+# Foundation enum member rather than the initializer label.
+application_support_pattern='\.[[:space:]]*applicationSupportDirectory'
+if ! printf '%s\n' 'for: .applicationSupportDirectory' | rg -q "$application_support_pattern" || \
+  printf '%s\n' 'ProductionLocalRoot(applicationSupportDirectory: alias)' | rg -q "$application_support_pattern"; then
+  fail "v2 Application Support boundary pattern is not precise"
+fi
+if rg -n -e "192\.168\.11\.5|postgres(ql)?://|$application_support_pattern" \
+  NovelKit/Tests/NovelSyncV2Tests NovelKit/Tests/NovelSyncV2StoreTests NovelKit/Tests/NovelSyncV2ApplicationTests; then
+  fail "v2 tests contain a production/LAN persistence or server endpoint"
+fi
+
+# The opt-in PostgreSQL test is allowed to connect only when the caller
+# explicitly supplies a freshly provisioned, marked test database.  The normal
+# gate removes the variable before running it, so this script never connects.
+integration_test="SyncServerV2/tests/integration_gate.rs"
+rg -Fq 'FUMINIWA_V2_TEST_DATABASE_URL' "$integration_test" \
+  || fail "Rust integration gate has no explicit opt-in database guard"
+rg -Fq 'validate_test_database_url' SyncServerV2/tests/support/mod.rs \
+  || fail "Rust integration gate has no isolated database URL validation"
+
+echo "D-080 Snapshot Sync v2 production/test boundary check passed"

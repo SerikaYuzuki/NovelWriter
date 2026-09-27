@@ -19,10 +19,10 @@ struct NovelpkgManifest: Codable, Equatable {
     struct ChapterEntry: Codable, Equatable {
         var id: UUID
         var title: String
-        /// v1 / v2 には存在しない。`nil` は旧形式の章を表す。
-        var episodes: [EpisodeEntry]?
+        /// v3の必須配列。欠損を旧形式として推測しない。
+        var episodes: [EpisodeEntry]
 
-        init(id: UUID, title: String, episodes: [EpisodeEntry]? = nil) {
+        init(id: UUID, title: String, episodes: [EpisodeEntry]) {
             self.id = id
             self.title = title
             self.episodes = episodes

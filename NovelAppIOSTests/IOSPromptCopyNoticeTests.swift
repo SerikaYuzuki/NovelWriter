@@ -2,20 +2,20 @@
 import Testing
 
 @Suite("iOS prompt copy notice")
-struct IOSPromptCopyNoticeTests {
-    @Test("成功通知はAIへ送信したと表現しない")
+struct IOSManuscriptCopyNoticeTests {
+    @Test("成功通知はコピー完了だけを伝える")
     func successNoticePreservesProductTruth() {
-        let notice = IOSPromptCopyNotice.success
+        let notice = IOSManuscriptCopyNotice.success
 
-        #expect(notice.title == "プロンプトをコピーしました")
-        #expect(notice.message.contains("AIチャットには送信していません"))
+        #expect(notice.title == "コピーしました")
+        #expect(notice.message == "クリップボードへコピーしました。")
     }
 
     @Test("IME中の失敗通知は確定を促す")
     func compositionFailureRequestsCommit() {
-        let notice = IOSPromptCopyNotice(failure: .compositionInProgress)
+        let notice = IOSManuscriptCopyNotice(failure: .compositionInProgress)
 
-        #expect(notice.title == "プロンプトをコピーできませんでした")
+        #expect(notice.title == "コピーできませんでした")
         #expect(notice.message.contains("日本語入力の変換を確定"))
     }
 }

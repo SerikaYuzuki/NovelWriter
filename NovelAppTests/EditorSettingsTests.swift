@@ -5,6 +5,25 @@ import Testing
 
 @MainActor
 struct EditorSettingsTests {
+    @Test("滑らかなカーソルは既定で有効になり、EditorKitへ渡される")
+    func smoothCaretEnabledByDefault() {
+        let settings = makeSettings(userDefaults: makeUserDefaults())
+        #expect(settings.animatesCaret)
+        #expect(settings.configuration.animatesCaret)
+    }
+
+    @Test("カーソル設定は端末へ保存され、OFFも再起動後に維持される")
+    func smoothCaretPreferencePersists() {
+        let defaults = makeUserDefaults()
+        let settings = makeSettings(userDefaults: defaults)
+        settings.animatesCaret = false
+        let reopened = makeSettings(userDefaults: defaults)
+        #expect(!reopened.animatesCaret)
+        #expect(!reopened.configuration.animatesCaret)
+        reopened.animatesCaret = true
+        #expect(makeSettings(userDefaults: defaults).configuration.animatesCaret)
+    }
+
     @Test("未保存の幅設定は制限なしになる")
     func defaultWidthModeIsUnlimited() {
         let defaults = makeUserDefaults()

@@ -1,0 +1,253 @@
+import Foundation
+import NovelCore
+import NovelSyncV2
+
+public struct SyncV2AccountScopeBinding: Hashable, Sendable {
+    public let accountID: String
+    public let accountFence: String
+    public let serverInstanceID: String
+    public let protocolEpoch: Int64
+
+    public init(
+        accountID: String,
+        accountFence: String,
+        serverInstanceID: String,
+        protocolEpoch: Int64 = 2
+    ) {
+        self.accountID = accountID
+        self.accountFence = accountFence
+        self.serverInstanceID = serverInstanceID
+        self.protocolEpoch = protocolEpoch
+    }
+}
+
+/// An owner-scoped lease that suppresses remote scheduling while an auth
+/// transition checkpoints and swaps the durable account binding. The token is
+/// intentionally opaque so a stale transition cannot release a newer lease.
+public struct SyncV2AccountTransitionRemoteSuspensionToken: Hashable, Sendable {
+    let rawValue: UUID
+
+    init(rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+}
+
+public enum SyncV2ApplicationError: Error, Equatable, Sendable {
+    case workDeletionPending
+    case workNotFound
+    case invalidRuntimeMode
+    case previewReadOnly
+    case staleConflictAction
+    case safeBoundaryRejected
+    case remoteOnlyInstallRejected
+    case invalidHistoryCursor
+    case remoteSchedulingSuspensionRequired
+}
+
+public enum SyncV2Failure: Error, Equatable, Sendable {
+    case offline
+    case authenticationRequired
+    case accountFenceChanged
+    case quarantined(SyncV2QuarantineReason)
+    case retryable(SyncV2RetryReason)
+    case fatal(SyncV2FatalReason)
+    case receiptMismatch
+}
+
+public enum SyncV2QuarantineReason: String, Equatable, Sendable {
+    case differentAccount
+    case changedFence
+    case invalidRemoteData
+    case unsafeLocalState
+}
+
+public enum SyncV2RetryReason: String, Equatable, Sendable {
+    case serverUnavailable
+    case rateLimited
+    case lostResponse
+    case uploadExpired
+    case publishLineageRejected
+}
+
+public enum SyncV2FatalReason: String, Equatable, Sendable {
+    case unsupportedCommand
+    case invalidLocalState
+    case unexpected
+    case remoteDataUnavailable
+    case remoteWorkDeleted
+    case uploadTooLarge
+
+    public var japaneseDescription: String {
+        switch self {
+        case .remoteWorkDeleted:
+            "別端末で削除された作品です。この端末の変更は新しい作品として残せます。"
+        case .remoteDataUnavailable:
+            "同期先の作品またはデータを利用できません。原稿はこの端末に残っています。作品を書き出して保管し、取り込み直すと別の作品として同期できます。"
+        case .uploadTooLarge:
+            "同期経路の送信上限を超えています。原稿はこの端末に保存されています。添付容量または接続先の制限を確認してください。"
+        case .unsupportedCommand, .invalidLocalState, .unexpected:
+            "同期できませんでした。原稿はこの端末に保存されています。接続先を確認して再試行してください。"
+        }
+    }
+}
+
+public enum SyncV2CheckpointReason: String, Codable, Sendable {
+    case autosave
+    case explicit
+    case navigation
+    case close
+    case restore
+    case migration
+    case conflictResolution
+    case keepBoth
+}
+
+public struct SyncV2CheckpointCapture: Sendable {
+    public let workID: WorkID
+    public let document: NovelDocument
+    public let documentCreatedAt: Date
+    public let expectedGeneration: Int64
+    public let reason: SyncV2CheckpointReason
+    public let attachments: [SyncAttachment]
+    /// `nil` keeps an existing local-only resource mirror intact.
+    public let resources: [PortableResource]?
+
+    public init(
+        workID: WorkID,
+        document: NovelDocument,
+        documentCreatedAt: Date,
+        expectedGeneration: Int64,
+        reason: SyncV2CheckpointReason,
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource]? = nil
+    ) {
+        self.workID = workID
+        self.document = document
+        self.documentCreatedAt = documentCreatedAt
+        self.expectedGeneration = expectedGeneration
+        self.reason = reason
+        self.attachments = attachments
+        self.resources = resources
+    }
+}
+
+public struct SyncV2LocalCheckpoint: Hashable, Sendable {
+    public let snapshotID: SnapshotID
+    public let generation: Int64
+    public let intentID: UUID?
+    public let noChanges: Bool
+
+    public init(
+        snapshotID: SnapshotID,
+        generation: Int64,
+        intentID: UUID?,
+        noChanges: Bool
+    ) {
+        self.snapshotID = snapshotID
+        self.generation = generation
+        self.intentID = intentID
+        self.noChanges = noChanges
+    }
+}
+
+public struct SyncV2OpenedWork: Sendable {
+    public let workID: WorkID
+    public let document: NovelDocument?
+    public let documentCreatedAt: Date
+    public let attachments: [SyncAttachment]
+    public let resources: [PortableResource]
+    public let generation: Int64
+    public let snapshotID: SnapshotID?
+
+    public init(
+        workID: WorkID,
+        document: NovelDocument?,
+        documentCreatedAt: Date,
+        attachments: [SyncAttachment] = [],
+        resources: [PortableResource] = [],
+        generation: Int64,
+        snapshotID: SnapshotID?
+    ) {
+        self.workID = workID
+        self.document = document
+        self.documentCreatedAt = documentCreatedAt
+        self.attachments = attachments
+        self.resources = resources
+        self.generation = generation
+        self.snapshotID = snapshotID
+    }
+}
+
+public struct SyncV2RestoreRequest: Hashable, Sendable {
+    public let workID: WorkID
+    public let snapshotID: SnapshotID
+
+    public init(workID: WorkID, snapshotID: SnapshotID) {
+        self.workID = workID
+        self.snapshotID = snapshotID
+    }
+}
+
+public struct SyncV2Preparation: Hashable, Sendable {
+    public let intentID: UUID?
+    public let noChanges: Bool
+    /// Set when preparation atomically created a local destination work.
+    public let preparedWorkID: WorkID?
+
+    public init(
+        intentID: UUID?,
+        noChanges: Bool,
+        preparedWorkID: WorkID? = nil
+    ) {
+        self.intentID = intentID
+        self.noChanges = noChanges
+        self.preparedWorkID = preparedWorkID
+    }
+}
+
+public struct SyncV2ExplicitAccountClone: Hashable, Sendable {
+    public let sourceWorkID: WorkID
+    public let newWorkID: WorkID
+    public let newDocumentID: DocumentID
+    public let intentID: UUID
+
+    public init(sourceWorkID: WorkID, newWorkID: WorkID, newDocumentID: DocumentID, intentID: UUID) {
+        self.sourceWorkID = sourceWorkID
+        self.newWorkID = newWorkID
+        self.newDocumentID = newDocumentID
+        self.intentID = intentID
+    }
+}
+
+public struct SyncV2PendingAdoption: Hashable, Sendable {
+    public let workID: WorkID
+    public let inboxID: UUID
+    public let expectedLocalVersion: SyncV2LocalVersion
+    public let conflictID: UUID?
+    public let conflictRevision: Int64?
+
+    public init(
+        workID: WorkID,
+        inboxID: UUID,
+        expectedLocalVersion: SyncV2LocalVersion,
+        conflictID: UUID? = nil,
+        conflictRevision: Int64? = nil
+    ) {
+        self.workID = workID
+        self.inboxID = inboxID
+        self.expectedLocalVersion = expectedLocalVersion
+        self.conflictID = conflictID
+        self.conflictRevision = conflictRevision
+    }
+}
+
+public struct SyncV2WorkDeletion: Sendable, Equatable {
+    public let workID: WorkID
+    public let binding: SyncV2AccountScopeBinding?
+    public let completed: Bool
+    public init(workID: WorkID, binding: SyncV2AccountScopeBinding?, completed: Bool) {
+        self.workID = workID
+        self.binding = binding
+        self.completed = completed
+    }
+}
