@@ -16,7 +16,7 @@ struct WritingMCPClient: Codable, Identifiable {
 @MainActor @Observable
 final class WritingMCPController {
     private(set) var clients: [WritingMCPClient]
-    private(set) var status = "停止中"
+    private(set) var status = "外部AIを登録すると接続を開始できます。"
     private(set) var port: UInt16
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let host: () -> WritingAssistantHost?
@@ -85,7 +85,11 @@ final class WritingMCPController {
     }
 
     func start() {
-        guard listener == nil, !clients.isEmpty else { return }
+        guard !clients.isEmpty else {
+            status = "外部AIを登録すると接続を開始できます。"
+            return
+        }
+        guard listener == nil else { return }
         #if FUMINIWA_TEST_COMPOSITION
         status = "テスト構成では外部接続を開始しません。"
         return
@@ -131,7 +135,8 @@ final class WritingMCPController {
         for value in Array(connections.values) {
             value.cancel()
         }
-        connections = [:]; status = "停止中"
+        connections = [:]
+        status = clients.isEmpty ? "外部AIを登録すると接続を開始できます。" : "停止中"
     }
 
     private func authorize(_ token: String) -> UUID? {

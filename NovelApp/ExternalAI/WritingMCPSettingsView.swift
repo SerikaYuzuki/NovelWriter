@@ -41,6 +41,7 @@ struct WritingMCPSettingsView: View {
                 HStack {
                     Button("接続を停止") { controller.stop() }
                     Button("接続を再開") { controller.start() }
+                        .disabled(controller.clients.isEmpty)
                 }
             }
             if let notice {
