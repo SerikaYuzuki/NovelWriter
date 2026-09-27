@@ -998,10 +998,12 @@ gqqk1jbuKa8PdCy5+vf1bBAcHTFcM/W9njhLTvM2bp3g1fFwkcsm
             authorization_code: "code-value".into(),
             redirect_uri: None,
         };
-        assert!(!request.form_fields().iter().any(|(key, _)| *key == "redirect_uri"));
-        request.redirect_uri = Some(
-            "https://sync.serika.work/v2/auth/browser/apple/callback".into(),
-        );
+        assert!(!request
+            .form_fields()
+            .iter()
+            .any(|(key, _)| *key == "redirect_uri"));
+        request.redirect_uri =
+            Some("https://sync.serika.work/v2/auth/browser/apple/callback".into());
         assert_eq!(
             request.form_fields().last().copied(),
             Some((
