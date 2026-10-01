@@ -193,6 +193,13 @@ struct LibraryPane: View {
         } message: {
             Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
         }
+        .task(id: appState.snapshotSyncV2AccountScopeToken) {
+            guard let application = appState.snapshotSyncV2Application else { return }
+            for await _ in await application.stateChanges() {
+                guard !Task.isCancelled else { return }
+                await appState.refreshSnapshotLibrary()
+            }
+        }
         .sheet(isPresented: $showingProtection) {
             if let application = appState.snapshotSyncV2Application {
                 ProtectedWorksView(application: application,
@@ -309,6 +316,9 @@ private extension LibraryPane {
                             .accessibilityLabel(status(for: work).text)
                     }
                 }
+            }
+            if let note = work.historyBackfillNote {
+                Text(note).font(FuminiwaType.rowSecondary).foregroundStyle(.secondary)
             }
             if !usesGrid {
                 Spacer()
@@ -467,6 +477,9 @@ private struct SnapshotHistorySheet: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.displayReason)
+                            if entry.snapshotAvailability == .unfetched {
+                                Text("古い履歴を取得中…").font(.caption).foregroundStyle(.secondary)
+                            }
                             Text(entry.createdAt.formatted(date: .abbreviated, time: .standard))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

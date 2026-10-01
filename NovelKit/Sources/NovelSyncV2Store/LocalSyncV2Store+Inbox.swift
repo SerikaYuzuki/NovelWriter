@@ -355,7 +355,7 @@ extension LocalSyncV2Store {
         }
         for snapshot in try topologicalSnapshots(graph) {
             try Task.checkCancellation()
-            try insertValidatedEncoded(snapshot, workID: graph.workID)
+            try insertValidatedEncoded(snapshot, workID: graph.workID, verifiedRemote: true)
         }
         try Task.checkCancellation()
         let next = graph.expectedLocalGeneration + 1

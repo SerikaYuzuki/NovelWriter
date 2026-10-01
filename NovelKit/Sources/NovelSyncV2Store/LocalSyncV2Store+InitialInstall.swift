@@ -26,6 +26,20 @@ public extension LocalSyncV2Store {
     }
 
     func installInitialGraph(_ prepared: V2ValidatedInitialGraph, scope: V2LocalWorkScope) throws {
+        try installPreparedGraph(prepared, scope: scope, shallow: false)
+    }
+
+    func installShallowHead(_ prepared: V2ValidatedInitialGraph, scope: V2LocalWorkScope) throws {
+        guard prepared.graph.snapshots.count == 1 else { throw SyncV2StoreError.invalidSnapshot }
+        try installPreparedGraph(prepared, scope: scope, shallow: true)
+    }
+
+    func installShallowHead(_ graph: V2RemoteSnapshotGraph, scope: V2LocalWorkScope) async throws {
+        let prepared = try await Self.prepareInitialGraph(graph)
+        try installShallowHead(prepared, scope: scope)
+    }
+
+    private func installPreparedGraph(_ prepared: V2ValidatedInitialGraph, scope: V2LocalWorkScope, shallow: Bool) throws {
         let graph = prepared.graph
         let anchor = prepared.anchor
         guard case let .bound(binding) = scope,
@@ -48,10 +62,12 @@ public extension LocalSyncV2Store {
             guard try activeConflictRow(workID: graph.workID, binding: binding) == nil,
                   try query("SELECT 1 FROM sync_intents WHERE work_id=? AND status IN ('pending','sealed') LIMIT 1",
                             [.text(graph.workID.description)]).isEmpty else { throw SyncV2StoreError.staleCAS }
-            try validateGraphParents(graph)
+            if !shallow {
+                try validateGraphParents(graph)
+            }
             for snapshot in try topologicalSnapshots(graph) {
                 try Task.checkCancellation()
-                try insertValidatedEncoded(snapshot, workID: graph.workID)
+                try insertValidatedEncoded(snapshot, workID: graph.workID, verifiedRemote: shallow)
             }
             try Task.checkCancellation()
             try exec("UPDATE works SET current_snapshot_id=?,local_generation=1 WHERE work_id=? AND local_generation=0 AND current_snapshot_id IS NULL",
@@ -63,6 +79,13 @@ public extension LocalSyncV2Store {
                 try validateMonotonicHead(workID: graph.workID, newHead: head)
                 try applyRemoteHead(head, workID: graph.workID)
             }
+            if shallow {
+                try exec("""
+                INSERT INTO history_backfills(work_id,root_snapshot_id,server_instance_id,protocol_epoch,
+                  account_id,account_fence,state,updated_at) VALUES(?,?,?,?,?,?,'running',?)
+                """, [.text(graph.workID.description), .blob(graph.headSnapshotID.bytes)] + binding.values + [.text(Self.now())])
+            }
+            guard try bindingIsActive(workID: graph.workID, binding: binding) else { throw SyncV2StoreError.accountMismatch }
             // Cancellation during the final metadata writes must still roll back.
             try Task.checkCancellation()
         }

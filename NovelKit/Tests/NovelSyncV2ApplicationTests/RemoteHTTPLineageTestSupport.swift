@@ -128,11 +128,15 @@ final class LineageHTTPState: @unchecked Sendable {
         let path = request.url?.path ?? ""
         lock.lock()
         defer { lock.unlock() }
+        if request.url?.query?.contains("mode=") == true, failures[path + "?mode"] == nil {
+            return LineageHTTPReply(status: 422, headers: [:], body: Data())
+        }
+        let queueKey = request.url?.query?.contains("mode=") == true ? path + "?mode" : path
         paths.append(path)
         queries[path, default: []].append(request.url?.query)
-        if var queued = failures[path], !queued.isEmpty {
+        if var queued = failures[queueKey], !queued.isEmpty {
             let reply = queued.removeFirst()
-            failures[path] = queued
+            failures[queueKey] = queued
             return reply
         }
         return replies["\(method) \(path)"] ?? ((path.hasSuffix("/download") || path.hasPrefix("/v2/protection/"))

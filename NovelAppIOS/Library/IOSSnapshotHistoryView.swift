@@ -26,6 +26,9 @@ struct IOSSnapshotHistoryView: View {
                             snapshotID = entry.snapshotID.rawValue
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
+                                if entry.snapshotAvailability == .unfetched {
+                                    Text("古い履歴を取得中…").font(.caption).foregroundStyle(.secondary)
+                                }
                                 Text(
                                     entry.reason + "・" + entry.createdAt.formatted(
                                         date: .abbreviated,

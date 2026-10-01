@@ -719,3 +719,34 @@ CREATE TABLE work_deletions (
     (server_instance_id IS NOT NULL AND protocol_epoch IS NOT NULL AND protocol_epoch > 0 AND account_id IS NOT NULL AND account_fence IS NOT NULL)
   )
 );
+
+-- Shallow history (D-106).
+CREATE TABLE shallow_boundaries (
+  work_id TEXT NOT NULL, snapshot_id BLOB NOT NULL,
+  parent_snapshot_id BLOB NOT NULL CHECK (length(parent_snapshot_id)=32),
+  PRIMARY KEY (snapshot_id, parent_snapshot_id),
+  CHECK (snapshot_id <> parent_snapshot_id),
+  FOREIGN KEY (work_id, snapshot_id) REFERENCES snapshots(work_id, snapshot_id)
+);
+CREATE INDEX shallow_boundaries_parent ON shallow_boundaries(work_id, parent_snapshot_id);
+CREATE TRIGGER shallow_boundaries_immutable_update BEFORE UPDATE ON shallow_boundaries
+BEGIN SELECT RAISE(ABORT, 'immutable boundary'); END;
+CREATE TRIGGER shallow_boundaries_guard_delete BEFORE DELETE ON shallow_boundaries
+WHEN NOT EXISTS (SELECT 1 FROM snapshot_parents p WHERE p.work_id=OLD.work_id
+  AND p.snapshot_id=OLD.snapshot_id AND p.parent_snapshot_id=OLD.parent_snapshot_id)
+BEGIN SELECT RAISE(ABORT, 'boundary parent unavailable'); END;
+CREATE TABLE history_backfills (
+  work_id TEXT PRIMARY KEY REFERENCES works(work_id),
+  root_snapshot_id BLOB NOT NULL,
+  server_instance_id TEXT NOT NULL, protocol_epoch INTEGER NOT NULL,
+  account_id TEXT NOT NULL, account_fence TEXT NOT NULL,
+  resume_cursor TEXT,
+  state TEXT NOT NULL CHECK (state IN ('running','paused','failed','suspended','complete')),
+  failure_code TEXT,
+  received_snapshots INTEGER NOT NULL DEFAULT 0 CHECK (received_snapshots >= 0),
+  total_snapshots INTEGER CHECK (total_snapshots >= 0),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (work_id, root_snapshot_id) REFERENCES snapshots(work_id, snapshot_id),
+  FOREIGN KEY (work_id, server_instance_id, protocol_epoch, account_id, account_fence)
+    REFERENCES account_bindings(work_id, server_instance_id, protocol_epoch, account_id, account_fence)
+);

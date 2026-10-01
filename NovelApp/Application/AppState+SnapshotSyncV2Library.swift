@@ -61,37 +61,7 @@ extension AppState {
         snapshotSyncCurrentWorkAccountState = currentSnapshotSyncV2WorkID.flatMap { workID in
             projection.items.first(where: { $0.workID == workID })?.accountState
         }
-        var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap { item -> (WorkID, StartupLibraryWork)? in
-            guard item.accountState == .active || item.accountState == .unbound
-                || item.accountState == .parkedDifferentAccount else { return nil }
-            let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
-                .parked
-            } else {
-                switch item.availability {
-                case .localOnly: .local
-                case .cached: .cached
-                case .remoteOnly: .remoteOnly
-                }
-            }
-            let withConflict = item.accountState != .parkedDifferentAccount &&
-                item.remoteProgress == .needsChoice
-            let remoteProgress: SyncV2RemoteProgress = if item.accountState == .parkedDifferentAccount {
-                .parkedDifferentAccount
-            } else {
-                item.remoteProgress
-            }
-            let work = StartupLibraryWork(
-                id: item.workID.rawValue,
-                title: item.title,
-                availability: withConflict ? .conflict : availability,
-                workID: item.workID,
-                remoteProgress: remoteProgress,
-                oldestUnreceivedAt: item.oldestUnreceivedAt,
-                accountState: item.accountState, remoteHeadConfirmed: item.remoteHeadConfirmed,
-                localGeneration: item.localGeneration
-            )
-            return (item.workID, work)
-        })
+        var worksByID = Dictionary(uniqueKeysWithValues: projection.items.compactMap(Self.startupLibraryWork))
         for remote in snapshotSyncRemoteCatalogItems {
             if parkedWorkIDs.contains(remote.workID) || deletedIDs.contains(remote.workID) {
                 continue
@@ -106,6 +76,7 @@ extension AppState {
                     availability: availability,
                     workID: remote.workID,
                     remoteProgress: local.remoteProgress,
+                    historyBackfillNote: local.historyBackfillNote,
                     oldestUnreceivedAt: local.oldestUnreceivedAt,
                     accountState: local.accountState, remoteHeadConfirmed: local.remoteHeadConfirmed,
                     localGeneration: local.localGeneration
@@ -125,6 +96,39 @@ extension AppState {
         if shouldPresentSelection {
             startupState = .documentSelection(.init(works: works, presentation: .localAndRemote, connection: connection))
         }
+    }
+
+    private static func startupLibraryWork(_ item: SyncV2LibraryItem) -> (WorkID, StartupLibraryWork)? {
+        guard item.accountState == .active || item.accountState == .unbound
+            || item.accountState == .parkedDifferentAccount else { return nil }
+        let availability: StartupLibraryWorkAvailability = if item.accountState == .parkedDifferentAccount {
+            .parked
+        } else {
+            switch item.availability {
+            case .localOnly: .local
+            case .cached: .cached
+            case .remoteOnly: .remoteOnly
+            }
+        }
+        let withConflict = item.accountState != .parkedDifferentAccount &&
+            item.remoteProgress == .needsChoice
+        let remoteProgress: SyncV2RemoteProgress = if item.accountState == .parkedDifferentAccount {
+            .parkedDifferentAccount
+        } else {
+            item.remoteProgress
+        }
+        let work = StartupLibraryWork(
+            id: item.workID.rawValue,
+            title: item.title,
+            availability: withConflict ? .conflict : availability,
+            workID: item.workID,
+            remoteProgress: remoteProgress,
+            historyBackfillNote: item.historyBackfillNote,
+            oldestUnreceivedAt: item.oldestUnreceivedAt,
+            accountState: item.accountState, remoteHeadConfirmed: item.remoteHeadConfirmed,
+            localGeneration: item.localGeneration
+        )
+        return (item.workID, work)
     }
 
     /// Refresh the account-scoped remote catalog in the background. The

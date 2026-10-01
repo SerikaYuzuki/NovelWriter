@@ -273,7 +273,11 @@ private func makeStore(
 }
 
 struct LineageFixture: Sendable {
-    let workID = WorkID(UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!)
+    let workID: WorkID
+    init(workID: WorkID = WorkID(UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!)) {
+        self.workID = workID
+    }
+
     let documentID = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
     let serverID = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
     let binding = V2AccountBinding(

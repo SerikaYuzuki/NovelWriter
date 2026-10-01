@@ -16,7 +16,7 @@ extension ProductionSyncV2RemoteClient {
     /// Additive v2 optimization. Only the initial route's 404/405 permits the
     /// old-server fallback; incomplete pages and invalid bytes fail closed.
     func downloadSnapshotPages(
-        workID: WorkID, id: SnapshotID, session: FuminiwaSession
+        workID: WorkID, id: SnapshotID, session: FuminiwaSession, mode: String? = nil
     ) async throws -> SnapshotDownloadBatch? {
         var batch = SnapshotDownloadBatch()
         var cursor: String?
@@ -27,7 +27,7 @@ extension ProductionSyncV2RemoteClient {
         var wantsTotals = true
         while true {
             try Task.checkCancellation()
-            let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session, includeTotals: cursor == nil && wantsTotals)
+            let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session, includeTotals: cursor == nil && wantsTotals, mode: mode)
             let (data, response): (Data, URLResponse)
             if let pending {
                 (data, response) = pending
@@ -35,6 +35,10 @@ extension ProductionSyncV2RemoteClient {
                 (data, response) = try await requestSnapshotData(
                     request, session: session, allowMissingEndpoint: cursor == nil, allowTotalsFallback: cursor == nil && wantsTotals
                 )
+            }
+            if mode != nil, cursor == nil, let http = response as? HTTPURLResponse,
+               [400, 404, 405, 422].contains(http.statusCode) {
+                return nil
             }
             if cursor == nil, let http = response as? HTTPURLResponse {
                 let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -54,7 +58,10 @@ extension ProductionSyncV2RemoteClient {
                     return nil
                 }
             }
-            let page = try await Self.decodeDownloadPage(data, response: response, id: id, allowsTotals: cursor == nil && wantsTotals)
+            let page = try await Self.decodeDownloadPage(data, response: response, id: id, allowsTotals: cursor == nil && wantsTotals, mode: mode)
+            if let mode {
+                _ = try Self.validateModeCursor(page.cursor, mode: mode, workID: workID, root: id, session: session)
+            }
             if let total = page.totalBytes {
                 ImportProgress.current?.advance(total: total)
             }
@@ -66,7 +73,7 @@ extension ProductionSyncV2RemoteClient {
             // The envelope is canonical and scoped to this root. A speculative
             // response is never consumed if any item in this page fails.
             let nextRequest = try page.cursor.map {
-                try downloadPageRequest(workID: workID, id: id, cursor: $0, session: session)
+                try downloadPageRequest(workID: workID, id: id, cursor: $0, session: session, mode: mode)
             }
             async let prefetched: (Data, URLResponse)? = fetchNextPage(nextRequest, session: session)
             let validated = try await Self.validatePageItems(page.items, workID: workID)
@@ -95,18 +102,19 @@ extension ProductionSyncV2RemoteClient {
                 break
             }
         }
-        try await Self.validateDownloadClosure(batch, head: id)
+        try await Self.validateDownloadClosure(batch, head: id, shallow: mode == "head")
         return batch
     }
 
-    private func downloadPageRequest(
-        workID: WorkID, id: SnapshotID, cursor: String?, session: FuminiwaSession, includeTotals: Bool = false
+    func downloadPageRequest(
+        workID: WorkID, id: SnapshotID, cursor: String?, session: FuminiwaSession, includeTotals: Bool = false, mode: String? = nil
     ) throws -> URLRequest {
         var url = URLComponents(url: origin.url.appendingPathComponent("v2/works/\(workID.description)/download"),
                                 resolvingAgainstBaseURL: false)
         url?.queryItems = [URLQueryItem(name: "snapshotId", value: id.rawValue)] +
             (cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? []) +
-            (includeTotals ? [URLQueryItem(name: "include", value: "totals")] : [])
+            (includeTotals ? [URLQueryItem(name: "include", value: "totals")] : []) +
+            (mode.map { [URLQueryItem(name: "mode", value: $0)] } ?? [])
         guard let value = url?.url else { throw SyncV2Failure.fatal(.unexpected) }
         var request = URLRequest(url: value)
         request.httpMethod = "GET"
@@ -122,21 +130,22 @@ extension ProductionSyncV2RemoteClient {
         return try await requestSnapshotData(request, session: session)
     }
 
-    private struct DownloadPage: Sendable {
+    struct DownloadPage: Sendable {
         let items: [CanonicalJSON.Value]
         let cursor: String?
         let totalBytes: Int64?
+        let resumeCursor: String?
     }
 
-    private struct DownloadItem: Sendable {
+    struct DownloadItem: Sendable {
         let key: String
         let id: String
         let bytes: Data
         let manifest: SnapshotManifest?
     }
 
-    private nonisolated static func decodeDownloadPage(
-        _ data: Data, response: URLResponse, id: SnapshotID, allowsTotals: Bool
+    nonisolated static func decodeDownloadPage(
+        _ data: Data, response: URLResponse, id: SnapshotID, allowsTotals: Bool, mode: String? = nil
     ) async throws -> DownloadPage {
         guard data.count <= 24 * 1024 * 1024,
               let http = response as? HTTPURLResponse,
@@ -148,7 +157,10 @@ extension ProductionSyncV2RemoteClient {
         }
         do {
             guard let page = try CanonicalJSON.parseObject(data).objectDictionary,
-                  Set(page.keys).subtracting(allowsTotals ? ["totals"] : []) == ["result", "snapshotId", "items", "nextCursor"],
+                  Set(page.keys).subtracting(allowsTotals ? ["totals"] : []) ==
+                  Set(["result", "snapshotId", "items", "nextCursor"] + (mode == nil ? [] : ["mode"]) +
+                      (mode == "backfill" ? ["resumeCursor"] : [])),
+                  page["mode"]?.stringContents == mode,
                   page["result"]?.stringContents == "noChanges", page["snapshotId"]?.stringContents == id.rawValue,
                   case let .array(items) = page["items"], items.count <= 256 else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -171,13 +183,22 @@ extension ProductionSyncV2RemoteClient {
                 }
                 totalBytes = bytes
             }
-            return DownloadPage(items: items, cursor: cursor, totalBytes: totalBytes)
+            var resume: String?
+            if mode == "backfill", case .null = page["resumeCursor"] {
+                resume = nil
+            } else if mode == "backfill" {
+                guard let raw = page["resumeCursor"]?.stringContents, !raw.isEmpty, raw.utf8.count <= 2048 else {
+                    throw SyncV2Failure.quarantined(.invalidRemoteData)
+                }
+                resume = raw
+            }
+            return DownloadPage(items: items, cursor: cursor, totalBytes: totalBytes, resumeCursor: resume)
         } catch {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
     }
 
-    private nonisolated static func validatePageItems(
+    nonisolated static func validatePageItems(
         _ items: [CanonicalJSON.Value], workID: WorkID
     ) async throws -> [DownloadItem] {
         try items.map { value in
@@ -203,12 +224,13 @@ extension ProductionSyncV2RemoteClient {
         }
     }
 
-    private nonisolated static func validateDownloadClosure(_ batch: SnapshotDownloadBatch, head: SnapshotID) async throws {
+    private nonisolated static func validateDownloadClosure(_ batch: SnapshotDownloadBatch, head: SnapshotID, shallow: Bool = false) async throws {
         guard batch.manifests[head] != nil else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+        guard !shallow || batch.manifests.count == 1 else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
         var referenced: Set<ObjectID> = []
         for value in batch.manifests.values {
             try Task.checkCancellation()
-            guard value.manifest.parentSnapshotIds.allSatisfy({ batch.manifests[$0] != nil }) else {
+            guard shallow || value.manifest.parentSnapshotIds.allSatisfy({ batch.manifests[$0] != nil }) else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
             for entry in value.manifest.entries {

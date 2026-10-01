@@ -93,3 +93,24 @@ cargo test --manifest-path SyncServerV2/Cargo.toml --test integration_gate postg
 An ordinary `cargo test` with that variable unset compiles this gate and emits
 SKIP; it is not PostgreSQL evidence. The account-deletion gate has its own
 separate opt-in variable as described above.
+
+## D-106 client Step 2
+
+`shallow-install-backfill.json` is a complete entity-valid work shared by the
+Rust download planner, Python independent reducer and Swift URLProtocol-to-SQLite
+installation test. `install-head-1.json` and `install-backfill-1.json` pin exact
+canonical wire bytes. The original `shallow-download.json` remains unchanged:
+its attachment-only manifests test transport ordering, and the client rejects
+those incomplete entity closures rather than weakening validation.
+
+Swift coverage lives in `ShallowHistoryTests`, `ShallowMigrationTests`,
+`ShallowConcurrentTests`, `ShallowDownloadTests`, `BackfillInterruptionTests`
+and `HistoryBackfillCoordinatorTests`. The opt-in `FUMINIWA_IMPORT_BENCHMARK=1`
+reports head/full time-to-editable and enforces the 256-item page write-lock
+budget. Tests use disposable SQLite roots and stub HTTP only.
+
+The old `6b089b87...` retired-restore checksum candidate cannot be reproduced
+by its pre-existing DDL builder. It remains fail-closed; tests do not claim that
+unsupported historical schema migrated. Other reproducible legacy candidates,
+the pre-deletion base, deletion tail, fresh schema and tampering are exercised.
+See [verification record](../../shallow-step2-verification.md) for actual runs.

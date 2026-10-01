@@ -279,9 +279,11 @@ extension LocalSyncV2Store {
     }
 
     /// Caller must validate the immutable snapshot and its document anchor in this transaction.
-    func insertValidatedEncoded(_ encoded: EncodedSnapshot, workID: WorkID, attestExistingObjects: Bool = true) throws {
+    func insertValidatedEncoded(_ encoded: EncodedSnapshot, workID: WorkID, attestExistingObjects: Bool = true, verifiedRemote: Bool = false) throws {
         let alreadyExists = try !query("SELECT 1 FROM snapshots WHERE snapshot_id=?", [.blob(encoded.snapshotIDBytes)]).isEmpty
-        try validateParents(encoded, workID: workID, checkCycles: alreadyExists)
+        if !verifiedRemote || alreadyExists {
+            try validateParents(encoded, workID: workID, checkCycles: alreadyExists)
+        }
 
         for (objectID, bytes) in encoded.objects {
             if transactionObjects?.contains(objectID) == true {
@@ -343,10 +345,14 @@ extension LocalSyncV2Store {
                 ]
             )
         }
+        try resolveBoundaries(workID: workID, parent: encoded.snapshotId)
         for parent in encoded.manifest.parentSnapshotIds {
+            let local = try hasSnapshot(workID: workID, snapshotID: parent)
+            guard local || verifiedRemote else { throw SyncV2StoreError.invalidSnapshot }
+            let table = local ? "snapshot_parents" : "shallow_boundaries"
             try exec(
                 """
-                INSERT OR IGNORE INTO snapshot_parents(
+                INSERT OR IGNORE INTO \(table)(
                   work_id,snapshot_id,parent_snapshot_id
                 ) VALUES(?,?,?)
                 """,
@@ -404,12 +410,10 @@ extension LocalSyncV2Store {
     func validateParents(_ encoded: EncodedSnapshot, workID: WorkID, checkCycles: Bool = true) throws {
         for parent in encoded.manifest.parentSnapshotIds {
             guard parent != encoded.snapshotId,
-                  try !query(
-                      "SELECT 1 FROM snapshots WHERE work_id=? AND snapshot_id=?",
-                      [.text(workID.description), .blob(parent.bytes)]
-                  ).isEmpty else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
+                  try hasSnapshot(workID: workID, snapshotID: parent) || !query(
+                      "SELECT 1 FROM shallow_boundaries WHERE work_id=? AND snapshot_id=? AND parent_snapshot_id=?",
+                      [.text(workID.description), .blob(encoded.snapshotIDBytes), .blob(parent.bytes)]
+                  ).isEmpty else { throw SyncV2StoreError.invalidSnapshot }
             // A new content-addressed manifest can only point at existing rows.
             // Immediate foreign keys make closing a cycle impossible on insertion.
             if !checkCycles {
@@ -439,9 +443,13 @@ extension LocalSyncV2Store {
         let parents = try query(
             """
             SELECT parent_snapshot_id FROM snapshot_parents
+            WHERE work_id=? AND snapshot_id=?
+            UNION ALL
+            SELECT parent_snapshot_id FROM shallow_boundaries
             WHERE work_id=? AND snapshot_id=? ORDER BY parent_snapshot_id
             """,
-            [.text(workID.description), .blob(encoded.snapshotIDBytes)]
+            [.text(workID.description), .blob(encoded.snapshotIDBytes),
+             .text(workID.description), .blob(encoded.snapshotIDBytes)]
         ).compactMap { $0[0].blob?.hexString }
         guard parents == encoded.manifest.parentSnapshotIds.map(\.rawValue).sorted() else {
             throw SyncV2StoreError.invalidSnapshot

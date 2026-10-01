@@ -3,6 +3,7 @@ import NovelSyncV2
 
 public struct SyncV2RemoteInbox: Sendable {
     /// Download-time scope. Production remote-only installation rejects an absent binding.
+    public let shallow: Bool
     public let binding: SealedCommand.Binding?
     public let inboxID: UUID
     public let workID: WorkID
@@ -20,8 +21,10 @@ public struct SyncV2RemoteInbox: Sendable {
         expectedCurrentSnapshotID: SnapshotID?,
         expectedLocalGeneration: Int64,
         expectedRemoteHead: SyncV2RemoteHead,
-        binding: SealedCommand.Binding? = nil
+        binding: SealedCommand.Binding? = nil,
+        shallow: Bool = false
     ) {
+        self.shallow = shallow
         self.binding = binding
         self.inboxID = inboxID
         self.workID = workID

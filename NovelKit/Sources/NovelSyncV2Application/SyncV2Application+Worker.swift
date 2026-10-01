@@ -7,6 +7,7 @@ extension SyncV2Application {
     /// keeps command bytes and operation IDs stable.
     public func resumePending() async throws {
         guard runtimeIdentity != .preview, remoteSchedulingSuspensions.isEmpty else { return }
+        try await resumeHistoryBackfills()
         for deletion in try await kernel.workDeletions() where !deletion.completed {
             Task { try? await self.deleteWork(workID: deletion.workID) }
         }

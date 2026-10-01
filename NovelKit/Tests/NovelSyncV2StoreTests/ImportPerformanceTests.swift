@@ -43,7 +43,19 @@ func syntheticImportPerformance() async throws {
     let initial = try LocalSyncV2Store(root: initialRoot, policy: .createNew)
     start = .now
     try await initial.installInitialGraph(graph, scope: scopeA)
-    print("BENCH initial-install \(start.duration(to: .now))")
+    _ = try await initial.open(workID: workID, scope: scopeA)
+    print("BENCH full time-to-editable \(start.duration(to: .now))")
+    let shallowRoot = temporaryStoreRoot("synthetic-shallow-performance")
+    defer { try? FileManager.default.removeItem(at: shallowRoot) }
+    let shallow = try LocalSyncV2Store(root: shallowRoot, policy: .createNew)
+    let headGraph = V2RemoteSnapshotGraph(workID: workID, headSnapshotID: head.snapshotId, snapshots: [head],
+                                          expectedCurrentSnapshotID: nil, expectedLocalGeneration: 0,
+                                          expectedRemoteHead: graph.expectedRemoteHead)
+    start = .now
+    try await shallow.installShallowHead(headGraph, scope: scopeA)
+    _ = try await shallow.open(workID: workID, scope: scopeA)
+    print("BENCH head-first time-to-editable \(start.duration(to: .now))")
+    await shallow.close()
     await initial.close()
     let contentionRoot = temporaryStoreRoot("synthetic-contention")
     defer { try? FileManager.default.removeItem(at: contentionRoot) }

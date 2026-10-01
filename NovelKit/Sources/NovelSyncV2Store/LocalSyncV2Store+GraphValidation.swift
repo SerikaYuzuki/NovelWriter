@@ -40,7 +40,8 @@ extension LocalSyncV2Store {
         for snapshot in graph.snapshots {
             try Task.checkCancellation()
             guard snapshot.snapshotId == SnapshotID(data: snapshot.manifestBytes),
-                  snapshot.manifest.workId == graph.workID else {
+                  snapshot.manifest.workId == graph.workID,
+                  Set(snapshot.objects.keys) == Set(snapshot.manifest.entries.map(\.objectId)) else {
                 throw SyncV2StoreError.invalidSnapshot
             }
             guard let documentEntry = snapshot.manifest.entries.first(where: { $0.entityKey == "work/document" }) else {
@@ -107,10 +108,16 @@ extension LocalSyncV2Store {
         let graphIDs = Set(graph.snapshots.map(\.snapshotId))
         for snapshot in graph.snapshots {
             for parent in snapshot.manifest.parentSnapshotIds where !graphIDs.contains(parent) {
-                guard try !query(
-                    "SELECT 1 FROM snapshots WHERE work_id=? AND snapshot_id=?",
-                    [.text(graph.workID.description), .blob(parent.bytes)]
-                ).isEmpty else { throw SyncV2StoreError.invalidSnapshot }
+                if try hasSnapshot(workID: graph.workID, snapshotID: parent) {
+                    continue
+                }
+                if try isBoundary(workID: graph.workID, snapshotID: parent) {
+                    continue
+                }
+                if try hasBoundaries(workID: graph.workID) {
+                    throw SyncV2StoreError.historyIncomplete
+                }
+                throw SyncV2StoreError.invalidSnapshot
             }
         }
     }

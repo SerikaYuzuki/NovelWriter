@@ -66,3 +66,20 @@ instead of copying labels into their own state machines.
 These source mappings do not establish that every app route renders them
 correctly. Current implementation gaps and device acceptance remain
 in [CODE_HEALTH](../../CODE_HEALTH.md).
+
+## History availability (D-106 Step 2)
+
+`SyncV2HistoryItem.snapshotAvailability` is per snapshot: `local`, `unfetched`
+or `unknown`. Page-level network availability is not evidence that every version
+is on the device. Unfetched rows show `古い履歴を取得中…` on both platforms.
+
+The shelf's secondary `historyBackfillNote` is independent of sync/publication
+status. When a snapshot total is known it reads `古い履歴を取得中 320 / 1,467`;
+otherwise it shows committed history MB. Current server `totals.items` counts
+objects and manifests, not snapshots, so it must not populate `total_snapshots`.
+Head import still uses D-105 byte totals. Page commits notify shelf observers.
+
+`オンラインで取得`, priority buttons, restore-after-fetch, detailed pause/failure
+and conflict-waiting text belong to Step 3. Step 2 leaves code hooks, not visible
+placeholder controls. A `historyIncomplete` retry keeps the local manuscript
+and unsent intents.

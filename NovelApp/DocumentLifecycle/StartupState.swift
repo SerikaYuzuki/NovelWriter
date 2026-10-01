@@ -30,6 +30,7 @@ struct StartupLibraryWork: Identifiable, Equatable {
     let availability: StartupLibraryWorkAvailability
     let workID: WorkID
     let remoteProgress: SyncV2RemoteProgress
+    var historyBackfillNote: String?
     var oldestUnreceivedAt: Date?
     var accountState: SyncV2LibraryAccountState = .unbound
     var remoteHeadConfirmed = false

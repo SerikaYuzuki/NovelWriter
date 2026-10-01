@@ -15,6 +15,7 @@ public actor LocalSyncV2Store {
     }
 
     // One immutable head closure, bounded to the last work/binding requested.
+    var lastBackfillWriteDuration: Duration?
     var registeredAncestorCache: RegisteredAncestorCache?
     var transactionObjects: Set<ObjectID>?
 
@@ -495,18 +496,7 @@ public extension LocalSyncV2Store {
         guard try scopedWorkRow(workID: workID, scope: scope) != nil else {
             throw SyncV2StoreError.workNotFound
         }
-        return try query(
-            """
-            SELECT parent_snapshot_id FROM snapshot_parents
-            WHERE work_id=? AND snapshot_id=? ORDER BY parent_snapshot_id
-            """,
-            [.text(workID.description), .blob(snapshotID.bytes)]
-        ).map { row in
-            guard let bytes = row[0].blob else {
-                throw SyncV2StoreError.invalidSnapshot
-            }
-            return try SnapshotID(rawValue: bytes.hexString)
-        }
+        return try loadEncoded(workID: workID, snapshotID: snapshotID).manifest.parentSnapshotIds
     }
 }
 

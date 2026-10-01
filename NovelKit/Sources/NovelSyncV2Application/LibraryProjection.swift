@@ -17,6 +17,7 @@ public enum SyncV2LibraryAccountState: String, Hashable, Sendable {
 public struct SyncV2LibraryItem: Sendable {
     public let workID: WorkID
     public let title: String
+    public var historyBackfillNote: String?
     public let availability: SyncV2LibraryAvailability
     public let accountState: SyncV2LibraryAccountState
     public let localGeneration: Int64?
@@ -36,8 +37,10 @@ public struct SyncV2LibraryItem: Sendable {
         remoteHeadConfirmed: Bool? = nil,
         conflict: SyncV2ConflictProjection? = nil,
         remoteProgress: SyncV2RemoteProgress = .idle,
-        oldestUnreceivedAt: Date? = nil
+        oldestUnreceivedAt: Date? = nil,
+        historyBackfillNote: String? = nil
     ) {
+        self.historyBackfillNote = historyBackfillNote
         self.workID = workID
         self.title = title
         self.availability = availability

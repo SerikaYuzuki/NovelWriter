@@ -68,7 +68,9 @@ struct FuminiwaIOSApp: App {
                     #endif
                     _ = await store.configureSnapshotSyncV2()
                     await store.bootstrap(localFirst: true)
-                    connectivityRecovery.start { await store.resumeSnapshotSyncV2() }
+                    connectivityRecovery.start(constrained: { limited in
+                        await store.snapshotSyncV2Application?.setHistoryBackfillConstrained(limited)
+                    }, recovered: { await store.resumeSnapshotSyncV2() })
                     // The local shelf/editor is the launch boundary. Auth
                     // vault reconciliation and remote wakeups continue in
                     // background and never delay offline editing.

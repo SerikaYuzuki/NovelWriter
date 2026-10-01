@@ -95,14 +95,14 @@ U-05・U-10の利用者判断に従い、初回downloadに`include=totals`を付
 
 棚に受信・確認・保存・開くの進捗、中止、作品別の失敗・再試行を表示する。「この端末に取り込む」は手動だけとし、開く処理と作品単位で合流するがeditorは開かない。取消しの境界はD-102のまま維持し、COMMIT済み作品を取消しのために削除しない。
 
-## D-106: head-first openと履歴backfill（Draft、2026-10-02）
+## D-106: head-first openと履歴backfill（2026-10-02、Step 3未完了）
 
-状態: owner承認済みの[設計](sync/v2/shallow-history-design.md)を段階実装するためのDraft。Step 1のserver・wire契約を実装済み。clientの保存・worker・画面と実機受入は未実装／未実施であり、このDecisionはまだ確定扱いにしない。
+状態: owner承認済みの[設計](sync/v2/shallow-history-design.md)に基づくStep 1・2の方針を確定。server契約、clientのhead install・履歴backfillと最小表示を実装。Step 3の優先取得・復元導線・競合待機表示、実機受入は未完了。検証範囲と制約は[Step 2検証記録](shallow-step2-verification.md)を参照する。
 
 未取得作品を開くときは、固定した最新snapshot Hのmanifestと参照objectを先に取得し、検証・端末保存後にeditorを開く。H以前の履歴は同じHに固定してbackgroundで補完する。履歴を削除・間引きせず、v2名称、digest・graph・anchor・scope・CAS検証、ローカルで完結する編集・自動保存・IME・Undo・終了、WorkID/session/account/generationの境界を維持する。失敗時は原稿と未送信intentを保持する。
 
-Step 1では`mode=head`と`mode=backfill`を追加した。[download契約](sync/v2/download.md#head-first-and-backfill-d-106-server-step)に、最長深さの降順で子を親より先に送る順序、snapshot単位のobject→manifestグループ、Hと先行グループに対する重複排除、2種のcursorと安全な再開位置、mode別の明示要求totalsを定める。backfillは専用1 permitで制限し、飽和時は503＋Retry-After。30秒cacheには不変metadataだけを置き、各ページのDB可視性・所有権・利用可能状態を再確認する。`mode`なしのD-101/D-105応答bytesと`/v2/capabilities`は変えない。server DB schemaの変更はない。
+Step 1では`mode=head`と`mode=backfill`を追加した。[download契約](sync/v2/download.md#head-first-and-backfill-d-106)に、最長深さの降順で子を親より先に送る順序、snapshot単位のobject→manifestグループ、Hと先行グループに対する重複排除、2種のcursorと安全な再開位置、mode別の明示要求totalsを定める。backfillは専用1 permitで制限し、飽和時は503＋Retry-After。30秒cacheには不変metadataだけを置き、各ページのDB可視性・所有権・利用可能状態を再確認する。`mode`なしのD-101/D-105応答bytesと`/v2/capabilities`は変えない。server DB schemaの変更はない。
 
 Step 2ではSQLiteへappend-only migrationで`shallow_boundaries`と`history_backfills`を追加する。各manifestの親は既存parent辺かboundaryのどちらか一方に必ず存在し、boundaryは検証済みのserver由来snapshotだけに作る。親の到着時には同一transactionで辺へ置換する。HのinstallはD-102の単一transaction・generation 0/current NULL CAS・binding再照合を維持する。backfillもdigest・entity・document anchor・Hへの祖先証明を検証し、保存とresume cursorを同一transactionで確定する。部分履歴を「共通祖先なし」と誤認せず、深い祖先が必要な操作は`historyIncomplete`で待機する。通常編集・公開、取得済み履歴のpreview/restore、exportは継続する。旧serverの初回400/404/405/422ではmodeなしへ一度戻り、D-101/D-102の完全取り込みを行う。
 
-Step 3では履歴の取得状態と「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、Low Data Modeでの停止を実装する。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。詳細と受入テストは設計のSteps 2・3を正とし、client完了時に本Draftを更新する。
+Step 2で作品別／全体1本のworker、constrained networkでの停止、再起動再開、履歴項目ごとの取得状態を追加した。Step 3では「オンラインで取得」、未取得版の復元・深いmerge/競合の優先取得、停止理由の詳しい表示を実装する。対象は利用者が開いた／明示取り込みした作品だけとする（U-10）。同じHから再開し、新しいheadは通常Inboxで受ける。同一accountのfence変更ではcursorを捨てて再検証、別accountではpark、削除・認証失効ではsuspendして端末原稿を残す。Step 3の完了と実機受入は別々に記録する。

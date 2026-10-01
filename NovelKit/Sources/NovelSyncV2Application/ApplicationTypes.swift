@@ -67,6 +67,7 @@ public enum SyncV2RetryReason: String, Equatable, Sendable {
     case lostResponse
     case uploadExpired
     case publishLineageRejected
+    case historyIncomplete
 }
 
 public enum SyncV2FatalReason: String, Equatable, Sendable {

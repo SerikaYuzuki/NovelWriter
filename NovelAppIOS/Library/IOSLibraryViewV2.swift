@@ -147,6 +147,13 @@ struct IOSLibraryView: View {
             }
         #endif
             .task(id: store.snapshotSyncV2AccountScope) {
+                guard observesLibrary, let application = store.snapshotSyncV2Application else { return }
+                for await _ in await application.stateChanges() {
+                    guard !Task.isCancelled else { return }
+                    _ = await store.refreshLibrary()
+                }
+            }
+            .task(id: store.snapshotSyncV2AccountScope) {
                 if observesLibrary {
                     await store.observeLibraryImports()
                 }

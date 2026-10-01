@@ -40,6 +40,9 @@ struct IOSLibraryImportRow: View {
                             .truncationMode(.tail).lineLimit(isGrid ? 2 : nil)
                             .foregroundStyle(FuminiwaColor.textPrimary.color)
                         status
+                        if let note = item.historyBackfillNote {
+                            Text(note).font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())

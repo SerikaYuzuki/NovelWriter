@@ -384,9 +384,11 @@ private extension FuminiwaApp {
             await appState.refreshSnapshotLibrary()
             await appState.refreshSnapshotRemoteCatalog()
         }
-        connectivityRecovery.start {
+        connectivityRecovery.start(constrained: { limited in
+            await appState.snapshotSyncV2Application?.setHistoryBackfillConstrained(limited)
+        }, recovered: {
             await appState.resumeSnapshotSyncV2()
-        }
+        })
         await appState.bootstrap(opening: opening)
         await appState.resumeSnapshotSyncV2()
         applicationDelegate.finishBootstrap()

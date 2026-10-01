@@ -309,7 +309,7 @@ def check_assistant(repo: Path) -> int:
 
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
-    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo) + check_assistant(repo) + check_download(repo) + check_shallow_download(repo)
+    count = check_canonical(repo / "docs/sync/v2/fixtures/canonical") + check_protection(repo) + check_assistant(repo) + check_download(repo) + check_shallow_download(repo) + check_shallow_download(repo, "shallow-install-backfill.json")
     print(f"v2 independent canonical fixture checks passed ({count} vectors)")
     return 0
 
@@ -348,7 +348,7 @@ def check_download(repo: Path) -> int:
     return 2
 
 
-def check_shallow_download(repo: Path) -> int:
+def check_shallow_download(repo: Path, scenario: str = "shallow-download.json") -> int:
     """Independent D-106 reducer: hash graph, longest depth, dedupe and paging.
 
     No Rust/Swift code, database or schema package is used. The fixture includes
@@ -357,8 +357,8 @@ def check_shallow_download(repo: Path) -> int:
     base = repo / "docs/sync/v2"
     schema = read_json(base / "download-page.schema.json")
     cursor_schema = read_json(base / "download-cursor.schema.json")
-    graph = read_json(base / "fixtures/scenarios/shallow-download.json")
-    assert_canonical(base / "fixtures/scenarios/shallow-download.json")
+    graph = read_json(base / "fixtures/scenarios" / scenario)
+    assert_canonical(base / "fixtures/scenarios" / scenario)
     binding = graph["binding"]
     root = binding["snapshotId"]
 
@@ -518,7 +518,7 @@ def check_shallow_download(repo: Path) -> int:
     # Closed envelopes/cursors must reject unknown keys, kind mixing and legacy
     # cursors even if the rest of their binding is correct.
     first = read_json(base / "fixtures/canonical" / graph["pages"]["backfill"][0])
-    valid = check_cursor(first["nextCursor"], "backfill")
+    valid = check_cursor(first["nextCursor"] or first["resumeCursor"], "backfill")
     bad_values = [{**valid, "extra": 1}, {**valid, "kind": "head"}, {k: v for k, v in valid.items() if k != "kind"}, {**valid, "accountFence": "changed"}, {**valid, "afterItem": -1}]
     for bad in bad_values:
         encoded = base64.urlsafe_b64encode(canonical(bad)).decode().rstrip("=")

@@ -92,6 +92,20 @@ manifest is deliberately small; entity payload schemas remain closed and are
 versioned by content type. A server may retain history, but may not mutate an
 accepted manifest.
 
+D-106 installs only the pinned head H for an explicitly opened or downloaded
+work. `shallow_boundaries` records missing parents without weakening ordinary
+parent attestation: the disjoint union of real edges and boundaries must exactly
+match each manifest. Local snapshots require local parents. Every insertion
+replaces incoming boundaries atomically; complete history is never truncated.
+`history_backfills` persists the root, exact binding, state and safe group cursor.
+Each verified page commits with its cursor in one transaction, never changing
+current snapshot or local generation. Validation runs outside the SQLite write
+transaction; edits, promotion and publish continue against H. Newer heads enter
+through the existing Inbox/document gate. Missing ancestry is retryable
+`historyIncomplete`, never evidence of disjointness or a null conflict base.
+Initial mode rejection falls back to the complete D-101/D-102 import. See
+[design](sync/v2/shallow-history-design.md) and [verification](shallow-step2-verification.md).
+
 Checkpoint capture is atomic and has these required fields:
 
 ```text

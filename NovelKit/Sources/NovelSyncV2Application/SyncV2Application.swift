@@ -39,6 +39,9 @@ public actor SyncV2Application {
     let libraryProvider: any SyncV2LibraryProvider
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
     let remoteOnlyImportTimeout: Duration
+    var backfillTask: Task<Void, Never>?
+    var backfillQueue: [WorkID] = []
+    var backfillConstrained = false
     var remoteOnlyOpens: [WorkID: Task<SyncV2OpenedWork, Error>] = [:]
     var remoteOnlyOpeningRequests: Set<WorkID> = []
     var importProgress: [WorkID: ImportProgress] = [:]
@@ -220,6 +223,8 @@ public actor SyncV2Application {
             throw SyncV2ApplicationError.remoteSchedulingSuspensionRequired
         }
         historyScopeGeneration &+= 1
+        backfillTask?.cancel()
+        backfillQueue.removeAll()
         let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys)
             .union(workerOwners.keys)
             .union(states.keys)
@@ -244,6 +249,8 @@ public actor SyncV2Application {
         let token = SyncV2AccountTransitionRemoteSuspensionToken()
         remoteSchedulingSuspensions.insert(token.rawValue)
         historyScopeGeneration &+= 1
+        backfillTask?.cancel()
+        backfillQueue.removeAll()
         let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys).union(workerOwners.keys)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)

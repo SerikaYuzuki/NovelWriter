@@ -10,8 +10,10 @@ import FoundationNetworking
 actor SnapshotDownloadContext {
     @TaskLocal static var current: SnapshotDownloadContext?
     var session: FuminiwaSession
+    let backgroundBackfill: Bool
 
-    init(session: FuminiwaSession) {
+    init(session: FuminiwaSession, backgroundBackfill: Bool = false) {
+        self.backgroundBackfill = backgroundBackfill
         self.session = session
     }
 
@@ -45,6 +47,9 @@ extension ProductionSyncV2RemoteClient {
             do {
                 var request = request
                 request.timeoutInterval = 30
+                if SnapshotDownloadContext.current?.backgroundBackfill == true {
+                    request.allowsConstrainedNetworkAccess = false
+                }
                 request.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
                 let (data, response, refreshed) = try await requestDataWithSession(request, session: current)
                 current = refreshed

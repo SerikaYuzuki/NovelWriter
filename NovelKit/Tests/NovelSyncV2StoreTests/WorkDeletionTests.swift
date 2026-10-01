@@ -68,7 +68,10 @@ import Testing
     let current = try SnapshotSyncV2SchemaContract.resourceSQL()
     let previous = String(decoding: current, as: UTF8.self).components(separatedBy: "\n-- Work deletion journal.")[0]
     let checksum = SnapshotSyncV2SchemaContract.checksum(Data(previous.utf8)).map { String(format: "%02x", $0) }.joined()
-    #expect(try sqliteExecutionSucceeded(databaseURL: url, sql: "DROP TABLE work_deletions; UPDATE schema_meta SET checksum=X'\(checksum)' WHERE key='schema';"))
+    #expect(try sqliteExecutionSucceeded(databaseURL: url, sql: """
+    DROP TABLE history_backfills; DROP TABLE shallow_boundaries; DROP TABLE work_deletions;
+    UPDATE schema_meta SET checksum=X'\(checksum)' WHERE key='schema';
+    """))
     let upgraded = try LocalSyncV2Store(root: root, policy: .openExisting)
     #expect(try await upgraded.open(workID: workID, scope: scopeA).document == document)
     #expect(try await upgraded.workDeletionIDs().isEmpty)

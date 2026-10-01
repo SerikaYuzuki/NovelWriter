@@ -14,6 +14,16 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         self.remote = remote
     }
 
+    func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID) async throws -> SyncV2SnapshotAvailability {
+        let localScope = try await scope.existingScope(workID: workID)
+        let availability = try await store.snapshotAvailability(workID: workID, snapshotID: snapshotID, scope: localScope)
+        return switch availability {
+        case .local: .local
+        case .unfetched: .unfetched
+        case .unknown: .unknown
+        }
+    }
+
     func writingContext(workID: WorkID) async throws -> SyncV2WritingContext {
         let active = try await scope.activeBinding()
         let local = try await scope.existingScope(workID: workID)
@@ -441,7 +451,11 @@ extension ProductionSyncV2Kernel {
             let prepared = try await LocalSyncV2Store.prepareInitialGraph(inbox.storeGraph)
             ImportProgress.current?.advance(to: .saving)
             _ = try await checkedBinding()
-            try await store.installInitialGraph(prepared, scope: localScope)
+            if inbox.shallow {
+                try await store.installShallowHead(prepared, scope: localScope)
+            } else {
+                try await store.installInitialGraph(prepared, scope: localScope)
+            }
             _ = try await checkedBinding()
             let opened = try await store.open(workID: inbox.workID, scope: localScope)
             return SyncV2OpenedWork(
@@ -687,7 +701,8 @@ private extension ProductionSyncV2Kernel {
                         remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
                         conflict: adoption == nil ? conflict : nil,
                         remoteProgress: progress,
-                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope)
+                        oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope),
+                        historyBackfillNote: store.backfillProgressNote(workID: summary.workID)
                     )
                 }
             }
@@ -702,6 +717,7 @@ private extension ProductionSyncV2Kernel {
     func mapStoreError(_ error: Error) -> any Error {
         guard let storeError = error as? SyncV2StoreError else { return error }
         return switch storeError {
+        case .historyIncomplete: SyncV2Failure.retryable(.historyIncomplete)
         case .workNotFound: SyncV2ApplicationError.workNotFound
         case .accountMismatch: SyncV2Failure.quarantined(.differentAccount)
         case .staleCAS, .generationMismatch:

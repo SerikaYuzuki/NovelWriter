@@ -47,11 +47,16 @@ extension ProductionSyncV2RemoteClient {
             snapshotID: SnapshotID(rawValue: raw),
             generation: generation
         )
-        let snapshots = try await fetchRemoteOnlyGraph(
-            workID: workID,
-            id: head.snapshotID,
-            session: session
-        )
+        let shallow = try await downloadHead(workID: workID, id: head.snapshotID, session: session)
+        let snapshots: [EncodedSnapshot] = if let shallow {
+            [shallow]
+        } else {
+            try await fetchRemoteOnlyGraph(
+                workID: workID,
+                id: head.snapshotID,
+                session: session
+            )
+        }
         return SyncV2RemoteInbox(
             inboxID: UUID(),
             workID: workID,
@@ -60,7 +65,7 @@ extension ProductionSyncV2RemoteClient {
             expectedCurrentSnapshotID: nil,
             expectedLocalGeneration: 0,
             expectedRemoteHead: head,
-            binding: binding
+            binding: binding, shallow: shallow != nil
         )
     }
 

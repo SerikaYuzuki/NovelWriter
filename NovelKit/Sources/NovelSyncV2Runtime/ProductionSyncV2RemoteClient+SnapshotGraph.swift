@@ -118,6 +118,15 @@ extension ProductionSyncV2RemoteClient {
                 pending.append((next.id, true))
                 continue
             }
+            if try await localStore?.isBoundary(workID: workID, snapshotID: next.id, scope: scope) == true {
+                traversal.active.remove(next.id)
+                traversal.completed.insert(next.id)
+                continue
+            }
+            if next.id != id, traversal.memo[next.id] == nil,
+               try await localStore?.historyIsIncomplete(workID: workID, scope: scope) == true {
+                throw SyncV2Failure.retryable(.historyIncomplete)
+            }
             let snapshot = try await loadUncommittedSnapshot(
                 workID: workID, id: next.id, scope: scope,
                 session: session, traversal: traversal
@@ -193,7 +202,7 @@ extension ProductionSyncV2RemoteClient {
         return try (SnapshotValidator.validate(manifestBytes: bytes), bytes)
     }
 
-    private func fetchObjects(
+    func fetchObjects(
         entries: [SnapshotEntry],
         session: FuminiwaSession,
         traversal: SnapshotFetchTraversal
@@ -254,6 +263,9 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
+        if SnapshotDownloadContext.current?.backgroundBackfill == true {
+            request.allowsConstrainedNetworkAccess = false
+        }
         if entry.byteCount > 256 * 1024 {
             return try await downloadObjectFile(request, entry: entry, session: session)
         }
@@ -269,7 +281,7 @@ extension ProductionSyncV2RemoteClient {
         return bytes
     }
 
-    private func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
+    func binding(for session: FuminiwaSession) -> SealedCommand.Binding {
         SealedCommand.Binding(
             accountFence: session.accountFence,
             accountId: session.accountID,

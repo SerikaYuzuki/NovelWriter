@@ -71,3 +71,28 @@ and must not offer an implicit winner or “always choose” setting in v2.
 - Restore, conflictResolution and keepBoth retain their current semantics,
   including protected local parents required by their graph. All local leaves,
   old chains, intents and receipts are retained. No schema/wire/server change.
+
+## Head-first and background history (D-106 Step 2)
+
+`remoteOnly -> verifiedHead -> shallowLocal + backfill(running) -> complete`.
+Only explicit open/prefetch creates a backfill record. Launch resumes existing
+`running` / `paused` records; it never enrolls remote-only catalog items.
+
+- One global application lane serializes works. Constrained/offline connectivity
+  cancels the lane and pauses it; restored connectivity resumes it.
+- Account-transition suspension cancels the lane. Same-account fence changes
+  reset only the cursor, replaying the pinned H idempotently. Foreign account
+  bindings stay parked and cannot read or update the journal.
+- A split group's objects stay in memory until its manifest closes. A page's
+  closed groups and `resume_cursor` commit together. Cancellation rolls back the
+  page; restart replays the unfinished group from the last closed cursor.
+- 401/404 suspend the journal and preserve the local manuscript; validation
+  failures become `failed` and are not automatically retried. Transport failures
+  become `paused`, eligible for a later connectivity/launch wake.
+- No page rewrites current/head/generation/intents. H1 adoption and new local
+  leaves coexist with backfill still pinned to H. Every commit invalidates the
+  registered-ancestor cache. Incomplete lineage returns `historyIncomplete`
+  without deleting staged Inbox data or unsent intents.
+
+Step 3 adds priority requests for restore, deep Inbox parents and conflict
+ancestry through the same lane; it does not introduce another download worker.

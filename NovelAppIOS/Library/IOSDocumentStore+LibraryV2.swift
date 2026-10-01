@@ -371,7 +371,7 @@ extension IOSDocumentStore {
                     remoteHeadConfirmed: local.remoteHeadConfirmed,
                     conflict: local.conflict,
                     remoteProgress: local.remoteProgress,
-                    oldestUnreceivedAt: local.oldestUnreceivedAt
+                    oldestUnreceivedAt: local.oldestUnreceivedAt, historyBackfillNote: local.historyBackfillNote
                 )
             } else {
                 rows[remote.workID] = SyncV2LibraryItem(

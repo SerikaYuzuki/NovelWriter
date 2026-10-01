@@ -110,7 +110,7 @@ public extension LocalSyncV2Store {
             'snapshot_parents_immutable_delete',
             'snapshot_entries_immutable_delete',
             'conflict_candidates_immutable_delete',
-            'intent_subsumptions_immutable_delete')
+            'intent_subsumptions_immutable_delete', 'shallow_boundaries_guard_delete')
             """)
             for trigger in triggers {
                 guard let name = trigger[0].text else { throw SyncV2StoreError.schemaMismatch }
@@ -141,7 +141,7 @@ public extension LocalSyncV2Store {
                 id
             )
             for table in [
-                "intent_subsumptions", "restore_records", "conflict_candidates", "conflicts", "inbox_batches",
+                "history_backfills", "shallow_boundaries", "intent_subsumptions", "restore_records", "conflict_candidates", "conflicts", "inbox_batches",
                 "upload_transfers", "remote_receipts", "sync_intents", "sealed_commands", "history_occurrences",
                 "snapshot_remote_equivalents", "snapshot_parents", "quarantine_records", "work_resources",
                 "binding_transitions", "account_bindings", "snapshots", "works"

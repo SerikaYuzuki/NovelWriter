@@ -163,6 +163,7 @@ public extension SyncV2Application {
             guard opened.workID == workID, opened.document != nil else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
+            scheduleHistoryBackfill(workID: workID)
             setState(workID: workID, localDurability: durability(for: opened),
                      remoteProgress: .idle, result: .remoteOnlyInstalled, conflict: .clear)
             if remoteOnlyOpeningRequests.contains(workID) {
@@ -208,7 +209,7 @@ public extension SyncV2Application {
                     remoteHeadConfirmed: item.remoteHeadConfirmed,
                     conflict: nil,
                     remoteProgress: .parkedDifferentAccount,
-                    oldestUnreceivedAt: item.oldestUnreceivedAt
+                    oldestUnreceivedAt: item.oldestUnreceivedAt, historyBackfillNote: item.historyBackfillNote
                 )
             }
             let conflict: SyncV2ConflictProjection? = switch state.remoteProgress {
@@ -227,7 +228,7 @@ public extension SyncV2Application {
                 remoteHeadConfirmed: item.remoteHeadConfirmed,
                 conflict: conflict,
                 remoteProgress: state.remoteProgress,
-                oldestUnreceivedAt: item.oldestUnreceivedAt
+                oldestUnreceivedAt: item.oldestUnreceivedAt, historyBackfillNote: item.historyBackfillNote
             )
         })
     }

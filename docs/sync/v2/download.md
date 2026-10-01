@@ -122,12 +122,12 @@ retained and cancelled presentation is rejected (D-102). Retry starts a fresh
 import after the cancelled single-flight has actually finished. Failure kind is
 retained per WorkID until retry or account transition.
 
-## Head-first and backfill (D-106, server step)
+## Head-first and backfill (D-106)
 
-[Reviewed design](shallow-history-design.md) and [draft D-106](../../DECISIONS.md)
-cover the whole feature. This step implements the server/contract only; shallow
-SQLite installation, background workers and availability UX are pending.
-No `/v2/capabilities` keys, v2 name, database schema or client behavior change.
+[Reviewed design](shallow-history-design.md) and [D-106](../../DECISIONS.md)
+cover the whole feature. Client Step 2 adds shallow SQLite installation, a
+background backfill lane and per-item availability. Priority restore/merge UX
+is Step 3. No `/v2/capabilities` keys, v2 name or server database schema change.
 
 ### Negotiation and head
 
@@ -142,7 +142,7 @@ oversized manifest exception, media type, digest checks and cache headers apply.
 Requests **without `mode` retain exactly the D-101/D-105 response bytes**, including
 old cursors, optional totals, error bodies and absence of new envelope keys.
 An unknown mode, query key or include value is a schema violation. `include=totals`
-is valid only without a cursor. The future client negotiates with `mode=head`;
+is valid only without a cursor. The client negotiates with `mode=head`;
 on initial 400/404/405/422 it retries once without `mode` and uses the D-101/D-102
 full import. This does not make a typed account-scoped 404 a successful import:
 the legacy retry still checks visibility and fails closed for a deleted/foreign

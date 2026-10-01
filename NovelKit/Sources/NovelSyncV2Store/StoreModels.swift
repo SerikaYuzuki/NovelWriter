@@ -13,6 +13,7 @@ public enum SyncV2StoreError: Error, Equatable, Sendable {
     case generationMismatch
     case snapshotNotFound
     case invalidSnapshot
+    case historyIncomplete
     case invalidCommand
     case commandAlreadySealed
     case invalidAcknowledgement
