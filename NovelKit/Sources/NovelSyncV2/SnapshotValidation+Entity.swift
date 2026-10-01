@@ -3,7 +3,8 @@ import Foundation
 extension SnapshotValidator {
     static let maxStringLength = 1_048_576
 
-    static func validateEntity(_ data: Data, for key: String) throws {
+    @discardableResult
+    static func validateEntity(_ data: Data, for key: String) throws -> [String: CanonicalJSON.Value] {
         guard data.count <= SnapshotSyncV2Limits.maxStructuredEntityBytes,
               case let .object(pairs) = try CanonicalJSON.parseObject(
                   data,
@@ -31,6 +32,7 @@ extension SnapshotValidator {
         } else {
             throw SyncV2TypeError.schemaViolation(key)
         }
+        return fields
     }
 
     private static func isTextEntity(_ key: String) -> Bool {

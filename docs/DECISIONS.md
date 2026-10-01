@@ -71,3 +71,7 @@ iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサ�
 ## D-101: 初回取り込みの一括読取（2026-10-01）
 
 履歴が多い作品の初回取り込みは、Snapshot Sync v2の読取専用ページでmanifestと重複排除した小さなobjectをまとめて取得する。履歴の件数制限や削除で速くせず、既存のdigest・graph・Inbox・編集境界の検証を維持する。ページは取得開始時のSnapshot IDへ固定し、account/fence/workに束縛する。旧serverは初回404/405に限り既存の個別読取へ戻る。DB schema、保存方式、通常編集を変更しない。[一括読取契約](sync/v2/download.md)に上限と互換境界を定める。
+
+## D-102: remote-only初回取り込みを単一transactionで確定（2026-10-01）
+
+未取得作品（work行なし、またはgeneration 0・current NULL）でeditor session・conflict・未処理intentがない場合、graphの全文検証後、単一のBEGIN IMMEDIATEで全履歴とcurrentをinstallする。COMMIT前の中断・失敗は全体をrollbackする。COMMIT後の取消し・account変更では表示を拒否し、元のbindingに属する完成済み作品を保持する。digest・graph・anchor・scope・CASの検証を維持し、通常同期と競合解決は永続Inboxのstage/verify/adoptを継続する。既存の未完了Inboxと履歴・証跡は削除しない。SQLite schemaとv2名称は変更しない。

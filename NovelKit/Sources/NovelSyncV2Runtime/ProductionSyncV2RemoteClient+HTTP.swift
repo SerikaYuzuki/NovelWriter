@@ -197,6 +197,12 @@ extension ProductionSyncV2RemoteClient {
 
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
+            if let progress = ImportProgress.current {
+                let (url, response) = try await session.download(for: request, delegate: ImportByteProgress(progress: progress))
+                defer { try? FileManager.default.removeItem(at: url) }
+                progress.received()
+                return try (Data(contentsOf: url), response)
+            }
             return try await session.data(for: request)
         } catch {
             try Task.checkCancellation()
@@ -462,4 +468,20 @@ func httpContentType(_ response: URLResponse) -> String? {
         .split(separator: ";")
         .first
         .map(String.init)
+}
+
+private final class ImportByteProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let progress: ImportProgress?
+    init(progress: ImportProgress?) {
+        self.progress = progress
+    }
+
+    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten _: Int64, totalBytesExpectedToWrite _: Int64) {
+        if bytesWritten > 0 {
+            progress?.received()
+        }
+    }
+
+    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didFinishDownloadingTo _: URL) {}
 }

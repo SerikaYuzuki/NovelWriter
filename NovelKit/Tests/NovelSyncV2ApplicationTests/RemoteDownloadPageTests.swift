@@ -85,8 +85,8 @@ extension RemoteHTTPLineageTests {
         #expect(state.count(path: "/v2/snapshots/\(head.snapshotId.rawValue)/manifest") == 0)
     }
 
-    @Test("large objects use the existing verified object read without inflating pages")
-    func largeObjectUsesSeparateRead() async throws {
+    @Test("large objects use the existing verified object read without inflating pages", arguments: [false, true])
+    func largeObjectUsesSeparateRead(tracksProgress: Bool) async throws {
         let fixture = LineageFixture()
         var document = fixture.document(title: "large content")
         document.chapters[0].episodes[0].content = String(repeating: "a", count: 300_000)
@@ -98,7 +98,9 @@ extension RemoteHTTPLineageTests {
             downloadPage(head: snapshot.snapshotId, items: downloadItems([snapshot]), cursor: nil)
         ])
         let client = try fixture.client(snapshots: [], overrideState: state)
-        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        let inbox = try await ImportProgress.$current.withValue(tracksProgress ? ImportProgress() : nil) {
+            try await client.downloadRemoteOnly(workID: fixture.workID)
+        }
         #expect(inbox.snapshots.first?.objects[large] == snapshot.objects[large])
         #expect(state.count(path: "/v2/objects/\(large.rawValue)") == 1)
     }

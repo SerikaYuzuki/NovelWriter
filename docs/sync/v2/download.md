@@ -36,35 +36,60 @@ Clients validate canonical response bytes, closed keys, root identity, ordering,
 digest of every item, manifest WorkID/schema, complete parent closure, the
 existing unique-object budget and object byte counts. Missing small objects,
 extra unreferenced objects and unreachable or cyclic manifests are rejected.
-The verified graph still passes the normal Inbox stage/verify/adopt transaction
-and work/session/account/generation checks. Downloading does not select a work
+Ordinary sync and conflicts use the Inbox stage/verify/adopt flow. Remote-only
+first import (absent work, or generation zero/current NULL, no editor session,
+no conflict or pending intent) validates the complete graph and installs it in
+one BEGIN IMMEDIATE transaction. Failure or cancellation before COMMIT rolls
+back all new rows; existing history and inbox evidence are retained. Both paths preserve
+digest, graph, document anchor, work/session/account and generation/CAS checks.
+After COMMIT, cancellation/account change rejects presentation while preserving
+the complete installed work under its original binding. Downloading does not select a work
 or loosen the editor boundary. Failed imports preserve the current manuscript.
 
 Each temporary transport/5xx failure retries only that page with the same root
 and cursor, at most five times. Exponential backoff with jitter waits about
 31 seconds in total without server guidance; Retry-After (seconds or HTTP date)
 is honored up to 30 seconds per wait. Sleeps are cancellable. Requests use a
-30-second idle timeout, the session resource timeout is 120 seconds, and the
-application limits one complete import attempt to 180 seconds. Expiry returns
-a retryable failure. Refreshed credentials are retained for subsequent reads
+30-second idle timeout and a one-hour resource timeout. Remote-only download
+fails after 60 seconds without received page/object/byte progress, not after a
+fixed overall duration. URLSession download byte callbacks extend this deadline;
+local-store validation/install are outside the network stall timer. Expiry returns a
+retryable failure. Refreshed credentials are retained for subsequent reads
 within the same import and must preserve the original account binding. Authorization, scope, throttling and validation
 failures are not silently retried. No history-count cutoff, pruning, lossy
 conversion or portable-package shortcut is introduced.
 
-Local import validates persisted inbox bytes again at verification and adoption.
-Within one adoption transaction, the already validated immutable graph and its
-work/document anchor feed snapshot insertion without decoding the same graph
-again. Parent checks, existing-row byte attestation, scope and CAS checks remain
-in the transaction; no validation cache survives a call or trusts mutable rows.
+Stage performs full entity validation once per unique (entity key, ObjectID),
+hashes unique object bytes, and validates each snapshot's entity references.
+The document anchor is decoded once; historical models are not materialized.
+The existing schema_meta table stores
+an inbox-validator/<inbox UUID> marker (version 1, checksum = head digest),
+without schema changes. A missing, differing, or head-mismatched marker requires
+full validation. Verification/adoption rehash every unique persisted object and
+manifest, attest closure rows and byte counts, and check parent closure,
+reachability, cycles, scope and CAS. The head digest binds the immutable ancestry;
+all snapshots must reference the same work/document ObjectID, decoded once.
+No mutable object bytes are trusted on reload. New rows inserted by validated
+statements need no immediate read-back; existing snapshot rows retain attestation.
+Imports compare reused existing CAS bytes once per unique object; ordinary
+checkpoints rely on immutable content addressing, attested immutability triggers
+and byte_count, with digest validation when reading objects.
+
+Full graph validation for stage and first install runs outside the store actor,
+with cancellation propagation. Mutable work/scope/CAS checks run again inside
+the transaction after validation. SQLite statements are cached only per store
+connection and finalized on close; transaction object caches never outlive COMMIT
+or ROLLBACK.
 
 A generation-zero local work with no current snapshot is not yet installed,
 even if a staged, verified, or rejected inbox remains. Explicit open downloads
-and stages a fresh inbox; existing inbox evidence and adopted history remain.
+and atomically installs the graph; existing inbox evidence and adopted history remain.
 The shelf continues to show this work as remote-only. Application opens and
 remote-only renames join one import per WorkID, retained until cancellation
 actually finishes. The platform document gate checks the durable generation
 before presenting an import result, so a joined rename cannot be overwritten
 by the older returned document. Account transition suspension rejects new remote opens and
-cancels existing ones. Download-time binding is checked before stage, verify,
-and adopt; cancellation is checked at these boundaries and during graph work.
+cancels existing ones. Download-time binding is checked before validation, immediately before atomic
+install, and after install; ordinary sync
+retains its stage/verify/adopt checks; cancellation is checked at these boundaries and during graph work.
 iOS open and rename hold a background task lease whose expiry cancels import.

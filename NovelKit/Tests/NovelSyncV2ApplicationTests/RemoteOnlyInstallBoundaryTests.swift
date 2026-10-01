@@ -5,8 +5,8 @@ import NovelSyncV2Application
 @testable import NovelSyncV2Store
 import Testing
 
-@Test("cancel or account switch between stage/verify/adopt preserves an uninstalled, recoverable work",
-      arguments: [2, 3], [false, true])
+@Test("cancel or account switch around atomic install never presents a stale result or leaves a partial work",
+      arguments: [1, 2, 3], [false, true])
 func remoteOnlyInstallChecksEveryBoundary(boundary: Int, changeAccount: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("import-boundary-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -26,7 +26,8 @@ func remoteOnlyInstallChecksEveryBoundary(boundary: Int, changeAccount: Bool) as
                                                                      serverInstanceId: binding.serverInstanceID))
     let task = Task { try await kernel.installRemoteOnly(inbox) }
     try await eventually { await scope.paused }
-    #expect(try await store.inboxState(inboxID: inbox.inboxID, binding: binding) == (boundary == 2 ? "staged" : "verified"))
+    #expect(try await store.query("SELECT COUNT(*) FROM inbox_batches").first?[0].int64 == 0)
+
     if changeAccount {
         await scope.release(binding: V2AccountBinding(accountID: "other", accountFence: "other", serverInstanceID: "test-server"))
         await #expect(throws: SyncV2Failure.accountFenceChanged) { try await task.value }
@@ -35,13 +36,19 @@ func remoteOnlyInstallChecksEveryBoundary(boundary: Int, changeAccount: Bool) as
         await scope.release(binding: binding)
         await #expect(throws: CancellationError.self) { try await task.value }
     }
-    let uninstalled = try await store.open(workID: workID, scope: .bound(binding))
-    #expect(uninstalled.summary.localGeneration == 0)
-    #expect(uninstalled.summary.currentSnapshotID == nil)
     await scope.release(binding: binding)
-    let recovered = try await kernel.installRemoteOnly(inbox)
-    #expect(recovered.document?.title == "境界前の原稿")
-    #expect(recovered.generation == 1)
+    if boundary < 3 {
+        #expect(try await store.listWorks(scope: .bound(binding)).isEmpty)
+        let recovered = try await kernel.installRemoteOnly(inbox)
+        #expect(recovered.document?.title == "境界前の原稿")
+        #expect(recovered.generation == 1)
+    } else {
+        // COMMIT won the race; presentation is rejected but the complete work
+        // remains durably scoped to the original account, never half-installed.
+        let installed = try await store.open(workID: workID, scope: .bound(binding))
+        #expect(installed.summary.localGeneration == 1)
+        #expect(installed.document?.title == "境界前の原稿")
+    }
     await store.close()
 }
 

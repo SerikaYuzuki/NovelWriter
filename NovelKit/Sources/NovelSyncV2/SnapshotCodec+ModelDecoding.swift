@@ -204,14 +204,7 @@ extension SnapshotCodec {
     }
 
     static func parseDate(_ string: String) throws -> Date {
-        let formatter = ISO8601DateFormatter()
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.formatOptions = [
-            .withInternetDateTime,
-            .withDashSeparatorInDate,
-            .withColonSeparatorInTime
-        ]
-        guard let date = formatter.date(from: string),
+        guard let date = CanonicalTimestamp.date(string),
               try dateString(date) == string else {
             throw SyncV2TypeError.schemaViolation("date")
         }

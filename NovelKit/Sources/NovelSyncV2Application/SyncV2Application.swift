@@ -74,7 +74,7 @@ public actor SyncV2Application {
     package init(
         mode: RuntimeMode,
         composition: SyncV2RuntimeComposition,
-        remoteOnlyImportTimeout: Duration = .seconds(180)
+        remoteOnlyImportTimeout: Duration = .seconds(60)
     ) throws {
         let valid = switch (mode, composition.identity) {
         case (.production, .production), (.test, .test), (.preview, .preview):

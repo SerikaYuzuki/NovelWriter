@@ -6,6 +6,8 @@ import NovelSyncV2
 public actor LocalSyncV2Store {
     public let databaseURL: URL
     var db: OpaquePointer?
+    var statements: [String: OpaquePointer] = [:]
+    var transactionObjects: Set<ObjectID>?
 
     public init(root: URL, policy: V2StoreOpenPolicy) throws {
         try Self.validateRoot(root)
@@ -45,6 +47,10 @@ public actor LocalSyncV2Store {
 
     public func close() {
         if let db {
+            for statement in statements.values {
+                sqlite3_finalize(statement)
+            }
+            statements.removeAll()
             sqlite3_close(db)
             self.db = nil
         }

@@ -426,11 +426,10 @@ extension ProductionSyncV2Kernel {
         }
         do {
             let localScope = try await V2LocalWorkScope.bound(checkedBinding())
-            try await store.stageRemoteGraph(inbox.storeGraph, scope: localScope)
+            let prepared = try await LocalSyncV2Store.prepareInitialGraph(inbox.storeGraph)
             _ = try await checkedBinding()
-            try await store.verifyInbox(inboxID: inbox.inboxID, scope: localScope)
+            try await store.installInitialGraph(prepared, scope: localScope)
             _ = try await checkedBinding()
-            try await store.adoptInbox(inboxID: inbox.inboxID, scope: localScope)
             let opened = try await store.open(workID: inbox.workID, scope: localScope)
             return SyncV2OpenedWork(
                 workID: inbox.workID,

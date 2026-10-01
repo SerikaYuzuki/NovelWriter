@@ -68,18 +68,7 @@ public extension SyncV2Application {
         let timeout = remoteOnlyImportTimeout
         let task = Task {
             defer { remoteOnlyOpens[workID] = nil }
-            return try await withThrowingTaskGroup(of: SyncV2OpenedWork.self) { group in
-                group.addTask {
-                    try await self.performRemoteOnlyOpen(workID: workID, generation: generation)
-                }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    throw SyncV2Failure.retryable(.lostResponse)
-                }
-                defer { group.cancelAll() }
-                guard let opened = try await group.next() else { throw CancellationError() }
-                return opened
-            }
+            return try await self.performRemoteOnlyOpen(workID: workID, generation: generation, timeout: timeout)
         }
         remoteOnlyOpens[workID] = task
         return try await joinRemoteOnlyOpen(task)
@@ -95,11 +84,26 @@ public extension SyncV2Application {
         }
     }
 
-    private func performRemoteOnlyOpen(workID: WorkID, generation: UInt64) async throws -> SyncV2OpenedWork {
+    private func performRemoteOnlyOpen(workID: WorkID, generation: UInt64, timeout: Duration) async throws -> SyncV2OpenedWork {
         var stage = "remote-only-download"
         do {
             try checkRemoteOnlyScope(generation)
-            let inbox = try await libraryProvider.downloadRemoteOnly(workID: workID)
+            let progress = ImportProgress()
+            let inbox = try await ImportProgress.$current.withValue(progress) {
+                try await withThrowingTaskGroup(of: SyncV2RemoteInbox.self) { group in
+                    group.addTask { try await self.libraryProvider.downloadRemoteOnly(workID: workID) }
+                    group.addTask {
+                        while true {
+                            let remaining = progress.remaining(untilStalledFor: timeout)
+                            guard remaining > .zero else { throw SyncV2Failure.retryable(.lostResponse) }
+                            try await Task.sleep(for: remaining)
+                        }
+                    }
+                    defer { group.cancelAll() }
+                    guard let inbox = try await group.next() else { throw CancellationError() }
+                    return inbox
+                }
+            }
             try checkRemoteOnlyScope(generation)
             guard inbox.workID == workID else { throw SyncV2Failure.receiptMismatch }
             stage = "remote-only-install"
