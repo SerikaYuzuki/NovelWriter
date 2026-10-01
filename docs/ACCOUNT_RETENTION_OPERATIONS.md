@@ -35,3 +35,6 @@ schema 0008を知らない旧binaryへ単純に戻せない。切り戻しは新
 
 
 2026-09-26に原稿保全とAI記録を反映した。現行imageは`sha256:f07038268fe26a9ff063bb23042448c1d8b8a46c9b62b4bf42a6d91747943901`、schema 0009。証跡は`releases/protection-ai-20260926/`の`rehearsal.json`、`live-migration.log`、`deployed.json`。更新前backupを所有者・ACL付きで別DBへ復元して8→9 migrationを確認し、本番更新後も件数・health・公開TLS・認証必須を確認した。更新後の暗号化backupも成功。詳細と端末受入の区別は[受入記録](PROTECTION_AI_ACCEPTANCE.md)。schema 0009を知らない旧binaryへの単純な切戻しは行わない。
+
+2026-10-02（JST）にSync v2全体レビューの修正（PR #69、schema 0011・head-first/backfill download・gzip）を反映した。現行imageは`sha256:18b2f4567b7ce009c497924d7ee8c5ad18fa26f1d02b1cc9a8594260674d3170`。証跡は`releases/sync-review-20261002/`の`rehearsal.json`、`live-migration.log`、`deployed.json`、`Caddyfile.before`。最新の暗号化backupを隔離DBへ復元して10→11 migrationとrole attestationを確認し、本番でも反映直前の暗号化backup（`20261001T215249Z-356a7e49`）取得後に移行した。作品13・snapshot 2,160・object 2,162・account 2が前後で一致、health正常、未認証のdownload（通常・`mode=head`）は401。edgeはCaddyfileへgzipを追加してvalidate後にreloadし、healthを確認した。小さい未認証応答は既定の最小サイズ未満のため圧縮されない。認証付きの大きい応答の圧縮と、実端末からの同期・初回取り込みの受入は未確認。schema 0011を知らない旧binaryへの単純な切戻しは行わない（旧containerは`fuminiwa-sync-v2-role-split-server-before-sync-review-20261002`として保持）。
+

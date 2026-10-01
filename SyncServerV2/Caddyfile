@@ -16,7 +16,8 @@ https://{$FUMINIWA_SYNC_V2_EDGE_HOST:192.168.11.5}:8443 {
     # Binary object responses (application/octet-stream) are intentionally excluded.
     encode gzip {
         match {
-            header Content-Type application/json* application/vnd.fuminiwa.sync.v2+jcs*
+            header Content-Type application/json*
+            header Content-Type application/vnd.fuminiwa.sync.v2+jcs*
         }
     }
     reverse_proxy server:8092
