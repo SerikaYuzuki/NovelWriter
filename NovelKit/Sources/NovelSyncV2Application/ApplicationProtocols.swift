@@ -129,6 +129,8 @@ public protocol SyncV2LocalKernel: Sendable {
     func prepareWorkDeletion(workID: WorkID) async throws -> SyncV2WorkDeletion
     func completeWorkDeletion(_ deletion: SyncV2WorkDeletion) async throws
     func workDeletions() async throws -> [SyncV2WorkDeletion]
+    func hasUnpromotedLeaf(workID: WorkID) async throws -> Bool
+    func promoteCurrentLeaf(workID: WorkID) async throws -> Bool
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
     func currentGeneration(workID: WorkID) async throws -> Int64

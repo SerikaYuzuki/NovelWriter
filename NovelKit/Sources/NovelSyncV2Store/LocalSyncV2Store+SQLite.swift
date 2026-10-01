@@ -163,6 +163,12 @@ extension LocalSyncV2Store {
         generation: Int64,
         scope: V2LocalWorkScope
     ) throws -> UUID {
+        // Every route that queues these bytes (explicit sync, recovery,
+        // account replan) promotes the leaf in the caller's transaction.
+        if try isUnpromotedLeaf(workID: workID, snapshotID: snapshotID) {
+            try insertHistory(workID: workID, snapshotID: snapshotID, reason: "promotion",
+                              pinned: true, generation: generation)
+        }
         var sql = """
         SELECT intent_id FROM sync_intents
         WHERE work_id=? AND kind='checkpoint' AND status='pending'

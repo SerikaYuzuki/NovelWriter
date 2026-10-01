@@ -6,6 +6,7 @@ import NovelSyncV2Store
 actor ProductionSyncV2Planner: SyncV2CommandPlanner {
     let store: LocalSyncV2Store
     let scope: any SyncV2ScopeResolver
+    private var recoveredLeafBindings: Set<V2AccountBinding> = []
     /// Immutable object presence is reusable only in this exact account,
     /// server, protocol, fence, and Work namespace. It is separate from a
     /// command's upload capability session.
@@ -52,6 +53,16 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
 
     func pendingWorkIDs() async throws -> [WorkID] {
         guard let binding = try await scope.activeBinding() else { return [] }
+        // Periodic UI refresh also resumes workers. Recover only on first
+        // launch/login for this binding, never turn those polls into promotions.
+        if recoveredLeafBindings.insert(binding).inserted {
+            do {
+                try await store.promoteUnpromotedLeaves(scope: .bound(binding))
+            } catch {
+                recoveredLeafBindings.remove(binding)
+                throw error
+            }
+        }
         return try await store.pendingWorkIDs(scope: .bound(binding))
     }
 
@@ -215,7 +226,15 @@ private extension ProductionSyncV2Planner {
                 resolutionIntentID: resolutionIntentID
             )
         }
-        let command = try makePublish(view)
+        let command: SealedCommand
+        if view.pendingIntent.kind == "restore" {
+            let source = try await store.restoreCommandSource(
+                workID: workID, intentID: view.pendingIntent.intentID, scope: localScope
+            )
+            command = try makeRestore(view, source: source)
+        } else {
+            command = try makePublish(view)
+        }
         try await store.seal(command, intentID: view.pendingIntent.intentID, scope: localScope)
         return .command(command)
     }

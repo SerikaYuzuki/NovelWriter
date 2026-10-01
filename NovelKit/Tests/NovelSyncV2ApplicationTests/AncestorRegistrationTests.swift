@@ -16,7 +16,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
         document.title = "offline \(generation)"
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: document, documentCreatedAt: applicationTestCreatedAt,
-            expectedGeneration: Int64(generation)
+            expectedGeneration: Int64(generation), reason: .explicit
         ), scope: productionScope)
         expectedSnapshots.append(saved.snapshotID)
     }
@@ -175,7 +175,7 @@ func initialHistoryIsAlreadyRegistered(restore: Bool) async throws {
         document.title = "only changed object"
         expected = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
                                                                   documentCreatedAt: applicationTestCreatedAt,
-                                                                  expectedGeneration: 1), scope: productionScope).snapshotID
+                                                                  expectedGeneration: 1, reason: .explicit), scope: productionScope).snapshotID
     }
     // Restart exercises evidence recovery from SQLite rather than runtime cache.
     let planner = ProductionSyncV2Planner(store: store, scope: TestScopeResolver(vault: config.vault, store: store))

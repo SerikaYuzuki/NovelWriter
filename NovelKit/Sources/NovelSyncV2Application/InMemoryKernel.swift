@@ -67,6 +67,10 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             if work.document == capture.document,
                attachmentsEqual(work.attachments, capture.attachments),
                capture.resources.map({ work.resources == $0 }) ?? true {
+                if capture.reason != .autosave {
+                    _ = try promoteCurrentLeaf(workID: capture.workID)
+                    work = works[capture.workID] ?? work
+                }
                 return SyncV2LocalCheckpoint(
                     snapshotID: work.snapshotID,
                     generation: work.generation,
@@ -74,7 +78,8 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
                     noChanges: true
                 )
             }
-            let encoded = try encode(capture, parent: work.snapshotID)
+            let parent = isLeaf(work) ? work.encoded[work.snapshotID]?.manifest.parentSnapshotIds.first : work.snapshotID
+            let encoded = try encode(capture, parent: parent)
             work.document = capture.document
             work.attachments = capture.attachments
             if let resources = capture.resources {
@@ -87,19 +92,21 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
                 SyncV2LocalHistoryOccurrence(
                     occurrenceID: UUID(),
                     snapshotID: encoded.snapshotId,
-                    reason: capture.reason.rawValue,
+                    reason: capture.reason == .autosave ? "autosaveLeaf" : capture.reason.rawValue,
                     pinned: capture.reason == .explicit || capture.reason == .navigation || capture.reason == .close || capture.reason == .migration,
                     localGeneration: work.generation,
                     createdAt: Date()
                 )
             )
-            let intent = coalescedIntent(for: work)
-            work.intents = intent.intents
+            let intent = capture.reason == .autosave ? nil : coalescedIntent(for: work)
+            if let intent {
+                work.intents = intent.intents
+            }
             works[capture.workID] = work
             return SyncV2LocalCheckpoint(
                 snapshotID: work.snapshotID,
                 generation: work.generation,
-                intentID: intent.id,
+                intentID: intent?.id,
                 noChanges: false
             )
         }
@@ -123,13 +130,13 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
             generation: 1,
             snapshotID: encoded.snapshotId,
             encoded: [encoded.snapshotId: encoded],
-            intents: [intent],
+            intents: capture.reason == .autosave ? [] : [intent],
             conflict: nil,
             history: [
                 SyncV2LocalHistoryOccurrence(
                     occurrenceID: UUID(),
                     snapshotID: encoded.snapshotId,
-                    reason: capture.reason.rawValue,
+                    reason: capture.reason == .autosave ? "autosaveLeaf" : capture.reason.rawValue,
                     pinned: capture.reason == .explicit || capture.reason == .navigation || capture.reason == .close || capture.reason == .migration,
                     localGeneration: 1,
                     createdAt: Date()
@@ -139,7 +146,7 @@ public actor InMemorySyncV2RuntimeState: SyncV2LocalKernel,
         return SyncV2LocalCheckpoint(
             snapshotID: encoded.snapshotId,
             generation: 1,
-            intentID: intent.id,
+            intentID: capture.reason == .autosave ? nil : intent.id,
             noChanges: false
         )
     }
@@ -356,8 +363,11 @@ public extension InMemorySyncV2RuntimeState {
         return .command(command)
     }
 
-    func pendingWorkIDs() -> [WorkID] {
-        Array(Set(works.keys.filter { workID in
+    func pendingWorkIDs() throws -> [WorkID] {
+        for workID in works.keys {
+            _ = try promoteCurrentLeaf(workID: workID)
+        }
+        return Array(Set(works.keys.filter { workID in
             (!(commands[workID] ?? []).isEmpty || !(works[workID]?.intents.isEmpty ?? true)) &&
                 works[workID]?.keepBothReserved != true
         }))
@@ -685,7 +695,7 @@ private extension InMemorySyncV2RuntimeState {
         }
     }
 
-    private func coalescedIntent(for work: Work) -> (id: UUID, intents: [Intent]) {
+    func coalescedIntent(for work: Work) -> (id: UUID, intents: [Intent]) {
         let sealedIDs = Set(commands.values.flatMap { $0.map(\.intentID) })
         if let last = work.intents.last, !sealedIDs.contains(last.id) {
             let replacement = Intent(
@@ -715,5 +725,34 @@ private extension InMemorySyncV2RuntimeState {
             generation: work.generation,
             snapshotID: work.snapshotID
         )
+    }
+}
+
+private extension InMemorySyncV2RuntimeState {
+    func isLeaf(_ work: Work) -> Bool {
+        let rows = work.history.filter { $0.snapshotID == work.snapshotID }
+        return !rows.isEmpty && rows.allSatisfy { $0.reason == "autosaveLeaf" && !$0.pinned }
+    }
+}
+
+public extension InMemorySyncV2RuntimeState {
+    func hasUnpromotedLeaf(workID: WorkID) -> Bool {
+        works[workID].map(isLeaf) ?? false
+    }
+
+    func requestSynchronization(workID: WorkID) throws {
+        _ = try promoteCurrentLeaf(workID: workID)
+    }
+
+    func promoteCurrentLeaf(workID: WorkID) throws -> Bool {
+        guard !readOnly else { throw SyncV2ApplicationError.previewReadOnly }
+        guard var work = works[workID], isLeaf(work) else { return false }
+        work.history.append(SyncV2LocalHistoryOccurrence(
+            occurrenceID: UUID(), snapshotID: work.snapshotID, reason: "promotion",
+            pinned: true, localGeneration: work.generation, createdAt: Date()
+        ))
+        work.intents = coalescedIntent(for: work).intents
+        works[workID] = work
+        return true
     }
 }

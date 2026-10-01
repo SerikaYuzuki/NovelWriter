@@ -83,7 +83,7 @@ func historyCursorCannotResumeAcrossFenceTransition() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -93,7 +93,7 @@ func historyCursorCannotResumeAcrossFenceTransition() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -126,7 +126,7 @@ func localHistoryRejectsInvalidCreatedAt() async throws {
             workID: workID,
             document: makeDocument(title: "invalid date"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )

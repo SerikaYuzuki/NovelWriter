@@ -85,6 +85,16 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
         try await store.completeWorkDeletion(record)
     }
 
+    func hasUnpromotedLeaf(workID: WorkID) async throws -> Bool {
+        let localScope = try await scope.existingScope(workID: workID)
+        return try await store.hasUnpromotedLeaf(workID: workID, scope: localScope)
+    }
+
+    func promoteCurrentLeaf(workID: WorkID) async throws -> Bool {
+        let localScope = try await scope.existingScope(workID: workID)
+        return try await store.promoteCurrentLeaf(workID: workID, scope: localScope)
+    }
+
     func checkpoint(
         _ capture: SyncV2CheckpointCapture
     ) async throws -> SyncV2LocalCheckpoint {
@@ -651,6 +661,7 @@ private extension ProductionSyncV2Kernel {
                     case .unbound, .parked:
                         []
                     }
+                    let hasLeaf = try await store.hasUnpromotedLeaf(workID: summary.workID, scope: localScope)
                     let progress: SyncV2RemoteProgress = if accountState == .parkedDifferentAccount {
                         .parkedDifferentAccount
                     } else if let adoption {
@@ -659,7 +670,7 @@ private extension ProductionSyncV2Kernel {
                         .needsChoice
                     } else if localScope == .unbound || localScope == .parked, !pending.isEmpty {
                         .authenticationRequired
-                    } else if !pending.isEmpty || !sealed.isEmpty {
+                    } else if !pending.isEmpty || !sealed.isEmpty || hasLeaf {
                         .pending
                     } else {
                         .idle

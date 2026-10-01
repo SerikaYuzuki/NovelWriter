@@ -33,7 +33,7 @@ extension ProductionRestartTests {
                 title: "追加入力",
                 body: "競合後も保持"
             ),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         let newerIntent = try #require(

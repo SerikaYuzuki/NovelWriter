@@ -82,7 +82,7 @@ struct WorkerRaceTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await Task.sleep(for: .milliseconds(50))
@@ -144,7 +144,7 @@ struct WorkerRaceTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await eventually { await remote.recordedOperations().count == 1 }

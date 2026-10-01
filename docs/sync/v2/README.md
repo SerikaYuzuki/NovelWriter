@@ -8,6 +8,8 @@ separate live authentication protocol; retired Sync v1 is not a fallback.
 
 Use this directory when changing the synchronization contract. For a UI-only change, start from the shared UI projection and the app entry points instead of loading every fixture. A wire/schema change needs matching fixtures and independent conformance evidence.
 
+- [Local autosave leaves and promotion](state-machine.md#local-leaves-and-promotion-d-103): D-103 local-only history, promotion clocks and unchanged schema/wire.
+
 - [AI feedback attachments](assistant-feedback.md): read-only dated Markdown using the existing attachment wire format.
 
 ## Contract files

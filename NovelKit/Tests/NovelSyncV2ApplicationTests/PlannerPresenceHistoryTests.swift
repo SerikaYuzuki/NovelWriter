@@ -82,7 +82,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
         document.title = "history-\(generation)"
         _ = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
                                                            documentCreatedAt: applicationTestCreatedAt,
-                                                           expectedGeneration: Int64(generation)), scope: productionScope)
+                                                           expectedGeneration: Int64(generation), reason: .explicit), scope: productionScope)
     }
     var available = Set<ObjectID>()
     var remoteGeneration: Int64 = 0
@@ -106,7 +106,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
         }
         let saved = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
                                                                    documentCreatedAt: applicationTestCreatedAt,
-                                                                   expectedGeneration: generation), scope: productionScope)
+                                                                   expectedGeneration: generation, reason: .explicit), scope: productionScope)
         generation = saved.generation
         let prepared = try await drainPresencePlanner(planner, workID: workID, available: &available,
                                                       remoteGeneration: &remoteGeneration)
@@ -116,7 +116,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
             // An unrelated work must not evict the first work's load marker.
             let other = WorkID(UUID())
             _ = try await store.checkpoint(V2CheckpointRequest(workID: other, document: applicationTestDocument(title: "other"),
-                                                               documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0),
+                                                               documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0, reason: .explicit),
                                            scope: productionScope)
             var otherGeneration: Int64 = 0
             _ = try await drainPresencePlanner(planner, workID: other, available: &available, remoteGeneration: &otherGeneration)
@@ -129,7 +129,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
     await config.vault.replaceAccount(TestAccount(accountID: newBinding.accountID, accountFence: newBinding.accountFence))
     document.title = "after binding change"
     _ = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
-                                                       documentCreatedAt: applicationTestCreatedAt, expectedGeneration: generation),
+                                                       documentCreatedAt: applicationTestCreatedAt, expectedGeneration: generation, reason: .explicit),
                                    scope: .bound(newBinding))
     generation += 1
     let reboundPrepares = try await drainPresencePlanner(planner, workID: workID, available: &available,
@@ -142,7 +142,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
     await planner.invalidateCaches(for: [workID])
     document.title = "after explicit invalidation"
     _ = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
-                                                       documentCreatedAt: applicationTestCreatedAt, expectedGeneration: generation),
+                                                       documentCreatedAt: applicationTestCreatedAt, expectedGeneration: generation, reason: .explicit),
                                    scope: .bound(newBinding))
     #expect(try await drainPresencePlanner(planner, workID: workID, available: &available,
                                            remoteGeneration: &remoteGeneration).count == 1)

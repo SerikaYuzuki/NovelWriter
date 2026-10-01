@@ -53,7 +53,7 @@ public extension SyncV2Application {
               workerTasks[workID] == nil else { return false }
         let state = states[workID]
         switch state?.remoteProgress ?? .idle {
-        case .idle, .noChanges, .offline, .retryable:
+        case .idle, .noChanges, .offline, .retryable, .pending:
             break
         default:
             return false
@@ -69,7 +69,8 @@ public extension SyncV2Application {
               workerTasks[workID] == nil,
               let head else { return false }
         if head == candidate.head {
-            if states[workID] == state, let state, state.remoteProgress != .noChanges {
+            if try await !kernel.hasUnpromotedLeaf(workID: workID),
+               states[workID] == state, let state, state.remoteProgress != .noChanges {
                 setState(workID: workID, localDurability: state.localDurability,
                          remoteProgress: .noChanges, result: .noChanges)
             }

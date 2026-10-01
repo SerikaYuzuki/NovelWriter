@@ -15,7 +15,7 @@ extension RemoteHTTPLineageTests {
         let store = try LocalSyncV2Store(root: root, policy: .createNew)
         let scope = V2LocalWorkScope.bound(fixture.binding)
         let saved = try await store.checkpoint(V2CheckpointRequest(workID: fixture.workID,
-                                                                   document: fixture.document, documentCreatedAt: fixture.createdAt, expectedGeneration: 0), scope: scope)
+                                                                   document: fixture.document, documentCreatedAt: fixture.createdAt, expectedGeneration: 0, reason: .explicit), scope: scope)
         let base = try fixture.snapshot(title: "B")
         #expect(saved.snapshotID == base.snapshotId)
         let head = try fixture.snapshot(title: "remote", parents: [base.snapshotId])

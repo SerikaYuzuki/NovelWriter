@@ -32,6 +32,7 @@ public extension LocalSyncV2Store {
                   try allSealedCommands(scope: scope, workID: workID).allSatisfy({
                       $0.lifecycle == .completed || $0.sourceGeneration < expectedLocalGeneration
                   }) else { return false }
+            _ = try promoteCurrentLeafTransaction(workID: workID, scope: scope)
             _ = try upsertCheckpointIntent(
                 workID: workID, snapshotID: SnapshotID(rawValue: snapshot.hexString),
                 generation: expectedLocalGeneration, scope: scope

@@ -167,7 +167,20 @@ extension AppState {
 
     @discardableResult
     func saveNow() async -> Bool {
-        await saveCoordinator.saveNow()
+        let workID = snapshotSyncV2ActiveWorkID
+        let session = documentSessionToken
+        let account = snapshotSyncV2AccountScopeToken
+        guard await saveCoordinator.saveNow(), documentSessionToken == session,
+              snapshotSyncV2ActiveWorkID == workID, snapshotSyncV2AccountScopeToken == account else { return false }
+        do {
+            if let workID, let application = snapshotSyncV2Application {
+                try await application.promoteCheckpoint(workID: workID)
+            }
+            return true
+        } catch {
+            saveState = .failed
+            return false
+        }
     }
 
     func saveBeforeTermination() async -> Bool {

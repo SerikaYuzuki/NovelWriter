@@ -16,7 +16,7 @@ func pendingIntentSubsumptionSurvivesRestartAndReplaysExactly() async throws {
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -67,7 +67,7 @@ func sealedIntentCannotUseLineageAsAReceipt() async throws {
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -111,7 +111,7 @@ func concurrentEditAndSubsumptionPreserveExactlyOneCurrentBranch() async throws 
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -209,7 +209,7 @@ private func attemptCheckpoint(
                 workID: workID,
                 document: document,
                 documentCreatedAt: testDate,
-                expectedGeneration: generation
+                expectedGeneration: generation, reason: .explicit
             ),
             scope: scopeA
         )

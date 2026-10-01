@@ -22,6 +22,10 @@ public struct SyncV2OperationResult: Sendable {
 }
 
 public actor SyncV2Application {
+    var promotionOwners: [WorkID: UUID] = [:]
+    var promotionTasks: [WorkID: Task<Void, Never>] = [:]
+    var promotionDeadlines: [WorkID: Date] = [:]
+    let promotionClock: SyncV2PromotionClock
     var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     var automaticChecks: Set<WorkID> = []
     var syncDiagnostics: [WorkID: String] = [:]
@@ -74,7 +78,8 @@ public actor SyncV2Application {
     package init(
         mode: RuntimeMode,
         composition: SyncV2RuntimeComposition,
-        remoteOnlyImportTimeout: Duration = .seconds(60)
+        remoteOnlyImportTimeout: Duration = .seconds(60),
+        promotionClock: SyncV2PromotionClock = .live
     ) throws {
         let valid = switch (mode, composition.identity) {
         case (.production, .production), (.test, .test), (.preview, .preview):
@@ -83,6 +88,7 @@ public actor SyncV2Application {
             false
         }
         guard valid else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        self.promotionClock = promotionClock
         self.remoteOnlyImportTimeout = remoteOnlyImportTimeout
         writingStore = composition.writingStore
         kernel = composition.kernel
@@ -123,6 +129,11 @@ public actor SyncV2Application {
                     resources: resources
                 )
             )
+            if reason == .autosave, !local.noChanges {
+                scheduleLeafPromotion(workID: workID)
+            } else if reason != .autosave {
+                cancelLeafPromotion(workID: workID)
+            }
             return try await finishCheckpoint(local, workID: workID)
         } catch {
             setState(
@@ -275,6 +286,7 @@ extension SyncV2Application {
         let result: SyncV2TypedResult = local.noChanges
             ? .noChanges : .checkpointed
         let hasPending = local.intentID != nil
+        let hasLeaf = try await kernel.hasUnpromotedLeaf(workID: workID)
         let durableConflict = try await kernel.activeConflict(workID: workID) != nil
         let hasConflict = states[workID]?.conflict != nil || durableConflict
         let progress: SyncV2RemoteProgress = if hasConflict {
@@ -283,7 +295,7 @@ extension SyncV2Application {
                   case .syncing = active {
             active
         } else {
-            hasPending ? .pending : .noChanges
+            hasPending || hasLeaf ? .pending : .noChanges
         }
         let state = setState(
             workID: workID,

@@ -11,7 +11,7 @@ func planningQueriesPreserveExactScopeOccurrenceAndQuarantineGuards() async thro
     let workID = WorkID(UUID())
     var document = makeDocument(title: "initial")
     var checkpoint = try await store.checkpoint(
-        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0),
+        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit),
         scope: scopeA
     )
     let create = try createWorkCommand(workID: workID, documentID: document.id, checkpoint: checkpoint)
@@ -27,7 +27,7 @@ func planningQueriesPreserveExactScopeOccurrenceAndQuarantineGuards() async thro
         document.title = "revision \(index)"
         checkpoint = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: document, documentCreatedAt: testDate,
-            expectedGeneration: checkpoint.generation
+            expectedGeneration: checkpoint.generation, reason: .explicit
         ), scope: scopeA)
     }
     let quarantined = try await publishCommand(workID: workID, checkpoint: checkpoint,

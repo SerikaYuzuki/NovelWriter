@@ -16,7 +16,7 @@ func accountTransitionReplansEveryWorkAndParksDifferentAccountAtomically() async
                 workID: workID,
                 document: makeDocument(title: "work"),
                 documentCreatedAt: testDate,
-                expectedGeneration: 0
+                expectedGeneration: 0, reason: .explicit
             ),
             scope: scopeA
         )
@@ -66,7 +66,7 @@ func repeatedAccountTransitionsAreIdempotentAfterCommit() async throws {
             workID: workID,
             document: makeDocument(title: "idempotent"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -95,7 +95,7 @@ func exactReauthenticationReactivatesParkedWorkWithFreshIntent() async throws {
             workID: workID,
             document: makeDocument(title: "park me"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -121,7 +121,7 @@ func reauthenticationWithNewFenceQuarantinesParkedLaneAndBootstraps() async thro
             workID: workID,
             document: makeDocument(title: "fenced"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -149,7 +149,7 @@ func sameAccountInAnotherServerNamespaceStaysParked() async throws {
             workID: workID,
             document: makeDocument(title: "namespace"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -176,7 +176,7 @@ func mixedActiveBindingsFailClosedWithoutPartialParking() async throws {
             workID: first,
             document: makeDocument(title: "first"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -190,7 +190,7 @@ func mixedActiveBindingsFailClosedWithoutPartialParking() async throws {
             workID: second,
             document: makeDocument(title: "second"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: .bound(other)
     )
@@ -216,7 +216,7 @@ func accountTransitionRollsBackWhenALinkedRestoreCannotBeRetired() async throws 
                 workID: workID,
                 document: document,
                 documentCreatedAt: testDate,
-                expectedGeneration: 0
+                expectedGeneration: 0, reason: .explicit
             ),
             scope: scopeA
         )
@@ -226,7 +226,7 @@ func accountTransitionRollsBackWhenALinkedRestoreCannotBeRetired() async throws 
                 workID: workID,
                 document: document,
                 documentCreatedAt: testDate,
-                expectedGeneration: first.generation
+                expectedGeneration: first.generation, reason: .explicit
             ),
             scope: scopeA
         )
@@ -273,7 +273,7 @@ func preparedRestoreIsParkedAndTransitionKeepsLocalHead() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -283,7 +283,7 @@ func preparedRestoreIsParkedAndTransitionKeepsLocalHead() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -321,7 +321,7 @@ func sealedRestoreIsParkedAndReauthRestartKeepsNewerEdit() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -331,7 +331,7 @@ func sealedRestoreIsParkedAndReauthRestartKeepsNewerEdit() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -374,7 +374,7 @@ func sealedRestoreIsParkedAndReauthRestartKeepsNewerEdit() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: prepared.checkpoint.generation
+            expectedGeneration: prepared.checkpoint.generation, reason: .explicit
         ),
         scope: .bound(rotated)
     )
@@ -400,7 +400,7 @@ func lateReceiptAndUploadCompletionCannotCrossFence() async throws {
             workID: workID,
             document: makeDocument(title: "late"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -495,7 +495,7 @@ func uploadTransferReadbackRejectsTamperedDigest() async throws {
             workID: workID,
             document: makeDocument(title: "transfer"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )

@@ -92,6 +92,7 @@ public extension SyncV2Application {
             )
             return SyncV2OperationResult(state: state, typedResult: .noChanges)
         }
+        cancelLeafPromotion(workID: workID)
         let hasPendingRemoteIntent = prepared.intentID != nil
         let state = setState(
             workID: workID,

@@ -16,7 +16,7 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -26,7 +26,7 @@ func concurrentFirstConflictDeliveryCreatesOneRevision() async throws {
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: base.generation
+            expectedGeneration: base.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -84,7 +84,7 @@ func unrelatedConflictBaseCannotChangeAuthoritativeState() async throws {
             workID: workID,
             document: localDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -130,7 +130,7 @@ func fastForwardLineageCannotBeRecordedAsConflict() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -165,7 +165,7 @@ func fastForwardLineageCannotBeRecordedAsConflict() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: base.generation
+            expectedGeneration: base.generation, reason: .explicit
         ),
         scope: scopeA
     )

@@ -16,7 +16,7 @@ func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent(editBefor
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -73,7 +73,7 @@ func publishNoChangesRequiresVerifiedLineageAndAcknowledgesExactIntent(editBefor
         var edited = document
         edited.title = "newer local edit"
         _ = try await reopened.checkpoint(V2CheckpointRequest(
-            workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: checkpoint.generation
+            workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: checkpoint.generation, reason: .explicit
         ), scope: scopeA)
         #expect(try await reopened.pendingFastForward(workID: workID, scope: scopeA) == nil)
         await #expect(throws: SyncV2StoreError.staleCAS) {
@@ -118,7 +118,7 @@ func sealedSendingCommandReopensWithExactIdentityAndBytes() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -154,7 +154,7 @@ func sealRequiresClosedIntentAndExactPayloadIdentity() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -186,7 +186,7 @@ func sealRequiresClosedIntentAndExactPayloadIdentity() async throws {
             workID: workID,
             document: newerDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: checkpoint.generation
+            expectedGeneration: checkpoint.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -208,7 +208,7 @@ func transferAcknowledgementNeverClearsCheckpointIntent() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -260,7 +260,7 @@ func parkedAcknowledgementCannotCompleteAReceipt() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -299,7 +299,7 @@ func incompleteReadbackCannotCompleteAndRemoteHeadIsMonotonic() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -342,7 +342,7 @@ func incompleteReadbackCannotCompleteAndRemoteHeadIsMonotonic() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scopeA
     )
@@ -400,7 +400,7 @@ func oldAcknowledgementPreservesNewerEditAndIntent() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -412,7 +412,7 @@ func oldAcknowledgementPreservesNewerEditAndIntent() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scopeA
     )
@@ -443,7 +443,7 @@ func delayedOlderReceiptAcknowledgesExactIntentWithoutRegressingHead() async thr
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -455,7 +455,7 @@ func delayedOlderReceiptAcknowledgesExactIntentWithoutRegressingHead() async thr
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -488,7 +488,7 @@ func fenceRotationQuarantinesAndDifferentAccountParksWithoutRebinding() async th
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )

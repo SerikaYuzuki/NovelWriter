@@ -210,9 +210,71 @@ def check_canonical(root: Path) -> int:
             raise AssertionError(f"{scenario}: name is missing")
         if value.get("schemaVersion") != 2:
             raise AssertionError(f"{scenario}: unexpected scenario contract marker")
+        if value["name"] == "dense-local-leaves-and-promotion":
+            check_local_leaf_promotion(value)
         checked += 1
 
     return checked
+
+
+def check_local_leaf_promotion(fixture: dict[str, Any]) -> None:
+    """Independent local-state reducer; no Swift/Rust implementation is imported."""
+    assert fixture["idleSeconds"] == 60 and fixture["maximumSeconds"] == 300
+    assert fixture["localReason"] == "autosaveLeaf"
+    assert fixture["conflictChoices"] == ["useDevice", "useServer", "keepBoth"]
+    allowed = {"explicit", "navigation", "close", "migration", "sync", "open", "launch", "remoteHeadChanged"}
+    for case in fixture["cases"]:
+        parents = dict(case["initial"]["parents"])
+        current = stable = acknowledged = remote = case["initial"]["current"]
+        commands: list[list[str]] = []
+        first_edit = last_edit = None
+        conflict = blocked = False
+
+        def promote() -> None:
+            nonlocal stable, acknowledged, remote, first_edit, last_edit, conflict
+            if blocked or current == stable:
+                return
+            stable = current
+            commands.extend([["registerSnapshot", current], ["publish", current]])
+            if remote != acknowledged:
+                conflict = True
+            else:
+                acknowledged = remote = current
+            first_edit = last_edit = None
+
+        previous_time = 0
+        for step in case["steps"]:
+            now = step["at"]
+            assert now >= previous_time
+            previous_time = now
+            operation = step["op"]
+            if operation == "autosave":
+                if first_edit is None:
+                    first_edit = now
+                last_edit = now
+                current = step["snapshot"]
+                assert current not in parents
+                parents[current] = [stable]
+            elif operation == "promote":
+                assert step["reason"] in allowed
+                promote()
+            elif operation == "advance":
+                if first_edit is not None and (
+                    now - last_edit >= fixture["idleSeconds"]
+                    or now - first_edit >= fixture["maximumSeconds"]
+                ):
+                    promote()
+            elif operation == "assertCommands":
+                assert len(commands) == step["count"], case["name"]
+            elif operation == "remoteAdvance":
+                parents[step["snapshot"]] = [remote]
+                remote = step["snapshot"]
+            elif operation in {"park", "delete"}:
+                blocked = True
+            else:
+                raise AssertionError(f"unknown leaf operation: {operation}")
+        actual = dict(parents=parents, current=current, stable=stable, commands=commands, conflict=conflict)
+        assert actual == case["expected"], f"{case['name']}: {actual}"
 
 
 def check_protection(repo: Path) -> int:

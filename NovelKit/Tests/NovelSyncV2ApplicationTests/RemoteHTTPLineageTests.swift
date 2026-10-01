@@ -256,7 +256,7 @@ private func makeStore(
             workID: fixture.workID,
             document: fixture.document,
             documentCreatedAt: fixture.createdAt,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scope
     )
@@ -265,7 +265,7 @@ private func makeStore(
             workID: fixture.workID,
             document: fixture.document(title: "L"),
             documentCreatedAt: fixture.createdAt,
-            expectedGeneration: 1
+            expectedGeneration: 1, reason: .explicit
         ),
         scope: scope
     )
@@ -428,7 +428,7 @@ extension RemoteHTTPLineageTests {
         let scope = V2LocalWorkScope.bound(fixture.binding)
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: fixture.workID, document: fixture.document,
-            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0, reason: .explicit
         ), scope: scope)
         var parent = saved.snapshotID
         var snapshots: [EncodedSnapshot] = []
@@ -503,7 +503,7 @@ extension RemoteHTTPLineageTests {
                 workID: fixture.workID,
                 document: fixture.document(title: "local-\(generation)"),
                 documentCreatedAt: fixture.createdAt,
-                expectedGeneration: Int64(generation)
+                expectedGeneration: Int64(generation), reason: .explicit
             ), scope: scope)
             head = saved.snapshotID
         }
@@ -548,7 +548,7 @@ extension RemoteHTTPLineageTests {
         let scope = V2LocalWorkScope.bound(fixture.binding)
         let saved = try await store.checkpoint(V2CheckpointRequest(
             workID: fixture.workID, document: fixture.document,
-            documentCreatedAt: fixture.createdAt, expectedGeneration: 0
+            documentCreatedAt: fixture.createdAt, expectedGeneration: 0, reason: .explicit
         ), scope: scope)
         let command = try SealedCommand.decodeCanonical(productionJSON([
             "binding": ["accountFence": fixture.binding.accountFence, "accountId": fixture.binding.accountID,

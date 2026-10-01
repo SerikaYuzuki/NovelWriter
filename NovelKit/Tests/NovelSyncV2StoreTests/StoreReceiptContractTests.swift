@@ -15,7 +15,7 @@ func receiptEnvelopeBindsStatusResultScopeDigestPredicatesAndHead() async throws
             workID: workID,
             document: makeDocument(title: "receipt"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )

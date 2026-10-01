@@ -31,3 +31,17 @@ it remains an explicit NO-GO/skip and does not connect anywhere.
 
 
 Account deletion uses `tests/account_deletion_gate.rs` with an explicit fresh `FUMINIWA_ACCOUNT_DELETION_TEST_URL`. `Scripts/conformance-v2.sh` unsets `FUMINIWA_V2_TEST_DATABASE_URL`, `FUMINIWA_ACCOUNT_DELETION_TEST_URL`, and `AUTH_V2_TEST_DATABASE_URL`. Backup tests are `Scripts/operations/test_backup.py`.
+
+
+## D-103 local leaf contract
+
+`fixtures/scenarios/local-leaf-promotion.json` is executed by the independent
+Python reducer in `Scripts/conformance-v2.py`: sibling parents, zero remote
+commands for autosaves, idle/max timing, explicit/lifecycle/restart promotion,
+retained upgrade ancestry, parked/deleted local bytes and divergent-head CAS.
+Swift `LocalLeafTests`, `LocalLeafRecoveryTests` and `LeafPromotionTests` exercise
+real temporary SQLite, the production planner/worker and an injected timer.
+Other store/runtime restore and three-choice conflict suites remain required.
+App tests cover lifecycle flushing and EditorKit's existing IME/Undo gate.
+No real DB, account or server is needed, and a local pass does not establish
+physical device acceptance or production deployment.

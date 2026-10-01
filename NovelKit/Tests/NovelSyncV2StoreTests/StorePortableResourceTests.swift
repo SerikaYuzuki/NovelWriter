@@ -21,7 +21,7 @@ func portableResourcesAreLocalOnlyAndRoundTripThroughCheckpoint() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: 0,
+            expectedGeneration: 0, reason: .explicit,
             resources: resources
         ),
         scope: scopeA
@@ -35,7 +35,7 @@ func portableResourcesAreLocalOnlyAndRoundTripThroughCheckpoint() async throws {
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation,
+            expectedGeneration: first.generation, reason: .explicit,
             resources: resources
         ),
         scope: scopeA
@@ -55,7 +55,7 @@ func portableResourcePathCollisionFailsClosed() async throws {
                 workID: WorkID(UUID()),
                 document: makeDocument(title: "collision"),
                 documentCreatedAt: testDate,
-                expectedGeneration: 0,
+                expectedGeneration: 0, reason: .explicit,
                 resources: [
                     PortableResource(pathComponents: ["Notes"], kind: .directory),
                     PortableResource(pathComponents: ["notes"], kind: .directory)
@@ -89,7 +89,7 @@ func ordinaryCheckpointPreservesPortableResourcesUntilExplicitClear() async thro
             workID: workID,
             document: firstDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: 0,
+            expectedGeneration: 0, reason: .explicit,
             resources: resources
         ),
         scope: scopeA
@@ -99,7 +99,7 @@ func ordinaryCheckpointPreservesPortableResourcesUntilExplicitClear() async thro
             workID: workID,
             document: makeDocument(title: "second", id: documentID),
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -109,7 +109,7 @@ func ordinaryCheckpointPreservesPortableResourcesUntilExplicitClear() async thro
             workID: workID,
             document: makeDocument(title: "third", id: documentID),
             documentCreatedAt: testDate,
-            expectedGeneration: 2,
+            expectedGeneration: 2, reason: .explicit,
             resources: []
         ),
         scope: scopeA
@@ -135,7 +135,7 @@ func explicitAccountCloneCopiesPortableResourceMirror() async throws {
             workID: source,
             document: makeDocument(title: "source"),
             documentCreatedAt: testDate,
-            expectedGeneration: 0,
+            expectedGeneration: 0, reason: .explicit,
             resources: resources
         ),
         scope: .unbound

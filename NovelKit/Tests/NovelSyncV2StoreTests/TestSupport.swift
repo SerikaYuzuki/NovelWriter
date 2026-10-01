@@ -438,7 +438,7 @@ func createConflict(
             workID: workID,
             document: local,
             documentCreatedAt: testDate,
-            expectedGeneration: 0
+            expectedGeneration: 0, reason: .explicit
         ),
         scope: scopeA
     )
@@ -448,7 +448,7 @@ func createConflict(
             workID: workID,
             document: local,
             documentCreatedAt: testDate,
-            expectedGeneration: baseCheckpoint.generation
+            expectedGeneration: baseCheckpoint.generation, reason: .explicit
         ),
         scope: scopeA
     )

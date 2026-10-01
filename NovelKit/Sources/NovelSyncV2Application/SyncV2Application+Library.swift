@@ -12,6 +12,10 @@ public extension SyncV2Application {
         guard opened.document != nil || opened.generation != 0 || opened.snapshotID != nil else {
             throw SyncV2ApplicationError.workNotFound
         }
+        if runtimeIdentity != .preview {
+            _ = try await kernel.promoteCurrentLeaf(workID: workID)
+            cancelLeafPromotion(workID: workID)
+        }
         recordOpened(opened)
         let activeConflict = try await kernel.activeConflict(workID: workID)
         let adoption = try await kernel.pendingAdoption(workID: workID)
@@ -208,6 +212,7 @@ public extension SyncV2Application {
             }
             diagnosticStage = "request-sync"
             try await planner.requestSynchronization(workID: workID)
+            cancelLeafPromotion(workID: workID)
             diagnosticStage = "plan-command"
             return try await synchronizePendingCommand(workID: workID)
         } catch {

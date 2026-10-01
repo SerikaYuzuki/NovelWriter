@@ -52,7 +52,7 @@ public struct SyncV2LocalHistoryPage: Hashable, Sendable {
 public struct SyncV2HistoryItem: Hashable, Sendable {
     public var displayReason: String {
         switch reason {
-        case "autosave": "自動保存"
+        case "autosave", "autosaveLeaf": "自動保存"
         case "explicit": "手動保存"
         case "navigation": "画面切替時の保存"
         case "close": "終了時の保存"

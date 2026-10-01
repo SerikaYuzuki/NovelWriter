@@ -11,6 +11,9 @@ extension SyncV2Application {
             Task { try? await self.deleteWork(workID: deletion.workID) }
         }
         for workID in try await planner.pendingWorkIDs() {
+            if try await !kernel.hasUnpromotedLeaf(workID: workID) {
+                cancelLeafPromotion(workID: workID)
+            }
             scheduleWorker(for: workID)
         }
     }
@@ -53,12 +56,13 @@ extension SyncV2Application {
                 guard isCurrentWorker(workID: workID, owner: owner) else { return }
                 switch plan {
                 case .idle:
+                    let hasLeaf = try await kernel.hasUnpromotedLeaf(workID: workID)
                     if finishWorkerIfUnchanged(
                         workID: workID,
                         owner: owner,
                         observedWake: observedWake
                     ) {
-                        projectCompletedWorker(workID: workID)
+                        projectCompletedWorker(workID: workID, hasLeaf: hasLeaf)
                         return
                     }
                 case let .blocked(failure):
@@ -361,12 +365,12 @@ extension SyncV2Application {
     }
 
     /// A receipt completes one operation. Only a stable idle read completes the lane.
-    private func projectCompletedWorker(workID: WorkID) {
+    private func projectCompletedWorker(workID: WorkID, hasLeaf: Bool) {
         cancelRetry(for: workID)
         retryAttempts[workID] = nil
         guard let state = states[workID], case .syncing = state.remoteProgress else { return }
         setState(workID: workID, localDurability: state.localDurability,
-                 remoteProgress: .noChanges, result: .noChanges)
+                 remoteProgress: hasLeaf ? .pending : .noChanges, result: .noChanges)
     }
 
     private func finishWorkerIfUnchanged(

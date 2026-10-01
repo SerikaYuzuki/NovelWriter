@@ -30,7 +30,14 @@ extension LocalSyncV2Store {
                 latest[5].text == anchor else {
                 throw SyncV2StoreError.generationMismatch
             }
-            if request.reason.protectsOccurrence {
+            let promoted = if request.reason != .autosave {
+                try promoteCurrentLeafTransaction(
+                    workID: request.workID, scope: scope, reason: request.reason.rawValue
+                )
+            } else {
+                false
+            }
+            if request.reason.protectsOccurrence, !promoted {
                 try insertHistory(
                     workID: request.workID,
                     snapshotID: current,

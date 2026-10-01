@@ -248,7 +248,20 @@ extension IOSDocumentStore {
     @discardableResult
     func saveNow() async -> Bool {
         guard startupState == .ready else { return false }
-        return await saveCoordinator.saveNow()
+        let workID = syncV2ActiveWorkID
+        let session = currentDocumentSessionToken
+        let account = snapshotSyncV2AccountScope
+        guard await saveCoordinator.saveNow(), currentDocumentSessionToken == session,
+              syncV2ActiveWorkID == workID, snapshotSyncV2AccountScope == account else { return false }
+        do {
+            if let workID, let application = snapshotSyncV2Application {
+                try await application.promoteCheckpoint(workID: workID)
+            }
+            return true
+        } catch {
+            saveState = .failed
+            return false
+        }
     }
 
     func requestExport(readable: Bool = false) async {

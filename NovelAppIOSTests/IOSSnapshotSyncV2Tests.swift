@@ -4,6 +4,7 @@ import NovelAuth
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelSyncV2Store
 import Testing
 
 @MainActor
@@ -311,6 +312,31 @@ struct IOSSnapshotSyncV2Tests {
             expectedEditingToken: staleToken
         )
         #expect(store.document.episode(episodeID)?.episode.content == "新しい本文")
+    }
+
+    @Test("background promotes a durable leaf even when the save revision is clean")
+    func backgroundPromotesCleanLeaf() async throws {
+        let environment = makeEnvironment()
+        defer { environment.cleanup() }
+        let store = IOSDocumentStore(userDefaults: environment.defaults, libraryRoot: environment.root)
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let workID = try #require(store.syncV2ActiveWorkID)
+        let configuration = try #require(IOSDocumentStore.testRuntimeConfigurations[environment.root.standardizedFileURL])
+        let account = try #require(await configuration.vault.currentAccount())
+        let scope = V2LocalWorkScope.bound(V2AccountBinding(
+            accountID: account.accountID, accountFence: account.accountFence, serverInstanceID: "test-server"
+        ))
+        var document = store.document
+        document.title = "latest local leaf"
+        store.document = document
+        #expect(await store.checkpointSnapshotSyncV2(document, reason: .autosave))
+        let local = try LocalSyncV2Store(root: configuration.localRoot.url, policy: .openExisting)
+        #expect(try await local.hasUnpromotedLeaf(workID: workID, scope: scope))
+        #expect(await store.flushDeviceSyncForBackground(waitForRemote: false))
+        #expect(try await !local.hasUnpromotedLeaf(workID: workID, scope: scope))
+        #expect(try await local.open(workID: workID, scope: scope).document == document)
+        await local.close()
     }
 
     private func makeEnvironment() -> TestEnvironment {

@@ -20,7 +20,7 @@ func deviceChoiceCanBeSealedAfterEditAndRestart() async throws {
             workID: workID,
             document: edited,
             documentCreatedAt: testDate,
-            expectedGeneration: first.generation
+            expectedGeneration: first.generation, reason: .explicit
         ),
         scope: scopeA
     )
@@ -178,7 +178,7 @@ private func checkpoint(
             workID: workID,
             document: document,
             documentCreatedAt: testDate,
-            expectedGeneration: generation
+            expectedGeneration: generation, reason: .explicit
         ),
         scope: scopeA
     )

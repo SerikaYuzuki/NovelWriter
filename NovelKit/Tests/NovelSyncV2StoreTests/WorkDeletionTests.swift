@@ -16,7 +16,7 @@ import Testing
                 workID: work,
                 document: makeDocument(title: work.description),
                 documentCreatedAt: testDate,
-                expectedGeneration: 0,
+                expectedGeneration: 0, reason: .explicit,
                 attachments: [shared]
             ),
             scope: .unbound
@@ -31,7 +31,7 @@ import Testing
                 workID: target,
                 document: makeDocument(title: "late"),
                 documentCreatedAt: testDate,
-                expectedGeneration: 1
+                expectedGeneration: 1, reason: .explicit
             ),
             scope: .unbound
         )
@@ -60,7 +60,7 @@ import Testing
     let workID = WorkID(UUID())
     let document = makeDocument(title: "migration survivor")
     _ = try await store.checkpoint(
-        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0),
+        V2CheckpointRequest(workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit),
         scope: scopeA
     )
     let url = await store.databaseURL
@@ -82,7 +82,7 @@ import Testing
     let workID = WorkID(UUID())
     _ = try await store.checkpoint(
         V2CheckpointRequest(workID: workID, document: makeDocument(title: "preserved"),
-                            documentCreatedAt: testDate, expectedGeneration: 0), scope: scopeA
+                            documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit), scope: scopeA
     )
     let old = try await store.prepareWorkDeletion(workID: workID, activeBinding: bindingA)
     let rotated = V2AccountBinding(accountID: bindingA.accountID, accountFence: "new-fence",
@@ -118,7 +118,7 @@ import Testing
     for workID in [first, second] {
         _ = try await store.checkpoint(V2CheckpointRequest(
             workID: workID, document: makeDocument(title: "resources"), documentCreatedAt: testDate,
-            expectedGeneration: 0, resources: workID == first ? [shared, owned] : [shared]
+            expectedGeneration: 0, reason: .explicit, resources: workID == first ? [shared, owned] : [shared]
         ), scope: .unbound)
     }
     let deletion = try await store.prepareWorkDeletion(workID: first, activeBinding: nil)
@@ -140,12 +140,12 @@ import Testing
     let original = makeDocument(title: "unsent original")
     let file = SyncAttachment(attachmentId: UUID(), fileName: "material.txt", bytes: Data("private note".utf8))
     _ = try await store.checkpoint(V2CheckpointRequest(workID: work, document: original,
-                                                       documentCreatedAt: testDate, expectedGeneration: 0, attachments: [file]), scope: scopeA)
+                                                       documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit, attachments: [file]), scope: scopeA)
     let pendingDate = try #require(await store.oldestUnreceivedChange(workID: work, scope: scopeA))
     var updated = original
     updated.title = "last unsent title"
     _ = try await store.checkpoint(V2CheckpointRequest(workID: work, document: updated,
-                                                       documentCreatedAt: testDate, expectedGeneration: 1, attachments: [file]), scope: scopeA)
+                                                       documentCreatedAt: testDate, expectedGeneration: 1, reason: .explicit, attachments: [file]), scope: scopeA)
     #expect(try await store.oldestUnreceivedChange(workID: work, scope: scopeA) == pendingDate)
     #expect(try await store.oldestUnreceivedChange(workID: work, scope: .unbound) == nil)
     let deletion = try await store.prepareWorkDeletion(workID: work, activeBinding: bindingA)

@@ -28,7 +28,7 @@ struct WorkerProgressTests {
         if editDuringSync {
             updated.title = "更新した作品名"
         }
-        _ = try await app.checkpoint(workID: workID, document: updated, reason: .autosave,
+        _ = try await app.checkpoint(workID: workID, document: updated, reason: .explicit,
                                      documentCreatedAt: applicationTestCreatedAt)
         let afterSave = await app.uiState(workID: workID)
         if case .syncing = afterSave?.remoteProgress {} else {

@@ -13,7 +13,7 @@ func restartedPlannerFinalizesEveryUploadBeforeRegistration(expireFirstUpload: B
     let workID = WorkID(UUID())
     _ = try await store.checkpoint(V2CheckpointRequest(
         workID: workID, document: applicationTestDocument(title: "restart", body: "body"),
-        documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0
+        documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0, reason: .explicit
     ), scope: productionScope)
     let scope = TestScopeResolver(vault: config.vault, store: store)
     var uploaded = Set<UUID>()

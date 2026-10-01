@@ -293,7 +293,7 @@ func useServerReceiptAdvancesBaselineWithoutOverwritingNewerEdit() async throws 
             workID: workID,
             document: newerDocument,
             documentCreatedAt: testDate,
-            expectedGeneration: fixture.conflict.sourceGeneration
+            expectedGeneration: fixture.conflict.sourceGeneration, reason: .explicit
         ),
         scope: scopeA
     )
@@ -364,7 +364,7 @@ func useDeviceReceiptDoesNotLoseEditsTypedAfterResolutionStarted() async throws 
             workID: workID,
             document: newer,
             documentCreatedAt: testDate,
-            expectedGeneration: decision.generation
+            expectedGeneration: decision.generation, reason: .explicit
         ),
         scope: scopeA
     )

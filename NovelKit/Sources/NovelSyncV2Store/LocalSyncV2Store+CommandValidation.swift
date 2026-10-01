@@ -251,8 +251,9 @@ extension LocalSyncV2Store {
         if conflictRow != nil {
             throw SyncV2StoreError.staleConflictAction
         }
-        let currentMatches = context.work[2].int64 == context.command.sourceGeneration &&
-            context.work[3].blob == context.command.sourceSnapshotId.bytes
+        let currentMatches = try publishSourceIsCurrentOrStableParent(
+            command: context.command, workID: context.workID, work: context.work
+        )
         let candidateMatches = try context.payload.snapshot("candidateSnapshotId") ==
             context.command.sourceSnapshotId
         let headMatches = try context.payload.remoteHead("expectedRemoteHead") ==

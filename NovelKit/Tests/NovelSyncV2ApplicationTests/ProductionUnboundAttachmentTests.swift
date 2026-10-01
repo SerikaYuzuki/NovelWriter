@@ -53,7 +53,7 @@ func signedInLocalOnlyWorkHasNoRemotePlan() async throws {
     let workID = WorkID(UUID())
     _ = try await store.checkpoint(V2CheckpointRequest(
         workID: workID, document: applicationTestDocument(title: "端末だけ"),
-        documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0
+        documentCreatedAt: applicationTestCreatedAt, expectedGeneration: 0, reason: .explicit
     ), scope: .unbound)
     let planner = ProductionSyncV2Planner(
         store: store, scope: TestScopeResolver(vault: configuration.vault, store: store)

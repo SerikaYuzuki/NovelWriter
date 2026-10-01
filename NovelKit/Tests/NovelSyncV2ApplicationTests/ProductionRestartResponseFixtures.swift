@@ -67,6 +67,11 @@ func productionResponse(
         response["head"] = cloneHead.map(productionHead) ?? NSNull()
         response["newRootSnapshotId"] = payload["newRootSnapshotId"]
         response["newWorkId"] = payload["newWorkId"]
+    case "restore":
+        response["protectedRestoreBeforeSnapshotId"] = payload["expectedCurrentSnapshotId"]
+        response["generation"] = head?.generation as Any
+        response["head"] = head.map(productionHead) ?? NSNull()
+        response["snapshotId"] = payload["newSnapshotId"]
     case "publish" where result == .conflictPending:
         response["conflictId"] = UUID().uuidString.lowercased()
         response["conflictRevision"] = 1

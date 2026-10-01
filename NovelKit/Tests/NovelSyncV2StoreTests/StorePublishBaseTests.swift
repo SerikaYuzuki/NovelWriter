@@ -11,7 +11,7 @@ func editingBeforeRemoteAdoptionUsesAncestralHeadAndRecoversLegacyRejection() as
     let workID = WorkID(UUID())
     let document = makeDocument(title: "base")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let baseHead = try V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
     let first = try publishCommand(workID: workID, checkpoint: base)
@@ -25,7 +25,7 @@ func editingBeforeRemoteAdoptionUsesAncestralHeadAndRecoversLegacyRejection() as
     var edited = document
     edited.title = "offline edit"
     let local = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     var remoteDocument = document
     remoteDocument.title = "other device edit"
@@ -78,12 +78,12 @@ func remoteConflictPreservesVerifiedGraphBaseAndServerIdentity() async throws {
     let workID = WorkID(UUID())
     let document = makeDocument(title: "base")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     var edited = document
     edited.title = "local"
     let local = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: edited, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     var remoteDocument = document
     remoteDocument.title = "remote first"
@@ -140,7 +140,7 @@ func signingBackIntoSameAccountRecoversVerifiedPublishBase() async throws {
     let workID = WorkID(UUID())
     var document = makeDocument(title: "before sign-out")
     let base = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: 0, reason: .explicit
     ), scope: scopeA)
     let head = try V2RemoteHead(snapshotID: base.snapshotID, generation: 1)
     let published = try publishCommand(workID: workID, checkpoint: base)
@@ -148,7 +148,7 @@ func signingBackIntoSameAccountRecoversVerifiedPublishBase() async throws {
     try await store.acknowledge(commandAcknowledgement(published, head: head), scope: scopeA)
     document.title = "local edit retained"
     _ = try await store.checkpoint(V2CheckpointRequest(
-        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: base.generation
+        workID: workID, document: document, documentCreatedAt: testDate, expectedGeneration: base.generation, reason: .explicit
     ), scope: scopeA)
     guard case let .bound(binding) = scopeA else { throw SyncV2StoreError.accountMismatch }
     try await store.transitionAccountScopes(from: binding, to: nil)

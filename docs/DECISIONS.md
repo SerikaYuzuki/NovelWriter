@@ -75,3 +75,12 @@ iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサ�
 ## D-102: remote-only初回取り込みを単一transactionで確定（2026-10-01）
 
 未取得作品（work行なし、またはgeneration 0・current NULL）でeditor session・conflict・未処理intentがない場合、graphの全文検証後、単一のBEGIN IMMEDIATEで全履歴とcurrentをinstallする。COMMIT前の中断・失敗は全体をrollbackする。COMMIT後の取消し・account変更では表示を拒否し、元のbindingに属する完成済み作品を保持する。digest・graph・anchor・scope・CASの検証を維持し、通常同期と競合解決は永続Inboxのstage/verify/adoptを継続する。既存の未完了Inboxと履歴・証跡は削除しない。SQLite schemaとv2名称は変更しない。
+
+
+## D-103: 自動保存は端末内の葉、公開時点だけ登録（2026-10-01）
+
+利用者が[同期レビュー D-01](SYNC_REVIEW.md#判断結果2026-10-01利用者)を採用した。2秒ごとの自動保存は直前の昇格済みcheckpointを親とする端末内の葉とし、SQLiteで本文・current・履歴を確定するが同期intentは作らない。別端末へ見せる履歴は公開時点単位になる。1作品で約1日に1,467世代（自動保存1,465件）の線形履歴が増えていたため、初回取り込み、祖先判定、通信往復の増加を抑える。
+
+明示保存、画面・作品切替、終了・background、明示同期、最終変更から60秒の待機、連続編集の5分上限で最新の葉を昇格する。起動・openでは中断時の葉を回収する。remote headの変化を照合する経路と同じaccountの再計画も、送信する葉を先に保護する。昇格は既存snapshotの保護付き履歴とintentを同一transactionで確定し、本文をeditorへ再installしない。タイマーは両OS共通の定数と差替え可能な時計を使う。
+
+新しい葉だけをhistory occurrenceの`reason=autosaveLeaf, pinned=0`で区別する。昇格時は同じsnapshotへ`promotion`（または保護理由）のpinned occurrenceを追加する。旧`autosave`、取り込み済みhead、復元・競合解決は従来の安定点として扱うため、SQLite schemaの追加・移行、wire、server変更は不要。旧履歴と未採用の葉は削除・書換えしない。復元・競合の3択、WorkID/session/account/IME境界とpublish CASを維持する。具体的な規範は[§4](SNAPSHOT_SYNC_V2.md#4-snapshot-and-checkpoint-schema)と[state machine](sync/v2/state-machine.md)。

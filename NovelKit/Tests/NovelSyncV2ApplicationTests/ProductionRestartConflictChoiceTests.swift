@@ -30,7 +30,7 @@ extension ProductionRestartTests {
                 title: "端末追加入力",
                 body: "解決中も保持"
             ),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         let newerIntent = try #require(
@@ -168,7 +168,7 @@ extension ProductionRestartTests {
                 title: "両方保持の追加入力",
                 body: "後続編集"
             ),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         let newerIntent = try #require(

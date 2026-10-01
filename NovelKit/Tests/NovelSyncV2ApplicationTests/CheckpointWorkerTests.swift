@@ -42,7 +42,7 @@ struct CheckpointWorkerTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: document,
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await eventually {
@@ -130,14 +130,14 @@ struct CheckpointWorkerTests {
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(id: documentID, body: "first"),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         try await eventually { await remote.recordedOperations().count == 1 }
         _ = try await app.checkpoint(
             workID: workID,
             document: applicationTestDocument(id: documentID, body: "second"),
-            reason: .autosave,
+            reason: .explicit,
             documentCreatedAt: applicationTestCreatedAt
         )
         await remote.resumeSuspended()

@@ -78,7 +78,7 @@ func seedProductionConflict(
             document: localDocument,
             documentCreatedAt: applicationTestCreatedAt,
             expectedGeneration: 1,
-            reason: .autosave
+            reason: .explicit
         ),
         scope: productionScope
     )

@@ -47,7 +47,7 @@ struct AutomaticSyncRaceTests {
             changed.title = "newer local edit"
             _ = try await store.checkpoint(V2CheckpointRequest(
                 workID: workID, document: changed, documentCreatedAt: applicationTestCreatedAt,
-                expectedGeneration: 1
+                expectedGeneration: 1, reason: .explicit
             ), scope: productionScope)
         case .account:
             try await application.parkAccountScope(workID: workID, binding: SyncV2AccountScopeBinding(

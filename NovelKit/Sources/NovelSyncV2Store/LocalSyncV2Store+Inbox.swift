@@ -433,6 +433,10 @@ extension LocalSyncV2Store {
         guard try activeConflictRow(workID: workID, binding: binding) == nil else {
             throw SyncV2StoreError.staleConflictAction
         }
+        if let bytes = current[3].blob,
+           try isUnpromotedLeaf(workID: workID, snapshotID: SnapshotID(rawValue: bytes.hexString)) {
+            throw SyncV2StoreError.staleCAS
+        }
         guard current[6].text == V2SyncLane.normal.rawValue,
               try query(
                   """
