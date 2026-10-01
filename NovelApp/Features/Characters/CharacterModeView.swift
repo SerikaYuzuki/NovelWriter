@@ -119,6 +119,7 @@ private struct CharacterSheetView: View {
 
     let onAppearanceJump: (CharacterAppearance) -> Void
 
+    @State private var selectedCharacterAppearances: [CharacterAppearance] = []
     private let roleChoices = ["主人公", "ヒロイン", "ライバル", "敵役", "脇役", "モブ"]
 
     var body: some View {
@@ -182,36 +183,37 @@ private struct CharacterSheetView: View {
             .padding(24)
             .frame(maxWidth: 920, alignment: .leading)
         }
-        .workbenchGlassChromeStyle()
+        .background(FuminiwaColor.paper.color)
+        .onChange(of: appState.document.chapters, initial: true) { _, _ in refreshAppearances() }
+        .onChange(of: appState.selectedCharacter) { _, _ in refreshAppearances() }
         .onDisappear {
             appState.commitCharacterEditing()
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let character = appState.selectedCharacter {
-                MacThumbnailEditor(owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
-            }
-            TextField("名前", text: selectedCharacterNameBinding)
-                .font(.title2)
-                .textFieldStyle(.plain)
-                .onSubmit {
-                    appState.commitCharacterEditing()
+        VStack(alignment: .leading, spacing: Spacing.group) {
+            HStack(alignment: .top, spacing: Spacing.group) {
+                if let character = appState.selectedCharacter {
+                    MacThumbnailEditor(owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name,
+                                       color: character.colorHex.flatMap { Color(hex: $0) })
                 }
-
-            HStack(alignment: .top, spacing: 12) {
-                WorkbenchLabeledField("ふりがな") {
-                    TextField("ふりがな", text: selectedCharacterKanaBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 220)
-                        .onSubmit {
-                            appState.commitCharacterEditing()
-                        }
+                VStack(alignment: .leading, spacing: Spacing.small) {
+                    TextField("名前", text: selectedCharacterNameBinding)
+                        .font(.title2.weight(.semibold)).textFieldStyle(.plain)
+                        .onSubmit { appState.commitCharacterEditing() }
+                    WorkbenchLabeledField("ふりがな") {
+                        TextField("ふりがな", text: selectedCharacterKanaBinding)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                            .onSubmit { appState.commitCharacterEditing() }
+                    }
+                    if let role = appState.selectedCharacter?.role, !role.isEmpty {
+                        Text(role).font(.caption).padding(Spacing.extraSmall)
+                            .background(FuminiwaColor.accentMuted.color, in: RoundedRectangle(cornerRadius: Radius.chip))
+                    }
                 }
-
-                colorControls
             }
+            colorControls
         }
     }
 
@@ -237,6 +239,9 @@ private struct CharacterSheetView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.group)
+        .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, lineWidth: 0.5))
     }
 
     private func labeledEditor(_ title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
@@ -313,9 +318,9 @@ private struct CharacterSheetView: View {
         )
     }
 
-    private var selectedCharacterAppearances: [CharacterAppearance] {
-        guard let character = appState.selectedCharacter else { return [] }
-        return CharacterAppearanceDetector.appearances(for: character, in: appState.document)
+    private func refreshAppearances() {
+        guard let character = appState.selectedCharacter else { selectedCharacterAppearances = []; return }
+        selectedCharacterAppearances = CharacterAppearanceDetector.appearances(for: character, in: appState.document)
     }
 }
 
@@ -337,13 +342,19 @@ private struct CharacterColorPresetPicker: View {
                         .frame(width: 16, height: 16)
                         .overlay {
                             Circle()
-                                .stroke(strokeColor, lineWidth: 1)
+                                .stroke(strokeColor, lineWidth: selectedHex == hex ? 2 : 0.5)
+                        }
+                        .overlay {
+                            if selectedHex == hex {
+                                Image(systemName: "checkmark").font(.caption2.bold()).foregroundStyle(.white)
+                            }
                         }
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.borderless)
                 .help(CharacterColorPreset.name(for: hex))
                 .accessibilityLabel(CharacterColorPreset.name(for: hex))
+                .accessibilityAddTraits(selectedHex == hex ? .isSelected : [])
             }
         }
     }

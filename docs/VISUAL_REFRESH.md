@@ -1,13 +1,8 @@
-# 残りの画面計画
+# 画面刷新の受入確認の残件
 
-色・文字・寸法・placeholder・動きは[STYLE](STYLE.md)を正とする。外観既定・本文・IME・執筆補助バーは維持する。
+棚・作品ホーム・人物・世界観・プロット／伏線・切り抜きの実装規約は[STYLE](STYLE.md)へ集約した。
 
-1. 棚：端末ごとのgrid/list切替、表紙＋明朝作品名＋状態。macOS左にbrand画像、操作は「新規」＋「…」。iOSは独立したアカウントsection、＋menuに新規／取り込み。挨拶・今日の文字数・最近開いた順は追加しない。
-2. iOS作品ホーム：表紙hero＋あらすじ3行、共有の文字数／400字詰め枚数／章／話。機能を2列tileと件数、AX文字サイズではlist。同期1行、競合時のみ既存3択、履歴・書き出しは「その他」。
-3. 人物：avatar行、詳細hero（72pt、名前・ふりがな・役割）、sectionをcard化。色選択はring＋checkmark＋日本語色名。登場検出をcacheしてから追加する。
-4. 世界観：行28ptサムネイル、画像があるときだけ詳細hero。本文編集領域は維持する。
-5. プロット／伏線：surface card、10pt角丸、hairline、選択1.5pt accent ring。macOS hoverはわずかに明るく、影はdrag中だけ。空は点線drop領域。iPad grid／iPhone icon＋2行memo。未回収flag＋warning、回収済みcheckmark.circle.fill＋leaf。
+- macOSのネイティブウインドウ撮影と目視受入。隔離したDebug-TestでのView描画は取得できるが、この作業環境では外部のウインドウ撮影が黒い画像になる。View描画をnative toolbar／materialの受入成功とは扱わない。作品棚の表紙／一覧（700pt含む）、人物、世界観、プロット／伏線、切り抜きをLight／Darkで再確認する。
+- `./Scripts/check.sh`全工程の完走。実行環境の`SwiftMacros.TaskLocalMacro`起動時に`sandbox_apply: Operation not permitted`で停止する。個別のアプリテスト・lintの結果と区別する。
 
-macOS最小幅700／Outline最小224、iPad Split View、iPhone AX Dynamic Typeを確認する。サムネイルは表示寸法decode・cache、gridはLazyVGrid。保存経路へUI処理を入れない。
-
-- iOS work home: remove internal jargon such as 「スナップショット履歴」 (use 「履歴」) and 「作品パッケージ」 wording per STYLE §1/§6 when redesigning.
+画面取得は`VisualRefreshCaptureTests`の隔離compositionを使う。`FUMINIWA_VISUAL_CAPTURE=1`でView描画、macOSの`FUMINIWA_EXTERNAL_CAPTURE=1`で外部撮影の受渡しを有効にする。実作品・実アカウント・実サーバーを使用しない。

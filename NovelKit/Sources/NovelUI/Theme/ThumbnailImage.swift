@@ -52,7 +52,7 @@ public struct ThumbnailImage: View {
             } else if kind == .work {
                 FuminiwaColor.paper.color
                 HStack(spacing: 0) { FuminiwaColor.accent.color.frame(width: size / 8); Spacer(minLength: 0) }
-                Text(String(title.first ?? "本")).font(FuminiwaType.workTitle).minimumScaleFactor(0.5)
+                Text(CoverInitial.character(in: title)).font(FuminiwaType.workTitle).minimumScaleFactor(0.5)
                     .foregroundStyle(FuminiwaColor.textPrimary.color)
             } else if kind == .character {
                 color ?? FuminiwaColor.sunken.color
@@ -78,14 +78,15 @@ private final class ShelfThumbnailCache {
 public struct LazyCoverThumbnail: View {
     let title: String
     let identity: String
+    let size: CGFloat
     let load: @MainActor () async -> Data?
     @State private var bytes: Data?
-    public init(title: String, identity: String, load: @escaping @MainActor () async -> Data?) {
-        self.title = title; self.identity = identity; self.load = load
+    public init(title: String, identity: String, size: CGFloat = 32, load: @escaping @MainActor () async -> Data?) {
+        self.title = title; self.identity = identity; self.size = size; self.load = load
     }
 
     public var body: some View {
-        ThumbnailImage(data: bytes, kind: .work, title: title, size: 32)
+        ThumbnailImage(data: bytes, kind: .work, title: title, size: size)
             .accessibilityHidden(true)
             .task(id: identity) {
                 bytes = nil

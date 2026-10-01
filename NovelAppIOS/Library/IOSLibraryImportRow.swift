@@ -9,6 +9,7 @@ struct IOSLibraryImportRow: View {
     let isRenaming: Bool
     let open: () -> Void
     let rename: () -> Void
+    var isGrid = false
 
     private var isImporting: Bool {
         store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID || store.libraryPrefetchWorkID == item.workID
@@ -19,18 +20,24 @@ struct IOSLibraryImportRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Spacing.small) {
-            LazyCoverThumbnail(title: item.title, identity: "\(item.workID)-\(store.snapshotSyncV2AccountScope)-\(item.localGeneration ?? 0)") {
-                guard item.availability != .remoteOnly else { return nil }
-                let account = store.snapshotSyncV2AccountScope
-                let bytes = try? await store.snapshotSyncV2Application?.localCoverThumbnail(workID: item.workID)
-                guard account == store.snapshotSyncV2AccountScope else { return nil }
-                return bytes
-            }
+        let layout = isGrid ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.small)) : AnyLayout(HStackLayout(alignment: .top, spacing: Spacing.small))
+        layout {
+            Button(action: open) {
+                LazyCoverThumbnail(title: item.title, identity: "\(item.workID)-\(store.snapshotSyncV2AccountScope)-\(item.localGeneration ?? 0)", size: isGrid ? 120 : 32) {
+                    guard item.availability != .remoteOnly else { return nil }
+                    let account = store.snapshotSyncV2AccountScope
+                    let bytes = try? await store.snapshotSyncV2Application?.localCoverThumbnail(workID: item.workID)
+                    guard account == store.snapshotSyncV2AccountScope else { return nil }
+                    return bytes
+                }
+            }.buttonStyle(.plain).disabled(isRenaming)
+                .accessibilityLabel("\(item.title)を開く")
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                 Button(action: open) {
                     VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                         Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
+                            .font(isGrid ? FuminiwaType.workTitle : .body)
+                            .lineLimit(isGrid ? 2 : nil)
                             .foregroundStyle(FuminiwaColor.textPrimary.color)
                         status
                     }
@@ -66,6 +73,10 @@ struct IOSLibraryImportRow: View {
             }
             if isImporting {
                 Button("取り込みを中止") { Task { await store.cancelLibraryImport() } }
+            }
+            if store.libraryImportFailures[item.workID] != nil {
+                Button("再試行") { store.takeOntoDevice(workID: item.workID, title: item.title) }
+                    .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
             }
             Button("作品名を変更", systemImage: "pencil", action: rename)
                 .disabled(isRenaming || isImporting)

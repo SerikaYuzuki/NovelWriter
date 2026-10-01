@@ -1,10 +1,12 @@
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelThumbnail
 import NovelUI
 import SwiftUI
 
 struct IOSProjectHomeView: View {
     let store: IOSDocumentStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showsSnapshotHistory = false
     let openWriting: () -> Void
     let openProjectInfo: () -> Void
@@ -18,56 +20,54 @@ struct IOSProjectHomeView: View {
     var body: some View {
         List {
             Section {
-                Text(store.document.title.isEmpty ? "名称未設定の作品" : store.document.title)
-                    .font(.title2.weight(.semibold))
-                if !store.document.synopsis.isEmpty {
-                    Text(store.document.synopsis).foregroundStyle(.secondary)
-                }
+                WorkInfoSummary(document: store.document, coverData: store.thumbnailData(ThumbnailOwner(.work, store.document.id)), synopsis: store.document.synopsis)
             }
-            Section("執筆") { Button(action: openWriting) { ProjectSectionStyle.writing.label } }
+            Section("執筆") { Button(action: openWriting) { ProjectSectionStyle.writing.label }.buttonStyle(.borderedProminent) }
             Section("作品") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: Spacing.small) {
+                    feature("人物", symbol: "person.2", count: store.document.characters.count, action: openCharacters)
+                    feature("世界観", symbol: "globe.asia.australia", count: store.document.worldNotes.count, action: openWorldbuilding)
+                    feature("プロット", symbol: "rectangle.stack", count: store.document.plotCards.count, action: openPlot)
+                    feature("伏線 未回収", symbol: "flag", count: unresolvedCount, action: openPlot)
+                    feature("資料", symbol: "paperclip", count: referenceCount, action: openReferences)
+                }
+                .listRowBackground(FuminiwaColor.paper.color)
                 Button(action: openProjectInfo) { ProjectSectionStyle.projectInfo.label }
-                Button(action: openPlot) { ProjectSectionStyle.plot.label }
-                    .badge(store.document.flags.count(where: { !$0.isResolved }))
-                Button(action: openCharacters) { ProjectSectionStyle.characters.label }
-                Button(action: openWorldbuilding) { ProjectSectionStyle.worldbuilding.label }
                 Button(action: openFeedback) { ProjectSectionStyle.feedback.label }
-                Button(action: openReferences) { ProjectSectionStyle.references.label }
             }
             Section("同期") {
-                Text(store.isCurrentWorkParked
-                    ? "別アカウントのため保留中"
-                    : store.snapshotSyncState?.japaneseLabel
-                    ?? (store.snapshotSyncOutcome == .offline
-                        ? "端末に保存済み・通信待ち" : "端末に保存済み"))
-                    .foregroundStyle(.secondary)
-                IOSExplicitSyncButton(store: store)
+                IOSExplicitSyncButton(store: store, status: syncStatus)
                 if store.snapshotSyncConflict != nil {
-                    Text("この端末とサーバーの変更が分かれています")
-                        .foregroundStyle(FuminiwaColor.warning.color)
-                    Text("残す内容を選んでください。通信が戻ると同期を続けます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
-                        ForEach([
-                            SyncV2ConflictChoice.useDevice,
-                            .useServer,
-                            .keepBoth
-                        ], id: \.rawValue) { choice in
-                            Button(conflictChoiceTitle(choice)) {
-                                Task {
-                                    _ = await store.resolveSnapshotSyncV2Conflict(
-                                        using: choice,
-                                        expectedSelection: displayedSelection
-                                    )
+                    VStack(alignment: .leading, spacing: Spacing.small) {
+                        Text("この端末とサーバーの変更が分かれています")
+                            .foregroundStyle(FuminiwaColor.warning.color)
+                        Text("残す内容を選んでください。通信が戻ると同期を続けます。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let displayedSelection = store.snapshotSyncV2DisplayedConflictSelection {
+                            ForEach([
+                                SyncV2ConflictChoice.useDevice,
+                                .useServer,
+                                .keepBoth
+                            ], id: \.rawValue) { choice in
+                                Button(conflictChoiceTitle(choice)) {
+                                    Task {
+                                        _ = await store.resolveSnapshotSyncV2Conflict(
+                                            using: choice,
+                                            expectedSelection: displayedSelection
+                                        )
+                                    }
                                 }
+                                .disabled(store.isExplicitSyncInFlight)
+                                Text(conflictChoiceDescription(choice))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            .disabled(store.isExplicitSyncInFlight)
-                            Text(conflictChoiceDescription(choice))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
                         }
                     }
+                    .padding(Spacing.medium)
+                    .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.warning.color, lineWidth: 1))
                 }
                 if case .readyForSafeAdoption = store.snapshotSyncState?.remoteProgress {
                     Button("サーバーの版を反映") {
@@ -79,28 +79,59 @@ struct IOSProjectHomeView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Section("スナップショット履歴") {
+            Section("その他") {
                 Button("履歴を見る") { showsSnapshotHistory = true }
                 Text("保存した版の確認・復元ができます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            Section {
                 Button(action: openSettings) { ProjectSectionStyle.settings.label }
                 Button { Task { await store.requestExport() } } label: {
-                    Label("作品パッケージを書き出す", systemImage: "square.and.arrow.up")
+                    Label("作品を書き出す…", systemImage: "square.and.arrow.up")
                 }
                 Button { Task { await store.requestExport(readable: true) } } label: {
                     Label("本文と資料を書き出す（ZIP）", systemImage: "square.and.arrow.up")
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
+        .onChange(of: store.document.flags, initial: true) { _, _ in unresolvedCount = store.document.flags.count(where: { !$0.isResolved }) }
+        .onChange(of: store.attachments, initial: true) { _, _ in referenceCount = store.referenceAttachments.count }
         .navigationTitle("作品ホーム")
         .sheet(isPresented: $showsSnapshotHistory) {
             NavigationStack { IOSSnapshotHistoryView(store: store) }
         }
         .onChange(of: store.syncV2ActiveWorkID) { _, _ in showsSnapshotHistory = false }
         .onChange(of: store.snapshotSyncV2AccountScope) { _, _ in showsSnapshotHistory = false }
+    }
+
+    private var syncStatus: SyncV2LibraryStatus {
+        let item = store.syncV2LibraryItems.first { $0.workID == store.syncV2ActiveWorkID }
+        return SyncV2LibraryStatus.resolve(availability: item?.availability ?? .localOnly,
+                                           accountState: item?.accountState ?? .unbound,
+                                           remoteHeadConfirmed: item?.remoteHeadConfirmed ?? false,
+                                           progress: store.snapshotSyncState?.remoteProgress ?? item?.remoteProgress ?? .idle)
+            .delayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: Date())
+    }
+
+    @State private var unresolvedCount = 0
+    @State private var referenceCount = 0
+
+    private func feature(_ title: String, symbol: String, count: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(HStackLayout(spacing: Spacing.small)) : AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.small))
+            layout {
+                Label(title, systemImage: symbol).symbolRenderingMode(.hierarchical)
+                if dynamicTypeSize.isAccessibilitySize {
+                    Spacer()
+                }
+                Text(count, format: .number).font(.title2).monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 72, alignment: .leading)
+            .padding(Spacing.medium)
+            .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, lineWidth: 0.5))
+        }.buttonStyle(.plain)
     }
 
     private func conflictChoiceTitle(_ choice: SyncV2ConflictChoice) -> String {

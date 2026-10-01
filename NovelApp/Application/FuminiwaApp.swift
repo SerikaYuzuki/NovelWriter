@@ -167,6 +167,7 @@ struct FuminiwaApp: App {
     var body: some Scene {
         Window("作品一覧", id: "library") {
             LibraryWindowView()
+                .defaultAppStorage(appState.userDefaults)
                 .environment(appState)
                 .environment(documentPanelPresenter)
                 .task { await bootstrapIfNeeded() }

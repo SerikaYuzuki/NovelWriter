@@ -1,6 +1,7 @@
 import AppKit
 import CoreTransferable
 import NovelCore
+import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -371,6 +372,7 @@ private struct PlotCardCanvas: View {
             }
             .frame(width: 260)
             .frame(minHeight: 120)
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(FuminiwaColor.separator.color, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
             .dropDestination(for: PlotCardID.self) { items, _ in
                 guard let droppedID = items.first else { return false }
                 appState.movePlotCard(id: droppedID, toChapter: chapterID, before: nil)
@@ -381,6 +383,7 @@ private struct PlotCardCanvas: View {
                 let card = item.value
                 PlotBoardCard(
                     card: card,
+                    isSelected: appState.selectedPlotCard?.id == card.id,
                     onEdit: {
                         editingCardRequest = item
                         appState.selectPlotCard(card.id)
@@ -403,6 +406,9 @@ private struct PlotCardCanvas: View {
 
 private struct PlotBoardCard: View {
     let card: PlotCard
+    var isSelected = false
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -423,14 +429,16 @@ private struct PlotBoardCard: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(.quaternary.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(isHovered ? FuminiwaColor.elevatedSurface.color : FuminiwaColor.surface.color)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.separator, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Radius.card)
+                    .strokeBorder(isSelected ? FuminiwaColor.accent.color : FuminiwaColor.separator.color, lineWidth: isSelected ? 1.5 : 0.5)
             }
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(Motion.standard(reduceMotion: reduceMotion), value: isHovered)
         .contextMenu {
             Button("編集") {
                 onEdit()

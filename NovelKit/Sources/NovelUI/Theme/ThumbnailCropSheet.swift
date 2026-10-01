@@ -47,6 +47,8 @@ public struct ThumbnailCropSheet: View {
                         do { let encoded = try ThumbnailEncoder.encode(data, owner: owner, crop: crop); onSave(encoded); dismiss() }
                         catch { self.error = error.localizedDescription }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(preview == nil)
                 }
             }
         }
@@ -60,11 +62,24 @@ public struct ThumbnailCropSheet: View {
         let height = width / owner.aspectRatio
         let base = max(width / CGFloat(image.width), height / CGFloat(image.height))
         let factor = base * crop.zoom
+        let shape = RoundedRectangle(cornerRadius: owner.kind == .character ? width / 2 : owner.kind == .work ? Radius.cover : Radius.thumbnail)
         return Image(decorative: image, scale: 1).resizable()
             .frame(width: CGFloat(image.width) * factor, height: CGFloat(image.height) * factor)
             .offset(x: (0.5 - crop.centerX) * CGFloat(image.width) * factor, y: (0.5 - crop.centerY) * CGFloat(image.height) * factor)
-            .frame(width: width, height: height).clipped()
-            .clipShape(RoundedRectangle(cornerRadius: owner.kind == .character ? width / 2 : owner.kind == .work ? Radius.cover : Radius.thumbnail))
+            .frame(width: width + 32, height: height + 32).clipped()
+            .overlay {
+                Rectangle().fill(.black.opacity(0.55))
+                    .mask {
+                        Rectangle().overlay {
+                            shape.frame(width: width, height: height).blendMode(.destinationOut)
+                        }.compositingGroup()
+                    }
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                shape.stroke(.white, lineWidth: 1.5).frame(width: width, height: height)
+                    .allowsHitTesting(false)
+            }
             .contentShape(Rectangle())
             .gesture(DragGesture().onChanged { value in
                 let initial = dragStart ?? crop; dragStart = initial

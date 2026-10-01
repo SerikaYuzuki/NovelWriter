@@ -255,11 +255,12 @@ struct PlotCardRow: View {
 struct FlagRow: View {
     let flag: Flag
     let plantedTitle: String?
+    var selected = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: flag.isResolved ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(flag.isResolved ? StyleToken.success : .secondary)
+            Image(systemName: flag.isResolved ? "checkmark.circle.fill" : "flag")
+                .foregroundStyle(flag.isResolved ? FuminiwaColor.leaf.color : FuminiwaColor.warning.color)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(NovelDocument.normalizedFlagTitle(flag.title))
@@ -272,6 +273,8 @@ struct FlagRow: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surfaceCard(selected: selected)
     }
 }
 

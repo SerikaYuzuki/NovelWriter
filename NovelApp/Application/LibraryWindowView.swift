@@ -2,6 +2,7 @@ import NovelUI
 import SwiftUI
 
 struct LibraryWindowView: View {
+    var observesLibrary = true
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(AppState.self) private var appState
@@ -10,8 +11,8 @@ struct LibraryWindowView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: "book.closed.fill")
-                    .font(.largeTitle).foregroundStyle(.tint)
+                Image("FuminiwaBookSprout").resizable().scaledToFit()
+                    .frame(maxWidth: 200).accessibilityHidden(true)
                 Text("ふみにわ").font(.largeTitle.bold())
                 Text("書きたい物語を、ここから。")
                     .foregroundStyle(.secondary)
@@ -22,9 +23,10 @@ struct LibraryWindowView: View {
                 Text("オフラインでも作成・編集できます。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(28).frame(width: 280)
+            .padding(Spacing.large).frame(width: 240)
+            .background(FuminiwaColor.paper.color)
             Divider()
-            LibraryPane()
+            LibraryPane(observesImports: observesLibrary)
                 .padding(.vertical, 16)
         }
         .frame(minWidth: 700, minHeight: 420)
@@ -33,6 +35,7 @@ struct LibraryWindowView: View {
             dismissWindow(id: "library")
         }
         .task {
+            guard observesLibrary else { return }
             await appState.refreshSnapshotLibrary()
             await appState.refreshSnapshotRemoteCatalog()
         }

@@ -27,15 +27,12 @@ public struct ThumbnailEditor: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: Spacing.small) {
-            ThumbnailImage(data: data, kind: owner.kind, title: title, size: owner.kind == .character ? 72 : 96, color: color)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(title)の画像")
-                .contextMenu { controls }
-            #if os(macOS)
-                .dropDestination(for: URL.self) { urls, _ in
-                    guard let url = urls.first, !saving else { return false }; read(url); return true
-                }
-            #endif
+            if owner.kind != .worldNote || data != nil {
+                ThumbnailImage(data: data, kind: owner.kind, title: title, size: owner.kind == .character ? 72 : 96, color: color)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(title)の画像")
+                    .contextMenu { controls }
+            }
             HStack {
                 Menu(data == nil ? "画像を設定…" : "画像を変更…") { controls }
                     .accessibilityLabel(data == nil ? "\(title)の画像を設定" : "\(title)の画像を変更")
@@ -58,23 +55,28 @@ public struct ThumbnailEditor: View {
             #endif
         }
         .disabled(saving)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.image]) { result in
-            switch result { case let .success(url): read(url); case let .failure(error): self.error = error.localizedDescription }
-        }
-        .sheet(item: $picked) { item in
-            ThumbnailCropSheet(data: item.data, owner: owner) { bytes in persist(bytes) }
-        }
-        .confirmationDialog("\(title)の画像を削除しますか？", isPresented: $removing) {
-            Button("削除", role: .destructive) { persist(nil) }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("以前の画像は作品の履歴から復元できます。") }
-        .alert("画像を変更できませんでした", isPresented: Binding(get: { error != nil }, set: {
-            if !$0 {
-                error = nil
+        #if os(macOS)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first, !saving else { return false }; read(url); return true
             }
-        })) {
-            Button("閉じる") { error = nil }
-        } message: { Text(error ?? "") }
+        #endif
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.image]) { result in
+                switch result { case let .success(url): read(url); case let .failure(error): self.error = error.localizedDescription }
+            }
+            .sheet(item: $picked) { item in
+                ThumbnailCropSheet(data: item.data, owner: owner) { bytes in persist(bytes) }
+            }
+            .confirmationDialog("\(title)の画像を削除しますか？", isPresented: $removing) {
+                Button("削除", role: .destructive) { persist(nil) }
+                Button("キャンセル", role: .cancel) {}
+            } message: { Text("以前の画像は作品の履歴から復元できます。") }
+            .alert("画像を変更できませんでした", isPresented: Binding(get: { error != nil }, set: {
+                if !$0 {
+                    error = nil
+                }
+            })) {
+                Button("閉じる") { error = nil }
+            } message: { Text(error ?? "") }
     }
 
     @ViewBuilder private var controls: some View {

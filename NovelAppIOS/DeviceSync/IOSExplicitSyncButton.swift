@@ -4,6 +4,7 @@ import SwiftUI
 
 struct IOSExplicitSyncButton: View {
     let store: IOSDocumentStore
+    var status: SyncV2LibraryStatus?
     @State private var delayClock = SyncV2DelayClock()
     @State private var showingSetup = false
     @State private var session: IOSDocumentSessionToken?
@@ -22,7 +23,7 @@ struct IOSExplicitSyncButton: View {
     }
 
     var body: some View {
-        Button(store.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath") {
+        Button {
             if store.canExplicitlySyncCurrentWork {
                 Task { _ = await store.synchronizeSnapshotSyncV2() }
             } else {
@@ -30,7 +31,14 @@ struct IOSExplicitSyncButton: View {
                 account = store.snapshotSyncV2AccountScope
                 showingSetup = true
             }
+        } label: {
+            if let status {
+                StatusLabel(status.text, systemImage: status.symbol, tone: StatusTone(rawValue: status.tone.rawValue) ?? .secondary)
+            } else {
+                Label(store.isSnapshotSyncInFlight ? "同期中…" : "今すぐ同期", systemImage: "arrow.triangle.2.circlepath")
+            }
         }
+        .accessibilityHint(status == nil ? "" : "タップして同期します")
         .disabled(store.isSnapshotSyncInFlight || store.isDocumentTransitionInProgress || store.isSyncV2RemoteAccountTransitionActive || store.syncV2AccountCloneInFlight)
         .accessibilityIdentifier("ios.editor.sync")
         .contextMenu {

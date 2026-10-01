@@ -531,13 +531,13 @@ private struct WorldNoteRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(displayTitle)
                 .lineLimit(1)
-            Text("\(ManuscriptMetrics.countCharacters(in: note.content))字")
+            Text("\(ManuscriptCountCache.shared.count(note))字")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(displayTitle)、\(ManuscriptMetrics.countCharacters(in: note.content))字")
+        .accessibilityLabel("\(displayTitle)、\(ManuscriptCountCache.shared.count(note))字")
     }
 
     private var displayTitle: String {

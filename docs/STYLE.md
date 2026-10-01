@@ -71,7 +71,11 @@
 - プロットカードは淡い面＋separator＋Radius.card角丸。ドラッグ中だけ控えめな影を許す。
 
 - サムネイル：表紙は2:3、一覧32×48、grid幅120〜150（iOS 104〜140）、home 96×144。人物は円形、一覧macOS 24／iOS 28、詳細72。世界観は角丸正方形、一覧28、詳細96。
-- 画像なしの表紙はpaper＋藍の帯＋作品名の先頭1文字（明朝）。人物はcolorHexの円＋頭文字（色なしは中立色）、世界観はaccentMuted＋`globe.asia.australia`。画像は表示寸法でdecode・cacheする。
+- 画像なしの表紙はpaper＋藍の帯＋作品名の先頭から数字・空白・句読点・記号を除いた最初の1文字（明朝、該当文字がなければ「文」）。人物はcolorHexの円＋頭文字（色なしは中立色）、世界観はaccentMuted＋`globe.asia.australia`。画像は表示寸法でdecode・cacheする。
+- 棚はtoolbarの標準Pickerで表紙／一覧を切り替え、端末のAppStorageへ記憶する。表紙はLazyVGrid、一覧は既存の行操作を保つ。iOSのアクセシビリティ文字サイズでは保存した選択を変えず一覧へ戻す。取り込みの進捗・中止・再試行は両形式のカード／行とcontext menuから利用できる。
+- 人物詳細は72ptの画像＋名前・ふりがな・役割を見出しにまとめ、設定をsurface cardへ分ける。色の選択状態はringとcheckmarkでも伝える。世界観詳細の画像領域は設定済みのときだけ表示し、未設定でも画像設定・dropの入口を残す。
+- プロット・伏線は`surfaceCard`相当の面と0.5ptの境界、選択は1.5ptのaccent。iPadはカード、iPhone・拡大文字・並べ替え編集中は一覧。未回収はwarningの`flag`、回収済みはleafの`checkmark.circle.fill`。通常時は影を付けない。
+- 切り抜きは対象形状の外側を暗くし、輪郭を表示する。位置・倍率の操作を保ち、「使用する」を主操作にする。
 - 状態は必ず記号＋文字。同期済みleaf、同期中／未取得accent、同期待ち／端末内secondary、offlineは記号tertiary・文字secondary、競合warning、失敗danger。文言と意味は共通applicationに従う。SF Symbolsはhierarchical、system weight。
 
 ## 6. 起動・同期・復旧の表示

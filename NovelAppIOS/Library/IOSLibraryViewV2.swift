@@ -7,6 +7,13 @@ struct IOSLibraryView: View {
     let store: IOSDocumentStore
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
+    var observesLibrary = true
+
+    @AppStorage("library.display") private var display = ShelfDisplay.grid
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var usesGrid: Bool {
+        display == .grid && !dynamicTypeSize.isAccessibilitySize
+    }
 
     @State private var searchText = ""
     @State private var pendingImportOpen: WorkID?
@@ -22,20 +29,6 @@ struct IOSLibraryView: View {
     var body: some View {
         List {
             Section("作品") {
-                if store.authUIState == .signedOut {
-                    Button("Appleでサインイン") {
-                        Task { await store.signInWithApple() }
-                    }
-                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
-                } else if store.authUIState == .unavailable {
-                    Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
-                        .foregroundStyle(.secondary)
-                } else if case .failed = store.authUIState {
-                    Button("Appleで再試行") {
-                        Task { await store.signInWithApple() }
-                    }
-                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
-                }
                 if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
                     StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
                         ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
@@ -59,21 +52,13 @@ struct IOSLibraryView: View {
                     Text("作品が見つかりません。検索する言葉を変えてください。")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
-                    IOSLibraryImportRow(store: store, item: item, isRenaming: renamingIDs.contains(item.workID),
-                                        open: { requestOpen(item.workID) }, rename: {
-                                            renameTitle = item.title
-                                            renameSession = store.currentDocumentSessionToken
-                                            renameAccountScope = store.snapshotSyncV2AccountScope
-                                            pendingRename = item
-                                        })
-                    if item.accountState == .unbound,
-                       item.workID == store.syncV2ActiveWorkID {
-                        Button("この作品をこのアカウントへ追加して同期") {
-                            Task { _ = await store.cloneActiveWorkIntoSignedInAccount() }
-                        }
-                        .disabled(store.syncV2AccountCloneInFlight)
+                if usesGrid {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .top)], alignment: .leading, spacing: Spacing.outer) {
+                        workRows
                     }
+                    .listRowBackground(FuminiwaColor.paper.color)
+                } else {
+                    workRows
                 }
                 if store.syncV2RemoteCatalogCursor != nil {
                     Button("サーバーの作品をさらに読み込む") {
@@ -82,9 +67,26 @@ struct IOSLibraryView: View {
                     .disabled(store.syncV2RemoteCatalogIsLoading)
                 }
             }
-            Section {
-                Button("新規作品", action: makeNewDocument)
-                Button("作品を取り込む…") { store.isImporterPresented = true }
+            Section("アカウント") {
+                if store.authUIState == .signedOut {
+                    Button("Appleでサインイン") {
+                        Task { await store.signInWithApple() }
+                    }
+                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
+                } else if case .signedIn = store.authUIState {
+                    Label("サインイン済み", systemImage: "person.crop.circle.badge.checkmark")
+                    Button("サインアウト") { Task { await store.signOutFromFuminiwa() } }
+                } else if store.authUIState == .signingIn {
+                    ProgressView("サインイン中…")
+                } else if store.authUIState == .unavailable {
+                    Label("アカウント同期は未設定", systemImage: "person.crop.circle.badge.exclamationmark")
+                        .foregroundStyle(.secondary)
+                } else if case .failed = store.authUIState {
+                    Button("Appleで再試行") {
+                        Task { await store.signInWithApple() }
+                    }
+                    Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
+                }
             }
         }
         .sheet(isPresented: $showingProtection) {
@@ -95,7 +97,18 @@ struct IOSLibraryView: View {
                 }
             }
         }
-        .toolbar { Button("復元", systemImage: "archivebox") { showingProtection = true } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { ShelfDisplayPicker(selection: $display) }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("新規作品", systemImage: "plus", action: makeNewDocument)
+                    Button("作品を取り込む…", systemImage: "square.and.arrow.down") { store.isImporterPresented = true }
+                    Button("復元", systemImage: "archivebox") { showingProtection = true }
+                } label: { Label("作品の操作", systemImage: "plus") }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
         .navigationTitle("作品一覧")
         .alert("作品名を変更", isPresented: Binding(
             get: { pendingRename != nil },
@@ -133,7 +146,11 @@ struct IOSLibraryView: View {
                 }
             }
         #endif
-            .task(id: store.snapshotSyncV2AccountScope) { await store.observeLibraryImports() }
+            .task(id: store.snapshotSyncV2AccountScope) {
+                if observesLibrary {
+                    await store.observeLibraryImports()
+                }
+            }
             .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
                 get: { pendingImportOpen != nil }, set: {
                     if !$0 {
@@ -153,7 +170,32 @@ struct IOSLibraryView: View {
             .refreshable {
                 _ = await store.refreshLibrary()
             }
-            .task { _ = await store.refreshLibrary() }
+            .task {
+                if observesLibrary {
+                    _ = await store.refreshLibrary()
+                }
+            }
+    }
+
+    private var workRows: some View {
+        ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
+            VStack(alignment: .leading, spacing: Spacing.small) {
+                IOSLibraryImportRow(store: store, item: item, isRenaming: renamingIDs.contains(item.workID),
+                                    open: { requestOpen(item.workID) }, rename: {
+                                        renameTitle = item.title
+                                        renameSession = store.currentDocumentSessionToken
+                                        renameAccountScope = store.snapshotSyncV2AccountScope
+                                        pendingRename = item
+                                    }, isGrid: usesGrid)
+                if case .signedIn = store.authUIState, item.accountState == .unbound,
+                   item.workID == store.syncV2ActiveWorkID {
+                    Button("この作品をこのアカウントへ追加して同期") {
+                        Task { _ = await store.cloneActiveWorkIntoSignedInAccount() }
+                    }
+                    .disabled(store.syncV2AccountCloneInFlight)
+                }
+            }
+        }
     }
 
     private func requestOpen(_ id: WorkID) {

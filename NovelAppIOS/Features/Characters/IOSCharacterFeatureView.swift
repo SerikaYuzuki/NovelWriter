@@ -215,7 +215,19 @@ struct IOSCharacterDetailView: View {
     private func characterForm(_ character: NovelCore.Character) -> some View {
         Form {
             Section {
-                IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
+                HStack(alignment: .top, spacing: Spacing.group) {
+                    IOSThumbnailEditor(store: store, owner: ThumbnailOwner(.character, character.id.rawValue), title: character.name, color: character.colorHex.flatMap { Color(hex: $0) })
+                    VStack(alignment: .leading, spacing: Spacing.small) {
+                        Text(NovelDocument.normalizedCharacterName(character.name)).font(.title2.weight(.semibold))
+                        if !character.kana.isEmpty {
+                            Text(character.kana).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        if let role = character.role, !role.isEmpty {
+                            Text(role).font(.caption).padding(Spacing.extraSmall)
+                                .background(FuminiwaColor.accentMuted.color, in: RoundedRectangle(cornerRadius: Radius.chip))
+                        }
+                    }
+                }
             }
             Section("基本情報") {
                 TextField("名前", text: characterBinding(character.id, \.name, fallback: ""))
@@ -228,6 +240,32 @@ struct IOSCharacterDetailView: View {
                 TextField("性別", text: optionalCharacterBinding(character.id, \.gender))
             }
 
+            Section("人物の色") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 44))]) {
+                    ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
+                        Button {
+                            var updated = character
+                            updated.colorHex = hex
+                            guard let expectedSession else { return }
+                            _ = store.updateCharacter(updated, expectedSession: expectedSession)
+                        } label: {
+                            Circle().fill(Color(hex: hex) ?? FuminiwaColor.sunken.color)
+                                .frame(width: 28, height: 28)
+                                .overlay(Circle().strokeBorder(character.colorHex == hex ? FuminiwaColor.accent.color : FuminiwaColor.separator.color, lineWidth: character.colorHex == hex ? 2 : 0.5))
+                                .overlay {
+                                    if character.colorHex == hex {
+                                        Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
+                                    }
+                                }
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .help(CharacterColorPreset.name(for: hex))
+                        .accessibilityLabel(CharacterColorPreset.name(for: hex))
+                        .accessibilityAddTraits(character.colorHex == hex ? .isSelected : [])
+                    }
+                }
+            }
             Section("話し方") {
                 TextField("一人称", text: optionalCharacterBinding(character.id, \.firstPerson))
                 TextField("二人称", text: optionalCharacterBinding(character.id, \.secondPerson))
@@ -265,6 +303,8 @@ struct IOSCharacterDetailView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
         .navigationTitle(NovelDocument.normalizedCharacterName(character.name))
         .navigationBarTitleDisplayMode(.inline)
     }

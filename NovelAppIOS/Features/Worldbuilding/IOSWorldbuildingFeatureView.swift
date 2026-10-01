@@ -287,7 +287,7 @@ private struct IOSWorldNoteRow: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Text("\(characterCount)字")
-                .font(.caption)
+                .font(FuminiwaType.rowSecondary)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
@@ -302,7 +302,7 @@ private struct IOSWorldNoteRow: View {
     }
 
     private var characterCount: Int {
-        ManuscriptMetrics.countCharacters(in: note.content)
+        ManuscriptCountCache.shared.count(note)
     }
 }
 

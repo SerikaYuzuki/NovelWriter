@@ -105,7 +105,7 @@ private struct FlagListView: View {
             List(selection: flagSelectionBinding) {
                 Section {
                     ForEach(sessionBoundUnresolvedFlags) { item in
-                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
                             .tag(item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
@@ -118,7 +118,7 @@ private struct FlagListView: View {
 
                 DisclosureGroup(isExpanded: $showsResolvedFlags) {
                     ForEach(sessionBoundResolvedFlags) { item in
-                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID))
+                        FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
                             .tag(item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
