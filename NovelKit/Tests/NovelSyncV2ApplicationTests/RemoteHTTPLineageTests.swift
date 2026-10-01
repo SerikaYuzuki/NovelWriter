@@ -9,6 +9,47 @@ import Testing
 
 @Suite("Snapshot Sync v2 remote HTTP lineage", .serialized)
 struct RemoteHTTPLineageTests {
+    @Test("a temporary failure resumes the failed graph request without restarting history", arguments: ["head", "manifest", "object"], [false, true])
+    func transientGraphRequestResumes(stage: String, disconnected: Bool) async throws {
+        let fixture = LineageFixture()
+        let base = try fixture.snapshot(title: "base")
+        let head = try fixture.snapshot(title: "head", parents: [base.snapshotId])
+        let objectID = try #require(base.objects.keys.first)
+        let path = switch stage {
+        case "head": "/v2/works/\(fixture.workID.description)/head"
+        case "manifest": "/v2/snapshots/\(base.snapshotId.rawValue)/manifest"
+        default: "/v2/objects/\(objectID.rawValue)"
+        }
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [base, head], publishResponse: nil)
+        state.failNext(path: path, replies: [LineageHTTPReply(
+            status: 502, headers: [:], body: Data(),
+            transportError: disconnected ? .networkConnectionLost : nil
+        )])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
+        #expect(inbox.snapshots.map(\.snapshotId) == [base.snapshotId, head.snapshotId])
+        #expect(state.count(path: path) == 2)
+        #expect(state.count(path: "/v2/snapshots/\(head.snapshotId.rawValue)/manifest") == 1)
+    }
+
+    @Test("persistent graph failures are bounded and authorization failures are not retried", arguments: [403, 404, 429, 503])
+    func graphRequestFailureIsBounded(status: Int) async throws {
+        let fixture = LineageFixture()
+        let path = "/v2/works/\(fixture.workID.description)/head"
+        let state = LineageHTTPState(replies: [
+            "GET \(path)": LineageHTTPReply(status: status, headers: [:], body: Data())
+        ])
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let expected: SyncV2Failure = switch status {
+        case 403: .accountFenceChanged
+        case 404: .fatal(.remoteDataUnavailable)
+        case 429: .retryable(.rateLimited)
+        default: .retryable(.serverUnavailable)
+        }
+        await #expect(throws: expected) { try await client.downloadRemoteOnly(workID: fixture.workID) }
+        #expect(state.count(path: path) == (status == 503 ? 3 : 1))
+    }
+
     @Test("publish conflict decodes its sealed base and store accepts B to L/R divergence")
     func publishConflictCarriesBaseIntoStore() async throws {
         let fixture = LineageFixture()

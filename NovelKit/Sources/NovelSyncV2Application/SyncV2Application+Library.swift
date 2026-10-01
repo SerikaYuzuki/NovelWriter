@@ -46,16 +46,23 @@ public extension SyncV2Application {
             guard runtimeIdentity != .preview else {
                 throw SyncV2ApplicationError.workNotFound
             }
-            let inbox = try await libraryProvider.downloadRemoteOnly(workID: workID)
-            let opened = try await kernel.installRemoteOnly(inbox)
-            setState(
-                workID: workID,
-                localDurability: durability(for: opened),
-                remoteProgress: .idle,
-                result: .remoteOnlyInstalled,
-                conflict: .clear
-            )
-            return opened
+            var stage = "remote-only-download"
+            do {
+                let inbox = try await libraryProvider.downloadRemoteOnly(workID: workID)
+                stage = "remote-only-install"
+                let opened = try await kernel.installRemoteOnly(inbox)
+                setState(
+                    workID: workID,
+                    localDurability: durability(for: opened),
+                    remoteProgress: .idle,
+                    result: .remoteOnlyInstalled,
+                    conflict: .clear
+                )
+                return opened
+            } catch {
+                recordSyncDiagnostic(workID: workID, stage: stage, error: error)
+                throw error
+            }
         }
     }
 

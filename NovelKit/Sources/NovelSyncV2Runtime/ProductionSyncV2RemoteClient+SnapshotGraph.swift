@@ -122,7 +122,7 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
-        let (data, response) = try await requestData(request, session: session)
+        let (data, response) = try await requestSnapshotData(request, session: session)
         let contentType = httpContentType(response)
         let cacheControl = (response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Cache-Control")?.lowercased()
@@ -182,7 +182,7 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding(for: session))
-        let (rawObject, response) = try await requestData(request, session: session)
+        let (rawObject, response) = try await requestSnapshotData(request, session: session)
         let contentType = httpContentType(response)
         let cacheControl = (response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Cache-Control")?.lowercased()

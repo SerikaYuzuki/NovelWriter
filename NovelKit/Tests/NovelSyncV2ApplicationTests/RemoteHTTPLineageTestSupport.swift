@@ -6,12 +6,20 @@ struct LineageHTTPReply: Sendable {
     let status: Int
     let headers: [String: String]
     let body: Data
+    var transportError: URLError.Code?
 }
 
 final class LineageHTTPState: @unchecked Sendable {
     private let lock = NSLock()
     private let replies: [String: LineageHTTPReply]
     private var paths: [String] = []
+    private var failures: [String: [LineageHTTPReply]] = [:]
+
+    func failNext(path: String, replies: [LineageHTTPReply]) {
+        lock.lock()
+        defer { lock.unlock() }
+        failures[path] = replies
+    }
 
     init(replies: [String: LineageHTTPReply]) {
         self.replies = replies
@@ -117,8 +125,13 @@ final class LineageHTTPState: @unchecked Sendable {
         let method = request.httpMethod ?? "GET"
         let path = request.url?.path ?? ""
         lock.lock()
+        defer { lock.unlock() }
         paths.append(path)
-        lock.unlock()
+        if var queued = failures[path], !queued.isEmpty {
+            let reply = queued.removeFirst()
+            failures[path] = queued
+            return reply
+        }
         return replies["\(method) \(path)"]
     }
 
@@ -141,14 +154,22 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        guard let reply = Self.state?.reply(for: request),
-              let url = request.url,
-              let response = HTTPURLResponse(
-                  url: url,
-                  statusCode: reply.status,
-                  httpVersion: nil,
-                  headerFields: reply.headers
-              ) else {
+        guard let reply = Self.state?.reply(for: request) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        if let error = reply.transportError {
+            client?.urlProtocol(self, didFailWithError: URLError(error))
+            return
+        }
+        guard
+            let url = request.url,
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: reply.status,
+                httpVersion: nil,
+                headerFields: reply.headers
+            ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }

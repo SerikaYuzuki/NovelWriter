@@ -42,6 +42,7 @@ extension IOSDocumentStore {
     /// owner slot from its defer block.
     func cancelSnapshotSyncV2BackgroundOperations() {
         snapshotSyncV2RemoteOnlyOpenToken = nil
+        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
         snapshotSyncV2RemoteOnlyOpenTask?.cancel()
         snapshotSyncV2RemoteOnlyOpenTask = nil
         snapshotSyncV2RemoteOnlyReadyWorkID = nil

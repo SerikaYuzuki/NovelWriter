@@ -274,6 +274,7 @@ final class IOSDocumentStore {
     /// Set only after a remote-only document has passed the install boundary.
     /// The shelf uses it to navigate after the asynchronous fetch completes.
     var snapshotSyncV2RemoteOnlyReadyWorkID: WorkID?
+    var snapshotSyncV2RemoteOnlyOpeningWorkID: WorkID?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
     var syncV2LibraryItems: [SyncV2LibraryItem] = []

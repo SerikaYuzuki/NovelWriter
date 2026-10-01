@@ -65,12 +65,14 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         let operationToken = UUID()
         snapshotSyncV2RemoteOnlyOpenToken = operationToken
+        snapshotSyncV2RemoteOnlyOpeningWorkID = workID
         snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
             defer {
                 if let self,
                    snapshotSyncV2RemoteOnlyOpenToken == operationToken {
                     snapshotSyncV2RemoteOnlyOpenToken = nil
                     snapshotSyncV2RemoteOnlyOpenTask = nil
+                    snapshotSyncV2RemoteOnlyOpeningWorkID = nil
                 }
             }
             do {
@@ -124,14 +126,39 @@ extension IOSDocumentStore {
             } catch is CancellationError {
                 return
             } catch {
+                let diagnostic = await application.syncDebugDiagnostic(workID: workID)
                 guard let self,
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       currentDocumentSessionToken == expectedSession,
                       snapshotSyncV2AccountScope == expectedAccountScope else { return }
-                operationErrorMessage = "作品を取得できませんでした。接続が戻ると再試行できます。"
+                operationErrorMessage = remoteOnlyOpenErrorMessage(error)
+                if let diagnostic {
+                    operationErrorMessage? += "\n\n\(diagnostic)"
+                }
             }
         }
         return true
+    }
+}
+
+func remoteOnlyOpenErrorMessage(_ error: any Error) -> String {
+    switch error as? SyncV2Failure {
+    case .offline:
+        "インターネットに接続できません。接続を確認して、もう一度作品を開いてください。"
+    case .authenticationRequired:
+        "サインインの確認が必要なため、作品を取得できませんでした。アカウントの状態を確認してください。"
+    case .accountFenceChanged, .quarantined(.differentAccount), .quarantined(.changedFence):
+        "アカウントの状態が変わったため、取り込みを中止しました。アカウントを確認して再試行してください。"
+    case .retryable(.rateLimited):
+        "サーバーが混み合っています。少し待ってから、もう一度作品を開いてください。"
+    case .retryable:
+        "作品の取得中に通信が途切れました。もう一度作品を開いてください。"
+    case .quarantined(.invalidRemoteData), .receiptMismatch:
+        "取得した作品データを検証できないため、取り込みを中止しました。"
+    case .fatal(.remoteDataUnavailable), .fatal(.remoteWorkDeleted):
+        "サーバー上の作品データを取得できませんでした。作品一覧を更新して再試行してください。"
+    default:
+        "作品を安全に取り込めませんでした。現在の端末内の作品は変更していません。"
     }
 }

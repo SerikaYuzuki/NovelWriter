@@ -22,7 +22,7 @@ extension ProductionSyncV2RemoteClient {
         )
         request.httpMethod = "GET"
         addHeaders(&request, session: session, binding: binding)
-        let (data, response) = try await requestData(request, session: session)
+        let (data, response) = try await requestSnapshotData(request, session: session)
         let contentType = httpContentType(response)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,

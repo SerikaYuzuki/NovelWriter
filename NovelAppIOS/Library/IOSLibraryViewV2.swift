@@ -51,6 +51,9 @@ struct IOSLibraryView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
+                            if store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID {
+                                ProgressView("作品を取り込み中…")
+                            }
                             if renamingIDs.contains(item.workID) {
                                 ProgressView("作品名を変更中…")
                             }
@@ -78,7 +81,8 @@ struct IOSLibraryView: View {
                             }
                         }
                     }
-                    .disabled(renamingIDs.contains(item.workID))
+                    .disabled(renamingIDs.contains(item.workID) ||
+                        (item.availability == .remoteOnly && store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil))
                     .contextMenu {
                         Button("作品名を変更", systemImage: "pencil") {
                             renameTitle = item.title

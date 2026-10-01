@@ -395,7 +395,7 @@ extension ProductionSyncV2RemoteClient {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
     }
 
-    private func mapStatus(_ status: Int) -> SyncV2Failure {
+    func mapStatus(_ status: Int) -> SyncV2Failure {
         switch status {
         case 401:
             .authenticationRequired
