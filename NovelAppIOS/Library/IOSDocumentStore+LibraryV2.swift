@@ -149,7 +149,11 @@ extension IOSDocumentStore {
         let projection: SyncV2LibraryProjection
         do {
             projection = try await application.library()
-            guard matchesSyncAccount(expectedAccountScope) else { return false }
+            let pending = try await application.pendingDeletionWorkIDs()
+            let deleted = try await application.deletedWorkIDs()
+            guard matchesSyncAccount(expectedAccountScope), libraryRefreshGeneration == refreshGeneration else { return false }
+            pendingDeletionWorkIDs = pending
+            deletedLibraryWorkIDs = deleted
             libraryFailure = nil
         } catch {
             guard matchesSyncAccount(expectedAccountScope) else { return false }
@@ -352,8 +356,13 @@ extension IOSDocumentStore {
         into localItems: [SyncV2LibraryItem],
         catalog: [SyncV2RemoteCatalogEntry]
     ) -> [SyncV2LibraryItem] {
-        var rows = Dictionary(uniqueKeysWithValues: localItems.map { ($0.workID, $0) })
-        for remote in catalog {
+        var rows = Dictionary(uniqueKeysWithValues: localItems.filter { !deletedLibraryWorkIDs.contains($0.workID) }.map { ($0.workID, $0) })
+        // Pending local intents may be absent from the ordinary projection.
+        // Retain their shelf title for status and explicit retry, including remote-only works.
+        for item in syncV2LibraryItems where pendingDeletionWorkIDs.contains(item.workID) {
+            rows[item.workID] = item
+        }
+        for remote in catalog where !deletedLibraryWorkIDs.contains(remote.workID) {
             if let local = rows[remote.workID] {
                 // A parked local copy is an explicit account boundary.  A
                 // catalog row with the same WorkID must never turn it into a

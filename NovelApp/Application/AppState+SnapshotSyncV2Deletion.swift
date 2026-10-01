@@ -11,9 +11,11 @@ extension AppState {
               matchesSnapshotSyncV2AccountScope(accountScope),
               !isDocumentTransitionInProgress, !isTerminationPending,
               interactiveAuthOperationCount == 0 else { return false }
+        let context = SyncOperationContext(workID: currentSnapshotSyncV2WorkID, session: documentSessionToken,
+                                           account: accountScope, editGeneration: nil)
         cancelSnapshotSyncV2BackgroundOperations()
         let prepared = await documentOperationGate.perform { [weak self] in
-            guard let self, matchesSnapshotSyncV2AccountScope(accountScope),
+            guard let self, matchesSyncOperation(context),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             isDocumentTransitionInProgress = true
@@ -21,39 +23,42 @@ extension AppState {
             do {
                 let result = try await saveCoordinator.performExclusiveAfterFlushing {
                     guard matchesSnapshotSyncV2AccountScope(accountScope) else { throw SyncV2ApplicationError.safeBoundaryRejected }
-                    _ = try await application.prepareWorkDeletion(workID: work.workID)
-                    guard matchesSnapshotSyncV2AccountScope(accountScope) else { throw SyncV2ApplicationError.safeBoundaryRejected }
-                    if currentSnapshotSyncV2WorkID == work.workID {
-                        document = NovelDocument.newDocument()
-                        snapshotSyncV2ActiveWorkID = nil
-                        snapshotSyncV2Session = nil
-                        snapshotSyncV2Attachments = []
-                        snapshotSyncV2Resources = []
-                        snapshotSyncV2PortableCreatedAt = nil
-                        attachments = []
-                        attachmentPreviewURLs.removeAll()
-                        selectedChapterID = nil
-                        selectedEpisodeID = nil
-                        selectedCharacterID = nil
-                        selectedPlotCardID = nil
-                        selectedFlagID = nil
-                        selectedWorldNoteID = nil
-                        editorContentGeneration &+= 1
-                        documentSessionToken = AppDocumentSessionToken(
-                            generation: editorContentGeneration,
-                            documentID: document.id,
-                            workID: WorkID(UUID())
-                        )
-                        snapshotSyncHistory = []
-                        snapshotSyncV2UIState = nil
-                        saveState = .saved
-                        userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
-                        userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
-                        startupState = .documentSelection(.init(
-                            works: snapshotSyncLibraryWorks,
-                            presentation: .localAndRemote,
-                            connection: lastStartupLibraryConnection
-                        ))
+                    try await syncSessionController.prepareWorkDeletion(
+                        application: application, workID: work.workID,
+                        isCurrent: { matchesSyncOperation(context) }
+                    ) {
+                        if currentSnapshotSyncV2WorkID == work.workID {
+                            document = NovelDocument.newDocument()
+                            snapshotSyncV2ActiveWorkID = nil
+                            snapshotSyncV2Session = nil
+                            snapshotSyncV2Attachments = []
+                            snapshotSyncV2Resources = []
+                            snapshotSyncV2PortableCreatedAt = nil
+                            attachments = []
+                            attachmentPreviewURLs.removeAll()
+                            selectedChapterID = nil
+                            selectedEpisodeID = nil
+                            selectedCharacterID = nil
+                            selectedPlotCardID = nil
+                            selectedFlagID = nil
+                            selectedWorldNoteID = nil
+                            editorContentGeneration &+= 1
+                            documentSessionToken = AppDocumentSessionToken(
+                                generation: editorContentGeneration,
+                                documentID: document.id,
+                                workID: WorkID(UUID())
+                            )
+                            snapshotSyncHistory = []
+                            snapshotSyncV2UIState = nil
+                            saveState = .saved
+                            userDefaults.removeObject(forKey: "fuminiwa.v2.activeWorkID")
+                            userDefaults.set(true, forKey: "fuminiwa.v2.startInLibrary")
+                            startupState = .documentSelection(.init(
+                                works: snapshotSyncLibraryWorks,
+                                presentation: .localAndRemote,
+                                connection: lastStartupLibraryConnection
+                            ))
+                        }
                     }
                 }
                 guard case .completed = result else {

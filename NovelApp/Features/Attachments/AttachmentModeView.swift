@@ -31,7 +31,6 @@ struct AttachmentListView: View {
                 List(selection: $selection) {
                     ForEach(sessionBoundAttachments) { item in
                         AttachmentRow(attachment: item.attachment)
-                            .tag(item.attachment.fileName)
                             .contextMenu {
                                 Button(role: .destructive) {
                                     attachmentPendingDeletion = item
@@ -39,6 +38,7 @@ struct AttachmentListView: View {
                                     Label("削除", systemImage: "trash")
                                 }
                             }
+                            .tag(item.attachment.fileName)
                     }
                 }
                 .overlay {

@@ -330,7 +330,6 @@ private extension LibraryPane {
         }
         .accessibilityElement(children: .contain)
         .accessibilityHint(rowHint(work))
-        .tag(work.id)
         .contextMenu {
             Button("開く") { open(work) }
                 .disabled(!canOpen(work))
@@ -340,6 +339,7 @@ private extension LibraryPane {
             deleteButton(work)
         }
         .accessibilityIdentifier("library.work.\(work.id.uuidString)")
+        .tag(work.id)
     }
 
     @ViewBuilder private func importMenu(_ work: StartupLibraryWork) -> some View {

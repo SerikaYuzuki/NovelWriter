@@ -13,7 +13,6 @@ struct CharacterListView: View {
         List(selection: characterSelectionBinding) {
             ForEach(sessionBoundCharacters) { item in
                 CharacterRow(character: item.value, thumbnailData: appState.thumbnailData(ThumbnailOwner(.character, item.value.id.rawValue)))
-                    .tag(item.value.id)
                     .contextMenu {
                         Button(role: .destructive) {
                             characterPendingDeletion = item
@@ -21,6 +20,7 @@ struct CharacterListView: View {
                             Label("削除", systemImage: "trash")
                         }
                     }
+                    .tag(item.value.id)
             }
             .onMove { offsets, destination in
                 appState.moveCharacters(fromOffsets: offsets, toOffset: destination)

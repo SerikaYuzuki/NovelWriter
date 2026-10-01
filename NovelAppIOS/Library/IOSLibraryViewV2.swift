@@ -24,6 +24,10 @@ struct IOSLibraryView: View {
     @State private var renamingIDs: Set<WorkID> = []
     @State private var renameFailed = false
 
+    @State private var pendingDeletion: SyncV2LibraryItem?
+    @State private var deletionSession: IOSDocumentSessionToken?
+    @State private var deletionAccountScope: IOSSnapshotSyncV2AccountScope?
+
     @State private var showingProtection = false
 
     var body: some View {
@@ -110,6 +114,22 @@ struct IOSLibraryView: View {
         .scrollContentBackground(.hidden)
         .background(FuminiwaColor.paper.color)
         .navigationTitle("作品一覧")
+        .alert("作品を完全に削除しますか？", isPresented: Binding(
+            get: { pendingDeletion != nil }, set: {
+                if !$0 {
+                    pendingDeletion = nil
+                }
+            }
+        )) {
+            Button("削除", role: .destructive) {
+                guard let item = pendingDeletion, let scope = deletionAccountScope else { return }
+                let session = deletionSession
+                Task { _ = await store.deleteLibraryWork(item, expectedSession: session, accountScope: scope) }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("「\(pendingDeletion?.title ?? "")」を一覧から削除します。同期した作品のサーバー受領済みデータは1年間保管されます。この端末だけの作品は元に戻せません。")
+        }
         .alert("作品名を変更", isPresented: Binding(
             get: { pendingRename != nil },
             set: {
@@ -193,7 +213,7 @@ struct IOSLibraryView: View {
                                         renameSession = store.currentDocumentSessionToken
                                         renameAccountScope = store.snapshotSyncV2AccountScope
                                         pendingRename = item
-                                    }, isGrid: usesGrid)
+                                    }, isGrid: usesGrid, delete: { requestDeletion(item) })
                 if case .signedIn = store.authUIState, item.accountState == .unbound,
                    item.workID == store.syncV2ActiveWorkID {
                     Button("この作品をこのアカウントへ追加して同期") {
@@ -202,7 +222,22 @@ struct IOSLibraryView: View {
                     .disabled(store.syncV2AccountCloneInFlight)
                 }
             }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if !usesGrid {
+                    Button("作品を削除…", systemImage: "trash", role: .destructive) { requestDeletion(item) }
+                        .disabled(renamingIDs.contains(item.workID) || store.libraryDeletionDisabledReason(for: item.workID) != nil)
+                        .accessibilityLabel("「\(item.title)」を削除")
+                        .accessibilityHint(store.libraryDeletionDisabledReason(for: item.workID) ?? "確認画面を表示します")
+                }
+            }
         }
+    }
+
+    private func requestDeletion(_ item: SyncV2LibraryItem) {
+        guard store.libraryDeletionDisabledReason(for: item.workID) == nil else { return }
+        deletionSession = store.currentDocumentSessionToken
+        deletionAccountScope = store.snapshotSyncV2AccountScope
+        pendingDeletion = item
     }
 
     private func requestOpen(_ id: WorkID) {

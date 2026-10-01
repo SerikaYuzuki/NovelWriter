@@ -10,6 +10,7 @@ struct IOSLibraryImportRow: View {
     let open: () -> Void
     let rename: () -> Void
     var isGrid = false
+    var delete: () -> Void = {}
 
     private var isImporting: Bool {
         store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID || store.libraryPrefetchWorkID == item.workID
@@ -30,7 +31,7 @@ struct IOSLibraryImportRow: View {
                     guard account == store.snapshotSyncV2AccountScope else { return nil }
                     return bytes
                 }
-            }.buttonStyle(.plain).disabled(isRenaming)
+            }.buttonStyle(.plain).disabled(isRenaming || store.pendingDeletionWorkIDs.contains(item.workID))
                 .accessibilityLabel("\(item.title)を開く")
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                 Button(action: open) {
@@ -45,7 +46,7 @@ struct IOSLibraryImportRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(isRenaming)
+                .disabled(isRenaming || store.pendingDeletionWorkIDs.contains(item.workID))
                 .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice) :
                     item.availability == .remoteOnly ? SyncV2LibraryPresentation.remoteOnlyHint : "")
                 if let note = item.historyBackfillNote, let application = store.snapshotSyncV2Application {
@@ -88,12 +89,26 @@ struct IOSLibraryImportRow: View {
                     .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
             }
             Button("作品名を変更", systemImage: "pencil", action: rename)
-                .disabled(isRenaming || isImporting)
+                .disabled(isRenaming || isImporting || store.pendingDeletionWorkIDs.contains(item.workID))
+            deletionButton
+            if let reason = store.libraryDeletionDisabledReason(for: item.workID) {
+                Text(reason)
+            }
         }
     }
 
+    private var deletionButton: some View {
+        Button("作品を削除…", systemImage: "trash", role: .destructive, action: delete)
+            .disabled(isRenaming || store.libraryDeletionDisabledReason(for: item.workID) != nil)
+            .accessibilityLabel("「\(item.title)」を削除")
+            .accessibilityHint(store.libraryDeletionDisabledReason(for: item.workID) ?? "確認画面を表示します")
+    }
+
     @ViewBuilder private var status: some View {
-        if isImporting, let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
+        if store.pendingDeletionWorkIDs.contains(item.workID) {
+            StatusLabel("削除待ち・接続時に再試行", systemImage: "clock", tone: .secondary)
+                .font(FuminiwaType.rowSecondary)
+        } else if isImporting, let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
             LibraryImportProgress(startedAt: startedAt, longImportNotice: SyncV2LibraryPresentation.longImportNotice,
                                   label: phase.japaneseLabel, fraction: phase.stage == .receiving ? phase.fraction : nil,
                                   accessibilityValue: phase.accessibilityValue, compact: isGrid)

@@ -282,6 +282,8 @@ final class IOSDocumentStore {
     var libraryFailure: SyncV2Failure?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
+    var pendingDeletionWorkIDs: Set<WorkID> = []
+    var deletedLibraryWorkIDs: Set<WorkID> = []
     var syncV2LibraryItems: [SyncV2LibraryItem] = []
     var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var syncV2RemoteCatalogCursor: String?

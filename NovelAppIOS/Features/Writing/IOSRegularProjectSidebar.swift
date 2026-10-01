@@ -21,39 +21,39 @@ struct IOSRegularProjectSidebar: View {
         List(selection: $selection) {
             Section("この作品") {
                 ProjectSectionStyle.projectInfo.label
-                    .tag(IOSRegularProjectSection.projectInfo)
                     .accessibilityIdentifier("ios.ipad.project.info")
+                    .tag(IOSRegularProjectSection.projectInfo)
 
                 ProjectSectionStyle.writing.label
-                    .tag(IOSRegularProjectSection.writing)
                     .accessibilityIdentifier("ios.ipad.project.writing")
+                    .tag(IOSRegularProjectSection.writing)
 
                 ProjectSectionStyle.plot.label
                     .badge(store.document.flags.count(where: { !$0.isResolved }))
-                    .tag(IOSRegularProjectSection.plot)
                     .accessibilityIdentifier("ios.ipad.project.plot")
+                    .tag(IOSRegularProjectSection.plot)
 
                 ProjectSectionStyle.characters.label
-                    .tag(IOSRegularProjectSection.characters)
                     .accessibilityIdentifier("ios.ipad.project.characters")
+                    .tag(IOSRegularProjectSection.characters)
 
                 ProjectSectionStyle.worldbuilding.label
-                    .tag(IOSRegularProjectSection.worldbuilding)
                     .accessibilityIdentifier("ios.ipad.project.worldbuilding")
+                    .tag(IOSRegularProjectSection.worldbuilding)
 
                 ProjectSectionStyle.feedback.label
-                    .tag(IOSRegularProjectSection.feedback)
                     .accessibilityIdentifier("ios.ipad.project.feedback")
+                    .tag(IOSRegularProjectSection.feedback)
 
                 ProjectSectionStyle.references.label
-                    .tag(IOSRegularProjectSection.references)
                     .accessibilityIdentifier("ios.ipad.project.references")
+                    .tag(IOSRegularProjectSection.references)
             }
 
             Section("アプリ") {
                 ProjectSectionStyle.settings.label
-                    .tag(IOSRegularProjectSection.settings)
                     .accessibilityIdentifier("ios.ipad.project.settings")
+                    .tag(IOSRegularProjectSection.settings)
             }
 
             Section("共有") {

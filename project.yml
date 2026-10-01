@@ -213,6 +213,7 @@ targets:
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
       - path: NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift
       - path: NovelApp/DocumentLifecycle/SyncSessionController.swift
+      - path: NovelApp/DocumentLifecycle/SyncSessionController+Deletion.swift
     dependencies:
       - package: NovelKit
         product: NovelCore

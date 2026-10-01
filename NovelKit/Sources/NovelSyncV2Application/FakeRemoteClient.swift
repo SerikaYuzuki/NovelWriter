@@ -17,6 +17,11 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
 
     private var deletionFailure: SyncV2Failure? = .offline
     private var deletions: [WorkID] = []
+    private var deletionHandler: (@Sendable (WorkID) async throws -> Void)?
+
+    public func setDeletionHandler(_ handler: @escaping @Sendable (WorkID) async throws -> Void) {
+        deletionHandler = handler
+    }
 
     public func setDeletionFailure(_ failure: SyncV2Failure?) {
         deletionFailure = failure
@@ -28,6 +33,9 @@ public actor FakeSyncV2RemoteClient: SyncV2RemoteClient {
 
     public func deleteWork(workID: WorkID, binding _: SyncV2AccountScopeBinding) async throws {
         deletions.append(workID)
+        if let deletionHandler {
+            return try await deletionHandler(workID)
+        }
         if let deletionFailure {
             throw deletionFailure
         }

@@ -406,8 +406,9 @@ struct ProjectSidebarView: View {
             Section("この作品") {
                 ForEach(ProjectSection.allCases.filter { $0 != .settings }) { section in
                     if section == .plot {
-                        section.style.label.tag(section)
+                        section.style.label
                             .badge(appState.document.flags.count(where: { !$0.isResolved }))
+                            .tag(section)
                     } else {
                         section.style.label.tag(section)
                     }
@@ -422,6 +423,10 @@ struct ProjectSidebarView: View {
     }
 
     private var sectionSelection: Binding<ProjectSection?> {
+        Self.selectionBinding(appState: appState, onSelect: onSelect)
+    }
+
+    static func selectionBinding(appState: AppState, onSelect: @escaping (ProjectSection) -> Void) -> Binding<ProjectSection?> {
         Binding(
             get: { appState.workspaceSelection.section },
             set: { section in
@@ -447,7 +452,6 @@ private struct WorldbuildingOutlineView: View {
                         ThumbnailImage(data: appState.thumbnailData(ThumbnailOwner(.worldNote, item.value.id.rawValue)), kind: .worldNote, title: item.value.title, size: 28).accessibilityHidden(true)
                         WorldNoteRow(note: item.value)
                     }
-                    .tag(item.value.id)
                     .contextMenu {
                         Button(role: .destructive) {
                             notePendingDeletion = item
@@ -455,6 +459,7 @@ private struct WorldbuildingOutlineView: View {
                             Label("削除", systemImage: "trash")
                         }
                     }
+                    .tag(item.value.id)
                 }
                 .onMove { offsets, destination in
                     appState.moveWorldNotes(fromOffsets: offsets, toOffset: destination)

@@ -106,10 +106,10 @@ private struct FlagListView: View {
                 Section {
                     ForEach(sessionBoundUnresolvedFlags) { item in
                         FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
-                            .tag(item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
                             }
+                            .tag(item.value.id)
                     }
                 } header: {
                     Text("未回収 \(unresolvedFlags.count)件")
@@ -119,10 +119,10 @@ private struct FlagListView: View {
                 DisclosureGroup(isExpanded: $showsResolvedFlags) {
                     ForEach(sessionBoundResolvedFlags) { item in
                         FlagRow(flag: item.value, plantedTitle: chapterTitle(for: item.value.plantedChapterID), selected: appState.selectedFlagID == item.value.id)
-                            .tag(item.value.id)
                             .contextMenu {
                                 deleteButton(for: item)
                             }
+                            .tag(item.value.id)
                     }
                 } label: {
                     Text("回収済み \(resolvedFlags.count)件")

@@ -18,13 +18,14 @@ struct AssistantFeedbackList: View {
                             row(record)
                         }
                     } else {
-                        row(record).tag(record.id)
+                        row(record)
                     }
                 }
                 .contextMenu {
                     Button("削除…", systemImage: "trash", role: .destructive) { pendingDeletion = record }
                 }
                 .disabled(isDeleting)
+                .tag(record.id)
             }
         }
         .overlay {
