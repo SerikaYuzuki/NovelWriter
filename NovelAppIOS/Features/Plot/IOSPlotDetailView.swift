@@ -202,7 +202,9 @@ struct IOSPlotDetailView: View {
         ContentUnavailableView {
             Label("項目が選択されていません", systemImage: "rectangle.stack")
         } description: {
-            Text("一覧から編集するプロットカードまたは伏線を選んでください。")
+            if !store.document.plotCards.isEmpty || !store.document.flags.isEmpty {
+                Text("一覧からプロットカードまたは伏線を選択してください。")
+            }
         }
     }
 

@@ -71,8 +71,21 @@ struct IOSPlotOutlineView: View {
             if store.document.plotCards.isEmpty, store.document.flags.isEmpty {
                 ContentUnavailableView {
                     Label("プロットがありません", systemImage: "rectangle.stack")
-                } description: {
-                    Text("右上の追加メニューから、カードまたは伏線を追加できます。")
+                } actions: {
+                    Button("プロットカードを追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addPlotCard(expectedSession: expectedSession) {
+                            selection = .card(id)
+                        }
+                    }
+                    .disabled(expectedSession == nil)
+                    Button("伏線を追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addFlag(expectedSession: expectedSession) {
+                            selection = .flag(id)
+                        }
+                    }
+                    .disabled(expectedSession == nil)
                 }
             }
         }

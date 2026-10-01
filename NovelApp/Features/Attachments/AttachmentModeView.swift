@@ -45,8 +45,6 @@ struct AttachmentListView: View {
                     if appState.referenceAttachments.isEmpty {
                         ContentUnavailableView {
                             Label("資料がありません", systemImage: "paperclip")
-                        } description: {
-                            Text("ツールバーまたは資料メニューから取り込めます。")
                         } actions: {
                             Button("資料を取り込む…") { NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil) }
                                 .disabled(!appState.permitsDocumentInteraction)
@@ -148,10 +146,9 @@ struct AttachmentDetailView: View {
             ContentUnavailableView {
                 Label("資料が選択されていません", systemImage: "paperclip")
             } description: {
-                Text("左の一覧から資料を選択してください。")
-            } actions: {
-                Button("資料を取り込む…") { NotificationCenter.default.post(name: .presentAttachmentImporter, object: nil) }
-                    .disabled(!appState.permitsDocumentInteraction)
+                if !appState.referenceAttachments.isEmpty {
+                    Text("左の一覧から資料を選択してください。")
+                }
             }
         }
     }

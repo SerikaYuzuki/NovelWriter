@@ -87,8 +87,12 @@ struct IOSProjectHomeView: View {
             }
             Section {
                 Button(action: openSettings) { ProjectSectionStyle.settings.label }
-                Button("作品パッケージを書き出す") { Task { await store.requestExport() } }
-                Button("本文と資料を書き出す（ZIP）") { Task { await store.requestExport(readable: true) } }
+                Button { Task { await store.requestExport() } } label: {
+                    Label("作品パッケージを書き出す", systemImage: "square.and.arrow.up")
+                }
+                Button { Task { await store.requestExport(readable: true) } } label: {
+                    Label("本文と資料を書き出す（ZIP）", systemImage: "square.and.arrow.up")
+                }
             }
         }
         .navigationTitle("作品ホーム")

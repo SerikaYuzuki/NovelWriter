@@ -10,8 +10,14 @@ struct IOSProjectInfoView: View {
                     .listRowBackground(FuminiwaColor.paper.color)
             }
             Section("編集") {
-                TextField("作品名", text: Binding(get: { store.document.title }, set: store.updateDocumentTitle))
-                TextField("あらすじ", text: Binding(get: { store.document.synopsis }, set: store.updateDocumentSynopsis), axis: .vertical)
+                VStack(alignment: .leading, spacing: Spacing.small) {
+                    Text("作品タイトル").font(.headline)
+                    TextField("作品タイトル", text: Binding(get: { store.document.title }, set: store.updateDocumentTitle))
+                }
+                VStack(alignment: .leading, spacing: Spacing.small) {
+                    Text("あらすじ").font(.headline)
+                    TextField("あらすじ", text: Binding(get: { store.document.synopsis }, set: store.updateDocumentSynopsis), axis: .vertical)
+                }
             }
         }
         .scrollContentBackground(.hidden)

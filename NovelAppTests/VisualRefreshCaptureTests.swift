@@ -3,6 +3,8 @@ import EditorKit
 import Foundation
 @testable import FUMINIWA
 import NovelCore
+import NovelSyncV2Application
+import NovelSyncV2Runtime
 import SwiftUI
 import Testing
 
@@ -12,7 +14,7 @@ import Testing
 struct VisualRefreshCaptureTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["FUMINIWA_VISUAL_CAPTURE"] == "1"))
     func captureLightAndDarkScreens() async throws {
-        let directory = URL(fileURLWithPath: "/private/tmp/claude-501/visual-refresh-p1")
+        let directory = URL(fileURLWithPath: "/private/tmp/claude-501/visual-refresh-p1b")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [false, true] {
             let defaults = makeIsolatedTestUserDefaults()
@@ -20,10 +22,20 @@ struct VisualRefreshCaptureTests {
             let chapter = Chapter(title: "第一章", episodes: [episode])
             let scheme: ColorScheme = dark ? .dark : .light
             let suffix = dark ? "dark" : "light"
-            for section in [ProjectSection.structure, .projectInfo, .settings, .characters] {
-                let state = AppState(dependencies: AppDependencies(userDefaults: defaults), initialStartupState: .ready)
+            for section in [ProjectSection.projectInfo, .settings, .characters, .worldbuilding, .plot, .references] {
+                let configuration = try TestRuntimeConfiguration(account: nil)
+                let state = AppState(dependencies: AppDependencies(
+                    userDefaults: defaults,
+                    snapshotSyncV2Factory: {
+                        try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
+                    }
+                ))
+                #expect(await state.configureSnapshotSyncV2(using: state.snapshotSyncV2Factory))
+                await state.bootstrap()
                 let settings = EditorSettings(userDefaults: defaults, appearanceApplier: { _ in })
-                state.document = NovelDocument(title: "雨あがりの書斎", chapters: [chapter], flags: [Flag(title: "封筒の差出人")])
+                state.document.title = "雨あがりの書斎"
+                state.document.chapters = [chapter]
+                state.plotOutlineSelection = .chapter(chapter.id)
                 state.selectedChapterID = chapter.id
                 state.selectedEpisodeID = episode.id
                 state.document.synopsis = "古い家に届いた一通の手紙から、忘れていた季節の記憶が動き始める。"
@@ -32,7 +44,7 @@ struct VisualRefreshCaptureTests {
                 case .structure: "sidebar"
                 case .projectInfo: "work-info"
                 case .settings: "settings"
-                default: "empty"
+                default: "empty-\(section.rawValue)"
                 }
                 let root = NovelWorkbenchView()
                     .environment(state)
@@ -50,27 +62,6 @@ struct VisualRefreshCaptureTests {
                     url: directory.appendingPathComponent("macos-\(name)-\(suffix).png")
                 )
             }
-            let assistant = AssistantPanelView(
-                defaults: defaults,
-                contextID: "visual-test",
-                episodeTitle: episode.title,
-                currentEpisodeID: episode.id,
-                capture: { throw NSError(domain: "VisualTest", code: 1) },
-                close: {}
-            )
-            .preferredColorScheme(scheme)
-            try await capture(
-                assistant,
-                size: NSSize(width: 420, height: 740),
-                dark: dark,
-                url: directory.appendingPathComponent("macos-ai-\(suffix).png")
-            )
-            try await capture(
-                ConflictSheet(choose: { _ in }, cancel: {}).preferredColorScheme(scheme),
-                size: NSSize(width: 420, height: 440),
-                dark: dark,
-                url: directory.appendingPathComponent("macos-conflict-\(suffix).png")
-            )
         }
     }
 

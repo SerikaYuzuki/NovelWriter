@@ -28,9 +28,7 @@ struct CharacterListView: View {
         .overlay {
             if appState.document.characters.isEmpty {
                 ContentUnavailableView {
-                    Label("キャラクターがありません", systemImage: "person.2")
-                } description: {
-                    Text("ツールバーまたは登場人物メニューから追加できます。")
+                    Label("登場人物がありません", systemImage: "person.2")
                 } actions: {
                     Button("登場人物を追加") { appState.addCharacter() }
                         .disabled(!appState.permitsDocumentInteraction)
@@ -46,7 +44,7 @@ struct CharacterListView: View {
             )
         }
         .confirmationDialog(
-            "キャラクターを削除しますか？",
+            "登場人物を削除しますか？",
             isPresented: characterDeletionDialogIsPresented,
             presenting: characterPendingDeletion
         ) { request in
@@ -93,12 +91,11 @@ struct CharacterDetailView: View {
     var body: some View {
         if appState.selectedCharacter == nil {
             ContentUnavailableView {
-                Label("キャラクターが選択されていません", systemImage: "person")
+                Label("登場人物が選択されていません", systemImage: "person")
             } description: {
-                Text("左の一覧から編集するキャラクターを選択してください。")
-            } actions: {
-                Button("登場人物を追加") { appState.addCharacter() }
-                    .disabled(!appState.permitsDocumentInteraction)
+                if !appState.document.characters.isEmpty {
+                    Text("左の一覧から登場人物を選択してください。")
+                }
             }
         } else {
             CharacterSheetView(onAppearanceJump: onAppearanceJump)

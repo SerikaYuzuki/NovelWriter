@@ -47,8 +47,9 @@ struct IOSReferencesOutlineView: View {
                     if store.referenceAttachments.isEmpty {
                         ContentUnavailableView {
                             Label("資料がありません", systemImage: "paperclip")
-                        } description: {
-                            Text("右上の取り込みボタンから資料を追加できます。")
+                        } actions: {
+                            Button("資料を取り込む…") { isFileImporterPresented = true }
+                                .disabled(expectedSession == nil)
                         }
                     }
                 }
@@ -193,7 +194,9 @@ struct IOSReferenceDetailView: View {
                 ContentUnavailableView {
                     Label("資料が選択されていません", systemImage: "paperclip")
                 } description: {
-                    Text("一覧から確認する資料を選んでください。")
+                    if !store.referenceAttachments.isEmpty {
+                        Text("一覧から資料を選択してください。")
+                    }
                 }
             }
         }

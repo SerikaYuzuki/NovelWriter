@@ -356,7 +356,6 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
-                    .frame(maxWidth: 560, alignment: .leading)
             }
         }
     }
@@ -461,8 +460,6 @@ private struct WorldbuildingOutlineView: View {
                 if appState.document.worldNotes.isEmpty {
                     ContentUnavailableView {
                         Label("世界観ノートがありません", systemImage: "globe.asia.australia")
-                    } description: {
-                        Text("上部の「ノートを追加」または世界観メニューから追加できます。")
                     } actions: {
                         Button("ノートを追加") { appState.addWorldNote() }
                             .disabled(!appState.permitsDocumentInteraction)
@@ -587,10 +584,9 @@ private struct WorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    Text("Outlineからノートを選択するか、ノートを追加してください。")
-                } actions: {
-                    Button("ノートを追加") { appState.addWorldNote() }
-                        .disabled(!appState.permitsDocumentInteraction)
+                    if !appState.document.worldNotes.isEmpty {
+                        Text("左の一覧から世界観ノートを選択してください。")
+                    }
                 }
             }
         }
@@ -671,8 +667,6 @@ private struct ProjectInfoView: View {
                         }
                         .padding(8)
                     }
-
-                    LabeledContent("保存状態", value: appState.saveState.label)
                 }
                 .padding(20)
                 .frame(maxWidth: 720, alignment: .leading)

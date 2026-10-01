@@ -64,27 +64,29 @@ private struct FlagListView: View {
         VStack(spacing: 0) {
             flagContent
 
-            Divider()
+            if !appState.document.flags.isEmpty {
+                Divider()
 
-            HStack {
-                Button {
-                    appState.addFlag()
-                } label: {
-                    Label("伏線を追加", systemImage: "plus")
-                }
-
-                Button(role: .destructive) {
-                    flagPendingDeletion = appState.selectedFlag.map {
-                        SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                HStack {
+                    Button {
+                        appState.addFlag()
+                    } label: {
+                        Label("伏線を追加", systemImage: "plus")
                     }
-                } label: {
-                    Label("削除", systemImage: "trash")
-                }
-                .disabled(appState.selectedFlag == nil)
 
-                Spacer()
+                    Button(role: .destructive) {
+                        flagPendingDeletion = appState.selectedFlag.map {
+                            SessionBoundValue(value: $0, session: appState.documentSessionToken)
+                        }
+                    } label: {
+                        Label("削除", systemImage: "trash")
+                    }
+                    .disabled(appState.selectedFlag == nil)
+
+                    Spacer()
+                }
+                .padding(8)
             }
-            .padding(8)
         }
     }
 
@@ -93,8 +95,6 @@ private struct FlagListView: View {
         if appState.document.flags.isEmpty {
             ContentUnavailableView {
                 Label("伏線がありません", systemImage: "flag")
-            } description: {
-                Text("伏線を追加ボタンから伏線を追加できます。")
             } actions: {
                 Button("伏線を追加") { appState.addFlag() }
                     .disabled(!appState.permitsDocumentInteraction)
@@ -184,10 +184,9 @@ private struct FlagDetailView: View {
             ContentUnavailableView {
                 Label("伏線が選択されていません", systemImage: "flag")
             } description: {
-                Text("左の一覧から編集する伏線を選択してください。")
-            } actions: {
-                Button("伏線を追加") { appState.addFlag() }
-                    .disabled(!appState.permitsDocumentInteraction)
+                if !appState.document.flags.isEmpty {
+                    Text("左の一覧から伏線を選択してください。")
+                }
             }
         } else {
             FlagEditor(
