@@ -166,7 +166,7 @@ pub async fn sweep(pool: &PgPool) -> Result<u64, sqlx::Error> {
         .fetch_all(&mut *tx)
         .await?;
         for object in objects {
-            sqlx::query("DELETE FROM sync_v2.global_blobs b WHERE object_id=$1 AND NOT EXISTS(SELECT 1 FROM sync_v2.account_objects a WHERE a.object_id=b.object_id)").bind(object).execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM sync_v2.global_blobs b WHERE object_id=$1 AND NOT EXISTS(SELECT 1 FROM sync_v2.account_objects a WHERE a.object_id=b.object_id) AND NOT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities u WHERE u.object_id=b.object_id)").bind(object).execute(&mut *tx).await?;
         }
         // The account state is the atomic remote-erasure marker. Keep the
         // request pending until every Apple revocation has actually succeeded.

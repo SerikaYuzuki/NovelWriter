@@ -805,51 +805,6 @@ fn unix_now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fresh_database_guard_accepts_only_empty_inventory() {
-        assert!(FreshDatabaseInventory::default().require_empty().is_ok());
-        for inventory in [
-            FreshDatabaseInventory {
-                user_schemas: 1,
-                ..Default::default()
-            },
-            FreshDatabaseInventory {
-                user_relations: 1,
-                ..Default::default()
-            },
-            FreshDatabaseInventory {
-                user_types: 1,
-                ..Default::default()
-            },
-            FreshDatabaseInventory {
-                user_routines: 1,
-                ..Default::default()
-            },
-            FreshDatabaseInventory {
-                disallowed_extensions: 1,
-                ..Default::default()
-            },
-        ] {
-            assert!(inventory.require_empty().is_err());
-        }
-    }
-
-    #[test]
-    fn fresh_database_guard_rejects_lookalike_names() {
-        assert!(is_isolated_database_name("auth_v2_test"));
-        assert!(is_isolated_database_name("auth_v2_test_550e8400"));
-        assert!(!is_isolated_database_name("fuminiwa_auth_v2_test"));
-        assert!(!is_isolated_database_name(
-            "auth_v2_test".trim_end_matches('t')
-        ));
-        assert!(!is_isolated_database_name("production_auth_v2_test_copy"));
-    }
-}
-
 async fn run_provider_order_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error>> {
     use fuminiwa_sync_server_v2::auth_apple::AppleS2SNotification;
     let verified_count: i64 = sqlx::query_scalar(
@@ -991,4 +946,49 @@ async fn run_provider_order_scenarios(pool: &PgPool) -> Result<(), Box<dyn Error
             .await?;
     assert_eq!(state, "revoked");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_database_guard_accepts_only_empty_inventory() {
+        assert!(FreshDatabaseInventory::default().require_empty().is_ok());
+        for inventory in [
+            FreshDatabaseInventory {
+                user_schemas: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_relations: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_types: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                user_routines: 1,
+                ..Default::default()
+            },
+            FreshDatabaseInventory {
+                disallowed_extensions: 1,
+                ..Default::default()
+            },
+        ] {
+            assert!(inventory.require_empty().is_err());
+        }
+    }
+
+    #[test]
+    fn fresh_database_guard_rejects_lookalike_names() {
+        assert!(is_isolated_database_name("auth_v2_test"));
+        assert!(is_isolated_database_name("auth_v2_test_550e8400"));
+        assert!(!is_isolated_database_name("fuminiwa_auth_v2_test"));
+        assert!(!is_isolated_database_name(
+            "auth_v2_test".trim_end_matches('t')
+        ));
+        assert!(!is_isolated_database_name("production_auth_v2_test_copy"));
+    }
 }

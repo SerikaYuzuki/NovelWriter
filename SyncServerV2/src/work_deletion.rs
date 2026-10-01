@@ -105,7 +105,7 @@ impl Repository {
         for object in objects {
             sqlx::query("DELETE FROM sync_v2.account_objects a WHERE account_id=$1 AND object_id=$2 AND NOT EXISTS(SELECT 1 FROM sync_v2.snapshot_entries e WHERE e.account_id=a.account_id AND e.object_id=a.object_id) AND NOT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities u WHERE u.account_id=a.account_id AND u.object_id=a.object_id)")
                 .bind(account).bind(&object).execute(&mut **tx).await?;
-            sqlx::query("DELETE FROM sync_v2.global_blobs b WHERE object_id=$1 AND NOT EXISTS(SELECT 1 FROM sync_v2.account_objects a WHERE a.object_id=b.object_id)")
+            sqlx::query("DELETE FROM sync_v2.global_blobs b WHERE object_id=$1 AND NOT EXISTS(SELECT 1 FROM sync_v2.account_objects a WHERE a.object_id=b.object_id) AND NOT EXISTS(SELECT 1 FROM sync_v2.upload_capabilities u WHERE u.object_id=b.object_id)")
                 .bind(&object).execute(&mut **tx).await?;
         }
         Ok(())

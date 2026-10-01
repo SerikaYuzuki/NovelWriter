@@ -418,3 +418,7 @@ CREATE INDEX snapshot_history_cursor ON sync_v2.history(account_id, work_id, eve
 -- sealed command before completion. cloneWork remains scoped to its source
 -- Work; a new-Work head event uses command_scope=cloneNewWork plus the source
 -- command_work_id and a receipt constrained to command_kind=cloneWork.
+
+-- Reference lookups for blob GC and account-scoped object reads.
+CREATE INDEX account_objects_object_id ON sync_v2.account_objects(object_id);
+CREATE INDEX snapshot_entries_account_object ON sync_v2.snapshot_entries(account_id, object_id);

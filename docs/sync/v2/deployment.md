@@ -147,13 +147,14 @@ Retain the previous image/container and backup before replacing the API.
 The old runtime cannot attest the added schema and must not be restarted
 against version 5 without an explicitly reviewed rollback.
 
-## Exact role-split v2 upgrade: known migrations (0006–0009)
+## Exact role-split v2 upgrade: known migrations (0006–0011)
 
-The explicit `sync_v2_migrator --upgrade-review-20260913` path accepts only an
+The explicit `sync_v2_migrator --upgrade-server-fixes-20261001` path (the older
+`--upgrade-review-20260913` flag remains an alias) accepts only an
 attested role-split database with the checked-in migration checksums and a
-complete history through version 5, 6, 7, 8 or 9. Under the existing deployment lock,
+complete history through version 5, 6, 7, 8, 9, 10 or 11. Under the existing deployment lock,
 SQLx applies only the remaining migrations. Ordinary startup does not upgrade.
-The current runtime requires the account-deletion schema (0008) and independent AI records/recovery receipts (0009), and refuses an older database. Runtime privileges remain DML-only.
+The current runtime requires account deletion (0008), independent AI records/recovery receipts (0009), browser auth (0010), and the reference indexes (0011), and refuses an older database. Runtime privileges remain DML-only.
 
 0006 adds the verified Apple authentication watermark and durable provider
 validation state. A verified login supersedes pending validation across all
@@ -178,3 +179,79 @@ See [operational evidence](../../ACCOUNT_RETENTION_OPERATIONS.md) for the last r
 ## AI records and work recovery (0009)
 
 0009 adds `assistant_records` and `recovery_operations`. Existing snapshot wire data stays unchanged. The runtime receives exact DML grants and USAGE-only access to the AI sequence; account erasure and expired-work purge include these rows. Apply with the same explicit reviewed-upgrade command, after an isolated backup restore and role attestation. A pre-0009 binary must not be restarted against the upgraded inventory. See [AI contract](assistant.md) and [rollout evidence](../../PROTECTION_AI_ACCEPTANCE.md).
+
+
+## Server review fixes (0011, 2026-10-01)
+
+Migration `0011_reference_indexes.sql` adds
+`account_objects_object_id(object_id)` and
+`snapshot_entries_account_object(account_id, object_id)`. The existing migrator
+owns both indexes. No snapshot depth/generation column or wire change is added.
+The identity inventory recognizes the exact pre-index catalog for the explicit
+upgrade, rejects a partially installed pair, and the runtime requires both
+valid indexes. The earlier migration files and their checksums are unchanged.
+The base `postgres.sql` contract includes the additional index DDL; subsequent
+feature migrations remain in their existing files. Older binaries reject the
+new inventory, so rollback requires the retained backup/image pair, not merely
+an image swap. No upgrade or deployment is implied by checking in this change.
+
+Runtime resource limits (per server process):
+
+- PostgreSQL pool: 10 connections, acquire timeout 5 seconds. Each new connection
+  sets `statement_timeout = '30s'`, covering sync/auth/worker statements and lock
+  waits on that shared pool. These are statement limits, not an end-to-end request
+  deadline. The separate DDL migrator pool does not inherit runtime timeouts.
+- Download: two concurrent handlers, including authentication, DB reads, digest
+  checks and response serialization. A saturated handler returns existing 503
+  `retryable` without waiting for a permit. Upload retains its separate two slots.
+- Download metadata: per-repository cache of at most four account/work/root
+  closures for 30 seconds, at most 100,000 identities each, containing only IDs
+  and sizes, never manuscript bytes or authorization decisions. Cold pages expand
+  ancestry/entries once; warm pages reuse metadata. Oversized closures remember
+  only a short-lived bypass marker and use the bounded uncached query. There is
+  no history truncation. Work visibility is checked before any cache read, and
+  object availability is rechecked per page, in one repeatable-read, read-only
+  transaction. At most two `ANY` queries fetch the selected payloads.
+- Lineage: one ancestry check visits at most 100,000 distinct snapshots and stops
+  immediately at the requested ancestor. This is not a maximum retained history
+  or generation number. `UNION` deduplicates merges and terminates even corrupt
+  cycles; a missing ancestor remains `NotAncestor`, and exhausted budget fails
+  closed as `lineageViolation`. Parent existence plus the manifest hash prevents
+  cycles through the registration API. The separately documented 100,000-object
+  graph budget is a different limit.
+- Blob deletion requires absence of both account ownership and **any** upload
+  capability referencing that ObjectID, including prepared/in-flight, uploaded,
+  finalized and expired rows. This change adds no orphan sweep or pruning policy.
+
+The default tracing filter is `info` when `RUST_LOG` is unset; Compose explicitly
+uses `${RUST_LOG:-info}`. HTTP completion logs contain only method, matched route
+**template**, status and elapsed milliseconds (through response construction).
+Database-to-503 warnings contain SQLSTATE and a fixed error category only (for
+example `pool_timeout`), never PostgreSQL messages,
+details, bind values, headers, cursors, tokens or bodies.
+
+## HTTP compression and URLSession
+
+Caddy uses `encode gzip`, negotiated via the request's `Accept-Encoding`, with
+an explicit response matcher for `application/vnd.fuminiwa.sync.v2+jcs` and
+`application/json` (including parameter suffixes). Binary object responses use
+`application/octet-stream` and are excluded, avoiding re-compression of images
+or compressed attachments. Default Caddy minimum-size behavior still applies.
+See the [Caddy encode reference](https://caddyserver.com/docs/caddyfile/directives/encode).
+
+Gzip is supported by URLSession's HTTP content decoding; the Data delivered to
+the client is the decoded canonical payload, which is what digest validation
+must hash. Do not compare compressed Content-Length to decoded Data length or
+add a second gzip decode. Apple documents URLSession's gzip/Brotli support in
+[WWDC18 session 714](https://developer.apple.com/videos/play/wwdc2018/714/).
+Zstd is deliberately not enabled here because older URLSession versions may not
+support it. The application media type, JCS bytes, digests, page ordering,
+limits and cursor format are unchanged.
+
+On a Mac permitting loopback listeners, run
+`python3 SyncServerV2/scripts/verify-urlsession-gzip.py` from the repository root.
+It serves only a synthetic checked-in fixture on an ephemeral `127.0.0.1` port,
+checks URLSession's gzip negotiation, and compares returned bytes and SHA-256
+with the uncompressed fixture. This is a client transport smoke test, not a
+Caddy deployment or device-acceptance gate. Restricted sandboxes which deny
+local socket bind cannot execute the transport portion of this test.

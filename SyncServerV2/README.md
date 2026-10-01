@@ -132,6 +132,15 @@ FUMINIWA_V2_TEST_DATABASE_URL='postgres://.../fuminiwa_v2_test_http_<uuid>' \
   -- --exact --nocapture
 ```
 
+The repository gate also covers an 8,194-generation publish, immediate-parent
+publication on that history, rejection of a non-ancestor, and cross-account
+blob protection while another upload is prepared/uploaded/finalized. The HTTP
+gate covers a merge DAG, object deduplication, quarantine/deleting states,
+objects just above 256 KiB, and an exact 2 MiB page followed by its remainder.
+The dedicated `FUMINIWA_ACCOUNT_DELETION_TEST_URL` gate in
+`tests/account_deletion_gate.rs` additionally verifies the same upload protection
+through account erasure; use another fresh guarded test database for that gate.
+
 Without the variable, ordinary tests emit an explicit integration skip and no
 network or fixed LAN endpoint is contacted. The guard rejects private-LAN
 hosts, legacy/production/staging database names, names without the test marker,

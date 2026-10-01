@@ -228,8 +228,12 @@ fn sync_migration_contains_fail_closed_server_identity() {
 #[test]
 fn sync_migration_is_byte_identical_to_the_audited_contract() {
     assert_eq!(
-        include_bytes!("../migrations/0001_sync_v2.sql"),
-        include_bytes!("../../docs/sync/v2/postgres.sql")
+        format!(
+            "{}\n{}",
+            include_str!("../migrations/0001_sync_v2.sql"),
+            include_str!("../migrations/0011_reference_indexes.sql")
+        ),
+        include_str!("../../docs/sync/v2/postgres.sql")
     );
 }
 

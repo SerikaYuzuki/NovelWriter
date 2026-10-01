@@ -153,7 +153,12 @@ async fn run_once() -> Result<()> {
                 )
                 .await?;
                 Repository::verify_migration_owner_attestation(&migration_pool).await?;
-                if env::args().any(|arg| arg == "--upgrade-review-20260913") {
+                if env::args().any(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "--upgrade-review-20260913" | "--upgrade-server-fixes-20261001"
+                    )
+                }) {
                     upgrade_review_20260913(&migration_pool, &server_instance_id).await?;
                 }
                 Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE)
@@ -174,7 +179,12 @@ async fn run_once() -> Result<()> {
             )
             .await?;
             Repository::verify_migration_owner_attestation(&migration_pool).await?;
-            if env::args().any(|arg| arg == "--upgrade-review-20260913") {
+            if env::args().any(|arg| {
+                matches!(
+                    arg.as_str(),
+                    "--upgrade-review-20260913" | "--upgrade-server-fixes-20261001"
+                )
+            }) {
                 upgrade_review_20260913(&migration_pool, &server_instance_id).await?;
             }
             Repository::verify_runtime_pool(&runtime_pool, &server_instance_id, RUNTIME_ROLE)
@@ -629,7 +639,11 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
     let intermediate: Vec<_> = (1..=6).map(|version| (version, true)).collect();
     let review: Vec<_> = (1..=7).map(|version| (version, true)).collect();
     let retention: Vec<_> = (1..=8).map(|version| (version, true)).collect();
-    if versions != previous
+    let browser: Vec<_> = (1..=10).map(|version| (version, true)).collect();
+    let indexes: Vec<_> = (1..=11).map(|version| (version, true)).collect();
+    if versions != browser
+        && versions != indexes
+        && versions != previous
         && versions != intermediate
         && versions != review
         && versions != retention
@@ -641,6 +655,6 @@ async fn upgrade_review_20260913(pool: &PgPool, server_instance_id: &str) -> Res
     // checked-in migration; unknown/changed history fails closed.
     sqlx::migrate!("./migrations").run(pool).await?;
     Repository::apply_runtime_grants(pool, RUNTIME_ROLE).await?;
-    println!("Review 20260913 schema upgrade applied and recorded");
+    println!("Known v2 schema migrations through 0011 applied and recorded");
     Ok(())
 }
