@@ -42,7 +42,7 @@ struct IOSVisualRefreshCaptureTests {
             let encoded = try ThumbnailEncoder.encode(bytes, owner: owner)
             #expect(await store.setThumbnail(encoded, owner: owner, session: session, account: store.snapshotSyncV2AccountScope))
         }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("visual-refresh-p2")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("visual-refresh-p2b")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [false, true] {
             for large in [false, true] {
@@ -50,6 +50,7 @@ struct IOSVisualRefreshCaptureTests {
                 let screens: [(String, AnyView)] = [
                     ("work-home", AnyView(NavigationStack { IOSProjectHomeView(store: store, openWriting: {}, openProjectInfo: {}, openPlot: {},
                                                                                openCharacters: {}, openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {}) })),
+                    ("work-info", AnyView(NavigationStack { IOSProjectInfoView(store: store) })),
                     ("characters-list", AnyView(NavigationStack { IOSCharacterFeatureView(store: store) })),
                     ("character-detail", AnyView(NavigationStack { IOSCharacterDetailView(store: store, characterID: character.id, expectedSession: session) })),
                     ("world-list", AnyView(NavigationStack { IOSWorldbuildingFeatureView(store: store) })),
@@ -97,6 +98,14 @@ struct IOSVisualRefreshCaptureTests {
                               url: directory.appendingPathComponent("ios-shelf-\(mode.rawValue)-\(suffix).png"))
         }
         store.snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+        for mode in [ShelfDisplay.grid, .list] {
+            defaults.set(mode.rawValue, forKey: "library.display")
+            let root = NavigationStack { IOSLibraryView(store: store, openWork: { _ in }, makeNewDocument: {}, observesLibrary: false) }
+                .defaultAppStorage(defaults).preferredColorScheme(dark ? .dark : .light)
+                .environment(\.dynamicTypeSize, large ? .accessibility1 : .large).tint(FuminiwaColor.accent.color)
+            try await capture(root, size: CGSize(width: 440, height: 1200), dark: dark,
+                              url: directory.appendingPathComponent("ios-shelf-\(mode.rawValue)-retry-enabled-\(dark ? "dark" : "light")-\(large ? "ax1" : "default").png"))
+        }
         store.libraryImportFailures = [:]
     }
 

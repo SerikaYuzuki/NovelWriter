@@ -22,7 +22,14 @@ struct IOSProjectHomeView: View {
             Section {
                 WorkInfoSummary(document: store.document, coverData: store.thumbnailData(ThumbnailOwner(.work, store.document.id)), synopsis: store.document.synopsis)
             }
-            Section("執筆") { Button(action: openWriting) { ProjectSectionStyle.writing.label }.buttonStyle(.borderedProminent) }
+            Section("執筆") {
+                Button(action: openWriting) {
+                    Label(store.document.chapters.contains { $0.episodes.contains { !$0.content.isEmpty } } ? "執筆を続ける" : "書き始める", systemImage: "pencil")
+                        .labelStyle(.titleAndIcon)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+            }
             Section("作品") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: Spacing.small) {
                     feature("人物", symbol: "person.2", count: store.document.characters.count, action: openCharacters)

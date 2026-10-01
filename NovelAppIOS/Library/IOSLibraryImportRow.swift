@@ -36,8 +36,8 @@ struct IOSLibraryImportRow: View {
                 Button(action: open) {
                     VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                         Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
-                            .font(isGrid ? FuminiwaType.workTitle : .body)
-                            .lineLimit(isGrid ? 2 : nil)
+                            .font(isGrid ? FuminiwaType.shelfTitle : .body)
+                            .truncationMode(.tail).lineLimit(isGrid ? 2 : nil)
                             .foregroundStyle(FuminiwaColor.textPrimary.color)
                         status
                     }
@@ -46,19 +46,20 @@ struct IOSLibraryImportRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isRenaming)
-                .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? "この作品を取り込み中です" :
+                .accessibilityHint(isRenaming ? "作品名を変更中です" : isImporting ? LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice) :
                     item.availability == .remoteOnly ? SyncV2LibraryPresentation.remoteOnlyHint : "")
                 if isImporting {
-                    Button("取り込みを中止") { Task { await store.cancelLibraryImport() } }
+                    Button(isGrid ? "中止" : "取り込みを中止") { Task { await store.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
                         .frame(minHeight: 44)
                 } else if store.libraryImportFailures[item.workID] != nil {
                     Button("再試行") { store.takeOntoDevice(workID: item.workID, title: item.title) }
+                        .tint(FuminiwaColor.accent.color)
+                        .help(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
+                        .accessibilityHint(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
                         .buttonStyle(.borderless)
                         .frame(minHeight: 44)
                         .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
-                        .accessibilityHint(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil
-                            ? SyncV2LibraryPresentation.importBusyReason : "開かずにこの端末へ保存します")
                 }
             }
         }
@@ -72,10 +73,14 @@ struct IOSLibraryImportRow: View {
                     ? SyncV2LibraryPresentation.importBusyReason : "開かずにこの端末へ保存します")
             }
             if isImporting {
+                Text(LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice))
                 Button("取り込みを中止") { Task { await store.cancelLibraryImport() } }
             }
             if store.libraryImportFailures[item.workID] != nil {
                 Button("再試行") { store.takeOntoDevice(workID: item.workID, title: item.title) }
+                    .tint(FuminiwaColor.accent.color)
+                    .help(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
+                    .accessibilityHint(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
                     .disabled(store.libraryPrefetchWorkID != nil || store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
             }
             Button("作品名を変更", systemImage: "pencil", action: rename)
@@ -87,7 +92,7 @@ struct IOSLibraryImportRow: View {
         if isImporting, let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
             LibraryImportProgress(startedAt: startedAt, longImportNotice: SyncV2LibraryPresentation.longImportNotice,
                                   label: phase.japaneseLabel, fraction: phase.stage == .receiving ? phase.fraction : nil,
-                                  accessibilityValue: phase.accessibilityValue)
+                                  accessibilityValue: phase.accessibilityValue, compact: isGrid)
         } else if let failure = store.libraryImportFailures[item.workID] {
             StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
                 .font(FuminiwaType.rowSecondary)

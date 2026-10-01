@@ -201,6 +201,7 @@ private struct CharacterSheetView: View {
                 VStack(alignment: .leading, spacing: Spacing.small) {
                     TextField("名前", text: selectedCharacterNameBinding)
                         .font(.title2.weight(.semibold)).textFieldStyle(.plain)
+                        .foregroundStyle(FuminiwaColor.textPrimary.color)
                         .onSubmit { appState.commitCharacterEditing() }
                     WorkbenchLabeledField("ふりがな") {
                         TextField("ふりがな", text: selectedCharacterKanaBinding)
@@ -217,11 +218,24 @@ private struct CharacterSheetView: View {
         }
     }
 
+    @State private var showsCustomColor = false
+
     private var colorControls: some View {
         HStack(spacing: 12) {
-            ColorPicker("カラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 32)
+            Button { showsCustomColor = true } label: {
+                Image(systemName: "paintpalette").font(.caption2)
+                    .frame(width: 16, height: 16)
+                    .background(FuminiwaColor.surface.color, in: Circle())
+                    .overlay(Circle().strokeBorder(FuminiwaColor.separator.color))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("カスタムカラー")
+            .accessibilityLabel("カスタムカラー")
+            .popover(isPresented: $showsCustomColor) {
+                ColorPicker("カスタムカラー", selection: selectedCharacterColorBinding, supportsOpacity: false)
+                    .padding(Spacing.medium)
+            }
 
             CharacterColorPresetPicker(
                 selectedHex: appState.selectedCharacter?.colorHex,
@@ -326,10 +340,26 @@ private struct CharacterSheetView: View {
 
 private struct CharacterColorPresetPicker: View {
     let selectedHex: String?
-    let onSelect: (String) -> Void
+    let onSelect: (String?) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
+            Button { onSelect(nil) } label: {
+                Circle().strokeBorder(FuminiwaColor.textSecondary.color, lineWidth: 1)
+                    .overlay(Image(systemName: "line.diagonal").font(.caption))
+                    .frame(width: 16, height: 16)
+                    .overlay {
+                        if selectedHex == nil {
+                            Circle().stroke(FuminiwaColor.accent.color, lineWidth: 2).padding(-3)
+                            Image(systemName: "checkmark").font(.caption2.bold())
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("色なし")
+            .accessibilityLabel("色なし")
+            .accessibilityAddTraits(selectedHex == nil ? .isSelected : [])
             ForEach(CharacterColorPreset.hexValues, id: \.self) { hex in
                 let fillColor = Color(hex: hex) ?? Color.accentColor
                 let strokeColor = selectedHex == hex ? Color.accentColor : Color(nsColor: .separatorColor)
@@ -351,7 +381,7 @@ private struct CharacterColorPresetPicker: View {
                         }
                         .frame(width: 24, height: 24)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help(CharacterColorPreset.name(for: hex))
                 .accessibilityLabel(CharacterColorPreset.name(for: hex))
                 .accessibilityAddTraits(selectedHex == hex ? .isSelected : [])

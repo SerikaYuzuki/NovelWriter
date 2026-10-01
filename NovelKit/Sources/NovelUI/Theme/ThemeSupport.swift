@@ -1,6 +1,7 @@
 import SwiftUI
 
 public enum FuminiwaType {
+    public static let shelfTitle = Font.custom("HiraMinProN-W6", size: 17, relativeTo: .headline)
     public static let workTitle = Font.custom("HiraMinProN-W6", size: 22, relativeTo: .title2)
     public static let coverInitial = Font.custom("HiraMinProN-W6", size: 34, relativeTo: .largeTitle)
     public static let groupTitle = Font.headline

@@ -7,9 +7,15 @@ public struct LibraryImportProgress: View {
     private let label: String
     private let fraction: Double?
     private let value: String
+    private let compact: Bool
+
+    public static func hint(_ notice: String) -> String {
+        "アプリを閉じると中断します。" + notice
+    }
 
     public init(startedAt: Date, longImportNotice: String, label: String = "サーバーから受信中 0.0 MB",
-                fraction: Double? = nil, accessibilityValue: String = "取り込み中") {
+                fraction: Double? = nil, accessibilityValue: String = "取り込み中", compact: Bool = false) {
+        self.compact = compact
         self.label = label
         self.fraction = fraction
         value = accessibilityValue
@@ -21,16 +27,16 @@ public struct LibraryImportProgress: View {
         TimelineView(.periodic(from: startedAt, by: 1)) { context in
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                 HStack(spacing: Spacing.small) {
-                    if fraction == nil {
+                    if !compact, fraction == nil {
                         ProgressView().controlSize(.small)
                             .tint(FuminiwaColor.accent.color)
                             .accessibilityHidden(true)
-                    } else {
+                    } else if !compact {
                         Image(systemName: "arrow.down.circle")
                             .foregroundStyle(FuminiwaColor.accent.color)
                             .accessibilityHidden(true)
                     }
-                    Text(label).monospacedDigit()
+                    Text(compact ? label.replacingOccurrences(of: "サーバーから", with: "") : label).monospacedDigit()
                         .foregroundStyle(FuminiwaColor.accent.color)
                 }
                 .accessibilityElement(children: .ignore)
@@ -41,16 +47,20 @@ public struct LibraryImportProgress: View {
                         .tint(FuminiwaColor.leaf.color)
                         .accessibilityHidden(true)
                 }
-                #if os(iOS)
-                Text("アプリを閉じると中断します")
-                    .foregroundStyle(FuminiwaColor.textSecondary.color)
-                #endif
-                if context.date.timeIntervalSince(startedAt) >= 15 {
-                    Text(longImportNotice)
+                if !compact {
+                    #if os(iOS)
+                    Text("アプリを閉じると中断します")
                         .foregroundStyle(FuminiwaColor.textSecondary.color)
+                    #endif
+                    if context.date.timeIntervalSince(startedAt) >= 15 {
+                        Text(longImportNotice)
+                            .foregroundStyle(FuminiwaColor.textSecondary.color)
+                    }
                 }
             }
-            .font(FuminiwaType.rowSecondary)
+            .accessibilityHint(Self.hint(longImportNotice))
+            .help(Self.hint(longImportNotice))
+            .font(compact ? .caption : FuminiwaType.rowSecondary)
         }
     }
 }

@@ -282,7 +282,7 @@ private extension LibraryPane {
                 return bytes
             }
             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                Text(work.title).font(usesGrid ? FuminiwaType.workTitle : .body).lineLimit(usesGrid ? 2 : 1)
+                Text(work.title).font(usesGrid ? FuminiwaType.shelfTitle : .body).truncationMode(.tail).lineLimit(usesGrid ? 2 : 1)
                 if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID || appState.libraryPrefetchWorkID == work.workID,
                    let startedAt = appState.snapshotSyncV2RemoteOnlyOpenStartedAt {
                     LibraryImportProgress(startedAt: startedAt,
@@ -290,16 +290,17 @@ private extension LibraryPane {
                                           label: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
                                           fraction: appState.libraryImportPhases[work.workID]?.stage == .receiving
                                               ? appState.libraryImportPhases[work.workID]?.fraction : nil,
-                                          accessibilityValue: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue)
-                    Button("取り込みを中止") { Task { await appState.cancelLibraryImport() } }
+                                          accessibilityValue: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue, compact: usesGrid)
+                    Button(usesGrid ? "中止" : "取り込みを中止") { Task { await appState.cancelLibraryImport() } }
                         .buttonStyle(.borderless)
                 } else if let failure = appState.libraryImportFailures[work.workID] {
                     StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
                     Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
+                        .tint(FuminiwaColor.accent.color)
+                        .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
+                        .accessibilityHint(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
                         .buttonStyle(.borderless)
                         .disabled(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
-                        .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil
-                            ? SyncV2LibraryPresentation.importBusyReason : "開かずにこの端末へ保存します")
                 } else {
                     TimelineView(.periodic(from: .now, by: 15)) { _ in
                         StatusLabel(status(for: work).text, systemImage: status(for: work).symbol,
@@ -332,9 +333,13 @@ private extension LibraryPane {
 
     @ViewBuilder private func importMenu(_ work: StartupLibraryWork) -> some View {
         if appState.libraryPrefetchWorkID == work.workID || appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID {
+            Text(LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice))
             Button("取り込みを中止") { Task { await appState.cancelLibraryImport() } }
         } else if appState.libraryImportFailures[work.workID] != nil {
             Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
+                .tint(FuminiwaColor.accent.color)
+                .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
+                .accessibilityHint(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil ? "ほかの作品を取り込み中です" : "この端末へ取り込み直します")
                 .disabled(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
         }
     }
@@ -430,7 +435,7 @@ private extension LibraryPane {
 
     private func rowHint(_ work: StartupLibraryWork) -> String {
         if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID {
-            return "この作品を取り込み中です"
+            return LibraryImportProgress.hint(SyncV2LibraryPresentation.longImportNotice)
         }
         if renamingIDs.contains(work.id) {
             return "作品名を変更中です"
