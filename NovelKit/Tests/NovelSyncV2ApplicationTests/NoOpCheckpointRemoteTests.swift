@@ -18,11 +18,11 @@ struct NoOpCheckpointRemoteTests {
                                              documentCreatedAt: applicationTestCreatedAt, attachments: attachments)
         try await leafEventually {
             let offline = await fixture.app.uiState(workID: fixture.workID)?.remoteProgress == .offline
-            let stopped = await fixture.app.workerTasks[fixture.workID] == nil
+            let stopped = await fixture.app.lanes[fixture.workID]?.workerTask == nil
             return offline && stopped
         }
         let before = await fixture.configuration.remote.recordedOperations().count
-        let wakeBefore = await fixture.app.wakeEpochs[fixture.workID]
+        let wakeBefore = await fixture.app.lanes[fixture.workID]?.wakeEpoch
         #expect(before > 0)
         for reason in [SyncV2CheckpointReason.autosave, .explicit] {
             let result = try await fixture.app.checkpoint(workID: fixture.workID, document: document, reason: reason,
@@ -30,7 +30,7 @@ struct NoOpCheckpointRemoteTests {
             #expect(result.typedResult == .noChanges)
             #expect(result.state.remoteProgress == .offline)
             try await fixture.app.promoteCheckpoint(workID: fixture.workID)
-            #expect(await fixture.app.wakeEpochs[fixture.workID] == wakeBefore)
+            #expect(await fixture.app.lanes[fixture.workID]?.wakeEpoch == wakeBefore)
             #expect(await fixture.configuration.remote.recordedOperations().count == before)
         }
         await fixture.close()

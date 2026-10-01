@@ -8,11 +8,11 @@ public extension SyncV2Application {
 
     func setHistoryBackfillNetwork(online: Bool, constrained: Bool) async {
         if !online {
-            constrainedBackfills.removeAll()
+            clearLaneFlag(\.allowsConstrainedBackfill)
         }
         backfillOnline = online
         backfillConstrained = constrained
-        if !online || (constrained && activeBackfill.map { !constrainedBackfills.contains($0) } == true) {
+        if !online || (constrained && activeBackfill.map { !lanes[$0, default: WorkLane()].allowsConstrainedBackfill } == true) {
             if let activeBackfill {
                 enqueueBackfill(activeBackfill, priority: false)
             }
@@ -29,13 +29,13 @@ public extension SyncV2Application {
         if stored == .complete || stored == .suspended {
             return stored
         }
-        if stored == .validationFailed, activeBackfill != workID || !manualBackfills.contains(workID) {
+        if stored == .validationFailed, activeBackfill != workID || !lanes[workID, default: WorkLane()].manuallyRequestedBackfill {
             return stored
         }
         if !backfillOnline {
             return .offline
         }
-        if backfillConstrained, !constrainedBackfills.contains(workID) {
+        if backfillConstrained, !lanes[workID, default: WorkLane()].allowsConstrainedBackfill {
             return .constrained
         }
         if activeBackfill == workID {
@@ -49,14 +49,14 @@ public extension SyncV2Application {
         let generation = historyScopeGeneration
         let stored = try await kernel.historyFetchState(workID: workID)
         guard generation == historyScopeGeneration, remoteSchedulingSuspensions.isEmpty,
-              runtimeIdentity != .preview, !deletingWorkIDs.contains(workID),
+              runtimeIdentity != .preview, !lanes[workID, default: WorkLane()].deletionPending,
               stored != .suspended else { return .unavailable }
         guard backfillOnline else { return .offline }
         if backfillConstrained, !allowConstrained {
             return .needsNetworkConfirmation
         }
-        let newlyManual = manualBackfills.insert(workID).inserted
-        let newlyAllowed = allowConstrained && constrainedBackfills.insert(workID).inserted
+        let newlyManual = setLaneFlag(\.manuallyRequestedBackfill, workID: workID, value: true)
+        let newlyAllowed = allowConstrained && setLaneFlag(\.allowsConstrainedBackfill, workID: workID, value: true)
         if activeBackfill == workID, newlyManual || newlyAllowed {
             enqueueBackfill(workID, priority: true)
             backfillTask?.cancel()
@@ -96,7 +96,7 @@ public extension SyncV2Application {
     }
 
     private func enqueueBackfill(_ workID: WorkID, priority: Bool) {
-        guard !deletingWorkIDs.contains(workID) else { return }
+        guard !lanes[workID, default: WorkLane()].deletionPending else { return }
         if priority {
             backfillQueue.removeAll { $0 == workID }; backfillQueue.insert(workID, at: 0)
         } else if !backfillQueue.contains(workID) {
@@ -107,19 +107,19 @@ public extension SyncV2Application {
     private func startHistoryBackfill() {
         guard backfillTask == nil, backfillOnline, remoteSchedulingSuspensions.isEmpty,
               runtimeIdentity != .preview,
-              let index = backfillQueue.firstIndex(where: { !backfillConstrained || constrainedBackfills.contains($0) }) else { return }
+              let index = backfillQueue.firstIndex(where: { !backfillConstrained || lanes[$0, default: WorkLane()].allowsConstrainedBackfill }) else { return }
         let workID = backfillQueue.remove(at: index)
         let generation = historyScopeGeneration
         activeBackfill = workID
-        let manual = manualBackfills.contains(workID)
-        let allowConstrained = constrainedBackfills.contains(workID)
+        let manual = lanes[workID, default: WorkLane()].manuallyRequestedBackfill
+        let allowConstrained = lanes[workID, default: WorkLane()].allowsConstrainedBackfill
         backfillTask = Task {
             defer {
                 activeBackfill = nil
                 backfillTask = nil
                 if generation == historyScopeGeneration, !backfillQueue.contains(workID) {
-                    manualBackfills.remove(workID)
-                    constrainedBackfills.remove(workID)
+                    setLaneFlag(\.manuallyRequestedBackfill, workID: workID, value: false)
+                    setLaneFlag(\.allowsConstrainedBackfill, workID: workID, value: false)
                 }
                 notifyHistoryChange()
                 startHistoryBackfill()
@@ -148,14 +148,12 @@ public extension SyncV2Application {
         notifyHistoryChange()
         // The sealed command and Inbox are retained. Re-read the receipt through
         // the ordinary CAS/session-gated worker as each closed group arrives.
-        if historyWaiting.contains(workID) {
+        if lanes[workID, default: WorkLane()].historyWaiting {
             scheduleWorker(for: workID)
         }
     }
 
     internal func notifyHistoryChange() {
-        for continuation in stateChangeContinuations.values {
-            continuation.yield(())
-        }
+        emit(.invalidated(nil))
     }
 }

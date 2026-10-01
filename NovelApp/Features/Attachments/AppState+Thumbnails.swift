@@ -28,7 +28,7 @@ extension AppState {
 
     func setThumbnail(_ bytes: Data?, owner: ThumbnailOwner, session: DocumentSessionToken,
                       account: SnapshotSyncV2AccountScopeToken) async -> Bool {
-        guard snapshotSyncV2AccountScopeToken == account else { return false }
+        guard matchesSnapshotSyncV2AccountScope(account) else { return false }
         return await performSnapshotDataMutation(expectedSession: session) {
             guard self.snapshotSyncV2AccountScopeToken == account, owner.exists(in: self.document) else { return false }
             var updated = self.snapshotSyncV2Attachments.filter { $0.fileName != owner.fileName }

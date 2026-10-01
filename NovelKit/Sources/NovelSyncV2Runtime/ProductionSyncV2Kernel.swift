@@ -6,12 +6,10 @@ import NovelSyncV2Store
 actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
     let store: LocalSyncV2Store
     let scope: any SyncV2ScopeResolver
-    private let remote: (any SyncV2RemoteClient)?
 
-    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver, remote: (any SyncV2RemoteClient)? = nil) {
+    init(store: LocalSyncV2Store, scope: any SyncV2ScopeResolver) {
         self.store = store
         self.scope = scope
-        self.remote = remote
     }
 
     func snapshotAvailability(workID: WorkID, snapshotID: SnapshotID) async throws -> SyncV2SnapshotAvailability {
@@ -141,6 +139,18 @@ actor ProductionSyncV2Kernel: SyncV2LocalKernel, SyncV2LibraryProvider {
             guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }
             let localScope = try await scope.existingScope(workID: workID)
             return try await store.workSummary(workID: workID, scope: localScope).localGeneration
+        } catch {
+            throw mapStoreError(error)
+        }
+    }
+
+    func currentVersion(workID: WorkID) async throws -> SyncV2LocalVersion {
+        do {
+            guard try await store.workDeletion(workID: workID) == nil else { throw SyncV2ApplicationError.workDeletionPending }
+            let localScope = try await scope.existingScope(workID: workID)
+            let summary = try await store.workSummary(workID: workID, scope: localScope)
+            guard let snapshotID = summary.currentSnapshotID else { throw SyncV2ApplicationError.safeBoundaryRejected }
+            return SyncV2LocalVersion(generation: summary.localGeneration, snapshotID: snapshotID)
         } catch {
             throw mapStoreError(error)
         }
@@ -488,31 +498,6 @@ extension ProductionSyncV2Kernel {
         projectionItems = projectionItems.filter { !parkedIDs.contains($0.workID) }
         projectionItems += parked
         return SyncV2LibraryProjection(items: projectionItems)
-    }
-
-    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
-        guard let remote else { throw SyncV2ApplicationError.workNotFound }
-        return try await remote.downloadRemoteOnly(workID: workID)
-    }
-
-    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.catalogPage(cursor: cursor, pageSize: pageSize)
-    }
-
-    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.remoteHead(workID: workID)
-    }
-
-    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.historyPage(workID: workID, cursor: cursor, pageSize: pageSize)
-    }
-
-    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
-        guard let remote else { throw SyncV2Failure.authenticationRequired }
-        return try await remote.remoteConflict(workID: workID)
     }
 }
 

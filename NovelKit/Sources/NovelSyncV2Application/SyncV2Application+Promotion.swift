@@ -36,21 +36,21 @@ public extension SyncV2Application {
 
 extension SyncV2Application {
     func cancelLeafPromotion(workID: WorkID) {
-        promotionOwners.removeValue(forKey: workID)
-        promotionTasks.removeValue(forKey: workID)?.cancel()
-        promotionDeadlines.removeValue(forKey: workID)
+        let previous = lanes[workID]?.promotion
+        lanes[workID, default: WorkLane()].promotion = .idle
+        previous?.task?.cancel()
+        takeLaneValue(\.promotionDeadline, workID: workID)
     }
 
     func scheduleLeafPromotion(workID: WorkID) {
-        promotionTasks[workID]?.cancel()
+        lanes[workID, default: WorkLane()].promotionTask?.cancel()
         let now = promotionClock.now()
-        let maximum = promotionDeadlines[workID] ?? now.addingTimeInterval(SyncV2PromotionClock.maximumInterval)
-        promotionDeadlines[workID] = maximum
+        let maximum = lanes[workID, default: WorkLane()].promotionDeadline ?? now.addingTimeInterval(SyncV2PromotionClock.maximumInterval)
+        lanes[workID, default: WorkLane()].promotionDeadline = maximum
         let deadline = min(now.addingTimeInterval(SyncV2PromotionClock.idleInterval), maximum)
         let clock = promotionClock
         let owner = UUID()
-        promotionOwners[workID] = owner
-        promotionTasks[workID] = Task { [weak self] in
+        let task = Task<Void, Never> { [weak self] in
             do {
                 try await clock.sleep(max(0, deadline.timeIntervalSince(clock.now())))
                 try Task.checkCancellation()
@@ -60,13 +60,14 @@ extension SyncV2Application {
                 // recover a promotion interrupted by cancellation or failure.
             }
         }
+        lanes[workID, default: WorkLane()].promotion = .running(owner: owner, task: task)
     }
 
     private func promoteTimedLeaf(workID: WorkID, owner: UUID) async throws {
-        guard promotionOwners[workID] == owner, remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID) else { return }
+        guard lanes[workID, default: WorkLane()].promotionOwner == owner, remoteSchedulingSuspensions.isEmpty,
+              !lanes[workID, default: WorkLane()].deletionPending else { return }
         let promoted = try await kernel.promoteCurrentLeaf(workID: workID)
-        if promotionOwners[workID] == owner {
+        if lanes[workID, default: WorkLane()].promotionOwner == owner {
             cancelLeafPromotion(workID: workID)
         }
         if promoted {

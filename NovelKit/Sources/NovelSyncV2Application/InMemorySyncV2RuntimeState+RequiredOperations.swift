@@ -28,6 +28,12 @@ public extension InMemorySyncV2RuntimeState {
         nil
     }
 
+    func currentVersion(workID: WorkID) async throws -> SyncV2LocalVersion {
+        let opened = try open(workID: workID)
+        guard let snapshotID = opened.snapshotID else { throw SyncV2ApplicationError.safeBoundaryRejected }
+        return SyncV2LocalVersion(generation: opened.generation, snapshotID: snapshotID)
+    }
+
     func currentGeneration(workID: WorkID) async throws -> Int64 {
         try open(workID: workID).generation
     }

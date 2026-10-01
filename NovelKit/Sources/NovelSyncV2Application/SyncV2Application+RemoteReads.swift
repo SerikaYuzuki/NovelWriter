@@ -8,11 +8,11 @@ public extension SyncV2Application {
         cursor: String? = nil,
         pageSize: Int = 100
     ) async throws -> SyncV2RemoteCatalogPage {
-        try await libraryProvider.catalogPage(cursor: cursor, pageSize: pageSize)
+        try await remoteReads.catalogPage(cursor: cursor, pageSize: pageSize)
     }
 
     func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
-        try await libraryProvider.remoteHead(workID: workID)
+        try await remoteReads.remoteHead(workID: workID)
     }
 
     func remoteHistory(
@@ -20,10 +20,10 @@ public extension SyncV2Application {
         cursor: String? = nil,
         pageSize: Int = 100
     ) async throws -> SyncV2RemoteHistoryPage {
-        try await libraryProvider.historyPage(workID: workID, cursor: cursor, pageSize: pageSize)
+        try await remoteReads.historyPage(workID: workID, cursor: cursor, pageSize: pageSize)
     }
 
     func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
-        try await libraryProvider.remoteConflict(workID: workID)
+        try await remoteReads.remoteConflict(workID: workID)
     }
 }

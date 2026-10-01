@@ -313,10 +313,9 @@ extension AppState {
         let expectedWorkID = currentSnapshotSyncV2WorkID
         let expectedSnapshotSession = snapshotSyncV2Session
         let accountScope = snapshotSyncV2AccountScopeToken
-        let operationToken = UUID()
-        snapshotSyncV2RemoteOnlyOpenToken = operationToken
-        snapshotSyncV2RemoteOnlyOpeningWorkID = work.workID
-        snapshotSyncV2RemoteOnlyOpenStartedAt = Date()
+        let operation = SyncOperationContext(workID: expectedWorkID, session: expectedSession,
+                                             account: accountScope, editGeneration: nil)
+        let operationToken = syncSessionController.beginRemoteOnlyOpen(workID: work.workID)
         snapshotSyncLibraryOpenFailure = nil
         let task = Task { @MainActor [weak self] in
             defer {
@@ -342,10 +341,8 @@ extension AppState {
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
+                          matchesSyncOperation(operation),
                           permitsLibraryWorkOpening,
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
                           snapshotSyncV2Session == expectedSnapshotSession,
                           containsSnapshotSyncV2LibraryWork(work),
                           let openedDocument = opened.document,
@@ -359,16 +356,12 @@ extension AppState {
                     guard await (try? application.isCurrentLocalVersion(opened)) == true else { return false }
                     guard !Task.isCancelled,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
+                          matchesSyncOperation(operation),
                           snapshotSyncV2Session == expectedSnapshotSession else { return false }
                     let newSnapshotSession = await application.beginSession(workID: opened.workID)
                     guard !Task.isCancelled,
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                          matchesSnapshotSyncV2AccountScope(accountScope),
-                          documentSessionToken == expectedSession,
-                          currentSnapshotSyncV2WorkID == expectedWorkID,
+                          matchesSyncOperation(operation),
                           snapshotSyncV2Session == expectedSnapshotSession else { return false }
                     guard installV2Document(
                         openedDocument,
@@ -416,12 +409,7 @@ extension AppState {
     }
 
     private func finishRemoteOnlyOpen(operationToken: UUID) {
-        if snapshotSyncV2RemoteOnlyOpenToken == operationToken {
-            snapshotSyncV2RemoteOnlyOpenToken = nil
-            snapshotSyncV2RemoteOnlyOpenTask = nil
-            snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-            snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-        }
+        syncSessionController.finishRemoteOnlyOpen(owner: operationToken)
     }
 
     private func reportRemoteOnlyOpenResult(

@@ -45,7 +45,7 @@ public enum SnapshotSyncV2Runtime {
             )
             let scope = TestScopeResolver(vault: configuration.vault, store: store)
             let remote = configuration.remote
-            let kernel = ProductionSyncV2Kernel(store: store, scope: scope, remote: remote)
+            let kernel = ProductionSyncV2Kernel(store: store, scope: scope)
             let planner = ProductionSyncV2Planner(store: store, scope: scope)
             composition = SyncV2RuntimeComposition(
                 identity: .test,
@@ -93,12 +93,12 @@ public enum SnapshotSyncV2Runtime {
                     clientVersion: configuration.clientVersion,
                     clientPlatform: configuration.clientPlatform,
                     sessionProvider: provider,
-                    localStore: store
+                    snapshotCache: store, backfillPersistence: store
                 )
             } else {
                 remote = OfflineProductionSyncV2RemoteClient()
             }
-            let kernel = ProductionSyncV2Kernel(store: store, scope: scope, remote: remote)
+            let kernel = ProductionSyncV2Kernel(store: store, scope: scope)
             let planner = ProductionSyncV2Planner(store: store, scope: scope)
             composition = SyncV2RuntimeComposition(
                 identity: .production,

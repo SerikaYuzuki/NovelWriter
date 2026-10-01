@@ -11,7 +11,7 @@ extension AppState {
         resume: Bool
     ) async -> Bool {
         guard let application, let token else { return true }
-        return await application.endAccountTransitionRemoteSuspension(token, resume: resume)
+        return await syncSessionController.endRemoteSuspension(application, token: token, resume: resume)
     }
 
     private func makeAuthOperationOwner() -> UUID {
@@ -76,7 +76,7 @@ extension AppState {
     func matchesSnapshotSyncV2AccountScope(
         _ expected: SnapshotSyncV2AccountScopeToken
     ) -> Bool {
-        snapshotSyncV2AccountScopeToken == expected
+        syncSessionController.matchesAccount(expected, current: snapshotSyncV2AccountScopeToken)
     }
 
     /// Cancels every asynchronous operation whose response could otherwise
@@ -134,7 +134,7 @@ extension AppState {
         let remoteSuspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? = if let suppliedSuspensionToken {
             suppliedSuspensionToken
         } else if let transitionApplication {
-            await transitionApplication.beginAccountTransitionRemoteSuspension()
+            await syncSessionController.beginRemoteSuspension(transitionApplication)
         } else {
             nil
         }
@@ -206,10 +206,8 @@ extension AppState {
             return true
         }
         if releaseRemoteSuspension, let transitionApplication, let remoteSuspensionToken {
-            _ = await transitionApplication.endAccountTransitionRemoteSuspension(
-                remoteSuspensionToken,
-                resume: !transitioned
-            )
+            _ = await syncSessionController.endRemoteSuspension(transitionApplication, token: remoteSuspensionToken,
+                                                                resume: !transitioned)
         }
         guard transitioned, ownsAuthOperation(operationOwner) else { return false }
         // Reproject local parked work immediately. This is deliberately after
@@ -236,7 +234,7 @@ extension AppState {
     private func restoreFuminiwaSessionOwned(owner: UUID) async {
         let transitionApplication = snapshotSyncV2Application
         let suspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? = if let transitionApplication {
-            await transitionApplication.beginAccountTransitionRemoteSuspension()
+            await syncSessionController.beginRemoteSuspension(transitionApplication)
         } else {
             nil
         }
@@ -472,7 +470,7 @@ extension AppState {
         let previousSession = authSession
         let transitionApplication = snapshotSyncV2Application
         let suspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? = if let transitionApplication {
-            await transitionApplication.beginAccountTransitionRemoteSuspension()
+            await syncSessionController.beginRemoteSuspension(transitionApplication)
         } else {
             nil
         }
@@ -641,7 +639,7 @@ extension AppState {
     ) async {
         let transitionApplication = snapshotSyncV2Application
         let suspensionToken: SyncV2AccountTransitionRemoteSuspensionToken? = if let transitionApplication {
-            await transitionApplication.beginAccountTransitionRemoteSuspension()
+            await syncSessionController.beginRemoteSuspension(transitionApplication)
         } else {
             nil
         }

@@ -64,7 +64,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope? = nil
     ) {
         guard expectedSession == nil || currentDocumentSessionToken == expectedSession,
-              expectedAccountScope == nil || snapshotSyncV2AccountScope == expectedAccountScope,
+              expectedAccountScope == nil || matchesSyncAccount(expectedAccountScope),
               permitsSyncSelectionMutation,
               let episode = document.chapters.first(where: { $0.id == chapterID })?.episodes.first(where: { $0.id == episodeID }),
               episode.title != title else { return }

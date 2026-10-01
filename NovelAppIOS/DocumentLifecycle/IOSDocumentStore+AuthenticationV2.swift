@@ -46,13 +46,11 @@ extension IOSDocumentStore {
         cancelSnapshotSyncV2BackgroundOperations()
         invalidateSnapshotSyncV2AccountOperations()
         if let application = snapshotSyncV2Application {
-            let token = await application.beginAccountTransitionRemoteSuspension()
+            let token = await syncSessionController.beginRemoteSuspension(application)
             guard syncV2AccountTransitionRequestOwner == owner,
                   syncV2AccountTransitionRequested else {
-                _ = await application.endAccountTransitionRemoteSuspension(
-                    token,
-                    resume: false
-                )
+                _ = await syncSessionController.endRemoteSuspension(application, token: token,
+                                                                    resume: false)
                 return nil
             }
             syncV2RemoteSuspensionToken = token
@@ -121,10 +119,8 @@ extension IOSDocumentStore {
         guard syncV2AccountTransitionRequestOwner == owner else { return }
         let token = syncV2RemoteSuspensionToken
         if let token, let application = snapshotSyncV2Application {
-            _ = await application.endAccountTransitionRemoteSuspension(
-                token,
-                resume: resume
-            )
+            _ = await syncSessionController.endRemoteSuspension(application, token: token,
+                                                                resume: resume)
         }
         guard syncV2AccountTransitionRequestOwner == owner else { return }
         syncV2RemoteSuspensionToken = nil
@@ -420,8 +416,7 @@ extension IOSDocumentStore {
         // session has been published and the old token has been released.
         try? await application.resumePending()
         await resumeSnapshotSyncV2()
-        guard !isSyncV2AccountTransitionActive,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return }
+        guard matchesLocalSyncAccount(expectedAccountScope) else { return }
         _ = await refreshRemoteCatalog(reset: true)
     }
 
@@ -482,7 +477,7 @@ extension IOSDocumentStore {
         syncV2HistoryOnlineFailure = nil
         snapshotSyncConflict = nil
         snapshotSyncState = nil
-        snapshotSyncOutcome = .offline
+        snapshotSyncOutcome = .failure(.offline)
     }
 
     private func retainLocalOnlyIOSLibraryProjection() {
@@ -765,7 +760,7 @@ extension IOSDocumentStore {
         defer { editorCommandSession.resumeAfterDocumentTransition() }
         let saved = await saveNow()
         if saved, clearProofreadingHighlights, currentEpisodeEditingToken == editingToken,
-           snapshotSyncV2AccountScope == account {
+           matchesSyncAccount(account) {
             editorCommandSession.clearProofreadingHighlights()
         }
         return saved

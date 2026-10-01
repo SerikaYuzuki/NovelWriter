@@ -17,20 +17,21 @@ extension AppState {
         session: AppDocumentSessionToken, account: SnapshotSyncV2AccountScopeToken
     ) async {
         guard !Task.isCancelled, documentSessionToken == session,
-              snapshotSyncV2AccountScopeToken == account else { return }
+              matchesSnapshotSyncV2AccountScope(account) else { return }
         await refreshSnapshotSyncV2UIState()
     }
 
     /// Owned by the Workbench task, so closing/changing work or account cancels
     /// the subscription. A toolbar overflow must not own this lifecycle.
     func observeSnapshotSyncV2Status() async {
-        guard let application = snapshotSyncV2Application else { return }
+        guard let application = snapshotSyncV2Application,
+              let workID = currentSnapshotSyncV2WorkID else { return }
         let session = documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
-        for await _ in await application.stateChanges() {
+        for await _ in await application.stateChanges(for: workID) {
             guard !Task.isCancelled,
                   documentSessionToken == session,
-                  snapshotSyncV2AccountScopeToken == account,
+                  matchesSnapshotSyncV2AccountScope(account),
                   snapshotSyncV2Application === application else { return }
             await refreshSnapshotSyncV2UIState()
         }

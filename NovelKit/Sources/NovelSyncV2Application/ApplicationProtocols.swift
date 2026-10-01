@@ -56,7 +56,7 @@ public protocol SyncV2CommandPlanner: Sendable {
 /// A closed semantic client. Its production adapter performs the typed v2
 /// capability/upload/register/publish or conflict/restore sequence internally;
 /// the application service never builds URLs or interprets HTTP/SQL details.
-public protocol SyncV2RemoteClient: Sendable {
+public protocol SyncV2RemoteClient: SyncV2RemoteReads {
     func appendWritingRecord(_ record: WritingRecord, binding: SyncV2AccountScopeBinding) async throws -> WritingEnvelope
     func writingRecordPage(workID: UUID?, after: Int64, binding: SyncV2AccountScopeBinding) async throws -> WritingRecordPage
     func protectedWorks() async throws -> [SyncV2ProtectedWork]
@@ -68,11 +68,6 @@ public protocol SyncV2RemoteClient: Sendable {
     func backfillWorkIDs() async throws -> [WorkID]
     func backfillHistory(workID: WorkID, manual: Bool, allowConstrained: Bool, progress: @escaping @Sendable () async -> Void) async throws
     func backfillHistory(workID: WorkID, progress: @escaping @Sendable () async -> Void) async throws
-    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
-    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
-    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
-    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
-    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
 }
 
 public protocol SyncV2LocalKernel: Sendable {
@@ -88,6 +83,7 @@ public protocol SyncV2LocalKernel: Sendable {
     func checkpoint(_ capture: SyncV2CheckpointCapture) async throws -> SyncV2LocalCheckpoint
     func open(workID: WorkID) async throws -> SyncV2OpenedWork
     func currentGeneration(workID: WorkID) async throws -> Int64
+    func currentVersion(workID: WorkID) async throws -> SyncV2LocalVersion
     /// Retires the active account binding without rebinding the Work. The
     /// retained local bytes remain editable offline, while the old remote
     /// lane is parked and cannot be adopted by a later account.
@@ -150,4 +146,13 @@ public protocol SyncV2LocalKernel: Sendable {
 public extension SyncV2CommandPlanner {
     /// Correct no-op for planners that keep no process-local caches.
     func invalidateCaches(for _: Set<WorkID>) async {}
+}
+
+/// The application has one remote read boundary, separate from local shelf projection.
+public protocol SyncV2RemoteReads: Sendable {
+    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox
+    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage
+    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
+    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
+    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
 }

@@ -30,6 +30,15 @@ struct IOSRootView: View {
         .task(id: AutomaticSyncObservationID(
             session: store.currentDocumentSessionToken,
             account: store.snapshotSyncV2AccountScope,
+            isActive: store.startupState == .ready
+        )) {
+            if store.startupState == .ready {
+                await store.observeSnapshotSyncV2Status()
+            }
+        }
+        .task(id: AutomaticSyncObservationID(
+            session: store.currentDocumentSessionToken,
+            account: store.snapshotSyncV2AccountScope,
             isActive: scenePhase == .active && store.startupState == .ready
         )) {
             if scenePhase == .active {

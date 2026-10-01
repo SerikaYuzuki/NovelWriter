@@ -64,7 +64,7 @@ struct IOSSnapshotSyncV2PortableBoundaryTests {
             #expect(store.installSnapshotSyncV2Opened(opened, value: original) == false)
             #expect(store.document == original)
             #expect(store.attachments.isEmpty)
-            #expect(store.snapshotSyncOutcome == .failed)
+            #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
             #expect(store.adoptV2AttachmentRecords(opened.attachments) == false)
             #expect(store.attachments.isEmpty)
         }

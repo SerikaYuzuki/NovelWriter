@@ -149,10 +149,10 @@ extension IOSDocumentStore {
         let projection: SyncV2LibraryProjection
         do {
             projection = try await application.library()
-            guard snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            guard matchesSyncAccount(expectedAccountScope) else { return false }
             libraryFailure = nil
         } catch {
-            guard snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            guard matchesSyncAccount(expectedAccountScope) else { return false }
             libraryFailure = syncV2FailureKind(error)
             logSyncV2PresentationFailure(error)
             throw error
@@ -172,7 +172,7 @@ extension IOSDocumentStore {
     ) -> Bool {
         guard !isSyncV2AccountTransitionActive,
               libraryRefreshGeneration == refreshGeneration,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         let localItems = projection.items.filter { item in
             if item.accountState == .parkedDifferentAccount {
                 return exposesParkedSyncV2Items
@@ -216,7 +216,7 @@ extension IOSDocumentStore {
             )
             guard !isSyncV2RemoteAccountTransitionActive,
                   remoteCatalogRefreshGeneration == refreshGeneration,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             var rows = Dictionary(
                 uniqueKeysWithValues: existingItems.map { ($0.workID, $0) }
             )
@@ -235,7 +235,7 @@ extension IOSDocumentStore {
         } catch {
             if !isSyncV2RemoteAccountTransitionActive,
                remoteCatalogRefreshGeneration == refreshGeneration,
-               snapshotSyncV2AccountScope == expectedAccountScope {
+               matchesSyncAccount(expectedAccountScope) {
                 if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
                     let message = "認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"
                     authUIState = .failed(message)
@@ -258,7 +258,7 @@ extension IOSDocumentStore {
     ) -> Bool {
         guard !isSyncV2RemoteAccountTransitionActive,
               remoteCatalogRefreshGeneration == refreshGeneration,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         // Merge into the current local rows, not a projection captured before
         // network I/O. A concurrent local refresh will likewise merge this cache.
         let localItems = syncV2LibraryItems.filter { item in
@@ -321,7 +321,7 @@ extension IOSDocumentStore {
             if !isSyncV2AccountTransitionActive,
                historyRefreshGeneration == refreshGeneration,
                syncV2HistoryWorkID == workID,
-               snapshotSyncV2AccountScope == expectedAccountScope {
+               matchesSyncAccount(expectedAccountScope) {
                 syncV2HistoryOnlineFailure = (error as? SyncV2Failure) ?? .offline
             }
             return false
@@ -339,7 +339,7 @@ extension IOSDocumentStore {
         guard !isSyncV2AccountTransitionActive,
               historyRefreshGeneration == refreshGeneration,
               syncV2HistoryWorkID == workID,
-              snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+              matchesSyncAccount(expectedAccountScope) else { return false }
         syncV2HistoryItems = existingItems + page.items
         syncV2HistoryCursor = page.nextCursor
         syncV2HistoryLocalAvailability = page.localAvailability
@@ -425,7 +425,7 @@ extension IOSDocumentStore {
             guard let self,
                   !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+                  matchesSyncAccount(expectedAccountScope) else { return false }
             var cloned = false
             let transitioned = await performDocumentTransition {
                 do {
@@ -448,7 +448,7 @@ extension IOSDocumentStore {
                           await checkpointSnapshotSyncV2(document, reason: .explicit),
                           !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope else {
+                          matchesSyncAccount(expectedAccountScope) else {
                         operationErrorMessage = "端末へ保存できないため、アカウントへの追加を中止しました。"
                         return
                     }
@@ -462,17 +462,16 @@ extension IOSDocumentStore {
                     }
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncAccount(expectedAccountScope) else { return }
                     let opened = try await application.openLocal(workID: newWorkID)
                     guard !isSyncV2AccountTransitionActive,
                           currentDocumentSessionToken == expectedSession,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncAccount(expectedAccountScope),
                           opened.workID == newWorkID,
                           let value = opened.document,
                           installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let state = await application.uiState(workID: newWorkID)
-                    guard !isSyncV2AccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                    guard matchesLocalSyncAccount(expectedAccountScope),
                           syncV2ActiveWorkID == newWorkID else { return }
                     applySnapshotSyncV2State(state)
                     Task { @MainActor [weak self] in

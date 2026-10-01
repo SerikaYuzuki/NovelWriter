@@ -28,7 +28,7 @@ struct AutomaticSyncRaceTests {
         try await store.adoptInbox(inboxID: seed.inboxID, scope: productionScope)
         let application = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         _ = try await application.openLocal(workID: workID)
-        try await eventually { await application.workerTasks[workID] == nil }
+        try await eventually { await application.lanes[workID]?.workerTask == nil }
         let barrier = AutomaticHeadBarrier()
         await configuration.remote.setHeadHandler { _ in
             await barrier.wait()

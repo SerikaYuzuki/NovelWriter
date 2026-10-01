@@ -49,9 +49,10 @@ extension AppState {
         documentSession: AppDocumentSessionToken,
         snapshotSession: NovelSyncV2Application.DocumentSessionToken
     ) -> Bool {
-        currentSnapshotSyncV2WorkID == workID
-            && documentSessionToken == documentSession
-            && snapshotSyncV2Session == snapshotSession
+        matchesSyncOperation(SyncOperationContext(
+            workID: workID, session: documentSession,
+            account: snapshotSyncV2AccountScopeToken, editGeneration: nil
+        )) && snapshotSyncV2Session == snapshotSession
     }
 
     /// Installs the local keep-both result before waking any transport lane.
@@ -219,36 +220,35 @@ extension AppState {
     }
 
     /// A server-choice conflict is one user operation. The worker may need to
-    /// finish its receipt asynchronously, so keep polling the shared value
+    /// finish its receipt asynchronously, so subscribe to the shared value
     /// projection and apply once it reaches the safe boundary. If the editor
     /// becomes dirty or the CAS changes, `applySnapshotSyncV2ServerVersion`
     /// returns false and the status control remains the explicit retry path.
     func scheduleAutomaticServerAdoption(
         expectedAccountScope: SnapshotSyncV2AccountScopeToken? = nil
     ) {
-        snapshotSyncAutoAdoptionTask?.cancel()
         let expectedSession = documentSessionToken
         let accountScope = expectedAccountScope ?? snapshotSyncV2AccountScopeToken
-        let operationToken = UUID()
-        snapshotSyncV2AutoAdoptionToken = operationToken
+        let operationToken = syncSessionController.beginReprojection()
         snapshotSyncAutoAdoptionTask = Task { @MainActor [weak self] in
             defer {
-                if let self, self.snapshotSyncV2AutoAdoptionToken == operationToken {
-                    self.snapshotSyncV2AutoAdoptionToken = nil
-                    self.snapshotSyncAutoAdoptionTask = nil
-                }
+                self?.syncSessionController.finishReprojection(owner: operationToken)
             }
-            for _ in 0 ..< 150 {
+            guard let application = self?.snapshotSyncV2Application,
+                  let observedWorkID = self?.currentSnapshotSyncV2WorkID else { return }
+            let changes = await application.stateChanges(for: observedWorkID, until: .now.advanced(by: .seconds(30)))
+            for await event in changes {
                 guard !Task.isCancelled, let self,
                       snapshotSyncV2AutoAdoptionToken == operationToken,
                       matchesSnapshotSyncV2AccountScope(accountScope),
                       documentSessionToken == expectedSession,
                       startupState.isReady,
-                      let application = snapshotSyncV2Application else { return }
+                      snapshotSyncV2Application === application else { return }
                 guard let workID = currentSnapshotSyncV2WorkID,
                       let state = await application.uiState(workID: workID) else {
                     return
                 }
+                guard event.concerns(workID) else { continue }
                 switch state.remoteProgress {
                 case .readyForSafeAdoption:
                     guard saveState == .saved, hasCommittedEditorTextMatchingSelectedEpisode() else { return }
@@ -262,11 +262,6 @@ extension AppState {
                 case .idle, .noChanges, .pending, .syncing, .offline,
                      .authenticationRequired, .retryable:
                     break
-                }
-                do {
-                    try await Task.sleep(nanoseconds: 200_000_000)
-                } catch {
-                    return
                 }
             }
         }
@@ -328,7 +323,7 @@ extension AppState {
                     expectedLocalVersion: pending.expectedLocalVersion,
                     proof: SyncV2SafeBoundaryProof(
                         editorGeneration: editorContentGeneration,
-                        hasMarkedText: false,
+                        hasMarkedText: activeCommittedTextCapture() == .compositionInProgress,
                         hasUnsavedChanges: saveState != .saved,
                         pendingIntentCleared: true
                     )

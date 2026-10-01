@@ -24,34 +24,34 @@ extension SyncV2Application {
     /// actual late-completion boundary.
     func cancelWorker(for workID: WorkID) {
         cancelRetry(for: workID)
-        retryAttempts[workID] = nil
-        workerOwners[workID] = nil
-        workerTasks[workID]?.cancel()
-        workerTasks[workID] = nil
-        wakeEpochs[workID, default: 0] &+= 1
+        lanes[workID, default: WorkLane()].retryAttempt = 0
+        let previous = lanes[workID]?.worker
+        lanes[workID, default: WorkLane()].worker = .idle
+        previous?.task?.cancel()
+        lanes[workID, default: WorkLane()].wakeEpoch &+= 1
     }
 
     func scheduleWorker(for workID: WorkID) {
         cancelRetry(for: workID)
-        wakeEpochs[workID, default: 0] &+= 1
-        guard !deletingWorkIDs.contains(workID), workerTasks[workID] == nil,
+        lanes[workID, default: WorkLane()].wakeEpoch &+= 1
+        guard !lanes[workID, default: WorkLane()].deletionPending, lanes[workID, default: WorkLane()].workerTask == nil,
               runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty else {
             return
         }
         let owner = UUID()
-        workerOwners[workID] = owner
-        workerTasks[workID] = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             await runWorker(for: workID, owner: owner)
         }
+        lanes[workID, default: WorkLane()].worker = .running(owner: owner, task: task)
     }
 
     func runWorker(for workID: WorkID, owner: UUID) async {
         while !Task.isCancelled {
             guard isCurrentWorker(workID: workID, owner: owner) else { return }
-            let observedWake = wakeEpochs[workID, default: 0]
-            syncDiagnostics[workID] = nil
+            let observedWake = lanes[workID, default: WorkLane()].wakeEpoch
+            lanes[workID, default: WorkLane()].syncDiagnostic = nil
             do {
                 let plan = try await planner.nextCommand(workID: workID)
                 guard isCurrentWorker(workID: workID, owner: owner) else { return }
@@ -91,7 +91,7 @@ extension SyncV2Application {
                         }
                         if command.kind != .resolveServer {
                             scheduleWorker(for: workID)
-                        } else if wakeEpochs[workID, default: 0] != observedWake {
+                        } else if lanes[workID, default: WorkLane()].wakeEpoch != observedWake {
                             // Safe adoption can arrive while this resolution
                             // task is handing off. Preserve that wake after
                             // the task releases its single-flight slot.
@@ -131,7 +131,7 @@ extension SyncV2Application {
         guard isCurrentWorker(workID: workID, owner: owner) else { return false }
         setState(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: .syncing(operationID: operationID(sending)),
             result: .queued
         )
@@ -145,7 +145,7 @@ extension SyncV2Application {
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
             try await accept(execution, for: sending, workID: workID, owner: owner)
             guard isCurrentWorker(workID: workID, owner: owner) else { return false }
-            historyWaiting.remove(workID)
+            setLaneFlag(\.historyWaiting, workID: workID, value: false)
             return true
         } catch {
             if !isCurrentWorker(workID: workID, owner: owner) {
@@ -237,7 +237,7 @@ extension SyncV2Application {
             guard isCurrentWorker(workID: workID, owner: owner) else { return }
             setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .syncing(operationID: planned.transferID),
                 result: .queued
             )
@@ -342,7 +342,7 @@ extension SyncV2Application {
         }
         setState(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: progress,
             result: result,
             conflict: conflict
@@ -352,8 +352,8 @@ extension SyncV2Application {
     /// A receipt completes one operation. Only a stable idle read completes the lane.
     private func projectCompletedWorker(workID: WorkID, hasLeaf: Bool) {
         cancelRetry(for: workID)
-        retryAttempts[workID] = nil
-        guard let state = states[workID], case .syncing = state.remoteProgress else { return }
+        lanes[workID, default: WorkLane()].retryAttempt = 0
+        guard let state = lanes[workID, default: WorkLane()].state, case .syncing = state.remoteProgress else { return }
         setState(workID: workID, localDurability: state.localDurability,
                  remoteProgress: hasLeaf ? .pending : .noChanges, result: .noChanges)
     }
@@ -365,23 +365,22 @@ extension SyncV2Application {
     ) -> Bool {
         guard isCurrentWorker(workID: workID, owner: owner),
               !Task.isCancelled,
-              wakeEpochs[workID, default: 0] == observedWake else {
+              lanes[workID, default: WorkLane()].wakeEpoch == observedWake else {
             return false
         }
         return finishCurrentWorker(workID: workID, owner: owner)
     }
 
     private func isCurrentWorker(workID: WorkID, owner: UUID) -> Bool {
-        workerOwners[workID] == owner &&
-            workerTasks[workID] != nil &&
+        lanes[workID, default: WorkLane()].workerOwner == owner &&
+            lanes[workID, default: WorkLane()].workerTask != nil &&
             !Task.isCancelled
     }
 
     @discardableResult
     private func finishCurrentWorker(workID: WorkID, owner: UUID) -> Bool {
-        guard workerOwners[workID] == owner else { return false }
-        workerOwners[workID] = nil
-        workerTasks[workID] = nil
+        guard lanes[workID, default: WorkLane()].workerOwner == owner else { return false }
+        lanes[workID, default: WorkLane()].worker = .idle
         scheduleRetryIfNeeded(for: workID)
         return true
     }
@@ -413,7 +412,7 @@ extension SyncV2Application {
     @discardableResult
     func record(failure: SyncV2Failure, workID: WorkID) -> SyncUIState {
         if failure == .retryable(.historyIncomplete) {
-            historyWaiting.insert(workID)
+            setLaneFlag(\.historyWaiting, workID: workID, value: true)
             prioritizeHistory(workID: workID)
         }
         let progress: SyncV2RemoteProgress = switch failure {
@@ -429,7 +428,7 @@ extension SyncV2Application {
         }
         return setState(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: progress,
             result: .failure(failure),
             failure: failure

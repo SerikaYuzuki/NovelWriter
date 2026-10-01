@@ -382,7 +382,7 @@ struct LineageFixture: Sendable {
             origin: ProductionHTTPSOrigin(url: URL(string: "https://lineage.test")!),
             vault: InMemoryAuthSessionVault(session: auth),
             session: session,
-            localStore: localStore
+            snapshotCache: localStore, backfillPersistence: localStore
         )
     }
 

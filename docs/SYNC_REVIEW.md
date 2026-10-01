@@ -209,6 +209,24 @@ NovelCore ← NovelSyncV2（canonical JSON / SealedCommand / Snapshot検証） �
 | R-07 | Kernelからremote中継を外し、`LibraryProvider`を`library()`だけに。RemoteClientには読取専用`SnapshotCache` protocolを注入 | M | Storeを通常保存の内側に閉じる |
 | R-08 | Storeを共有connection／transaction実行部の上でOutbox/Inbox/Conflict/Account/Deletionのrepositoryに分割し、行読取を型付きに（`row[n]`がCommandValidationだけで35か所） | L | checkpointの1 transaction確定。L-xxと同時に |
 
+
+### 構造整理の実装状況（2026-10-02、pass B）
+
+初回レビューの根拠は上記のまま残す。以下は現在のソースの実装状況であり、実機受入の完了を意味しない。
+
+| ID | 状態 | 現在の責務・残り |
+| --- | --- | --- |
+| R-01 | done（pass A） | `SyncV2CommandKind`とpayload accessorを共有。wire/fixture/schemaは変更なし |
+| R-02 | done（pass A） | 共有receipt validatorをStore/Runtimeから使用 |
+| R-03 | done | `WorkLane`に作品別のtask/owner、retry、wake、session、取込・backfill状態を集約。worker/retry/promotionは所有者付き状態。制御はlane、`states`はUIへの投影のみ。gate期待版はkernelの永続generation/current snapshotから取得 |
+| R-04 | done | WorkID付きstate変更とadoption可能イベントをpush。作品別購読で別作品の通知による取りこぼしを避け、Mac/iOSのadoption待ちを30秒の明示deadline付き購読へ変更。iOSのrootも継続購読。通知からのinstallは従来のIME・保存・document gateを通す |
+| R-05 | done（gateは意味差を保持） | 共有`SyncSessionController`が`OperationContext.isCurrent`、open/prefetch/reprojectionの所有権、認証leaseとscope照合を担当。iOS独自outcome enumを共有typed resultへ置換。両gateには実際のmarked-text状態を渡す。下記の意味差があるためgate本体は統合しない |
+| R-06 | done（pass A） | `wake(reason:)`とApplication所有のforeground確認を使用 |
+| R-07 | done | remote readは`SyncV2RemoteReads`へ直接接続し、Kernelの5つの中継を削除。`LibraryProvider`は`library()`のみ。HTTP clientは読取専用`SnapshotCache`と別の`HistoryBackfillPersistence`を受け取り、具体的Storeを保持しない。backfillのpage/cursor transactionは維持 |
+| R-08 | deferred | R-03〜R-07の境界検証を優先。共有connection/transaction上のrepository分割とCommandValidationの型付きrow化は次のpassへ。checkpoint/installのtransaction・SQL・schemaは今回変更しない |
+
+**保持したplatform差**：Mac gateは1つのarmed boundaryを持ち、明示disarmと検証失敗でもarmを解除する。Production gateはWorkIDごとのarmを持ち、token消費時にarm存在を条件にせず、失敗時のarm保持も異なる。これを同一化すると拒否・再試行の挙動が変わるため両実装を維持する。またremote-only取消はMacが即時所有権解除、iOSが非協調taskの終了待ちという既存の差を、共有controllerの明示policyとして残した。account tokenの比較項目も各platformの既存型を維持する。
+
 ## 7. UI
 
 ### 現状の問題

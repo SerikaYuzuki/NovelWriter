@@ -35,7 +35,7 @@ struct WorkerProgressTests {
             Issue.record("A concurrent save must retain active sync progress")
         }
         await planner.releaseFirstRead()
-        try await eventually { await app.workerTasks[workID] == nil }
+        try await eventually { await app.lanes[workID]?.workerTask == nil }
         #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)
         #expect(await remote.recordedOperations().count == (editDuringSync ? 2 : 1))
     }

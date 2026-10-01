@@ -13,7 +13,7 @@ extension AppState {
               let workUUID = UUID(uuidString: work.description) else { return nil }
         let session = documentSessionToken, account = snapshotSyncV2AccountScopeToken
         let validate = { [weak self] in
-            guard !Task.isCancelled, let self, documentSessionToken == session, snapshotSyncV2AccountScopeToken == account,
+            guard !Task.isCancelled, let self, documentSessionToken == session, matchesSnapshotSyncV2AccountScope(account),
                   permitsDocumentInteraction else { throw WritingError.changedScope }
         }
         let context: () async throws -> SyncV2WritingContext = {

@@ -11,7 +11,7 @@ extension IOSDocumentStore {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, let application = snapshotSyncV2Application,
               currentDocumentSessionToken == expectedSession,
-              snapshotSyncV2AccountScope == accountScope,
+              matchesSyncAccount(accountScope),
               !isSyncV2AccountTransitionActive else { return false }
         do {
             // Only a server-only work needs a download; local renames stay offline.
@@ -21,18 +21,18 @@ extension IOSDocumentStore {
             }
             let renamed = await documentOperationGate.perform { [weak self] in
                 guard let self, currentDocumentSessionToken == expectedSession,
-                      snapshotSyncV2AccountScope == accountScope,
+                      matchesSyncAccount(accountScope),
                       !isSyncV2AccountTransitionActive else { return false }
                 return await performDocumentTransition {
                     try await saveCoordinator.performExclusive {
                         guard currentDocumentSessionToken == expectedSession,
-                              snapshotSyncV2AccountScope == accountScope,
+                              matchesSyncAccount(accountScope),
                               !isSyncV2AccountTransitionActive else {
                             throw SyncV2ApplicationError.safeBoundaryRejected
                         }
                         _ = try await application.renameLocalWork(workID: item.workID, title: title)
                         guard currentDocumentSessionToken == expectedSession,
-                              snapshotSyncV2AccountScope == accountScope else {
+                              matchesSyncAccount(accountScope) else {
                             throw SyncV2ApplicationError.safeBoundaryRejected
                         }
                         if syncV2ActiveWorkID == item.workID {

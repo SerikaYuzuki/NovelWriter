@@ -22,21 +22,15 @@ public struct SyncV2OperationResult: Sendable {
 }
 
 public actor SyncV2Application {
-    var promotionOwners: [WorkID: UUID] = [:]
-    var promotionTasks: [WorkID: Task<Void, Never>] = [:]
-    var promotionDeadlines: [WorkID: Date] = [:]
     let promotionClock: SyncV2PromotionClock
-    var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-    var automaticChecks: Set<WorkID> = []
+    var stateChangeContinuations: [UUID: SyncV2StateObserver] = [:]
     var lifecycleWake: SyncV2WakeFlight?
-    var foregroundObservations: [WorkID: SyncV2ForegroundObservation] = [:]
     let automaticSyncSleep: @Sendable (UInt64) async throws -> Void
-    var syncDiagnostics: [WorkID: String] = [:]
     let writingStore: (any WritingLocalPersistence)?
     var writingSyncOwners: [String: UUID] = [:]
-    var writingCopyRetries: [WorkID: WorkID] = [:]
     let kernel: any SyncV2LocalKernel
     let planner: any SyncV2CommandPlanner
+    let remoteReads: any SyncV2RemoteReads
     let remote: any SyncV2RemoteClient
     let gate: any SyncV2DocumentGate
     let libraryProvider: any SyncV2LibraryProvider
@@ -47,34 +41,16 @@ public actor SyncV2Application {
     var backfillConstrained = false
     var backfillOnline = true
     var activeBackfill: WorkID?
-    var constrainedBackfills: Set<WorkID> = []
-    var manualBackfills: Set<WorkID> = []
-    var historyWaiting: Set<WorkID> = []
-    var remoteOnlyOpens: [WorkID: Task<SyncV2OpenedWork, Error>] = [:]
-    var remoteOnlyOpeningRequests: Set<WorkID> = []
-    var importProgress: [WorkID: ImportProgress] = [:]
-    var importFailures: [WorkID: SyncV2Failure] = [:]
-    var deletionTasks: [WorkID: Task<Void, Error>] = [:]
-    var deletingWorkIDs: Set<WorkID> = []
-    var retryTasks: [WorkID: Task<Void, Never>] = [:]
-    var retryOwners: [WorkID: UUID] = [:]
-    var retryAttempts: [WorkID: Int] = [:]
-    var workerTasks: [WorkID: Task<Void, Never>] = [:]
     /// Identity of the currently installed worker for each Work.  A cancelled
     /// task can still resume after a non-cooperative remote await, so a task
     /// must never use the dictionary slot or clear a newer worker merely
     /// because it has the same WorkID.
-    var workerOwners: [WorkID: UUID] = [:]
-    var wakeEpochs: [WorkID: UInt64] = [:]
-    var states: [WorkID: SyncUIState] = [:] {
-        didSet {
-            for continuation in stateChangeContinuations.values {
-                continuation.yield(())
-            }
-        }
+    var lanes: [WorkID: WorkLane] = [:]
+    /// Display-only values; scheduling reads the work lane.
+    var states: [WorkID: SyncUIState] {
+        laneValues(\.state).mapValues(\.projection)
     }
 
-    var sessions: [WorkID: DocumentSessionToken] = [:]
     var remoteSchedulingSuspensions: Set<UUID> = []
     var activeAccountTransitionSuspensions: Set<UUID> = []
     /// Monotonic process-local generation for merged history cursors. A
@@ -85,12 +61,12 @@ public actor SyncV2Application {
         didSet {
             backfillTask?.cancel()
             backfillQueue.removeAll()
-            constrainedBackfills.removeAll()
-            manualBackfills.removeAll()
-            historyWaiting.removeAll()
-            importFailures.removeAll()
-            importProgress.removeAll()
-            for task in remoteOnlyOpens.values {
+            clearLaneFlag(\.allowsConstrainedBackfill)
+            clearLaneFlag(\.manuallyRequestedBackfill)
+            clearLaneFlag(\.historyWaiting)
+            clearLaneValues(\.importFailure)
+            clearLaneValues(\.importProgress)
+            for task in laneValues(\.remoteOnlyOpen).values {
                 task.cancel()
             }
         }
@@ -116,6 +92,7 @@ public actor SyncV2Application {
         writingStore = composition.writingStore
         kernel = composition.kernel
         planner = composition.planner
+        remoteReads = composition.remoteReads
         remote = composition.remote
         gate = composition.gate
         libraryProvider = composition.library
@@ -137,7 +114,7 @@ public actor SyncV2Application {
         setState(
             workID: workID,
             localDurability: .saving,
-            remoteProgress: states[workID]?.remoteProgress ?? .idle,
+            remoteProgress: lanes[workID, default: WorkLane()].state?.remoteProgress ?? .idle,
             result: .checkpointed
         )
         do {
@@ -162,7 +139,7 @@ public actor SyncV2Application {
             setState(
                 workID: workID,
                 localDurability: .failed,
-                remoteProgress: states[workID]?.remoteProgress ?? .idle,
+                remoteProgress: lanes[workID, default: WorkLane()].state?.remoteProgress ?? .idle,
                 result: .failure(.fatal(.invalidLocalState)),
                 failure: .fatal(.invalidLocalState)
             )
@@ -183,13 +160,13 @@ public actor SyncV2Application {
         await planner.invalidateCaches(for: [workID])
         historyScopeGeneration &+= 1
         cancelWorker(for: workID)
-        states[workID] = SyncUIState(
+        updateLaneState(WorkLane.State(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: .idle,
             conflict: nil,
             lastTypedResult: .checkpointed
-        )
+        ), workID: workID)
     }
 
     /// Quarantine the old fence and bind the same account to a new fence.
@@ -207,13 +184,13 @@ public actor SyncV2Application {
         await planner.invalidateCaches(for: [workID])
         historyScopeGeneration &+= 1
         cancelWorker(for: workID)
-        states[workID] = SyncUIState(
+        updateLaneState(WorkLane.State(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: .idle,
             conflict: nil,
             lastTypedResult: .checkpointed
-        )
+        ), workID: workID)
     }
 
     /// Performs the database-wide auth transition before any new scope can be
@@ -240,20 +217,20 @@ public actor SyncV2Application {
         historyScopeGeneration &+= 1
         backfillTask?.cancel()
         backfillQueue.removeAll()
-        let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys)
-            .union(workerOwners.keys)
-            .union(states.keys)
-            .union(sessions.keys)
+        let affectedWorkIDs = Set(laneValues(\.workerTask).keys).union(laneValues(\.retryTask).keys)
+            .union(laneValues(\.workerOwner).keys)
+            .union(laneValues(\.state).keys)
+            .union(laneValues(\.session).keys)
         await planner.invalidateCaches(for: affectedWorkIDs)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)
-            states[workID] = SyncUIState(
+            updateLaneState(WorkLane.State(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .idle,
                 conflict: nil,
                 lastTypedResult: .checkpointed
-            )
+            ), workID: workID)
         }
     }
 
@@ -266,7 +243,7 @@ public actor SyncV2Application {
         historyScopeGeneration &+= 1
         backfillTask?.cancel()
         backfillQueue.removeAll()
-        let affectedWorkIDs = Set(workerTasks.keys).union(retryTasks.keys).union(workerOwners.keys)
+        let affectedWorkIDs = Set(laneValues(\.workerTask).keys).union(laneValues(\.retryTask).keys).union(laneValues(\.workerOwner).keys)
         for workID in affectedWorkIDs {
             cancelWorker(for: workID)
         }
@@ -315,14 +292,14 @@ extension SyncV2Application {
         let hasPending = local.intentID != nil
         let hasLeaf = try await kernel.hasUnpromotedLeaf(workID: workID)
         let durableConflict = try await kernel.activeConflict(workID: workID) != nil
-        let hasConflict = states[workID]?.conflict != nil || durableConflict
+        let hasConflict = lanes[workID, default: WorkLane()].state?.conflict != nil || durableConflict
         let progress: SyncV2RemoteProgress = if hasConflict {
             .needsChoice
-        } else if historyWaiting.contains(workID) {
+        } else if lanes[workID, default: WorkLane()].historyWaiting {
             .retryable(.historyIncomplete)
-        } else if local.noChanges, !local.promotedLeaf, hasPending, let previous = states[workID]?.remoteProgress {
+        } else if local.noChanges, !local.promotedLeaf, hasPending, let previous = lanes[workID, default: WorkLane()].state?.remoteProgress {
             previous
-        } else if workerTasks[workID] != nil, let active = states[workID]?.remoteProgress,
+        } else if lanes[workID, default: WorkLane()].workerTask != nil, let active = lanes[workID, default: WorkLane()].state?.remoteProgress,
                   case .syncing = active {
             active
         } else {
@@ -349,7 +326,7 @@ extension SyncV2Application {
         setState(
             workID: opened.workID,
             localDurability: durability(for: opened),
-            remoteProgress: states[opened.workID]?.remoteProgress ?? .idle,
+            remoteProgress: lanes[opened.workID, default: WorkLane()].state?.remoteProgress ?? .idle,
             result: .sent
         )
     }
@@ -369,11 +346,11 @@ extension SyncV2Application {
         failure: SyncV2Failure? = nil
     ) -> SyncUIState {
         let projectedConflict: SyncV2ConflictProjection? = switch conflict {
-        case .retain: states[workID]?.conflict
+        case .retain: lanes[workID, default: WorkLane()].state?.conflict
         case let .set(value): value
         case .clear: nil
         }
-        let state = SyncUIState(
+        let state = WorkLane.State(
             workID: workID,
             localDurability: localDurability,
             remoteProgress: remoteProgress,
@@ -381,7 +358,7 @@ extension SyncV2Application {
             lastTypedResult: result,
             lastFailure: failure
         )
-        states[workID] = state
-        return state
+        updateLaneState(state, workID: workID)
+        return state.projection
     }
 }

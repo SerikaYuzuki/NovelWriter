@@ -119,7 +119,7 @@ extension LeafPromotionTests {
             serverInstanceID: productionBinding.serverInstanceID
         ))
         fixture.clock.advance(60)
-        try await leafEventually { await fixture.app.promotionTasks[fixture.workID] == nil }
+        try await leafEventually { await fixture.app.lanes[fixture.workID]?.promotionTask == nil }
         #expect(await fixture.configuration.remote.recordedOperations().isEmpty)
         #expect(try await fixture.store.open(workID: fixture.workID, scope: .parked).document == durable)
         #expect(try await fixture.store.pendingIntents(scope: .unbound).isEmpty)

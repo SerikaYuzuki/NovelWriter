@@ -15,14 +15,7 @@ extension AppState {
     /// A document identity change explicitly retires background UI operations.
     /// The eventual installer itself must never cancel the Task that owns it.
     func cancelSnapshotSyncV2BackgroundOperations() {
-        snapshotSyncV2RemoteOnlyOpenToken = nil
-        snapshotSyncV2RemoteOnlyOpenTask?.cancel()
-        snapshotSyncV2RemoteOnlyOpenTask = nil
-        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-        snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-        snapshotSyncV2AutoAdoptionToken = nil
-        snapshotSyncAutoAdoptionTask?.cancel()
-        snapshotSyncAutoAdoptionTask = nil
+        syncSessionController.cancelBackgroundOperations(remoteOnly: .releaseImmediately)
     }
 
     private func checkpointSnapshotSyncV2(
@@ -174,7 +167,7 @@ extension AppState {
         let session = documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
         guard await saveCoordinator.saveNow(), documentSessionToken == session,
-              snapshotSyncV2ActiveWorkID == workID, snapshotSyncV2AccountScopeToken == account else { return false }
+              snapshotSyncV2ActiveWorkID == workID, matchesSnapshotSyncV2AccountScope(account) else { return false }
         do {
             if let workID, let application = snapshotSyncV2Application {
                 try await application.promoteCheckpoint(workID: workID)
@@ -272,13 +265,13 @@ extension AppState {
         defer { isSnapshotSyncInFlight = false }
         let saved = await documentOperationGate.perform { [weak self] in
             guard let self, documentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScopeToken == expectedAccount,
+                  matchesSnapshotSyncV2AccountScope(expectedAccount),
                   editorCommandSession.prepareForDocumentTransition() else { return false }
             defer { editorCommandSession.resumeAfterDocumentTransition() }
             return await saveNow()
         }
         guard saved, documentSessionToken == expectedSession,
-              snapshotSyncV2AccountScopeToken == expectedAccount,
+              matchesSnapshotSyncV2AccountScope(expectedAccount),
               currentSnapshotSyncV2WorkID == workID else { return }
         editorCommandSession.clearProofreadingHighlights()
         // Cmd-S also serves local-only works. Never add an account binding or
@@ -292,11 +285,11 @@ extension AppState {
             _ = try await application.synchronize(workID: workID)
         } catch {
             guard documentSessionToken == expectedSession,
-                  snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+                  matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
             operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。"
         }
         guard documentSessionToken == expectedSession,
-              snapshotSyncV2AccountScopeToken == expectedAccount else { return }
+              matchesSnapshotSyncV2AccountScope(expectedAccount) else { return }
         await refreshSnapshotSyncV2UIState()
         await refreshSnapshotLibrary()
     }

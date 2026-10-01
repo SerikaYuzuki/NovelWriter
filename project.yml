@@ -212,6 +212,7 @@ targets:
       - path: NovelApp/ManuscriptCopy.swift
       - path: NovelApp/DocumentLifecycle/DocumentOperationGate.swift
       - path: NovelApp/DocumentLifecycle/V2DocumentSaveCoordinator.swift
+      - path: NovelApp/DocumentLifecycle/SyncSessionController.swift
     dependencies:
       - package: NovelKit
         product: NovelCore
@@ -264,6 +265,7 @@ targets:
       - path: NovelAppTests/AssistantChatContextTests.swift
       - path: NovelAppTests/AssistantConversationTests.swift
       - path: NovelAppTests/V2DocumentSaveCoordinatorTests.swift
+      - path: NovelAppTests/SyncSessionControllerTests.swift
       - path: NovelAppIOSTests
       - path: NovelKit/Tests/NovelUITests/ThemeContrastTests.swift
       - path: NovelKit/Tests/NovelThumbnailTests/SyntheticThumbnailImage.swift

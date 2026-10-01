@@ -6,11 +6,7 @@ import NovelSyncV2Application
 import NovelSyncV2PortableBridge
 import NovelSyncV2Runtime
 
-struct AutoAdoptionExpectation: Sendable {
-    let session: IOSDocumentSessionToken
-    let editGeneration: UInt64
-    let accountScope: IOSSnapshotSyncV2AccountScope
-}
+typealias AutoAdoptionExpectation = IOSDocumentStore.SyncOperationContext
 
 extension IOSDocumentStore {
     /// Adopt a verified remote resolution only after the iOS document gate,
@@ -32,10 +28,11 @@ extension IOSDocumentStore {
         }
         let expectedEditGeneration = expectedEditGeneration ?? localEditGeneration
         let expectedAccountScope = expectedAccountScope ?? snapshotSyncV2AccountScope
+        let operation = SyncOperationContext(workID: expectedSession.workID, session: expectedSession,
+                                             account: expectedAccountScope, editGeneration: expectedEditGeneration)
         return await documentOperationGate.perform { [weak self] in
             guard let self else { return false }
-            guard !isSyncV2RemoteAccountTransitionActive,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            guard matchesRemoteSyncAccount(expectedAccountScope) else { return false }
             guard currentDocumentSessionToken == expectedSession,
                   localEditGeneration == expectedEditGeneration,
                   saveState == .saved else {
@@ -56,9 +53,7 @@ extension IOSDocumentStore {
                     // is never replaced by the staged remote snapshot.
                     guard syncV2ActiveWorkID == activeWorkID,
                           !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncOperation(operation),
                           saveState == .saved else { return }
                     // The worker already projected the receipt into the durable
                     // application state. Reading uiState/pendingAdoption is
@@ -67,23 +62,17 @@ extension IOSDocumentStore {
                           projected.lastTypedResult == .adoptionPending,
                           case let .readyForSafeAdoption(inboxID) = projected.remoteProgress,
                           !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncOperation(operation) else { return }
                     guard let pending = try await application.pendingAdoption(workID: activeWorkID),
                           pending.workID == activeWorkID,
                           pending.inboxID == inboxID,
                           !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncOperation(operation) else { return }
                     applySnapshotSyncV2State(projected)
 
                     let session = await application.beginSession(workID: pending.workID)
                     guard !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncOperation(operation) else { return }
                     #if !FUMINIWA_TEST_COMPOSITION
                     // ProductionRuntimeConfiguration receives this exact
                     // platform gate. The compile-time test runtime owns an
@@ -95,7 +84,7 @@ extension IOSDocumentStore {
                         expectedLocalVersion: pending.expectedLocalVersion,
                         proof: SyncV2SafeBoundaryProof(
                             editorGeneration: editorContentGeneration,
-                            hasMarkedText: false,
+                            hasMarkedText: editorCommandSession.captureActiveCommittedText() == .compositionInProgress,
                             hasUnsavedChanges: saveState != .saved,
                             pendingIntentCleared: projected.lastTypedResult == .adoptionPending
                         )
@@ -103,9 +92,7 @@ extension IOSDocumentStore {
                     #endif
                     let token = try await application.documentGateToken(for: session)
                     guard !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncOperation(operation) else { return }
                     let boundary = SafeAdoptionBoundary(
                         workID: pending.workID,
                         inboxID: pending.inboxID,
@@ -115,23 +102,18 @@ extension IOSDocumentStore {
                     let opened = try await application.applyStagedRemote(at: boundary)
                     guard !isSyncV2RemoteAccountTransitionActive,
                           opened.workID == activeWorkID,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                          matchesSyncOperation(operation) else { return }
                     guard let value = opened.document else { return }
                     guard !isSyncV2RemoteAccountTransitionActive,
-                          currentDocumentSessionToken == expectedSession,
-                          localEditGeneration == expectedEditGeneration,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncOperation(operation),
                           installSnapshotSyncV2Opened(opened, value: value, preservingSelection: true) else { return }
                     let adoptedState = await application.uiState(workID: opened.workID)
-                    guard !isSyncV2RemoteAccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                    guard matchesRemoteSyncAccount(expectedAccountScope) else { return }
                     applySnapshotSyncV2State(adoptedState)
                     adopted = true
                 } catch {
-                    guard snapshotSyncV2AccountScope == expectedAccountScope else { return }
-                    snapshotSyncOutcome = .failed
+                    guard matchesSyncAccount(expectedAccountScope) else { return }
+                    snapshotSyncOutcome = .failure(.fatal(.invalidLocalState))
                 }
             }
             return transitioned && adopted
@@ -168,13 +150,9 @@ extension IOSDocumentStore {
               !isSyncV2RemoteAccountTransitionActive,
               currentDocumentSessionToken == session,
               localEditGeneration == editGeneration,
-              snapshotSyncV2AccountScope == accountScope,
+              matchesSyncAccount(accountScope),
               saveState == .saved else { return nil }
-        return AutoAdoptionExpectation(
-            session: session,
-            editGeneration: editGeneration,
-            accountScope: accountScope
-        )
+        return AutoAdoptionExpectation(workID: workID, session: session, account: accountScope, editGeneration: editGeneration)
     }
 
     func scheduleAutomaticAdoptionAfterCleanOpen(
@@ -192,7 +170,7 @@ extension IOSDocumentStore {
             application,
             workID: workID,
             automaticAdoption: expectation,
-            expectedAccountScope: expectation.accountScope,
+            expectedAccountScope: expectation.account,
             resumesWorker: false
         )
     }

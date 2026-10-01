@@ -109,7 +109,7 @@ extension ProductionSyncV2RemoteClient {
                 serverInstanceID: session.serverInstanceID.uuidString.lowercased()
             ))
             if traversal.memo[next.id] == nil,
-               let snapshot = try await localStore?.committedSnapshot(
+               let snapshot = try await snapshotCache?.committedSnapshot(
                    workID: workID, snapshotID: next.id, scope: scope
                ) {
                 // Committed parents remain a verified lineage anchor in SQLite.
@@ -118,13 +118,13 @@ extension ProductionSyncV2RemoteClient {
                 pending.append((next.id, true))
                 continue
             }
-            if try await localStore?.isBoundary(workID: workID, snapshotID: next.id, scope: scope) == true {
+            if try await snapshotCache?.isBoundary(workID: workID, snapshotID: next.id, scope: scope) == true {
                 traversal.active.remove(next.id)
                 traversal.completed.insert(next.id)
                 continue
             }
             if next.id != id, traversal.memo[next.id] == nil,
-               try await localStore?.historyIsIncomplete(workID: workID, scope: scope) == true {
+               try await snapshotCache?.historyIsIncomplete(workID: workID, scope: scope) == true {
                 throw SyncV2Failure.retryable(.historyIncomplete)
             }
             let snapshot = try await loadUncommittedSnapshot(
@@ -147,7 +147,7 @@ extension ProductionSyncV2RemoteClient {
         if let prefetched = traversal.memo[id] {
             return prefetched
         }
-        if let cached = try await localStore?.verifiedInboxSnapshot(
+        if let cached = try await snapshotCache?.verifiedInboxSnapshot(
             workID: workID, snapshotID: id, scope: scope
         ) {
             try traversal.include(cached.manifest)

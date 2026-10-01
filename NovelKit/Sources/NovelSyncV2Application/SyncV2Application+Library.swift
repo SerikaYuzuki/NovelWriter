@@ -52,19 +52,19 @@ public extension SyncV2Application {
     }
 
     func importStates() -> (phases: [WorkID: ImportPhase], failures: [WorkID: SyncV2Failure]) {
-        (importProgress.mapValues { $0.value }, importFailures)
+        (laneValues(\.importProgress).mapValues { $0.value }, laneValues(\.importFailure))
     }
 
     func importUpdates(workID: WorkID) -> AsyncStream<ImportPhase>? {
-        importProgress[workID]?.updates
+        lanes[workID, default: WorkLane()].importProgress?.updates
     }
 
     func lastImportFailure(workID: WorkID) -> SyncV2Failure? {
-        importFailures[workID]
+        lanes[workID, default: WorkLane()].importFailure
     }
 
     func cancelImport(workID: WorkID) async {
-        guard let task = remoteOnlyOpens[workID] else { return }
+        guard let task = lanes[workID, default: WorkLane()].remoteOnlyOpen else { return }
         task.cancel()
         _ = try? await task.value
     }
@@ -75,16 +75,16 @@ public extension SyncV2Application {
 
     private func obtainWork(workID: WorkID, opening: Bool) async throws -> SyncV2OpenedWork {
         try Task.checkCancellation()
-        if let task = remoteOnlyOpens[workID] {
+        if let task = lanes[workID, default: WorkLane()].remoteOnlyOpen {
             guard remoteSchedulingSuspensions.isEmpty else { throw SyncV2Failure.accountFenceChanged }
             if opening {
-                remoteOnlyOpeningRequests.insert(workID)
+                setLaneFlag(\.shouldOpenImportedWork, workID: workID, value: true)
             }
             return try await joinRemoteOnlyOpen(task)
         }
         do {
             let opened = try await openLocal(workID: workID)
-            importFailures[workID] = nil
+            lanes[workID, default: WorkLane()].importFailure = nil
             return opened
         } catch SyncV2ApplicationError.workNotFound {
             guard runtimeIdentity != .preview else {
@@ -96,32 +96,32 @@ public extension SyncV2Application {
             throw SyncV2Failure.accountFenceChanged
         }
         // openLocal suspends: another caller may have started the import meanwhile.
-        if let task = remoteOnlyOpens[workID] {
+        if let task = lanes[workID, default: WorkLane()].remoteOnlyOpen {
             if opening {
-                remoteOnlyOpeningRequests.insert(workID)
+                setLaneFlag(\.shouldOpenImportedWork, workID: workID, value: true)
             }
             return try await joinRemoteOnlyOpen(task)
         }
         if opening {
-            remoteOnlyOpeningRequests.insert(workID)
+            setLaneFlag(\.shouldOpenImportedWork, workID: workID, value: true)
         }
-        importFailures[workID] = nil
+        lanes[workID, default: WorkLane()].importFailure = nil
         let progress = ImportProgress()
-        importProgress[workID] = progress
+        lanes[workID, default: WorkLane()].importProgress = progress
         let generation = historyScopeGeneration
         let timeout = remoteOnlyImportTimeout
         let task = Task {
             defer {
-                remoteOnlyOpeningRequests.remove(workID)
+                setLaneFlag(\.shouldOpenImportedWork, workID: workID, value: false)
                 progress.finish()
-                importProgress[workID] = nil
-                remoteOnlyOpens[workID] = nil
+                lanes[workID, default: WorkLane()].importProgress = nil
+                lanes[workID, default: WorkLane()].remoteOnlyOpen = nil
             }
             return try await ImportProgress.$current.withValue(progress) {
                 try await self.performRemoteOnlyOpen(workID: workID, generation: generation, timeout: timeout)
             }
         }
-        remoteOnlyOpens[workID] = task
+        lanes[workID, default: WorkLane()].remoteOnlyOpen = task
         return try await joinRemoteOnlyOpen(task)
     }
 
@@ -142,7 +142,7 @@ public extension SyncV2Application {
             let progress = ImportProgress.current ?? ImportProgress()
             let inbox = try await ImportProgress.$current.withValue(progress) {
                 try await withThrowingTaskGroup(of: SyncV2RemoteInbox.self) { group in
-                    group.addTask { try await self.libraryProvider.downloadRemoteOnly(workID: workID) }
+                    group.addTask { try await self.remoteReads.downloadRemoteOnly(workID: workID) }
                     group.addTask {
                         while true {
                             let remaining = progress.remaining(untilStalledFor: timeout)
@@ -166,13 +166,13 @@ public extension SyncV2Application {
             scheduleHistoryBackfill(workID: workID)
             setState(workID: workID, localDurability: durability(for: opened),
                      remoteProgress: .idle, result: .remoteOnlyInstalled, conflict: .clear)
-            if remoteOnlyOpeningRequests.contains(workID) {
+            if lanes[workID, default: WorkLane()].shouldOpenImportedWork {
                 progress.advance(to: .opening)
             }
             return opened
         } catch {
             if !Task.isCancelled, !(error is CancellationError), historyScopeGeneration == generation {
-                importFailures[workID] = (error as? SyncV2Failure) ?? .fatal(.unexpected)
+                lanes[workID, default: WorkLane()].importFailure = (error as? SyncV2Failure) ?? .fatal(.unexpected)
             }
             recordSyncDiagnostic(workID: workID, stage: stage, error: error)
             throw error
@@ -197,7 +197,7 @@ public extension SyncV2Application {
     func library() async throws -> SyncV2LibraryProjection {
         let projection = try await libraryProvider.library()
         return SyncV2LibraryProjection(items: projection.items.map { item in
-            guard let state = states[item.workID] else { return item }
+            guard let state = lanes[item.workID, default: WorkLane()].state else { return item }
             if item.accountState == .parkedDifferentAccount {
                 return SyncV2LibraryItem(
                     workID: item.workID,
@@ -234,13 +234,13 @@ public extension SyncV2Application {
     }
 
     func synchronize(workID: WorkID) async throws -> SyncV2OperationResult {
-        syncDiagnostics[workID] = nil
+        lanes[workID, default: WorkLane()].syncDiagnostic = nil
         var diagnosticStage = "pending-adoption"
         do {
             if let adoption = try await kernel.pendingAdoption(workID: workID) {
                 let state = setState(
                     workID: workID,
-                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                     remoteProgress: .readyForSafeAdoption(inboxID: adoption.inboxID),
                     result: .adoptionPending,
                     conflict: .clear
@@ -254,7 +254,7 @@ public extension SyncV2Application {
             if let conflict = try await kernel.activeConflict(workID: workID) {
                 let state = setState(
                     workID: workID,
-                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                     remoteProgress: .needsChoice,
                     result: .conflictPending,
                     conflict: .set(conflict)
@@ -285,7 +285,7 @@ private extension SyncV2Application {
         case .idle:
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .noChanges,
                 result: .noChanges
             )
@@ -300,7 +300,7 @@ private extension SyncV2Application {
         case .command, .upload:
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .pending,
                 result: .queued
             )

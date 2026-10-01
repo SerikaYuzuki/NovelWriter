@@ -18,10 +18,6 @@ private func snapshotSyncV2StartupErrorType(_ error: any Error) -> String {
     String(reflecting: type(of: error))
 }
 
-enum IOSSnapshotSyncOutcome: Equatable, Sendable {
-    case notStarted, offline, idle, pending, syncing, conflict, failed
-}
-
 func acceptsSnapshotSyncV2ConflictResult(_ result: SyncV2TypedResult) -> Bool {
     switch result {
     case .queued, .noChanges: true
@@ -41,22 +37,7 @@ extension IOSDocumentStore {
     /// can change the session. The task itself must not clear a newer task's
     /// owner slot from its defer block.
     func cancelSnapshotSyncV2BackgroundOperations() {
-        // Keep ownership until the cancelled task has actually finished.
-        if let task = snapshotSyncV2RemoteOnlyOpenTask {
-            let token = snapshotSyncV2RemoteOnlyOpenToken
-            task.cancel()
-            Task { @MainActor [weak self] in
-                await task.value
-                guard let self, snapshotSyncV2RemoteOnlyOpenToken == token else { return }
-                snapshotSyncV2RemoteOnlyOpenTask = nil
-                snapshotSyncV2RemoteOnlyOpenToken = nil
-                snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-                snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-            }
-        }
-        snapshotSyncV2ReprojectionToken = nil
-        snapshotSyncV2ReprojectionTask?.cancel()
-        snapshotSyncV2ReprojectionTask = nil
+        syncSessionController.cancelBackgroundOperations(remoteOnly: .retainUntilFinished)
     }
 
     func invalidateSnapshotSyncV2AccountOperations() {

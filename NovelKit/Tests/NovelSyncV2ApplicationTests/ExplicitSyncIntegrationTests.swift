@@ -44,7 +44,7 @@ struct ExplicitSyncIntegrationTests {
         let app = try await SnapshotSyncV2Runtime.makeApplication(mode: .test(configuration))
         _ = try await app.openLocal(workID: workID)
         if automatic {
-            try await eventually { await app.workerTasks[workID] == nil }
+            try await eventually { await app.lanes[workID]?.workerTask == nil }
             await configuration.remote.setHeadHandler { _ in throw SyncV2Failure.offline }
             await #expect(throws: SyncV2Failure.offline) {
                 try await app.checkForRemoteUpdates(workID: workID)
@@ -78,7 +78,7 @@ struct ExplicitSyncIntegrationTests {
         #expect(adopted.document == updated)
         #expect(try await app.pendingAdoption(workID: workID) == nil)
         if automatic {
-            try await eventually { await app.workerTasks[workID] == nil }
+            try await eventually { await app.lanes[workID]?.workerTask == nil }
             let count = await configuration.remote.recordedOperations().count
             #expect(try await !app.checkForRemoteUpdates(workID: workID))
             #expect(await app.uiState(workID: workID)?.remoteProgress == .noChanges)

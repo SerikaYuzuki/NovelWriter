@@ -21,10 +21,10 @@ public extension SyncV2Application {
         guard let writingStore, let id = UUID(uuidString: destination.description) else { return }
         do {
             try await writingStore.copyHistory(source: "work:\(source.description)", destination: "work:\(destination.description)", newWorkID: id)
-            writingCopyRetries[destination] = nil
+            lanes[destination, default: WorkLane()].writingCopyRetry = nil
         } catch {
             // The manuscript clone has already committed. Never report it as failed.
-            writingCopyRetries[destination] = source
+            lanes[destination, default: WorkLane()].writingCopyRetry = source
         }
     }
 
@@ -111,7 +111,7 @@ public extension SyncV2Application {
 
     private func retryWritingHistoryCopies() async throws {
         guard let writingStore else { return }
-        for (destination, source) in writingCopyRetries {
+        for (destination, source) in laneValues(\.writingCopyRetry) {
             await copyWritingHistory(source: source, destination: destination)
         }
         try await writingStore.retryHistoryCopies()

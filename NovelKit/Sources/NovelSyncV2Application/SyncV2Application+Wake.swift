@@ -53,7 +53,7 @@ public extension SyncV2Application {
         await withTaskCancellationHandler {
             guard !Task.isCancelled else { return }
             await withCheckedContinuation { continuation in
-                if let previous = foregroundObservations.removeValue(forKey: workID) {
+                if let previous = takeLaneValue(\.foregroundObservation, workID: workID) {
                     previous.task.cancel()
                     previous.finished.resume()
                 }
@@ -61,7 +61,7 @@ public extension SyncV2Application {
                     await self?.pollForeground(workID: workID, refresh: refresh)
                     await self?.endForegroundObservation(workID: workID, owner: owner)
                 }
-                foregroundObservations[workID] = SyncV2ForegroundObservation(
+                lanes[workID, default: WorkLane()].foregroundObservation = SyncV2ForegroundObservation(
                     owner: owner, task: task, finished: continuation
                 )
             }
@@ -71,8 +71,8 @@ public extension SyncV2Application {
     }
 
     private func endForegroundObservation(workID: WorkID, owner: UUID) {
-        guard let observation = foregroundObservations[workID], observation.owner == owner else { return }
-        foregroundObservations[workID] = nil
+        guard let observation = lanes[workID, default: WorkLane()].foregroundObservation, observation.owner == owner else { return }
+        lanes[workID, default: WorkLane()].foregroundObservation = nil
         observation.task.cancel()
         observation.finished.resume()
     }

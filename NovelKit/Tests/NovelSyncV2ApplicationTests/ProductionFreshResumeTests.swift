@@ -27,8 +27,7 @@ struct ProductionFreshResumeTests {
         let remote = ApplicationTestRemote([.failure(.offline)])
         let kernel = ProductionSyncV2Kernel(
             store: store,
-            scope: scope,
-            remote: remote
+            scope: scope
         )
         let planner = ProductionSyncV2Planner(store: store, scope: scope)
         let configuration = try ProductionRuntimeConfiguration(
@@ -77,8 +76,7 @@ struct ProductionFreshResumeTests {
         let remote = ApplicationTestRemote([.failure(.offline)])
         let kernel = ProductionSyncV2Kernel(
             store: store,
-            scope: scope,
-            remote: remote
+            scope: scope
         )
         let planner = ProductionSyncV2Planner(store: store, scope: scope)
         let configuration = try ProductionRuntimeConfiguration(

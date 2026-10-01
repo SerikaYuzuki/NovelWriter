@@ -44,13 +44,13 @@ public extension SyncV2Application {
     func checkForRemoteUpdates(workID: WorkID) async throws -> Bool {
         guard runtimeIdentity != .preview,
               remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID),
-              automaticChecks.insert(workID).inserted else { return false }
-        defer { automaticChecks.remove(workID) }
+              !lanes[workID, default: WorkLane()].deletionPending,
+              setLaneFlag(\.automaticCheckInProgress, workID: workID, value: true) else { return false }
+        defer { setLaneFlag(\.automaticCheckInProgress, workID: workID, value: false) }
         let scopeGeneration = historyScopeGeneration
         guard let candidate = try await planner.automaticSyncCandidate(workID: workID),
-              workerTasks[workID] == nil else { return false }
-        let state = states[workID]
+              lanes[workID, default: WorkLane()].workerTask == nil else { return false }
+        let state = lanes[workID, default: WorkLane()].state
         switch state?.remoteProgress ?? .idle {
         case .idle, .noChanges, .offline, .retryable, .pending:
             break
@@ -64,12 +64,12 @@ public extension SyncV2Application {
         try Task.checkCancellation()
         guard scopeGeneration == historyScopeGeneration,
               remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID),
-              workerTasks[workID] == nil,
+              !lanes[workID, default: WorkLane()].deletionPending,
+              lanes[workID, default: WorkLane()].workerTask == nil,
               let head else { return false }
         if head == candidate.head {
             if try await !kernel.hasUnpromotedLeaf(workID: workID),
-               states[workID] == state, let state, state.remoteProgress != .noChanges {
+               lanes[workID, default: WorkLane()].state == state, let state, state.remoteProgress != .noChanges {
                 setState(workID: workID, localDurability: state.localDurability,
                          remoteProgress: .noChanges, result: .noChanges)
             }
@@ -91,14 +91,14 @@ public extension SyncV2Application {
 
 private extension SyncV2Application {
     func readAutomaticHead(
-        workID: WorkID, scopeGeneration: UInt64, state: SyncUIState?
+        workID: WorkID, scopeGeneration: UInt64, state: WorkLane.State?
     ) async throws -> SyncV2RemoteHead? {
         do {
-            return try await libraryProvider.remoteHead(workID: workID)
+            return try await remoteReads.remoteHead(workID: workID)
         } catch {
             if !Task.isCancelled, scopeGeneration == historyScopeGeneration,
-               remoteSchedulingSuspensions.isEmpty, workerTasks[workID] == nil,
-               states[workID] == state {
+               remoteSchedulingSuspensions.isEmpty, lanes[workID, default: WorkLane()].workerTask == nil,
+               lanes[workID, default: WorkLane()].state == state {
                 // Project the small status indicator; no command is retried,
                 // quarantined, or reported through the Debug modal channel.
                 record(failure: error as? SyncV2Failure ?? .offline, workID: workID)

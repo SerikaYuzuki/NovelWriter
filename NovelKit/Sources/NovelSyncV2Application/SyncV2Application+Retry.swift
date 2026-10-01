@@ -7,29 +7,30 @@ extension SyncV2Application {
     }
 
     func cancelRetry(for workID: WorkID) {
-        retryTasks.removeValue(forKey: workID)?.cancel()
-        retryOwners[workID] = nil
+        let previous = lanes[workID]?.retry
+        lanes[workID, default: WorkLane()].retry = .idle
+        previous?.task?.cancel()
     }
 
     func scheduleRetryIfNeeded(for workID: WorkID) {
         guard runtimeIdentity != .preview, remoteSchedulingSuspensions.isEmpty,
-              !deletingWorkIDs.contains(workID), retryTasks[workID] == nil else { return }
-        switch states[workID]?.remoteProgress {
+              !lanes[workID, default: WorkLane()].deletionPending, lanes[workID, default: WorkLane()].retryTask == nil else { return }
+        switch lanes[workID, default: WorkLane()].state?.remoteProgress {
         case .offline, .retryable(.serverUnavailable), .retryable(.lostResponse): break
         default: return
         }
         let owner = UUID()
-        let delay = Self.retryDelay(attempt: retryAttempts[workID, default: 0], jitter: Double.random(in: 0.75 ... 1.25))
-        retryAttempts[workID, default: 0] += 1
-        retryOwners[workID] = owner
-        retryTasks[workID] = Task { [weak self] in
+        let delay = Self.retryDelay(attempt: lanes[workID, default: WorkLane()].retryAttempt, jitter: Double.random(in: 0.75 ... 1.25))
+        lanes[workID, default: WorkLane()].retryAttempt += 1
+        let task = Task<Void, Never> { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             await self?.wakeRetry(workID: workID, owner: owner)
         }
+        lanes[workID, default: WorkLane()].retry = .running(owner: owner, task: task)
     }
 
     private func wakeRetry(workID: WorkID, owner: UUID) {
-        guard retryOwners[workID] == owner, !Task.isCancelled else { return }
+        guard lanes[workID, default: WorkLane()].retryOwner == owner, !Task.isCancelled else { return }
         cancelRetry(for: workID)
         scheduleWorker(for: workID)
     }

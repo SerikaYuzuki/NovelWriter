@@ -30,7 +30,7 @@ func applicationTestComposition(
         planner: state,
         remote: remote,
         gate: gate,
-        library: state
+        library: state, remoteReads: state
     )
 }
 

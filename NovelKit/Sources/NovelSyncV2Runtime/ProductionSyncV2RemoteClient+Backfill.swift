@@ -9,7 +9,7 @@ import FoundationNetworking
 
 extension ProductionSyncV2RemoteClient {
     func backfillWorkIDs() async throws -> [WorkID] {
-        try await localStore?.backfillWorkIDs() ?? []
+        try await backfillPersistence?.backfillWorkIDs() ?? []
     }
 
     func backfillHistory(workID: WorkID, progress: @escaping @Sendable () async -> Void = {}) async throws {
@@ -17,7 +17,7 @@ extension ProductionSyncV2RemoteClient {
     }
 
     func backfillHistory(workID: WorkID, manual: Bool, allowConstrained: Bool = false, progress: @escaping @Sendable () async -> Void) async throws {
-        guard let store = localStore else { return }
+        guard let store = backfillPersistence else { return }
         let session = try await loadSession()
         let binding = V2AccountBinding(accountID: session.accountID, accountFence: session.accountFence,
                                        serverInstanceID: session.serverInstanceID.uuidString.lowercased())
@@ -39,7 +39,7 @@ extension ProductionSyncV2RemoteClient {
         }
     }
 
-    private func downloadBackfill(_ state: V2BackfillState, session: FuminiwaSession, store: LocalSyncV2Store, progress: @Sendable () async -> Void) async throws {
+    private func downloadBackfill(_ state: V2BackfillState, session: FuminiwaSession, store: any HistoryBackfillPersistence, progress: @Sendable () async -> Void) async throws {
         var cursor = state.resumeCursor
         var committedCursor = state.resumeCursor
         var seen = Set<String>()

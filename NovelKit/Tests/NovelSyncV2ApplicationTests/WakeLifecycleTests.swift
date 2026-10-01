@@ -42,7 +42,7 @@ struct WakeLifecycleTests {
         #expect(delay == (failure ? 60_000_000_000 : 10_000_000_000))
         observation.cancel()
         await observation.value
-        #expect(await app.foregroundObservations.isEmpty)
+        #expect(await app.laneValues(\.foregroundObservation).isEmpty)
         continuation.finish()
     }
 }

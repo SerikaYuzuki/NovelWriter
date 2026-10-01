@@ -27,7 +27,7 @@ struct IOSSnapshotSyncV2Tests {
         #expect(!FileManager.default.fileExists(
             atPath: environment.root.appendingPathComponent(store.document.id.uuidString).path
         ))
-        #expect(store.snapshotSyncOutcome == .pending || store.snapshotSyncOutcome == .offline)
+        #expect(store.snapshotSyncState?.remoteProgress == .pending || store.snapshotSyncState?.remoteProgress == .offline)
     }
 
     @Test("normal new/open never creates a WorkID directory")
@@ -209,7 +209,7 @@ struct IOSSnapshotSyncV2Tests {
         store.replaceAttachments([Attachment(fileName: "missing.pdf", byteCount: 12)])
         #expect(await store.checkpointSnapshotSyncV2(store.document, reason: .explicit) == false)
         #expect(store.attachments.map { $0.fileName } == ["missing.pdf"])
-        #expect(store.snapshotSyncOutcome == .failed)
+        #expect(store.snapshotSyncOutcome == .failure(.fatal(.invalidLocalState)))
     }
 
     @Test("履歴UIはSQLite localとremoteを同一projectionへ載せる")

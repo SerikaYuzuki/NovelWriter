@@ -23,14 +23,12 @@ extension IOSDocumentStore {
                     // flushes a dirty editor through the local SQLite
                     // checkpoint.  It never wakes or awaits the remote worker.
                     let opened = try await application.openLocal(workID: targetWorkID)
-                    guard !isSyncV2AccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                    guard matchesLocalSyncAccount(expectedAccountScope),
                           opened.workID == targetWorkID else { return }
                     guard let value = opened.document else { throw SyncV2ApplicationError.workNotFound }
                     guard installSnapshotSyncV2Opened(opened, value: value) else { return }
                     let state = await application.uiState(workID: opened.workID)
-                    guard !isSyncV2AccountTransitionActive,
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                    guard matchesLocalSyncAccount(expectedAccountScope),
                           syncV2ActiveWorkID == targetWorkID else { return }
                     applySnapshotSyncV2State(state)
                     didOpen = true
@@ -67,10 +65,9 @@ extension IOSDocumentStore {
         let title = syncV2LibraryItems.first(where: { $0.workID == workID })?.title ?? "作品"
         let expectedSession = currentDocumentSessionToken
         let expectedAccountScope = snapshotSyncV2AccountScope
-        let operationToken = UUID()
-        snapshotSyncV2RemoteOnlyOpenToken = operationToken
-        snapshotSyncV2RemoteOnlyOpeningWorkID = workID
-        snapshotSyncV2RemoteOnlyOpenStartedAt = Date()
+        let operation = SyncOperationContext(workID: expectedSession?.workID, session: expectedSession,
+                                             account: expectedAccountScope, editGeneration: nil)
+        let operationToken = syncSessionController.beginRemoteOnlyOpen(workID: workID)
         snapshotSyncV2RemoteOnlyOpenFailure = nil
         libraryNotice = nil
         snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
@@ -87,7 +84,7 @@ extension IOSDocumentStore {
                       !Task.isCancelled,
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                      snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                      matchesSyncAccount(expectedAccountScope) else { return }
                 libraryImportPhases[workID] = ImportPhase(stage: .opening)
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
@@ -95,7 +92,7 @@ extension IOSDocumentStore {
                           snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                           currentDocumentSessionToken == expectedSession,
                           shouldOpen(),
-                          snapshotSyncV2AccountScope == expectedAccountScope,
+                          matchesSyncOperation(operation),
                           syncV2LibraryItems.contains(where: { $0.workID == workID }) else {
                         return false
                     }
@@ -108,7 +105,7 @@ extension IOSDocumentStore {
                               !isSyncV2RemoteAccountTransitionActive,
                               currentDocumentSessionToken == expectedSession,
                               shouldOpen(),
-                              snapshotSyncV2AccountScope == expectedAccountScope,
+                              matchesSyncOperation(operation),
                               acceptsSnapshotSyncV2RemoteOnlyOpen(
                                   opened,
                                   requestedWorkID: workID
@@ -121,8 +118,7 @@ extension IOSDocumentStore {
                         }
                         let state = await application.uiState(workID: opened.workID)
                         guard snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                              !isSyncV2RemoteAccountTransitionActive,
-                              snapshotSyncV2AccountScope == expectedAccountScope,
+                              matchesRemoteSyncAccount(expectedAccountScope),
                               syncV2ActiveWorkID == workID else { return }
                         applySnapshotSyncV2State(state)
                         if shouldOpen(), let session = currentDocumentSessionToken {
@@ -144,7 +140,7 @@ extension IOSDocumentStore {
                 guard !Task.isCancelled,
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
-                      snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                      matchesSyncAccount(expectedAccountScope) else { return }
                 operationErrorMessage = remoteOnlyOpenErrorMessage(error)
                 snapshotSyncV2RemoteOnlyOpenFailure = syncV2FailureKind(error)
                 logSyncV2PresentationFailure(error)
@@ -155,13 +151,7 @@ extension IOSDocumentStore {
     }
 
     private func finishLibraryOpen(operationToken: UUID) {
-        guard snapshotSyncV2RemoteOnlyOpenToken == operationToken else { return }
-        snapshotSyncV2RemoteOnlyOpenToken = nil
-        snapshotSyncV2RemoteOnlyOpenTask = nil
-        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-        if libraryPrefetchTask == nil {
-            snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-        }
+        syncSessionController.finishRemoteOnlyOpen(owner: operationToken, preservingPrefetchStart: true)
     }
 
     private func reportRemoteOnlySnapshotSyncV2OpenResult(
@@ -171,7 +161,7 @@ extension IOSDocumentStore {
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
         shouldOpen: @MainActor () -> Bool
     ) async {
-        guard !Task.isCancelled, snapshotSyncV2AccountScope == expectedAccountScope else { return }
+        guard !Task.isCancelled, matchesSyncAccount(expectedAccountScope) else { return }
         if !installed, shouldOpen(), currentDocumentSessionToken == expectedSession {
             let failure = SyncV2Failure.fatal(.invalidLocalState)
             snapshotSyncV2RemoteOnlyOpenFailure = failure

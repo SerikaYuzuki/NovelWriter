@@ -2,7 +2,6 @@ import Foundation
 import NovelAuth
 import NovelSyncV2
 import NovelSyncV2Application
-import NovelSyncV2Store
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -211,7 +210,8 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
     let sessionProvider: any SyncV2SessionProvider
     let clientVersion: String
     let session: URLSession
-    let localStore: LocalSyncV2Store?
+    let snapshotCache: (any SnapshotCache)?
+    let backfillPersistence: (any HistoryBackfillPersistence)?
     let mediaType = "application/vnd.fuminiwa.sync.v2+jcs"
 
     init(
@@ -221,10 +221,12 @@ actor ProductionSyncV2RemoteClient: SyncV2RemoteClient {
         clientPlatform: AuthClientPlatform = .macos,
         session: URLSession? = nil,
         sessionProvider: (any SyncV2SessionProvider)? = nil,
-        localStore: LocalSyncV2Store? = nil
+        snapshotCache: (any SnapshotCache)? = nil,
+        backfillPersistence: (any HistoryBackfillPersistence)? = nil
     ) {
         self.origin = origin
-        self.localStore = localStore
+        self.snapshotCache = snapshotCache
+        self.backfillPersistence = backfillPersistence
         self.clientVersion = clientVersion
         _ = clientPlatform
         let configuredSession: URLSession

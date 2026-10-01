@@ -15,7 +15,7 @@ extension IOSDocumentStore {
                                     editingToken: IOSEpisodeEditingToken,
                                     account: IOSSnapshotSyncV2AccountScope) -> Bool {
         guard writingInteractionAllowed, currentEpisodeEditingToken == editingToken,
-              snapshotSyncV2AccountScope == account else { return false }
+              matchesSyncAccount(account) else { return false }
         return editorCommandSession.applyProofreading(expectedText: manuscript.content, replacement: replacement)
     }
 
@@ -24,7 +24,7 @@ extension IOSDocumentStore {
               let workUUID = UUID(uuidString: work.description) else { return nil }
         let session = currentDocumentSessionToken, account = snapshotSyncV2AccountScope
         let validate = { [weak self] in
-            guard !Task.isCancelled, let self, currentDocumentSessionToken == session, snapshotSyncV2AccountScope == account,
+            guard !Task.isCancelled, let self, currentDocumentSessionToken == session, matchesSyncAccount(account),
                   writingInteractionAllowed else { throw WritingError.changedScope }
         }
         let context: () async throws -> SyncV2WritingContext = {

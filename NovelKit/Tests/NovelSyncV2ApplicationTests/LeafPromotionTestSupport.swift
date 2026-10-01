@@ -101,7 +101,7 @@ struct LeafRuntimeFixture: Sendable {
         try await store.adoptInbox(inboxID: inbox.inboxID, scope: productionScope)
         await configuration.remote.setCommandHandler(leafSuccessResponse)
         let resolver = TestScopeResolver(vault: configuration.vault, store: store)
-        let kernel = ProductionSyncV2Kernel(store: store, scope: resolver, remote: configuration.remote)
+        let kernel = ProductionSyncV2Kernel(store: store, scope: resolver)
         let clock = LeafTestClock()
         let gate = InMemorySyncV2DocumentGate()
         let app = try SyncV2Application(mode: .test(configuration), composition: SyncV2RuntimeComposition(

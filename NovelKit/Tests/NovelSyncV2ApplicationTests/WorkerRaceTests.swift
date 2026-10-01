@@ -149,18 +149,18 @@ struct WorkerRaceTests {
         )
         try await eventually { await remote.recordedOperations().count == 1 }
 
-        let oldOwner = await app.workerOwners[workID]
+        let oldOwner = await app.lanes[workID]?.workerOwner
         #expect(oldOwner != nil)
         let suspension = await app.beginAccountTransitionRemoteSuspension()
-        #expect(await app.workerOwners[workID] == nil)
+        #expect(await app.lanes[workID]?.workerOwner == nil)
         #expect(await app.endAccountTransitionRemoteSuspension(suspension, resume: false))
         let pendingWorkIDs = try await (state as any SyncV2CommandPlanner).pendingWorkIDs()
         #expect(pendingWorkIDs.contains(workID))
         try await app.resumePending()
-        #expect(await app.workerOwners[workID] != nil)
+        #expect(await app.lanes[workID]?.workerOwner != nil)
         try await eventually { await remote.recordedOperations().count == 2 }
 
-        let newOwner = await app.workerOwners[workID]
+        let newOwner = await app.lanes[workID]?.workerOwner
         #expect(newOwner != nil)
         #expect(newOwner != oldOwner)
         // The first task is still awaiting the remote. Its continuation is
@@ -175,7 +175,7 @@ struct WorkerRaceTests {
         // response is otherwise a valid-looking receipt, so this assertion
         // exercises the owner boundary rather than receipt validation.
         await remote.releaseNext(result: .applied)
-        try await eventually { await app.workerOwners[workID] == nil }
+        try await eventually { await app.lanes[workID]?.workerOwner == nil }
         #expect(await remote.recordedOperations().count == 2)
         #expect(await planner.acknowledgeCount() == 1)
         #expect(await planner.failureCount() == 0)

@@ -252,7 +252,7 @@ extension IOSDocumentStore {
         let session = currentDocumentSessionToken
         let account = snapshotSyncV2AccountScope
         guard await saveCoordinator.saveNow(), currentDocumentSessionToken == session,
-              syncV2ActiveWorkID == workID, snapshotSyncV2AccountScope == account else { return false }
+              syncV2ActiveWorkID == workID, matchesSyncAccount(account) else { return false }
         do {
             if let workID, let application = snapshotSyncV2Application {
                 try await application.promoteCheckpoint(workID: workID)
@@ -274,12 +274,12 @@ extension IOSDocumentStore {
                   !isSyncV2AccountTransitionActive,
                   currentDocumentSessionToken == expectedSession,
                   syncV2ActiveWorkID == expectedWorkID,
-                  snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                  matchesSyncAccount(expectedAccountScope) else { return }
             _ = await performDocumentTransition {
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope,
+                      matchesSyncAccount(expectedAccountScope),
                       snapshotSyncV2Application != nil,
                       let attachments = currentV2Attachments() else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
@@ -316,7 +316,7 @@ extension IOSDocumentStore {
                 guard !isSyncV2AccountTransitionActive,
                       currentDocumentSessionToken == expectedSession,
                       syncV2ActiveWorkID == expectedWorkID,
-                      snapshotSyncV2AccountScope == expectedAccountScope else {
+                      matchesSyncAccount(expectedAccountScope) else {
                     throw SyncV2ApplicationError.invalidRuntimeMode
                 }
                 pendingExportRootURL = root
@@ -334,7 +334,7 @@ extension IOSDocumentStore {
         !isSyncV2AccountTransitionActive
             && currentDocumentSessionToken == session
             && syncV2ActiveWorkID == workID
-            && snapshotSyncV2AccountScope == accountScope
+            && matchesSyncAccount(accountScope)
     }
 
     func dismissExport() {

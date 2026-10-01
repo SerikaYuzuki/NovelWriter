@@ -30,7 +30,7 @@ public extension SyncV2Application {
             if prepared.noChanges {
                 let state = setState(
                     workID: workID,
-                    localDurability: states[workID]?.localDurability ?? .unsaved,
+                    localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                     remoteProgress: .noChanges,
                     result: .noChanges,
                     conflict: .clear
@@ -43,7 +43,7 @@ public extension SyncV2Application {
             }
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .pending,
                 result: .queued
             )
@@ -62,7 +62,7 @@ public extension SyncV2Application {
         } catch SyncV2ApplicationError.staleConflictAction {
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .needsChoice,
                 result: .staleConflictAction
             )
@@ -90,7 +90,7 @@ public extension SyncV2Application {
         guard !prepared.noChanges else {
             let state = setState(
                 workID: workID,
-                localDurability: states[workID]?.localDurability ?? .unsaved,
+                localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
                 remoteProgress: .noChanges,
                 result: .noChanges
             )
@@ -100,7 +100,7 @@ public extension SyncV2Application {
         let hasPendingRemoteIntent = prepared.intentID != nil
         let state = setState(
             workID: workID,
-            localDurability: states[workID]?.localDurability ?? .unsaved,
+            localDurability: lanes[workID, default: WorkLane()].state?.localDurability ?? .unsaved,
             remoteProgress: hasPendingRemoteIntent ? .pending : .authenticationRequired,
             result: .restored
         )
