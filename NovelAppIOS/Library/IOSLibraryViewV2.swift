@@ -9,6 +9,7 @@ struct IOSLibraryView: View {
     let makeNewDocument: () -> Void
 
     @State private var searchText = ""
+    @State private var pendingImportOpen: WorkID?
     @State private var pendingRename: SyncV2LibraryItem?
     @State private var renameSession: IOSDocumentSessionToken?
     @State private var renameAccountScope: IOSSnapshotSyncV2AccountScope?
@@ -59,53 +60,13 @@ struct IOSLibraryView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(store.syncV2LibraryItems.filter { searchText.isEmpty || $0.title.localizedStandardContains(searchText) }, id: \.workID) { item in
-                    Button {
-                        openWork(item.workID)
-                    } label: {
-                        HStack(spacing: Spacing.small) {
-                            LazyCoverThumbnail(title: item.title, identity: "\(item.workID)-\(store.snapshotSyncV2AccountScope)-\(item.localGeneration ?? 0)") {
-                                guard item.availability != .remoteOnly else { return nil }
-                                let account = store.snapshotSyncV2AccountScope
-                                let bytes = try? await store.snapshotSyncV2Application?.localCoverThumbnail(workID: item.workID)
-                                guard account == store.snapshotSyncV2AccountScope else { return nil }
-                                return bytes
-                            }
-                            VStack(alignment: .leading, spacing: Spacing.extraSmall) {
-                                Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
-                                    .foregroundStyle(FuminiwaColor.textPrimary.color)
-                                if store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID,
-                                   let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
-                                    LibraryImportProgress(startedAt: startedAt,
-                                                          longImportNotice: SyncV2LibraryPresentation.longImportNotice)
-                                } else if renamingIDs.contains(item.workID) {
-                                    ProgressView("作品名を変更中…")
-                                } else {
-                                    TimelineView(.periodic(from: .now, by: 15)) { _ in
-                                        StatusLabel(item.status.text, systemImage: item.status.symbol,
-                                                    tone: StatusTone(rawValue: item.status.tone.rawValue) ?? .secondary)
-                                            .font(FuminiwaType.rowSecondary)
-                                    }
-                                }
-                            }
-                            Spacer()
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityHint(renamingIDs.contains(item.workID) ? "作品名を変更中です" :
-                        item.workID == store.snapshotSyncV2RemoteOnlyOpeningWorkID ? "この作品を取り込み中です" :
-                        item.availability != .remoteOnly ? "" : store.snapshotSyncV2RemoteOnlyOpeningWorkID == nil
-                        ? SyncV2LibraryPresentation.remoteOnlyHint : SyncV2LibraryPresentation.importBusyReason)
-                    .disabled(renamingIDs.contains(item.workID) ||
-                        (item.availability == .remoteOnly && store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil))
-                    .contextMenu {
-                        Button("作品名を変更", systemImage: "pencil") {
-                            renameTitle = item.title
-                            renameSession = store.currentDocumentSessionToken
-                            renameAccountScope = store.snapshotSyncV2AccountScope
-                            pendingRename = item
-                        }
-                        .disabled(renamingIDs.contains(item.workID))
-                    }
+                    IOSLibraryImportRow(store: store, item: item, isRenaming: renamingIDs.contains(item.workID),
+                                        open: { requestOpen(item.workID) }, rename: {
+                                            renameTitle = item.title
+                                            renameSession = store.currentDocumentSessionToken
+                                            renameAccountScope = store.snapshotSyncV2AccountScope
+                                            pendingRename = item
+                                        })
                     if item.accountState == .unbound,
                        item.workID == store.syncV2ActiveWorkID {
                         Button("この作品をこのアカウントへ追加して同期") {
@@ -165,10 +126,42 @@ struct IOSLibraryView: View {
         } message: {
             Text("作品やアカウントが切り替わっていないか、接続状態を確認して再試行してください。")
         }
-        .searchable(text: $searchText, prompt: "作品を検索")
-        .refreshable {
-            _ = await store.refreshLibrary()
+        #if FUMINIWA_TEST_COMPOSITION
+        .task {
+                if ProcessInfo.processInfo.arguments.contains("--library-preview=import-cancel") {
+                    pendingImportOpen = store.syncV2LibraryItems.last?.workID
+                }
+            }
+        #endif
+            .task(id: store.snapshotSyncV2AccountScope) { await store.observeLibraryImports() }
+            .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
+                get: { pendingImportOpen != nil }, set: {
+                    if !$0 {
+                        pendingImportOpen = nil
+                    }
+                }
+            ), titleVisibility: .visible) {
+                if let id = pendingImportOpen {
+                    Button("取り込みを中止して開く") {
+                        pendingImportOpen = nil
+                        Task { await store.cancelLibraryImport(); openWork(id) }
+                    }
+                }
+                Button("キャンセル", role: .cancel) { pendingImportOpen = nil }
+            }
+            .searchable(text: $searchText, prompt: "作品を検索")
+            .refreshable {
+                _ = await store.refreshLibrary()
+            }
+            .task { _ = await store.refreshLibrary() }
+    }
+
+    private func requestOpen(_ id: WorkID) {
+        if let importing = store.libraryPrefetchWorkID ?? store.snapshotSyncV2RemoteOnlyOpeningWorkID,
+           importing != id {
+            pendingImportOpen = id
+        } else {
+            openWork(id)
         }
-        .task { _ = await store.refreshLibrary() }
     }
 }

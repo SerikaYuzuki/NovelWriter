@@ -93,3 +93,31 @@ cancels existing ones. Download-time binding is checked before validation, immed
 install, and after install; ordinary sync
 retains its stage/verify/adopt checks; cancellation is checked at these boundaries and during graph work.
 iOS open and rename hold a background task lease whose expiry cancels import.
+
+## Negotiated progress totals (D-105)
+
+New clients request `include=totals` only on the first page. No opt-in means
+exactly the original closed envelope: old clients must never receive extra keys.
+A negotiated first page includes `totals: {items, bytes}`: deduplicated manifests
+and objects in the complete pinned ancestry, including large separately fetched
+objects and thumbnail attachments; bytes are raw sizes, not JSON/Base64 wire
+sizes. Both values are nonnegative JCS-safe integers. Totals use S-03 metadata
+and its cold-query aggregates, including oversized closures; later pages incur
+no totals query or summation. Mutable availability is still checked independently.
+Totals do not authenticate content or relax closure/digest validation.
+
+Older servers reject unknown query keys. On 400/404/405 (also the original server's typed schemaViolation/422) from the initial opt-in
+request the client retries the same pinned root without `include`, once. Only
+then may the existing untyped 404/405 endpoint fallback apply. A typed 404
+fails closed immediately, including on the opt-in request. Missing totals are supported, including servers ignoring opt-in.
+`include` on a cursor request or any value other than `totals` is rejected.
+
+Manual 「この端末に取り込む」 shares the WorkID import with explicit open and
+rename; it never begins an editor session. No automatic prefetch is performed.
+Progress counts raw payloads (large-object byte callbacks use per-object high-water
+marks so retries do not inflate the fraction), with unknown totals shown as received MB.
+The stream coalesces byte updates to 10 Hz and emits phase boundaries immediately.
+Before COMMIT cancellation rolls back; after COMMIT the complete local work is
+retained and cancelled presentation is rejected (D-102). Retry starts a fresh
+import after the cancelled single-flight has actually finished. Failure kind is
+retained per WorkID until retry or account transition.

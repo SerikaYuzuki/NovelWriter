@@ -63,6 +63,8 @@ public extension LocalSyncV2Store {
                 try validateMonotonicHead(workID: graph.workID, newHead: head)
                 try applyRemoteHead(head, workID: graph.workID)
             }
+            // Cancellation during the final metadata writes must still roll back.
+            try Task.checkCancellation()
         }
     }
 }

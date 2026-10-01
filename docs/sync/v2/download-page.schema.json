@@ -4,24 +4,76 @@
   "title": "Snapshot Sync v2 immutable graph download page",
   "type": "object",
   "additionalProperties": false,
-  "required": ["result", "snapshotId", "items", "nextCursor"],
+  "required": [
+    "result",
+    "snapshotId",
+    "items",
+    "nextCursor"
+  ],
   "properties": {
-    "result": { "const": "noChanges" },
-    "snapshotId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "result": {
+      "const": "noChanges"
+    },
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "items": {
       "type": "array",
       "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "id", "bytesBase64URL"],
+        "required": [
+          "kind",
+          "id",
+          "bytesBase64URL"
+        ],
         "properties": {
-          "kind": { "enum": ["manifest", "object"] },
-          "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "bytesBase64URL": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" }
+          "kind": {
+            "enum": [
+              "manifest",
+              "object"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytesBase64URL": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]*$"
+          }
         }
       }
     },
-    "nextCursor": { "type": ["string", "null"], "minLength": 1, "maxLength": 2048 }
+    "nextCursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "bytes"
+      ],
+      "properties": {
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    }
   }
 }

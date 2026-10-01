@@ -24,8 +24,12 @@ func remoteOnlyInstallChecksEveryBoundary(boundary: Int, changeAccount: Bool) as
                                       binding: SealedCommand.Binding(accountFence: binding.accountFence,
                                                                      accountId: binding.accountID, protocolEpoch: 2,
                                                                      serverInstanceId: binding.serverInstanceID))
-    let task = Task { try await kernel.installRemoteOnly(inbox) }
+    let progress = ImportProgress()
+    let task = Task {
+        try await ImportProgress.$current.withValue(progress) { try await kernel.installRemoteOnly(inbox) }
+    }
     try await eventually { await scope.paused }
+    #expect(progress.value.stage == (boundary == 1 ? .checking : .saving))
     #expect(try await store.query("SELECT COUNT(*) FROM inbox_batches").first?[0].int64 == 0)
 
     if changeAccount {

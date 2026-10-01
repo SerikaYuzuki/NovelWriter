@@ -60,6 +60,9 @@ extension IOSDocumentStore {
     }
 
     func invalidateSnapshotSyncV2AccountOperations() {
+        libraryPrefetchTask?.cancel()
+        libraryImportPhases.removeAll()
+        libraryImportFailures.removeAll()
         cancelSnapshotSyncV2BackgroundOperations()
         syncV2KeepBothPendingWorkID = nil
         libraryRefreshGeneration &+= 1

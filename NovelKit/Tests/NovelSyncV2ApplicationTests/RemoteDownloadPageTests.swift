@@ -105,12 +105,14 @@ extension RemoteHTTPLineageTests {
         #expect(state.count(path: "/v2/objects/\(large.rawValue)") == 1)
     }
 
-    @Test("the shared server page fixture passes the client digest and closure checks")
-    func sharedDownloadPageFixture() async throws {
+    @Test("the shared server page fixture passes the client digest and closure checks", arguments: ["download-page", "download-page-totals"])
+    func sharedDownloadPageFixture(name: String) async throws {
         let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("docs/sync/v2/fixtures/canonical/download-page.json")
+            .appendingPathComponent("docs/sync/v2/fixtures/canonical/\(name).json")
         let data = try Data(contentsOf: fixtureURL)
+        let digest = try String(contentsOf: fixtureURL.deletingPathExtension().appendingPathExtension("sha256"), encoding: .utf8)
+        #expect(ObjectID(data: data).rawValue == digest.trimmingCharacters(in: .whitespacesAndNewlines))
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let head = try SnapshotID(rawValue: #require(object["snapshotId"] as? String))
         let items = try #require(object["items"] as? [[String: String]])
@@ -125,7 +127,8 @@ extension RemoteHTTPLineageTests {
         let client = try fixture.client(snapshots: [], overrideState: state)
         let batch = try await client.downloadSnapshotPages(workID: manifest.workId, id: head, session: client.loadSession())
         #expect(batch?.manifests.count == 1)
-        #expect(batch?.objects.count == Set(manifest.entries.map(\.objectId)).count)
+        let objectIDs = Set(manifest.entries.map(\.objectId))
+        #expect(batch?.objects.count == objectIDs.count)
     }
 
     @Test("a later page retries its cursor without fetching the first page again")
@@ -372,6 +375,70 @@ extension RemoteHTTPLineageTests {
         let client = try fixture.client(snapshots: [snapshot], overrideState: state)
         await #expect(throws: SyncV2Failure.quarantined(.invalidRemoteData)) {
             try await client.downloadRemoteOnly(workID: fixture.workID)
+        }
+    }
+}
+
+extension RemoteHTTPLineageTests {
+    @Test("first-page totals opt-in falls back once for older query handlers", arguments: [400, 404, 405, 422])
+    func totalsCompatibilityFallback(status: Int) async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "互換")
+        let path = "/v2/works/\(fixture.workID.description)/download"
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        try state.failNext(path: path, replies: [
+            LineageHTTPReply(status: status, headers: [:], body: status == 422 ? Data(#"{"error":"schemaViolation"}"#.utf8) : Data()),
+            downloadPage(head: snapshot.snapshotId, items: downloadItems([snapshot]), cursor: nil)
+        ])
+        let progress = ImportProgress()
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        let inbox = try await ImportProgress.$current.withValue(progress) {
+            try await client.downloadRemoteOnly(workID: fixture.workID)
+        }
+        #expect(inbox.headSnapshotID == snapshot.snapshotId)
+        let queries = state.requestedQueries(path: path)
+        #expect(queries.count == 2)
+        #expect(queries[0]?.contains("include=totals") == true)
+        #expect(queries[1]?.contains("include=") == false)
+        #expect(progress.value.totalBytes == nil)
+        #expect(progress.value.receivedBytes > 0)
+    }
+
+    @Test("negotiated totals are validated and raw bytes match the canonical fixture", arguments: ["valid", "negative", "unknown", "fractional", "later"])
+    func totalsValidation(mode: String) async throws {
+        let fixture = LineageFixture()
+        let snapshot = try fixture.snapshot(title: "総量")
+        let items = downloadItems([snapshot])
+        let rawBytes = snapshot.manifestBytes.count + snapshot.objects.values.reduce(0) { $0 + $1.count }
+        var totals: [String: Any] = ["items": items.count, "bytes": rawBytes]
+        switch mode {
+        case "negative": totals["bytes"] = -1
+        case "unknown": totals["extra"] = 1
+        case "fractional": totals["bytes"] = 0.5
+        default: break
+        }
+        let body = try productionJSON(["result": "noChanges", "snapshotId": snapshot.snapshotId.rawValue,
+                                       "items": items, "nextCursor": NSNull(), "totals": totals])
+        let state = LineageHTTPState(workID: fixture.workID, snapshots: [snapshot], publishResponse: nil)
+        let reply = LineageHTTPReply(status: 200, headers: downloadHeaders, body: body)
+        var replies = [reply]
+        if mode == "later" {
+            try replies.insert(downloadPage(head: snapshot.snapshotId, items: Array(items.prefix(1)), cursor: "next"), at: 0)
+        }
+        state.failNext(path: "/v2/works/\(fixture.workID.description)/download", replies: replies)
+        let progress = ImportProgress()
+        let client = try fixture.client(snapshots: [], overrideState: state)
+        if mode == "valid" {
+            _ = try await ImportProgress.$current.withValue(progress) {
+                try await client.downloadRemoteOnly(workID: fixture.workID)
+            }
+            #expect(progress.value.totalBytes == Int64(rawBytes))
+            #expect(progress.value.receivedBytes == Int64(rawBytes))
+            #expect(progress.value.fraction == 1)
+        } else {
+            await #expect(throws: SyncV2Failure.quarantined(.invalidRemoteData)) {
+                try await client.downloadRemoteOnly(workID: fixture.workID)
+            }
         }
     }
 }

@@ -54,3 +54,29 @@ struct IOSLibraryImportPresentationTests {
         #expect(navigation.navigationGeneration != generation)
     }
 }
+
+extension IOSLibraryImportPresentationTests {
+    @Test("Manual take refreshes the shelf without navigating or replacing the current editor")
+    func manualTakeDoesNotOpen() async throws {
+        let configuration = try TestRuntimeConfiguration(account: nil)
+        let defaults = try #require(UserDefaults(suiteName: configuration.defaults.suiteName))
+        let store = IOSDocumentStore(userDefaults: defaults, libraryRoot: configuration.localRoot.url,
+                                     runtimeComposition: .test(configuration))
+        await store.bootstrap()
+        #expect(await store.makeNewDocument())
+        let original = store.currentDocumentSessionToken
+        let originalDocument = store.document.id
+        let application = try #require(store.snapshotSyncV2Application)
+        let target = WorkID(UUID())
+        _ = try await application.checkpoint(workID: target, document: .newDocument(title: "取得した作品"),
+                                             reason: .migration, documentCreatedAt: Date())
+        store.syncV2LibraryItems = [.init(workID: target, title: "取得した作品", availability: .remoteOnly, accountState: .active)]
+        store.takeOntoDevice(workID: target, title: "取得した作品")
+        let task = try #require(store.libraryPrefetchTask)
+        await task.value
+        #expect(store.currentDocumentSessionToken == original)
+        #expect(store.document.id == originalDocument)
+        #expect(store.libraryPrefetchTask == nil)
+        #expect(store.syncV2LibraryItems.contains { $0.workID == target && $0.availability != .remoteOnly })
+    }
+}

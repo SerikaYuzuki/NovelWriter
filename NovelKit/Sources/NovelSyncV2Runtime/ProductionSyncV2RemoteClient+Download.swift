@@ -34,7 +34,8 @@ extension ProductionSyncV2RemoteClient {
     func requestSnapshotData(
         _ request: URLRequest,
         session: FuminiwaSession,
-        allowMissingEndpoint: Bool = false
+        allowMissingEndpoint: Bool = false,
+        allowTotalsFallback: Bool = false
     ) async throws -> (Data, URLResponse) {
         guard request.httpMethod == "GET" else { throw SyncV2Failure.fatal(.unexpected) }
         var current = await SnapshotDownloadContext.current?.session ?? session
@@ -53,7 +54,8 @@ extension ProductionSyncV2RemoteClient {
                 }
                 retryAfter = Self.downloadRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
                 guard http.statusCode == 200 ||
-                    (allowMissingEndpoint && [404, 405].contains(http.statusCode)) else {
+                    (allowMissingEndpoint && [404, 405].contains(http.statusCode)) ||
+                    (allowTotalsFallback && [400, 422].contains(http.statusCode)) else {
                     if http.statusCode == 429 {
                         throw SyncV2Failure.retryable(.rateLimited)
                     }

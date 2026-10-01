@@ -84,7 +84,7 @@ public enum SyncV2LibraryPresentation {
     public static let offlineNotice = "オフライン・未取得の作品は接続後に取り込めます"
     public static let longImportNotice = "履歴が多い作品は数分かかることがあります。ほかの作品はこのまま使えます。"
     public static let remoteOnlyHint = "この端末に取り込んでから開きます"
-    public static let importBusyReason = "別の作品を取り込み中です。完了後に取り込めます。"
+    public static let importBusyReason = "取り込み中です。完了するか中止すると使えます。"
 
     public static func precedes(title: String, workID: WorkID, otherTitle: String, otherWorkID: WorkID) -> Bool {
         let order = title.localizedStandardCompare(otherTitle)

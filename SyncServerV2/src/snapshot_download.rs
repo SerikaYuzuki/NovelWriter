@@ -81,6 +81,23 @@ impl Cursor {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DownloadTotals {
+    items: u64,
+    bytes: u64,
+}
+
+impl DownloadTotals {
+    fn value(&self) -> SyncResult<Value> {
+        const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+        if self.items > MAX_SAFE_INTEGER || self.bytes > MAX_SAFE_INTEGER {
+            return Err(SyncError::SizeLimitExceeded);
+        }
+        Ok(json!({"items":self.items,"bytes":self.bytes}))
+    }
+}
+
 #[derive(Clone)]
 struct Item {
     kind: i16,
@@ -94,7 +111,7 @@ type CacheKey = (String, Uuid, [u8; 32]);
 #[derive(Clone)]
 enum CachedGraph {
     Metadata(Arc<Vec<Item>>),
-    Oversized,
+    Oversized { items: u64, bytes: u64 },
 }
 #[derive(Default)]
 pub struct DownloadCache(Mutex<HashMap<CacheKey, (Instant, CachedGraph)>>);
@@ -170,9 +187,14 @@ async fn page(
     if work_id.to_string() != work
         || params
             .keys()
-            .any(|key| key != "snapshotId" && key != "cursor")
+            .any(|key| key != "snapshotId" && key != "cursor" && key != "include")
     {
         return Err(SyncError::SchemaViolation("download query".into()));
+    }
+    if params.get("include").is_some_and(|value| value != "totals")
+        || (params.contains_key("include") && params.contains_key("cursor"))
+    {
+        return Err(SyncError::SchemaViolation("download include".into()));
     }
     let head = decode_digest(
         params
@@ -215,16 +237,16 @@ async fn page(
           SELECT 0::smallint AS kind,s.snapshot_id AS id,octet_length(s.manifest_bytes)::bigint AS byte_count,true AS available
           FROM sync_v2.snapshots s JOIN ancestors a ON a.snapshot_id=s.snapshot_id WHERE s.account_id=$1 AND s.work_id=$2
           UNION ALL
-          SELECT 1::smallint,b.object_id,b.byte_count,o.state='available' FROM sync_v2.global_blobs b
+          SELECT (CASE WHEN b.byte_count <= $4 THEN 1 ELSE 2 END)::smallint,b.object_id,b.byte_count,o.state='available' FROM sync_v2.global_blobs b
           JOIN sync_v2.account_objects o ON o.object_id=b.object_id AND o.account_id=$1
-          WHERE b.byte_count <= $4 AND b.object_id IN (
+          WHERE b.object_id IN (
             SELECT e.object_id FROM sync_v2.snapshot_entries e JOIN ancestors a ON a.snapshot_id=e.snapshot_id WHERE e.account_id=$1
           )
         )
-        (SELECT kind,id,byte_count,true AS cache_entry FROM items ORDER BY kind,id LIMIT $5)
+        (SELECT kind,id,byte_count,true AS cache_entry, count(*) OVER() AS total_items, (sum(byte_count) OVER())::bigint AS total_bytes FROM items ORDER BY kind,id LIMIT $5)
         UNION ALL
-        (SELECT kind,id,byte_count,false AS cache_entry FROM items
-         WHERE available AND (kind,id)>($6,$7) ORDER BY kind,id LIMIT $8)
+        (SELECT kind,id,byte_count,false AS cache_entry, 0::bigint AS total_items, 0::bigint AS total_bytes FROM items
+         WHERE kind < 2 AND available AND (kind,id)>($6,$7) ORDER BY kind,id LIMIT $8)
     "#)
             .bind(&p.account_id).bind(work_id).bind(head.as_slice())
             .bind(INLINE_OBJECT_BYTES).bind((CACHE_ITEMS + 1) as i64)
@@ -247,13 +269,37 @@ async fn page(
             items.sort_by_key(|item| (item.kind, item.id));
             metadata = Some(CachedGraph::Metadata(Arc::new(items)));
         } else {
-            metadata = Some(CachedGraph::Oversized);
+            let first = cache_rows.first().ok_or(SyncError::Retryable)?;
+            metadata = Some(CachedGraph::Oversized {
+                items: first.try_get::<i64, _>("total_items")? as u64,
+                bytes: first.try_get::<i64, _>("total_bytes")? as u64,
+            });
         }
         state
             .repo
             .download_cache
             .insert(key, metadata.clone().ok_or(SyncError::Retryable)?);
     }
+    // Sum cached metadata once on the negotiated first page, never per page.
+    // Oversized closures cache aggregate totals without retaining unbounded metadata.
+    let totals = if params.contains_key("include") {
+        match &metadata {
+            Some(CachedGraph::Metadata(items)) => Some(DownloadTotals {
+                items: items.len() as u64,
+                bytes: items.iter().try_fold(0_u64, |sum, i| {
+                    sum.checked_add(i.byte_count as u64)
+                        .ok_or(SyncError::SizeLimitExceeded)
+                })?,
+            }),
+            Some(CachedGraph::Oversized { items, bytes }) => Some(DownloadTotals {
+                items: *items,
+                bytes: *bytes,
+            }),
+            None => None,
+        }
+    } else {
+        None
+    };
     let candidates = if let Some(candidates) = cold_candidates {
         candidates
     } else if let Some(CachedGraph::Metadata(metadata)) = metadata {
@@ -353,9 +399,11 @@ async fn page(
     } else {
         None
     };
-    Ok(
-        json!({"result":"noChanges", "snapshotId":hex::encode(head), "items":items, "nextCursor":next}),
-    )
+    let mut response = json!({"result":"noChanges", "snapshotId":hex::encode(head), "items":items, "nextCursor":next});
+    if let Some(totals) = totals {
+        response["totals"] = totals.value()?;
+    }
+    Ok(response)
 }
 
 fn page_prefix(items: &[Item]) -> usize {
@@ -432,7 +480,7 @@ mod tests {
         for id in 1..=CACHE_ROOTS {
             cache.insert(
                 ("account-a".into(), work, [id as u8; 32]),
-                CachedGraph::Oversized,
+                CachedGraph::Oversized { items: 0, bytes: 0 },
             );
         }
         assert!(cache.get(&first).is_none());
@@ -443,25 +491,71 @@ mod tests {
     }
 
     #[test]
-    fn shared_download_fixture_is_canonical_and_preserves_all_item_digests() {
-        let bytes = include_bytes!("../../docs/sync/v2/fixtures/canonical/download-page.json");
-        let page = strict_json(bytes).unwrap();
-        assert_eq!(canonical_json(&page).unwrap(), bytes);
-        assert_eq!(
-            hex::encode(sha256(bytes)),
-            include_str!("../../docs/sync/v2/fixtures/canonical/download-page.sha256").trim()
-        );
-        let mut previous: Option<(String, String)> = None;
-        for item in page["items"].as_array().unwrap() {
-            let id = item["id"].as_str().unwrap();
-            let raw = URL_SAFE_NO_PAD
-                .decode(item["bytesBase64URL"].as_str().unwrap())
-                .unwrap();
-            assert_eq!(hex::encode(sha256(&raw)), id);
-            let key = (item["kind"].as_str().unwrap().to_owned(), id.to_owned());
-            assert!(previous.as_ref().is_none_or(|previous| previous < &key));
-            previous = Some(key);
+    fn shared_download_fixtures_validate_both_closed_envelopes_and_totals() {
+        let fixtures: &[(&[u8], &str, bool)] = &[
+            (
+                include_bytes!("../../docs/sync/v2/fixtures/canonical/download-page.json"),
+                include_str!("../../docs/sync/v2/fixtures/canonical/download-page.sha256"),
+                false,
+            ),
+            (
+                include_bytes!("../../docs/sync/v2/fixtures/canonical/download-page-totals.json"),
+                include_str!("../../docs/sync/v2/fixtures/canonical/download-page-totals.sha256"),
+                true,
+            ),
+        ];
+        for (bytes, digest, negotiated) in fixtures {
+            let page = strict_json(bytes).unwrap();
+            assert_eq!(canonical_json(&page).unwrap(), *bytes);
+            assert_eq!(hex::encode(sha256(bytes)), digest.trim());
+            let expected = if *negotiated {
+                vec!["items", "nextCursor", "result", "snapshotId", "totals"]
+            } else {
+                vec!["items", "nextCursor", "result", "snapshotId"]
+            };
+            assert_eq!(
+                page.as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let mut previous: Option<(String, String)> = None;
+            let mut raw_bytes = 0;
+            for item in page["items"].as_array().unwrap() {
+                let id = item["id"].as_str().unwrap();
+                let raw = URL_SAFE_NO_PAD
+                    .decode(item["bytesBase64URL"].as_str().unwrap())
+                    .unwrap();
+                raw_bytes += raw.len() as u64;
+                assert_eq!(hex::encode(sha256(&raw)), id);
+                let key = (item["kind"].as_str().unwrap().to_owned(), id.to_owned());
+                assert!(previous.as_ref().is_none_or(|previous| previous < &key));
+                previous = Some(key);
+            }
+            if *negotiated {
+                let totals: DownloadTotals =
+                    serde_json::from_value(page["totals"].clone()).unwrap();
+                assert_eq!(totals.value().unwrap(), page["totals"]);
+                assert_eq!(totals.items, page["items"].as_array().unwrap().len() as u64);
+                assert_eq!(totals.bytes, raw_bytes);
+            }
         }
+        for invalid in [
+            json!({"items":-1,"bytes":0}),
+            json!({"items":1,"bytes":0.5}),
+            json!({"items":1,"bytes":0,"extra":1}),
+            json!({"items":true,"bytes":0}),
+        ] {
+            assert!(serde_json::from_value::<DownloadTotals>(invalid).is_err());
+        }
+        assert!(DownloadTotals {
+            items: 1,
+            bytes: u64::MAX
+        }
+        .value()
+        .is_err());
     }
 
     #[test]

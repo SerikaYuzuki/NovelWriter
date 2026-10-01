@@ -24,29 +24,40 @@ extension ProductionSyncV2RemoteClient {
         var lastKey: String?
         let budget = SnapshotFetchTraversal()
         var pending: (Data, URLResponse)?
-        repeat {
+        var wantsTotals = true
+        while true {
             try Task.checkCancellation()
-            let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session)
+            let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session, includeTotals: cursor == nil && wantsTotals)
             let (data, response): (Data, URLResponse)
             if let pending {
                 (data, response) = pending
             } else {
                 (data, response) = try await requestSnapshotData(
-                    request, session: session, allowMissingEndpoint: cursor == nil
+                    request, session: session, allowMissingEndpoint: cursor == nil, allowTotalsFallback: cursor == nil && wantsTotals
                 )
             }
-            if cursor == nil, let http = response as? HTTPURLResponse, [404, 405].contains(http.statusCode) {
-                try await rejectKnownRemoteDeletion(workID: workID)
-                // A typed account-scoped 404 means the route exists but its root
-                // is missing. Only an untyped router 404/405 is old-server fallback.
+            if cursor == nil, let http = response as? HTTPURLResponse {
                 let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                 if http.statusCode == 404,
                    httpContentType(response) == mediaType || object?["error"] != nil || object?["code"] != nil {
+                    try await rejectKnownRemoteDeletion(workID: workID)
                     throw SyncV2Failure.fatal(.remoteDataUnavailable)
                 }
-                return nil
+                // The original server maps unknown query keys to schemaViolation/422.
+                let oldQueryRejection = http.statusCode == 422 && object?["error"] as? String == "schemaViolation"
+                if wantsTotals, [400, 404, 405].contains(http.statusCode) || oldQueryRejection {
+                    wantsTotals = false
+                    continue
+                }
+                if [404, 405].contains(http.statusCode) {
+                    try await rejectKnownRemoteDeletion(workID: workID)
+                    return nil
+                }
             }
-            let page = try await Self.decodeDownloadPage(data, response: response, id: id)
+            let page = try await Self.decodeDownloadPage(data, response: response, id: id, allowsTotals: cursor == nil && wantsTotals)
+            if let total = page.totalBytes {
+                ImportProgress.current?.advance(total: total)
+            }
             if let next = page.cursor {
                 guard seenCursors.insert(next).inserted else {
                     throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -68,27 +79,34 @@ extension ProductionSyncV2RemoteClient {
                     let snapshotID = try SnapshotID(rawValue: item.id)
                     try budget.include(manifest)
                     batch.manifests[snapshotID] = (manifest, item.bytes)
+                    ImportProgress.current?.advance(bytes: Int64(item.bytes.count))
                 } else {
                     guard batch.objects.count < SnapshotSyncV2Limits.maxEntries else {
                         throw SyncV2Failure.quarantined(.invalidRemoteData)
                     }
-                    try batch.objects[ObjectID(rawValue: item.id)] = item.bytes
+                    let objectID = try ObjectID(rawValue: item.id)
+                    batch.objects[objectID] = item.bytes
+                    ImportProgress.current?.receivedObject(objectID, bytes: Int64(item.bytes.count))
                 }
             }
             cursor = page.cursor
             pending = try await prefetched
-        } while cursor != nil
+            if cursor == nil {
+                break
+            }
+        }
         try await Self.validateDownloadClosure(batch, head: id)
         return batch
     }
 
     private func downloadPageRequest(
-        workID: WorkID, id: SnapshotID, cursor: String?, session: FuminiwaSession
+        workID: WorkID, id: SnapshotID, cursor: String?, session: FuminiwaSession, includeTotals: Bool = false
     ) throws -> URLRequest {
         var url = URLComponents(url: origin.url.appendingPathComponent("v2/works/\(workID.description)/download"),
                                 resolvingAgainstBaseURL: false)
         url?.queryItems = [URLQueryItem(name: "snapshotId", value: id.rawValue)] +
-            (cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [])
+            (cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? []) +
+            (includeTotals ? [URLQueryItem(name: "include", value: "totals")] : [])
         guard let value = url?.url else { throw SyncV2Failure.fatal(.unexpected) }
         var request = URLRequest(url: value)
         request.httpMethod = "GET"
@@ -107,6 +125,7 @@ extension ProductionSyncV2RemoteClient {
     private struct DownloadPage: Sendable {
         let items: [CanonicalJSON.Value]
         let cursor: String?
+        let totalBytes: Int64?
     }
 
     private struct DownloadItem: Sendable {
@@ -117,7 +136,7 @@ extension ProductionSyncV2RemoteClient {
     }
 
     private nonisolated static func decodeDownloadPage(
-        _ data: Data, response: URLResponse, id: SnapshotID
+        _ data: Data, response: URLResponse, id: SnapshotID, allowsTotals: Bool
     ) async throws -> DownloadPage {
         guard data.count <= 24 * 1024 * 1024,
               let http = response as? HTTPURLResponse,
@@ -129,7 +148,7 @@ extension ProductionSyncV2RemoteClient {
         }
         do {
             guard let page = try CanonicalJSON.parseObject(data).objectDictionary,
-                  Set(page.keys) == ["result", "snapshotId", "items", "nextCursor"],
+                  Set(page.keys).subtracting(allowsTotals ? ["totals"] : []) == ["result", "snapshotId", "items", "nextCursor"],
                   page["result"]?.stringContents == "noChanges", page["snapshotId"]?.stringContents == id.rawValue,
                   case let .array(items) = page["items"], items.count <= 256 else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -143,7 +162,16 @@ extension ProductionSyncV2RemoteClient {
             } else {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
-            return DownloadPage(items: items, cursor: cursor)
+            var totalBytes: Int64?
+            if let value = page["totals"] {
+                guard let totals = value.objectDictionary, Set(totals.keys) == ["items", "bytes"],
+                      case let .number(count) = totals["items"], count >= 0,
+                      case let .number(bytes) = totals["bytes"], bytes >= 0 else {
+                    throw SyncV2Failure.quarantined(.invalidRemoteData)
+                }
+                totalBytes = bytes
+            }
+            return DownloadPage(items: items, cursor: cursor, totalBytes: totalBytes)
         } catch {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }

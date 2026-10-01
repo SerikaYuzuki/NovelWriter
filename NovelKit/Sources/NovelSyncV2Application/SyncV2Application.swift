@@ -40,6 +40,9 @@ public actor SyncV2Application {
     let runtimeIdentity: SyncV2RuntimeComposition.Identity
     let remoteOnlyImportTimeout: Duration
     var remoteOnlyOpens: [WorkID: Task<SyncV2OpenedWork, Error>] = [:]
+    var remoteOnlyOpeningRequests: Set<WorkID> = []
+    var importProgress: [WorkID: ImportProgress] = [:]
+    var importFailures: [WorkID: SyncV2Failure] = [:]
     var deletionTasks: [WorkID: Task<Void, Error>] = [:]
     var deletingWorkIDs: Set<WorkID> = []
     var retryTasks: [WorkID: Task<Void, Never>] = [:]
@@ -69,6 +72,8 @@ public actor SyncV2Application {
     /// page can append stale rows.
     var historyScopeGeneration: UInt64 = 0 {
         didSet {
+            importFailures.removeAll()
+            importProgress.removeAll()
             for task in remoteOnlyOpens.values {
                 task.cancel()
             }

@@ -60,6 +60,16 @@ private final class IOSBackgroundTaskLease {
 }
 
 extension IOSDocumentStore {
+    func prefetchWithBackgroundTime(_ application: SyncV2Application, workID: WorkID) async throws {
+        let task = Task { try await application.prefetch(workID: workID) }
+        let lease = IOSBackgroundTaskLease(controller: backgroundTaskController) { task.cancel() }
+        defer { lease.end() }
+        try await withTaskCancellationHandler {
+            try await task.value
+            try Task.checkCancellation()
+        } onCancel: { task.cancel() }
+    }
+
     func openRemoteOnlyWithBackgroundTime(
         _ application: SyncV2Application, workID: WorkID
     ) async throws -> SyncV2OpenedWork {

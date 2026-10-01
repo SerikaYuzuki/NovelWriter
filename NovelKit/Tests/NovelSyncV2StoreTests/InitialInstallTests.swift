@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import NovelSyncV2
 @testable import NovelSyncV2Store
@@ -90,4 +91,33 @@ func persistedInboxStillRejectsCorruption(version: String) async throws {
 @Test(arguments: ["a", "abc", "GG", "-1", "é", "0 "])
 func hexadecimalBytesRejectMalformedInput(_ value: String) {
     #expect(Data(hex: value) == nil)
+}
+
+@Test("cancellation inside the last install writes rolls back all rows and allows retry")
+func initialInstallCancellationRollsBack() async throws {
+    let root = temporaryStoreRoot("initial-cancel")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = try LocalSyncV2Store(root: root, policy: .createNew)
+    let graph = try initialGraph()
+    try await store.installCancellationTrigger()
+    let task = Task { try await store.installInitialGraph(graph, scope: scopeA) }
+    await #expect(throws: CancellationError.self) { try await task.value }
+    for table in ["works", "objects", "snapshots", "history_occurrences", "inbox_batches"] {
+        #expect(try await store.query("SELECT COUNT(*) FROM \(table)").first?[0].int64 == 0)
+    }
+    try await store.exec("DROP TRIGGER cancel_initial_install")
+    try await store.installInitialGraph(graph, scope: scopeA)
+    #expect(try await store.open(workID: graph.workID, scope: scopeA).document?.title == "synthetic")
+    await store.close()
+}
+
+private extension LocalSyncV2Store {
+    func installCancellationTrigger() throws {
+        let result = sqlite3_create_function_v2(db, "cancel_import_task", 0, SQLITE_UTF8, nil, { context, _, _ in
+            withUnsafeCurrentTask { $0?.cancel() }
+            sqlite3_result_null(context)
+        }, nil, nil, nil)
+        #expect(result == SQLITE_OK)
+        try exec("CREATE TEMP TRIGGER cancel_initial_install AFTER UPDATE OF current_snapshot_id ON works BEGIN SELECT cancel_import_task(); END")
+    }
 }

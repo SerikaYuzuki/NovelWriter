@@ -23,7 +23,7 @@ extension ProductionSyncV2RemoteClient {
                     var request = original
                     request.timeoutInterval = 30
                     request.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
-                    let (url, response) = try await performFileRequest(request)
+                    let (url, response) = try await performFileRequest(request, entry: entry)
                     defer { try? FileManager.default.removeItem(at: url) }
                     guard let http = response as? HTTPURLResponse else {
                         throw SyncV2Failure.retryable(.lostResponse)
@@ -61,9 +61,9 @@ extension ProductionSyncV2RemoteClient {
         throw SyncV2Failure.retryable(.serverUnavailable)
     }
 
-    private func performFileRequest(_ request: URLRequest) async throws -> (URL, URLResponse) {
+    private func performFileRequest(_ request: URLRequest, entry: SnapshotEntry) async throws -> (URL, URLResponse) {
         do {
-            return try await session.download(for: request, delegate: ImportByteProgress(progress: ImportProgress.current))
+            return try await session.download(for: request, delegate: ImportByteProgress(progress: ImportProgress.current, rawObject: entry))
         } catch {
             try Task.checkCancellation()
             if (error as NSError).domain == NSURLErrorDomain,

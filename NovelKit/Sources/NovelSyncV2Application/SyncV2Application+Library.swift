@@ -47,14 +47,45 @@ public extension SyncV2Application {
         return opened
     }
 
+    func prefetch(workID: WorkID) async throws {
+        _ = try await obtainWork(workID: workID, opening: false)
+    }
+
+    func importStates() -> (phases: [WorkID: ImportPhase], failures: [WorkID: SyncV2Failure]) {
+        (importProgress.mapValues { $0.value }, importFailures)
+    }
+
+    func importUpdates(workID: WorkID) -> AsyncStream<ImportPhase>? {
+        importProgress[workID]?.updates
+    }
+
+    func lastImportFailure(workID: WorkID) -> SyncV2Failure? {
+        importFailures[workID]
+    }
+
+    func cancelImport(workID: WorkID) async {
+        guard let task = remoteOnlyOpens[workID] else { return }
+        task.cancel()
+        _ = try? await task.value
+    }
+
     func open(workID: WorkID) async throws -> SyncV2OpenedWork {
+        try await obtainWork(workID: workID, opening: true)
+    }
+
+    private func obtainWork(workID: WorkID, opening: Bool) async throws -> SyncV2OpenedWork {
         try Task.checkCancellation()
         if let task = remoteOnlyOpens[workID] {
             guard remoteSchedulingSuspensions.isEmpty else { throw SyncV2Failure.accountFenceChanged }
+            if opening {
+                remoteOnlyOpeningRequests.insert(workID)
+            }
             return try await joinRemoteOnlyOpen(task)
         }
         do {
-            return try await openLocal(workID: workID)
+            let opened = try await openLocal(workID: workID)
+            importFailures[workID] = nil
+            return opened
         } catch SyncV2ApplicationError.workNotFound {
             guard runtimeIdentity != .preview else {
                 throw SyncV2ApplicationError.workNotFound
@@ -66,13 +97,29 @@ public extension SyncV2Application {
         }
         // openLocal suspends: another caller may have started the import meanwhile.
         if let task = remoteOnlyOpens[workID] {
+            if opening {
+                remoteOnlyOpeningRequests.insert(workID)
+            }
             return try await joinRemoteOnlyOpen(task)
         }
+        if opening {
+            remoteOnlyOpeningRequests.insert(workID)
+        }
+        importFailures[workID] = nil
+        let progress = ImportProgress()
+        importProgress[workID] = progress
         let generation = historyScopeGeneration
         let timeout = remoteOnlyImportTimeout
         let task = Task {
-            defer { remoteOnlyOpens[workID] = nil }
-            return try await self.performRemoteOnlyOpen(workID: workID, generation: generation, timeout: timeout)
+            defer {
+                remoteOnlyOpeningRequests.remove(workID)
+                progress.finish()
+                importProgress[workID] = nil
+                remoteOnlyOpens[workID] = nil
+            }
+            return try await ImportProgress.$current.withValue(progress) {
+                try await self.performRemoteOnlyOpen(workID: workID, generation: generation, timeout: timeout)
+            }
         }
         remoteOnlyOpens[workID] = task
         return try await joinRemoteOnlyOpen(task)
@@ -92,7 +139,7 @@ public extension SyncV2Application {
         var stage = "remote-only-download"
         do {
             try checkRemoteOnlyScope(generation)
-            let progress = ImportProgress()
+            let progress = ImportProgress.current ?? ImportProgress()
             let inbox = try await ImportProgress.$current.withValue(progress) {
                 try await withThrowingTaskGroup(of: SyncV2RemoteInbox.self) { group in
                     group.addTask { try await self.libraryProvider.downloadRemoteOnly(workID: workID) }
@@ -118,8 +165,14 @@ public extension SyncV2Application {
             }
             setState(workID: workID, localDurability: durability(for: opened),
                      remoteProgress: .idle, result: .remoteOnlyInstalled, conflict: .clear)
+            if remoteOnlyOpeningRequests.contains(workID) {
+                progress.advance(to: .opening)
+            }
             return opened
         } catch {
+            if !Task.isCancelled, !(error is CancellationError), historyScopeGeneration == generation {
+                importFailures[workID] = (error as? SyncV2Failure) ?? .fatal(.unexpected)
+            }
             recordSyncDiagnostic(workID: workID, stage: stage, error: error)
             throw error
         }

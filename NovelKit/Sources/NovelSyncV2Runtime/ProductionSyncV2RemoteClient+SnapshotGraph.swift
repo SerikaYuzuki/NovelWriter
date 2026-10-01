@@ -148,6 +148,7 @@ extension ProductionSyncV2RemoteClient {
         guard manifest.workId == workID else {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
+        ImportProgress.current?.advance(bytes: Int64(bytes.count))
         try traversal.include(manifest)
         let objects = try await fetchObjects(entries: manifest.entries, session: session, traversal: traversal)
         return EncodedSnapshot(manifest: manifest, manifestBytes: bytes, objects: objects)
@@ -229,6 +230,7 @@ extension ProductionSyncV2RemoteClient {
             try Task.checkCancellation()
             for (index, entry) in entries.enumerated() {
                 let bytes = try results[index]!.get()
+                ImportProgress.current?.receivedObject(entry.objectId, bytes: Int64(bytes.count))
                 traversal.objects[entry.objectId] = bytes
                 objects[entry.objectId] = bytes
             }

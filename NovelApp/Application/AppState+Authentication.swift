@@ -82,6 +82,9 @@ extension AppState {
     /// Cancels every asynchronous operation whose response could otherwise
     /// project or install bytes from the previous authenticated tenant.
     func invalidateSnapshotSyncV2AccountOperations() {
+        libraryPrefetchTask?.cancel()
+        libraryImportPhases.removeAll()
+        libraryImportFailures.removeAll()
         snapshotSyncV2AccountScopeGeneration &+= 1
         snapshotSyncV2CatalogRefreshToken = nil
         cancelSnapshotSyncV2BackgroundOperations()

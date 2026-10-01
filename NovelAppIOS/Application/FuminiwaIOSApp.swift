@@ -22,6 +22,12 @@ struct FuminiwaIOSApp: App {
         guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
             preconditionFailure("Unable to create the isolated iOS test defaults")
         }
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--test-appearance=") }) {
+            let appearance = String(argument.dropFirst("--test-appearance=".count))
+            if ["light", "dark"].contains(appearance) {
+                defaults.set(appearance, forKey: IOSAppearance.preferenceKey)
+            }
+        }
         let store = IOSDocumentStore(
             userDefaults: defaults,
             libraryRoot: configuration.localRoot.url,

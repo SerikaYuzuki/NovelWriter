@@ -233,6 +233,9 @@ extension AppState {
         guard let application = snapshotSyncV2Application,
               work.isOpenable,
               permitsLibraryWorkOpening else { return false }
+        if snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID, let task = snapshotSyncV2RemoteOnlyOpenTask {
+            return await task.value
+        }
         let accountScope = snapshotSyncV2AccountScopeToken
         // Selecting another shelf item explicitly retires any older remote
         // download/adoption operation before its bytes can cross the gate.
@@ -330,6 +333,7 @@ extension AppState {
                       let self,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       matchesSnapshotSyncV2AccountScope(accountScope) else { return false }
+                libraryImportPhases[work.workID] = ImportPhase(stage: .opening)
                 var validationRejected = false
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,

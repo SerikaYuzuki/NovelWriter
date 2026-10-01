@@ -275,6 +275,10 @@ final class IOSDocumentStore {
     /// The shelf uses it to navigate after the asynchronous fetch completes.
     var snapshotSyncV2RemoteOnlyOpeningWorkID: WorkID?
     var snapshotSyncV2RemoteOnlyOpenStartedAt: Date?
+    var libraryImportPhases: [WorkID: ImportPhase] = [:]
+    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
+    var libraryPrefetchTask: Task<Void, Never>?
+    var libraryPrefetchWorkID: WorkID?
     var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
     var libraryNotice: String?
     var libraryIsLoading = false

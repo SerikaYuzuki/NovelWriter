@@ -167,6 +167,10 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenToken: UUID?
     var snapshotSyncV2RemoteOnlyOpeningWorkID: WorkID?
     var snapshotSyncV2RemoteOnlyOpenStartedAt: Date?
+    var libraryImportPhases: [WorkID: ImportPhase] = [:]
+    var libraryImportFailures: [WorkID: SyncV2Failure] = [:]
+    var libraryPrefetchTask: Task<Void, Never>?
+    var libraryPrefetchWorkID: WorkID?
     var snapshotSyncLibraryFailure: SyncV2Failure?
     var snapshotSyncLibraryLocalFailure: SyncV2Failure?
     var snapshotSyncLibraryOpenFailure: SyncV2Failure?

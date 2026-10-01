@@ -33,6 +33,12 @@ struct FuminiwaApp: App {
         guard let defaults = UserDefaults(suiteName: configuration.defaults.suiteName) else {
             preconditionFailure("Unable to create the isolated macOS test defaults")
         }
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--test-appearance=") }) {
+            let appearance = String(argument.dropFirst("--test-appearance=".count))
+            if ["light", "dark"].contains(appearance) {
+                defaults.set(appearance, forKey: AppPreferenceKey.appearance)
+            }
+        }
         let dependencies = Self.makeTestDependencies(
             userDefaults: defaults,
             configuration: configuration,

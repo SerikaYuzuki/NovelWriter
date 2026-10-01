@@ -75,14 +75,7 @@ extension IOSDocumentStore {
         libraryNotice = nil
         snapshotSyncV2RemoteOnlyOpenTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer {
-                if snapshotSyncV2RemoteOnlyOpenToken == operationToken {
-                    snapshotSyncV2RemoteOnlyOpenToken = nil
-                    snapshotSyncV2RemoteOnlyOpenTask = nil
-                    snapshotSyncV2RemoteOnlyOpeningWorkID = nil
-                    snapshotSyncV2RemoteOnlyOpenStartedAt = nil
-                }
-            }
+            defer { finishLibraryOpen(operationToken: operationToken) }
             do {
                 let opened = try await openRemoteOnlyWithBackgroundTime(application, workID: workID)
                 guard opened.document != nil else { throw SyncV2ApplicationError.workNotFound }
@@ -95,6 +88,7 @@ extension IOSDocumentStore {
                       !isSyncV2RemoteAccountTransitionActive,
                       snapshotSyncV2RemoteOnlyOpenToken == operationToken,
                       snapshotSyncV2AccountScope == expectedAccountScope else { return }
+                libraryImportPhases[workID] = ImportPhase(stage: .opening)
                 let installed = await documentOperationGate.perform { [weak self] in
                     guard let self,
                           !isSyncV2RemoteAccountTransitionActive,
@@ -158,6 +152,16 @@ extension IOSDocumentStore {
             }
         }
         return true
+    }
+
+    private func finishLibraryOpen(operationToken: UUID) {
+        guard snapshotSyncV2RemoteOnlyOpenToken == operationToken else { return }
+        snapshotSyncV2RemoteOnlyOpenToken = nil
+        snapshotSyncV2RemoteOnlyOpenTask = nil
+        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+        if libraryPrefetchTask == nil {
+            snapshotSyncV2RemoteOnlyOpenStartedAt = nil
+        }
     }
 
     private func reportRemoteOnlySnapshotSyncV2OpenResult(

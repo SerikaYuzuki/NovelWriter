@@ -436,8 +436,10 @@ extension ProductionSyncV2Kernel {
             return binding
         }
         do {
+            ImportProgress.current?.advance(to: .checking)
             let localScope = try await V2LocalWorkScope.bound(checkedBinding())
             let prepared = try await LocalSyncV2Store.prepareInitialGraph(inbox.storeGraph)
+            ImportProgress.current?.advance(to: .saving)
             _ = try await checkedBinding()
             try await store.installInitialGraph(prepared, scope: localScope)
             _ = try await checkedBinding()

@@ -321,7 +321,8 @@ def check_download(repo: Path) -> int:
     page = read_json(path)
     assert_canonical(path)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == path.with_suffix(".sha256").read_text().strip()
-    assert set(page) == set(schema["required"]) == set(schema["properties"])
+    assert set(page) == set(schema["required"])
+    assert set(schema["properties"]) == set(page) | {"totals"}
     assert schema["additionalProperties"] is False
     assert page["result"] == "noChanges" and page["nextCursor"] is None
     assert len(page["items"]) <= schema["properties"]["items"]["maxItems"]
@@ -335,7 +336,16 @@ def check_download(repo: Path) -> int:
         keys.append((item["kind"], item["id"]))
     assert keys == sorted(set(keys))
     assert ("manifest", page["snapshotId"]) in keys
-    return 1
+    negotiated = path.with_name("download-page-totals.json")
+    assert_canonical(negotiated)
+    assert hashlib.sha256(negotiated.read_bytes()).hexdigest() == negotiated.with_suffix(".sha256").read_text().strip()
+    enriched = read_json(negotiated)
+    totals = enriched.pop("totals")
+    assert enriched == page
+    assert set(totals) == {"items", "bytes"}
+    assert totals["items"] == len(page["items"])
+    assert totals["bytes"] == sum(len(base64.urlsafe_b64decode(i["bytesBase64URL"] + "=" * (-len(i["bytesBase64URL"]) % 4))) for i in page["items"])
+    return 2
 
 
 if __name__ == "__main__":

@@ -33,8 +33,15 @@ pub(super) async fn verify_download_pages(context: &ScenarioContext) {
         .fetch_one(&context.repo.pool)
         .await
         .unwrap();
+    let (cold_status, _, cold_bytes) =
+        get(context, account, &format!("{path}&include=totals")).await;
+    assert_eq!(cold_status, StatusCode::OK);
+    let cold: Value = serde_json::from_slice(&cold_bytes).unwrap();
+    assert_eq!(canonical_json(&cold).unwrap(), cold_bytes);
+    assert!(cold.get("totals").is_some());
     let mut cursor: Option<String> = None;
     let mut seen = BTreeSet::new();
+    let mut total_bytes = 0_u64;
     let mut pages = 0;
     loop {
         let url = cursor
@@ -51,6 +58,7 @@ pub(super) async fn verify_download_pages(context: &ScenarioContext) {
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(canonical_json(&value).unwrap(), bytes);
         assert_eq!(value["snapshotId"], hex::encode(head));
+        assert!(value.get("totals").is_none());
         let items = value["items"].as_array().unwrap();
         assert!(items.len() <= 256);
         let mut decoded_size = 0;
@@ -59,6 +67,7 @@ pub(super) async fn verify_download_pages(context: &ScenarioContext) {
                 .decode(item["bytesBase64URL"].as_str().unwrap())
                 .unwrap();
             decoded_size += bytes.len();
+            total_bytes += bytes.len() as u64;
             assert_eq!(item["id"], hex::encode(sha256(&bytes)));
             assert!(seen.insert((
                 item["kind"].as_str().unwrap().to_owned(),
@@ -82,6 +91,35 @@ pub(super) async fn verify_download_pages(context: &ScenarioContext) {
         }
         assert!(pages < 5);
     }
+    let (status, _, bytes) = get(context, account, &format!("{path}&include=totals")).await;
+    assert_eq!(status, StatusCode::OK);
+    let enriched: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(cold["totals"], enriched["totals"]);
+    assert_eq!(
+        get(context, account, &format!("{path}&include=unknown"))
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        enriched["totals"],
+        serde_json::json!({"items":seen.len(),"bytes":total_bytes})
+    );
+    let cursor = enriched["nextCursor"].as_str().unwrap();
+    let (status, _, bytes) = get(context, account, &format!("{path}&cursor={cursor}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let later: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(later.get("totals").is_none());
+    assert_ne!(
+        get(
+            context,
+            account,
+            &format!("{path}&cursor={cursor}&include=totals")
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
     assert!(pages >= 2);
     assert_eq!(
         seen.iter().filter(|(kind, _)| kind == "manifest").count(),
@@ -243,6 +281,23 @@ pub(super) async fn verify_merge_and_page_boundaries(context: &ScenarioContext) 
         assert!(!seen.contains(&("object".into(), id.clone())));
     }
     assert_eq!(seen.len(), 13);
+
+    let (_, _, bytes) = get(context, account, &format!("{path}&include=totals")).await;
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let ids: Vec<Vec<u8>> = [root, left, right, head]
+        .iter()
+        .map(|id| id.to_vec())
+        .collect();
+    let manifest_bytes: i64 = sqlx::query_scalar("SELECT sum(octet_length(manifest_bytes))::bigint FROM sync_v2.snapshots WHERE account_id=$1 AND snapshot_id=ANY($2::bytea[])")
+        .bind(account).bind(ids).fetch_one(&context.repo.pool).await.unwrap();
+    let object_bytes: u64 = entries
+        .iter()
+        .map(|entry| entry["byteCount"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        value["totals"],
+        serde_json::json!({"items":4+entries.len(),"bytes":manifest_bytes as u64+object_bytes})
+    );
 
     // Valid existing cursor format: start immediately after the last manifest.
     // Nine exactly-256 KiB objects must produce eight (2 MiB) then one.

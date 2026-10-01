@@ -472,14 +472,19 @@ func httpContentType(_ response: URLResponse) -> String? {
 
 final class ImportByteProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let progress: ImportProgress?
-    init(progress: ImportProgress?) {
+    let rawObject: SnapshotEntry?
+    init(progress: ImportProgress?, rawObject: SnapshotEntry? = nil) {
         self.progress = progress
+        self.rawObject = rawObject
     }
 
-    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
-                    totalBytesWritten _: Int64, totalBytesExpectedToWrite _: Int64) {
+    func urlSession(_: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite _: Int64) {
         if bytesWritten > 0 {
             progress?.received()
+            if let rawObject, (downloadTask.response as? HTTPURLResponse)?.statusCode == 200 {
+                progress?.receivedObject(rawObject.objectId, bytes: min(Int64(rawObject.byteCount), totalBytesWritten))
+            }
         }
     }
 

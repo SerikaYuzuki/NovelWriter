@@ -20,6 +20,7 @@ struct LibraryPane: View {
     @State private var showingProtection = false
     @State private var selection: UUID?
     @State private var searchText = ""
+    @State private var pendingImportOpen: StartupLibraryWork?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
@@ -84,10 +85,23 @@ struct LibraryPane: View {
                             }
                             VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                                 Text(work.title).lineLimit(1)
-                                if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID,
+                                if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID || appState.libraryPrefetchWorkID == work.workID,
                                    let startedAt = appState.snapshotSyncV2RemoteOnlyOpenStartedAt {
                                     LibraryImportProgress(startedAt: startedAt,
-                                                          longImportNotice: SyncV2LibraryPresentation.longImportNotice)
+                                                          longImportNotice: SyncV2LibraryPresentation.longImportNotice,
+                                                          label: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).japaneseLabel,
+                                                          fraction: appState.libraryImportPhases[work.workID]?.stage == .receiving
+                                                              ? appState.libraryImportPhases[work.workID]?.fraction : nil,
+                                                          accessibilityValue: (appState.libraryImportPhases[work.workID] ?? ImportPhase()).accessibilityValue)
+                                    Button("取り込みを中止") { Task { await appState.cancelLibraryImport() } }
+                                        .buttonStyle(.borderless)
+                                } else if let failure = appState.libraryImportFailures[work.workID] {
+                                    StatusLabel(SyncV2LibraryPresentation.importFailure(failure), systemImage: "exclamationmark.circle", tone: .danger)
+                                    Button("再試行") { appState.takeOntoDevice(workID: work.workID, title: work.title) }
+                                        .buttonStyle(.borderless)
+                                        .disabled(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
+                                        .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil
+                                            ? SyncV2LibraryPresentation.importBusyReason : "開かずにこの端末へ保存します")
                                 } else {
                                     TimelineView(.periodic(from: .now, by: 15)) { _ in
                                         StatusLabel(status(for: work).text, systemImage: status(for: work).symbol,
@@ -102,12 +116,13 @@ struct LibraryPane: View {
                                 ProgressView().controlSize(.small).accessibilityLabel("作品名を変更中")
                             }
                         }
-                        .accessibilityElement(children: .combine)
+                        .accessibilityElement(children: .contain)
                         .accessibilityHint(rowHint(work))
                         .tag(work.id)
                         .contextMenu {
                             Button("開く") { open(work) }
                                 .disabled(!canOpen(work))
+                            takeButton(work)
                             renameButton(work)
                             deleteButton(work)
                         }
@@ -141,6 +156,7 @@ struct LibraryPane: View {
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let work = works.first(where: { ids.contains($0.id) }) {
                     Button("開く") { open(work) }.disabled(!canOpen(work))
+                    takeButton(work)
                     renameButton(work)
                     deleteButton(work)
                 }
@@ -222,17 +238,40 @@ struct LibraryPane: View {
                 }
             }
         }
-        .frame(minWidth: 220)
-        .sheet(isPresented: $showingHistory) {
-            SnapshotHistorySheet {
-                showingHistory = false
+        #if FUMINIWA_TEST_COMPOSITION
+        .task {
+                if ProcessInfo.processInfo.arguments.contains("--library-preview=import-cancel") {
+                    pendingImportOpen = appState.snapshotSyncLibraryWorks.last
+                }
             }
-        }
+        #endif
+            .task(id: appState.snapshotSyncV2AccountScopeToken) { await appState.observeLibraryImports() }
+            .confirmationDialog("取り込みを中止して開きますか？", isPresented: Binding(
+                get: { pendingImportOpen != nil }, set: {
+                    if !$0 {
+                        pendingImportOpen = nil
+                    }
+                }
+            ), titleVisibility: .visible) {
+                if let work = pendingImportOpen {
+                    Button("取り込みを中止して開く") {
+                        pendingImportOpen = nil
+                        Task { await appState.cancelLibraryImport(); performOpen(work) }
+                    }
+                }
+                Button("キャンセル", role: .cancel) { pendingImportOpen = nil }
+            }
+            .frame(minWidth: 220)
+            .sheet(isPresented: $showingHistory) {
+                SnapshotHistorySheet {
+                    showingHistory = false
+                }
+            }
     }
 
     private func canOpen(_ work: StartupLibraryWork) -> Bool {
         work.isOpenable && !renamingIDs.contains(work.id)
-            && !(work.availability == .remoteOnly && appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
+
             && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
     }
 
@@ -256,6 +295,26 @@ struct LibraryPane: View {
 
     private func open(_ work: StartupLibraryWork) {
         guard canOpen(work) else { return }
+        if let importing = appState.libraryPrefetchWorkID ?? appState.snapshotSyncV2RemoteOnlyOpeningWorkID,
+           importing != work.workID {
+            pendingImportOpen = work
+            return
+        }
+        performOpen(work)
+    }
+
+    @ViewBuilder private func takeButton(_ work: StartupLibraryWork) -> some View {
+        if work.availability == .remoteOnly {
+            Button("この端末に取り込む", systemImage: "arrow.down.circle") {
+                appState.takeOntoDevice(workID: work.workID, title: work.title)
+            }
+            .disabled(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
+            .help(appState.libraryPrefetchWorkID != nil || appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil
+                ? SyncV2LibraryPresentation.importBusyReason : "開かずにこの端末へ保存します")
+        }
+    }
+
+    private func performOpen(_ work: StartupLibraryWork) {
         Task {
             if await appState.openLibraryWork(work),
                appState.currentSnapshotSyncV2WorkID == work.workID, appState.startupState.isReady {
@@ -269,7 +328,9 @@ struct LibraryPane: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return query.isEmpty ? works : works.filter { $0.title.localizedStandardContains(query) }
     }
+}
 
+private extension LibraryPane {
     private var works: [StartupLibraryWork] {
         if !appState.snapshotSyncLibraryWorks.isEmpty {
             return appState.snapshotSyncLibraryWorks

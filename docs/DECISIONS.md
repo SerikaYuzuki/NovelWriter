@@ -88,3 +88,9 @@ iPhone / iPadにもGoogleログインを追加する。GoogleはMacと同じサ�
 ## D-104: サムネイル（作品・人物・世界観）（2026-10-01）
 
 作品の表紙・人物・WorldNoteだけに設定する。表紙は2:3、人物は円、世界観は角丸正方形。縮小・切り抜き・sRGB再描画済みJPEGだけを予約名attachmentとして保存し、元画像・EXIF・GPSを保持しない。上限は表紙1024 px／他768 px、200 KiB。所有者との紐付けはUUID入りの名前で行い、NovelCoreモデル・wire・schema・package形式を変えない。owner削除と画像削除を同一checkpointへまとめ、既存の孤立画像は通常資料として残す。AI／MCPへは公開せず、MCP書き戻しでも除外画像を保全する。削除は確認後に行い、復旧は作品履歴を使う。[契約](sync/v2/thumbnails.md)に詳細を定める。
+
+## D-105: 取り込み総量の明示要求と手動の端末取り込み（2026-10-02）
+
+U-05・U-10の利用者判断に従い、初回downloadに`include=totals`を付けた場合だけ総件数・raw byte総量を返す。閉じたkey集合を検証する旧clientには既存応答を維持する。旧serverの400/404/405（旧実装のschemaViolation/422を含む）では総量指定なしで一度再要求し、総量不明の取り込みも継続する。詳細は[download契約](sync/v2/download.md)。schema・fixture・server/clientを同時に更新し、SQLite schemaは変更しない。
+
+棚に受信・確認・保存・開くの進捗、中止、作品別の失敗・再試行を表示する。「この端末に取り込む」は手動だけとし、開く処理と作品単位で合流するがeditorは開かない。取消しの境界はD-102のまま維持し、COMMIT済み作品を取消しのために削除しない。
