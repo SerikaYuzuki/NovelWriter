@@ -23,6 +23,8 @@ use std::{
 };
 use uuid::Uuid;
 
+mod shallow;
+
 const PAGE_ITEMS: usize = 256;
 const PAGE_BYTES: usize = 2 * 1024 * 1024;
 const INLINE_OBJECT_BYTES: i64 = 256 * 1024;
@@ -107,10 +109,11 @@ struct Item {
 
 // Per-repository cache: immutable graph metadata only. Scope/visibility and
 // mutable object availability are always read from PostgreSQL on every page.
-type CacheKey = (String, Uuid, [u8; 32]);
+type CacheKey = (String, Uuid, [u8; 32], &'static str);
 #[derive(Clone)]
 enum CachedGraph {
     Metadata(Arc<Vec<Item>>),
+    Shallow(Arc<shallow::Plan>),
     Oversized { items: u64, bytes: u64 },
 }
 #[derive(Default)]
@@ -163,9 +166,22 @@ pub(crate) async fn download(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let _permit = match DOWNLOAD_PERMITS.try_acquire() {
+    let semaphore = if params.get("mode").is_some_and(|mode| mode == "backfill") {
+        &shallow::BACKFILL_PERMITS
+    } else {
+        &DOWNLOAD_PERMITS
+    };
+    let _permit = match semaphore.try_acquire() {
         Ok(permit) => permit,
-        Err(_) => return error_response(SyncError::Retryable),
+        Err(_) => {
+            let mut response = error_response(SyncError::Retryable);
+            if params.get("mode").is_some_and(|mode| mode == "backfill") {
+                response
+                    .headers_mut()
+                    .insert("retry-after", "1".parse().unwrap());
+            }
+            return response;
+        }
     };
     let p = match principal(&headers, &state).await {
         Ok(p) => p,
@@ -178,6 +194,18 @@ pub(crate) async fn download(
 }
 
 async fn page(
+    state: &AppState,
+    p: &AuthenticatedPrincipal,
+    work: &str,
+    params: &HashMap<String, String>,
+) -> SyncResult<Value> {
+    if params.contains_key("mode") {
+        return shallow::page(state, p, work, params).await;
+    }
+    legacy_page(state, p, work, params).await
+}
+
+async fn legacy_page(
     state: &AppState,
     p: &AuthenticatedPrincipal,
     work: &str,
@@ -223,7 +251,7 @@ async fn page(
         .unwrap_or([0; 32]);
     // Cache at most four small closures. Oversized graphs keep the bounded
     // original query path; the cache capacity is not a history cutoff.
-    let key = (p.account_id.clone(), work_id, head);
+    let key = (p.account_id.clone(), work_id, head, "full");
     let mut metadata = state.repo.download_cache.get(&key);
     let mut cold_candidates = None;
     if metadata.is_none() {
@@ -295,7 +323,7 @@ async fn page(
                 items: *items,
                 bytes: *bytes,
             }),
-            None => None,
+            None | Some(CachedGraph::Shallow(_)) => None,
         }
     } else {
         None
@@ -459,33 +487,69 @@ mod tests {
         let response = download(
             Path("unused".into()),
             HeaderMap::new(),
-            State(state),
+            State(state.clone()),
             Query(HashMap::new()),
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let backfill = shallow::BACKFILL_PERMITS.try_acquire().unwrap();
+        let response = download(
+            Path("unused".into()),
+            HeaderMap::new(),
+            State(state.clone()),
+            Query(HashMap::from([("mode".into(), "backfill".into())])),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "1");
+        for mode in [None, Some("head")] {
+            let params = mode
+                .map(|mode| HashMap::from([("mode".into(), mode.into())]))
+                .unwrap_or_default();
+            let response = download(
+                Path("unused".into()),
+                HeaderMap::new(),
+                State(state.clone()),
+                Query(params),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        drop(backfill);
     }
 
     #[test]
     fn metadata_cache_is_scoped_bounded_and_expires() {
         let cache = DownloadCache::default();
         let work = Uuid::new_v4();
-        let first = ("account-a".to_owned(), work, [0; 32]);
+        let first = ("account-a".to_owned(), work, [0; 32], "full");
         cache.insert(first.clone(), CachedGraph::Metadata(Arc::new(vec![])));
         assert!(cache.get(&first).is_some());
-        assert!(cache.get(&("account-b".into(), work, [0; 32])).is_none());
+        for mode in ["head", "backfill"] {
+            assert!(cache
+                .get(&("account-a".into(), work, [0; 32], mode))
+                .is_none());
+        }
         assert!(cache
-            .get(&("account-a".into(), Uuid::new_v4(), [0; 32]))
+            .get(&("account-b".into(), work, [0; 32], "full"))
+            .is_none());
+        assert!(cache
+            .get(&("account-a".into(), Uuid::new_v4(), [0; 32], "full"))
             .is_none());
         for id in 1..=CACHE_ROOTS {
             cache.insert(
-                ("account-a".into(), work, [id as u8; 32]),
+                ("account-a".into(), work, [id as u8; 32], "full"),
                 CachedGraph::Oversized { items: 0, bytes: 0 },
             );
         }
         assert!(cache.get(&first).is_none());
         assert_eq!(cache.0.lock().unwrap().len(), CACHE_ROOTS);
-        let last = ("account-a".to_owned(), work, [CACHE_ROOTS as u8; 32]);
+        let last = (
+            "account-a".to_owned(),
+            work,
+            [CACHE_ROOTS as u8; 32],
+            "full",
+        );
         cache.0.lock().unwrap().get_mut(&last).unwrap().0 = Instant::now() - CACHE_TTL;
         assert!(cache.get(&last).is_none());
     }

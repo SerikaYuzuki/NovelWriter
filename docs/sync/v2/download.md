@@ -121,3 +121,109 @@ Before COMMIT cancellation rolls back; after COMMIT the complete local work is
 retained and cancelled presentation is rejected (D-102). Retry starts a fresh
 import after the cancelled single-flight has actually finished. Failure kind is
 retained per WorkID until retry or account transition.
+
+## Head-first and backfill (D-106, server step)
+
+[Reviewed design](shallow-history-design.md) and [draft D-106](../../DECISIONS.md)
+cover the whole feature. This step implements the server/contract only; shallow
+SQLite installation, background workers and availability UX are pending.
+No `/v2/capabilities` keys, v2 name, database schema or client behavior change.
+
+### Negotiation and head
+
+`GET /v2/works/{workId}/download?snapshotId=H&mode=head[&include=totals]`
+returns H's manifest and only H's referenced inline objects, deduplicated and
+ordered by `(kind, id)` as in D-101. H's ancestors are not traversed, even for
+first-page totals. Larger objects remain available through the existing object
+GET using H's entries. The closed envelope adds `"mode":"head"`; it does not
+have `resumeCursor`. The usual 256-item / 2 MiB raw-byte page budgets, single
+oversized manifest exception, media type, digest checks and cache headers apply.
+
+Requests **without `mode` retain exactly the D-101/D-105 response bytes**, including
+old cursors, optional totals, error bodies and absence of new envelope keys.
+An unknown mode, query key or include value is a schema violation. `include=totals`
+is valid only without a cursor. The future client negotiates with `mode=head`;
+on initial 400/404/405/422 it retries once without `mode` and uses the D-101/D-102
+full import. This does not make a typed account-scoped 404 a successful import:
+the legacy retry still checks visibility and fails closed for a deleted/foreign
+work. Later-page failure never switches modes or installs a partial graph.
+
+### Backfill order and group boundaries
+
+`GET /v2/works/{workId}/download?snapshotId=H&mode=backfill[&include=totals]`
+returns H's strict ancestors. H stays pinned even if a newer head is published.
+Depth is zero for a root, otherwise `1 + max(parent depths)`; order is depth
+**descending**, then Snapshot ID ascending. It is not shortest distance from H.
+This immutable topological order puts children before all parents, including
+merges with shortcut edges. No generation-count cutoff is imposed.
+
+Each ancestor is one group: new inline objects in Object ID ascending order,
+then that snapshot's manifest. The manifest closes the group. Deduplication
+excludes all objects referenced by H (including large objects), then objects
+referenced by earlier groups. Large objects contribute to totals but are not
+inline items; retrieve them through the existing object GET. Entity references
+in manifests are unchanged. No history or object is truncated/deleted.
+
+Page budgets still apply **within a group**: a group larger than a page is split,
+not rejected or returned as an unbounded page. Every backfill response has
+`"mode":"backfill"` and `resumeCursor` in addition to the usual keys:
+
+- `nextCursor`: after the last returned item if more items remain; otherwise null.
+- `resumeCursor`: after the last manifest closing a group anywhere in the stream
+  through this page (possibly on a previous page); null if no group has closed.
+  It can be non-null on a terminal page. Following a terminal resume cursor
+  returns an empty terminal page with that same resume cursor.
+
+Use `nextCursor` while receiving a stream. Persist only a verified closed-group
+boundary for restart; replay from `resumeCursor` may resend a partial group's
+objects and is intentionally idempotent. An oversized first group can leave
+`resumeCursor` null for several pages. Empty nonterminal pages are forbidden.
+These transport boundaries do not replace the pending client's digest, anchor,
+ancestry, scope, generation and atomic-install validation.
+
+### Cursors, totals and mutable checks
+
+[Decoded cursor schemas](download-cursor.schema.json) are closed tagged unions;
+clients treat the canonical-JCS/Base64URL encoding as opaque. Both bind
+`accountId`, `accountFence`, `serverInstanceId`, `protocolEpoch`, `workId` and
+`snapshotId` (H). Head cursors have `kind=head`, `afterKind` (0 manifest / 1
+object), `afterId`. Backfill cursors have `kind=backfill`, `afterDepth`,
+`afterSnapshotId` and `afterItem`, a zero-based index among the group's **inline
+items and closing manifest**. Large objects do not occupy indices. The position
+must exist in the pinned plan. Unknown fields, legacy/new cursor mixing and
+head/backfill mixing are rejected; stale/foreign binding returns fence mismatch.
+A future persisted depth column must retain exactly this cursor meaning.
+
+Opt-in first-page `totals: {items, bytes}` use the same units as D-105: manifests
+plus unique objects (including large objects), and their raw sizes. Head totals
+cover H only. Backfill totals cover strict ancestors and their new objects after
+H/earlier-group deduplication; they exclude H and all its objects. They are not
+a count of snapshots alone. An empty backfill has zero totals. Both are
+nonnegative JCS-safe integers. Totals never appear without opt-in or on cursor
+pages and never authorize skipping content checks.
+
+The existing per-repository DownloadCache keeps immutable plans for 30 seconds,
+keyed by account/work/H/**mode**, with at most four entries shared across modes.
+Backfill reads ancestors, edges and object metadata once per cold plan, computes
+longest depths/order in memory without recursion, and caches only when the
+combined snapshot/edge/object-reference metadata is at most 100,000 rows.
+Oversized plans are recomputed cold for each page, with no history cutoff and
+no unbounded persistent cache entry. Head uses direct H metadata only. No
+payload bytes, mutable availability or access decisions are cached.
+
+Every page, including warm-cache and empty terminal pages, opens a read-only
+repeatable-read PostgreSQL transaction. It checks H's account/work ownership,
+active-work and deletion visibility. Each touched snapshot is checked in the
+same scope; all its references (also H's references, large objects and deduped
+objects) must still be account-owned, available, present and size-consistent.
+New-mode pages fail with account-scoped 404 rather than silently skipping an
+unavailable object and closing its group. Selected payloads are re-read,
+size/digest checked and returned from that page's consistent database view.
+Authentication and scope headers are checked on every HTTP request as before.
+
+Backfill has a dedicated global semaphore with **one permit**, separate from
+the two foreground download permits. A second concurrent backfill returns the
+canonical retryable 503 with `Retry-After: 1`, without waiting on authentication
+or PostgreSQL. Head and legacy initial imports retain their foreground permits;
+backfill cannot occupy them. No deployment or client acceptance is implied by
+this server contract step.

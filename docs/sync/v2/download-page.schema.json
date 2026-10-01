@@ -74,6 +74,47 @@
           "maximum": 9007199254740991
         }
       }
+    },
+    "mode": {
+      "enum": [
+        "head",
+        "backfill"
+      ]
+    },
+    "resumeCursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Backfill only: position after the last closed snapshot group in the stream, including earlier pages, or null."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "backfill"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "resumeCursor"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "resumeCursor"
+          ]
+        }
+      }
+    }
+  ]
 }
