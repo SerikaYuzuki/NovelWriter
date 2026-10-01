@@ -1,3 +1,4 @@
+import NovelUI
 import SwiftUI
 
 struct LibraryWindowView: View {
@@ -10,7 +11,7 @@ struct LibraryWindowView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 20) {
                 Image(systemName: "book.closed.fill")
-                    .font(.system(size: 48)).foregroundStyle(.tint)
+                    .font(.largeTitle).foregroundStyle(.tint)
                 Text("ふみにわ").font(.largeTitle.bold())
                 Text("書きたい物語を、ここから。")
                     .foregroundStyle(.secondary)

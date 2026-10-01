@@ -1,4 +1,5 @@
 import NovelCore
+import NovelUI
 import SwiftUI
 
 enum IOSRegularProjectSection: Hashable {
@@ -19,37 +20,38 @@ struct IOSRegularProjectSidebar: View {
     var body: some View {
         List(selection: $selection) {
             Section("この作品") {
-                Label("作品情報", systemImage: "doc.text.magnifyingglass")
+                ProjectSectionStyle.projectInfo.label
                     .tag(IOSRegularProjectSection.projectInfo)
                     .accessibilityIdentifier("ios.ipad.project.info")
 
-                Label("執筆", systemImage: "square.and.pencil")
+                ProjectSectionStyle.writing.label
                     .tag(IOSRegularProjectSection.writing)
                     .accessibilityIdentifier("ios.ipad.project.writing")
 
-                Label("プロット", systemImage: "rectangle.stack")
+                ProjectSectionStyle.plot.label
+                    .badge(store.document.flags.count(where: { !$0.isResolved }))
                     .tag(IOSRegularProjectSection.plot)
                     .accessibilityIdentifier("ios.ipad.project.plot")
 
-                Label("登場人物", systemImage: "person.2")
+                ProjectSectionStyle.characters.label
                     .tag(IOSRegularProjectSection.characters)
                     .accessibilityIdentifier("ios.ipad.project.characters")
 
-                Label("世界観", systemImage: "globe.asia.australia")
+                ProjectSectionStyle.worldbuilding.label
                     .tag(IOSRegularProjectSection.worldbuilding)
                     .accessibilityIdentifier("ios.ipad.project.worldbuilding")
 
-                Label("感想・アドバイス", systemImage: "text.bubble")
+                ProjectSectionStyle.feedback.label
                     .tag(IOSRegularProjectSection.feedback)
                     .accessibilityIdentifier("ios.ipad.project.feedback")
 
-                Label("資料", systemImage: "paperclip")
+                ProjectSectionStyle.references.label
                     .tag(IOSRegularProjectSection.references)
                     .accessibilityIdentifier("ios.ipad.project.references")
             }
 
             Section("アプリ") {
-                Label("設定", systemImage: "gearshape")
+                ProjectSectionStyle.settings.label
                     .tag(IOSRegularProjectSection.settings)
                     .accessibilityIdentifier("ios.ipad.project.settings")
             }
@@ -65,8 +67,10 @@ struct IOSRegularProjectSidebar: View {
                     Label("作品を書き出す…", systemImage: "square.and.arrow.up")
                 }
                 .accessibilityHint("現在の作業コピーから、共有用のnovelpkgファイルを作ります。")
-                Button("本文と資料を書き出す（ZIP）") {
+                Button {
                     editorIdentityBoundary.perform { Task { await store.requestExport(readable: true) } }
+                } label: {
+                    Label("本文と資料を書き出す（ZIP）", systemImage: "square.and.arrow.up")
                 }
             }
         }

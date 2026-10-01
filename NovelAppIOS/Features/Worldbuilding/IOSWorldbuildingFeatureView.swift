@@ -49,8 +49,14 @@ struct IOSWorldNoteOutlineView: View {
             if store.document.worldNotes.isEmpty {
                 ContentUnavailableView {
                     Label("世界観ノートがありません", systemImage: "globe.asia.australia")
-                } description: {
-                    Text("右上の追加ボタンから世界観ノートを追加できます。")
+                } actions: {
+                    Button("世界観ノートを追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addWorldNote(expectedSession: expectedSession) {
+                            selection = id
+                        }
+                    }
+                    .disabled(expectedSession == nil)
                 }
             }
         }
@@ -160,7 +166,9 @@ struct IOSWorldNoteDetailView: View {
                 ContentUnavailableView {
                     Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
                 } description: {
-                    Text("一覧から編集する世界観ノートを選んでください。")
+                    if !store.document.worldNotes.isEmpty {
+                        Text("一覧から世界観ノートを選択してください。")
+                    }
                 }
             }
         }

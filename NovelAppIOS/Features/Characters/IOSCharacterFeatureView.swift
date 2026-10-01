@@ -49,8 +49,14 @@ struct IOSCharacterOutlineView: View {
             if store.document.characters.isEmpty {
                 ContentUnavailableView {
                     Label("登場人物がありません", systemImage: "person.2")
-                } description: {
-                    Text("右上の追加ボタンから登場人物を追加できます。")
+                } actions: {
+                    Button("登場人物を追加") {
+                        guard let expectedSession else { return }
+                        if let id = store.addCharacter(expectedSession: expectedSession) {
+                            selection = id
+                        }
+                    }
+                    .disabled(expectedSession == nil)
                 }
             }
         }
@@ -159,7 +165,9 @@ struct IOSCharacterDetailView: View {
                 ContentUnavailableView {
                     Label("登場人物が選択されていません", systemImage: "person")
                 } description: {
-                    Text("一覧から編集する登場人物を選んでください。")
+                    if !store.document.characters.isEmpty {
+                        Text("一覧から登場人物を選択してください。")
+                    }
                 }
             }
         }

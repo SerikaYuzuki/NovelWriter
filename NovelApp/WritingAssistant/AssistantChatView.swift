@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelUI
 import NovelWritingSupport
 import SwiftUI
 
@@ -112,7 +113,13 @@ struct AssistantChatView: View {
                                     Button("この依頼の編集を取り消す") { Task { await undo(id) } }
                                         .font(.caption)
                                 }
-                            }.frame(maxWidth: .infinity, alignment: .leading).id(index)
+                            }
+                            .padding(message.role == "user" ? Spacing.medium : 0)
+                            .background(message.role == "user" ? FuminiwaColor.accentMuted.color : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                            .padding(message.role == "user" ? .leading : .trailing, Spacing.large)
+                            .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
+                            .id(index)
                         }
                     }
                 }.onChange(of: messages.count) {

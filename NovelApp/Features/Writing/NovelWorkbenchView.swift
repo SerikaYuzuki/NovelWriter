@@ -1,5 +1,6 @@
 import EditorKit
 import NovelCore
+import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -66,7 +67,7 @@ struct NovelWorkbenchView: View {
         } panel: {
             assistantPanel
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isAssistantPresented)
+        .animation(Motion.standard(reduceMotion: reduceMotion), value: isAssistantPresented)
         .modifier(WritingSyncPulse(host: appState.writingAssistantHost))
         .navigationTitle(documentDisplayTitle)
         .modifier(WorkbenchToolbarTitleVisibility())
@@ -309,21 +310,21 @@ struct NovelWorkbenchView: View {
     private var workbenchDetailContent: some View {
         switch appState.workspaceSelection.section {
         case .structure:
-            EditorPaneView(
-                isPlotCardRailPresented: $isPlotCardRailPresented
-            )
-            .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
                 HStack {
                     Text(documentDisplayTitle)
                         .accessibilityIdentifier("workbench.editor.workTitle")
                         .font(.headline)
+                        .foregroundStyle((Color(hex: editorSettings.textColorHex) ?? .primary).opacity(0.75))
                         .lineLimit(1)
                         .help(documentDisplayTitle)
                     Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(.thinMaterial)
+                .background(Color(hex: editorSettings.backgroundColorHex) ?? Color(nsColor: .textBackgroundColor))
+                .overlay(alignment: .bottom) { Divider() }
+                EditorPaneView(isPlotCardRailPresented: $isPlotCardRailPresented)
             }
         case .characters:
             CharacterDetailView { appearance in
@@ -355,7 +356,6 @@ struct NovelWorkbenchView: View {
             SectionSurface(title: "設定", systemImage: "gearshape") {
                 EditorSettingsView()
                     .environment(editorSettings)
-                    .frame(maxWidth: 560, alignment: .leading)
             }
         }
     }
@@ -402,9 +402,18 @@ struct ProjectSidebarView: View {
 
     var body: some View {
         List(selection: sectionSelection) {
-            ForEach(ProjectSection.allCases) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
+            Section("この作品") {
+                ForEach(ProjectSection.allCases.filter { $0 != .settings }) { section in
+                    if section == .plot {
+                        section.style.label.tag(section)
+                            .badge(appState.document.flags.count(where: { !$0.isResolved }))
+                    } else {
+                        section.style.label.tag(section)
+                    }
+                }
+            }
+            Section("アプリ") {
+                ProjectSection.settings.style.label.tag(ProjectSection.settings)
             }
         }
         .focused(isFocused)
@@ -449,11 +458,12 @@ private struct WorldbuildingOutlineView: View {
             }
             .overlay {
                 if appState.document.worldNotes.isEmpty {
-                    ContentUnavailableView(
-                        "世界観ノートがありません",
-                        systemImage: "globe.asia.australia",
-                        description: Text("上部の「ノートを追加」または世界観メニューから追加できます。")
-                    )
+                    ContentUnavailableView {
+                        Label("世界観ノートがありません", systemImage: "globe.asia.australia")
+                    } actions: {
+                        Button("ノートを追加") { appState.addWorldNote() }
+                            .disabled(!appState.permitsDocumentInteraction)
+                    }
                 }
             }
             .workbenchGlassOutlineStyle()
@@ -571,11 +581,13 @@ private struct WorldNoteDetailView: View {
                 }
                 .padding(20)
             } else {
-                ContentUnavailableView(
-                    "世界観ノートが選択されていません",
-                    systemImage: "globe.asia.australia",
-                    description: Text("Outlineからノートを選択するか、ノートを追加してください。")
-                )
+                ContentUnavailableView {
+                    Label("世界観ノートが選択されていません", systemImage: "globe.asia.australia")
+                } description: {
+                    if !appState.document.worldNotes.isEmpty {
+                        Text("左の一覧から世界観ノートを選択してください。")
+                    }
+                }
             }
         }
         .workbenchGlassChromeStyle()
@@ -629,7 +641,7 @@ private struct WorkbenchStatusBarView: View {
     }
 
     private var totalCountText: String {
-        "全体 \(appState.document.manuscriptCharacterCount)字"
+        "全体 \(ManuscriptCountCache.shared.count(appState.document))字"
     }
 }
 
@@ -640,6 +652,7 @@ private struct ProjectInfoView: View {
         SectionSurface(title: "作品情報", systemImage: "book.closed") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    WorkInfoSummary(document: appState.document)
                     GroupBox("編集") {
                         VStack(alignment: .leading, spacing: 8) {
                             WorkbenchLabeledField("作品タイトル") {
@@ -654,30 +667,11 @@ private struct ProjectInfoView: View {
                         }
                         .padding(8)
                     }
-
-                    GroupBox("保存情報") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            LabeledContent("保存状態", value: appState.saveState.label)
-                            LabeledContent("章数") {
-                                Text("\(appState.document.chapters.count)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("話数") {
-                                Text("\(episodeCount)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("文字数") {
-                                Text("\(appState.document.manuscriptCharacterCount)")
-                                    .monospacedDigit()
-                            }
-                            LabeledContent("保存形式", value: ".novelpkg v3")
-                        }
-                        .padding(8)
-                    }
                 }
                 .padding(20)
                 .frame(maxWidth: 720, alignment: .leading)
             }
+            .background(FuminiwaColor.paper.color)
         }
     }
 
@@ -693,10 +687,6 @@ private struct ProjectInfoView: View {
             get: { appState.document.synopsis },
             set: { appState.updateDocumentSynopsis($0) }
         )
-    }
-
-    private var episodeCount: Int {
-        appState.document.chapters.reduce(0) { $0 + $1.episodes.count }
     }
 }
 
@@ -724,7 +714,7 @@ private struct SectionSurface<Content: View>: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .workbenchGlassChromeStyle()
+        .background(FuminiwaColor.paper.color)
     }
 }
 

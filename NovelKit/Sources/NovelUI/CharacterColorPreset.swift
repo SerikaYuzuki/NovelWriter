@@ -4,6 +4,12 @@
 /// スウォッチで提示する。両モード(ライト/ダーク)で背景とのコントラストを
 /// 確認済みの中間トーン。
 public enum CharacterColorPreset {
+    public static func name(for hex: String) -> String {
+        let names = ["紅", "柿", "芥子", "松", "青磁", "縹", "藤紫", "菖蒲", "梅紫", "胡桃"]
+        guard let index = hexValues.firstIndex(of: hex) else { return "選択した色" }
+        return names[index]
+    }
+
     /// STYLE.md で定義された10色。並び順は STYLE.md の記載順。
     public static let hexValues: [String] = [
         "#C25450", // 紅

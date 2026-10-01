@@ -2,6 +2,7 @@ import EditorKit
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct ContentView: View {
@@ -14,7 +15,7 @@ struct ContentView: View {
         rootContent
             .sheet(isPresented: $showingConflict) {
                 if let selection = appState.snapshotSyncV2ConflictSelection {
-                    ConflictSheet(selection: selection) { choice in
+                    ConflictSheet { choice in
                         Task {
                             if await appState.resolveSnapshotConflict(using: choice, selection: selection) {
                                 showingConflict = false
@@ -83,11 +84,15 @@ struct ContentView: View {
                 case .loading:
                     ProgressView("端末の作品を開いています…")
                 case .documentSelection:
-                    ContentUnavailableView(
-                        "作品を選択してください",
-                        systemImage: "books.vertical",
-                        description: Text("左の作品一覧から作品を開くか、新しい作品を作成してください。")
-                    )
+                    ContentUnavailableView {
+                        Label("作品を選択してください", systemImage: "books.vertical")
+                    } description: {
+                        Text("左の作品一覧から作品を開くか、新しい作品を作成してください。")
+                    } actions: {
+                        Button("新しい作品…") { documentPanelPresenter.presentNewDocument() }
+                            .disabled(!appState.permitsNewDocument)
+                        Button("作品を取り込む…") { documentPanelPresenter.presentOpenPanel() }
+                    }
                 default:
                     EmptyView()
                 }
@@ -116,8 +121,7 @@ private struct RecoveryPane: View {
     }
 }
 
-private struct ConflictSheet: View {
-    let selection: SnapshotSyncV2ConflictSelection
+struct ConflictSheet: View {
     let choose: (SyncV2ConflictChoice) -> Void
     let cancel: () -> Void
 
@@ -128,17 +132,33 @@ private struct ConflictSheet: View {
             Text("この端末の版とサーバーの版が分かれています。選択中の入力は先に端末へ保存されます。")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Button("この端末の版を残す") { choose(.useDevice) }
-                Button("サーバーの版を採用") { choose(.useServer) }
-                Button("両方を残す") { choose(.keepBoth) }
+                choiceRow("この端末の版を使う", symbol: "internaldrive", description: "この端末の変更をサーバーへ送ります。", choice: .useDevice)
+                choiceRow("サーバーの版を使う", symbol: "arrow.down.circle", description: "サーバーで確認済みの版を、この端末へ適用します。", choice: .useServer)
+                choiceRow("両方を残す", symbol: "doc.on.doc", description: "元の作品を保ち、もう一つの作品として残します。", choice: .keepBoth)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             Button("後で確認", action: cancel)
                 .buttonStyle(.borderless)
         }
         .padding(24)
         .frame(width: 420)
+        .background(FuminiwaColor.paper.color)
         .accessibilityIdentifier("snapshotSyncV2.conflictSheet")
+    }
+
+    private func choiceRow(_ title: String, symbol: String, description: String, choice: SyncV2ConflictChoice) -> some View {
+        Button { choose(choice) } label: {
+            HStack(alignment: .top, spacing: Spacing.medium) {
+                Image(systemName: symbol).symbolRenderingMode(.hierarchical)
+                VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                    Text(title).font(.headline)
+                    Text(description).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(Spacing.small)
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import NovelCore
+import NovelUI
 import SwiftUI
 
 struct EpisodeDeletionRequest: Identifiable {
@@ -76,9 +77,7 @@ struct OutlineChapterRowPresentation: Equatable {
         let trimmedTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
         title = trimmedTitle.isEmpty ? "無題の章" : trimmedTitle
         episodeCount = chapter.episodes.count
-        characterCount = chapter.episodes.reduce(0) {
-            $0 + ManuscriptMetrics.countCharacters(in: $1.content)
-        }
+        characterCount = ManuscriptCountCache.shared.count(chapter)
     }
 }
 
@@ -179,7 +178,7 @@ struct OutlineEpisodeRow: View {
     }
 
     private var characterCount: Int {
-        ManuscriptMetrics.countCharacters(in: episode.content)
+        ManuscriptCountCache.shared.count(episode)
     }
 }
 

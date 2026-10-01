@@ -1,6 +1,7 @@
 import EditorKit
 import NovelCore
 import NovelSyncV2
+import NovelUI
 import SwiftUI
 
 @MainActor
@@ -396,7 +397,7 @@ private struct IOSEpisodeOutlineRow: View {
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: "doc.text")
-                .foregroundStyle(IOSPalette.accent)
+                .foregroundStyle(FuminiwaColor.accent.color)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -610,7 +611,7 @@ struct IOSEditorPane: View {
                 } label: {
                     Label("AI", systemImage: "sparkles")
                         .labelStyle(.titleAndIcon)
-                        .foregroundStyle(IOSPalette.accent)
+                        .foregroundStyle(FuminiwaColor.accent.color)
                 }
                 .accessibilityLabel("AI支援")
                 .accessibilityValue(showingAssistant ? "開いています" : "閉じています")

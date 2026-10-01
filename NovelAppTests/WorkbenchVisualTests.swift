@@ -102,7 +102,7 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(200))
         let toolbar = try #require(window.toolbar)
         let syncItem = try #require(toolbar.items.first { $0.itemIdentifier.rawValue.contains("workbench.snapshot.sync") })
-        #expect(syncItem.paletteLabel == "保存して同期")
+        #expect(syncItem.paletteLabel == "同期済み")
         #expect(toolbar.visibleItems?.contains(where: { $0 === syncItem }) == true)
         #expect(syncItem.visibilityPriority > .standard)
         #expect((toolbar.visibleItems?.count ?? 0) < toolbar.items.count)
