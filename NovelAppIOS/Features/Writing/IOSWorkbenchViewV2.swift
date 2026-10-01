@@ -453,12 +453,6 @@ struct IOSWorkbenchView: View {
                 navigation.documentDidBecomeUnavailable()
             }
         }
-        .onChange(of: store.snapshotSyncV2RemoteOnlyReadyWorkID) { _, workID in
-            guard workID != nil,
-                  let session = store.currentDocumentSessionToken else { return }
-            navigation.showProjectHome(for: session)
-            store.snapshotSyncV2RemoteOnlyReadyWorkID = nil
-        }
     }
 
     private var path: Binding<[IOSWorkspaceRoute]> {

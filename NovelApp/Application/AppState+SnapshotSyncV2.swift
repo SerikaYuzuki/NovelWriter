@@ -17,6 +17,8 @@ extension AppState {
         snapshotSyncV2RemoteOnlyOpenToken = nil
         snapshotSyncV2RemoteOnlyOpenTask?.cancel()
         snapshotSyncV2RemoteOnlyOpenTask = nil
+        snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+        snapshotSyncV2RemoteOnlyOpenStartedAt = nil
         snapshotSyncV2AutoAdoptionToken = nil
         snapshotSyncAutoAdoptionTask?.cancel()
         snapshotSyncAutoAdoptionTask = nil
@@ -276,13 +278,6 @@ extension AppState {
             guard documentSessionToken == expectedSession,
                   snapshotSyncV2AccountScopeToken == expectedAccount else { return }
             operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。"
-            #if DEBUG
-            if let diagnostic = await application.syncDebugDiagnostic(workID: workID),
-               documentSessionToken == expectedSession,
-               snapshotSyncV2AccountScopeToken == expectedAccount {
-                operationMessage = "同期を開始できませんでした。原稿はこの端末に保存されています。\n\n一時診断: \(diagnostic)"
-            }
-            #endif
         }
         guard documentSessionToken == expectedSession,
               snapshotSyncV2AccountScopeToken == expectedAccount else { return }
@@ -313,17 +308,6 @@ extension AppState {
         if case let .failed(reason) = state?.remoteProgress {
             operationMessage = reason.japaneseDescription
         }
-        #if DEBUG
-        if let diagnostic = await application.syncDebugDiagnostic(workID: workID),
-           matchesSnapshotSyncV2AccountScope(accountScope), currentSnapshotSyncV2WorkID == workID {
-            let guidance: String = if case let .failed(reason) = state?.remoteProgress {
-                reason.japaneseDescription
-            } else {
-                "同期が停止しました。原稿はこの端末に保存されています。"
-            }
-            operationMessage = "\(guidance)\n\n一時診断: \(diagnostic)"
-        }
-        #endif
         if let progress = state?.remoteProgress,
            case .readyForSafeAdoption = progress {
             scheduleAutomaticServerAdoption()

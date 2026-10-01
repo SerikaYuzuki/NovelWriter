@@ -109,6 +109,11 @@ extension IOSDocumentStore {
 
     @discardableResult
     func refreshLibrary() async -> Bool {
+        #if FUMINIWA_TEST_COMPOSITION
+        if isLibraryPreview {
+            return true
+        }
+        #endif
         guard !isSyncV2AccountTransitionActive else { return false }
         do {
             guard try await reloadLibraryItems() else { return false }
@@ -135,7 +140,23 @@ extension IOSDocumentStore {
         let expectedAccountScope = snapshotSyncV2AccountScope
         libraryRefreshGeneration &+= 1
         let refreshGeneration = libraryRefreshGeneration
-        let projection = try await application.library()
+        libraryIsLoading = true
+        defer {
+            if libraryRefreshGeneration == refreshGeneration {
+                libraryIsLoading = false
+            }
+        }
+        let projection: SyncV2LibraryProjection
+        do {
+            projection = try await application.library()
+            guard snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            libraryFailure = nil
+        } catch {
+            guard snapshotSyncV2AccountScope == expectedAccountScope else { return false }
+            libraryFailure = syncV2FailureKind(error)
+            logSyncV2PresentationFailure(error)
+            throw error
+        }
         return applySnapshotSyncV2LibraryProjection(
             projection,
             expectedAccountScope: expectedAccountScope,
@@ -218,9 +239,10 @@ extension IOSDocumentStore {
                 if error as? SyncV2Failure == .authenticationRequired, case .signedIn = authUIState {
                     let message = "認証の有効期限が切れました。Appleで再サインインしてください。原稿はこの端末に保存されています。"
                     authUIState = .failed(message)
-                    syncV2RemoteCatalogError = message
+                    syncV2RemoteCatalogError = .authenticationRequired
                 } else {
-                    syncV2RemoteCatalogError = error.localizedDescription
+                    syncV2RemoteCatalogError = syncV2FailureKind(error)
+                    logSyncV2PresentationFailure(error)
                 }
             }
             return false
@@ -345,7 +367,8 @@ extension IOSDocumentStore {
                     availability: local.availability == .remoteOnly ? .remoteOnly : .cached,
                     accountState: local.accountState,
                     localGeneration: local.localGeneration,
-                    remoteHead: remote.head ?? local.remoteHead,
+                    remoteHead: local.remoteHead ?? remote.head,
+                    remoteHeadConfirmed: local.remoteHeadConfirmed,
                     conflict: local.conflict,
                     remoteProgress: local.remoteProgress,
                     oldestUnreceivedAt: local.oldestUnreceivedAt
@@ -360,7 +383,7 @@ extension IOSDocumentStore {
                 )
             }
         }
-        return rows.values.sorted { $0.workID.description < $1.workID.description }
+        return rows.values.sorted { SyncV2LibraryPresentation.precedes(title: $0.title, workID: $0.workID, otherTitle: $1.title, otherWorkID: $1.workID) }
     }
 
     @discardableResult

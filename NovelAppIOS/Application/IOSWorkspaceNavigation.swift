@@ -1,6 +1,7 @@
 import EditorKit
 import NovelCore
 import NovelSyncV2
+import NovelSyncV2Application
 import Observation
 
 struct IOSWorkspaceEditorDeparture: Equatable {
@@ -49,7 +50,15 @@ enum IOSWorkspaceRoute: Hashable {
 @MainActor
 @Observable
 final class IOSWorkspaceNavigationCoordinator {
-    private(set) var path: [IOSWorkspaceRoute] = []
+    private(set) var path: [IOSWorkspaceRoute] = [] {
+        didSet {
+            if path != oldValue {
+                navigationGeneration &+= 1
+            }
+        }
+    }
+
+    private(set) var navigationGeneration: UInt64 = 0
     private(set) var activeSession: IOSDocumentSessionToken?
 
     var activeDocumentID: IOSPrivateDocumentID? {
@@ -62,6 +71,14 @@ final class IOSWorkspaceNavigationCoordinator {
 
     @discardableResult
     func openLibraryWork(_ workID: WorkID, using store: IOSDocumentStore) async -> Bool {
+        if store.syncV2LibraryItems.first(where: { $0.workID == workID })?.availability == .remoteOnly {
+            let generation = navigationGeneration
+            return await store.startRemoteOnlySnapshotSyncV2Open(workID: workID, shouldOpen: { [weak self] in
+                self?.navigationGeneration == generation
+            }, onOpened: { [weak self] session in
+                self?.showProjectHome(for: session)
+            })
+        }
         // The shelf contains both local and remote-only works. The store owns
         // that routing; local opens must never enter the remote-only guard.
         guard await store.openPrivateDocument(id: IOSPrivateDocumentID(workID: workID)),

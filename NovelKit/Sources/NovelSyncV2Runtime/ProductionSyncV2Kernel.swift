@@ -670,6 +670,7 @@ private extension ProductionSyncV2Kernel {
                         availability: .localOnly,
                         accountState: accountState,
                         localGeneration: summary.localGeneration,
+                        remoteHeadConfirmed: accountState == .active && summary.acknowledgedHeadGeneration != nil,
                         conflict: adoption == nil ? conflict : nil,
                         remoteProgress: progress,
                         oldestUnreceivedAt: store.oldestUnreceivedChange(workID: summary.workID, scope: localScope)

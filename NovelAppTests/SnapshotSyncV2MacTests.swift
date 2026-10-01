@@ -161,7 +161,7 @@ struct SnapshotSyncV2MacTests {
 
     @Test("remote-only作品の取得待ちは作品一覧のgateを占有しない")
     @MainActor
-    func remoteOnlyOpenReturnsWithoutBlockingCurrentWork() async throws {
+    func remoteOnlyOpenWaitsForCompletionWithoutBlockingCurrentWork() async throws {
         let configuration = try TestRuntimeConfiguration()
         // This test controls a pending download. Keep unrelated outbound workers
         // pending too, so their default offline diagnostic cannot race the UI assertion.
@@ -216,15 +216,12 @@ struct SnapshotSyncV2MacTests {
         )
         #expect(remoteOnly.availability == .remoteOnly)
 
-        let clock = ContinuousClock()
-        let started = clock.now
-        #expect(await state.openLibraryWork(remoteOnly))
-        let elapsed = clock.now - started
-
-        #expect(elapsed < .seconds(1))
+        let remoteOpen = Task { await state.openLibraryWork(remoteOnly) }
         try await eventuallyMac {
             await suspendedOpen.isWaiting(for: remoteOnlyWorkID)
         }
+        #expect(state.snapshotSyncV2RemoteOnlyOpeningWorkID == remoteOnlyWorkID)
+        #expect(state.snapshotSyncV2RemoteOnlyOpenStartedAt != nil)
         #expect(state.startupState.isReady == false)
         #expect(state.snapshotSyncV2ActiveWorkID == currentWorkID)
         #expect(state.document == currentDocument)
@@ -254,6 +251,7 @@ struct SnapshotSyncV2MacTests {
             state.snapshotSyncV2RemoteOnlyOpenTask == nil
         }
 
+        #expect(await remoteOpen.value == false)
         #expect(state.snapshotSyncV2ActiveWorkID == secondWorkID)
         #expect(state.documentSessionToken == secondSession)
         #expect(state.document.title == secondDocument.title)

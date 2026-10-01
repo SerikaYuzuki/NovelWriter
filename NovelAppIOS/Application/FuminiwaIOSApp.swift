@@ -55,6 +55,11 @@ struct FuminiwaIOSApp: App {
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )
                 .task {
+                    #if FUMINIWA_TEST_COMPOSITION
+                    if store.installLibraryPreviewIfRequested() {
+                        return
+                    }
+                    #endif
                     _ = await store.configureSnapshotSyncV2()
                     await store.bootstrap(localFirst: true)
                     connectivityRecovery.start { await store.resumeSnapshotSyncV2() }

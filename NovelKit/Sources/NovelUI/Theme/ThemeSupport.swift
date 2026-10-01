@@ -51,7 +51,7 @@ public extension View {
     }
 }
 
-public enum StatusTone: Sendable {
+public enum StatusTone: String, Sendable {
     case success, active, secondary, offline, warning, danger
     public var token: FuminiwaColor {
         switch self {

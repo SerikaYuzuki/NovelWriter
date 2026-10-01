@@ -358,6 +358,11 @@ private extension FuminiwaApp {
     func bootstrapIfNeeded() async {
         guard !didBootstrap else { return }
         didBootstrap = true
+        #if FUMINIWA_TEST_COMPOSITION
+        if appState.installLibraryPreviewIfRequested() {
+            return
+        }
+        #endif
         applicationDelegate.attach(appState: appState)
         let opening = applicationDelegate.takeStartupOpenURL()
         guard await appState.configureSnapshotSyncV2(using: appState.snapshotSyncV2Factory) else {

@@ -1,3 +1,5 @@
+import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -34,6 +36,19 @@ struct IOSRootView: View {
                 await store.runAutomaticSnapshotSyncV2()
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let notice = store.libraryNotice {
+                HStack(spacing: Spacing.small) {
+                    StatusLabel(notice, systemImage: "checkmark.circle", tone: .success)
+                        .font(FuminiwaType.rowSecondary)
+                    Spacer()
+                    Button("閉じる", systemImage: "xmark") { store.libraryNotice = nil }
+                        .labelStyle(.iconOnly)
+                }
+                .padding(Spacing.medium)
+                .background(FuminiwaColor.surface.color)
+            }
+        }
         .disabled(store.isDocumentTransitionInProgress)
         .overlay {
             if store.showsDocumentTransitionOverlay {
@@ -62,7 +77,8 @@ struct IOSRootView: View {
                     showCurrentProjectHome()
                 }
             case let .failure(error):
-                store.operationErrorMessage = "作品を選択できませんでした。\n\(error.localizedDescription)"
+                logSyncV2PresentationFailure(error)
+                store.operationErrorMessage = remoteOnlyOpenErrorMessage(error)
             }
         }
         .onOpenURL { url in

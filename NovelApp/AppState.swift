@@ -163,8 +163,14 @@ final class AppState {
     @ObservationIgnored var snapshotSyncV2DocumentCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2PortableCreatedAt: Date?
     @ObservationIgnored var snapshotSyncV2Resources: [PortableResource]
-    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenTask: Task<Void, Never>?
+    @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenTask: Task<Bool, Never>?
     @ObservationIgnored var snapshotSyncV2RemoteOnlyOpenToken: UUID?
+    var snapshotSyncV2RemoteOnlyOpeningWorkID: WorkID?
+    var snapshotSyncV2RemoteOnlyOpenStartedAt: Date?
+    var snapshotSyncLibraryFailure: SyncV2Failure?
+    var snapshotSyncLibraryLocalFailure: SyncV2Failure?
+    var snapshotSyncLibraryOpenFailure: SyncV2Failure?
+    var snapshotSyncLibraryIsLoading = false
     @ObservationIgnored var snapshotSyncV2AutoAdoptionToken: UUID?
     @ObservationIgnored var snapshotSyncV2CatalogRefreshToken: UUID?
     @ObservationIgnored var snapshotSyncV2AccountScopeGeneration: UInt64 = 0

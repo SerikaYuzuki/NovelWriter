@@ -51,9 +51,9 @@ extension IOSDocumentStore {
                 snapshotSyncV2RemoteOnlyOpenTask = nil
                 snapshotSyncV2RemoteOnlyOpenToken = nil
                 snapshotSyncV2RemoteOnlyOpeningWorkID = nil
+                snapshotSyncV2RemoteOnlyOpenStartedAt = nil
             }
         }
-        snapshotSyncV2RemoteOnlyReadyWorkID = nil
         snapshotSyncV2ReprojectionToken = nil
         snapshotSyncV2ReprojectionTask?.cancel()
         snapshotSyncV2ReprojectionTask = nil

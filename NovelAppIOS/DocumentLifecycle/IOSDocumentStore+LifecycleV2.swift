@@ -42,7 +42,8 @@ extension IOSDocumentStore {
                     saveState = .saved
                 }
             } catch {
-                startupState = .recovery(message: "作品を安全に開けませんでした。\n\(error.localizedDescription)")
+                logSyncV2PresentationFailure(error)
+                startupState = .recovery(message: remoteOnlyOpenErrorMessage(error))
             }
         }
         bootstrapTask = task
@@ -238,7 +239,8 @@ extension IOSDocumentStore {
             try await operation()
             return true
         } catch {
-            operationErrorMessage = "作品を操作できませんでした。\n\(error.localizedDescription)"
+            logSyncV2PresentationFailure(error)
+            operationErrorMessage = remoteOnlyOpenErrorMessage(error)
             return false
         }
     }

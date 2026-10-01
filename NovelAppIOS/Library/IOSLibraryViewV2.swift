@@ -1,5 +1,6 @@
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct IOSLibraryView: View {
@@ -7,7 +8,6 @@ struct IOSLibraryView: View {
     let openWork: (WorkID) -> Void
     let makeNewDocument: () -> Void
 
-    @State private var delayClock = SyncV2DelayClock()
     @State private var searchText = ""
     @State private var pendingRename: SyncV2LibraryItem?
     @State private var renameSession: IOSDocumentSessionToken?
@@ -35,11 +35,24 @@ struct IOSLibraryView: View {
                     }
                     Button("Googleでサインイン") { Task { await store.signInWithGoogle() } }
                 }
+                if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+                    StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
+                        ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
+                        systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                        tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
+                        .font(FuminiwaType.rowSecondary)
+                }
                 if store.syncV2LibraryItems.isEmpty {
-                    Text(store.authUIState == .signedOut
-                        ? "「新規作品」から、サインインせずに書き始められます"
-                        : "端末内に保存された作品はありません")
-                        .foregroundStyle(.secondary)
+                    if store.libraryIsLoading || store.syncV2RemoteCatalogIsLoading {
+                        ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
+                    } else if let failure = store.syncV2RemoteCatalogError ?? store.libraryFailure {
+                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+                                               systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                                               description: Text("下に引いて再読み込みできます。「新規作品」から端末内で書き始められます。"))
+                    } else {
+                        ContentUnavailableView("最初の作品を書きましょう", systemImage: "book.closed",
+                                               description: Text("「新規作品」から、サインインせずに書き始められます。"))
+                    }
                 }
                 if !searchText.isEmpty, !store.syncV2LibraryItems.contains(where: { $0.title.localizedStandardContains(searchText) }) {
                     Text("作品が見つかりません。検索する言葉を変えてください。")
@@ -49,38 +62,33 @@ struct IOSLibraryView: View {
                     Button {
                         openWork(item.workID)
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
-                            if store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID {
-                                ProgressView("作品を取り込み中…")
-                            }
-                            if renamingIDs.contains(item.workID) {
-                                ProgressView("作品名を変更中…")
-                            }
-                            HStack(spacing: 6) {
-                                Text(item.availability.japaneseLabel)
-                                TimelineView(.periodic(from: .now, by: 15)) { _ in
-                                    Text(SyncV2DelayNotice.label(progress: item.remoteProgress,
-                                                                 since: item.oldestUnreceivedAt, now: delayClock.now))
+                        HStack(spacing: Spacing.small) {
+                            // Leading slot reserved for a future cover thumbnail.
+                            VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                                Text(item.title.isEmpty ? "名称未設定の作品" : item.title)
+                                    .foregroundStyle(FuminiwaColor.textPrimary.color)
+                                if store.snapshotSyncV2RemoteOnlyOpeningWorkID == item.workID,
+                                   let startedAt = store.snapshotSyncV2RemoteOnlyOpenStartedAt {
+                                    LibraryImportProgress(startedAt: startedAt,
+                                                          longImportNotice: SyncV2LibraryPresentation.longImportNotice)
+                                } else if renamingIDs.contains(item.workID) {
+                                    ProgressView("作品名を変更中…")
+                                } else {
+                                    TimelineView(.periodic(from: .now, by: 15)) { _ in
+                                        StatusLabel(item.status.text, systemImage: item.status.symbol,
+                                                    tone: StatusTone(rawValue: item.status.tone.rawValue) ?? .secondary)
+                                            .font(FuminiwaType.rowSecondary)
+                                    }
                                 }
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            if item.conflict != nil {
-                                Text("競合を確認してください")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                            } else if item.availability == .remoteOnly {
-                                Text("サーバーからこの端末へ取り込み")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            } else if item.accountState == .unbound {
-                                Text("この端末のみ・アカウントへ追加可能")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Spacer()
                         }
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint(renamingIDs.contains(item.workID) ? "作品名を変更中です" :
+                        item.workID == store.snapshotSyncV2RemoteOnlyOpeningWorkID ? "この作品を取り込み中です" :
+                        item.availability != .remoteOnly ? "" : store.snapshotSyncV2RemoteOnlyOpeningWorkID == nil
+                        ? SyncV2LibraryPresentation.remoteOnlyHint : SyncV2LibraryPresentation.importBusyReason)
                     .disabled(renamingIDs.contains(item.workID) ||
                         (item.availability == .remoteOnly && store.snapshotSyncV2RemoteOnlyOpeningWorkID != nil))
                     .contextMenu {
@@ -106,15 +114,10 @@ struct IOSLibraryView: View {
                     }
                     .disabled(store.syncV2RemoteCatalogIsLoading)
                 }
-                if let error = store.syncV2RemoteCatalogError {
-                    Text("サーバー一覧: \(error)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
             Section {
                 Button("新規作品", action: makeNewDocument)
-                Button(".novelpkg を取り込む") { store.isImporterPresented = true }
+                Button("作品を取り込む…") { store.isImporterPresented = true }
             }
         }
         .sheet(isPresented: $showingProtection) {
@@ -161,15 +164,5 @@ struct IOSLibraryView: View {
             _ = await store.refreshLibrary()
         }
         .task { _ = await store.refreshLibrary() }
-    }
-}
-
-private extension SyncV2LibraryAvailability {
-    var japaneseLabel: String {
-        switch self {
-        case .localOnly: "端末のみ"
-        case .cached: "端末・サーバー"
-        case .remoteOnly: "サーバーのみ"
-        }
     }
 }

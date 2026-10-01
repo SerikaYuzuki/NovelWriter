@@ -21,6 +21,7 @@ public struct SyncV2LibraryItem: Sendable {
     public let accountState: SyncV2LibraryAccountState
     public let localGeneration: Int64?
     public let remoteHead: SyncV2RemoteHead?
+    public let remoteHeadConfirmed: Bool
     public let conflict: SyncV2ConflictProjection?
     public var oldestUnreceivedAt: Date?
     public let remoteProgress: SyncV2RemoteProgress
@@ -32,6 +33,7 @@ public struct SyncV2LibraryItem: Sendable {
         accountState: SyncV2LibraryAccountState,
         localGeneration: Int64? = nil,
         remoteHead: SyncV2RemoteHead? = nil,
+        remoteHeadConfirmed: Bool? = nil,
         conflict: SyncV2ConflictProjection? = nil,
         remoteProgress: SyncV2RemoteProgress = .idle,
         oldestUnreceivedAt: Date? = nil
@@ -42,6 +44,7 @@ public struct SyncV2LibraryItem: Sendable {
         self.accountState = accountState
         self.localGeneration = localGeneration
         self.remoteHead = remoteHead
+        self.remoteHeadConfirmed = remoteHeadConfirmed ?? (remoteHead != nil)
         self.conflict = conflict
         self.oldestUnreceivedAt = oldestUnreceivedAt
         self.remoteProgress = remoteProgress

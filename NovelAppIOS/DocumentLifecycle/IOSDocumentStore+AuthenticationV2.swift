@@ -471,6 +471,9 @@ extension IOSDocumentStore {
         syncV2RemoteCatalogItems = []
         syncV2RemoteCatalogCursor = nil
         syncV2RemoteCatalogError = nil
+        libraryFailure = nil
+        libraryNotice = nil
+        snapshotSyncV2RemoteOnlyOpenFailure = nil
         syncV2HistoryItems = []
         syncV2HistoryCursor = nil
         syncV2HistoryWorkID = nil

@@ -148,6 +148,7 @@ public extension SyncV2Application {
                     accountState: item.accountState,
                     localGeneration: item.localGeneration,
                     remoteHead: item.remoteHead,
+                    remoteHeadConfirmed: item.remoteHeadConfirmed,
                     conflict: nil,
                     remoteProgress: .parkedDifferentAccount,
                     oldestUnreceivedAt: item.oldestUnreceivedAt
@@ -166,6 +167,7 @@ public extension SyncV2Application {
                 accountState: item.accountState,
                 localGeneration: item.localGeneration,
                 remoteHead: item.remoteHead,
+                remoteHeadConfirmed: item.remoteHeadConfirmed,
                 conflict: conflict,
                 remoteProgress: state.remoteProgress,
                 oldestUnreceivedAt: item.oldestUnreceivedAt

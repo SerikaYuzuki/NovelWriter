@@ -273,15 +273,19 @@ final class IOSDocumentStore {
     var snapshotSyncConflict: SyncV2ConflictProjection?
     /// Set only after a remote-only document has passed the install boundary.
     /// The shelf uses it to navigate after the asynchronous fetch completes.
-    var snapshotSyncV2RemoteOnlyReadyWorkID: WorkID?
     var snapshotSyncV2RemoteOnlyOpeningWorkID: WorkID?
+    var snapshotSyncV2RemoteOnlyOpenStartedAt: Date?
+    var snapshotSyncV2RemoteOnlyOpenFailure: SyncV2Failure?
+    var libraryNotice: String?
+    var libraryIsLoading = false
+    var libraryFailure: SyncV2Failure?
     var isSnapshotSyncInFlight = false
     var snapshotSyncState: SyncUIState?
     var syncV2LibraryItems: [SyncV2LibraryItem] = []
     var syncV2RemoteCatalogItems: [SyncV2RemoteCatalogEntry] = []
     var syncV2RemoteCatalogCursor: String?
     var syncV2RemoteCatalogIsLoading = false
-    var syncV2RemoteCatalogError: String?
+    var syncV2RemoteCatalogError: SyncV2Failure?
     /// Local SQLite and remote occurrences share one history projection.  A
     /// SnapshotID is not a deduplication key: the same snapshot can have a
     /// different local/remote restore authority.

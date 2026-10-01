@@ -1,12 +1,12 @@
 import NovelCore
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct LibraryPane: View {
     @Environment(AppState.self) private var appState
     @Environment(DocumentPanelPresenter.self) private var documentPanelPresenter
-    @State private var delayClock = SyncV2DelayClock()
     @State private var pendingRename: StartupLibraryWork?
     @State private var renameSession: DocumentSessionToken?
     @State private var renameAccountScope: SnapshotSyncV2AccountScopeToken?
@@ -24,7 +24,7 @@ struct LibraryPane: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Spacing.small) {
             HStack {
                 Text("作品一覧")
                     .font(.headline)
@@ -41,7 +41,10 @@ struct LibraryPane: View {
                 .labelStyle(.iconOnly)
                 .help("作品を取り込む")
                 Button("更新", systemImage: "arrow.clockwise") {
-                    Task { await appState.refreshSnapshotLibrary() }
+                    Task {
+                        await appState.refreshSnapshotLibrary()
+                        await appState.refreshSnapshotRemoteCatalog()
+                    }
                 }
                 .labelStyle(.iconOnly)
                 .help("作品一覧を更新")
@@ -56,23 +59,36 @@ struct LibraryPane: View {
                 .labelStyle(.iconOnly)
                 .help("スナップショット履歴")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, Spacing.medium)
             TextField("作品を検索", text: $searchText)
                 .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, Spacing.medium)
+            if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+                StatusLabel(SyncV2LibraryPresentation.isOffline(failure)
+                    ? SyncV2LibraryPresentation.offlineNotice : remoteOnlyOpenErrorMessage(failure),
+                    systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                    tone: SyncV2LibraryPresentation.isOffline(failure) ? .offline : .danger)
+                    .font(FuminiwaType.rowSecondary)
+                    .padding(.horizontal, Spacing.medium)
+            }
             List(selection: $selection) {
                 Section {
                     ForEach(filteredWorks) { work in
-                        HStack(spacing: 8) {
-                            Image(systemName: icon(for: work))
-                                .foregroundStyle(color(for: work))
-                            VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Spacing.small) {
+                            // Leading slot reserved for a future cover thumbnail.
+                            VStack(alignment: .leading, spacing: Spacing.extraSmall) {
                                 Text(work.title).lineLimit(1)
-                                TimelineView(.periodic(from: .now, by: 15)) { _ in
-                                    Text(SyncV2DelayNotice.isDelayed(since: work.oldestUnreceivedAt, now: delayClock.now)
-                                        ? SyncV2DelayNotice.label(progress: work.remoteProgress, since: work.oldestUnreceivedAt, now: delayClock.now)
-                                        : label(for: work))
-                                        .font(.caption).foregroundStyle(.secondary)
+                                if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID,
+                                   let startedAt = appState.snapshotSyncV2RemoteOnlyOpenStartedAt {
+                                    LibraryImportProgress(startedAt: startedAt,
+                                                          longImportNotice: SyncV2LibraryPresentation.longImportNotice)
+                                } else {
+                                    TimelineView(.periodic(from: .now, by: 15)) { _ in
+                                        StatusLabel(status(for: work).text, systemImage: status(for: work).symbol,
+                                                    tone: StatusTone(rawValue: status(for: work).tone.rawValue) ?? .secondary)
+                                            .font(FuminiwaType.rowSecondary)
+                                            .accessibilityLabel(status(for: work).text)
+                                    }
                                 }
                             }
                             Spacer()
@@ -80,6 +96,8 @@ struct LibraryPane: View {
                                 ProgressView().controlSize(.small).accessibilityLabel("作品名を変更中")
                             }
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityHint(rowHint(work))
                         .tag(work.id)
                         .contextMenu {
                             Button("開く") { open(work) }
@@ -99,11 +117,19 @@ struct LibraryPane: View {
             }
             .overlay {
                 if filteredWorks.isEmpty {
-                    ContentUnavailableView(
-                        searchText.isEmpty ? "最初の作品を書きましょう" : "作品が見つかりません",
-                        systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
-                        description: Text(searchText.isEmpty ? "「新規」からオフラインでも始められます。" : "検索する言葉を変えてください。")
-                    )
+                    if appState.startupState == .loading || appState.snapshotSyncLibraryIsLoading {
+                        ContentUnavailableView("作品一覧を読み込み中…", systemImage: "arrow.clockwise")
+                    } else if let failure = appState.snapshotSyncLibraryFailure ?? appState.snapshotSyncLibraryLocalFailure {
+                        ContentUnavailableView(SyncV2LibraryPresentation.isOffline(failure) ? "オフラインです" : "作品一覧を読み込めませんでした",
+                                               systemImage: SyncV2LibraryPresentation.isOffline(failure) ? "wifi.slash" : "exclamationmark.circle",
+                                               description: Text("「更新」からもう一度読み込めます。端末内では「新規」から書き始められます。"))
+                    } else {
+                        ContentUnavailableView(
+                            searchText.isEmpty ? "最初の作品を書きましょう" : "作品が見つかりません",
+                            systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
+                            description: Text(searchText.isEmpty ? "「新規」からオフラインでも始められます。" : "検索する言葉を変えてください。")
+                        )
+                    }
                 }
             }
             .contextMenu(forSelectionType: UUID.self) { ids in
@@ -127,12 +153,12 @@ struct LibraryPane: View {
                 }
                 .disabled(!works.contains { $0.id == selection && canOpen($0) })
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, Spacing.medium)
             Text(connectionLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+                .padding(.horizontal, Spacing.medium)
+                .padding(.bottom, Spacing.small)
         }
         .alert("作品名を変更", isPresented: Binding(
             get: { pendingRename != nil },
@@ -200,6 +226,7 @@ struct LibraryPane: View {
 
     private func canOpen(_ work: StartupLibraryWork) -> Bool {
         work.isOpenable && !renamingIDs.contains(work.id)
+            && !(work.availability == .remoteOnly && appState.snapshotSyncV2RemoteOnlyOpeningWorkID != nil)
             && !appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID)
     }
 
@@ -224,7 +251,8 @@ struct LibraryPane: View {
     private func open(_ work: StartupLibraryWork) {
         guard canOpen(work) else { return }
         Task {
-            if await appState.openLibraryWork(work) {
+            if await appState.openLibraryWork(work),
+               appState.currentSnapshotSyncV2WorkID == work.workID, appState.startupState.isReady {
                 openWindow(id: "workbench")
                 dismissWindow(id: "library")
             }
@@ -252,82 +280,29 @@ struct LibraryPane: View {
         case .offline: "オフライン・接続時再開"
         case .accountRequired: "サインインせず、この端末で執筆できます"
         case .differentAccount: "別のアカウントのため保留中"
-        case let .unavailable(message): message
+        case .unavailable: "作品一覧を読み込めませんでした"
         }
     }
 
-    private func icon(for work: StartupLibraryWork) -> String {
-        switch work.remoteProgress {
-        case .needsChoice:
-            return "exclamationmark.triangle"
-        case .readyForSafeAdoption:
-            return "arrow.down.circle"
-        case .pending, .syncing, .retryable:
-            return "arrow.triangle.2.circlepath"
-        case .offline:
-            return "wifi.slash"
-        case .failed(.remoteWorkDeleted):
-            return "別端末で削除済み・端末の変更は保持中"
-        case .failed, .receiptMismatch:
-            return "exclamationmark.circle"
-        default:
-            break
-        }
-        return switch work.availability {
-        case .remoteOnly: "server.rack.and.arrow.down"
-        case .cached: "externaldrive"
-        case .pending: "arrow.triangle.2.circlepath"
-        case .conflict: "exclamationmark.triangle"
-        case .parked, .excluded: "lock"
-        case .local: "internaldrive"
-        }
-    }
-
-    private func color(for work: StartupLibraryWork) -> Color {
-        if case .readyForSafeAdoption = work.remoteProgress {
-            return .blue
-        }
-        return switch work.availability {
-        case .conflict: Color.orange
-        case .remoteOnly: Color.blue
-        case .parked, .excluded: Color.secondary
-        default: Color.secondary
-        }
-    }
-
-    private func label(for work: StartupLibraryWork) -> String {
+    private func status(for work: StartupLibraryWork) -> SyncV2LibraryStatus {
         if appState.snapshotSyncPendingDeletionWorkIDs.contains(work.workID) {
-            return "削除待ち・接続時に再試行"
+            return .init(text: "削除待ち・接続時に再試行", symbol: "clock", tone: .secondary)
         }
-        switch work.remoteProgress {
-        case .pending, .syncing, .retryable:
-            return "同期待ち"
-        case .offline:
-            return "オフライン・接続時再開"
-        case .authenticationRequired:
-            return "サインインすると同期します"
-        case .needsChoice:
-            return "競合・確認が必要"
-        case .readyForSafeAdoption:
-            return "サーバーの版を適用できます"
-        case .parkedDifferentAccount, .fenceChanged, .quarantined:
-            return "別のアカウントのため保留中"
-        case .failed(.remoteWorkDeleted):
-            return "別端末で削除済み・端末の変更は保持中"
-        case .failed, .receiptMismatch:
-            return "同期できませんでした"
-        case .idle, .noChanges:
-            break
+        return work.status
+    }
+
+    private func rowHint(_ work: StartupLibraryWork) -> String {
+        if appState.snapshotSyncV2RemoteOnlyOpeningWorkID == work.workID {
+            return "この作品を取り込み中です"
         }
-        return switch work.availability {
-        case .local: "この端末"
-        case .cached: "この端末・同期済み"
-        case .remoteOnly: "サーバー・未ダウンロード"
-        case .pending: "同期待ち"
-        case .conflict: "競合・確認が必要"
-        case .parked: "別のアカウントのため保留中"
-        case .excluded: "表示対象外"
+        if renamingIDs.contains(work.id) {
+            return "作品名を変更中です"
         }
+        if work.availability == .remoteOnly {
+            return appState.snapshotSyncV2RemoteOnlyOpeningWorkID == nil
+                ? SyncV2LibraryPresentation.remoteOnlyHint : SyncV2LibraryPresentation.importBusyReason
+        }
+        return ""
     }
 }
 

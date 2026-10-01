@@ -538,7 +538,7 @@ struct SnapshotSyncV2MacAccountCompletionTests {
         )
         state.snapshotSyncLibraryWorks = [remoteWork]
 
-        #expect(await state.openLibraryWork(remoteWork))
+        let remoteOpen = Task { await state.openLibraryWork(remoteWork) }
         try await eventuallyMac {
             await suspendedOpen.isWaiting(for: remoteWorkID)
         }
@@ -562,6 +562,7 @@ struct SnapshotSyncV2MacAccountCompletionTests {
             state.snapshotSyncV2RemoteOnlyOpenTask == nil
         }
 
+        #expect(await remoteOpen.value == false)
         #expect(state.authSession?.accountID == "account-b")
         #expect(state.snapshotSyncV2ActiveWorkID == originalWorkID)
         #expect(state.documentSessionToken != originalSession)
