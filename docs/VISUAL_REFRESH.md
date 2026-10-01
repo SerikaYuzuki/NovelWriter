@@ -9,3 +9,5 @@
 5. プロット／伏線：surface card、10pt角丸、hairline、選択1.5pt accent ring。macOS hoverはわずかに明るく、影はdrag中だけ。空は点線drop領域。iPad grid／iPhone icon＋2行memo。未回収flag＋warning、回収済みcheckmark.circle.fill＋leaf。
 
 macOS最小幅700／Outline最小224、iPad Split View、iPhone AX Dynamic Typeを確認する。サムネイルは表示寸法decode・cache、gridはLazyVGrid。保存経路へUI処理を入れない。
+
+- iOS work home: remove internal jargon such as 「スナップショット履歴」 (use 「履歴」) and 「作品パッケージ」 wording per STYLE §1/§6 when redesigning.
