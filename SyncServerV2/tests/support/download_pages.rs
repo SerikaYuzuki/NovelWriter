@@ -152,7 +152,7 @@ pub(super) async fn verify_download_pages(context: &ScenarioContext) {
     assert_eq!((foreign.0, foreign.2), (absent.0, absent.2));
 }
 
-async fn seed_snapshot(
+pub(super) async fn seed_snapshot(
     context: &ScenarioContext,
     work: Uuid,
     parents: &[[u8; 32]],

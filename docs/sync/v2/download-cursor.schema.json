@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fuminiwa.invalid/sync/v2/download-cursor.schema.json",
+  "title": "D-106 decoded canonical head/backfill cursor (opaque to clients)",
+  "description": "Base64URL without padding of canonical JCS. At most 2048 encoded characters. Legacy D-101 cursors have no kind and are accepted only without mode.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountId",
+        "accountFence",
+        "serverInstanceId",
+        "protocolEpoch",
+        "workId",
+        "snapshotId",
+        "kind",
+        "afterKind",
+        "afterId"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accountFence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverInstanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocolEpoch": {
+          "type": "integer"
+        },
+        "workId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "snapshotId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "kind": {
+          "const": "head"
+        },
+        "afterKind": {
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "afterId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountId",
+        "accountFence",
+        "serverInstanceId",
+        "protocolEpoch",
+        "workId",
+        "snapshotId",
+        "kind",
+        "afterDepth",
+        "afterSnapshotId",
+        "afterItem"
+      ],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accountFence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverInstanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocolEpoch": {
+          "type": "integer"
+        },
+        "workId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "snapshotId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "kind": {
+          "const": "backfill"
+        },
+        "afterDepth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "afterSnapshotId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "afterItem": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    }
+  ]
+}
