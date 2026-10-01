@@ -1,4 +1,5 @@
 import NovelCore
+import NovelUI
 import NovelWritingSupport
 import SwiftUI
 
@@ -33,7 +34,9 @@ struct AssistantPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("AI支援").font(.headline)
+                Label("AI支援", systemImage: "sparkles").font(.headline)
+                    .foregroundStyle(FuminiwaColor.accent.color)
+                    .symbolRenderingMode(.hierarchical)
                 Spacer()
                 if externalSettings != nil {
                     Button("外部AI", systemImage: "cable.connector") { showingExternalSettings = true }.labelStyle(.iconOnly)
@@ -77,6 +80,8 @@ struct AssistantPanelView: View {
                 ScrollView {
                     AssistantMarkdownView(source: answer.isEmpty ? "校正・感想・アドバイスがここに表示されます。" : answer)
                         .textSelection(.enabled)
+                        .padding(Spacing.medium)
+                        .background(FuminiwaColor.surface.color, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: .infinity)
@@ -84,6 +89,7 @@ struct AssistantPanelView: View {
         }
         .padding(16)
         .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+        .background(FuminiwaColor.paper.color)
         .sheet(isPresented: $showingExternalSettings) {
             NavigationStack {
                 externalSettings.toolbar { Button("閉じる") { showingExternalSettings = false } }

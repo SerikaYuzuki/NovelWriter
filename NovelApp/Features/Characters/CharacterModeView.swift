@@ -27,11 +27,14 @@ struct CharacterListView: View {
         }
         .overlay {
             if appState.document.characters.isEmpty {
-                ContentUnavailableView(
-                    "キャラクターがありません",
-                    systemImage: "person.2",
-                    description: Text("ツールバーまたは登場人物メニューから追加できます。")
-                )
+                ContentUnavailableView {
+                    Label("キャラクターがありません", systemImage: "person.2")
+                } description: {
+                    Text("ツールバーまたは登場人物メニューから追加できます。")
+                } actions: {
+                    Button("登場人物を追加") { appState.addCharacter() }
+                        .disabled(!appState.permitsDocumentInteraction)
+                }
             }
         }
         .workbenchGlassOutlineStyle()
@@ -89,11 +92,14 @@ struct CharacterDetailView: View {
 
     var body: some View {
         if appState.selectedCharacter == nil {
-            ContentUnavailableView(
-                "キャラクターが選択されていません",
-                systemImage: "person",
-                description: Text("左の一覧から編集するキャラクターを選択してください。")
-            )
+            ContentUnavailableView {
+                Label("キャラクターが選択されていません", systemImage: "person")
+            } description: {
+                Text("左の一覧から編集するキャラクターを選択してください。")
+            } actions: {
+                Button("登場人物を追加") { appState.addCharacter() }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
         } else {
             CharacterSheetView(onAppearanceJump: onAppearanceJump)
         }
@@ -335,7 +341,8 @@ private struct CharacterColorPresetPicker: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.borderless)
-                .help(hex)
+                .help(CharacterColorPreset.name(for: hex))
+                .accessibilityLabel(CharacterColorPreset.name(for: hex))
             }
         }
     }

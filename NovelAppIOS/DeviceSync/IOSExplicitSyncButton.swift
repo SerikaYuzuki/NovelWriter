@@ -1,4 +1,5 @@
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct IOSExplicitSyncButton: View {
@@ -42,7 +43,7 @@ struct IOSExplicitSyncButton: View {
         .overlay(alignment: .bottomTrailing) {
             TimelineView(.periodic(from: .now, by: 15)) { _ in
                 if SyncV2DelayNotice.isDelayed(since: store.snapshotSyncState?.oldestUnreceivedAt, now: delayClock.now) {
-                    Circle().fill(.orange).frame(width: 6, height: 6)
+                    Circle().fill(FuminiwaColor.warning.color).frame(width: 6, height: 6)
                         .accessibilityLabel("未同期の変更があります")
                 }
             }

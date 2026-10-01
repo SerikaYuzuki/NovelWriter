@@ -91,11 +91,14 @@ private struct FlagListView: View {
     @ViewBuilder
     private var flagContent: some View {
         if appState.document.flags.isEmpty {
-            ContentUnavailableView(
-                "伏線がありません",
-                systemImage: "checklist",
-                description: Text("伏線を追加ボタンから伏線を追加できます。")
-            )
+            ContentUnavailableView {
+                Label("伏線がありません", systemImage: "flag")
+            } description: {
+                Text("伏線を追加ボタンから伏線を追加できます。")
+            } actions: {
+                Button("伏線を追加") { appState.addFlag() }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(16)
         } else {
@@ -178,11 +181,14 @@ private struct FlagDetailView: View {
 
     var body: some View {
         if appState.selectedFlag == nil {
-            ContentUnavailableView(
-                "伏線が選択されていません",
-                systemImage: "checklist",
-                description: Text("左の一覧から編集する伏線を選択してください。")
-            )
+            ContentUnavailableView {
+                Label("伏線が選択されていません", systemImage: "flag")
+            } description: {
+                Text("左の一覧から編集する伏線を選択してください。")
+            } actions: {
+                Button("伏線を追加") { appState.addFlag() }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
         } else {
             FlagEditor(
                 title: selectedFlagTitleBinding,

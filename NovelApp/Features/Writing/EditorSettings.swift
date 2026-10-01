@@ -1,11 +1,11 @@
 import EditorKit
 import Foundation
+import NovelUI
 import Observation
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
 #endif
-import NovelUI
 
 @MainActor
 @Observable
@@ -240,70 +240,78 @@ struct EditorSettingsView: View {
         @Bindable var settings = settings
 
         Form {
+            Section("外観") {
+                Picker("外観", selection: $settings.appearance) {
+                    ForEach(AppAppearance.allCases) { appearance in
+                        Text(appearance.title)
+                            .tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            Section("本文") {
+                Picker("フォント", selection: fontFamilyBinding) {
+                    ForEach(EditorFontFamily.allCases) { family in
+                        Text(family.title)
+                            .tag(family)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Slider(value: $settings.fontSize, in: EditorSettings.fontSizeRange, step: 1) {
+                    Text("フォントサイズ")
+                } minimumValueLabel: {
+                    Text("8")
+                        .monospacedDigit()
+                } maximumValueLabel: {
+                    Text("24")
+                        .monospacedDigit()
+                }
+                LabeledContent("サイズ", value: "\(Int(settings.fontSize)) pt")
+                    .monospacedDigit()
+
+                Slider(value: $settings.lineHeightMultiple, in: 1.2 ... 2.0, step: 0.1) {
+                    Text("行間")
+                } minimumValueLabel: {
+                    Text("1.2")
+                        .monospacedDigit()
+                } maximumValueLabel: {
+                    Text("2.0")
+                        .monospacedDigit()
+                }
+                LabeledContent("行間", value: String(format: "%.1f", settings.lineHeightMultiple))
+                    .monospacedDigit()
+
+                Picker("本文の最大幅", selection: $settings.widthMode) {
+                    ForEach(EditorWidthMode.allCases) { mode in
+                        Text(mode.title)
+                            .monospacedDigit()
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                #if canImport(AppKit)
+                Toggle("滑らかなカーソル", isOn: $settings.animatesCaret)
+                    .accessibilityIdentifier("editor.animates-caret")
+                ColorPicker("本文色", selection: textColorBinding, supportsOpacity: false)
+                ColorPicker("背景色", selection: backgroundColorBinding, supportsOpacity: false)
+                #endif
+                Text("窓辺に、一冊の本を開く。")
+                    .font(.custom(settings.fontName, size: settings.fontSize, relativeTo: .body))
+                    .foregroundStyle(Color(hex: settings.textColorHex) ?? .primary)
+                    .padding(Spacing.group)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(hex: settings.backgroundColorHex) ?? FuminiwaColor.paper.color)
+                    .accessibilityLabel("本文のプレビュー。窓辺に、一冊の本を開く。")
+            }
             Section("AI支援") {
                 Button("AI支援の設定…") { showingAssistantSettings = true }
             }
-            Picker("外観", selection: $settings.appearance) {
-                ForEach(AppAppearance.allCases) { appearance in
-                    Text(appearance.title)
-                        .tag(appearance)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Picker("フォント", selection: fontFamilyBinding) {
-                ForEach(EditorFontFamily.allCases) { family in
-                    Text(family.title)
-                        .tag(family)
-                }
-            }
-            .pickerStyle(.menu)
-
-            Slider(value: $settings.fontSize, in: EditorSettings.fontSizeRange, step: 1) {
-                Text("フォントサイズ")
-            } minimumValueLabel: {
-                Text("8")
-                    .monospacedDigit()
-            } maximumValueLabel: {
-                Text("24")
-                    .monospacedDigit()
-            }
-            Text("\(Int(settings.fontSize)) pt")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-
-            Slider(value: $settings.lineHeightMultiple, in: 1.2 ... 2.0, step: 0.1) {
-                Text("行間")
-            } minimumValueLabel: {
-                Text("1.2")
-                    .monospacedDigit()
-            } maximumValueLabel: {
-                Text("2.0")
-                    .monospacedDigit()
-            }
-            Text(String(format: "%.1f", settings.lineHeightMultiple))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-
-            Picker("本文の最大幅", selection: $settings.widthMode) {
-                ForEach(EditorWidthMode.allCases) { mode in
-                    Text(mode.title)
-                        .monospacedDigit()
-                        .tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            #if canImport(AppKit)
-            Toggle("滑らかなカーソル", isOn: $settings.animatesCaret)
-                .accessibilityIdentifier("editor.animates-caret")
-            ColorPicker("本文色", selection: textColorBinding, supportsOpacity: false)
-            ColorPicker("背景色", selection: backgroundColorBinding, supportsOpacity: false)
-            #endif
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 420)
+        .frame(minWidth: 380, idealWidth: 420, maxWidth: 620)
         .sheet(isPresented: $showingAssistantSettings) {
             VStack {
                 AssistantSettingsView(defaults: settings.userDefaults)

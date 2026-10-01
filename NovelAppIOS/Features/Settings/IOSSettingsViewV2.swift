@@ -1,3 +1,4 @@
+import NovelUI
 import SwiftUI
 
 struct IOSSettingsView: View {
@@ -14,12 +15,14 @@ struct IOSSettingsView: View {
     var body: some View {
         List {
             appearanceSections
-            Section("AI支援") {
+            Section {
                 NavigationLink("APIキー・モデル・プロンプト") {
                     AssistantSettingsView(defaults: userDefaults)
                 }
+            } header: {
+                Label("AI支援", systemImage: "sparkles")
             }
-            Section("同期") {
+            Section {
                 Text(store.authUIState.label).foregroundStyle(.secondary)
                 switch store.authUIState {
                 case .signedOut, .failed:
@@ -39,8 +42,12 @@ struct IOSSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Label("同期", systemImage: "arrow.triangle.2.circlepath")
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
         .navigationTitle("設定")
     }
 }

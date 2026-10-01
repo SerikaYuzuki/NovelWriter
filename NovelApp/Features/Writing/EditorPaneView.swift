@@ -5,6 +5,7 @@ import NovelUI
 import SwiftUI
 
 struct EditorPaneView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppState.self) private var appState
     @Environment(EditorSettings.self) private var editorSettings
     @Environment(EditorSearchSession.self) private var editorSearchSession
@@ -64,7 +65,7 @@ struct EditorPaneView: View {
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
-                    .animation(.snappy(duration: 0.2), value: isPlotCardRailPresented)
+                    .animation(Motion.standard(reduceMotion: reduceMotion), value: isPlotCardRailPresented)
 
                     EditorAccessoryBar(
                         isEnabled: isEditable,
@@ -72,11 +73,14 @@ struct EditorPaneView: View {
                     )
                 }
             } else {
-                ContentUnavailableView(
-                    "話が選択されていません",
-                    systemImage: "doc.text",
-                    description: Text("Outlineから話を選択するか、話を追加してください。")
-                )
+                ContentUnavailableView {
+                    Label("話が選択されていません", systemImage: "doc.text")
+                } description: {
+                    Text("章・話の一覧から話を選択するか、話を追加してください。")
+                } actions: {
+                    Button("話を追加") { Task { _ = await appState.addEpisodeAfterTransition() } }
+                        .disabled(appState.selectedChapterID == nil || !appState.permitsDocumentInteraction)
+                }
             }
         }
         .focusedValue(\.workbenchSearchSurface, .editor)
@@ -122,11 +126,14 @@ private struct WritingPlotCardRail: View {
     var body: some View {
         Group {
             if cards.isEmpty {
-                ContentUnavailableView(
-                    "プロットカードがありません",
-                    systemImage: "rectangle.stack",
-                    description: Text("プロット画面からこの章のカードを追加できます。")
-                )
+                ContentUnavailableView {
+                    Label("プロットカードがありません", systemImage: "rectangle.stack")
+                } description: {
+                    Text("プロット画面からこの章のカードを追加できます。")
+                } actions: {
+                    Button("プロットを開く") { Task { _ = await appState.selectProjectSectionAfterTransition(.plot) } }
+                        .disabled(!appState.permitsDocumentInteraction)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(12)
             } else {

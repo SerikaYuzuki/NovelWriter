@@ -50,7 +50,7 @@ struct FuminiwaIOSApp: App {
         WindowGroup {
             IOSRootView(store: store)
                 .defaultAppStorage(store.userDefaults)
-                .tint(IOSPalette.accent)
+                .tint(.accentColor)
                 .preferredColorScheme(
                     IOSAppearance(storedRawValue: appearanceRawValue).colorScheme
                 )

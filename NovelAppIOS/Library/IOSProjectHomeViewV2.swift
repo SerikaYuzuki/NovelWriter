@@ -1,5 +1,6 @@
 import NovelSyncV2
 import NovelSyncV2Application
+import NovelUI
 import SwiftUI
 
 struct IOSProjectHomeView: View {
@@ -23,14 +24,15 @@ struct IOSProjectHomeView: View {
                     Text(store.document.synopsis).foregroundStyle(.secondary)
                 }
             }
-            Section("執筆") { Button("本文を書く", action: openWriting) }
+            Section("執筆") { Button(action: openWriting) { ProjectSectionStyle.writing.label } }
             Section("作品") {
-                Button("作品情報", action: openProjectInfo)
-                Button("プロット", action: openPlot)
-                Button("登場人物", action: openCharacters)
-                Button("世界観", action: openWorldbuilding)
-                Button("感想・アドバイス", action: openFeedback)
-                Button("資料", action: openReferences)
+                Button(action: openProjectInfo) { ProjectSectionStyle.projectInfo.label }
+                Button(action: openPlot) { ProjectSectionStyle.plot.label }
+                    .badge(store.document.flags.count(where: { !$0.isResolved }))
+                Button(action: openCharacters) { ProjectSectionStyle.characters.label }
+                Button(action: openWorldbuilding) { ProjectSectionStyle.worldbuilding.label }
+                Button(action: openFeedback) { ProjectSectionStyle.feedback.label }
+                Button(action: openReferences) { ProjectSectionStyle.references.label }
             }
             Section("同期") {
                 Text(store.isCurrentWorkParked
@@ -42,7 +44,7 @@ struct IOSProjectHomeView: View {
                 IOSExplicitSyncButton(store: store)
                 if store.snapshotSyncConflict != nil {
                     Text("この端末とサーバーの変更が分かれています")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(FuminiwaColor.warning.color)
                     Text("残す内容を選んでください。通信が戻ると同期を続けます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -84,7 +86,7 @@ struct IOSProjectHomeView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                Button("設定", action: openSettings)
+                Button(action: openSettings) { ProjectSectionStyle.settings.label }
                 Button("作品パッケージを書き出す") { Task { await store.requestExport() } }
                 Button("本文と資料を書き出す（ZIP）") { Task { await store.requestExport(readable: true) } }
             }

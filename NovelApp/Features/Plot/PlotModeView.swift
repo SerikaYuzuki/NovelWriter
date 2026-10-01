@@ -79,11 +79,14 @@ struct PlotBoardView: View {
             if let chapter = appState.document.chapters.first(where: { $0.id == focusedChapterID }) {
                 cardBoard(chapterID: chapter.id, cards: cards(in: chapter.id))
             } else {
-                ContentUnavailableView(
-                    "章が見つかりません",
-                    systemImage: "rectangle.stack",
-                    description: Text("Outlineから章または未割り当てを選び直してください。")
-                )
+                ContentUnavailableView {
+                    Label("章が見つかりません", systemImage: "rectangle.stack")
+                } description: {
+                    Text("章の一覧から章または未割り当てを選び直してください。")
+                } actions: {
+                    Button("未割り当てを見る") { appState.selectPlotOutline(.unassigned) }
+                        .disabled(!appState.permitsDocumentInteraction)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(16)
             }
@@ -96,11 +99,14 @@ struct PlotBoardView: View {
         cards: [SessionBoundValue<PlotCard>]
     ) -> some View {
         if cards.isEmpty {
-            ContentUnavailableView(
-                "プロットカードがありません",
-                systemImage: "rectangle.stack",
-                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
-            )
+            ContentUnavailableView {
+                Label("プロットカードがありません", systemImage: "rectangle.stack")
+            } description: {
+                Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
+            } actions: {
+                Button("プロットカードを追加") { appState.addPlotCard(chapterID: chapterID) }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(16)
             .contentShape(Rectangle())
@@ -198,11 +204,14 @@ struct PlotChapterOutlineView: View {
             .overlay {
                 if appState.document.chapters.isEmpty,
                    appState.document.plotCards.allSatisfy({ $0.chapterID != nil }) {
-                    ContentUnavailableView(
-                        "章がありません",
-                        systemImage: "doc.text",
-                        description: Text("上部の「章を追加」または章メニューから追加できます。")
-                    )
+                    ContentUnavailableView {
+                        Label("章がありません", systemImage: "doc.text")
+                    } description: {
+                        Text("上部の「章を追加」または章メニューから追加できます。")
+                    } actions: {
+                        Button("章を追加") { Task { _ = await appState.addChapterAfterTransition() } }
+                            .disabled(!appState.permitsDocumentInteraction)
+                    }
                 }
             }
         }
@@ -358,11 +367,14 @@ private struct PlotCardCanvas: View {
 
     var body: some View {
         if cards.isEmpty {
-            ContentUnavailableView(
-                "プロットカードがありません",
-                systemImage: "rectangle.stack",
-                description: Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
-            )
+            ContentUnavailableView {
+                Label("プロットカードがありません", systemImage: "rectangle.stack")
+            } description: {
+                Text("上部の「プロットカードを追加」またはプロットメニューから追加できます。")
+            } actions: {
+                Button("プロットカードを追加") { appState.addPlotCard(chapterID: chapterID) }
+                    .disabled(!appState.permitsDocumentInteraction)
+            }
             .frame(width: 260)
             .frame(minHeight: 120)
             .dropDestination(for: PlotCardID.self) { items, _ in
