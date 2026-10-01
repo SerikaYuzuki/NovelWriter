@@ -22,7 +22,7 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 ## 実装が残るもの
 
 - 端末未取得作品の初回表示の高速化。一括取得後も全履歴の検証・保存完了を待つため、履歴の多い作品は待ち時間が長い。[現状・測定結果・改善課題](INITIAL_IMPORT_LATENCY.md)。追加実装は保留。
-
+- Sync v2全体の不具合・性能・構造・UIの課題。[全体レビュー](SYNC_REVIEW.md)。未着手。
 - 削除予約・取消のアプリ画面。サーバーAPIと720時間後のworkerは実装済み。[lifecycle](auth/v1/account-deletion.md)。
 - Package Validator / 共通fixtureの全体、Windows 11版とinstaller。[互換契約](CROSS_PLATFORM.md)。
 
@@ -30,6 +30,8 @@ macOSの滑らかなカーソルを通常EditorKitへ組み込み、端末の執
 
 - Apple通知: 規範`/v1/auth/providers/apple/notifications`に対し、`auth_http.rs`は`/v1/auth/apple/notifications`を登録している。規範へ揃える際はApple側の登録先も確認する。[通知契約](auth/v1/apple-notification.md)。
 - LAN CA export: `Scripts/export-sync-v2-staging-ca.sh`のedge固定名が現行role-splitと異なり、Sync epoch検査も不足する。[LAN手順](SNAPSHOT_SYNC_V2_STAGING.md)。
+
+- 自動保存: 規範は「安定checkpointからの葉」だが、実装は2秒ごとの自動保存を親子の鎖としてすべてserverへ登録する。serverの祖先判定は4,096世代で恒久失敗する。初回取込の途中失敗で作品を開けなくなる経路もある。[全体レビュー](SYNC_REVIEW.md)のD-01・S-01・C-01。
 
 いずれも今回の文書更新では実装修正していない。
 
