@@ -710,10 +710,10 @@ extension Data {
         guard input.count.isMultiple(of: 2) else { return nil }
         func nibble(_ byte: UInt8) -> UInt8? {
             switch byte {
-            case 48...57: return byte - 48
-            case 65...70: return byte - 65 + 10
-            case 97...102: return byte - 97 + 10
-            default: return nil
+            case 48 ... 57: byte - 48
+            case 65 ... 70: byte - 65 + 10
+            case 97 ... 102: byte - 97 + 10
+            default: nil
             }
         }
         var bytes = Data()
@@ -724,7 +724,6 @@ extension Data {
         }
         self = bytes
     }
-
 }
 
 extension ObjectID {

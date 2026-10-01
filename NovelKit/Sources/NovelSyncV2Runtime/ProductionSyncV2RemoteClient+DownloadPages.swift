@@ -28,8 +28,9 @@ extension ProductionSyncV2RemoteClient {
             try Task.checkCancellation()
             let request = try downloadPageRequest(workID: workID, id: id, cursor: cursor, session: session)
             let (data, response): (Data, URLResponse)
-            if let pending { (data, response) = pending }
-            else {
+            if let pending {
+                (data, response) = pending
+            } else {
                 (data, response) = try await requestSnapshotData(
                     request, session: session, allowMissingEndpoint: cursor == nil
                 )
@@ -71,7 +72,7 @@ extension ProductionSyncV2RemoteClient {
                     guard batch.objects.count < SnapshotSyncV2Limits.maxEntries else {
                         throw SyncV2Failure.quarantined(.invalidRemoteData)
                     }
-                    batch.objects[try ObjectID(rawValue: item.id)] = item.bytes
+                    try batch.objects[ObjectID(rawValue: item.id)] = item.bytes
                 }
             }
             cursor = page.cursor
@@ -134,10 +135,14 @@ extension ProductionSyncV2RemoteClient {
                 throw SyncV2Failure.quarantined(.invalidRemoteData)
             }
             let cursor: String?
-            if case .null = page["nextCursor"] { cursor = nil }
-            else if let next = page["nextCursor"]?.stringContents,
-                    !items.isEmpty, !next.isEmpty, next.utf8.count <= 2048 { cursor = next }
-            else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
+            if case .null = page["nextCursor"] {
+                cursor = nil
+            } else if let next = page["nextCursor"]?.stringContents,
+                      !items.isEmpty, !next.isEmpty, next.utf8.count <= 2048 {
+                cursor = next
+            } else {
+                throw SyncV2Failure.quarantined(.invalidRemoteData)
+            }
             return DownloadPage(items: items, cursor: cursor)
         } catch {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
@@ -189,5 +194,4 @@ extension ProductionSyncV2RemoteClient {
             throw SyncV2Failure.quarantined(.invalidRemoteData)
         }
     }
-
 }

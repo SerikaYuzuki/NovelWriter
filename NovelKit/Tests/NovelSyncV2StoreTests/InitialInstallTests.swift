@@ -83,7 +83,7 @@ func persistedInboxStillRejectsCorruption(version: String) async throws {
 }
 
 @Test func hexadecimalBytesAcceptUppercaseAndEmptyInput() {
-    #expect(Data(hex: "aBcDEF0190") == Data([0xab, 0xcd, 0xef, 0x01, 0x90]))
+    #expect(Data(hex: "aBcDEF0190") == Data([0xAB, 0xCD, 0xEF, 0x01, 0x90]))
     #expect(Data(hex: "") == Data())
 }
 

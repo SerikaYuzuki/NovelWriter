@@ -1,5 +1,5 @@
-import Foundation
 import CryptoKit
+import Foundation
 import NovelAuth
 import NovelSyncV2
 import NovelSyncV2Application
@@ -12,14 +12,14 @@ extension ProductionSyncV2RemoteClient {
     func downloadObjectFile(_ original: URLRequest, entry: SnapshotEntry,
                             session originalSession: FuminiwaSession) async throws -> Data {
         var current = originalSession
-        for attempt in 0..<6 {
+        for attempt in 0 ..< 6 {
             try Task.checkCancellation()
             var retryAfter: TimeInterval?
             do {
                 if let context = SnapshotDownloadContext.current {
                     current = try await context.session(matching: current)
                 }
-                for authAttempt in 0..<2 {
+                for authAttempt in 0 ..< 2 {
                     var request = original
                     request.timeoutInterval = 30
                     request.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
@@ -43,7 +43,9 @@ extension ProductionSyncV2RemoteClient {
                     }
                     retryAfter = Self.downloadRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
                     guard http.statusCode == 200 else {
-                        if http.statusCode == 429 { throw SyncV2Failure.retryable(.rateLimited) }
+                        if http.statusCode == 429 {
+                            throw SyncV2Failure.retryable(.rateLimited)
+                        }
                         throw mapStatus(http.statusCode)
                     }
                     return try await Self.validateObjectFile(url, response: response, entry: entry)
@@ -53,7 +55,7 @@ extension ProductionSyncV2RemoteClient {
                 try Task.checkCancellation()
                 guard attempt < 5, let failure = error as? SyncV2Failure,
                       failure == .retryable(.lostResponse) || failure == .retryable(.serverUnavailable) else { throw error }
-                try await Task.sleep(for: .seconds(max(pow(2, Double(attempt)) * Double.random(in: 0.8...1.2), retryAfter ?? 0)))
+                try await Task.sleep(for: .seconds(max(pow(2, Double(attempt)) * Double.random(in: 0.8 ... 1.2), retryAfter ?? 0)))
             }
         }
         throw SyncV2Failure.retryable(.serverUnavailable)
@@ -65,7 +67,9 @@ extension ProductionSyncV2RemoteClient {
         } catch {
             try Task.checkCancellation()
             if (error as NSError).domain == NSURLErrorDomain,
-               (error as NSError).code == NSURLErrorNotConnectedToInternet { throw SyncV2Failure.offline }
+               (error as NSError).code == NSURLErrorNotConnectedToInternet {
+                throw SyncV2Failure.offline
+            }
             throw SyncV2Failure.retryable(.lostResponse)
         }
     }

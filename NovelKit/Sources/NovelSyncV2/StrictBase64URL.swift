@@ -10,9 +10,9 @@ public extension Data {
         for byte in value.utf8 {
             let digit: UInt32
             switch byte {
-            case 65...90: digit = UInt32(byte - 65)
-            case 97...122: digit = UInt32(byte - 97 + 26)
-            case 48...57: digit = UInt32(byte - 48 + 52)
+            case 65 ... 90: digit = UInt32(byte - 65)
+            case 97 ... 122: digit = UInt32(byte - 97 + 26)
+            case 48 ... 57: digit = UInt32(byte - 48 + 52)
             case 45: digit = 62
             case 95: digit = 63
             default: return nil

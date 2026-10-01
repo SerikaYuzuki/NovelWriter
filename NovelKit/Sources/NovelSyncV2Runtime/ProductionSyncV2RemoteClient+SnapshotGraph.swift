@@ -17,10 +17,12 @@ extension ProductionSyncV2RemoteClient {
         if let batch {
             traversal.objects = batch.objects
             let ordered = batch.manifests.sorted { $0.key.rawValue < $1.key.rawValue }
-            for (_, value) in ordered { try traversal.include(value.manifest) }
+            for (_, value) in ordered {
+                try traversal.include(value.manifest)
+            }
             // Collect the whole page graph first: attachments belonging to
             // different historical snapshots share the same four-request bound.
-            _ = try await fetchObjects(entries: ordered.flatMap { $0.value.manifest.entries },
+            _ = try await fetchObjects(entries: ordered.flatMap(\.value.manifest.entries),
                                        session: session, traversal: traversal)
             for (snapshotID, value) in ordered {
                 try Task.checkCancellation()
@@ -202,22 +204,26 @@ extension ProductionSyncV2RemoteClient {
             if let bytes = traversal.objects[entry.objectId] {
                 guard bytes.count == entry.byteCount else { throw SyncV2Failure.quarantined(.invalidRemoteData) }
                 objects[entry.objectId] = bytes
-            } else if seen.insert(entry.objectId).inserted { missing.append(entry) }
+            } else if seen.insert(entry.objectId).inserted {
+                missing.append(entry)
+            }
         }
         // Fixed windows bound network + validation memory. Await results in
         // manifest order, so simultaneous failures have deterministic priority.
         for offset in stride(from: 0, to: missing.count, by: 4) {
             try Task.checkCancellation()
-            let entries = Array(missing[offset..<min(offset + 4, missing.count)])
+            let entries = Array(missing[offset ..< min(offset + 4, missing.count)])
             let results = await withTaskGroup(of: (Int, Result<Data, Error>).self) { group in
                 for (index, entry) in entries.enumerated() {
                     group.addTask {
-                        do { return (index, .success(try await self.fetchObject(entry: entry, session: session))) }
+                        do { return try await (index, .success(self.fetchObject(entry: entry, session: session))) }
                         catch { return (index, .failure(error)) }
                     }
                 }
                 var results: [Int: Result<Data, Error>] = [:]
-                for await (index, result) in group { results[index] = result }
+                for await (index, result) in group {
+                    results[index] = result
+                }
                 return results
             }
             try Task.checkCancellation()

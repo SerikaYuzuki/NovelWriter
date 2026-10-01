@@ -173,7 +173,9 @@ class LineageURLProtocol: URLProtocol, @unchecked Sendable {
         }
         if reply.delay > 0 {
             DispatchQueue.global().asyncAfter(deadline: .now() + reply.delay) { [self] in deliver(reply) }
-        } else { deliver(reply) }
+        } else {
+            deliver(reply)
+        }
     }
 
     private func deliver(_ reply: LineageHTTPReply) {

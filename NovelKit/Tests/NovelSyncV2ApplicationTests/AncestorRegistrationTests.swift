@@ -152,17 +152,17 @@ func initialHistoryIsAlreadyRegistered(restore: Bool) async throws {
     let workID = WorkID(UUID())
     var document = applicationTestDocument(title: "history")
     var snapshots: [EncodedSnapshot] = []
-    for index in 0..<512 {
+    for index in 0 ..< 512 {
         document.title = "history \(index)"
-        snapshots.append(try SnapshotCodec.encode(SnapshotModel(workId: workID, document: document,
+        try snapshots.append(SnapshotCodec.encode(SnapshotModel(workId: workID, document: document,
                                                                 documentCreatedAt: applicationTestCreatedAt),
                                                   parents: snapshots.last.map { [$0.snapshotId] } ?? []))
     }
     let head = try #require(snapshots.last)
     try await store.installInitialGraph(V2RemoteSnapshotGraph(workID: workID, headSnapshotID: head.snapshotId,
-                                                             snapshots: snapshots, expectedCurrentSnapshotID: nil,
-                                                             expectedLocalGeneration: 0,
-                                                             expectedRemoteHead: V2RemoteHead(snapshotID: head.snapshotId, generation: 512)),
+                                                              snapshots: snapshots, expectedCurrentSnapshotID: nil,
+                                                              expectedLocalGeneration: 0,
+                                                              expectedRemoteHead: V2RemoteHead(snapshotID: head.snapshotId, generation: 512)),
                                         scope: productionScope)
     let expected: SnapshotID
     if restore {
@@ -181,18 +181,24 @@ func initialHistoryIsAlreadyRegistered(restore: Bool) async throws {
     let planner = ProductionSyncV2Planner(store: store, scope: TestScopeResolver(vault: config.vault, store: store))
     var registrations: [SnapshotID] = []
     var prepares = 0
-    for _ in 0..<8 {
+    for _ in 0 ..< 8 {
         guard case let .command(command) = try await planner.nextCommand(workID: workID) else {
             Issue.record("Expected transfer command"); break
         }
-        if ["publish", "restore"].contains(command.commandKind) { break }
-        if command.commandKind == "registerSnapshot" { registrations.append(command.sourceSnapshotId) }
-        if command.commandKind == "prepareObject" { prepares += 1 }
+        if ["publish", "restore"].contains(command.commandKind) {
+            break
+        }
+        if command.commandKind == "registerSnapshot" {
+            registrations.append(command.sourceSnapshotId)
+        }
+        if command.commandKind == "prepareObject" {
+            prepares += 1
+        }
         let result: V2CommandTerminalResult = command.commandKind == "prepareObject" ? .noChanges : .applied
         let response = try productionResponse(command: command, result: result, head: nil, cloneHead: nil, status: 200)
         try await store.acknowledge(V2CommandAcknowledgement(commandID: command.commandId,
-                                                            canonicalReceiptEnvelope: productionEnvelope(command: command, response: response,
-                                                                                                         result: result, status: 200)), scope: productionScope)
+                                                             canonicalReceiptEnvelope: productionEnvelope(command: command, response: response,
+                                                                                                          result: result, status: 200)), scope: productionScope)
         if command.commandKind == "registerSnapshot" {
             let view = try #require(await store.immutableTransferView(workID: workID, scope: productionScope))
             #expect(try await store.nextSnapshotTransferView(for: view, scope: productionScope) == nil)

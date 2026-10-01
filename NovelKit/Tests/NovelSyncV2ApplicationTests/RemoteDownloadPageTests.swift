@@ -236,16 +236,16 @@ extension RemoteHTTPLineageTests {
         let fixture = LineageFixture()
         var document = fixture.document
         var snapshots: [EncodedSnapshot] = []
-        for index in 0..<1500 {
+        for index in 0 ..< 1500 {
             document.chapters[0].episodes[0].content = String(repeating: "a", count: 7000) + "\(index)"
-            snapshots.append(try SnapshotCodec.encode(SnapshotModel(
+            try snapshots.append(SnapshotCodec.encode(SnapshotModel(
                 workId: fixture.workID, document: document, documentCreatedAt: fixture.createdAt
             ), parents: snapshots.last.map { [$0.snapshotId] } ?? []))
         }
         let head = try #require(snapshots.last)
         let items = downloadItems(snapshots)
         let pages = try stride(from: 0, to: items.count, by: 256).map { offset in
-            try downloadPage(head: head.snapshotId, items: Array(items[offset..<min(offset + 256, items.count)]),
+            try downloadPage(head: head.snapshotId, items: Array(items[offset ..< min(offset + 256, items.count)]),
                              cursor: offset + 256 < items.count ? "page-\(offset + 256)" : nil)
         }
         let state = LineageHTTPState(workID: fixture.workID, snapshots: snapshots, publishResponse: nil)
@@ -282,7 +282,7 @@ extension RemoteHTTPLineageTests {
 
     @Test("file validation rejects truncation, overflow, bad digest and wrong headers", arguments: ["valid", "short", "long", "digest", "header"])
     func streamingObjectValidation(mode: String) async throws {
-        let bytes = Data(repeating: 123, count: 400000)
+        let bytes = Data(repeating: 123, count: 400_000)
         let entry = SnapshotEntry(byteCount: bytes.count, contentType: .octetStream,
                                   entityKey: "unused", objectId: ObjectID(data: bytes))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -295,12 +295,12 @@ extension RemoteHTTPLineageTests {
         default: break
         }
         try received.write(to: url)
-        let response = try #require(HTTPURLResponse(url: URL(string: "https://fixture.invalid/object")!, statusCode: 200,
-                                                    httpVersion: nil, headerFields: [
-            "Content-Type": "application/octet-stream", "Cache-Control": mode == "header" ? "public" : "no-store",
-            "Pragma": "no-cache", "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
-            "X-Fuminiwa-Byte-Count": "\(entry.byteCount)"
-        ]))
+        let response = try #require(try HTTPURLResponse(url: #require(URL(string: "https://fixture.invalid/object")), statusCode: 200,
+                                                        httpVersion: nil, headerFields: [
+                                                            "Content-Type": "application/octet-stream", "Cache-Control": mode == "header" ? "public" : "no-store",
+                                                            "Pragma": "no-cache", "X-Fuminiwa-Object-Digest": entry.objectId.rawValue,
+                                                            "X-Fuminiwa-Byte-Count": "\(entry.byteCount)"
+                                                        ]))
         if mode == "valid" {
             let mapped = try await ProductionSyncV2RemoteClient.validateObjectFile(url, response: response, entry: entry)
             try FileManager.default.removeItem(at: url)
@@ -319,9 +319,9 @@ extension RemoteHTTPLineageTests {
         let fixture = LineageFixture()
         var document = fixture.document
         var snapshots: [EncodedSnapshot] = []
-        for index in 0..<8 {
-            document.chapters[0].episodes[0].content = String(repeating: "x", count: 300000) + "\(index)"
-            snapshots.append(try SnapshotCodec.encode(SnapshotModel(workId: fixture.workID, document: document,
+        for index in 0 ..< 8 {
+            document.chapters[0].episodes[0].content = String(repeating: "x", count: 300_000) + "\(index)"
+            try snapshots.append(SnapshotCodec.encode(SnapshotModel(workId: fixture.workID, document: document,
                                                                     documentCreatedAt: fixture.createdAt),
                                                       parents: snapshots.last.map { [$0.snapshotId] } ?? []))
         }
@@ -330,7 +330,7 @@ extension RemoteHTTPLineageTests {
         try state.failNext(path: "/v2/works/\(fixture.workID.description)/download", replies: [
             downloadPage(head: head.snapshotId, items: downloadItems(snapshots), cursor: nil)
         ])
-        let large = snapshots.flatMap { $0.objects }.filter { $0.value.count > 256 * 1024 }
+        let large = snapshots.flatMap(\.objects).filter { $0.value.count > 256 * 1024 }
         let paths = large.map { "/v2/objects/\($0.key.rawValue)" }
         for (id, bytes) in large {
             state.failNext(path: "/v2/objects/\(id.rawValue)", replies: [LineageHTTPReply(status: 200, headers: [

@@ -29,7 +29,7 @@ struct LibraryPresentationTests {
                 #expect(status == .resolve(availability: availability, accountState: account,
                                            remoteHeadConfirmed: confirmed, state: state))
                 #expect(!status.text.isEmpty)
-                let allASCII = status.symbol.unicodeScalars.allSatisfy { $0.isASCII }
+                let allASCII = status.symbol.unicodeScalars.allSatisfy(\.isASCII)
                 #expect(allASCII)
                 let canSaySynced = availability != .remoteOnly && account == .active && confirmed
                     && (progress == .idle || progress == .noChanges)

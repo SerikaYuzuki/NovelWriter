@@ -9,8 +9,8 @@ func strictBase64RejectsInvalid(_ raw: String) {
 
 @Test func strictBase64RoundTripsEveryTail() {
     #expect(Data(base64URL: "") == Data())
-    for count in 0...260 {
-        let bytes = Data((0..<count).map { UInt8($0 % 256) })
+    for count in 0 ... 260 {
+        let bytes = Data((0 ..< count).map { UInt8($0 % 256) })
         let raw = bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         #expect(Data(base64URL: raw) == bytes)

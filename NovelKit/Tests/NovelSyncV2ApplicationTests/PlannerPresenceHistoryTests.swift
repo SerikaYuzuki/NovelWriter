@@ -14,7 +14,9 @@ private actor PresenceLoadSpy {
         return try await store.knownRemoteObjectIDs(workID: workID, scope: scope)
     }
 
-    func count(_ workID: WorkID) -> Int { counts[workID, default: 0] }
+    func count(_ workID: WorkID) -> Int {
+        counts[workID, default: 0]
+    }
 }
 
 /// Drives real sealing, upload persistence and verified receipts against a
@@ -24,7 +26,7 @@ private func drainPresencePlanner(
     available: inout Set<ObjectID>, remoteGeneration: inout Int64
 ) async throws -> [ObjectID] {
     var prepared: [ObjectID] = []
-    for _ in 0..<2500 {
+    for _ in 0 ..< 2500 {
         switch try await planner.nextCommand(workID: workID) {
         case .idle: return prepared
         case let .upload(transfer):
@@ -39,7 +41,9 @@ private func drainPresencePlanner(
             if command.commandKind == "prepareObject" {
                 let object = try ObjectID(rawValue: productionString(payload, key: "objectId"))
                 prepared.append(object)
-                if available.contains(object) { result = .noChanges; status = 200 }
+                if available.contains(object) {
+                    result = .noChanges; status = 200
+                }
             }
             if command.commandKind == "finalizeObject" {
                 try available.insert(ObjectID(rawValue: productionString(payload, key: "objectId")))
@@ -48,14 +52,16 @@ private func drainPresencePlanner(
             if command.commandKind == "publish" {
                 remoteGeneration += 1
                 head = try V2RemoteHead(snapshotID: command.sourceSnapshotId, generation: remoteGeneration)
-            } else { head = nil }
+            } else {
+                head = nil
+            }
             let response = try productionResponse(command: command, result: result, head: head, cloneHead: nil, status: status)
             let envelope = try productionEnvelope(command: command, response: response, result: result, status: status)
             try await planner.acknowledgeCommand(SyncV2ReceiptReadback(
                 commandID: command.commandId, requestDigest: command.requestDigest,
                 responseStatus: status, canonicalResponse: envelope,
                 predicates: SyncV2ReadBackPredicates(accountMatched: true, commandDigestMatched: true,
-                                                    resourceMatched: true, headMatched: true, stateMatched: true),
+                                                     resourceMatched: true, headMatched: true, stateMatched: true),
                 result: result == .noChanges ? .noChanges : .applied
             ), command: command, verifiedInboxID: nil)
         default: throw SyncV2Failure.fatal(.unexpected)
@@ -72,7 +78,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
     let resolver = TestScopeResolver(vault: config.vault, store: store)
     let workID = WorkID(UUID())
     var document = applicationTestDocument(title: "history", body: "unchanged body")
-    for generation in 0..<256 {
+    for generation in 0 ..< 256 {
         document.title = "history-\(generation)"
         _ = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
                                                            documentCreatedAt: applicationTestCreatedAt,
@@ -90,17 +96,20 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
         try await spy.load(store: store, workID: work, scope: scope)
     })
     var generation: Int64 = 256
-    for index in 0..<8 {
+    for index in 0 ..< 8 {
         // Alternate entities so the preceding checkpoint's newly finalized
         // object remains necessary on the next checkpoint.
-        if index.isMultiple(of: 2) { document.title = "new title-\(index)" }
-        else { document.chapters[0].episodes[0].content = "new body-\(index)" }
+        if index.isMultiple(of: 2) {
+            document.title = "new title-\(index)"
+        } else {
+            document.chapters[0].episodes[0].content = "new body-\(index)"
+        }
         let saved = try await store.checkpoint(V2CheckpointRequest(workID: workID, document: document,
-                                                                  documentCreatedAt: applicationTestCreatedAt,
-                                                                  expectedGeneration: generation), scope: productionScope)
+                                                                   documentCreatedAt: applicationTestCreatedAt,
+                                                                   expectedGeneration: generation), scope: productionScope)
         generation = saved.generation
         let prepared = try await drainPresencePlanner(planner, workID: workID, available: &available,
-                                                       remoteGeneration: &remoteGeneration)
+                                                      remoteGeneration: &remoteGeneration)
         #expect(prepared.count == 1)
         #expect(await spy.count(workID) == 1)
         if index == 0 {
@@ -136,7 +145,7 @@ func plannerPresenceLoadIsIndependentOfCheckpointCount() async throws {
                                                        documentCreatedAt: applicationTestCreatedAt, expectedGeneration: generation),
                                    scope: .bound(newBinding))
     #expect(try await drainPresencePlanner(planner, workID: workID, available: &available,
-                                          remoteGeneration: &remoteGeneration).count == 1)
+                                           remoteGeneration: &remoteGeneration).count == 1)
     #expect(await spy.count(workID) == 3)
     await store.close()
 }

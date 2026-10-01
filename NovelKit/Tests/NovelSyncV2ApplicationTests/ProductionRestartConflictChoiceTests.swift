@@ -198,7 +198,7 @@ extension ProductionRestartTests {
         try await app.resumePending()
         // Scheduling latency is not a transport invariant, especially while
         // the synthetic import and other actor tests run concurrently.
-        try await eventually { !(await configuration.remote.recordedOperations()).isEmpty }
+        try await eventually { await !(configuration.remote.recordedOperations()).isEmpty }
         #expect(await app.uiState(workID: fixture.workID)?.lastFailure == nil)
         try await eventually {
             let operations = await configuration.remote.recordedOperations()
