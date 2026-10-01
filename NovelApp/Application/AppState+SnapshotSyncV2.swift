@@ -218,7 +218,7 @@ extension AppState {
 
     /// Launch/foreground/network recovery only wakes the shared outbox once.
     /// It intentionally does not wait for a remote response.
-    func resumeSnapshotSyncV2() async {
+    func resumeSnapshotSyncV2(reason: SyncV2WakeReason = .foreground) async {
         guard let application = snapshotSyncV2Application else { return }
         let coordinator = authSessionCoordinator
         Task { @MainActor [weak self] in
@@ -231,7 +231,7 @@ extension AppState {
                     try await coordinator.resumePendingRevoke()
                 }
             }
-            try? await application.resumePending()
+            try? await application.wake(reason: reason)
             // Re-project terminal worker state after the background wake. The
             // caller has already returned and never waits for the network lane.
             await self?.refreshSnapshotSyncV2UIState()

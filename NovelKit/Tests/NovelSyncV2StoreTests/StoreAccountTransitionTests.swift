@@ -31,7 +31,7 @@ func accountTransitionReplansEveryWorkAndParksDifferentAccountAtomically() async
     // active rows may already be at the destination binding.
     try await store.transitionAccountScopes(from: bindingA, to: rotated)
     #expect(try await store.listWorks(scope: scopeA).isEmpty)
-    #expect(try await store.listWorks(scope: .bound(rotated)).map(\.workID) == workIDs.sorted {
+    #expect(try await store.listWorks(scope: .bound(rotated)).map { $0.workID } == workIDs.sorted {
         $0.description < $1.description
     })
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
@@ -46,7 +46,7 @@ func accountTransitionReplansEveryWorkAndParksDifferentAccountAtomically() async
     #expect(try await store.listWorks(scope: .bound(rotated)).isEmpty)
     #expect(try await store.listWorks(scope: .bound(other)).isEmpty)
     #expect(try await store.listWorks(scope: .unbound).isEmpty)
-    #expect(try await store.listWorks(scope: .parked).map(\.workID) == workIDs.sorted {
+    #expect(try await store.listWorks(scope: .parked).map { $0.workID } == workIDs.sorted {
         $0.description < $1.description
     })
     #expect(try await store.pendingIntents(scope: .parked).isEmpty)
@@ -77,11 +77,11 @@ func repeatedAccountTransitionsAreIdempotentAfterCommit() async throws {
     )
     try await store.transitionAccountScopes(from: bindingA, to: rotated)
     try await store.transitionAccountScopes(from: bindingA, to: rotated)
-    #expect(try await store.listWorks(scope: .bound(rotated)).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .bound(rotated)).map { $0.workID } == [workID])
 
     try await store.transitionAccountScopes(from: rotated, to: nil)
     try await store.transitionAccountScopes(from: rotated, to: nil)
-    #expect(try await store.listWorks(scope: .parked).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .parked).map { $0.workID } == [workID])
 }
 
 @Test
@@ -100,9 +100,9 @@ func exactReauthenticationReactivatesParkedWorkWithFreshIntent() async throws {
         scope: scopeA
     )
     try await store.transitionAccountScopes(from: bindingA, to: nil)
-    #expect(try await store.listWorks(scope: .parked).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .parked).map { $0.workID } == [workID])
     try await store.transitionAccountScopes(from: nil, to: bindingA)
-    #expect(try await store.listWorks(scope: scopeA).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: scopeA).map { $0.workID } == [workID])
     #expect(try await store.listWorks(scope: .parked).isEmpty)
     let pending = try await store.pendingIntents(scope: scopeA, workID: workID)
     #expect(pending.count == 1)
@@ -132,7 +132,7 @@ func reauthenticationWithNewFenceQuarantinesParkedLaneAndBootstraps() async thro
         serverInstanceID: bindingA.serverInstanceID
     )
     try await store.transitionAccountScopes(from: nil, to: rotated)
-    #expect(try await store.listWorks(scope: .bound(rotated)).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .bound(rotated)).map { $0.workID } == [workID])
     #expect(try await store.listWorks(scope: .parked).isEmpty)
     #expect(try await store.pendingIntents(scope: .bound(rotated)).count == 1)
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
@@ -160,7 +160,7 @@ func sameAccountInAnotherServerNamespaceStaysParked() async throws {
         serverInstanceID: "server-other"
     )
     try await store.transitionAccountScopes(from: nil, to: collision)
-    #expect(try await store.listWorks(scope: .parked).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .parked).map { $0.workID } == [workID])
     #expect(try await store.listWorks(scope: .bound(collision)).isEmpty)
 }
 
@@ -197,8 +197,8 @@ func mixedActiveBindingsFailClosedWithoutPartialParking() async throws {
     await #expect(throws: SyncV2StoreError.accountMismatch) {
         try await store.transitionAccountScopes(from: bindingA, to: nil)
     }
-    #expect(try await store.listWorks(scope: scopeA).map(\.workID) == [first])
-    #expect(try await store.listWorks(scope: .bound(other)).map(\.workID) == [second])
+    #expect(try await store.listWorks(scope: scopeA).map { $0.workID } == [first])
+    #expect(try await store.listWorks(scope: .bound(other)).map { $0.workID } == [second])
     #expect(try await store.listWorks(scope: .parked).isEmpty)
 }
 
@@ -254,7 +254,7 @@ func accountTransitionRollsBackWhenALinkedRestoreCannotBeRetired() async throws 
     await #expect(throws: SyncV2StoreError.invalidLifecycle) {
         try await store.transitionAccountScopes(from: bindingA, to: rotated)
     }
-    #expect(try await store.listWorks(scope: scopeA).map(\.workID) == workIDs.sorted {
+    #expect(try await store.listWorks(scope: scopeA).map { $0.workID } == workIDs.sorted {
         $0.description < $1.description
     })
     #expect(try await store.listWorks(scope: .bound(rotated)).isEmpty)
@@ -302,7 +302,7 @@ func preparedRestoreIsParkedAndTransitionKeepsLocalHead() async throws {
     )
     try await store.transitionAccountScopes(from: bindingA, to: rotated)
     #expect(try await store.listWorks(scope: scopeA).isEmpty)
-    #expect(try await store.listWorks(scope: .bound(rotated)).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .bound(rotated)).map { $0.workID } == [workID])
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
     #expect(try await store.pendingIntents(scope: .bound(rotated)).count == 1)
     #expect(try await store.open(workID: workID, scope: .bound(rotated)).summary.currentSnapshotID ==

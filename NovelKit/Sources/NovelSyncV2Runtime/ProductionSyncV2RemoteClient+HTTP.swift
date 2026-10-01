@@ -20,24 +20,21 @@ extension ProductionSyncV2RemoteClient {
         _ command: SealedCommand,
         session: FuminiwaSession
     ) async throws -> SyncV2ReceiptReadback {
-        let path: String
-        switch command.commandKind {
-        case "createWork":
-            path = "v2/works"
-        case "prepareObject":
-            path = "v2/objects/prepare"
-        case "finalizeObject":
-            path = "v2/objects/finalize"
-        case "registerSnapshot":
-            path = "v2/snapshots/register"
-        case "publish":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/publish"
-        case "resolveDevice", "resolveServer", "cloneWork":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/conflict/resolve"
-        case "restore":
-            path = try "v2/works/\(remoteClientWorkID(for: command).description)/restore"
-        default:
-            throw SyncV2Failure.fatal(.unsupportedCommand)
+        let path: String = switch command.kind {
+        case .createWork:
+            "v2/works"
+        case .prepareObject:
+            "v2/objects/prepare"
+        case .finalizeObject:
+            "v2/objects/finalize"
+        case .registerSnapshot:
+            "v2/snapshots/register"
+        case .publish:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/publish"
+        case .resolveDevice, .resolveServer, .cloneWork:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/conflict/resolve"
+        case .restore:
+            try "v2/works/\(remoteClientWorkID(for: command).description)/restore"
         }
         var request = URLRequest(url: origin.url.appendingPathComponent(path))
         request.httpMethod = "POST"
@@ -279,7 +276,7 @@ extension ProductionSyncV2RemoteClient {
               contentType == mediaType else {
             throw SyncV2Failure.fatal(.unexpected)
         }
-        if http.statusCode == 422, command.commandKind == "publish",
+        if http.statusCode == 422, command.kind == .publish,
            data == Data(#"{"error":"lineageViolation","result":"parked","retryable":false}"#.utf8) {
             throw SyncV2Failure.retryable(.publishLineageRejected)
         }
@@ -289,7 +286,7 @@ extension ProductionSyncV2RemoteClient {
         // A pre-commit rejection has no receipt envelope. Preserve its typed
         // upload error instead of reporting a failed receipt verification.
         if http.statusCode == 409,
-           command.commandKind == "finalizeObject",
+           command.kind == .finalizeObject,
            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
            object["error"] is String {
             throw typedUploadFailure(data: data)
@@ -385,24 +382,10 @@ extension ProductionSyncV2RemoteClient {
     private func publishExpectedRemoteHeadSnapshotID(
         _ command: SealedCommand
     ) throws -> SnapshotID? {
-        guard command.commandKind == "publish" else {
+        guard command.kind == .publish else {
             return nil
         }
-        guard let payload = try JSONSerialization.jsonObject(with: command.payloadBytes)
-            as? [String: Any],
-            let expected = payload["expectedRemoteHead"] else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        if expected is NSNull {
-            return nil
-        }
-        guard let head = expected as? [String: Any],
-              Set(head.keys) == ["generation", "snapshotId"],
-              head["generation"] is NSNumber,
-              let rawSnapshotID = head["snapshotId"] as? String else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        return try SnapshotID(rawValue: rawSnapshotID)
+        return try command.payload.head("expectedRemoteHead")?.snapshotID
     }
 
     private func addScope(

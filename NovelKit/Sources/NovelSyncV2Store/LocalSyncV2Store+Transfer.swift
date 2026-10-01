@@ -207,7 +207,7 @@ public extension LocalSyncV2Store {
             throw SyncV2StoreError.invalidCommand
         }
         var objects = Set<ObjectID>()
-        if kind == "finalizeObject" || (kind == "prepareObject" && result == "noChanges") {
+        if SyncV2CommandKind(rawValue: kind) == .finalizeObject || (SyncV2CommandKind(rawValue: kind) == .prepareObject && result == "noChanges") {
             if let bytes = row[4].blob {
                 try objects.insert(ObjectID(rawValue: bytes.hexString))
             } else {
@@ -219,7 +219,7 @@ public extension LocalSyncV2Store {
                       let raw = payload["objectId"]?.stringContents else { throw SyncV2StoreError.invalidCommand }
                 try objects.insert(ObjectID(rawValue: raw))
             }
-        } else if kind == "registerSnapshot" {
+        } else if SyncV2CommandKind(rawValue: kind) == .registerSnapshot {
             for entry in try query("SELECT DISTINCT object_id FROM snapshot_entries WHERE snapshot_id=?", [.blob(source)]) {
                 guard let bytes = entry[0].blob else { throw SyncV2StoreError.invalidSnapshot }
                 try objects.insert(ObjectID(rawValue: bytes.hexString))

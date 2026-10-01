@@ -2,10 +2,15 @@ import Foundation
 
 public struct SealedCommand: Hashable, Sendable {
     public let commandId: UUID
-    public let commandKind: String
+    public let kind: SyncV2CommandKind
+    public var commandKind: String {
+        kind.rawValue
+    }
+
     public let sourceGeneration: Int64
     public let sourceSnapshotId: SnapshotID
     public let binding: Binding
+    public let payload: SyncV2CommandPayload
     public let payloadBytes: Data
     public let canonicalBytes: Data
     public let requestDigest: ObjectID
@@ -29,17 +34,7 @@ public struct SealedCommand: Hashable, Sendable {
         }
     }
 
-    public static let kinds: Set<String> = [
-        "cloneWork",
-        "createWork",
-        "finalizeObject",
-        "prepareObject",
-        "publish",
-        "registerSnapshot",
-        "resolveDevice",
-        "resolveServer",
-        "restore"
-    ]
+    public static let kinds = Set(SyncV2CommandKind.allCases.map(\.rawValue))
 
     public static func decodeCanonical(_ data: Data) throws -> SealedCommand {
         guard data.count <= SnapshotSyncV2Limits.maxCommandBytes else {
@@ -55,7 +50,8 @@ public struct SealedCommand: Hashable, Sendable {
         let root = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
         try validateEnvelope(root)
 
-        guard case let .string(kind) = root["commandKind"] else {
+        guard case let .string(rawKind) = root["commandKind"],
+              let kind = SyncV2CommandKind(rawValue: rawKind) else {
             throw SyncV2TypeError.commandViolation("kind/version")
         }
         guard let commandString = root["commandId"]?.stringValue,
@@ -76,14 +72,15 @@ public struct SealedCommand: Hashable, Sendable {
         }
 
         let binding = try decodeBinding(bindingPairs)
-        try validatePayload(kind, payload)
+        try validatePayload(kind.rawValue, payload)
         let payloadBytes = try CanonicalJSON.render(payload)
-        return SealedCommand(
+        return try SealedCommand(
             commandId: commandID,
             commandKind: kind,
             sourceGeneration: generation,
             sourceSnapshotId: sourceSnapshot,
             binding: binding,
+            payload: SyncV2CommandPayload(payload),
             payloadBytes: payloadBytes,
             canonicalBytes: data,
             requestDigest: ObjectID(data: data)
@@ -100,19 +97,21 @@ public struct SealedCommand: Hashable, Sendable {
 
     private init(
         commandId: UUID,
-        commandKind: String,
+        commandKind: SyncV2CommandKind,
         sourceGeneration: Int64,
         sourceSnapshotId: SnapshotID,
         binding: Binding,
+        payload: SyncV2CommandPayload,
         payloadBytes: Data,
         canonicalBytes: Data,
         requestDigest: ObjectID
     ) {
         self.commandId = commandId
-        self.commandKind = commandKind
+        kind = commandKind
         self.sourceGeneration = sourceGeneration
         self.sourceSnapshotId = sourceSnapshotId
         self.binding = binding
+        self.payload = payload
         self.payloadBytes = payloadBytes
         self.canonicalBytes = canonicalBytes
         self.requestDigest = requestDigest

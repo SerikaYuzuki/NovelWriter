@@ -45,7 +45,7 @@ struct IOSEditingDepartureRegressionTests {
         store.deleteEpisodes(at: IndexSet(integer: 0), chapterID: chapter.id)
         release.continuation.finish()
         #expect(await pending.value == !reordering)
-        #expect(store.selectedChapter?.episodes.map(\.id) == Array(ids.dropFirst()))
+        #expect(store.selectedChapter?.episodes.map { $0.id } == Array(ids.dropFirst()))
         #expect(await store.saveNow())
         started.continuation.finish()
     }

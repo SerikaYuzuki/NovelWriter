@@ -49,26 +49,6 @@ public struct SyncV2RecoveryRequest: Codable, Sendable {
     }
 }
 
-public extension SyncV2RemoteClient {
-    func protectedWorks() async throws -> [SyncV2ProtectedWork] {
-        throw SyncV2Failure.authenticationRequired
-    }
-
-    func recoveryPoints(workID _: WorkID) async throws -> [SyncV2RecoveryPoint] {
-        throw SyncV2Failure.authenticationRequired
-    }
-
-    func recoverWork(workID _: WorkID, request _: SyncV2RecoveryRequest) async throws {
-        throw SyncV2Failure.authenticationRequired
-    }
-}
-
-public extension SyncV2LocalKernel {
-    func localRescuableWorks() async throws -> [SyncV2ProtectedWork] {
-        []
-    }
-}
-
 public extension SyncV2Application {
     func protectedWorks() async throws -> [SyncV2ProtectedWork] {
         let generation = historyScopeGeneration

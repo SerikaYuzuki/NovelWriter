@@ -26,7 +26,7 @@ struct RemoteAuthRefreshTests {
         async let third = provider.refresh(afterUnauthorizedFor: session)
         let results = try await [first, second, third]
 
-        #expect(results.map(\.refreshGeneration) == [2, 2, 2])
+        #expect(results.map { $0.refreshGeneration } == [2, 2, 2])
         #expect(await transport.refreshCount() == 1)
     }
 

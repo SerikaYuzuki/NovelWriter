@@ -27,7 +27,7 @@ struct RemoteHTTPLineageTests {
         )])
         let client = try fixture.client(snapshots: [], overrideState: state)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == [base.snapshotId, head.snapshotId])
+        #expect(inbox.snapshots.map { $0.snapshotId } == [base.snapshotId, head.snapshotId])
         #expect(state.count(path: path) == 2)
         #expect(state.count(path: "/v2/snapshots/\(head.snapshotId.rawValue)/manifest") == 1)
     }
@@ -120,8 +120,8 @@ struct RemoteHTTPLineageTests {
 
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
         let expected = [base.snapshotId, orderedParents[0], orderedParents[1], decision.snapshotId]
-        #expect(inbox.snapshots.map(\.snapshotId) == expected)
-        #expect(Set(inbox.snapshots.map(\.snapshotId)).count == 4)
+        #expect(inbox.snapshots.map { $0.snapshotId } == expected)
+        #expect(Set(inbox.snapshots.map { $0.snapshotId }).count == 4)
         #expect(fixture.requestCount(path: "/v2/snapshots/\(base.snapshotId.rawValue)/manifest") == 1)
         let sharedObjects = Set(base.objects.keys).intersection(decision.objects.keys)
         #expect(!sharedObjects.isEmpty)
@@ -180,7 +180,7 @@ struct RemoteHTTPLineageTests {
         let client = try fixture.client(snapshots: snapshots)
 
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == snapshots.map(\.snapshotId))
+        #expect(inbox.snapshots.map { $0.snapshotId } == snapshots.map { $0.snapshotId })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try LocalSyncV2Store(root: root, policy: .createNew)
@@ -519,7 +519,7 @@ extension RemoteHTTPLineageTests {
         // would fail, rather than silently passing against a full server fixture.
         let client = try fixture.client(snapshots: [remote], localStore: store)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == (remoteChanged ? [anchor, remote.snapshotId] : [anchor]))
+        #expect(inbox.snapshots.map { $0.snapshotId } == (remoteChanged ? [anchor, remote.snapshotId] : [anchor]))
         #expect(fixture.requestCount(path: "/v2/snapshots/\(anchor.rawValue)/manifest") == 0)
         let graph = try V2RemoteSnapshotGraph(
             inboxID: inbox.inboxID,

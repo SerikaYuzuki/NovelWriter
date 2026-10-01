@@ -1,4 +1,5 @@
 import NovelSyncV2
+import NovelUI
 import SwiftUI
 
 struct IOSSnapshotHistoryView: View {
@@ -6,29 +7,36 @@ struct IOSSnapshotHistoryView: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         List {
-            Section("スナップショット履歴") {
+            Section("履歴") {
                 Text(historyAvailabilityLabel)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FuminiwaColor.textSecondary.color)
                 if store.syncV2HistoryItems.isEmpty {
                     Text("履歴を読み込むと、復元対象を選べます。")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(FuminiwaColor.textSecondary.color)
                 } else {
                     ForEach(store.syncV2HistoryItems, id: \.occurrenceID) { entry in
-                        VStack(alignment: .leading) {
-                            Text(entry.displayReason + "・" + entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                            if let application = store.snapshotSyncV2Application,
-                               let workID = store.syncV2ActiveWorkID {
-                                let session = store.currentDocumentSessionToken
-                                let scope = store.snapshotSyncV2AccountScope
-                                HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
-                                                     announcesStatus: entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID) {
-                                    guard store.currentDocumentSessionToken == session,
-                                          store.snapshotSyncV2AccountScope == scope else { return }
-                                    _ = await store.restoreSnapshotSyncV2(snapshotID: entry.snapshotID.rawValue)
-                                }
+                        if let application = store.snapshotSyncV2Application,
+                           let workID = store.syncV2ActiveWorkID {
+                            let session = store.currentDocumentSessionToken
+                            let scope = store.snapshotSyncV2AccountScope
+                            HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
+                                                 rowDate: entry.createdAt, rowKind: entry.displayReason,
+                                                 announcesStatus: entry.occurrenceID == store.syncV2HistoryItems.first?.occurrenceID) {
+                                guard store.currentDocumentSessionToken == session,
+                                      store.snapshotSyncV2AccountScope == scope else { return }
+                                _ = await store.restoreSnapshotSyncV2(snapshotID: entry.snapshotID.rawValue)
+                            }
+                            .surfaceCard()
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: Spacing.extraSmall, leading: Spacing.outer,
+                                                      bottom: Spacing.extraSmall, trailing: Spacing.outer))
+                        } else {
+                            VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                Text(entry.displayReason).font(FuminiwaType.rowSecondary)
                             }
                         }
                     }
@@ -57,10 +65,14 @@ struct IOSSnapshotHistoryView: View {
                 .disabled(!store.canRefreshSnapshotHistory)
                 Text("復元前の内容も履歴に残します。復元後の同期は接続が戻ると再開します。")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FuminiwaColor.textSecondary.color)
             }
+            .listRowBackground(FuminiwaColor.paper.color)
+            .listRowSeparator(.hidden)
         }
-        .navigationTitle("スナップショット履歴")
+        .scrollContentBackground(.hidden)
+        .background(FuminiwaColor.paper.color)
+        .navigationTitle("履歴")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -77,10 +89,12 @@ struct IOSSnapshotHistoryView: View {
     }
 
     private var historyAvailabilityLabel: String {
-        let local = store.syncV2HistoryLocalAvailability == .available
-            ? "端末履歴あり" : "端末履歴なし"
-        let online = store.syncV2HistoryOnlineAvailability == .available
-            ? "サーバー履歴あり" : "サーバー履歴は未取得"
-        return "\(local)・\(online)"
+        switch (store.syncV2HistoryLocalAvailability == .available,
+                store.syncV2HistoryOnlineAvailability == .available) {
+        case (true, true): "この端末とサーバーの履歴"
+        case (true, false): "この端末の履歴（サーバーの履歴は未取得）"
+        case (false, true): "サーバーの履歴"
+        case (false, false): "履歴を読み込んでいます"
+        }
     }
 }

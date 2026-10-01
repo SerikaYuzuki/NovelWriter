@@ -27,7 +27,7 @@ import Testing
         ) as? [String: Any]
     )
     let entries = try #require(metadata["notes"] as? [[String: Any]])
-    #expect(entries.map { $0["title"] as? String } == notes.map(\.title))
+    #expect(entries.map { $0["title"] as? String } == notes.map { $0.title })
     for note in notes {
         let contentURL = packageURL
             .appendingPathComponent("world-notes", isDirectory: true)
@@ -174,6 +174,6 @@ import Testing
     #expect(try await repository.load(from: destinationURL).worldNotes == document.worldNotes)
 
     try await repository.restoreSnapshot(from: snapshotURL, into: sourceURL)
-    #expect(try await repository.load(from: sourceURL).worldNotes.map(\.title) == ["初版"])
-    #expect(try await repository.load(from: sourceURL).worldNotes.map(\.content) == ["スナップショット本文"])
+    #expect(try await repository.load(from: sourceURL).worldNotes.map { $0.title } == ["初版"])
+    #expect(try await repository.load(from: sourceURL).worldNotes.map { $0.content } == ["スナップショット本文"])
 }

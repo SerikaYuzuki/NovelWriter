@@ -91,6 +91,9 @@ struct NovelSyncV2ConformanceTests {
             let command = try SealedCommand.decodeCanonical(data)
             let expectedDigest = try #require(row["requestDigest"] as? String)
             let expectedByteCount = try #require(row["byteCount"] as? Int)
+            #expect(command.canonicalBytes == data)
+            #expect(command.kind.rawValue == command.commandKind)
+            #expect(try command.payload.workID == WorkID(uuidString: command.payload.uuid(command.kind == .cloneWork ? "sourceWorkId" : "workId")))
             #expect(command.requestDigest.rawValue == expectedDigest)
             #expect(data.count == expectedByteCount)
         }

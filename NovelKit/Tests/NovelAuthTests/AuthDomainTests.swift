@@ -79,7 +79,8 @@ struct AuthDomainTests {
         #expect(reserved == firstID)
         #expect(second == firstID)
         let restarted = await InMemoryAuthSessionVault(record: vault.snapshot())
-        #expect(try await restarted.loadOrReserveRefreshRotation(proposed: #require(secondID), for: session) == firstID)
+        let proposedRotation = try #require(secondID)
+        #expect(try await restarted.loadOrReserveRefreshRotation(proposed: proposedRotation, for: session) == firstID)
     }
 
     @Test("concurrent refresh reservation returns one rotation id")

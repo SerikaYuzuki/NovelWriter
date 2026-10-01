@@ -54,7 +54,7 @@ import Testing
     try await repository.saveValidatedCopy(document, from: source, to: destination)
 
     #expect(try await repository.validatePortablePackage(at: destination) == document)
-    #expect(try await repository.listAttachments(in: destination).map(\.fileName) == ["資料.txt"])
+    #expect(try await repository.listAttachments(in: destination).map { $0.fileName } == ["資料.txt"])
     #expect(try await repository.listSnapshots(in: destination).count == 1)
     #expect(FileManager.default.fileExists(
         atPath: destination.appendingPathComponent("future-metadata.json").path

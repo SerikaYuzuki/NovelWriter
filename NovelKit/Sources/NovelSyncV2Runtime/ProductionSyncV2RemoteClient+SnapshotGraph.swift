@@ -318,13 +318,5 @@ final class SnapshotFetchTraversal: @unchecked Sendable {
 }
 
 func remoteClientWorkID(for command: SealedCommand) throws -> WorkID {
-    guard let object = try JSONSerialization.jsonObject(with: command.payloadBytes)
-        as? [String: Any] else {
-        throw SyncV2Failure.receiptMismatch
-    }
-    guard let raw = (object["workId"] as? String) ??
-        (object["sourceWorkId"] as? String) else {
-        throw SyncV2Failure.receiptMismatch
-    }
-    return try WorkID(uuidString: raw)
+    try command.payload.workID
 }

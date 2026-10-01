@@ -130,7 +130,7 @@ extension PriorityHistoryFixture {
     }
 }
 
-private actor PriorityOperationPlanner: SyncV2CommandPlanner {
+actor PriorityOperationPlanner: SyncV2CommandPlanner {
     let command: SealedCommand
     var acknowledged = false
     init(command: SealedCommand) {

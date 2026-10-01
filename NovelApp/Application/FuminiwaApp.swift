@@ -387,10 +387,10 @@ private extension FuminiwaApp {
         connectivityRecovery.start(constrained: { online, limited in
             await appState.snapshotSyncV2Application?.setHistoryBackfillNetwork(online: online, constrained: limited)
         }, recovered: {
-            await appState.resumeSnapshotSyncV2()
+            await appState.resumeSnapshotSyncV2(reason: .networkRecovery)
         })
         await appState.bootstrap(opening: opening)
-        await appState.resumeSnapshotSyncV2()
+        await appState.resumeSnapshotSyncV2(reason: .launch)
         applicationDelegate.finishBootstrap()
     }
 }

@@ -70,7 +70,7 @@ struct FuminiwaIOSApp: App {
                     await store.bootstrap(localFirst: true)
                     connectivityRecovery.start(constrained: { online, limited in
                         await store.snapshotSyncV2Application?.setHistoryBackfillNetwork(online: online, constrained: limited)
-                    }, recovered: { await store.resumeSnapshotSyncV2() })
+                    }, recovered: { await store.resumeSnapshotSyncV2(reason: .networkRecovery) })
                     // The local shelf/editor is the launch boundary. Auth
                     // vault reconciliation and remote wakeups continue in
                     // background and never delay offline editing.
@@ -79,7 +79,7 @@ struct FuminiwaIOSApp: App {
                     }
                     store.resumePendingAuthRevoke()
                     Task { @MainActor in
-                        await store.resumeSnapshotSyncV2()
+                        await store.resumeSnapshotSyncV2(reason: .launch)
                     }
                 }
                 .onChange(of: scenePhase) { _, newPhase in

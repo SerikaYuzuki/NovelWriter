@@ -45,7 +45,7 @@ import Testing
     _ = await app.beginAccountTransitionRemoteSuspension()
 }
 
-private actor BackfillCoordinatorRemote: SyncV2RemoteClient {
+actor BackfillCoordinatorRemote: SyncV2RemoteClient {
     let works: [WorkID]
     var started: [WorkID] = []
     var active = 0

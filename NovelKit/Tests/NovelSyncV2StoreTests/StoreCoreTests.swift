@@ -116,7 +116,7 @@ func noOpCheckpointKeepsIntentAndProtectsOnlyExplicitOccurrence() async throws {
     #expect(history.last?.localGeneration == first.generation)
     #expect(history.last?.reason == V2CheckpointReason.explicit.rawValue)
     #expect(history.last?.pinned == true)
-    #expect(try await store.pendingIntents(scope: scopeA).map(\.intentID) == [
+    #expect(try await store.pendingIntents(scope: scopeA).map { $0.intentID } == [
         first.intentID
     ])
 
@@ -189,7 +189,7 @@ func unboundWorkStaysLocalAndExplicitAccountMoveClonesNewIdentity() async throws
         ),
         scope: .unbound
     )
-    #expect(try await store.listWorks(scope: .unbound).map(\.workID) == [sourceWorkID])
+    #expect(try await store.listWorks(scope: .unbound).map { $0.workID } == [sourceWorkID])
     #expect(try await store.listWorks(scope: scopeA).isEmpty)
 
     let destinationDocumentID = DocumentID(UUID())
@@ -205,8 +205,8 @@ func unboundWorkStaysLocalAndExplicitAccountMoveClonesNewIdentity() async throws
     #expect(original.document == sourceDocument)
     #expect(clone.document?.title == sourceDocument.title)
     #expect(clone.document?.id == destinationDocumentID.rawValue)
-    #expect(try await store.listWorks(scope: .unbound).map(\.workID) == [sourceWorkID])
-    #expect(try await store.listWorks(scope: scopeA).map(\.workID) == [destinationWorkID])
+    #expect(try await store.listWorks(scope: .unbound).map { $0.workID } == [sourceWorkID])
+    #expect(try await store.listWorks(scope: scopeA).map { $0.workID } == [destinationWorkID])
 }
 
 @Test

@@ -16,22 +16,6 @@ public struct SyncV2WritingContext: Equatable, Sendable {
     }
 }
 
-public extension SyncV2LocalKernel {
-    func writingContext(workID: WorkID) async throws -> SyncV2WritingContext {
-        SyncV2WritingContext(workID: workID, commonNamespace: "local:common", binding: nil)
-    }
-}
-
-public extension SyncV2RemoteClient {
-    func appendWritingRecord(_: WritingRecord, binding _: SyncV2AccountScopeBinding) async throws -> WritingEnvelope {
-        throw WritingError.unavailable
-    }
-
-    func writingRecordPage(workID _: UUID?, after _: Int64, binding _: SyncV2AccountScopeBinding) async throws -> WritingRecordPage {
-        throw WritingError.unavailable
-    }
-}
-
 public extension SyncV2Application {
     func copyWritingHistory(source: WorkID, destination: WorkID) async {
         guard let writingStore, let id = UUID(uuidString: destination.description) else { return }

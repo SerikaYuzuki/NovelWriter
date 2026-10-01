@@ -54,7 +54,7 @@ public extension LocalSyncV2Store {
         guard case let .bound(binding) = scope else { throw SyncV2StoreError.accountMismatch }
         try inTransaction {
             guard let record = try sealedRecord(commandID: commandID, binding: binding),
-                  record.commandKind == "publish", record.lifecycle == .sending,
+                  record.kind == .publish, record.lifecycle == .sending,
                   let intentID = record.intentID,
                   try receiptReadback(commandID: commandID, scope: scope) == nil,
                   let row = try scopedWorkRow(workID: record.workID, scope: scope),
@@ -62,7 +62,7 @@ public extension LocalSyncV2Store {
                 throw SyncV2StoreError.invalidCommand
             }
             let command = try SealedCommand.decodeCanonical(record.canonicalRequest)
-            let payload = try command.payloadDictionary()
+            let payload = command.payload
             guard try payload.remoteHead("expectedRemoteHead") !=
                 publishBaseHead(workID: record.workID, snapshotID: record.sourceSnapshotID) else {
                 throw SyncV2StoreError.invalidCommand

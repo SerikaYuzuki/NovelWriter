@@ -341,7 +341,7 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.resumeSnapshotSyncV2()
+                await self?.resumeSnapshotSyncV2(reason: .systemWake)
             }
         }
     }

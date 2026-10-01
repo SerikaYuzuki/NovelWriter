@@ -26,7 +26,7 @@ import Testing
     try await repository.save(doc, to: packageURL)
 
     let loaded = try await repository.load(from: packageURL)
-    #expect(loaded.plotCards.map(\.title) == ["C", "B", "A"])
+    #expect(loaded.plotCards.map { $0.title } == ["C", "B", "A"])
     #expect(loaded.plotCards.last?.chapterID == chapter.id)
 }
 

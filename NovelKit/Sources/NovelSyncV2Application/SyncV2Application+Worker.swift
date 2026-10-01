@@ -85,11 +85,11 @@ extension SyncV2Application {
                     )
                     guard completed else { return }
                     guard isCurrentWorker(workID: workID, owner: owner) else { return }
-                    if ["resolveServer", "resolveDevice", "cloneWork"].contains(command.commandKind) {
+                    if [.resolveServer, .resolveDevice, .cloneWork].contains(command.kind) {
                         guard finishCurrentWorker(workID: workID, owner: owner) else {
                             return
                         }
-                        if command.commandKind != "resolveServer" {
+                        if command.kind != .resolveServer {
                             scheduleWorker(for: workID)
                         } else if wakeEpochs[workID, default: 0] != observedWake {
                             // Safe adoption can arrive while this resolution
@@ -247,11 +247,7 @@ extension SyncV2Application {
     }
 
     private func commandWorkID(_ command: SealedCommand) throws -> WorkID {
-        guard let object = try JSONSerialization.jsonObject(with: command.payloadBytes) as? [String: Any],
-              let raw = (object["workId"] as? String) ?? (object["sourceWorkId"] as? String) else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        return try WorkID(uuidString: raw)
+        try command.payload.workID
     }
 
     private func validateInbox(
@@ -284,20 +280,7 @@ extension SyncV2Application {
     }
 
     private func expectedRemoteHeadSnapshotID(_ command: SealedCommand) throws -> SnapshotID? {
-        guard let payload = try JSONSerialization.jsonObject(with: command.payloadBytes) as? [String: Any],
-              let raw = payload["expectedRemoteHead"] else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        if raw is NSNull {
-            return nil
-        }
-        guard let head = raw as? [String: Any],
-              Set(head.keys) == ["generation", "snapshotId"],
-              head["generation"] is NSNumber,
-              let snapshot = head["snapshotId"] as? String else {
-            throw SyncV2Failure.receiptMismatch
-        }
-        return try SnapshotID(rawValue: snapshot)
+        try command.payload.head("expectedRemoteHead")?.snapshotID
     }
 
     private func project(

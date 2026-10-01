@@ -84,8 +84,9 @@ struct ShallowHistoryCaptureTests {
             _ = await application.endAccountTransitionRemoteSuspension(suspension, resume: false)
             await application.setHistoryBackfillNetwork(online: true, constrained: true)
             let restore = HistoryFetchControls(application: application, workID: fixture.workID,
-                                               snapshotID: fixture.snapshots[0].snapshotId).presentingRestoreForCapture()
-            try await capture(NavigationStack { List { restore }.navigationTitle("スナップショット履歴") }, dark: dark,
+                                               snapshotID: fixture.snapshots[0].snapshotId,
+                                               rowDate: Date(timeIntervalSince1970: 1_780_000_000), rowKind: "手動保存").presentingRestoreForCapture()
+            try await capture(NavigationStack { List { restore }.navigationTitle("履歴") }, dark: dark,
                               url: directory.appendingPathComponent("restore-unfetched-\(suffix).png"))
             await application.setHistoryBackfillNetwork(online: true, constrained: false)
             try await fixture.local.setBackfillStatus(workID: fixture.workID, binding: fixture.binding, status: .paused, failureCode: "interrupted")
@@ -102,6 +103,7 @@ struct ShallowHistoryCaptureTests {
                 IOSProjectHomeView(store: fixture.store, openWriting: {}, openProjectInfo: {}, openPlot: {}, openCharacters: {},
                                    openWorldbuilding: {}, openFeedback: {}, openReferences: {}, openSettings: {})
             }
+            try await capture(home, dark: dark, url: directory.appendingPathComponent("work-home-\(suffix).png"))
             try await capture(home, dark: dark, url: directory.appendingPathComponent("conflict-waiting-\(suffix).png"), scrollToBottom: true)
         }
         _ = await application.beginAccountTransitionRemoteSuspension()

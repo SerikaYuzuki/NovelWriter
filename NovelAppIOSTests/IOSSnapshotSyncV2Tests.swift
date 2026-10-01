@@ -208,7 +208,7 @@ struct IOSSnapshotSyncV2Tests {
         #expect(await store.makeNewDocument())
         store.replaceAttachments([Attachment(fileName: "missing.pdf", byteCount: 12)])
         #expect(await store.checkpointSnapshotSyncV2(store.document, reason: .explicit) == false)
-        #expect(store.attachments.map(\.fileName) == ["missing.pdf"])
+        #expect(store.attachments.map { $0.fileName } == ["missing.pdf"])
         #expect(store.snapshotSyncOutcome == .failed)
     }
 
@@ -287,7 +287,7 @@ struct IOSSnapshotSyncV2Tests {
         await store.signOutFromFuminiwa()
 
         #expect(store.syncV2ActiveWorkID == workID)
-        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
     }
 
     @Test("世代が進んだeditor callbackは現在の本文へ混入しない")
@@ -414,7 +414,7 @@ extension IOSSnapshotSyncV2Tests {
             sourceGeneration: 1
         )
         await store.signOutFromFuminiwa()
-        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
         #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
         #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
         #expect(store.syncV2RemoteCatalogItems.isEmpty)

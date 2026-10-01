@@ -60,12 +60,12 @@ private func syncAttachment(_ name: String, _ bytes: [UInt8]) -> SyncAttachment 
     let imported = try await bridge.importExplicitPackage(from: source)
     #expect(imported.document == document)
     #expect(imported.documentCreatedAt == Date(timeIntervalSince1970: 1_709_210_096.789))
-    #expect(imported.attachments.map(\.fileName) == ["参考.txt", "画像.bin"])
+    #expect(imported.attachments.map { $0.fileName } == ["参考.txt", "画像.bin"])
     #expect(imported.attachments.allSatisfy { $0.byteCount == $0.bytes.count })
-    #expect(imported.resources.map(\.pathComponents) == [["orphan.dat"], ["snapshots"], ["snapshots", "legacy.bin"]])
+    #expect(imported.resources.map { $0.pathComponents } == [["orphan.dat"], ["snapshots"], ["snapshots", "legacy.bin"]])
 
     let repeated = try await bridge.importExplicitPackage(from: source)
-    #expect(imported.attachments.map(\.attachmentId) == repeated.attachments.map(\.attachmentId))
+    #expect(imported.attachments.map { $0.attachmentId } == repeated.attachments.map { $0.attachmentId })
 
     try await bridge.exportExplicitPackage(
         document: imported.document,
@@ -76,9 +76,9 @@ private func syncAttachment(_ name: String, _ bytes: [UInt8]) -> SyncAttachment 
     )
     let exported = try await bridge.importExplicitPackage(from: destination)
     #expect(exported.document == document)
-    #expect(exported.attachments.map(\.fileName) == imported.attachments.map(\.fileName))
-    #expect(exported.attachments.map(\.bytes) == imported.attachments.map(\.bytes))
-    #expect(exported.attachments.map(\.attachmentId) == imported.attachments.map(\.attachmentId))
+    #expect(exported.attachments.map { $0.fileName } == imported.attachments.map { $0.fileName })
+    #expect(exported.attachments.map { $0.bytes } == imported.attachments.map { $0.bytes })
+    #expect(exported.attachments.map { $0.attachmentId } == imported.attachments.map { $0.attachmentId })
     #expect(exported.documentCreatedAt == imported.documentCreatedAt)
     #expect(exported.resources == imported.resources)
 }

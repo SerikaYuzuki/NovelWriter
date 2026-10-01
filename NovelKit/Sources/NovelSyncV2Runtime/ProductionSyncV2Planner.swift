@@ -115,8 +115,8 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
             return try .command(SealedCommand.decodeCanonical(record.canonicalRequest))
         }
         let records = try await store.planningGuardCommands(scope: localScope, workID: workID)
-        if records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .quarantined }),
-           !records.contains(where: { $0.commandKind == "createWork" && $0.lifecycle == .completed }) {
+        if records.contains(where: { $0.kind == .createWork && $0.lifecycle == .quarantined }),
+           !records.contains(where: { $0.kind == .createWork && $0.lifecycle == .completed }) {
             return .blocked(.receiptMismatch)
         }
         let pending = try await store.pendingIntents(scope: localScope, workID: workID)
@@ -129,7 +129,7 @@ actor ProductionSyncV2Planner: SyncV2CommandPlanner {
         }
         return try await planPending(
             workID: workID, scope: localScope, pending: pending,
-            hasCreatedWork: records.contains { $0.commandKind == "createWork" && $0.lifecycle == .completed }
+            hasCreatedWork: records.contains { $0.kind == .createWork && $0.lifecycle == .completed }
         )
     }
 
@@ -267,7 +267,7 @@ private extension ProductionSyncV2Planner {
         if let object = view.snapshot.manifest.entries.map(\.objectId).first(where: { !progress.prepared.contains($0) &&
                 !remoteObjectPresence.contains(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: $0))
         }) {
-            let command = try makeObjectCommand(kind: "prepareObject", objectID: object, view: view)
+            let command = try makeObjectCommand(kind: .prepareObject, objectID: object, view: view)
             try await store.seal(command, scope: localScope)
             return .command(command)
         }
@@ -290,7 +290,7 @@ private extension ProductionSyncV2Planner {
                 return .blocked(.fatal(.invalidLocalState))
             }
             let command = try makeObjectCommand(
-                kind: "finalizeObject",
+                kind: .finalizeObject,
                 objectID: object,
                 view: view,
                 uploadID: currentTransfer(
@@ -331,8 +331,8 @@ private extension ProductionSyncV2Planner {
         var registered = false
         for record in records {
             guard presenceRevisions[workID, default: 0] == revision else { throw CancellationError() }
-            switch record.commandKind {
-            case "prepareObject":
+            switch record.kind {
+            case .prepareObject:
                 let object = try objectID(record)
                 if let transfer = try await store.uploadTransfer(commandID: record.commandID, scope: localScope) {
                     if transfer.expiresAt <= Date() {
@@ -356,11 +356,11 @@ private extension ProductionSyncV2Planner {
                         )
                     )
                 }
-            case "finalizeObject":
+            case .finalizeObject:
                 let object = try objectID(record)
                 finalized.insert(object)
                 remoteObjectPresence.insert(RemoteObjectPresenceKey(binding: view.binding, workID: workID, objectID: object))
-            case "registerSnapshot":
+            case .registerSnapshot:
                 registered = try commandSnapshotID(record) == view.snapshot.snapshotId
             default:
                 continue
@@ -389,7 +389,7 @@ private extension ProductionSyncV2Planner {
         }
         guard let target = candidates.first else { return nil }
         guard let prepare = records.reversed().first(where: {
-            $0.commandKind == "prepareObject" && (try? objectID($0)) == target
+            $0.kind == .prepareObject && (try? objectID($0)) == target
         }) else {
             return nil
         }
@@ -414,7 +414,7 @@ private extension ProductionSyncV2Planner {
         records: [V2SealedCommandRecord]
     ) -> SyncV2UploadTransfer? {
         guard let prepare = records.reversed().first(where: {
-            $0.commandKind == "prepareObject" && (try? self.objectID($0)) == objectID
+            $0.kind == .prepareObject && (try? self.objectID($0)) == objectID
         }) else { return nil }
         return transfers[
             transferSessionKey(for: prepare, objectID: objectID, view: view)
@@ -660,13 +660,7 @@ private extension ProductionSyncV2Planner {
 private extension SealedCommand {
     var workID: WorkID {
         get throws {
-            let object = try JSONSerialization.jsonObject(
-                with: payloadBytes
-            ) as? [String: Any]
-            let raw = object?["workId"] as? String ??
-                object?["sourceWorkId"] as? String
-            guard let raw else { throw SyncV2Failure.receiptMismatch }
-            return try WorkID(uuidString: raw)
+            try payload.workID
         }
     }
 }

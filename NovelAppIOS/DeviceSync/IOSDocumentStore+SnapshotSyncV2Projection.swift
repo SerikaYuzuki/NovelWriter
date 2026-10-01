@@ -91,7 +91,8 @@ extension IOSDocumentStore {
         workID: WorkID?,
         automaticAdoption: AutoAdoptionExpectation?,
         expectedAccountScope: IOSSnapshotSyncV2AccountScope,
-        resumesWorker: Bool
+        resumesWorker: Bool,
+        wakeReason: SyncV2WakeReason = .foreground
     ) {
         guard !isSyncV2RemoteAccountTransitionActive,
               snapshotSyncV2AccountScope == expectedAccountScope else { return }
@@ -107,7 +108,7 @@ extension IOSDocumentStore {
                 }
             }
             if resumesWorker {
-                try? await application.resumePending()
+                try? await application.wake(reason: wakeReason)
             }
             guard let self,
                   !isSyncV2RemoteAccountTransitionActive,

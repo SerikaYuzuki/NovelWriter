@@ -39,29 +39,14 @@ extension ProductionSyncV2RemoteClient {
             throw SyncV2Failure.receiptMismatch
         }
         let workID = try remoteClientWorkID(for: command)
-        try CanonicalJSON.validate(data)
-        guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(envelope.keys) == Set([
-                  "canonicalResponseBase64URL", "commandId", "commandKind", "originalResponseStatus",
-                  "originalResult", "readBack", "requestDigest", "result", "workId"
-              ]),
-              envelope["commandId"] as? String == command.commandId.uuidString.lowercased(),
-              envelope["commandKind"] as? String == command.commandKind,
-              envelope["requestDigest"] as? String == command.requestDigest.rawValue,
-              envelope["workId"] as? String == workID.description,
-              envelope["result"] as? String == "noChanges",
-              envelope["originalResult"] as? String == receipt.result.rawValue,
-              envelope["originalResponseStatus"] as? Int == receipt.responseStatus,
-              let encoded = envelope["canonicalResponseBase64URL"] as? String,
-              encoded == receipt.canonicalResponse.base64EncodedString()
-              .replacingOccurrences(of: "+", with: "-")
-              .replacingOccurrences(of: "/", with: "_")
-              .replacingOccurrences(of: "=", with: ""),
-              let predicates = envelope["readBack"] as? [String: Bool],
-              predicates == [
-                  "accountMatched": true, "commandDigestMatched": true, "resourceMatched": true,
-                  "headMatched": true, "stateMatched": true
-              ] else {
+        do {
+            _ = try validateSyncV2ReceiptEnvelope(
+                data, commandID: command.commandId, commandKind: command.commandKind,
+                requestDigest: command.requestDigest, workID: workID,
+                expectation: .response(status: receipt.responseStatus, result: receipt.result.rawValue,
+                                       canonicalBytes: receipt.canonicalResponse)
+            )
+        } catch SyncV2ReceiptValidationError.mismatch {
             throw SyncV2Failure.receiptMismatch
         }
         return SyncV2ReceiptReadback(

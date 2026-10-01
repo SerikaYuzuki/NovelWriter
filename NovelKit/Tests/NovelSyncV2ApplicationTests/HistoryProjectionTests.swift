@@ -4,7 +4,7 @@ import NovelSyncV2
 @testable import NovelSyncV2Application
 import Testing
 
-private actor HistoryProjectionRemote: SyncV2RemoteClient {
+actor HistoryProjectionRemote: SyncV2RemoteClient {
     var entries: [SyncV2RemoteHistoryEntry] = []
     var failure: SyncV2Failure?
 
@@ -34,7 +34,7 @@ private actor HistoryProjectionRemote: SyncV2RemoteClient {
     }
 }
 
-private actor BlockingHistoryProjectionRemote: SyncV2RemoteClient {
+actor BlockingHistoryProjectionRemote: SyncV2RemoteClient {
     private var continuation: CheckedContinuation<SyncV2RemoteHistoryPage, Error>?
     private var entered = false
 
@@ -144,8 +144,8 @@ func applicationHistoryDoesNotMergeSameSnapshotOccurrences() async throws {
 
     let page = try await app.historyPage(workID: workID, pageSize: 10)
     #expect(page.items.count == 2)
-    #expect(Set(page.items.map(\.source)) == [.local, .remote])
-    #expect(Set(page.items.map(\.occurrenceID)).count == 2)
+    #expect(Set(page.items.map { $0.source }) == [.local, .remote])
+    #expect(Set(page.items.map { $0.occurrenceID }).count == 2)
     #expect(page.items.allSatisfy { $0.snapshotID == snapshotID })
 }
 

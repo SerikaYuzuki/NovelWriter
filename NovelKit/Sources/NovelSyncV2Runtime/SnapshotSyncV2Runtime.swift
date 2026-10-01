@@ -209,7 +209,7 @@ enum ProductionStoreFactory {
     }
 }
 
-private actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
+actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
     func execute(
         _ operation: SyncV2RemoteOperation
     ) async throws -> SyncV2RemoteExecution {
@@ -218,7 +218,7 @@ private actor PreviewSyncV2RemoteClient: SyncV2RemoteClient {
     }
 }
 
-private actor OfflineProductionSyncV2RemoteClient: SyncV2RemoteClient {
+actor OfflineProductionSyncV2RemoteClient: SyncV2RemoteClient {
     func execute(_ operation: SyncV2RemoteOperation) async throws -> SyncV2RemoteExecution {
         _ = operation
         throw SyncV2Failure.authenticationRequired

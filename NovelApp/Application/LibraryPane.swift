@@ -464,8 +464,8 @@ private struct SnapshotHistorySheet: View {
     let dismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("スナップショット履歴")
+        VStack(alignment: .leading, spacing: Spacing.medium) {
+            Text("履歴")
                 .font(.title2.weight(.semibold))
             if appState.snapshotSyncHistory.isEmpty {
                 ContentUnavailableView(
@@ -475,42 +475,41 @@ private struct SnapshotHistorySheet: View {
                 )
             } else {
                 List(appState.snapshotSyncHistory, id: \.occurrenceID) { entry in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.displayReason)
-                            Text(entry.createdAt.formatted(date: .abbreviated, time: .standard))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(entry.source == .local ? "端末" : "オンライン")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if entry.pinned {
-                            Label("保持", systemImage: "pin.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let application = appState.snapshotSyncV2Application,
-                           let workID = appState.currentSnapshotSyncV2WorkID {
-                            let session = appState.documentSessionToken
-                            let scope = appState.snapshotSyncV2AccountScopeToken
-                            HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
-                                                 announcesStatus: entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID) {
-                                guard appState.documentSessionToken == session,
-                                      appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
-                                if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
-                                    dismiss()
-                                }
+                    if let application = appState.snapshotSyncV2Application,
+                       let workID = appState.currentSnapshotSyncV2WorkID {
+                        let session = appState.documentSessionToken
+                        let scope = appState.snapshotSyncV2AccountScopeToken
+                        HistoryFetchControls(application: application, workID: workID, snapshotID: entry.snapshotID,
+                                             rowDate: entry.createdAt,
+                                             rowKind: entry.displayReason + (entry.pinned ? "・保持" : ""),
+                                             announcesStatus: entry.occurrenceID == appState.snapshotSyncHistory.first?.occurrenceID) {
+                            guard appState.documentSessionToken == session,
+                                  appState.matchesSnapshotSyncV2AccountScope(scope) else { return }
+                            if await appState.restoreSnapshotV2(snapshotID: entry.snapshotID) {
+                                dismiss()
                             }
                         }
+                        .surfaceCard()
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    } else {
+                        VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                            Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            Text(entry.displayReason).font(FuminiwaType.rowSecondary)
+                        }
+                        .surfaceCard()
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
             Button("閉じる", action: dismiss)
                 .buttonStyle(.borderless)
         }
-        .padding(24)
+        .padding(Spacing.large)
+        .background(FuminiwaColor.paper.color)
         .frame(minWidth: 460, minHeight: 300)
         .accessibilityIdentifier("snapshotSyncV2.historySheet")
         .onChange(of: appState.documentSessionToken) { _, _ in dismiss() }

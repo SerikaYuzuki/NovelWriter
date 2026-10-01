@@ -36,7 +36,7 @@ private extension LocalSyncV2Store {
     func retryInitialCreateWork(workID: WorkID, scope: V2LocalWorkScope) throws {
         let records = try allSealedCommands(scope: scope, workID: workID)
         guard !records.isEmpty,
-              records.allSatisfy({ $0.commandKind == "createWork" && $0.lifecycle == .quarantined }),
+              records.allSatisfy({ $0.kind == .createWork && $0.lifecycle == .quarantined }),
               let first = records.first else { return }
         try transitionCommand(commandID: first.commandID, scope: scope, from: ["quarantined"], to: "sealed")
     }
@@ -50,7 +50,7 @@ private extension LocalSyncV2Store {
         guard let intent = intents.first, intent.status == "sealed" else { return }
         let records = try allSealedCommands(scope: scope, workID: workID)
         guard let command = records.first(where: {
-            $0.commandKind == "publish" && $0.lifecycle == .quarantined &&
+            $0.kind == .publish && $0.lifecycle == .quarantined &&
                 $0.intentID == intent.intentID && $0.sourceSnapshotID == intent.sourceSnapshotID &&
                 $0.sourceGeneration == intent.sourceGeneration
         }) else { return }

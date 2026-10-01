@@ -502,7 +502,7 @@ func fenceRotationQuarantinesAndDifferentAccountParksWithoutRebinding() async th
     )
     try await store.rebindWork(workID: workID, from: bindingA, to: rotated)
     #expect(try await store.listWorks(scope: scopeA).isEmpty)
-    #expect(try await store.listWorks(scope: .bound(rotated)).map(\.workID) == [workID])
+    #expect(try await store.listWorks(scope: .bound(rotated)).map { $0.workID } == [workID])
     #expect(try await store.pendingSealedCommands(scope: scopeA).isEmpty)
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
 

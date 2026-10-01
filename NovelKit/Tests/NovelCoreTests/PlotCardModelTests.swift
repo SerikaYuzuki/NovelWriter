@@ -54,7 +54,7 @@ import Testing
 
     doc.movePlotCards(fromOffsets: IndexSet(integer: 0), toOffset: 3)
 
-    #expect(doc.plotCards.map(\.id) == [second.id, third.id, first.id])
+    #expect(doc.plotCards.map { $0.id } == [second.id, third.id, first.id])
 }
 
 @Test func removingChapterClearsPlotCardChapterLink() {
@@ -88,7 +88,7 @@ import Testing
 
     doc.movePlotCard(id: first.id, toChapter: secondChapter.id, before: third.id)
 
-    #expect(doc.plotCards.map(\.id) == [second.id, first.id, third.id])
+    #expect(doc.plotCards.map { $0.id } == [second.id, first.id, third.id])
     #expect(doc.plotCards[1].chapterID == secondChapter.id)
 }
 
@@ -110,6 +110,6 @@ import Testing
 
     doc.movePlotCard(id: first.id, toChapter: chapter.id, before: first.id)
 
-    #expect(doc.plotCards.map(\.id) == [first.id, second.id])
+    #expect(doc.plotCards.map { $0.id } == [first.id, second.id])
     #expect(doc.plotCards[0].chapterID == chapter.id)
 }

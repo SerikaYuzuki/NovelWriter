@@ -183,7 +183,7 @@ struct WorkerRaceTests {
     }
 }
 
-private actor IdleRacePlanner: SyncV2CommandPlanner {
+actor IdleRacePlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var isFirst = true
     private var firstReadSuspended = false
@@ -249,7 +249,7 @@ private actor IdleRacePlanner: SyncV2CommandPlanner {
     }
 }
 
-private actor MismatchedReceiptRemote: SyncV2RemoteClient {
+actor MismatchedReceiptRemote: SyncV2RemoteClient {
     func execute(
         _ operation: SyncV2RemoteOperation
     ) throws -> SyncV2RemoteExecution {
@@ -276,7 +276,7 @@ private actor MismatchedReceiptRemote: SyncV2RemoteClient {
     }
 }
 
-private actor NonCooperativeRemote: SyncV2RemoteClient {
+actor NonCooperativeRemote: SyncV2RemoteClient {
     private struct Pending {
         let operation: SyncV2RemoteOperation
         let continuation: CheckedContinuation<SyncV2RemoteExecution, Error>
@@ -353,7 +353,7 @@ private actor NonCooperativeRemote: SyncV2RemoteClient {
     }
 }
 
-private actor CountingPlanner: SyncV2CommandPlanner {
+actor CountingPlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var acknowledgements = 0
     private var failures = 0

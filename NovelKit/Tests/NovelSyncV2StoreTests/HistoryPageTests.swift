@@ -57,7 +57,7 @@ func localHistoryPageIsNewestFirstStableAndScoped() async throws {
         cursor: tail,
         pageSize: 1
     )
-    #expect(next.items.map(\.snapshotID) == [first.snapshotID])
+    #expect(next.items.map { $0.snapshotID } == [first.snapshotID])
 
     let foreign = V2LocalWorkScope.bound(
         V2AccountBinding(

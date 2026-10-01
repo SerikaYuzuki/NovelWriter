@@ -8,7 +8,7 @@ extension AppState {
               let workID = currentSnapshotSyncV2WorkID else { return }
         let session = documentSessionToken
         let account = snapshotSyncV2AccountScopeToken
-        await application.runAutomaticSynchronization(workID: workID) { [weak self] in
+        await application.observeForegroundSynchronization(workID: workID) { [weak self] in
             await self?.refreshAutomaticSnapshotSyncV2(session: session, account: account)
         }
     }

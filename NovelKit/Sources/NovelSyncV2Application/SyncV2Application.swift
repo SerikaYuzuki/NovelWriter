@@ -28,6 +28,9 @@ public actor SyncV2Application {
     let promotionClock: SyncV2PromotionClock
     var stateChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     var automaticChecks: Set<WorkID> = []
+    var lifecycleWake: SyncV2WakeFlight?
+    var foregroundObservations: [WorkID: SyncV2ForegroundObservation] = [:]
+    let automaticSyncSleep: @Sendable (UInt64) async throws -> Void
     var syncDiagnostics: [WorkID: String] = [:]
     let writingStore: (any WritingLocalPersistence)?
     var writingSyncOwners: [String: UUID] = [:]
@@ -97,7 +100,8 @@ public actor SyncV2Application {
         mode: RuntimeMode,
         composition: SyncV2RuntimeComposition,
         remoteOnlyImportTimeout: Duration = .seconds(60),
-        promotionClock: SyncV2PromotionClock = .live
+        promotionClock: SyncV2PromotionClock = .live,
+        automaticSyncSleep: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }
     ) throws {
         let valid = switch (mode, composition.identity) {
         case (.production, .production), (.test, .test), (.preview, .preview):
@@ -106,6 +110,7 @@ public actor SyncV2Application {
             false
         }
         guard valid else { throw SyncV2ApplicationError.invalidRuntimeMode }
+        self.automaticSyncSleep = automaticSyncSleep
         self.promotionClock = promotionClock
         self.remoteOnlyImportTimeout = remoteOnlyImportTimeout
         writingStore = composition.writingStore

@@ -93,8 +93,8 @@ func sealedIntentCannotUseLineageAsAReceipt() async throws {
 
     let opened = try await store.open(workID: workID, scope: scopeA)
     #expect(opened.summary.currentSnapshotID == local.snapshotID)
-    #expect(try await store.pendingIntents(scope: scopeA).map(\.intentID) == [intentID])
-    #expect(try await store.pendingSealedCommands(scope: scopeA).map(\.commandID) == [
+    #expect(try await store.pendingIntents(scope: scopeA).map { $0.intentID } == [intentID])
+    #expect(try await store.pendingSealedCommands(scope: scopeA).map { $0.commandID } == [
         command.commandId
     ])
 }
@@ -151,7 +151,7 @@ func concurrentEditAndSubsumptionPreserveExactlyOneCurrentBranch() async throws 
         let edit = try #require(edit)
         #expect(opened.document?.title == "local concurrent edit")
         #expect(opened.summary.currentSnapshotID == edit.snapshotID)
-        #expect(pending.map(\.sourceSnapshotID) == [edit.snapshotID])
+        #expect(pending.map { $0.sourceSnapshotID } == [edit.snapshotID])
     }
 }
 

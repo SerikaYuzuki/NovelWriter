@@ -5,16 +5,16 @@ import NovelSyncV2Store
 
 extension ProductionSyncV2Planner {
     func makeCreateWork(_ view: V2ImmutableTransferView) throws -> SealedCommand {
-        try makeCommand(kind: "createWork", payload: CreateWorkPayload(documentId: view.summary.documentID.description, workId: view.workID.description), view: view)
+        try makeCommand(kind: .createWork, payload: CreateWorkPayload(documentId: view.summary.documentID.description, workId: view.workID.description), view: view)
     }
 
     func makeObjectCommand(
-        kind: String,
+        kind: SyncV2CommandKind,
         objectID: ObjectID,
         view: V2ImmutableTransferView,
         uploadID: UUID? = nil
     ) throws -> SealedCommand {
-        if kind == "prepareObject" {
+        if kind == .prepareObject {
             return try makeCommand(
                 kind: kind,
                 payload: PrepareObjectPayload(
@@ -40,7 +40,7 @@ extension ProductionSyncV2Planner {
 
     func makeRegister(_ view: V2ImmutableTransferView) throws -> SealedCommand {
         try makeCommand(
-            kind: "registerSnapshot",
+            kind: .registerSnapshot,
             payload: RegisterSnapshotPayload(
                 manifestBase64URL: view.snapshot.manifestBytes.base64URLEncodedString(),
                 manifestBytesDigest: view.snapshot.snapshotId.rawValue,
@@ -70,7 +70,7 @@ extension ProductionSyncV2Planner {
 
     func makeResolveServer(_ view: V2ImmutableTransferView, conflict: V2ConflictCandidate) throws -> SealedCommand {
         try makeCommand(
-            kind: "resolveServer",
+            kind: .resolveServer,
             payload: ResolveServerPayload(
                 conflictId: conflict.conflictID.uuidString.lowercased(),
                 conflictRevision: conflict.revision,
@@ -137,14 +137,14 @@ extension ProductionSyncV2Planner {
     }
 
     func makeCommand(
-        kind: String,
+        kind: SyncV2CommandKind,
         payload: some Encodable,
         view: V2ImmutableTransferView
     ) throws -> SealedCommand {
         let envelope = CommandEnvelope(
             binding: CommandBinding(binding: view.binding),
             commandId: UUID().uuidString.lowercased(),
-            commandKind: kind,
+            commandKind: kind.rawValue,
             payload: payload,
             schemaVersion: 2,
             sourceGeneration: view.sourceGeneration,
@@ -154,23 +154,11 @@ extension ProductionSyncV2Planner {
     }
 
     func objectID(_ record: V2SealedCommandRecord) throws -> ObjectID {
-        let object = try JSONSerialization.jsonObject(with: record.canonicalRequest)
-        guard let dictionary = object as? [String: Any],
-              let payload = dictionary["payload"] as? [String: Any],
-              let raw = payload["objectId"] as? String else {
-            throw SyncV2Failure.fatal(.invalidLocalState)
-        }
-        return try ObjectID(rawValue: raw)
+        try SealedCommand.decodeCanonical(record.canonicalRequest).payload.object("objectId")
     }
 
     func commandSnapshotID(_ record: V2SealedCommandRecord) throws -> SnapshotID {
-        let object = try JSONSerialization.jsonObject(with: record.canonicalRequest)
-        guard let dictionary = object as? [String: Any],
-              let payload = dictionary["payload"] as? [String: Any],
-              let raw = payload["snapshotId"] as? String else {
-            throw SyncV2Failure.fatal(.invalidLocalState)
-        }
-        return try SnapshotID(rawValue: raw)
+        try SealedCommand.decodeCanonical(record.canonicalRequest).payload.snapshot("snapshotId")
     }
 }
 

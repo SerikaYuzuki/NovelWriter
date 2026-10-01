@@ -14,9 +14,8 @@ public struct SyncV2AutomaticSyncCandidate: Sendable {
 }
 
 public extension SyncV2Application {
-    /// The foreground view owns cancellation. No network request is awaited by
-    /// an editor gate. The callback only reprojects local state / verified Inbox.
-    func runAutomaticSynchronization(
+    /// Application-owned cadence: 10 seconds normally, 60 after a read failure.
+    internal func pollForeground(
         workID: WorkID,
         refresh: @Sendable () async -> Void
     ) async {
@@ -33,7 +32,7 @@ public extension SyncV2Application {
             guard !Task.isCancelled else { return }
             await refresh()
             do {
-                try await Task.sleep(nanoseconds: delay)
+                try await automaticSyncSleep(delay)
             } catch { return }
         }
     }

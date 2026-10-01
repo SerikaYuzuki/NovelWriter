@@ -111,7 +111,7 @@ struct MacTextAdapterContextMenuTests {
 
         #expect(menu.items.first?.title == "標準コピー")
         #expect(separatorStates.contains(true))
-        #expect(items.map(\.title) == ["校正用プロンプトをコピー", "アドバイス用プロンプトをコピー"])
+        #expect(items.map { $0.title } == ["校正用プロンプトをコピー", "アドバイス用プロンプトをコピー"])
         #expect(enabledStates == [true, true])
     }
 
@@ -254,7 +254,7 @@ struct MacTextAdapterContextMenuTests {
         ))
 
         #expect(returnedMenu === standardMenu)
-        #expect(returnedMenu.items.map(\.title) == ["標準コピー"])
+        #expect(returnedMenu.items.map { $0.title } == ["標準コピー"])
     }
 }
 #endif

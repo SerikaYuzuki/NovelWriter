@@ -13,7 +13,7 @@ extension IOSDocumentStore {
               let application = snapshotSyncV2Application else { return }
         let session = currentDocumentSessionToken
         let account = snapshotSyncV2AccountScope
-        await application.runAutomaticSynchronization(workID: workID) { [weak self] in
+        await application.observeForegroundSynchronization(workID: workID) { [weak self] in
             await self?.refreshAutomaticSnapshotSyncV2(session: session, account: account)
         }
     }
@@ -24,7 +24,7 @@ extension IOSDocumentStore {
         guard !Task.isCancelled, currentDocumentSessionToken == session,
               snapshotSyncV2AccountScope == account,
               snapshotSyncV2ReprojectionTask == nil else { return }
-        await resumeSnapshotSyncV2()
+        await resumeSnapshotSyncV2(reason: nil)
     }
 
     @discardableResult
@@ -89,7 +89,7 @@ extension IOSDocumentStore {
         }
     }
 
-    func resumeSnapshotSyncV2() async {
+    func resumeSnapshotSyncV2(reason: SyncV2WakeReason? = .foreground) async {
         guard !isSnapshotSyncInFlight, !isSyncV2RemoteAccountTransitionActive,
               let application = snapshotSyncV2Application else { return }
         let resumedWorkID = syncV2ActiveWorkID
@@ -120,7 +120,8 @@ extension IOSDocumentStore {
             workID: resumedWorkID,
             automaticAdoption: automaticAdoption,
             expectedAccountScope: expectedAccountScope,
-            resumesWorker: true
+            resumesWorker: reason != nil,
+            wakeReason: reason ?? .foreground
         )
     }
 

@@ -41,7 +41,7 @@ struct WorkerProgressTests {
     }
 }
 
-private actor CompletionReadPlanner: SyncV2CommandPlanner {
+actor CompletionReadPlanner: SyncV2CommandPlanner {
     private let base: InMemorySyncV2RuntimeState
     private var receiptAcknowledged = false
     private var didPause = false

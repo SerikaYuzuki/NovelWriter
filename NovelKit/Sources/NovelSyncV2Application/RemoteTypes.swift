@@ -168,29 +168,14 @@ public struct SyncV2RemoteHistoryPage: Hashable, Sendable {
     }
 }
 
-public enum SyncV2RemoteOperationKind: String, CaseIterable, Equatable, Sendable {
-    case createWork
-    case prepareObject
-    case finalizeObject
-    case registerSnapshot
-    case publish
-    case resolveDevice
-    case resolveServer
-    case cloneWork
-    case restore
-}
+public typealias SyncV2RemoteOperationKind = SyncV2CommandKind
 
 public struct SyncV2SealedRemoteCommand: Sendable {
     public let kind: SyncV2RemoteOperationKind
     public let command: SealedCommand
 
     public init(command: SealedCommand) throws {
-        guard let kind = SyncV2RemoteOperationKind(
-            rawValue: command.commandKind
-        ) else {
-            throw SyncV2Failure.fatal(.unsupportedCommand)
-        }
-        self.kind = kind
+        kind = command.kind
         self.command = command
     }
 }

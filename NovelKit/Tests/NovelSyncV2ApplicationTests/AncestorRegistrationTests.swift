@@ -61,7 +61,7 @@ func offlineCheckpointsRegisterParents(restartEveryStep: Bool) async throws {
                 let manifest = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
                 let parents = try #require(manifest["parentSnapshotIds"] as? [String])
                 // Same prerequisites as the server's registration transaction.
-                #expect(Set(parents).isSubset(of: Set(registered.map(\.rawValue))))
+                #expect(Set(parents).isSubset(of: Set(registered.map { $0.rawValue })))
                 let entries = try #require(manifest["entries"] as? [[String: Any]])
                 for entry in entries {
                     let rawObject = try #require(entry["objectId"] as? String)

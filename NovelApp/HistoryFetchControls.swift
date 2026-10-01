@@ -9,6 +9,8 @@ struct HistoryFetchControls: View {
     let workID: WorkID
     let snapshotID: SnapshotID?
     var progressNote: String?
+    var rowDate: Date?
+    var rowKind: String?
     var announcesStatus = true
     var restore: (() async -> Void)?
     @State private var state: SyncV2HistoryFetchState = .paused
@@ -17,13 +19,34 @@ struct HistoryFetchControls: View {
     @State private var confirmsNetwork = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.small) {
-            if !available {
-                status()
-            }
-            if snapshotID != nil {
-                Button("復元") { showsRestore = true }
-                    .accessibilityHint(available ? "選んだ版への復元を確認します" : SyncV2HistoryFetchState.restoreNotice)
+        Group {
+            if let rowDate, let rowKind {
+                HStack(spacing: Spacing.group) {
+                    VStack(alignment: .leading, spacing: Spacing.extraSmall) {
+                        Text(rowDate.formatted(date: .abbreviated, time: .shortened))
+                            .font(.body)
+                            .foregroundStyle(FuminiwaColor.textPrimary.color)
+                        Text(rowKind)
+                            .font(FuminiwaType.rowSecondary)
+                            .foregroundStyle(FuminiwaColor.textSecondary.color)
+                        if !available {
+                            Text(state == .running ? progressNote ?? state.label : state.label)
+                                .font(.caption)
+                                .foregroundStyle(FuminiwaColor.textSecondary.color)
+                        }
+                    }
+                    Spacer(minLength: Spacing.small)
+                    restoreButton
+                }
+            } else {
+                VStack(alignment: .leading, spacing: Spacing.small) {
+                    if !available {
+                        status()
+                    }
+                    if snapshotID != nil {
+                        restoreButton
+                    }
+                }
             }
         }
         .sheet(isPresented: $showsRestore) {
@@ -49,8 +72,10 @@ struct HistoryFetchControls: View {
                 Button("キャンセル", role: .cancel) { showsRestore = false }
             }
             .padding(Spacing.large)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(FuminiwaColor.paper.color)
             #if os(iOS)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.medium])
             #endif
                 .confirmationDialog("古い履歴を取得しますか？", isPresented: $confirmsNetwork) {
                     Button("オンラインで取得") { Task { await fetch(confirmed: true) } }
@@ -80,6 +105,16 @@ struct HistoryFetchControls: View {
                 AccessibilityNotification.Announcement("履歴を取得しました。復元できます。").post()
             }
         }
+    }
+
+    private var restoreButton: some View {
+        Button("復元") { showsRestore = true }
+            .buttonStyle(.borderless)
+            .foregroundStyle(FuminiwaColor.accent.color)
+        #if os(iOS)
+            .frame(minWidth: 44, minHeight: 44)
+        #endif
+            .accessibilityHint(available ? "選んだ版への復元を確認します" : SyncV2HistoryFetchState.restoreNotice)
     }
 
     private func status(showAction: Bool = true) -> some View {

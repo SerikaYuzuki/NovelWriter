@@ -166,7 +166,8 @@ struct WorkbenchVisualTests {
         try await Task.sleep(for: .milliseconds(400))
         #expect(descendants(host).contains { $0 === editor })
         #expect(host.bounds.maxX - editor.convert(editor.bounds, to: host).maxX >= 300)
-        #expect(try #require(editor.enclosingScrollView).bounds.height > 150)
+        let editorScrollView = try #require(editor.enclosingScrollView)
+        #expect(editorScrollView.bounds.height > 150)
         try await snapshot(host, path: "/tmp/fuminiwa-assistant-bottom.png")
         NotificationCenter.default.post(name: .toggleWritingAssistant, object: nil)
         try await Task.sleep(for: .milliseconds(400))
@@ -227,7 +228,7 @@ struct WorkbenchVisualTests {
         let second = makeWindow()
         defer { second.close() }
         try await Task.sleep(for: .milliseconds(250))
-        #expect(second.toolbar?.items.map(\.itemIdentifier) == customized)
+        #expect(second.toolbar?.items.map { $0.itemIdentifier } == customized)
         search.focusSearchField()
         try await Task.sleep(for: .milliseconds(100))
         let field = try #require(second.toolbar?.items.first(where: { $0.itemIdentifier == searchID })?.view)

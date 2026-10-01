@@ -49,26 +49,8 @@ public protocol SyncV2CommandPlanner: Sendable {
     ) async throws
     func acknowledgeUpload(_ completion: SyncV2UploadCompletion) async throws
     /// Invalidates process-local planning caches after a durable account or
-    /// Work transition. The default keeps lightweight/fake planners compatible.
+    /// Work transition. Implementations without process-local caches need no work.
     func invalidateCaches(for workIDs: Set<WorkID>) async
-}
-
-public extension SyncV2CommandPlanner {
-    func requestSynchronization(workID _: WorkID) async throws {}
-
-    func automaticSyncCandidate(workID _: WorkID) async throws -> SyncV2AutomaticSyncCandidate? {
-        nil
-    }
-
-    func requestAutomaticSynchronization(workID _: WorkID, candidate _: SyncV2AutomaticSyncCandidate) async throws -> Bool {
-        false
-    }
-
-    func pendingWorkIDs() async throws -> [WorkID] {
-        []
-    }
-
-    func invalidateCaches(for _: Set<WorkID>) async {}
 }
 
 /// A closed semantic client. Its production adapter performs the typed v2
@@ -91,47 +73,6 @@ public protocol SyncV2RemoteClient: Sendable {
     func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead?
     func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage
     func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection?
-}
-
-public extension SyncV2RemoteClient {
-    func backfillHistory(workID: WorkID, manual _: Bool, allowConstrained _: Bool = false, progress: @escaping @Sendable () async -> Void) async throws {
-        try await backfillHistory(workID: workID, progress: progress)
-    }
-
-    func backfillWorkIDs() async throws -> [WorkID] {
-        []
-    }
-
-    func backfillHistory(workID _: WorkID, progress _: @escaping @Sendable () async -> Void) async throws {}
-
-    func deleteWork(workID _: WorkID, binding _: SyncV2AccountScopeBinding) async throws {
-        throw SyncV2Failure.fatal(.unexpected)
-    }
-
-    func downloadRemoteOnly(workID: WorkID) async throws -> SyncV2RemoteInbox {
-        _ = workID
-        throw SyncV2ApplicationError.workNotFound
-    }
-
-    func catalogPage(cursor: String?, pageSize: Int) async throws -> SyncV2RemoteCatalogPage {
-        _ = cursor; _ = pageSize
-        throw SyncV2Failure.authenticationRequired
-    }
-
-    func remoteHead(workID: WorkID) async throws -> SyncV2RemoteHead? {
-        _ = workID
-        throw SyncV2Failure.authenticationRequired
-    }
-
-    func historyPage(workID: WorkID, cursor: String?, pageSize: Int) async throws -> SyncV2RemoteHistoryPage {
-        _ = workID; _ = cursor; _ = pageSize
-        throw SyncV2Failure.authenticationRequired
-    }
-
-    func remoteConflict(workID: WorkID) async throws -> SyncV2ConflictProjection? {
-        _ = workID
-        throw SyncV2Failure.authenticationRequired
-    }
 }
 
 public protocol SyncV2LocalKernel: Sendable {
@@ -206,42 +147,7 @@ public protocol SyncV2LocalKernel: Sendable {
     ) async throws -> SyncV2OpenedWork
 }
 
-public extension SyncV2LocalKernel {
-    func currentGeneration(workID: WorkID) async throws -> Int64 {
-        try await open(workID: workID).generation
-    }
-
-    func prepareWorkDeletion(workID _: WorkID) async throws -> SyncV2WorkDeletion {
-        throw SyncV2ApplicationError.safeBoundaryRejected
-    }
-
-    func completeWorkDeletion(_: SyncV2WorkDeletion) async throws {
-        throw SyncV2ApplicationError.safeBoundaryRejected
-    }
-
-    func workDeletions() async throws -> [SyncV2WorkDeletion] {
-        []
-    }
-}
-
-public extension SyncV2LocalKernel {
-    func oldestUnreceivedChange(workID _: WorkID) async throws -> Date? {
-        nil
-    }
-}
-
-public extension SyncV2LocalKernel {
-    func rescueLocalWork(sourceWorkID _: WorkID, newWorkID _: WorkID, newDocumentID _: DocumentID) async throws -> SyncV2OpenedWork {
-        throw SyncV2ApplicationError.safeBoundaryRejected
-    }
-}
-
-public extension SyncV2LocalKernel {
-    func historyFetchState(workID _: WorkID) async throws -> SyncV2HistoryFetchState {
-        .complete
-    }
-
-    func snapshotAvailability(workID _: WorkID, snapshotID _: SnapshotID) async throws -> SyncV2SnapshotAvailability {
-        .local
-    }
+public extension SyncV2CommandPlanner {
+    /// Correct no-op for planners that keep no process-local caches.
+    func invalidateCaches(for _: Set<WorkID>) async {}
 }

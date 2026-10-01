@@ -538,7 +538,8 @@ func makeMacConflictFixture(
     remoteBehavior: FakeSyncV2RemoteClient.Behavior,
     committedText: String? = nil,
     committedCapture: EditorCommittedTextCaptureResult? = nil,
-    afterStagedRemote: SnapshotSyncV2AfterStagedRemoteOverride? = nil
+    afterStagedRemote: SnapshotSyncV2AfterStagedRemoteOverride? = nil,
+    checkpointOverride: SnapshotSyncV2CheckpointOverride? = nil
 ) async throws -> MacConflictFixture {
     let configuration = try TestRuntimeConfiguration()
     let kernel = try await makeMacConflictKernel(configuration: configuration)
@@ -555,6 +556,7 @@ func makeMacConflictFixture(
         snapshotSyncV2DocumentGate: MacSyncV2DocumentGate()
     )
     dependencies.snapshotSyncV2AfterStagedRemoteOverride = afterStagedRemote
+    dependencies.snapshotSyncV2CheckpointOverride = checkpointOverride
     let state = AppState(dependencies: dependencies, initialStartupState: .ready)
     state.snapshotSyncV2Application = kernel.application
     state.authSession = makeMacV2Session(accountID: "test-account", fence: "test-fence")

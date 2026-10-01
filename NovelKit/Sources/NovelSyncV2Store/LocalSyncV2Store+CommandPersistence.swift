@@ -4,7 +4,7 @@ import NovelSyncV2
 extension LocalSyncV2Store {
     func persistSealedCommand(
         _ command: SealedCommand,
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         workID: WorkID,
         scope: V2LocalWorkScope,
         binding: V2AccountBinding,
@@ -78,12 +78,12 @@ extension LocalSyncV2Store {
 
     private func linkPreparedAction(
         _ command: SealedCommand,
-        payload: [String: Any],
+        payload: SyncV2CommandPayload,
         workID: WorkID,
         intentID: UUID?
     ) throws {
-        switch command.commandKind {
-        case "restore":
+        switch command.kind {
+        case .restore:
             guard let intentID else { throw SyncV2StoreError.invalidCommand }
             try exec(
                 """
@@ -95,7 +95,7 @@ extension LocalSyncV2Store {
                     .text(intentID.uuidString.lowercased())
                 ]
             )
-        case "cloneWork":
+        case .cloneWork:
             try exec(
                 """
                 UPDATE pending_keep_both SET command_id=?,state='sealed'
@@ -161,7 +161,7 @@ extension LocalSyncV2Store {
         try insertReceipt(acknowledgement, record: record, binding: binding)
         if successful {
             try acknowledgeLinkedIntent(record)
-            if ["resolveDevice", "cloneWork"].contains(record.commandKind) {
+            if [.resolveDevice, .cloneWork].contains(record.kind) {
                 try reopenNewerCheckpointIntents(
                     workID: record.workID,
                     afterGeneration: record.sourceGeneration,
@@ -175,7 +175,7 @@ extension LocalSyncV2Store {
         _ acknowledgement: DecodedCommandAcknowledgement,
         record: V2SealedCommandRecord
     ) throws {
-        guard record.commandKind == "cloneWork" || acknowledgement.cloneRemoteHead == nil else {
+        guard record.kind == .cloneWork || acknowledgement.cloneRemoteHead == nil else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
         switch acknowledgement.result {
@@ -187,24 +187,24 @@ extension LocalSyncV2Store {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
         case .conflictPending:
-            guard record.commandKind == "publish",
+            guard record.kind == .publish,
                   acknowledgement.remoteHead != nil,
                   acknowledgement.cloneRemoteHead == nil else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
         case .applied, .noChanges:
-            if record.commandKind == "publish", acknowledgement.result == .noChanges {
+            if record.kind == .publish, acknowledgement.result == .noChanges {
                 guard acknowledgement.remoteHead != nil else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
-            } else if ["publish", "restore"].contains(record.commandKind) {
+            } else if [.publish, .restore].contains(record.kind) {
                 let localSnapshot = try receiptLocalSnapshot(record)
                 guard let remoteHead = acknowledgement.remoteHead,
                       remoteHead.snapshotID == localSnapshot else {
                     throw SyncV2StoreError.invalidAcknowledgement
                 }
             }
-            if record.commandKind == "cloneWork" {
+            if record.kind == .cloneWork {
                 guard acknowledgement.remoteHead != nil,
                       acknowledgement.cloneRemoteHead != nil else {
                     throw SyncV2StoreError.invalidAcknowledgement
@@ -219,18 +219,18 @@ extension LocalSyncV2Store {
         successful: Bool
     ) throws {
         guard successful else { return }
-        switch record.commandKind {
-        case "resolveServer":
+        switch record.kind {
+        case .resolveServer:
             guard let remoteHead = acknowledgement.remoteHead else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
             try finalizeUseServerAcknowledgement(record: record, remoteHead: remoteHead)
-        case "resolveDevice":
+        case .resolveDevice:
             guard let remoteHead = acknowledgement.remoteHead else {
                 throw SyncV2StoreError.invalidAcknowledgement
             }
             try finalizeUseDeviceAcknowledgement(record: record, remoteHead: remoteHead)
-        case "cloneWork":
+        case .cloneWork:
             guard let originalHead = acknowledgement.remoteHead,
                   let cloneHead = acknowledgement.cloneRemoteHead else {
                 throw SyncV2StoreError.invalidAcknowledgement
@@ -253,7 +253,7 @@ extension LocalSyncV2Store {
         guard let head = acknowledgement.remoteHead else { return }
         try applyRemoteHead(head, workID: record.workID)
         guard successful,
-              ["publish", "resolveDevice", "restore"].contains(record.commandKind) else {
+              [.publish, .resolveDevice, .restore].contains(record.kind) else {
             return
         }
         let localSnapshot = try receiptLocalSnapshot(record)
@@ -302,7 +302,7 @@ extension LocalSyncV2Store {
     }
 
     private func acknowledgeLinkedIntent(_ record: V2SealedCommandRecord) throws {
-        guard ["publish", "resolveDevice", "resolveServer", "cloneWork", "restore"].contains(record.commandKind),
+        guard [.publish, .resolveDevice, .resolveServer, .cloneWork, .restore].contains(record.kind),
               let intentID = record.intentID else { return }
         guard let intent = try query(
             """
@@ -338,7 +338,7 @@ extension LocalSyncV2Store {
         guard try changes() == 1 else {
             throw SyncV2StoreError.invalidAcknowledgement
         }
-        if record.commandKind == "restore" {
+        if record.kind == .restore {
             try finalizeRestoreRecord(record: record, intentID: intentID)
         }
     }

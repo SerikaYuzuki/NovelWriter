@@ -48,11 +48,11 @@ import Testing
     let second = Chapter(title: "第2章")
     let doc = NovelDocument(title: "テスト作品", chapters: [first, second])
 
-    #expect(doc.chapters.map(\.id) == [first.id, second.id])
+    #expect(doc.chapters.map { $0.id } == [first.id, second.id])
 
     var reordered = doc
     reordered.chapters.swapAt(0, 1)
-    #expect(reordered.chapters.map(\.id) == [second.id, first.id])
+    #expect(reordered.chapters.map { $0.id } == [second.id, first.id])
 }
 
 @Test func newDocumentFactoryCreatesOneChapter() {
@@ -193,7 +193,7 @@ import Testing
 
     #expect(removed.chapter == second)
     #expect(removed.index == 1)
-    #expect(doc.chapters.map(\.id) == [first.id, third.id])
+    #expect(doc.chapters.map { $0.id } == [first.id, third.id])
 }
 
 @Test func removeChapterIgnoresUnknownChapterID() {
@@ -215,7 +215,7 @@ import Testing
     // 先頭の要素を末尾へ移動する(List.onMove と同じ (IndexSet, Int) 形)。
     doc.moveChapters(fromOffsets: IndexSet(integer: 0), toOffset: 3)
 
-    #expect(doc.chapters.map(\.id) == [second.id, third.id, first.id])
+    #expect(doc.chapters.map { $0.id } == [second.id, third.id, first.id])
 }
 
 @Test func manuscriptCharacterCountExcludesNewlinesButIncludesSpaces() {
@@ -301,5 +301,5 @@ import Testing
 
     doc.moveCharacters(fromOffsets: IndexSet(integer: 0), toOffset: 3)
 
-    #expect(doc.characters.map(\.id) == [second.id, third.id, first.id])
+    #expect(doc.characters.map { $0.id } == [second.id, third.id, first.id])
 }

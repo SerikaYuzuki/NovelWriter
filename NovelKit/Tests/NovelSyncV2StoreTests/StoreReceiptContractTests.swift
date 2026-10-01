@@ -1,7 +1,7 @@
 import Foundation
 import NovelCore
 import NovelSyncV2
-import NovelSyncV2Store
+@testable import NovelSyncV2Store
 import Testing
 
 @Test
@@ -45,10 +45,10 @@ func receiptEnvelopeBindsStatusResultScopeDigestPredicatesAndHead() async throws
         commandID: command.commandId,
         scope: scopeA
     ) == nil)
-    #expect(try await store.pendingSealedCommands(scope: scopeA).map(\.commandID) == [
+    #expect(try await store.pendingSealedCommands(scope: scopeA).map { $0.commandID } == [
         command.commandId
     ])
-    #expect(try await store.pendingIntents(scope: scopeA).map(\.sourceSnapshotID) == [
+    #expect(try await store.pendingIntents(scope: scopeA).map { $0.sourceSnapshotID } == [
         checkpoint.snapshotID
     ])
     let beforeValid = try await store.open(workID: workID, scope: scopeA)
@@ -67,7 +67,7 @@ func receiptEnvelopeBindsStatusResultScopeDigestPredicatesAndHead() async throws
     #expect(try await store.pendingIntents(scope: scopeA).isEmpty)
 }
 
-private func invalidAcknowledgements(
+func invalidAcknowledgements(
     command: SealedCommand,
     validHead: V2RemoteHead,
     wrongHead: V2RemoteHead

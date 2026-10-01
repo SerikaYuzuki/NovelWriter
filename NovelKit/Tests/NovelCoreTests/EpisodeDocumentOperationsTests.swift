@@ -8,7 +8,8 @@ import Testing
     let episodeID = document.addEpisode(to: document.chapters[0].id, title: "第1話")
 
     #expect(episodeID != nil)
-    #expect(try document.chapters[0].episodes.map(\.id) == [#require(episodeID)])
+    let addedEpisodeID = try #require(episodeID)
+    #expect(document.chapters[0].episodes.map { $0.id } == [addedEpisodeID])
     #expect(document.chapters[0].episodes[0].title == "第1話")
 }
 
@@ -41,8 +42,8 @@ import Testing
         before: destinationFirst.id
     )
     #expect(moved)
-    #expect(document.chapters[0].episodes.map(\.id) == [first.id])
-    #expect(document.chapters[1].episodes.map(\.id) == [second.id, destinationFirst.id])
+    #expect(document.chapters[0].episodes.map { $0.id } == [first.id])
+    #expect(document.chapters[1].episodes.map { $0.id } == [second.id, destinationFirst.id])
 }
 
 @Test func removeEpisodeReturnsOriginalIndex() {

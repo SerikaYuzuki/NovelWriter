@@ -37,10 +37,10 @@ struct IOSProjectHomeView: View {
                     feature("プロット", symbol: "rectangle.stack", count: store.document.plotCards.count, action: openPlot)
                     feature("伏線 未回収", symbol: "flag", count: unresolvedCount, action: openPlot)
                     feature("資料", symbol: "paperclip", count: referenceCount, action: openReferences)
+                    feature("作品情報", symbol: "book.closed", detail: "あらすじ・作品設定", action: openProjectInfo)
+                    feature("感想・アドバイス", symbol: "text.bubble", detail: "保存した回答", action: openFeedback)
                 }
                 .listRowBackground(FuminiwaColor.paper.color)
-                Button(action: openProjectInfo) { ProjectSectionStyle.projectInfo.label }
-                Button(action: openFeedback) { ProjectSectionStyle.feedback.label }
             }
             Section("同期") {
                 IOSExplicitSyncButton(store: store, status: syncStatus)
@@ -124,7 +124,7 @@ struct IOSProjectHomeView: View {
     @State private var unresolvedCount = 0
     @State private var referenceCount = 0
 
-    private func feature(_ title: String, symbol: String, count: Int, action: @escaping () -> Void) -> some View {
+    private func feature(_ title: String, symbol: String, count: Int? = nil, detail: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(HStackLayout(spacing: Spacing.small)) : AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.small))
             layout {
@@ -132,7 +132,11 @@ struct IOSProjectHomeView: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     Spacer()
                 }
-                Text(count, format: .number).font(.title2).monospacedDigit()
+                if let count {
+                    Text(count, format: .number).font(.title2).monospacedDigit()
+                } else if let detail {
+                    Text(detail).font(FuminiwaType.rowSecondary).foregroundStyle(FuminiwaColor.textSecondary.color)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 72, alignment: .leading)
             .padding(Spacing.medium)

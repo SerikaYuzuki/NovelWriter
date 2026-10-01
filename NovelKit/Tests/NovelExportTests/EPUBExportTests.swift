@@ -18,8 +18,8 @@ import Testing
         "OEBPS/chapter-3.xhtml"
     ]
 
-    #expect(archive.localEntries.map(\.path) == expectedPaths)
-    #expect(archive.centralEntries.map(\.path) == expectedPaths)
+    #expect(archive.localEntries.map { $0.path } == expectedPaths)
+    #expect(archive.centralEntries.map { $0.path } == expectedPaths)
     #expect(archive.localEntries.allSatisfy { $0.versionNeeded == 20 })
     #expect(archive.localEntries.allSatisfy { $0.compressionMethod == 0 })
     #expect(archive.localEntries.allSatisfy { ($0.flags & 0x0800) != 0 })

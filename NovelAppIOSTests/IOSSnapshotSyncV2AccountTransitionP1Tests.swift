@@ -69,7 +69,7 @@ struct IOSSnapshotSyncV2P1TransitionTests {
         if case .failed = store.authUIState {} else {
             Issue.record("unsupported session was not surfaced as a typed auth failure")
         }
-        #expect(store.syncV2LibraryItems.map(\.workID) == [workID])
+        #expect(store.syncV2LibraryItems.map { $0.workID } == [workID])
         #expect(store.syncV2LibraryItems.first?.accountState == .parkedDifferentAccount)
         #expect(store.syncV2LibraryItems.first?.availability == .localOnly)
     }

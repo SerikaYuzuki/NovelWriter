@@ -25,7 +25,7 @@ extension RemoteHTTPLineageTests {
         ])
         let client = try fixture.client(snapshots: [], overrideState: state, localStore: store)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == [base.snapshotId, head.snapshotId])
+        #expect(inbox.snapshots.map { $0.snapshotId } == [base.snapshotId, head.snapshotId])
         #expect(try await store.open(workID: fixture.workID, scope: scope).summary.currentSnapshotID == saved.snapshotID)
         await store.close()
     }
@@ -48,7 +48,7 @@ extension RemoteHTTPLineageTests {
         state.failNext(path: path, replies: pages)
         let client = try fixture.client(snapshots: [], overrideState: state)
         let inbox = try await client.downloadRemoteOnly(workID: fixture.workID)
-        #expect(inbox.snapshots.map(\.snapshotId) == snapshots.map(\.snapshotId))
+        #expect(inbox.snapshots.map { $0.snapshotId } == snapshots.map { $0.snapshotId })
         #expect(state.count(path: path) == pages.count)
         #expect(pages.count < 10)
         for snapshot in snapshots {
