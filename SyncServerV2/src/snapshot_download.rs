@@ -16,7 +16,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use uuid::Uuid;
 
 const PAGE_ITEMS: usize = 256;
@@ -77,10 +81,63 @@ impl Cursor {
     }
 }
 
+#[derive(Clone)]
 struct Item {
     kind: i16,
     id: [u8; 32],
     byte_count: usize,
+}
+
+// Per-repository cache: immutable graph metadata only. Scope/visibility and
+// mutable object availability are always read from PostgreSQL on every page.
+type CacheKey = (String, Uuid, [u8; 32]);
+#[derive(Clone)]
+enum CachedGraph {
+    Metadata(Arc<Vec<Item>>),
+    Oversized,
+}
+#[derive(Default)]
+pub struct DownloadCache(Mutex<HashMap<CacheKey, (Instant, CachedGraph)>>);
+const CACHE_ITEMS: usize = 100_000;
+const CACHE_ROOTS: usize = 4;
+const CACHE_TTL: Duration = Duration::from_secs(30);
+static DOWNLOAD_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+impl DownloadCache {
+    fn get(&self, key: &CacheKey) -> Option<CachedGraph> {
+        let mut cache = self.0.lock().ok()?;
+        cache.retain(|_, (created, _)| created.elapsed() < CACHE_TTL);
+        cache.get(key).map(|(_, items)| items.clone())
+    }
+
+    fn insert(&self, key: CacheKey, items: CachedGraph) {
+        if let Ok(mut cache) = self.0.lock() {
+            if cache.len() >= CACHE_ROOTS {
+                if let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, (created, _))| *created)
+                    .map(|(key, _)| key.clone())
+                {
+                    cache.remove(&oldest);
+                }
+            }
+            cache.insert(key, (Instant::now(), items));
+        }
+    }
+}
+
+fn decode_items(rows: &[sqlx::postgres::PgRow]) -> SyncResult<Vec<Item>> {
+    rows.iter()
+        .map(|row| {
+            let id: Vec<u8> = row.try_get("id")?;
+            let size: i64 = row.try_get("byte_count")?;
+            Ok(Item {
+                kind: row.try_get("kind")?,
+                id: id.try_into().map_err(|_| SyncError::Retryable)?,
+                byte_count: usize::try_from(size).map_err(|_| SyncError::Retryable)?,
+            })
+        })
+        .collect()
 }
 
 pub(crate) async fn download(
@@ -89,6 +146,10 @@ pub(crate) async fn download(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
+    let _permit = match DOWNLOAD_PERMITS.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) => return error_response(SyncError::Retryable),
+    };
     let p = match principal(&headers, &state).await {
         Ok(p) => p,
         Err(response) => return response,
@@ -119,8 +180,12 @@ async fn page(
             .ok_or_else(|| SyncError::SchemaViolation("snapshotId".into()))?,
     )
     .map_err(SyncError::SchemaViolation)?;
+    let mut tx = state.repo.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let visible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sync_v2.works w JOIN sync_v2.snapshots s ON s.account_id=w.account_id AND s.work_id=w.work_id WHERE w.account_id=$1 AND w.work_id=$2 AND s.snapshot_id=$3 AND w.state='bound' AND NOT EXISTS(SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id))")
-        .bind(&p.account_id).bind(work_id).bind(head.as_slice()).fetch_one(&state.repo.pool).await?;
+        .bind(&p.account_id).bind(work_id).bind(head.as_slice()).fetch_one(&mut *tx).await?;
     if !visible {
         return Err(SyncError::NotFound);
     }
@@ -134,9 +199,85 @@ async fn page(
         .map(|cursor| decode_digest(&cursor.after_id).map_err(SyncError::SchemaViolation))
         .transpose()?
         .unwrap_or([0; 32]);
-    // Fetch sizes first: a page of large BYTEA values must not be materialized
-    // just to discover that it exceeds the response budget.
-    let rows = sqlx::query(r#"
+    // Cache at most four small closures. Oversized graphs keep the bounded
+    // original query path; the cache capacity is not a history cutoff.
+    let key = (p.account_id.clone(), work_id, head);
+    let mut metadata = state.repo.download_cache.get(&key);
+    let mut cold_candidates = None;
+    if metadata.is_none() {
+        let rows = sqlx::query(r#"
+        WITH RECURSIVE ancestors(snapshot_id) AS (
+          SELECT snapshot_id FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3
+          UNION
+          SELECT p.parent_snapshot_id FROM sync_v2.snapshot_parents p JOIN ancestors a ON a.snapshot_id=p.snapshot_id
+          WHERE p.account_id=$1 AND p.work_id=$2
+        ), items AS MATERIALIZED (
+          SELECT 0::smallint AS kind,s.snapshot_id AS id,octet_length(s.manifest_bytes)::bigint AS byte_count,true AS available
+          FROM sync_v2.snapshots s JOIN ancestors a ON a.snapshot_id=s.snapshot_id WHERE s.account_id=$1 AND s.work_id=$2
+          UNION ALL
+          SELECT 1::smallint,b.object_id,b.byte_count,o.state='available' FROM sync_v2.global_blobs b
+          JOIN sync_v2.account_objects o ON o.object_id=b.object_id AND o.account_id=$1
+          WHERE b.byte_count <= $4 AND b.object_id IN (
+            SELECT e.object_id FROM sync_v2.snapshot_entries e JOIN ancestors a ON a.snapshot_id=e.snapshot_id WHERE e.account_id=$1
+          )
+        )
+        (SELECT kind,id,byte_count,true AS cache_entry FROM items ORDER BY kind,id LIMIT $5)
+        UNION ALL
+        (SELECT kind,id,byte_count,false AS cache_entry FROM items
+         WHERE available AND (kind,id)>($6,$7) ORDER BY kind,id LIMIT $8)
+    "#)
+            .bind(&p.account_id).bind(work_id).bind(head.as_slice())
+            .bind(INLINE_OBJECT_BYTES).bind((CACHE_ITEMS + 1) as i64)
+            .bind(after_kind).bind(after_id.as_slice()).bind((PAGE_ITEMS + 1) as i64)
+            .fetch_all(&mut *tx).await?;
+        let mut cache_rows = Vec::new();
+        let mut page_rows = Vec::new();
+        for row in rows {
+            if row.try_get::<bool, _>("cache_entry")? {
+                cache_rows.push(row);
+            } else {
+                page_rows.push(row);
+            }
+        }
+        let mut candidates = decode_items(&page_rows)?;
+        candidates.sort_by_key(|item| (item.kind, item.id));
+        cold_candidates = Some(candidates);
+        if cache_rows.len() <= CACHE_ITEMS {
+            let mut items = decode_items(&cache_rows)?;
+            items.sort_by_key(|item| (item.kind, item.id));
+            metadata = Some(CachedGraph::Metadata(Arc::new(items)));
+        } else {
+            metadata = Some(CachedGraph::Oversized);
+        }
+        state
+            .repo
+            .download_cache
+            .insert(key, metadata.clone().ok_or(SyncError::Retryable)?);
+    }
+    let candidates = if let Some(candidates) = cold_candidates {
+        candidates
+    } else if let Some(CachedGraph::Metadata(metadata)) = metadata {
+        let mut selected: Vec<_> = metadata
+            .iter()
+            .filter(|item| item.kind == 0 && (item.kind, item.id) > (after_kind, after_id))
+            .take(PAGE_ITEMS + 1)
+            .cloned()
+            .collect();
+        if selected.len() < PAGE_ITEMS + 1 {
+            let ids: Vec<Vec<u8>> = metadata
+                .iter()
+                .filter(|item| item.kind == 1 && (item.kind, item.id) > (after_kind, after_id))
+                .map(|item| item.id.to_vec())
+                .collect();
+            // Never cache mutable availability (including quarantine).
+            let rows = sqlx::query("SELECT 1::smallint AS kind,b.object_id AS id,b.byte_count FROM sync_v2.global_blobs b JOIN sync_v2.account_objects o ON o.object_id=b.object_id WHERE o.account_id=$1 AND o.state='available' AND b.object_id=ANY($2::bytea[]) AND b.byte_count <= $3 ORDER BY b.object_id LIMIT $4")
+                .bind(&p.account_id).bind(ids).bind(INLINE_OBJECT_BYTES)
+                .bind((PAGE_ITEMS + 1 - selected.len()) as i64).fetch_all(&mut *tx).await?;
+            selected.extend(decode_items(&rows)?);
+        }
+        selected
+    } else {
+        let rows = sqlx::query(r#"
         WITH RECURSIVE ancestors(snapshot_id) AS (
           SELECT snapshot_id FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3
           UNION
@@ -154,35 +295,38 @@ async fn page(
         )
         SELECT kind,id,byte_count FROM items WHERE (kind,id)>($4,$5) ORDER BY kind,id LIMIT $7
     "#).bind(&p.account_id).bind(work_id).bind(head.as_slice())
-        .bind(after_kind).bind(after_id.as_slice()).bind(INLINE_OBJECT_BYTES).bind((PAGE_ITEMS + 1) as i64)
-        .fetch_all(&state.repo.pool).await?;
-    let candidates = rows
-        .iter()
-        .map(|row| {
-            let id: Vec<u8> = row.try_get("id")?;
-            let size: i64 = row.try_get("byte_count")?;
-            Ok(Item {
-                kind: row.try_get("kind")?,
-                id: id.try_into().map_err(|_| SyncError::Retryable)?,
-                byte_count: usize::try_from(size).map_err(|_| SyncError::Retryable)?,
-            })
-        })
-        .collect::<SyncResult<Vec<_>>>()?;
+            .bind(after_kind).bind(after_id.as_slice()).bind(INLINE_OBJECT_BYTES).bind((PAGE_ITEMS + 1) as i64)
+            .fetch_all(&mut *tx).await?;
+        decode_items(&rows)?
+    };
     let count = page_prefix(&candidates);
+    let manifests: Vec<Vec<u8>> = candidates[..count]
+        .iter()
+        .filter(|i| i.kind == 0)
+        .map(|i| i.id.to_vec())
+        .collect();
+    let objects: Vec<Vec<u8>> = candidates[..count]
+        .iter()
+        .filter(|i| i.kind == 1)
+        .map(|i| i.id.to_vec())
+        .collect();
+    let mut payloads = HashMap::new();
+    if !manifests.is_empty() {
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = sqlx::query_as("SELECT snapshot_id,manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=ANY($3::bytea[])")
+            .bind(&p.account_id).bind(work_id).bind(manifests).fetch_all(&mut *tx).await?;
+        payloads.extend(rows.into_iter().map(|(id, bytes)| ((0, id), bytes)));
+    }
+    if !objects.is_empty() {
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = sqlx::query_as("SELECT b.object_id,b.raw_bytes FROM sync_v2.global_blobs b JOIN sync_v2.account_objects a ON a.object_id=b.object_id WHERE a.account_id=$1 AND a.state='available' AND b.object_id=ANY($2::bytea[])")
+            .bind(&p.account_id).bind(objects).fetch_all(&mut *tx).await?;
+        payloads.extend(rows.into_iter().map(|(id, bytes)| ((1, id), bytes)));
+    }
+    tx.commit().await?;
     let mut items = Vec::with_capacity(count);
     for item in &candidates[..count] {
-        let bytes: Vec<u8> = if item.kind == 0 {
-            sqlx::query_scalar("SELECT manifest_bytes FROM sync_v2.snapshots WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3")
-                .bind(&p.account_id).bind(work_id).bind(item.id.as_slice()).fetch_optional(&state.repo.pool).await?
-                .ok_or(SyncError::NotFound)?
-        } else {
-            // The metadata query already proved membership in this work's
-            // pinned graph. Keep scope/deletion checks without rescanning every
-            // other history occurrence for each small object.
-            sqlx::query_scalar("SELECT b.raw_bytes FROM sync_v2.global_blobs b JOIN sync_v2.account_objects a ON a.object_id=b.object_id AND a.account_id=$1 AND a.state='available' WHERE b.object_id=$2 AND EXISTS(SELECT 1 FROM sync_v2.works w WHERE w.account_id=$1 AND w.work_id=$3 AND w.state='bound' AND NOT EXISTS(SELECT 1 FROM sync_v2.deleted_works d WHERE d.account_id=w.account_id AND d.work_id=w.work_id))")
-                .bind(&p.account_id).bind(item.id.as_slice()).bind(work_id).fetch_optional(&state.repo.pool).await?
-                .ok_or(SyncError::NotFound)?
-        };
+        let bytes = payloads
+            .remove(&(item.kind, item.id.to_vec()))
+            .ok_or(SyncError::NotFound)?;
         if bytes.len() != item.byte_count || sha256(&bytes) != item.id {
             return Err(SyncError::Retryable);
         }
@@ -231,6 +375,72 @@ fn page_prefix(items: &[Item]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn saturated_download_rejects_without_auth_or_database_wait() {
+        use crate::{
+            auth::{FixtureAccessAuthenticator, RuntimeMode},
+            object_store::PostgresObjectStore,
+            Repository,
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://fixture@127.0.0.1:1/unused_test")
+            .unwrap();
+        let state = AppState {
+            repo: Arc::new(Repository {
+                pool: pool.clone(),
+                object_store: Arc::new(PostgresObjectStore { pool }),
+                download_cache: Arc::default(),
+                server_instance_id: "test-instance".into(),
+                protocol_epoch: 2,
+            }),
+            access_authenticator: Arc::new(
+                FixtureAccessAuthenticator::new(RuntimeMode::Test, "fixture-fence".into()).unwrap(),
+            ),
+        };
+        let permits = DOWNLOAD_PERMITS.try_acquire_many(2).unwrap();
+        let response = download(
+            Path("unused".into()),
+            HeaderMap::new(),
+            State(state.clone()),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(permits);
+        let response = download(
+            Path("unused".into()),
+            HeaderMap::new(),
+            State(state),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn metadata_cache_is_scoped_bounded_and_expires() {
+        let cache = DownloadCache::default();
+        let work = Uuid::new_v4();
+        let first = ("account-a".to_owned(), work, [0; 32]);
+        cache.insert(first.clone(), CachedGraph::Metadata(Arc::new(vec![])));
+        assert!(cache.get(&first).is_some());
+        assert!(cache.get(&("account-b".into(), work, [0; 32])).is_none());
+        assert!(cache
+            .get(&("account-a".into(), Uuid::new_v4(), [0; 32]))
+            .is_none());
+        for id in 1..=CACHE_ROOTS {
+            cache.insert(
+                ("account-a".into(), work, [id as u8; 32]),
+                CachedGraph::Oversized,
+            );
+        }
+        assert!(cache.get(&first).is_none());
+        assert_eq!(cache.0.lock().unwrap().len(), CACHE_ROOTS);
+        let last = ("account-a".to_owned(), work, [CACHE_ROOTS as u8; 32]);
+        cache.0.lock().unwrap().get_mut(&last).unwrap().0 = Instant::now() - CACHE_TTL;
+        assert!(cache.get(&last).is_none());
+    }
 
     #[test]
     fn shared_download_fixture_is_canonical_and_preserves_all_item_digests() {

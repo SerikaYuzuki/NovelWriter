@@ -697,6 +697,7 @@ async fn postgres_and_http_scenarios_are_opt_in() {
     verify_chunk_upload_http(&context).await;
     verify_assistant_lane(&context).await;
     download_pages::verify_download_pages(&context).await;
+    download_pages::verify_merge_and_page_boundaries(&context).await;
     verify_work_deletion(&context).await;
     let (deleted_download, _, _) = get(
         &context,

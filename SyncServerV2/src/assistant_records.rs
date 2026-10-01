@@ -178,7 +178,10 @@ mod tests {
     fn swift_generated_record_accepts_timestamp_and_canonical_bytes() {
         let bytes = std::env::var("FUMINIWA_ASSISTANT_INTEROP_FIXTURE")
             .map(|path| std::fs::read(path).unwrap())
-            .unwrap_or_else(|_| include_bytes!("../../docs/sync/v2/fixtures/canonical/assistant-record.json").to_vec());
+            .unwrap_or_else(|_| {
+                include_bytes!("../../docs/sync/v2/fixtures/canonical/assistant-record.json")
+                    .to_vec()
+            });
         let record: AssistantRecord = serde_json::from_slice(&bytes).unwrap();
         assert!(record.bytes().is_ok());
         let mut invalid = record;

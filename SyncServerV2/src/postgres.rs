@@ -29,10 +29,10 @@ fn is_temporary_namespace(name: &str) -> bool {
     name.starts_with("pg_temp_") || name.starts_with("pg_toast_temp_")
 }
 /// The server never follows an unbounded user-controlled snapshot graph.
-/// This is deliberately a graph-node budget (not a wall-clock timeout): a
-/// malformed cycle or an unexpectedly huge closure is rejected before any
-/// head/conflict/receipt mutation can be committed.
-const MAX_LINEAGE_NODES: i64 = 4096;
+/// This counts distinct visited nodes, not the age or total size of a work.
+/// Deduplication terminates even corrupt cycles; an absent target never implies
+/// ancestry. Budget exhaustion rejects before head/receipt changes commit.
+const MAX_LINEAGE_NODES: i64 = 100_000;
 
 pub const MIGRATION_OWNER_ROLE: &str = "fuminiwa_sync_v2_migrator";
 pub const RUNTIME_ROLE: &str = "fuminiwa_sync_v2_runtime";
@@ -192,6 +192,8 @@ fn expected_v2_database_objects() -> HashSet<String> {
                 "recovery_operations_pkey",
                 "global_blobs_pkey",
                 "account_objects_pkey",
+                "account_objects_object_id",
+                "snapshot_entries_account_object",
                 "snapshots_pkey",
                 "snapshots_account_id_work_id_snapshot_id_key",
                 "snapshots_account_id_manifest_digest_key",
@@ -329,7 +331,23 @@ fn classify_database_identity(
                 .any(|(actual_key, actual_value)| actual_key == key && actual_value == value)
         });
     let expected_objects = expected_v2_database_objects();
-    let before_browser: HashSet<_> = expected_objects
+    let before_indexes: HashSet<_> = expected_objects
+        .iter()
+        .filter(|name| {
+            !name.ends_with(".account_objects_object_id")
+                && !name.ends_with(".snapshot_entries_account_object")
+        })
+        .cloned()
+        .collect();
+    if marker_matches
+        && user_objects.len() == before_indexes.len()
+        && user_objects
+            .iter()
+            .all(|object| before_indexes.contains(object))
+    {
+        return Ok(DatabaseIdentity::SnapshotSyncV2);
+    }
+    let before_browser: HashSet<_> = before_indexes
         .iter()
         .filter(|name| {
             !name.contains("auth_v1.browser_attempts")
@@ -409,6 +427,7 @@ enum SnapshotRelation {
 pub struct Repository {
     pub pool: PgPool,
     pub object_store: Arc<dyn ObjectStore>,
+    pub download_cache: Arc<crate::snapshot_download::DownloadCache>,
     pub server_instance_id: String,
     pub protocol_epoch: i64,
 }
@@ -450,6 +469,15 @@ impl Repository {
             .password(&password);
         let pool = PgPoolOptions::new()
             .max_connections(10)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("SET statement_timeout = '30s'")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect_with(options)
             .await?;
         // Runtime startup is intentionally read-only.  The one-shot v2
@@ -461,6 +489,7 @@ impl Repository {
         Ok(Self {
             pool,
             object_store,
+            download_cache: Arc::default(),
             server_instance_id,
             protocol_epoch: PROTOCOL_EPOCH,
         })
@@ -469,6 +498,15 @@ impl Repository {
     pub async fn connect(url: &str, server_instance_id: String) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(10)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("SET statement_timeout = '30s'")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(url)
             .await?;
         // Lock ordering is database identity advisory lock, then the
@@ -500,6 +538,7 @@ impl Repository {
         Ok(Self {
             pool,
             object_store,
+            download_cache: Arc::default(),
             server_instance_id,
             protocol_epoch: PROTOCOL_EPOCH,
         })
@@ -536,6 +575,13 @@ impl Repository {
         sqlx::query("SELECT request_id,delete_after FROM auth_v1.account_deletions LIMIT 0")
             .execute(&mut *connection)
             .await?;
+        let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index WHERE indexrelid IN (to_regclass('sync_v2.account_objects_object_id'),to_regclass('sync_v2.snapshot_entries_account_object')) AND indisvalid")
+            .fetch_one(&mut *connection).await?;
+        if indexes != 2 {
+            return Err(sqlx::Error::Protocol(
+                "v2 index migration 0011 is required".into(),
+            ));
+        }
         Self::verify_server_meta_read_only(&mut connection, server_instance_id).await
     }
 
@@ -2585,10 +2631,13 @@ impl Repository {
             sqlx::query("INSERT INTO sync_v2.snapshot_parents(account_id,work_id,snapshot_id,parent_snapshot_id) VALUES($1,$2,$3,$4)")
                 .bind(&p.account_id).bind(c.work_id).bind(id.as_slice()).bind(parent_id.as_slice()).execute(&mut **tx).await?;
         }
-        for entry in &entries {
-            sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) VALUES($1,$2,$3,$4,$5,$6)")
-                .bind(&p.account_id).bind(id.as_slice()).bind(&entry.entity_key).bind(entry.object_id.as_slice()).bind(entry.byte_count).bind(&entry.content_type).execute(&mut **tx).await?;
-        }
+        let keys: Vec<_> = entries.iter().map(|e| e.entity_key.clone()).collect();
+        let objects: Vec<Vec<u8>> = entries.iter().map(|e| e.object_id.to_vec()).collect();
+        let sizes: Vec<_> = entries.iter().map(|e| e.byte_count).collect();
+        let types: Vec<_> = entries.iter().map(|e| e.content_type.clone()).collect();
+        sqlx::query("INSERT INTO sync_v2.snapshot_entries(account_id,snapshot_id,entity_key,object_id,byte_count,content_type) SELECT $1,$2,* FROM UNNEST($3::text[],$4::bytea[],$5::bigint[],$6::text[])")
+            .bind(&p.account_id).bind(id.as_slice()).bind(keys).bind(objects).bind(sizes).bind(types)
+            .execute(&mut **tx).await?;
         Ok((
             200,
             Self::response(
@@ -2603,12 +2652,10 @@ impl Repository {
             ),
         ))
     }
-    /// Verify a snapshot graph edge without trusting a client-provided base.
-    ///
-    /// The recursive walk starts at `descendant` and follows immutable parent
-    /// edges. The query also emits a row for a cycle edge and detects a
-    /// continuation past the node budget, so both cases fail closed as
-    /// `lineageViolation` instead of being treated as a normal conflict.
+    /// UNION deduplicates DAG nodes (and terminates even corrupt cycles).
+    /// The unsorted outer LIMIT stops recursive evaluation at the first match.
+    /// row_number has no ordering/frame: it streams, without a path per row.
+    /// Exhausting the unique-node budget fails closed, never implies ancestry.
     async fn snapshot_is_ancestor<'a>(
         &self,
         tx: &mut Transaction<'a, Postgres>,
@@ -2618,59 +2665,32 @@ impl Repository {
         descendant: &[u8; 32],
     ) -> SyncResult<SnapshotRelation> {
         let row = sqlx::query(
-            "WITH RECURSIVE walk(snapshot_id, depth, path, cycle) AS (
-                 SELECT s.snapshot_id, 0::bigint, ARRAY[s.snapshot_id]::bytea[], false
-                 FROM sync_v2.snapshots s
-                 WHERE s.account_id=$1 AND s.work_id=$2 AND s.snapshot_id=$3
-                 UNION ALL
-                 SELECT p.parent_snapshot_id,
-                        w.depth + 1,
-                        w.path || p.parent_snapshot_id,
-                        p.parent_snapshot_id = ANY(w.path)
-                 FROM walk w
+            "WITH RECURSIVE walk(snapshot_id) AS (
+                 SELECT snapshot_id FROM sync_v2.snapshots
+                 WHERE account_id=$1 AND work_id=$2 AND snapshot_id=$3
+                 UNION
+                 SELECT p.parent_snapshot_id FROM walk w
                  JOIN sync_v2.snapshot_parents p
                    ON p.account_id=$1 AND p.work_id=$2 AND p.snapshot_id=w.snapshot_id
-                 WHERE NOT w.cycle AND w.depth < $5
-             ), bounded AS (
-                 SELECT * FROM walk LIMIT $6
-             ), checked AS (
-                 SELECT w.*,
-                        EXISTS(
-                            SELECT 1
-                            FROM sync_v2.snapshot_parents next_parent
-                            WHERE next_parent.account_id=$1
-                              AND next_parent.work_id=$2
-                              AND next_parent.snapshot_id=w.snapshot_id
-                        ) AS has_next
-                 FROM bounded w
              )
-             SELECT
-                 EXISTS(SELECT 1 FROM checked WHERE snapshot_id=$4) AS ancestor,
-                 EXISTS(SELECT 1 FROM checked WHERE cycle) AS cycle,
-                 EXISTS(SELECT 1 FROM checked WHERE depth >= $5 AND has_next) AS over_budget,
-                 COUNT(*) AS visited
-             FROM checked",
+             SELECT snapshot_id, visited FROM (
+                 SELECT snapshot_id, row_number() OVER () AS visited FROM walk LIMIT $5
+             ) bounded WHERE snapshot_id=$4 OR visited=$5 LIMIT 1",
         )
         .bind(&p.account_id)
         .bind(work_id)
         .bind(descendant)
         .bind(ancestor)
-        .bind(MAX_LINEAGE_NODES)
         .bind(MAX_LINEAGE_NODES + 1)
-        .fetch_one(&mut **tx)
+        .fetch_optional(&mut **tx)
         .await?;
-        let cycle: bool = row.try_get("cycle")?;
-        let over_budget: bool = row.try_get("over_budget")?;
-        let visited: i64 = row.try_get("visited")?;
-        if cycle || over_budget || visited > MAX_LINEAGE_NODES {
-            return Err(SyncError::LineageViolation);
+        match row {
+            Some(row) if row.try_get::<i64, _>("visited")? > MAX_LINEAGE_NODES => {
+                Err(SyncError::LineageViolation)
+            }
+            Some(_) => Ok(SnapshotRelation::Ancestor),
+            None => Ok(SnapshotRelation::NotAncestor),
         }
-        let is_ancestor: bool = row.try_get("ancestor")?;
-        Ok(if is_ancestor {
-            SnapshotRelation::Ancestor
-        } else {
-            SnapshotRelation::NotAncestor
-        })
     }
 
     async fn snapshot_is_root<'a>(
@@ -3695,6 +3715,27 @@ mod database_identity_tests {
             .collect::<Vec<_>>();
         assert_eq!(
             classify_database_identity(true, &exact_marker(), &objects),
+            Ok(DatabaseIdentity::SnapshotSyncV2)
+        );
+    }
+
+    #[test]
+    fn accepts_pre_index_upgrade_but_rejects_partial_index_inventory() {
+        let mut objects = expected_v2_database_objects();
+        objects.remove("relation:i:sync_v2.account_objects_object_id");
+        assert!(classify_database_identity(
+            true,
+            &exact_marker(),
+            &objects.iter().cloned().collect::<Vec<_>>()
+        )
+        .is_err());
+        objects.remove("relation:i:sync_v2.snapshot_entries_account_object");
+        assert_eq!(
+            classify_database_identity(
+                true,
+                &exact_marker(),
+                &objects.into_iter().collect::<Vec<_>>()
+            ),
             Ok(DatabaseIdentity::SnapshotSyncV2)
         );
     }
